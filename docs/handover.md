@@ -1,4 +1,84 @@
-# Bootstrap slice handover
+# Transport/authentication slice handover
+
+## Current receipt: 2026-10-25T15:28+01:00
+
+The bounded read-only transport slice follows bootstrap commit
+`27501961eb595b77bf5da83bcba0bbff51acde43`. Gate 1/2 approval and zero-must-fix
+review were inherited; Gate 3 remains one small sequential slice. No whole-feature
+code review is claimed. Pagination is intentionally the following slice.
+
+### Implemented interfaces
+
+- `ConnectClient.create(aliasOrUsername: string, apiVersion: string): Promise<ConnectClient>`
+  delegates existing CLI authentication to `Org.create` and `getConnection(version)`.
+- `new ConnectClient(connection, apiVersion)` accepts the narrow Salesforce-core
+  `Pick<Connection, 'instanceUrl' | 'request'>` seam for synthetic tests.
+- `get<T = unknown>(path: string): Promise<T>` performs one GET and returns the
+  untouched response. It does not claim list completeness or validate schemas.
+- `ConnectError` exposes `code` (`INVALID_REQUEST`, `AUTHENTICATION_FAILED`, or
+  `REQUEST_FAILED`) and optional numeric `statusCode`. Original messages, causes,
+  headers, bodies, request URLs and credentials are discarded, not regex-filtered.
+  Status is retained only if the underlying error supplies a valid numeric status;
+  JSforce errors can omit it. Session-expiry names are classified as authentication.
+- Paths must be root-relative or absolute on the authenticated HTTPS origin, under
+  `/services/data/v<explicit-version>/ssot/`. Reject cross-origin, credential-bearing,
+  wrong namespace/version, traversal, separator/nested encodings, controls, fragments
+  and duplicate path separators. All redirects throw before forwarding a request.
+- Salesforce core owns authentication/session refresh. There are no application-level
+  retries, mutations, adapters, selectors, CLI changes or manually handled tokens.
+  Dependency debug logging is not a plugin-owned diagnostic surface; callers must
+  not deliberately place secrets into resource URLs.
+
+### Official contract evidence
+
+Official online lookup was expressly approved on 2026-10-25 after local mirrors
+proved incomplete. Evidence was obtained using official-site web search; a direct
+summary fetch timed out, but indexed full reference text was available.
+
+- [Data360 Connect REST reference](https://developer.salesforce.com/docs/data/connectapi/references):
+  `GET /ssot/data-model-objects` and detail routes; current examples use
+  `/services/data/v68.0/ssot/`. This is the **data/connectapi** reference, not an
+  assumed equivalent platform/connectapi specification.
+- [Official DMO mapping use case](https://developer.salesforce.com/docs/data/connectapi/guide/dmo-use-case.html):
+  example mapping requests explicitly use `/services/data/v65.0/ssot/`.
+- [Custom application API overview](https://developer.salesforce.com/docs/data/data-cloud-dev/guide/custom-app-dev):
+  distinguishes Salesforce OAuth/My Domain Connect REST from tenant-specific Direct
+  API token exchange. The transport uses the core connection origin, never a URL
+  supplied by a response or a Direct API token exchange.
+
+Consequently `/connect/ssot/` is rejected. Explicit versions must match `NN.0` or
+`NNN.0`; there is no latest/default discovery, upgrade, downgrade or version retry.
+Current reference v68 examples are not proof of v65 field/operation support.
+Future adapters must establish endpoint/feature availability at the selected
+version. Tests use independently authored shapes, not copied official examples.
+
+### Verification and next boundary
+
+- `npm run lint:fix`, `npm run lint`: exit 0, zero warnings/errors.
+- Explicit `npm run build`: exit 0.
+- `npm test`: 14 passed, 0 failed/skipped (6 transport, 6 CLI, 2 tooling),
+  11,407.3291 ms excluding compilation.
+- `npm run smoke`: 6 passed, 0 failed/skipped, 10,522.6068 ms.
+- Normal enabled pre-commit repeats registry-only lock validation, zero-warning
+  lint, build/full tests and six-case smoke. Final hash/hook receipt is returned
+  after commit; a commit cannot embed its own hash.
+- No live calls, fixtures, root edits or recursive cleanup. No scratch was allocated
+  by this slice. All test fixtures are inline synthetic objects; CLI help smoke
+  retains its own verified OS-temp roots. No pushes/tags/publication authorized.
+
+Next smallest slice: document actual DMO list pagination response contract, then
+add bounded pagination completion/loop/truncation regressions. No adapters yet.
+No transport blocker remains; endpoint-specific minimum versions and response
+contracts are future adapter evidence checkpoints.
+
+Propagation: README and capability checklist updated; artifact/Git workflow docs
+unchanged because no artifact or command behavior changed. This independent package
+has no downstream consumers: language/data/parser/LSP/extensions/MCP/MSO, CMS and
+MCNext are N/A. Wiki/sites/hover data need no updates for this unpublished internal
+slice. Root release/dependency-map registration remains a coordinator follow-up,
+not an authorized edit here. Package remains 0.1.0, no prior release/tags; no bump.
+
+## Historical bootstrap receipt
 
 ## Scope and timing
 

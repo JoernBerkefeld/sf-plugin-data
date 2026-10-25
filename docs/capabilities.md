@@ -53,9 +53,10 @@ Every family must complete all gates below before support can be declared.
 - [ ] Classify implicit compute/enable/schedule side effects and block unsafe routes.
 - [ ] Prove safe export-to-target create/update/no-op without computation.
 
-## Shared gates (also unimplemented)
+## Shared gates
 
-- [ ] Authenticated Connect REST transport, structured errors and redaction.
+- [x] Read-only authenticated Connect REST transport, structured errors and redaction.
+      Synthetic verification only; CLI integration and resource contracts remain pending.
 - [ ] Complete pagination, loop/truncation detection and synthetic fixtures.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.

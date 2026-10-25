@@ -35,8 +35,11 @@ is no public plan command or saved-plan infrastructure.
 ## Scope and safety
 
 Seven planned families are tracked in [capabilities](docs/capabilities.md).
-Transport/authentication and pagination fixtures are the next bounded slice.
-No org was contacted or changed by bootstrap tests. Smoke tests retain isolated
+An internal read-only Salesforce-core transport now accepts an explicit API
+version and only same-origin `/services/data/v<version>/ssot/` requests. It rejects
+redirects and emits payload-free structured errors. It is not wired to the CLI;
+no resource-family support is implied. Pagination is the next bounded slice.
+No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),
 TMPDIR (when set), and actual Node `os.tmpdir()`. Verification rejects mismatches.
