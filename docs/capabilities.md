@@ -66,6 +66,13 @@ pending without changing its approved future meaning. Deployment is unimplemente
 
 ## Shared gates
 
+- [x] Internal single-authored-DMO read-only deploy preflight independently maps
+      source, proves absence through complete scoped inventory, and retrieves
+      existing target through full common semantics. Identity-keyed field comparison
+      ignores reorder only; differences are blocked with static reasons until PATCH
+      is proven. Unknown target semantics and acquisition failures fail closed.
+      No CLI preview wiring, filesystem discovery, mutation or live acceptance.
+
 - [x] Common offline object projector composes the shared field join with exact
       custom identity/default scope, category/taxonomy classification, explicit
       DateTime references and complete retained relationships. Recognized Other

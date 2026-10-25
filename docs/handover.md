@@ -1,3 +1,83 @@
+# Internal read-only deploy preflight slice
+
+Started 2026-10-25 approximately 18:26+01:00 from requested clean
+`d190c6a2ad351e1bd394a73b0bf58c20b6691b48`. Fetch/status completed (no remote
+configured). Written slice plan and explicit simplicity check preceded edits;
+inherited common plan review 2873b976 complete, Gates 1/2 applied. Gate 3 one small
+coupled service/test slice; whole-feature Gate 4 remains coordinator-owned.
+
+## Interface, proof and comparison
+
+`preflightDmoDeploy(document: unknown, connection: ReadConnection,
+apiVersion: unknown, dataSpace: unknown): Promise<DmoDeployPreview>` in
+src/services/preflight-dmo-deploy.ts. ReadConnection is core Connection's
+instanceUrl/request/metadata/getApiVersion subset. Explicit API 65.0/default only.
+Source independently common-mapped before reads, detached across awaits. No
+CLI/filesystem discovery, org calls during development, mutation transport or
+execution, saved public plan or generic framework.
+
+Returns `{outcome:'create'|'unchanged'|'blocked-changes'|'blocked',
+target:'absent'|'present'|'unknown', absenceProof:'complete-inventory'|'none',
+diagnostics:Array<{code:string,message:string}>}`. Static messages contain no raw
+IDs, names, token bodies, requests or exception payloads. Complete successful
+Connect inventory exhaustion plus exact default/name filtering is the only absence
+proof; no HTTP 404/auth/network/malformed/incomplete failure means missing. Existing
+entries require actual common retrieveDmo detail/Metadata/complete relationships,
+strict projection and independent target mapping. Unknown generated semantics
+block, never false no-op. Inventory isn't a transactional concurrency guarantee.
+
+Fixed authored properties compare exactly (including optional absence vs empty).
+Fields join by exact name, never array index; reorder alone is unchanged. Object,
+category, field-set, field configuration and immutable type/primary differences
+have deterministic reason codes; every difference appends UPDATE_UNSUPPORTED.
+No PATCH or delete/recreate fallback. Authored-only artifact contract preserved.
+
+## Verification and safety
+
+Scoped autofix, explicit build, full zero-warning lint passed; focused preflight
+15/15 and full suite 144/144 passed (12654.5176 ms test phase). Initial npx argument
+routing did not apply autofix; direct local ESLint fixed line endings/style, with
+four await-member lint issues repaired without suppression. Package smoke now
+checks 22 packed entries including preflight JS/declarations. Smoke passed 6/6;
+package installed outside repo and passed three help checks, retained at
+F:/Temp/data360-package-zLdCd5. Verification sequence ended
+2026-10-25T18:34:10.3731123+01:00. Enabled-hook commit receipt follows in coordinator
+response; self-hash cannot be embedded here.
+
+Every shell/test entry checks absolute normalized TEMP, actual os.tmpdir and
+nonempty TMP/TMPDIR at F:/Temp, process-only repair/recheck. First inline Node
+quoting failed closed before Git; corrected quoting passed. Scratch only existing
+verified OS-temp mkdtemp package tooling; no recursive cleanup, global edits,
+root edits, push/tag/release or reference names. Version unchanged 0.1.0.
+
+Gate 5 slice documentation checked: existing README/artifact/capabilities/handover
+updated; no npm changelog. No wiki/site/tool listing/hover or downstream surface.
+
+| Component                                                                            | Needs update? | What to update                                          | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | preflight, regressions, package check and existing docs | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                             | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                      | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                            | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                    | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                             | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                             | not needed |
+
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
+
+## Next bounded deploy preview command slice
+
+Wire internal preflight to read-only deploy --preview for explicitly selected
+one authored file/DMO, preserving approved CMS-style deploy explicit selection
+rules (no no-selector/type-only discovery or implicit org/file search). Re-read
+approved command/envelope contract, validate authored-only file safely, obtain an
+explicit target core connection and pass API/default unchanged to preflight.
+Payload-free preview envelope/nonzero blocked outcomes, no writes/mutations or
+saved-plan infrastructure. Re-read selection details before implementation, not
+inferred from this service. Whole-feature Gate 4 once after final integration.
+
 # Common retrieval integration slice
 
 Start: 2026-10-25T18:16:32.6761590+01:00, clean requested baseline
@@ -58,19 +138,19 @@ Gate 5 slice propagation: README/artifact/capability/handover updated after gree
 checks. Wiki/sites/tool listings/hover have no affected surface for unpublished
 internal integration. Root release/dependency registration remains coordinator-only.
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | common service/writer/command/tests and existing docs | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                        | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | common service/writer/command/tests and existing docs | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                           | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                    | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                          | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                  | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                           | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                           | not needed |
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 ## Next bounded deploy-preview slice
 
@@ -156,19 +236,19 @@ no npm changelog/version bump. Wiki/sites/tool listings/hover have no affected
 surface for this unpublished internal helper. No downstream consumers or language
 coupling. Whole-feature Gate 4 remains pending coordinator, not claimed here.
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | common object projector/tests and existing docs | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                  | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | common object projector/tests and existing docs | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                     | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                              | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                    | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                            | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                     | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                     | not needed |
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Common offline field join slice
 
@@ -243,23 +323,23 @@ against absolute normalized F:/Temp; process-only repair/recheck. Initial inline
 PowerShell quoting failed closed before Git workload; piped Node source fixed it.
 No recursive cleanup. Existing package-smoke retains owned OS-temp roots.
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | field join/tests, README/artifact/capability/handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                        | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | field join/tests, README/artifact/capability/handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                           | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                    | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                          | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                  | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                           | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                           | not needed |
 
 Slice docs reviewed; whole-feature Gate 4/root release registration stay coordinator
 responsibilities. Wiki/sites/tool listings/hover unchanged for unpublished internal
 slice. No npm changelog/version bump/push/tag/release/global edits.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Common authored DMO mapper slice
 
@@ -333,24 +413,24 @@ provenance/schema framework, deployment or live calls/writes implicit.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | mapper/regressions, README/artifact/capability/handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                          | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | mapper/regressions, README/artifact/capability/handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                             | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                      | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                            | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                    | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                             | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                             | not needed |
 
 Gate 5 slice docs checked after green verification; whole-feature Gate 4/root
 release registration stay coordinator-only. No wiki/site/tool listing/hover
 change needed for unpublished internal slice. No npm changelog, bump, push, tag,
 release, global/root edit, reference identifier copying or org calls/writes.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Explicit retrieve command wiring
 
@@ -417,15 +497,15 @@ and independently validated authored artifact. No deployment expansion implicit.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | command/tests/topic/help, README/artifact/capability/handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                                | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | command/tests/topic/help, README/artifact/capability/handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                                   | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                            | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                                  | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                          | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                                   | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                                   | not needed |
 
 Gate 5 slice docs checked; whole-feature Gate 4 remains coordinator-owned. Root
 release/dependency registration remains coordinator-only. No wiki/site/tool listing/
@@ -435,9 +515,9 @@ as absolute normalized F:/Temp with process-only repair/recheck. Existing smoke
 owns OS-temp fixtures; command tests require no scratch. No recursive cleanup,
 root/global edits, org calls/writes, push/tag/release or additional workers.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Bounded authored Other file writer
 
@@ -500,15 +580,15 @@ commit under current approval. No new artifact contract, org write, push/tag/rel
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | writer/tests/package inventory, README/artifact/capabilities/handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                                        | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | --------------------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | writer/tests/package inventory, README/artifact/capabilities/handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                                           | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                                    | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                                          | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                                  | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                                           | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                                           | not needed |
 
 Gate 5 slice docs audited; whole-feature Gate 4 remains coordinator-owned. No
 wiki/site/tool listing/hover or Git workflow change needed. Root release/dependency
@@ -518,9 +598,9 @@ absolute normalized F:/Temp, process-only repair/recheck. Initial inline quoting
 failed closed before workload, corrected by piped Node source then existing script.
 No live calls/writes, global settings, push/tag/release or recursive deletion.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Authored-only Other document mapper
 
@@ -582,23 +662,23 @@ Gate 4 and root release/dependency registration remain coordinator follow-ups.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | mapper/tests, README, artifact contract, capabilities, handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                                  | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | --------------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | mapper/tests, README, artifact contract, capabilities, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                                     | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                              | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                                    | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                            | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                                     | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                                     | not needed |
 
 Gate 5 slice documentation checked after green checks; whole-feature Gate 4 is
 coordinator-owned. Wiki/sites/tool listings/hover and Git workflow need no update.
 No npm changelog. No release/version bump prepared; keep all commits local.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Internal read-only Other retrieval service
 
@@ -666,23 +746,23 @@ coordinator follow-ups, not completed here.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | service/tests, README, capabilities, artifact contract, handover, package inventory | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                                                      | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | service/tests, README, capabilities, artifact contract, handover, package inventory | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                                                         | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                                                  | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                                                        | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                                                                | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                                                         | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                                                         | not needed |
 
 Gate 5 slice docs checked after green checks; Gate 4 deliberately remains with
 coordinator. Wiki/sites/tool listings/hover and Git workflow need no update.
 No npm changelog. Root release/dependency registration stays coordinator-only.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Bounded offline Other create-request mapper
 
@@ -756,15 +836,15 @@ unsupported SDK methods or discard unknown properties.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | README, capabilities, artifact contract, handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                    | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, capabilities, artifact contract, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                       | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                      | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                              | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                       | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                       | not needed |
 
 Gate 5 slice docs updated after green verification; Gate 4 deliberately deferred
 to coordinator as instructed. README/artifact/capabilities/handover cover this
@@ -772,9 +852,9 @@ internal helper. Git workflow, wiki/sites/tool listings/hover and other packages
 need no change. No npm changelog. Root release/dependency registration remains
 coordinator-only; no whole-feature propagation completion claimed.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Autonomous offline Other create identity
 
@@ -837,23 +917,23 @@ CLI or org calls. No retained create-request/provenance framework is needed.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | README, capabilities, artifact contract, handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                    | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, capabilities, artifact contract, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                       | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                      | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                              | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                       | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                       | not needed |
 
 README/capability/artifact surfaces updated. Wiki/sites/tool listings/hover and
 Git workflow need no change. No npm changelog. Gate 5 slice propagation done;
 root registration/release dependency map remain coordinator-only follow-ups.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Strict offline Other Connect/Metadata projection
 
@@ -917,23 +997,23 @@ read directly from package.json: @joernberkefeld/sf-plugin-data360 0.1.0, unchan
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | README, capabilities, artifact evidence, handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                    | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, capabilities, artifact evidence, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                       | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                      | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                              | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                       | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                       | not needed |
 
 Wiki/sites/tool listings/hover and Git workflow need no update. No npm changelog.
 Root registration is coordinator-only and remains outside this slice. Gate 5
 slice docs are applied; whole-milestone review is deliberately not claimed.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Live API 65 relationship contract correction
 
@@ -1008,22 +1088,22 @@ cleanup, scratch allocation, push, tag, publication or global config changes.
 
 ## Propagation Table
 
-| Component | Needs update? | What to update | Status |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | README, capability, artifact evidence, handover | done |
-| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
-| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
-| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
-| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
-| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
-| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+| Component                                                                            | Needs update? | What to update                                  | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, capability, artifact evidence, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                     | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                              | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                    | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                            | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                     | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                     | not needed |
 
 Wiki/sites/hover and Git workflow need no update. No npm changelog or release.
 Root registration remains coordinator-only and was not edited.
 
-| Folder | Changed? | Current version | New version |
-| --- | --- | --- | --- |
-| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
 
 # Read-only DMO relationship acquisition slice
 

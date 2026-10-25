@@ -30,6 +30,14 @@ fields; unqualified replay semantics remain blockers. The common object projecto
 now qualifies complete acquired inputs before the service/command publishes an
 authored candidate; no fixed authored count or fixture-specific command rule applies.
 
+Internal `preflightDmoDeploy` now performs read-only target-aware comparison for
+one explicitly supplied authored DMO and API 65.0/default connection. Complete
+inventory alone proves absence; existing targets must pass common full retrieval.
+Field reordering alone is unchanged. All authored differences are blocked until
+the PATCH contract is proven; unknown target semantics fail closed. Its preview
+contains static diagnostics, never requests, raw org IDs or remote payloads.
+This internal service is not yet wired to `deploy --preview` or mutation execution.
+
 ## Local development
 
 Requires Node `^22.22.2 || ^24.15.0` and npm. Run from this independent repository:

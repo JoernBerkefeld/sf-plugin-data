@@ -10,6 +10,32 @@ published JSON Schema and deployment request execution remain unimplemented. The
 DMO writer below implements only `default/dmo`; explicit CLI retrieval is wired
 to the service and this writer without adding command-level profile restrictions.
 
+## Internal read-only deploy preflight
+
+`preflightDmoDeploy(document: unknown, connection: ReadConnection,
+apiVersion: unknown, dataSpace: unknown): Promise<DmoDeployPreview>` accepts one
+standalone authored document and explicit API 65.0/default target binding. It maps
+the source independently before reads and detaches the mapped request in memory.
+No CLI, file discovery, saved plan or mutation route is introduced.
+
+The result is `{outcome, target, absenceProof, diagnostics}`. Outcomes are `create`,
+`unchanged`, `blocked-changes` or `blocked`; target is `absent`, `present` or
+`unknown`. Only a successful complete offset inventory filtered by exact default
+space/API-name identity yields `absenceProof: 'complete-inventory'`; otherwise it
+is `none`. No 404 or other error establishes absence. Existing inventory entries
+require common `retrieveDmo` qualification including Metadata and relationships.
+A race after inventory acquisition fails closed on retrieval; inventory is not a
+transactional snapshot or permission to execute a later create.
+
+Comparison uses fixed authored properties and exact identity-keyed fields, ignoring
+field array order but preserving absent versus empty strings, case, primary/type,
+category, dynamic flags and date designations. Static reasons distinguish object,
+category, field-set, field and immutable changes; every difference appends
+`UPDATE_UNSUPPORTED`. Unqualified target semantics produce `blocked`, never no-op.
+Diagnostics contain code/message only, without authored values or remote payloads.
+The public command will later enforce CMS-style explicit deploy selection; no
+selector/discovery semantics change here.
+
 ## Internal common authored DMO file writer
 
 `writeDmoDocument(value: unknown, projectRoot: string, overwrite: boolean)`

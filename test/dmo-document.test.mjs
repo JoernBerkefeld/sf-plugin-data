@@ -20,6 +20,7 @@ import {
 } from '../lib/artifacts/dmo-document.js';
 
 import { retrieveDmo, DmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
+import { preflightDmoDeploy } from '../lib/services/preflight-dmo-deploy.js';
 
 const fixture = () => ({
   schemaVersion: 1,
@@ -1512,6 +1513,238 @@ const retrievalFixture = () => {
   const run = () => retrieveDmo(connection, objectApiName, '65.0', 'default');
   return { input, calls, connection, run };
 };
+
+const preflightFixture = () => {
+  const fixture = retrievalFixture();
+  const source = projectCommonDmoConnectMetadata(
+    fixture.input.connect,
+    fixture.input.metadata,
+    [],
+  ).candidate;
+  const request = fixture.connection.request;
+  fixture.connection.request = async (options) => {
+    if (options.url.includes('data-model-objects?')) {
+      fixture.calls.push(options);
+      return {
+        dataModelObject: [{ name: source.identity.apiName, dataSpaceName: 'default' }],
+      };
+    }
+    return request(options);
+  };
+  return {
+    ...fixture,
+    source,
+    preview: () => preflightDmoDeploy(source, fixture.connection, '65.0', 'default'),
+  };
+};
+
+test('deploy preflight proves absence only from complete inventory in the explicit scope', async () => {
+  const { connection, source, calls } = preflightFixture();
+  connection.request = async (request) => {
+    calls.push(request);
+    return { dataModelObject: [{ name: source.identity.apiName, dataSpaceName: 'foreign' }] };
+  };
+  const result = await preflightDmoDeploy(source, connection, '65.0', 'default');
+  assert.deepEqual(result, {
+    outcome: 'create',
+    target: 'absent',
+    absenceProof: 'complete-inventory',
+    diagnostics: [],
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'GET');
+});
+
+test('deploy preflight never mistakes 404, 403, network, malformed or incomplete reads for absence', async () => {
+  for (const response of [
+    Object.assign(new Error('secret-token'), { statusCode: 404 }),
+    Object.assign(new Error('secret-token'), { statusCode: 403 }),
+    Object.assign(new Error('secret-token'), { statusCode: 401 }),
+    new Error('secret-token'),
+    undefined,
+    {},
+    { dataModelObject: [], nextPageToken: 'secret-token' },
+    { dataModelObject: [{ name: 'secret-token' }] },
+  ]) {
+    const { connection, source } = preflightFixture();
+    connection.request = async () => {
+      if (response instanceof Error) throw response;
+      return response;
+    };
+    const result = await preflightDmoDeploy(source, connection, '65.0', 'default');
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.target, 'unknown');
+    assert.equal(result.absenceProof, 'none');
+    assert.ok(!JSON.stringify(result).includes('secret-token'));
+  }
+  const { connection, source } = preflightFixture();
+  connection.request = async ({ url }) => {
+    const offset = Number(new URL(url).searchParams.get('offset'));
+    return {
+      dataModelObject: Array.from({ length: 50 }, (_, index) => ({
+        name: `Other${offset + index}__dlm`,
+        dataSpaceName: 'default',
+      })),
+    };
+  };
+  const result = await preflightDmoDeploy(source, connection, '65.0', 'default');
+  assert.equal(result.outcome, 'blocked');
+});
+
+test('deploy preflight validates source and explicit scope before target reads', async () => {
+  for (const arguments_ of [
+    [{}, '65.0', 'default'],
+    [undefined, '65.0', 'default'],
+  ]) {
+    const { connection, calls } = preflightFixture();
+    const result = await preflightDmoDeploy(
+      arguments_[0],
+      connection,
+      arguments_[1],
+      arguments_[2],
+    );
+    assert.equal(result.outcome, 'blocked');
+    assert.deepEqual(calls, []);
+  }
+  for (const [version, space] of [
+    [undefined, 'default'],
+    ['66.0', 'default'],
+    ['65.0', undefined],
+    ['65.0', 'other'],
+  ]) {
+    const { connection, source, calls } = preflightFixture();
+    const result = await preflightDmoDeploy(source, connection, version, space);
+    assert.equal(result.diagnostics[0].code, 'INVALID_SCOPE');
+    assert.deepEqual(calls, []);
+  }
+  const { connection, source, calls } = preflightFixture();
+  source.expectations = { token: 'secret' };
+  const result = await preflightDmoDeploy(source, connection, '65.0', 'default');
+  assert.equal(result.diagnostics[0].code, 'INVALID_SOURCE');
+  assert.deepEqual(calls, []);
+});
+
+test('deploy preflight qualifies full target and treats reordered identity-keyed fields as unchanged', async () => {
+  const { source, input, calls, preview } = preflightFixture();
+  source.spec.fields.reverse();
+  input.connect.fields.reverse();
+  input.metadata.fields.reverse();
+  assert.deepEqual(await preview(), {
+    outcome: 'unchanged',
+    target: 'present',
+    absenceProof: 'none',
+    diagnostics: [],
+  });
+  assert.equal(calls.length, 4);
+  assert.ok(calls.filter((call) => call.url).every((call) => call.method === 'GET'));
+});
+
+for (const [code, mutate] of [
+  [
+    'OBJECT_CHANGED',
+    (d) => {
+      d.spec.label = 'Changed';
+    },
+  ],
+  [
+    'OBJECT_CHANGED',
+    (d) => {
+      d.spec.description = '';
+    },
+  ],
+  [
+    'CATEGORY_CHANGED',
+    (d) => {
+      d.spec.category = 'Profile';
+    },
+  ],
+  [
+    'FIELD_SET_CHANGED',
+    (d) => {
+      d.spec.fields[1].name = 'Renamed__c';
+    },
+  ],
+  [
+    'FIELD_SET_CHANGED',
+    (d) => {
+      d.spec.fields.pop();
+    },
+  ],
+  [
+    'FIELD_CHANGED',
+    (d) => {
+      d.spec.fields[1].label = 'Changed';
+    },
+  ],
+  [
+    'FIELD_CHANGED',
+    (d) => {
+      d.spec.fields[1].category = 'Changed';
+    },
+  ],
+  [
+    'FIELD_CHANGED',
+    (d) => {
+      d.spec.fields[1].isDynamicLookup = true;
+    },
+  ],
+  [
+    'IMMUTABLE_FIELD_CHANGED',
+    (d) => {
+      d.spec.fields[1].dataType = 'Number';
+    },
+  ],
+  [
+    'IMMUTABLE_FIELD_CHANGED',
+    (d) => {
+      for (const field of d.spec.fields) field.isPrimaryKey = !field.isPrimaryKey;
+    },
+  ],
+]) {
+  test(`deploy preflight blocks changes with ${code}`, async () => {
+    const { source, preview } = preflightFixture();
+    mutate(source);
+    const result = await preview();
+    assert.equal(result.outcome, 'blocked-changes');
+    assert.equal(result.target, 'present');
+    assert.ok(result.diagnostics.some((item) => item.code === code));
+    assert.equal(result.diagnostics.at(-1).code, 'UPDATE_UNSUPPORTED');
+    assert.ok(!JSON.stringify(result).includes(source.identity.apiName));
+  });
+}
+
+test('deploy preflight refuses false no-op when generated target projection or acquisition is unsupported', async () => {
+  for (const mutate of [
+    ({ input }) => {
+      input.connect.fields.find((field) => field.creationType === 'System').label = 'Unknown';
+    },
+    ({ input }) => {
+      input.metadata.mktDataModelAttributes.dataModelTaxonomy = 'Unknown';
+    },
+    ({ input }) => {
+      input.connect.unknown = 'secret-token';
+    },
+    ({ connection }) => {
+      connection.metadata.read = async () => [];
+    },
+    ({ connection }) => {
+      connection.metadata.read = async () => {
+        throw new Error('secret-token');
+      };
+    },
+    ({ input }) => {
+      input.connect.category = 'PROFILE';
+    },
+  ]) {
+    const fixture = preflightFixture();
+    mutate(fixture);
+    const result = await fixture.preview();
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.target, 'present');
+    assert.equal(result.diagnostics[0].code, 'TARGET_UNQUALIFIED');
+    assert.ok(!JSON.stringify(result).includes('secret-token'));
+  }
+});
 
 test('retrieval uses real core Metadata read and Connect adapters and retains validated expectations', async () => {
   const { input, calls, run } = retrievalFixture();
