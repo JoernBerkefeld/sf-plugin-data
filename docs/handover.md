@@ -1,3 +1,95 @@
+# Bounded offline Other create-request mapper
+
+Start: 2026-10-25T17:08:55+01:00. Clean baseline
+`0f22dd522495e97d81ac06a4f9a0581651ce4602`. Written slice plan and simplicity
+check preceded edits. Inherited reviewed narrowed Gate 1/2 applies; Gate 3 is one
+small coupled sequential module/test slice. No new subagent or whole Gate 4;
+whole-feature review remains coordinator-owned.
+
+## Contract and exact interface
+
+`buildOtherDmoCreateRequest(value: unknown, targetDataSpace: unknown):
+OtherDmoCreateRequest` rechecks complete joined expectations through
+projectDmoConnectMetadata and checks candidate, verified identity, qualifier binding
+and empty blockers against the recomputed result. Detached documents and forged
+unsupported profiles reject with payload-free DmoDocumentError. This validates
+shape/semantics, not authenticity of JSON or proof of an org snapshot; acquisition
+and complete relationship inventory remain the caller's prerequisite.
+
+Source and explicit target both must equal case-sensitive default. No inferred
+fallback, arbitrary space or cross-space acceptance. The fresh minimal request
+contains name (verified object base), label, optional description, dataSpaceName,
+category Other, and two authored fields containing exact name, label, dataType,
+isPrimaryKey, isDynamicLookup. System fields, qualifiers, org IDs and read-only
+metadata remain expectations only. No transport, org call/write, Profile,
+Engagement, relationship, update/no-op or CLI generalization.
+
+Local text mirrors had no nested contract. Approved official nested URL fetch
+timed out, then indexed full official reference text was inspected. Its example
+uses unsuffixed field inputs but does not prohibit qualified names. Existing
+API 65 cross-org replay at F:/Temp/data360-other-replay-S4bRkD submitted authored
+ContractKey__c and ObservedAt__c unchanged, matched all six exact readback field
+identities and passed with no source drift (completed 2026-10-25T15:52:30.908Z).
+Thus preserve proven authored __c names; no inversion or new blocker is needed.
+Artifact-format documents source URL and evidence boundaries. No unrelated
+mapping/stream search synthesis was treated as nested field contract.
+
+## Verification receipt
+
+Scoped ESLint autofix, explicit build and full zero-warning lint passed. One
+initial unicorn/no-null fixture issue was fixed before verification. Full tests:
+47 passed, 0 failed/skipped, 11,441.5985 ms excluding compile. Smoke: 6 passed,
+0 failed/skipped, 10,733.2266 ms. Standalone sequence ended
+2026-10-25T17:12:53.8143479+01:00. Four new synthetic tests cover exact minimal
+body/no generated replay, independent output, explicit source/target binding,
+16 forged-profile mutations, detached candidate refusal, exact authored names
+and omitted optional description. Normal enabled hooks repeat lint/build/full
+tests/smoke; final hook counts, commit hash/time/clean receipt follow outside
+this self-referential commit.
+
+Every shell entry checks TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR for
+absolute normalized F:/Temp; process-only repair/recheck. Initial inline quoting
+failed closed before Git/workload; piped Node source then passed. No scratch
+allocation or recursive cleanup by this slice. Existing smoke retains owned OS
+temp fixtures. Fetch/status completed; no remote exists, so upstream is unverifiable.
+Personal Git identity verified. Only literal own paths staged. No push/tag/release,
+root edits, global settings or live calls/writes.
+
+## Next coherent retrieve-service slice
+
+Implement one internal read-only Other/default retrieve service with an injected
+Connect/Metadata acquisition seam. Require explicit object identity, API version
+and data space; acquire detail, exact matching Metadata and complete relationships,
+then run the strict projector and bounded mapper as offline validation. Return the
+complete projection (including expectations), never a detached candidate as a
+portable deploy artifact. Synthetic tests should cover scope/identity joins,
+missing metadata, incomplete/failed relationships and propagated payload-free
+errors. No filesystem/CLI/deploy/update changes or new live acceptance implicit.
+Establish the Metadata read seam from actual source before editing; do not invent
+unsupported SDK methods or discard unknown properties.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | README, capabilities, artifact contract, handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Gate 5 slice docs updated after green verification; Gate 4 deliberately deferred
+to coordinator as instructed. README/artifact/capabilities/handover cover this
+internal helper. Git workflow, wiki/sites/tool listings/hover and other packages
+need no change. No npm changelog. Root release/dependency registration remains
+coordinator-only; no whole-feature propagation completion claimed.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Autonomous offline Other create identity
 
 Start: 2026-10-25T17:04:30+01:00. Clean baseline

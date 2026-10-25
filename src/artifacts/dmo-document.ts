@@ -448,6 +448,70 @@ export function projectDmoConnectMetadata(
   };
 }
 
+export type OtherDmoCreateRequest = {
+  name: string;
+  label: string;
+  description?: string;
+  dataSpaceName: 'default';
+  category: 'Other';
+  fields: Array<Pick<DmoField, 'name' | 'label' | 'dataType' | 'isPrimaryKey' | 'isDynamicLookup'>>;
+};
+
+/**
+ * Construct only the evidenced default-space Other request, rechecking the complete projection.
+ * @param {unknown} value Joined projection, including its independent readback expectations.
+ * @param {unknown} targetDataSpace Explicit target binding; only default has replay evidence.
+ * @returns {OtherDmoCreateRequest} Fresh authored-only request; no transport or generated-field replay.
+ */
+export function buildOtherDmoCreateRequest(
+  value: unknown,
+  targetDataSpace: unknown,
+): OtherDmoCreateRequest {
+  requireValid(targetDataSpace === 'default');
+  const projection = record(value, [
+    'status',
+    'blockers',
+    'candidate',
+    'createIdentity',
+    'qualifierBindings',
+    'expectations',
+  ]);
+  requireValid(projection.status === 'projected');
+  requireValid(Array.isArray(projection.blockers) && projection.blockers.length === 0);
+  const expectations = record(projection.expectations, ['connect', 'metadata']);
+  // Reapply every strict join/profile check; a portable candidate alone is not authority.
+  const checked = projectDmoConnectMetadata(expectations.connect, expectations.metadata, []);
+  requireValid(checked.candidate.identity.dataSpace === 'default');
+  requireValid(
+    serializeDmoDocument(projection.candidate) === serializeDmoDocument(checked.candidate),
+  );
+  const identity = record(projection.createIdentity, ['status', 'name', 'sourceApiName']);
+  for (const key of ['status', 'name', 'sourceApiName'] as const)
+    requireValid(identity[key] === checked.createIdentity[key]);
+  requireValid(
+    Array.isArray(projection.qualifierBindings) && projection.qualifierBindings.length === 1,
+  );
+  const binding = record(projection.qualifierBindings[0], ['fieldName', 'qualifierFieldName']);
+  requireValid(binding.fieldName === checked.qualifierBindings[0].fieldName);
+  requireValid(binding.qualifierFieldName === checked.qualifierBindings[0].qualifierFieldName);
+  const { spec } = checked.candidate;
+  return {
+    name: checked.createIdentity.name,
+    label: spec.label,
+    ...('description' in spec ? { description: spec.description } : {}),
+    dataSpaceName: targetDataSpace,
+    category: 'Other',
+    // API 65 replay preserves these exact authored __c names; do not invert them.
+    fields: spec.fields.map(({ name, label, dataType, isPrimaryKey, isDynamicLookup }) => ({
+      name,
+      label,
+      dataType,
+      isPrimaryKey,
+      isDynamicLookup,
+    })),
+  };
+}
+
 /**
  * Sort only object keys; all arrays and string contents retain their order.
  * @param {unknown} value Validated JSON value.

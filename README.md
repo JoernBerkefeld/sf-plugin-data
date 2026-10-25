@@ -61,8 +61,11 @@ expectations and now verifies the autonomous create identity for that exact loca
 profile: remove one terminal case-sensitive `__dlm` from a validated non-namespaced
 custom name, preserving case and internal single underscores. It returns an offline
 `projected` result with no identity blocker, not a deployable artifact or request.
-Profile and Engagement remain pending; no writable Metadata projection, request
-builder or CLI mutation is provided. See the exact subset and evidence in the artifact document.
+A pure internal Other create-request mapper now rechecks the complete joined
+projection and explicitly binds only evidenced source/target `default` space.
+It preserves authored `__c` field names and excludes generated fields, org IDs
+and read-only metadata. It performs no transport. Profile and Engagement remain
+pending; no writable Metadata projection or CLI mutation is provided. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),

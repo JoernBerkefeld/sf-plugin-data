@@ -2,7 +2,7 @@
 
 The validator/serializer and raw field projection are internal offline helpers,
 not an export/deploy format. No CLI integration, filesystem discovery, published
-JSON Schema or request construction exists. The future layout remains
+JSON Schema or live request execution exists. The future layout remains
 `data360/<logical-data-space>/<family>/<api-name>.json`; safe paths are unimplemented.
 
 ## Authored document
@@ -102,7 +102,7 @@ presence and all admitted readback metadata; they are not writable Metadata API
 input. The source Connect ID remains an observation. `projected` establishes only
 this offline profile projection and identity, not general deployment support.
 The candidate must never be detached and presented as deployable. No request
-builder exists: the nested field request-name contract remains a separate checkpoint.
+execution exists. The bounded offline mapper below constructs an authored-only request.
 
 Offline evidence inspected 2026-10-25: a separately authorized Other experiment
 reported full Connect/Metadata equality across orgs, excluding only Connect ID
@@ -110,6 +110,39 @@ and field-array ordering, with no source drift. This gate is satisfied only for
 that fixture and does not establish repeat no-op/update behavior,
 Profile/Engagement support or generic generated schemas.
 No live calls occur in this helper or its independently authored synthetic tests.
+
+## Bounded offline Other create request
+
+`buildOtherDmoCreateRequest(value: unknown, targetDataSpace: unknown):
+OtherDmoCreateRequest` accepts the complete joined projection, not a detached
+portable candidate. It re-runs the existing strict profile against the independent
+Connect/Metadata expectations and checks candidate, create identity, qualifier
+binding and empty blocker agreement. Relationships must already have been acquired
+and checked by the projection caller; this pure mapper performs no acquisition.
+It does not authenticate the origin of supplied JSON or prove an org snapshot.
+
+Both source and explicit target must equal case-sensitive `default`. Other spaces,
+missing bindings and implicit fallback reject; cross-space remapping is not proven.
+The fresh body contains only `name` (verified unsuffixed object base), `label`,
+optional `description`, `dataSpaceName`, `category: 'Other'`, and exactly the two
+authored `fields` with `name`, `label`, `dataType`, `isPrimaryKey`,
+`isDynamicLookup`. Exact authored custom `__c` names survive unchanged. Generated
+fields/qualifier references, org IDs, usage/distinctness, taxonomy, length/required
+and other readback metadata never enter the request. No POST, update/no-op,
+Profile/Engagement, CLI wiring or general deployment acceptance is implemented.
+
+Nested-name reconciliation checked 2026-10-25: local text mirrors have no nested
+input contract. The official reference linked below labels `fields` as Data Object
+Field Input and its paired example submits unsuffixed field names. That example
+shows one accepted spelling, not an explicit prohibition of qualified names.
+Direct nested-page retrieval timed out; indexed full reference text was inspected,
+not unrelated mapping/stream search synthesis. The existing separately authorized
+API 65 experiment submitted `ContractKey__c` and `ObservedAt__c` unchanged and
+read back identical authored identities, plus all four generated identities, in
+both orgs. Its comparison passed with no source drift. That observed evidence
+resolves this exact Other/default profile: field-name inversion is unnecessary.
+It does not establish every naming form, arbitrary spaces or every API version.
+No live org call or write was made while implementing this mapper.
 
 ## Authoritative contract evidence (2026-10-25)
 
@@ -136,8 +169,9 @@ has exactly `category`, `dataType` (the 12-value enum above), `description`,
 `isDynamicLookup`, `isPrimaryKey`, `label`, `name`; no nested required list.
 The tool schema is current metadata without per-property minimum API versions.
 Its description/example disagree about suffixes; the separate official naming
-contract below resolves only the object create identity, not nested field request
-names or version-specific runtime acceptance. The wider object schema also
+contract resolves object create identity; the bounded API 65 Other replay above
+independently resolves preservation of the exact authored nested field names.
+Neither establishes general version-specific runtime acceptance. The wider object schema also
 exposes additional categories and SQL/flex settings; these are explicitly blocked
 rather than added to this bounded custom-schema slice.
 

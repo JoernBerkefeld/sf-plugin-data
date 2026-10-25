@@ -87,9 +87,11 @@ Every family must complete all gates below before support can be declared.
       remove one terminal case-sensitive __dlm from the validated non-namespaced
       custom name. Result is offline projected with no identity blocker, retaining
       qualified readback identity and case; invalid names are rejected, not repaired.
-      No request builder, public wiring, writable Metadata projection or transport
-      mutation. Profile and Engagement remain pending. This does not complete the
-      dmo family gates.
+      A pure bounded Other request mapper revalidates the complete projection,
+      preserves proven authored __c names and excludes generated/read-only fields.
+      Source and explicit target must both be default; arbitrary space acceptance
+      is unproven. No public wiring, writable Metadata projection or transport
+      mutation. Profile and Engagement remain pending; dmo family gates remain open.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

@@ -2,6 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildOtherDmoCreateRequest,
   classifyDmoRawField,
   projectDmoRawFields,
   projectDmoConnectMetadata,
@@ -532,6 +533,148 @@ test('strict joined projection rejects mismatched joins and unsupported semantic
   const { connect, metadata } = joinedFixture();
   assert.throws(() => projectDmoConnectMetadata(connect, metadata, [{}]), DmoDocumentError);
   assert.throws(() => projectDmoConnectMetadata(connect, metadata), DmoDocumentError);
+});
+
+const defaultProjection = () => {
+  const { connect, metadata } = joinedFixture();
+  connect.dataSpaceName = 'default';
+  metadata.mktDataModelAttributes.dataSpaceName = 'default';
+  return projectDmoConnectMetadata(connect, metadata, []);
+};
+
+test('Other mapper returns exactly the minimal authored request with explicit default binding', () => {
+  const projection = defaultProjection();
+  const before = structuredClone(projection);
+  const request = buildOtherDmoCreateRequest(projection, 'default');
+  assert.deepEqual(request, {
+    name: 'Audit_Ledger',
+    label: 'Audit ledger',
+    description: 'Independent synthetic schema',
+    dataSpaceName: 'default',
+    category: 'Other',
+    fields: [
+      {
+        name: 'Ticket__c',
+        label: 'Ticket',
+        dataType: 'Text',
+        isPrimaryKey: true,
+        isDynamicLookup: false,
+      },
+      {
+        name: 'Recorded__c',
+        label: 'Recorded',
+        dataType: 'DateTime',
+        isPrimaryKey: false,
+        isDynamicLookup: false,
+      },
+    ],
+  });
+  assert.deepEqual(projection, before);
+  request.fields[0].label = 'Changed';
+  assert.deepEqual(projection, before);
+  assert.equal(request.fields.length, 2);
+  assert.ok(!JSON.stringify(request).includes('Partition__c'));
+  assert.ok(!JSON.stringify(request).includes('synthetic-observation'));
+});
+
+test('Other mapper rejects absent, malformed and unproven source/target data-space bindings', () => {
+  for (const target of [undefined, '', 'research', 'Default', '../default', {}, 1])
+    assert.throws(() => buildOtherDmoCreateRequest(defaultProjection(), target), DmoDocumentError);
+  const { connect, metadata } = joinedFixture();
+  assert.throws(
+    () => buildOtherDmoCreateRequest(projectDmoConnectMetadata(connect, metadata, []), 'default'),
+    DmoDocumentError,
+  );
+});
+
+test('Other mapper cannot accept a detached candidate or bypass strict profile through a forged projection', () => {
+  assert.throws(
+    () => buildOtherDmoCreateRequest(defaultProjection().candidate, 'default'),
+    DmoDocumentError,
+  );
+  for (const change of [
+    (p) => {
+      p.status = 'incomplete';
+    },
+    (p) => {
+      p.blockers.push('UNKNOWN');
+    },
+    (p) => {
+      p.createIdentity.name = 'Foreign';
+    },
+    (p) => {
+      p.createIdentity.sourceApiName = 'Foreign__dlm';
+    },
+    (p) => {
+      p.candidate.spec.category = 'Profile';
+    },
+    (p) => {
+      p.candidate.spec.fields[0].name = 'Foreign__c';
+    },
+    (p) => {
+      p.candidate.spec.fields.push({ ...p.candidate.spec.fields[1], name: 'Generated__c' });
+    },
+    (p) => {
+      p.qualifierBindings[0].qualifierFieldName = 'Foreign__c';
+    },
+    (p) => {
+      p.expectations.connect.isEnabled = true;
+    },
+    (p) => {
+      p.expectations.connect.category = 'ENGAGEMENT';
+    },
+    (p) => {
+      p.expectations.connect.fields[0].isDistinct = true;
+    },
+    (p) => {
+      p.expectations.metadata.fields.pop();
+    },
+    (p) => {
+      p.expectations.metadata.validationRules.push({});
+    },
+    (p) => {
+      p.expectations.relationships = [{}];
+    },
+    (p) => {
+      p.futureConfiguration = true;
+    },
+    (p) => {
+      Object.defineProperty(p.createIdentity, 'name', {
+        enumerable: true,
+        get() {
+          throw new Error('secret');
+        },
+      });
+    },
+  ]) {
+    const projection = defaultProjection();
+    change(projection);
+    assert.throws(() => buildOtherDmoCreateRequest(projection, 'default'), DmoDocumentError);
+  }
+});
+
+test('Other mapper preserves exact authored names and omits absent optional description', () => {
+  const { connect, metadata } = joinedFixture();
+  connect.dataSpaceName = 'default';
+  metadata.mktDataModelAttributes.dataSpaceName = 'default';
+  delete connect.description;
+  delete metadata.mktDataModelAttributes.description;
+  for (const [prior, next] of [
+    ['Ticket__c', 'Case_Sensitive2__c'],
+    ['Recorded__c', 'Recorded_AT__c'],
+  ]) {
+    connect.fields.find((f) => f.name === prior).name = next;
+    metadata.fields.find((f) => f.fullName === prior).fullName = next;
+  }
+  const request = buildOtherDmoCreateRequest(
+    projectDmoConnectMetadata(connect, metadata, []),
+    'default',
+  );
+  assert.deepEqual(
+    request.fields.map((f) => f.name),
+    ['Case_Sensitive2__c', 'Recorded_AT__c'],
+  );
+  assert.ok(!('description' in request));
 });
 
 test('raw classification keeps qualifier and semantic metadata meaningful and unknowns blocked', () => {
