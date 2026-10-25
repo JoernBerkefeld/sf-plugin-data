@@ -1,7 +1,8 @@
 import './check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -21,13 +22,14 @@ const environment = {
 const packed = spawnSync(process.execPath, [npm, 'pack', '--pack-destination', root, '--json'], {
   encoding: 'utf8',
   env: environment,
-  timeout: 60_000,
 });
 assert.equal(packed.status, 0, packed.stderr);
 // Lifecycle output precedes npm's JSON result.
 const [artifact] = JSON.parse(packed.stdout.slice(packed.stdout.indexOf('[\n')));
 assert.equal(artifact.name, '@joernberkefeld/sf-plugin-data360');
-assert.equal(artifact.entryCount, 26);
+assert.equal(artifact.entryCount, 28);
+assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.js'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-create.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-create.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.js'));
@@ -52,7 +54,7 @@ const installed = spawnSync(
     '--no-workspaces',
     '--ignore-scripts',
   ],
-  { encoding: 'utf8', env: environment, timeout: 180_000 },
+  { encoding: 'utf8', env: environment },
 );
 assert.equal(installed.status, 0, installed.stderr);
 const runner = path.join(
@@ -68,9 +70,51 @@ for (const command of [[], ['retrieve'], ['deploy']]) {
     cwd: root,
     encoding: 'utf8',
     env: environment,
-    timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Data360/u);
 }
-process.stdout.write(`${JSON.stringify({ root, artifact, helpChecks: 3 }, undefined, 2)}\n`);
+// Exercise the installed command implementation, not only help or the source tree.
+// Parsing and service boundaries are injected: no org resolution or remote work is reachable.
+const packageRoot = path.dirname(path.dirname(runner));
+const metadata = JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+assert.equal(metadata.version, '0.1.0');
+for (const operation of ['retrieve', 'deploy']) {
+  const { default: Command } = await import(
+    pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', `${operation}.js`)).href
+  );
+  const command = Object.create(Command.prototype);
+  command.config = { pjson: { version: '2.151.7' } };
+  command.parse = async () => ({
+    flags: { 'api-version': '65.0', 'data-space': 'default', preview: true },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveInputs = async () => [];
+  command.acquire =
+    command.writeDocument =
+    command.preflight =
+    command.execute =
+      () => assert.fail('Offline installed provenance check must not reach any service.');
+  const previous = process.exitCode;
+  try {
+    const envelope = await command.run();
+    assert.equal(process.exitCode, 1);
+    assert.equal(envelope.contract, `sf-data360-${operation}`);
+    assert.equal(envelope.status, 'blocked');
+    assert.deepEqual(envelope.metadata.plugin, {
+      name: metadata.name,
+      version: metadata.version,
+    });
+    assert.equal(envelope.provenance.pluginVersion, metadata.version);
+    assert.equal(
+      envelope.diagnostics.errors[0].code,
+      operation === 'retrieve' ? 'RETRIEVE_SELECTION_NOT_IMPLEMENTED' : 'INVALID_SELECTION',
+    );
+    assert.deepEqual(envelope.result.items, []);
+  } finally {
+    process.exitCode = previous;
+  }
+}
+process.stdout.write(
+  `${JSON.stringify({ root, artifact, helpChecks: 3, installedEnvelopeChecks: 2, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
+);

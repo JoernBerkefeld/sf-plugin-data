@@ -35,7 +35,7 @@ const invocation = (overrides = {}) => {
     },
     ...overrides,
   };
-  command.config = { pjson: { version: '0.1.0' } };
+  command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
   command.resolveInputs = async (options) => {
@@ -89,6 +89,11 @@ test('preview resolves local input before org inspection and returns advisory ve
   assert.equal(result.status, 'success');
   assert.equal(result.metadata.preview, true);
   assert.equal(result.metadata.operation, 'deploy');
+  assert.deepEqual(result.metadata.plugin, {
+    name: '@joernberkefeld/sf-plugin-data360',
+    version: '0.1.0',
+  });
+  assert.equal(result.provenance.pluginVersion, '0.1.0');
   assert.equal(result.provenance.targetOrgId, 'synthetic-target');
   assert.ok(Number.isFinite(Date.parse(result.provenance.generatedAt)));
   assert.equal(result.result.items[0].operation, 'preview');

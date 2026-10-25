@@ -4,6 +4,7 @@ import { DmoDocumentError } from '../../artifacts/dmo-document.js';
 import { DmoWriteError, writeDmoDocument } from '../../artifacts/write-other-dmo.js';
 import { DmoRetrieveError, retrieveDmo } from '../../services/retrieve-other-dmo.js';
 import { ConnectError } from '../../transport/connect-client.js';
+import { plugin as packageMetadata } from '../../plugin.js';
 
 export type RetrieveEnvelope = {
   contract: 'sf-data360-retrieve';
@@ -80,8 +81,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public async run(): Promise<RetrieveEnvelope> {
     const { flags } = await this.parse(Retrieve);
     const plugin = {
-      name: '@joernberkefeld/sf-plugin-data360',
-      version: this.config.pjson.version,
+      name: packageMetadata.name,
+      version: packageMetadata.version,
     };
     const envelope: RetrieveEnvelope = {
       contract: 'sf-data360-retrieve',

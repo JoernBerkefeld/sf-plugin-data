@@ -4,6 +4,7 @@ import { preflightDmoDeploy } from '../../services/preflight-dmo-deploy.js';
 import type { DmoDeployPreview } from '../../services/preflight-dmo-deploy.js';
 import { executeDmoCreate } from '../../services/execute-dmo-create.js';
 import type { DmoCreateExecution } from '../../services/execute-dmo-create.js';
+import { plugin as packageMetadata } from '../../plugin.js';
 
 type ExecutionItem = Omit<DmoCreateExecution, 'outcome'> & {
   outcome: DmoCreateExecution['outcome'] | 'not-attempted';
@@ -93,8 +94,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     const { flags } = await this.parse(Deploy);
     const cwd = process.cwd();
     const plugin = {
-      name: '@joernberkefeld/sf-plugin-data360',
-      version: this.config.pjson.version,
+      name: packageMetadata.name,
+      version: packageMetadata.version,
     };
     const envelope: DeployEnvelope = {
       contract: 'sf-data360-deploy',

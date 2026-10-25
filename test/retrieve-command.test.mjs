@@ -28,7 +28,7 @@ const invocation = (overrides = {}) => {
     },
     ...overrides,
   };
-  command.config = { pjson: { version: '0.1.0' } };
+  command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
   command.acquire = async (...arguments_) => {
@@ -72,6 +72,11 @@ test('command delegates acquisition and authored-only output without duplicating
   assert.equal(result.contract, 'sf-data360-retrieve');
   assert.equal(result.contractVersion, '1.0.0');
   assert.equal(result.status, 'success');
+  assert.deepEqual(result.metadata.plugin, {
+    name: '@joernberkefeld/sf-plugin-data360',
+    version: '0.1.0',
+  });
+  assert.equal(result.provenance.pluginVersion, '0.1.0');
   assert.equal(result.metadata.apiVersion, '65.0');
   assert.equal(result.provenance.sourceOrgId, 'synthetic-org');
   assert.equal(result.result.items[0].outcome, 'retrieved');

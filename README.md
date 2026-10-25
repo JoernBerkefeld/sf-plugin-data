@@ -20,7 +20,9 @@ is a project root, default cwd; output is `data360/default/dmo/<api-name>.json`.
 Core API/version flags are passed unchanged to the service capability boundary.
 `--json` uses Salesforce CLI's normal outer result wrapper containing a versioned
 `sf-data360-retrieve` envelope with status, metadata, diagnostics, provenance and
-result. Blocked/failed work exits 1, success exits 0. Parser/auth flag failures use
+result. Both retrieve and deploy resolve `metadata.plugin.version` and
+`provenance.pluginVersion` from this plugin's own package metadata, not the host
+Salesforce CLI version. Blocked/failed work exits 1, success exits 0. Parser/auth flag failures use
 core CLI diagnostics; runtime errors never include remote payloads. No org mutation.
 
 A common offline `joinDmoConnectMetadataFields` helper now joins arbitrary

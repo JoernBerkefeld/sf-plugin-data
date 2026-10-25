@@ -1,3 +1,38 @@
+# Recovery slice 2: plugin-owned version provenance
+
+Started 2026-10-25 23:31:28+01:00 from clean b58d8e6205418cdf771acd9aa060ce467e98859d.
+Bounded recovery plan review 1922fc5a completed with no planning must-fix;
+this worker does not dispatch a self-review. Whole-feature Gate 4 remains with
+coordinator after recovery chunks.
+
+`src/plugin.ts` reads `../package.json` relative to `import.meta.url`; both source
+`src/` and built/installed `lib/` are direct package-root children. Both commands
+copy its name/version into metadata and provenance. No host-config fallback,
+hardcoded runtime version, upward search or dependency change. Envelope contracts,
+statuses, diagnostics and exit behavior are unchanged.
+
+Command regressions inject host pjson version 2.151.7 and assert plugin 0.1.0 in
+both envelope fields. Package smoke retains the actual npm tarball and isolated
+npm installation, checks the two additional compiled metadata-module entries,
+and imports BOTH installed command implementations for injected offline blocked
+selection envelopes. Parsing and service calls are replaced; unexpected service
+entry fails. This proves installed package metadata attribution, not actual host
+CLI dispatch or live org acceptance. Three installed help checks remain separate.
+Package smoke child processes have no wrapper timeouts and are awaited to
+completion; retained scratch is never recursively removed.
+
+Live dispatch remains blocked: Windows descendant termination is unproven. This
+slice does not solve that harness, run live commands, access credentials, or claim
+help-only checks establish provenance or remote safety.
+
+Propagation: sf-plugin-data360 source/tests/package smoke and README/handover
+updated; catalogs, parsers, language service, extensions, MCPs, MSO, other CLI
+plugins, wiki and public guide/tool listings are unrelated (N/A). No root-rule
+edits or downstream dependency changes. Working package version stays 0.1.0;
+release/version assignment deferred, no push, tag, release or publication.
+Verification receipt follows in coordinator handoff (build, scoped autofix, full
+zero-warning lint, full tests, smoke, installed package checks, enabled-hook commit).
+
 # Gate 4 remediation slice 2: operation-local SOAP redirect refusal
 
 Started 2026-10-25 19:28+01:00 from clean admission commit ec15e2d.
