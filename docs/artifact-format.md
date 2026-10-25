@@ -144,6 +144,37 @@ resolves this exact Other/default profile: field-name inversion is unnecessary.
 It does not establish every naming form, arbitrary spaces or every API version.
 No live org call or write was made while implementing this mapper.
 
+## Internal read-only Other retrieval
+
+`retrieveOtherDmo(connection: ReadConnection, objectApiName: unknown,
+apiVersion: unknown, dataSpace: unknown): Promise<DmoConnectMetadataProjection>`
+is internal; ReadConnection is a Pick of core Connection's instanceUrl, request,
+metadata and getApiVersion. Caller supplies existing authenticated core connection.
+Both explicit API and the connection version must be 65.0; data space must be
+case-sensitive default; object identity must be the supported local custom __dlm
+form. Unsupported inputs fail before acquisition, without version mutation.
+
+The service uses ConnectClient GET for exact detail, core
+`connection.metadata.read('CustomObject', [objectApiName])`, then the existing
+complete incoming/outgoing relationship helper with explicit default scope.
+Installed core/JSforce source confirms array input returns the decoded records
+array, not a SOAP result/records wrapper, using the connection's SOAP API version.
+Exactly one record with exact fullName is mandatory; empty, missing, wrapped,
+foreign and ambiguous responses block. Every admitted Metadata property reaches
+the strict projector unchanged; there is no property-stripping envelope adapter.
+The retained successful API 65 Other experiment used the same core metadata.read
+seam with scalar input. No new live execution was needed here.
+
+Strict joined projection and buildOtherDmoCreateRequest both run before success.
+Return value retains complete independent expectations, create identity and
+qualifier binding; no detached candidate or create request is returned instead.
+Acquisition errors have payload-free diagnostics; failures never return a partial
+projection. Existing ConnectError/DmoDocumentError remain intact; other failures
+become OtherDmoRetrieveError with ACQUISITION_FAILED. INVALID_SCOPE and
+INVALID_METADATA identify rejected scope or decoded record cardinality/identity.
+No snapshot consistency, authenticity of arbitrary JSON, CLI/file wiring,
+Profile/Engagement/general DMO support, request execution or mutation is claimed.
+
 ## Authoritative contract evidence (2026-10-25)
 
 The coordinator's resolved official naming research uses the

@@ -1,3 +1,87 @@
+# Internal read-only Other retrieval service
+
+Start: 2026-10-25T17:15:49+01:00. Clean baseline
+`df1dbbf20303bde36c2585e849db92c39fbc5cb5`. Written slice plan and simplicity
+check preceded edits. Inherited reviewed narrow Gate 1/2 remains applicable;
+Gate 3 is one small coupled sequential service/test slice. No extra reviewer or
+whole-milestone Gate 4; that remains coordinator-owned.
+
+## Exact interface and real acquisition seam
+
+`retrieveOtherDmo(connection: ReadConnection, objectApiName: unknown,
+apiVersion: unknown, dataSpace: unknown): Promise<DmoConnectMetadataProjection>`
+uses Pick<Connection, instanceUrl | request | metadata | getApiVersion>.
+Require explicit API 65.0 and matching connection version, exact supported local
+custom __dlm identity and case-sensitive default. No version mutation/fallback.
+Use ConnectClient detail GET, core connection.metadata.read('CustomObject',
+[objectApiName]), then complete incoming/outgoing relationship acquisition.
+Array read must return exactly one record with exact fullName. Missing, foreign,
+ambiguous or wrapped results block; all Metadata content reaches the strict join.
+Installed JSforce source establishes decoded records array and SOAP version from
+connection; retained successful Other experiment establishes the actual core
+metadata.read seam. Evidence inspected offline only, no new org calls.
+
+Strict projectDmoConnectMetadata and buildOtherDmoCreateRequest both run before
+success. Return full independent projection/expectations, identity and qualifier
+bindings, never a detached candidate. Existing ConnectError/DmoDocumentError
+remain payload-free; OtherDmoRetrieveError has INVALID_SCOPE, INVALID_METADATA
+or ACQUISITION_FAILED, with no remote cause/payload. No partial success, writable
+transport, CLI/file wiring, Profile/Engagement or general DMO claim. Bounded
+profile stays two authored fields plus four expected generated fields.
+
+## Verification
+
+Scoped ESLint autofix, explicit build and full zero-warning lint passed.
+Focused artifact/service suite: 24 passed, 0 failed (934.5759 ms).
+Full tests: 52 passed, 0 failed/skipped (12,801.9002 ms excluding compile).
+Smoke: 6 passed, 0 failed/skipped (12,992.8261 ms). Sequence completed
+2026-10-25T17:20:10.2558445+01:00. Five added synthetic tests cover real adapter
+calls, scope/version refusal before acquisition, missing/ambiguous envelopes,
+exact joins/category/default checks, incomplete/nonempty relationships and
+payload-free failures at every acquisition phase. Initial helper-scope lint and
+fixture name-binding assertion failures were fixed, not suppressed.
+Package smoke expected inventory updated to 18 for the new JS/declaration pair;
+final checks and normal hook/commit receipt follow outside this self-referential
+commit. Hook remains unmodified and enabled.
+
+Every shell entry verifies TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+against absolute normalized F:/Temp; process-only repair/recheck. No recursive
+cleanup. Existing smoke owns retained OS-temp roots. Fetch/status done; no remote
+exists, so upstream state cannot be verified. Personal Git identity checked before
+commit; only literal own paths staged. No push/tag/release, root edits, global
+settings, live org call/mutation or reference-plugin identifiers.
+
+## Next coherent CLI/file slice
+
+Wire only an explicit single-object Other/default retrieve command to this service
+using existing core authentication and explicit API 65.0. First define the full
+projection envelope's deterministic file serialization/revalidation and safe output
+path/overwrite contract; never persist only candidate or accept projection without
+expectations. Add isolated OS-temp filesystem/CLI tests and payload-free refusal
+checks. Keep deploy, writes, discovery, broader categories/spaces and general
+artifact framework out. Root registration and whole-milestone Gate 4 remain
+coordinator follow-ups, not completed here.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | service/tests, README, capabilities, artifact contract, handover, package inventory | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Gate 5 slice docs checked after green checks; Gate 4 deliberately remains with
+coordinator. Wiki/sites/tool listings/hover and Git workflow need no update.
+No npm changelog. Root release/dependency registration stays coordinator-only.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Bounded offline Other create-request mapper
 
 Start: 2026-10-25T17:08:55+01:00. Clean baseline

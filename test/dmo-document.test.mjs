@@ -11,6 +11,8 @@ import {
   validateDmoDocument,
 } from '../lib/artifacts/dmo-document.js';
 
+import { retrieveOtherDmo, OtherDmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
+
 const fixture = () => ({
   schemaVersion: 1,
   kind: 'dmo',
@@ -675,6 +677,161 @@ test('Other mapper preserves exact authored names and omits absent optional desc
     ['Case_Sensitive2__c', 'Recorded_AT__c'],
   );
   assert.ok(!('description' in request));
+});
+
+// Exercise the production adapter against the same independent joined schema, never an org.
+const retrievalFixture = () => {
+  const input = joinedFixture();
+  input.connect.dataSpaceName = 'default';
+  input.metadata.mktDataModelAttributes.dataSpaceName = 'default';
+  const calls = [];
+  const connection = {
+    instanceUrl: 'https://synthetic.example',
+    getApiVersion: () => '65.0',
+    metadata: {
+      read: async (type, names) => {
+        calls.push({ type, names });
+        return [input.metadata];
+      },
+    },
+    request: async (request) => {
+      calls.push(request);
+      return request.url.includes('/relationships?')
+        ? { relationships: [], totalSize: 0 }
+        : input.connect;
+    },
+  };
+  const objectApiName = input.connect.name;
+  const run = () => retrieveOtherDmo(connection, objectApiName, '65.0', 'default');
+  return { input, calls, connection, run };
+};
+
+test('retrieval uses real core Metadata read and Connect adapters and retains validated expectations', async () => {
+  const { input, calls, run } = retrievalFixture();
+  const result = await run();
+  assert.deepEqual(result, projectDmoConnectMetadata(input.connect, input.metadata, []));
+  assert.equal(buildOtherDmoCreateRequest(result, 'default').fields.length, 2);
+  assert.deepEqual(calls[1], { type: 'CustomObject', names: ['Audit_Ledger__dlm'] });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(
+    calls[0].url,
+    'https://synthetic.example/services/data/v65.0/ssot/data-model-objects/Audit_Ledger__dlm',
+  );
+  assert.match(calls[2].url, /relationships\?dataspace=default&limit=20&offset=0/u);
+  assert.equal(calls[2].method, 'GET');
+  result.expectations.metadata.fields[0].required = true;
+  assert.equal(input.metadata.fields[0].required, false);
+  assert.throws(() => buildOtherDmoCreateRequest(result, 'default'), DmoDocumentError);
+});
+
+test('retrieval rejects unsupported explicit scope and mismatched core version before acquisition', async () => {
+  for (const arguments_ of [
+    ['Audit_Ledger__dlm', '64.0', 'default'],
+    ['Audit_Ledger__dlm', '66.0', 'default'],
+    ['Audit_Ledger__dlm', undefined, 'default'],
+    ['Audit_Ledger__dlm', '65.0', 'research'],
+    ['Audit_Ledger__dlm', '65.0', undefined],
+    ['Audit_Ledger__dlm', '65.0', 'Default'],
+    ['ns__Ledger__dlm', '65.0', 'default'],
+    ['SSOTLedger__dlm', '65.0', 'default'],
+    ['Ledger__dlm/escape', '65.0', 'default'],
+    ['Ledger', '65.0', 'default'],
+  ]) {
+    const { connection, calls } = retrievalFixture();
+    await assert.rejects(retrieveOtherDmo(connection, ...arguments_), { code: 'INVALID_SCOPE' });
+    assert.deepEqual(calls, []);
+  }
+  const { connection, calls, run } = retrievalFixture();
+  connection.getApiVersion = () => '66.0';
+  await assert.rejects(run(), { code: 'INVALID_SCOPE' });
+  assert.deepEqual(calls, []);
+});
+
+test('retrieval rejects missing ambiguous and wrapped Metadata records without partial success', async () => {
+  for (const response of [
+    undefined,
+    [],
+    [{}],
+    [{ fields: [] }],
+    [{ fullName: 'Foreign__dlm' }],
+    [[], []],
+    { records: [] },
+  ]) {
+    const { connection, run } = retrievalFixture();
+    connection.metadata.read = async () => response;
+    await assert.rejects(run(), { code: 'INVALID_METADATA' });
+  }
+  const { connection, input, run } = retrievalFixture();
+  connection.metadata.read = async () => [input.metadata, input.metadata];
+  await assert.rejects(run(), { code: 'INVALID_METADATA' });
+});
+
+test('retrieval validates exact joins category default binding and complete relationship absence', async () => {
+  for (const change of [
+    (index) => {
+      index.connect.name = 'Foreign__dlm';
+    },
+    (index) => {
+      index.connect.category = 'PROFILE';
+    },
+    (index) => {
+      index.connect.category = 'ENGAGEMENT';
+    },
+    (index) => {
+      index.metadata.fields[0].fullName = 'Foreign__c';
+    },
+    (index) => {
+      index.connect.dataSpaceName = 'research';
+      index.metadata.mktDataModelAttributes.dataSpaceName = 'research';
+    },
+  ]) {
+    const { input, run } = retrievalFixture();
+    change(input);
+    await assert.rejects(run(), DmoDocumentError);
+  }
+  for (const page of [
+    { relationships: [], totalSize: 1 },
+    { relationships: [] },
+    {
+      relationships: [
+        {
+          name: 'Link',
+          sourceObject: { name: 'Audit_Ledger__dlm' },
+          targetObject: { name: 'Foreign__dlm' },
+        },
+      ],
+      totalSize: 1,
+    },
+  ]) {
+    const { connection, input, run } = retrievalFixture();
+    connection.request = async (request) =>
+      request.url.includes('/relationships?') ? page : input.connect;
+    await assert.rejects(run());
+  }
+});
+
+const fail = () => {
+  throw new Error('secret remote payload');
+};
+
+test('retrieval propagates payload-free acquisition failure and never returns a partial result', async () => {
+  for (const phase of ['detail', 'metadata', 'relationships']) {
+    const { connection, input, run } = retrievalFixture();
+    if (phase === 'metadata') connection.metadata.read = fail;
+    else
+      connection.request = async (request) => {
+        if (phase === 'detail' || request.url.includes('/relationships?')) fail();
+        return input.connect;
+      };
+    await assert.rejects(run(), (error) => {
+      assert.ok(error instanceof OtherDmoRetrieveError || error.name === 'ConnectError');
+      assert.ok(!JSON.stringify(error).includes('secret'));
+      assert.ok(!error.message.includes('secret'));
+      assert.equal(error.cause, undefined);
+      return true;
+    });
+  }
 });
 
 test('raw classification keeps qualifier and semantic metadata meaningful and unknowns blocked', () => {

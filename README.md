@@ -64,7 +64,13 @@ custom name, preserving case and internal single underscores. It returns an offl
 A pure internal Other create-request mapper now rechecks the complete joined
 projection and explicitly binds only evidenced source/target `default` space.
 It preserves authored `__c` field names and excludes generated fields, org IDs
-and read-only metadata. It performs no transport. Profile and Engagement remain
+and read-only metadata. It performs no transport. An internal read-only
+`retrieveOtherDmo` service now acquires detail, Metadata CustomObject and complete
+relationships using an existing Salesforce core connection, explicitly at API
+65.0/default only. It validates both projection and mapper, returning the full
+projection/expectations rather than a detached candidate. Missing/ambiguous
+Metadata or incomplete relationships fail without partial results. No CLI or
+filesystem wiring exists. Profile and Engagement remain
 pending; no writable Metadata projection or CLI mutation is provided. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows

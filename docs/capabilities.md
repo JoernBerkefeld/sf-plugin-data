@@ -92,6 +92,11 @@ Every family must complete all gates below before support can be declared.
       Source and explicit target must both be default; arbitrary space acceptance
       is unproven. No public wiring, writable Metadata projection or transport
       mutation. Profile and Engagement remain pending; dmo family gates remain open.
+- [x] Internal read-only Other retrieval at explicit API 65.0/default scope.
+      Existing core Connection supplies Connect GET and Metadata CustomObject read;
+      exact identity/cardinality, complete relationships, strict joined projection
+      and offline mapper are required before returning full expectations. Synthetic
+      acquisition/failure tests only; no CLI/file wiring or write transport added.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input
