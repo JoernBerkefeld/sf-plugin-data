@@ -178,6 +178,41 @@ resolves this exact Other/default profile: field-name inversion is unnecessary.
 It does not establish every naming form, arbitrary spaces or every API version.
 No live org call or write was made while implementing this mapper.
 
+## Common authored-document request mapper
+
+`buildDmoCreateRequestFromDocument(value: unknown, targetDataSpace: unknown):
+DmoCreateRequest` independently validates authored schemaVersion/kind/identity/spec.
+It maps all three authored categories, all 12 documented nested types, any nonempty
+field count, one primary key, and true/false dynamic lookup. Field category and
+field/object description retain absence versus empty strings. Explicit event and
+record-modified names retain exact spelling and must resolve to DateTime fields;
+Engagement requires an event reference. Source and explicit target remain default.
+Unsupported scope errors name only the affected property, never its supplied value.
+Unknown/runtime properties still reject through the existing strict validator.
+
+The fresh allowlisted object maps identity.apiName to the terminal-suffix-stripped
+name, explicit target to dataSpaceName, and spec label/description/category/date
+references individually. Each fresh field maps only name/label/dataType/description/
+category/isPrimaryKey/isDynamicLookup. No spec spread, generated fields, response
+flags, source expectations or relationships are accepted. Existing narrow Other
+mappers and their compatibility tests remain unchanged; service/writer/command
+still use those narrow helpers. No runtime acceptance is implied by construction.
+
+Evidence rechecked 2026-10-25 after local mirror gaps: official nested page fetches
+timed out. Indexed full official [Connect endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec?meta=type%3AData+Model+Object+Input)
+explicitly lists the three title-case categories, eventDateTimeFieldName and
+recordModifiedFieldName as input (object base properties from 59.0; fields/category/
+references from 60.0; custom DMO POST from 61.0). Its uppercase example is not used
+as the enum. Official Data360 MCP payload_examples for d360_dmo_create independently
+confirms the seven nested properties, optional string category/description,
+boolean dynamic/primary flags and all 12 enum types. That schema omits the object
+date references, so the endpoint contract supplies those mappings. It provides
+no nested per-property minimum versions; true dynamic lookup and additional types
+are schema-level mappings, not newly observed API 65 behavior. Exact authored
+qualified field names retain the earlier naming evidence without claiming a live
+round trip for every category/type/flag combination. SQL/flex/extra categories
+remain outside the authored contract, not silently dropped.
+
 ## Standalone authored-document Other mapper
 
 `buildOtherDmoCreateRequestFromDocument(value: unknown, targetDataSpace: unknown):

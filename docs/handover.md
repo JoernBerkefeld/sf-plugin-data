@@ -1,3 +1,94 @@
+# Common authored DMO mapper slice
+
+Start: 2026-10-25T17:52+01:00; clean requested HEAD
+`cb65e6e29af4450f44c725674d664a5c78e05ff3`. Fetch/status completed; no remote
+configured. Written slice plan/simplicity check before edits; inherited revised
+plan review 2873b976 zero must-fix. Gate 1/2 complete; Gate 3 one small coupled
+mapper/test slice, no new workers. Whole-milestone Gate 4 remains coordinator-owned.
+
+## Done and exact interface
+
+`buildDmoCreateRequestFromDocument(value: unknown, targetDataSpace: unknown):
+DmoCreateRequest` lives beside the old narrow helpers, which remain unchanged.
+Request: name/label/description?, dataSpaceName:'default', category:
+Profile|Other|Engagement, eventDateTimeFieldName?, recordModifiedFieldName?, fields:
+{name,label,dataType,description?,category?,isPrimaryKey,isDynamicLookup}[].
+Validate authored-only JSON first; map every property individually to a fresh
+allowlisted object and fresh fields. Remove only validated terminal object __dlm;
+preserve exact authored __c names, order, strings and optional presence. Source
+and explicit target both remain default; scope errors precisely identify the
+property without echoing values. No runtime projection keys or spec spread.
+
+All 12 documented types, three categories, any nonempty authored field count,
+optional field category/description and true/false dynamic lookup map. Existing
+exact name/one-primary/exact DateTime-reference invariants remain; Engagement
+requires its authored explicit event reference. Missing export designation is a
+projector concern, not a reason to reject a documented authored reference.
+
+## Evidence and boundaries
+
+Local mirror search found no input contract. Approved official nested fetches
+timed out; indexed full endpoint reference explicitly supplies category/fields/
+event/recordModified input, with three title-case categories (do not copy its
+uppercase example as enum). Official Data360 payload_examples metadata confirms
+seven nested properties and all 12 types, optional string field category/description
+and boolean flags without a false-only rule. No org dispatch occurred. That tool
+schema omits object event/modified properties; endpoint text is authority for
+those. Nested per-property versions are not supplied. No new API 65 runtime
+acceptance, cross-space support or generalized generated-field replay is claimed.
+The earlier exact qualified field-name evidence is retained, not expanded into a
+claim of live acceptance for every combination. No service/projector/command or
+writer was changed; they still use the narrow compatibility helpers.
+
+## Verification
+
+Scoped ESLint autofix, explicit build, full zero-warning lint all passed.
+Full tests 115 passed, 0 failed/skipped, 14238.7415 ms excluding compile;
+16 new common mapper tests cover all types/categories, 1/3/4/12/17 field counts,
+optional absence/empty/nonempty, independent references, frozen input/fresh output,
+19 invalid mutations, malformed/runtime inputs and exact source/target binding.
+Smoke 6 passed, 0 failed/skipped, 12162.2436 ms. Sequence ended
+2026-10-25T17:55:44.2826693+01:00. Packaged help and normal enabled hook/commit
+receipts follow in coordinator output; no self-referential hash is embedded here.
+Every shell/test entry checks actual Node tmpdir, TEMP and nonempty TMP/TMPDIR
+against absolute normalized F:/Temp, repairing only process environment/rechecking.
+No recursive cleanup; existing package smoke retains its owned OS-temp roots.
+
+## Next bounded generalized projection slice
+
+Generalize only the offline Connect/Metadata projector next: read the actual
+Connect and Metadata contracts for arbitrary authored types/counts/categories;
+join exact qualified object/field identities; retain unknown configuration as a
+blocker rather than drop it. Bind primary/dynamic flags and generated qualifier
+references from authoritative metadata, not naming patterns. Acquire complete
+relationships as today. Stop the affected variant if generated replay, optional
+field classification or designation cannot be proven. In particular Engagement
+detail lacks its event designation: find an authoritative metadata designation
+and map exact DateTime reference, never infer from a lone DateTime field. Do not
+broaden service/writer/command before generalized projection is qualified. No
+provenance/schema framework, deployment or live calls/writes implicit.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | mapper/regressions, README/artifact/capability/handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Gate 5 slice docs checked after green verification; whole-feature Gate 4/root
+release registration stay coordinator-only. No wiki/site/tool listing/hover
+change needed for unpublished internal slice. No npm changelog, bump, push, tag,
+release, global/root edit, reference identifier copying or org calls/writes.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Explicit retrieve command wiring
 
 Start: 2026-10-25T17:45:08+01:00, clean requested baseline

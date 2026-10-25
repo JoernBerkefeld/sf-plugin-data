@@ -448,6 +448,66 @@ export function projectDmoConnectMetadata(
   };
 }
 
+export type DmoCreateRequest = {
+  name: string;
+  label: string;
+  description?: string;
+  dataSpaceName: 'default';
+  category: DmoDocument['spec']['category'];
+  eventDateTimeFieldName?: string;
+  recordModifiedFieldName?: string;
+  fields: Array<{
+    name: string;
+    label: string;
+    dataType: DmoField['dataType'];
+    description?: string;
+    category?: string;
+    isPrimaryKey: boolean;
+    isDynamicLookup: boolean;
+  }>;
+};
+
+/**
+ * Map authored custom schema to the documented Connect input, not a raw response.
+ * @param {unknown} value Parsed authored document, never a runtime projection.
+ * @param {unknown} targetDataSpace Explicit target binding; this slice supports default only.
+ * @returns {DmoCreateRequest} Fresh allowlisted request, without a runtime acceptance claim.
+ */
+export function buildDmoCreateRequestFromDocument(
+  value: unknown,
+  targetDataSpace: unknown,
+): DmoCreateRequest {
+  const document = validateDmoDocument(value);
+  if (document.identity.dataSpace !== 'default')
+    throw new Error('Unsupported DMO create mapping: identity.dataSpace must be default.');
+  if (targetDataSpace !== 'default')
+    throw new Error('Unsupported DMO create mapping: targetDataSpace must be explicit default.');
+  const { spec } = document;
+  return {
+    // Invert only the validated terminal object suffix; preserve authored field names.
+    name: document.identity.apiName.slice(0, -'__dlm'.length),
+    label: spec.label,
+    ...('description' in spec ? { description: spec.description } : {}),
+    dataSpaceName: targetDataSpace,
+    category: spec.category,
+    ...('eventDateTimeFieldName' in spec
+      ? { eventDateTimeFieldName: spec.eventDateTimeFieldName }
+      : {}),
+    ...('recordModifiedFieldName' in spec
+      ? { recordModifiedFieldName: spec.recordModifiedFieldName }
+      : {}),
+    fields: spec.fields.map((field) => ({
+      name: field.name,
+      label: field.label,
+      dataType: field.dataType,
+      ...('description' in field ? { description: field.description } : {}),
+      ...('category' in field ? { category: field.category } : {}),
+      isPrimaryKey: field.isPrimaryKey,
+      isDynamicLookup: field.isDynamicLookup,
+    })),
+  };
+}
+
 export type OtherDmoCreateRequest = {
   name: string;
   label: string;

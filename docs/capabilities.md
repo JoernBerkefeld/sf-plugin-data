@@ -19,7 +19,8 @@ Every family must complete all gates below before support can be declared.
 service, then writes authored-only canonical JSON through the existing writer.
 No command-level category/field-count restriction is added. Current service
 supports API 65.0/default and one evidenced Other shape; shared common DMO
-expansion is pending independently. Type-only/no-selector discovery remains
+offline common authored request mapping is now implemented independently; generalized
+source projection/service/writer integration is still pending. Type-only/no-selector discovery remains
 pending without changing its approved future meaning. Deployment is unimplemented.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
@@ -122,6 +123,12 @@ pending without changing its approved future meaning. Deployment is unimplemente
       Existing strict projection mapper and forged-profile refusals remain intact.
       Deploy still needs independent authored-file validation and target readback;
       no CLI, filesystem or transport write is implemented by this mapper.
+- [x] Common offline authored DMO request mapper alongside unchanged narrow helpers.
+      All 12 types, three categories, varied nonempty field counts, optional field
+      category/description, true/false dynamic flags and exact DateTime references
+      map individually into fresh allowlisted output. Source/explicit target default
+      only. Unknown/runtime JSON rejects. Schema mapping is not selected-version live
+      acceptance; generalized projection/service/writer and deployment remain pending.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

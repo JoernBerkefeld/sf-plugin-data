@@ -99,6 +99,14 @@ object description; unsupported semantics and runtime keys reject. This offline
 mapping is not deploy acceptance: deployment must separately validate the authored
 file and later verify target readback. Profile and Engagement remain
 pending; no writable Metadata projection or CLI mutation is provided. See the exact subset and evidence in the artifact document.
+The separate common `buildDmoCreateRequestFromDocument` offline mapper accepts
+all 12 documented field types, Profile/Other/Engagement, any nonempty authored
+field count, boolean dynamic lookup, optional field category/description and
+explicit exact DateTime event/record-modified references. It constructs a fresh
+allowlisted request from authored JSON; source and explicit target remain default.
+This does not broaden the existing narrow service, writer or command, and does
+not claim live API acceptance or general export/deployment support.
+
 An internal `writeOtherDmoDocument(candidate, projectRoot, overwrite)` now validates
 standalone Other/default authored JSON independently, serializes canonically and
 writes `data360/default/dmo/<api-name>.json` beneath the project root. Identical
