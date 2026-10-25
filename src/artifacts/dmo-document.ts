@@ -434,6 +434,248 @@ export function joinDmoConnectMetadataFields(
   };
 }
 
+export type DmoCommonProjection = {
+  status: 'projected' | 'incomplete';
+  blockers: string[];
+  /** Absent when an Engagement event designation is unavailable. */
+  candidate?: DmoDocument;
+  createIdentity: { status: 'verified'; name: string; sourceApiName: string };
+  qualifierBindings: DmoJoinedFields['qualifierBindings'];
+  expectations: {
+    connect: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+    relationships: unknown[];
+  };
+};
+
+/**
+ * Recognize the evidenced generated recipe, independently of authored collection size.
+ * @param {DmoJoinedFields} joined Validated complete field join.
+ * @returns {boolean} Whether generated identities, defaults and the primary qualifier match.
+ */
+function hasOtherGeneratedRecipe(joined: DmoJoinedFields): boolean {
+  const primary = joined.fields.find((field) => field.isPrimaryKey)!;
+  if (primary.dataType !== 'Text' || primary.isDynamicLookup) return false;
+  const reference = `KQ_${primary.name.slice(0, -3)}`;
+  const expected = new Map([
+    ['DataSource__c', 'Data Source'],
+    ['DataSourceObject__c', 'Data Source Object'],
+    ['InternalOrganization__c', 'Internal Organization'],
+    [`${reference}__c`, `Key Qualifier ${primary.label}`],
+  ]);
+  if (
+    joined.qualifierBindings.length !== 1 ||
+    joined.qualifierBindings[0].fieldName !== primary.name ||
+    joined.qualifierBindings[0].qualifierFieldName !== `${reference}__c`
+  )
+    return false;
+  for (const field of joined.expectations.connect) {
+    if (field.creationType !== 'System') continue;
+    if (
+      expected.get(field.name as string) !== field.label ||
+      field.type !== 'Text' ||
+      field.isDistinct !== false ||
+      'description' in field ||
+      'category' in field
+    )
+      return false;
+    expected.delete(field.name as string);
+    const meta = joined.expectations.metadata.find((item) => item.fullName === field.name)!;
+    const detail = meta.mktDataModelFieldAttributes as Record<string, unknown>;
+    if (
+      meta.length !== 60 ||
+      meta.required !== false ||
+      'description' in meta ||
+      detail.isDynamicLookup !== 'false' ||
+      detail.labelOverride !== field.label ||
+      detail.masterLabel !== field.label ||
+      detail.usageTag !== field.usageTag ||
+      !Array.isArray(meta.summaryFilterItems) ||
+      meta.summaryFilterItems.length > 0 ||
+      (field.name === `${reference}__c`
+        ? detail.refAttrDeveloperName !== reference || field.usageTag !== 'KeyQualifier'
+        : field.usageTag !== 'None')
+    )
+      return false;
+  }
+  return expected.size === 0;
+}
+
+/**
+ * Compose exact common object joins and qualify only evidenced replay semantics.
+ * @param {unknown} connect Complete Connect object detail.
+ * @param {unknown} metadata Exact matching Metadata CustomObject.
+ * @param {unknown} relationships Complete separately acquired relationship inventory.
+ * @returns {DmoCommonProjection} Qualified authored candidate or precise incomplete diagnostics.
+ */
+export function projectCommonDmoConnectMetadata(
+  connect: unknown,
+  metadata: unknown,
+  relationships: unknown,
+): DmoCommonProjection {
+  const raw = record(connect, [...rawObjectConfiguration, ...rawObjectObservations]);
+  const collections = [
+    'actionOverrides',
+    'businessProcesses',
+    'compactLayouts',
+    'fieldSets',
+    'indexes',
+    'listViews',
+    'profileSearchLayouts',
+    'recordTypes',
+    'sharingReasons',
+    'sharingRecalculations',
+    'validationRules',
+    'webLinks',
+  ];
+  const meta = record(metadata, [
+    'fullName',
+    'label',
+    'fields',
+    'mktDataModelAttributes',
+    ...collections,
+  ]);
+  requireValid(
+    customName(raw.name, '__dlm') && meta.fullName === raw.name && meta.label === raw.label,
+  );
+  requireValid(raw.creationType === 'Custom' && raw.dataSpaceName === 'default');
+  requireValid(text(raw.label) && (!('description' in raw) || typeof raw.description === 'string'));
+  requireValid(!('id' in raw) || text(raw.id));
+  const attributes = record(meta.mktDataModelAttributes, [
+    'creationType',
+    'dataModelTaxonomy',
+    'dataSpaceName',
+    'description',
+    'isEnabled',
+    'isSegmentable',
+    'isUsedForMetrics',
+    'labelOverride',
+    'masterLabel',
+    'objectCategory',
+  ]);
+  requireValid(
+    attributes.creationType === 'Custom' && attributes.dataSpaceName === raw.dataSpaceName,
+  );
+  requireValid(
+    attributes.description === raw.description &&
+      attributes.labelOverride === raw.label &&
+      attributes.masterLabel === raw.label,
+  );
+  requireValid(text(attributes.dataModelTaxonomy) && text(attributes.objectCategory));
+  requireValid(
+    typeof raw.category === 'string' && ['OTHER', 'PROFILE', 'ENGAGEMENT'].includes(raw.category),
+  );
+  const category = ({ OTHER: 'Other', PROFILE: 'Profile', ENGAGEMENT: 'Engagement' } as const)[
+    raw.category as 'OTHER' | 'PROFILE' | 'ENGAGEMENT'
+  ];
+  requireValid(category);
+  const blockers = new Set<string>();
+  if (attributes.dataModelTaxonomy !== 'Salesforce_SFDCReferenceModel_0_93')
+    blockers.add('OBJECT_TAXONOMY_REPLAY_UNVERIFIED');
+  if (
+    category !== 'Other' ||
+    attributes.objectCategory !== 'Salesforce_SFDCReferenceModel_0_93.Related'
+  )
+    blockers.add('OBJECT_CATEGORY_TAXONOMY_REPLAY_UNVERIFIED');
+  for (const key of ['isEnabled', 'isSegmentable']) {
+    requireValid(
+      typeof raw[key] === 'boolean' && ['true', 'false'].includes(attributes[key] as string),
+    );
+    requireValid(raw[key] === (attributes[key] === 'true'));
+    if (raw[key]) blockers.add('OBJECT_EXECUTION_REPLAY_UNVERIFIED');
+  }
+  requireValid(['true', 'false'].includes(attributes.isUsedForMetrics as string));
+  if (attributes.isUsedForMetrics === 'true') blockers.add('OBJECT_METRICS_REPLAY_UNVERIFIED');
+  requireValid(
+    typeof raw.isEditable === 'boolean' &&
+      typeof raw.hasExternalDataLakeObjectMappings === 'boolean',
+  );
+  if (!raw.isEditable || raw.hasExternalDataLakeObjectMappings)
+    blockers.add('OBJECT_MAPPING_REPLAY_UNVERIFIED');
+  for (const key of collections) {
+    // Only empty auxiliary collections have an established semantics contract.
+    requireValid(Array.isArray(meta[key]) && meta[key].length === 0);
+  }
+  requireValid(Array.isArray(relationships));
+  for (const item of relationships) {
+    const relation = record(item, [
+      'cardinality',
+      'creationType',
+      'id',
+      'name',
+      'owner',
+      'sourceField',
+      'sourceObject',
+      'status',
+      'targetField',
+      'targetObject',
+    ]);
+    for (const [key, value] of Object.entries(relation)) {
+      if (['sourceObject', 'targetObject', 'sourceField', 'targetField'].includes(key)) {
+        const endpoint = record(value, ['name', 'label', 'type', 'keyQualifierField']);
+        requireValid(
+          Object.values(endpoint).every((entry) => entry === null || typeof entry === 'string'),
+        );
+      } else requireValid(value === null || typeof value === 'string');
+    }
+    const source = relation.sourceObject as Record<string, unknown> | undefined;
+    const target = relation.targetObject as Record<string, unknown> | undefined;
+    requireValid(
+      text(source?.name) &&
+        text(target?.name) &&
+        (source?.name === raw.name || target?.name === raw.name),
+    );
+  }
+  if (relationships.length > 0) blockers.add('RELATIONSHIP_REPLAY_UNSUPPORTED');
+  const joined = joinDmoConnectMetadataFields(raw.fields, meta.fields);
+  const recipe = category === 'Other' && hasOtherGeneratedRecipe(joined);
+  if (!recipe) blockers.add('GENERATED_RECIPE_REPLAY_UNVERIFIED');
+  for (const blocker of joined.blockers) {
+    if (
+      recipe &&
+      [
+        'GENERATED_FIELD_REPLAY_UNVERIFIED',
+        'GENERATED_QUALIFIER_REPLAY_UNVERIFIED',
+        'FIELD_LENGTH_REPLAY_UNVERIFIED',
+      ].includes(blocker)
+    )
+      continue;
+    blockers.add(blocker);
+  }
+  if (
+    recipe &&
+    joined.expectations.metadata.some((field) => 'length' in field && field.length !== 60)
+  )
+    blockers.add('FIELD_LENGTH_REPLAY_UNVERIFIED');
+  const spec: DmoDocument['spec'] = { label: raw.label, category, fields: joined.fields };
+  if ('description' in raw) spec.description = raw.description as string;
+  for (const key of ['eventDateTimeFieldName', 'recordModifiedFieldName'] as const) {
+    if (!(key in raw)) continue;
+    requireValid(
+      joined.fields.some((field) => field.name === raw[key] && field.dataType === 'DateTime'),
+    );
+    spec[key] = raw[key] as string;
+  }
+  const missingEvent = category === 'Engagement' && !('eventDateTimeFieldName' in spec);
+  if (missingEvent) blockers.add('ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE');
+  const candidate = missingEvent
+    ? undefined
+    : validateDmoDocument({
+        schemaVersion: 1,
+        kind: 'dmo',
+        identity: { dataSpace: raw.dataSpaceName, apiName: raw.name },
+        spec,
+      });
+  return {
+    status: blockers.size === 0 ? 'projected' : 'incomplete',
+    blockers: [...blockers],
+    ...(candidate ? { candidate } : {}),
+    createIdentity: { status: 'verified', name: raw.name.slice(0, -5), sourceApiName: raw.name },
+    qualifierBindings: joined.qualifierBindings,
+    expectations: structuredClone({ connect: raw, metadata: meta, relationships }),
+  };
+}
+
 export type DmoConnectMetadataProjection = {
   status: 'projected';
   blockers: [];

@@ -60,6 +60,16 @@ is no public plan command or saved-plan infrastructure.
 
 ## Scope and safety
 
+`projectCommonDmoConnectMetadata` now composes the shared offline field join and
+object semantics in one common implementation beside the unchanged compatibility
+path. Recognized Other generated defaults retain a successful projection across
+varied authored counts/types; unproven generated recipes, taxonomy, storage or
+execution semantics remain explicit blockers. Explicit date references resolve
+exactly to authored DateTime fields; missing Engagement event designation is a
+specific blocker, never inferred. Complete nonempty relationships are retained
+but unsupported. Service/command/writer integration is the next slice, not shipped
+by this helper; no new live replay acceptance is claimed.
+
 Seven planned families are tracked in [capabilities](docs/capabilities.md).
 An internal read-only Salesforce-core transport now accepts an explicit API
 version and only same-origin `/services/data/v<version>/ssot/` requests. It rejects

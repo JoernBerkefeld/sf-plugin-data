@@ -1,3 +1,90 @@
+# Common offline object projection slice
+
+Start: 2026-10-25T18:06+01:00, clean requested baseline
+`69a9eb41f2a51c46683f51032aaffe6130a005df`. Fetch/status completed; no remote
+configured. Written slice plan/simplicity preceded edits; inherited reviewed
+shared-DMO plan 2873b976 zero must-fix (Gates 1/2 complete). Gate 3 applied as
+one coupled object/test slice; no additional workers/root edits. Whole-feature
+Gate 4 remains coordinator-owned. Evidence read offline: original source-before
+and comparison at F:/Temp/data360-other-replay-S4bRkD (full equality, no source
+drift). No new online research or live org calls/writes.
+
+## Exact interface and support boundary
+
+`projectCommonDmoConnectMetadata(connect: unknown, metadata: unknown,
+relationships: unknown): DmoCommonProjection` in src/artifacts/dmo-document.ts.
+Returns `{status:'projected'|'incomplete', blockers:string[], candidate?:DmoDocument,
+createIdentity:{status:'verified',name,sourceApiName}, qualifierBindings,
+expectations:{connect,metadata,relationships}}`. Candidate absent only when
+Engagement event designation is unavailable, rather than returning invalid authored
+JSON. Any incomplete candidate is diagnostic, never an export/deploy artifact.
+
+Composes existing exact field join; binds object identity/labels/descriptions and
+explicit default scope, classifies taxonomy/category/execution/metrics/mapping
+semantics, validates explicit Connect date references against exact authored
+DateTime fields. Does not invent Metadata date properties or infer a lone date.
+Unknown meaningful keys/source conflicts reject payload-free; empty auxiliary
+Metadata collections checked. Caller must independently acquire complete inputs.
+All admitted inputs, including unsupported nonempty relationships, survive as
+fresh independent expectations. Foreign/malformed/unknown relationship shapes
+reject. Nonempty valid relationships: RELATIONSHIP_REPLAY_UNSUPPORTED.
+
+Recognized Other generated pattern uses the three observed system field identities
+and explicit primary Text qualifier, observed labels/defaults/length-60 semantics.
+Does not require two authored or six total fields. Positive synthetic counts
+1/3/12/19 exercise all twelve types and dynamic/optional authored values. Original
+live-fixture-shaped two-plus-four regression is projected without blanket generated
+or length blockers. Recipe recognition removes only resolved generated/qualifier/
+length blockers. Non-60 Text storage, required/distinct and unknown generated
+semantics remain blocked; missing/unknown recipes never become successful by
+absence of diagnostics. Profile/Engagement taxonomy/generated replay remain
+unproven; Engagement missing event has ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE.
+Exact authored event/modified references are handled, but don't clear unrelated
+category/taxonomy blockers. Synthetic qualification is not broader live proof.
+
+## Next retrieval integration slice
+
+Common helper coexists with unchanged narrow projector/mappers/service/writer/
+command. Integrate the common runtime projection into read-only retrieval next,
+requiring status projected, no blockers and validated candidate before writing.
+Retain exact API/default binding and complete relationship acquisition. Independently
+validate candidate through common authored mapper at writer boundary (not narrow
+2-field mapper). Plan any writer interface changes as a separate coherent slice.
+No deployment/general category acceptance implicit. Whole-feature Gate 4 runs once
+at coordinator after integration; root release/dependency registration also stays
+coordinator-owned.
+
+## Verification and propagation
+
+Scoped autofix, explicit build and full zero-warning lint passed. Full tests 126
+passed, zero failed/skipped, 14160.2897 ms excluding compile. Packaged help passed
+20 entries and 3 outside-repo help checks. Smoke/normal hook final receipts follow
+in coordinator response; commit self-hash cannot live
+inside this document. Every shell/test entry preflights TEMP, actual Node os.tmpdir
+and nonempty TMP/TMPDIR as absolute normalized F:/Temp, repairing only process env
+and rechecking. Initial inline quoting failed closed before Git and was corrected
+by piped Node preflight. No recursive cleanup; existing package smoke retains
+newly allocated verified OS-temp roots. No global edits, push/tag/release.
+
+Gate 5 slice doc propagation checked: README/artifact/capabilities/handover updated;
+no npm changelog/version bump. Wiki/sites/tool listings/hover have no affected
+surface for this unpublished internal helper. No downstream consumers or language
+coupling. Whole-feature Gate 4 remains pending coordinator, not claimed here.
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | common object projector/tests and existing docs | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Common offline field join slice
 
 Start: 2026-10-25T17:58+01:00; clean requested baseline

@@ -7,6 +7,7 @@ import {
   classifyDmoRawField,
   projectDmoRawFields,
   projectDmoConnectMetadata,
+  projectCommonDmoConnectMetadata,
   joinDmoConnectMetadataFields,
   DmoDocumentError,
   serializeDmoDocument,
@@ -388,6 +389,301 @@ const joinedFixture = () => {
   };
   return { connect, metadata };
 };
+
+// Original live-fixture shape, with independently authored object/field labels and identities.
+const commonFixture = () => {
+  const input = joinedFixture();
+  input.connect.dataSpaceName = 'default';
+  input.metadata.mktDataModelAttributes.dataSpaceName = 'default';
+  const replacements = new Map([
+    ['Origin__c', ['DataSource__c', 'Data Source']],
+    ['OriginEntity__c', ['DataSourceObject__c', 'Data Source Object']],
+    ['Tenant__c', ['InternalOrganization__c', 'Internal Organization']],
+    ['Partition__c', ['KQ_Ticket__c', 'Key Qualifier Ticket']],
+  ]);
+  for (const field of input.connect.fields) {
+    if (replacements.has(field.name)) [field.name, field.label] = replacements.get(field.name);
+    if ('keyQualifierName' in field) field.keyQualifierName = 'KQ_Ticket';
+  }
+  for (const field of input.metadata.fields) {
+    if (replacements.has(field.fullName)) {
+      [field.fullName, field.label] = replacements.get(field.fullName);
+      field.mktDataModelFieldAttributes.labelOverride = field.label;
+      field.mktDataModelFieldAttributes.masterLabel = field.label;
+    }
+    if ('refAttrDeveloperName' in field.mktDataModelFieldAttributes)
+      field.mktDataModelFieldAttributes.refAttrDeveloperName = 'KQ_Ticket';
+  }
+  return input;
+};
+
+const runCommon = ({ connect, metadata }, relationships = []) =>
+  projectCommonDmoConnectMetadata(connect, metadata, relationships);
+
+test('common projection preserves original proven Other recipe and independent expectations', () => {
+  const input = commonFixture();
+  const before = structuredClone(input);
+  const result = runCommon(input);
+  assert.equal(result.status, 'projected');
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.candidate.spec.fields.length, 2);
+  assert.deepEqual(result.qualifierBindings, [
+    { fieldName: 'Ticket__c', qualifierFieldName: 'KQ_Ticket__c' },
+  ]);
+  assert.equal(result.createIdentity.name, 'Audit_Ledger');
+  assert.equal(validateDmoDocument(result.candidate), result.candidate);
+  result.expectations.metadata.fields[0].length = 999;
+  result.expectations.relationships.push({});
+  result.candidate.spec.fields[0].label = 'Changed';
+  assert.deepEqual(input, before);
+});
+
+test('common projection supports varied authored counts and all twelve types with recognized generation', () => {
+  const types = [
+    'Number',
+    'Text',
+    'Date',
+    'DateTime',
+    'Url',
+    'Phone',
+    'Email',
+    'Percent',
+    'Boolean',
+    'Currency',
+    'ArrayOfFloats',
+    'ArrayOfTexts',
+  ];
+  for (const count of [1, 3, 12, 19]) {
+    const input = commonFixture();
+    input.connect.fields.splice(1, 1);
+    input.metadata.fields = input.metadata.fields.filter(
+      (field) => field.fullName !== 'Recorded__c',
+    );
+    for (let index = 0; index < count - 1; index++) {
+      const type = types[index % types.length];
+      const name = `Value${index}__c`;
+      const label = `Value ${index}`;
+      input.connect.fields.push({
+        name,
+        label,
+        type,
+        creationType: 'Custom',
+        usageTag: 'None',
+        isDistinct: false,
+        description: '',
+        category: 'Synthetic',
+        isDynamicLookup: true,
+      });
+      input.metadata.fields.push({
+        fullName: name,
+        label,
+        type,
+        required: false,
+        description: '',
+        ...(type === 'Text' ? { length: 60 } : {}),
+        mktDataModelFieldAttributes: {
+          definitionCreationType: 'Custom',
+          isDynamicLookup: 'true',
+          usageTag: 'None',
+        },
+      });
+    }
+    const result = runCommon(input);
+    assert.deepEqual(result.blockers, []);
+    assert.equal(result.status, 'projected');
+    assert.equal(result.candidate.spec.fields.length, count);
+    assert.deepEqual(
+      result.candidate.spec.fields.map((field) => field.name),
+      input.connect.fields
+        .filter((field) => field.creationType === 'Custom')
+        .map((field) => field.name),
+    );
+    if (count === 19)
+      assert.ok(
+        types.every((type) =>
+          result.candidate.spec.fields.some((field) => field.dataType === type),
+        ),
+      );
+  }
+});
+
+test('common projection blocks unproven generated storage taxonomy execution and relationships precisely', () => {
+  for (const [mutate, blocker] of [
+    [
+      (index) => {
+        index.connect.fields.find((f) => f.name === 'DataSource__c').label = 'Unknown';
+        index.metadata.fields.find((f) => f.fullName === 'DataSource__c').label = 'Unknown';
+        const a = index.metadata.fields.find(
+          (f) => f.fullName === 'DataSource__c',
+        ).mktDataModelFieldAttributes;
+        a.labelOverride = 'Unknown';
+        a.masterLabel = 'Unknown';
+      },
+      'GENERATED_FIELD_REPLAY_UNVERIFIED',
+    ],
+    [
+      (index) => {
+        index.metadata.fields.find((f) => f.fullName === 'Ticket__c').length = 200;
+      },
+      'FIELD_LENGTH_REPLAY_UNVERIFIED',
+    ],
+    [
+      (index) => {
+        index.metadata.mktDataModelAttributes.dataModelTaxonomy = 'Unknown';
+      },
+      'OBJECT_TAXONOMY_REPLAY_UNVERIFIED',
+    ],
+    [
+      (index) => {
+        index.metadata.mktDataModelAttributes.objectCategory = 'Unknown';
+      },
+      'OBJECT_CATEGORY_TAXONOMY_REPLAY_UNVERIFIED',
+    ],
+    [
+      (index) => {
+        index.connect.isEnabled = true;
+        index.metadata.mktDataModelAttributes.isEnabled = 'true';
+      },
+      'OBJECT_EXECUTION_REPLAY_UNVERIFIED',
+    ],
+    [
+      (index) => {
+        index.metadata.mktDataModelAttributes.isUsedForMetrics = 'true';
+      },
+      'OBJECT_METRICS_REPLAY_UNVERIFIED',
+    ],
+    [
+      (index) => {
+        index.metadata.fields[0].required = true;
+      },
+      'FIELD_REQUIRED_REPLAY_UNVERIFIED',
+    ],
+  ]) {
+    const input = commonFixture();
+    mutate(input);
+    const result = runCommon(input);
+    assert.equal(result.status, 'incomplete');
+    assert.ok(result.blockers.includes(blocker), result.blockers.join(','));
+  }
+  const input = commonFixture();
+  const relationships = [
+    {
+      name: 'SyntheticLink',
+      sourceObject: { name: input.connect.name },
+      targetObject: { name: 'Other__dlm' },
+      sourceField: { name: 'Ticket__c' },
+    },
+  ];
+  const result = runCommon(input, relationships);
+  assert.ok(result.blockers.includes('RELATIONSHIP_REPLAY_UNSUPPORTED'));
+  assert.deepEqual(result.expectations.relationships, relationships);
+  assert.notEqual(result.expectations.relationships[0], relationships[0]);
+  assert.throws(() => runCommon(input, {}), DmoDocumentError);
+});
+
+test('common projection never qualifies a missing generated recipe or malformed relationship inventory', () => {
+  const input = commonFixture();
+  input.connect.fields = input.connect.fields.filter((field) => field.creationType === 'Custom');
+  delete input.connect.fields[0].keyQualifierName;
+  input.metadata.fields = input.metadata.fields.filter(
+    (field) => field.mktDataModelFieldAttributes.definitionCreationType === 'Custom',
+  );
+  const result = runCommon(input);
+  assert.equal(result.status, 'incomplete');
+  assert.ok(result.blockers.includes('GENERATED_RECIPE_REPLAY_UNVERIFIED'));
+  for (const relationship of [
+    { sourceObject: { name: 'Foreign__dlm' }, targetObject: { name: 'Other__dlm' } },
+    {
+      sourceObject: { name: input.connect.name },
+      targetObject: { name: 'Other__dlm' },
+      futureConfiguration: false,
+    },
+    {
+      sourceObject: { name: input.connect.name },
+      targetObject: { name: 'Other__dlm', futureConfiguration: false },
+    },
+  ])
+    assert.throws(() => runCommon(input, [relationship]), DmoDocumentError);
+});
+
+test('common projection handles authoritative date references and never guesses Engagement event', () => {
+  const input = commonFixture();
+  input.connect.recordModifiedFieldName = 'Recorded__c';
+  assert.equal(runCommon(input).candidate.spec.recordModifiedFieldName, 'Recorded__c');
+  input.connect.category = 'ENGAGEMENT';
+  const missing = runCommon(input);
+  assert.ok(missing.blockers.includes('ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE'));
+  assert.equal(missing.candidate, undefined);
+  input.connect.eventDateTimeFieldName = 'Recorded__c';
+  assert.equal(runCommon(input).candidate.spec.eventDateTimeFieldName, 'Recorded__c');
+  assert.ok(!runCommon(input).blockers.includes('ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE'));
+  for (const name of ['recorded__c', 'Missing__c', 'Ticket__c', 'DataSource__c']) {
+    input.connect.eventDateTimeFieldName = name;
+    assert.throws(() => runCommon(input), DmoDocumentError);
+  }
+  input.connect.category = 'PROFILE';
+  delete input.connect.eventDateTimeFieldName;
+  assert.equal(runCommon(input).candidate.spec.category, 'Profile');
+});
+
+test('common projection rejects unknown meaningful configuration and exact source conflicts', () => {
+  for (const mutate of [
+    (index) => {
+      index.connect.category = 'toString';
+    },
+    (index) => {
+      index.connect.name = 'Foreign__dlm';
+    },
+    (index) => {
+      index.connect.dataSpaceName = 'research';
+      index.metadata.mktDataModelAttributes.dataSpaceName = 'research';
+    },
+    (index) => {
+      index.metadata.mktDataModelAttributes.dataSpaceName = 'foreign';
+    },
+    (index) => {
+      index.metadata.mktDataModelAttributes.isEnabled = 'true';
+    },
+    (index) => {
+      index.connect.futureConfiguration = false;
+    },
+    (index) => {
+      index.metadata.mktDataModelAttributes.futureConfiguration = '';
+    },
+    (index) => {
+      index.metadata.fields[0].futureConfiguration = false;
+    },
+    (index) => {
+      index.connect.fields[2].futureConfiguration = false;
+    },
+    (index) => {
+      index.metadata.fields[0].fullName = 'Missing__c';
+    },
+    (index) => {
+      index.connect.fields[0].keyQualifierName = 'Missing';
+    },
+    (index) => {
+      index.metadata.fields.find(
+        (f) => f.fullName === 'KQ_Ticket__c',
+      ).mktDataModelFieldAttributes.refAttrDeveloperName = 'Missing';
+    },
+    (index) => {
+      index.metadata.indexes = [{}];
+    },
+    (index) => {
+      Object.defineProperty(index.connect, 'label', {
+        enumerable: true,
+        get() {
+          throw new Error('secret');
+        },
+      });
+    },
+  ]) {
+    const input = commonFixture();
+    mutate(input);
+    assert.throws(() => runCommon(input), DmoDocumentError);
+  }
+});
 
 test('strict joined Other projection binds exact identities and flags with verified create identity', () => {
   const input = joinedFixture();

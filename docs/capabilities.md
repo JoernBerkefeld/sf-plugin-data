@@ -65,6 +65,14 @@ pending without changing its approved future meaning. Deployment is unimplemente
 
 ## Shared gates
 
+- [x] Common offline object projector composes the shared field join with exact
+      custom identity/default scope, category/taxonomy classification, explicit
+      DateTime references and complete retained relationships. Recognized Other
+      generated defaults project with varied authored counts/types; unproven
+      recipes/storage/taxonomy remain blockers. Missing Engagement event is a
+      specific diagnostic; nonempty relationships are unsupported. No integration
+      or broader live acceptance is implied; compatibility path is unchanged.
+
 - [x] Internal bounded Other/default authored-document writer with canonical JSON,
       independent persisted-candidate mapping validation, exact `default/dmo` path,
       unchanged-byte no-op, explicit overwrite and link/directory refusal tests.

@@ -96,6 +96,38 @@ All other admitted object keys are configuration. Field configuration includes
 `isDynamicLookup`, `creationType`, `keyQualifierName`, `isDistinct`, `usageTag`.
 No field-ID exemption or generic unknown-metadata stripping exists.
 
+## Common offline object projection (integration pending)
+
+`projectCommonDmoConnectMetadata(connect: unknown, metadata: unknown,
+relationships: unknown): DmoCommonProjection` returns status `projected` or
+`incomplete`, blockers, optional validated candidate, verified local createIdentity,
+exact qualifierBindings and independent expectations containing all three inputs.
+Candidate is absent for missing Engagement event designation; it is diagnostic
+only whenever blockers remain. Inputs must be complete separately acquired
+collections; the projector cannot establish acquisition completeness itself.
+
+One common path composes the shared field join for all authored types/counts.
+Exact object name/label/description/default space and creation type must agree.
+Unknown meaningful properties reject, not disappear. The observed Other taxonomy
+and disabled/unmapped defaults qualify; unfamiliar taxonomy/category, execution,
+metrics and mapping semantics have specific blockers. Explicit Connect event and
+modified references must resolve exactly to authored DateTime fields. No Metadata
+designation key is invented. Missing Engagement event returns
+`ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE`, even with one DateTime field.
+
+The retained cross-org Other experiment establishes the generated recipe: three
+standard system Text defaults and the explicit primary-key qualifier, joined by
+metadata reference, with their observed labels/usage/default storage semantics.
+The common recognizer checks those identities and defaults, not merely a System
+tag or suffix. Recognition resolves generated/qualifier and observed length-60
+storage blockers, without requiring two authored or six total fields. Other Text
+lengths, required/distinct semantics and unfamiliar generated variants stay blocked.
+Synthetic varied-count/type success is offline qualification, not new live proof.
+No-generated shapes also retain an unverified recipe blocker. Complete nonempty
+relationships remain retained with `RELATIONSHIP_REPLAY_UNSUPPORTED`; malformed,
+foreign or unknown relationship shapes reject. Empty auxiliary Metadata
+collections are checked, not silently dropped. No command/service/writer changes.
+
 ## Common offline field join (integration pending)
 
 `joinDmoConnectMetadataFields(connectFields: unknown, metadataFields: unknown):
