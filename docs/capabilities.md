@@ -55,6 +55,13 @@ Every family must complete all gates below before support can be declared.
 
 ## Shared gates
 
+- [x] Internal bounded Other/default authored-document writer with canonical JSON,
+      independent persisted-candidate mapping validation, exact `default/dmo` path,
+      unchanged-byte no-op, explicit overwrite and link/directory refusal tests.
+      OS-temp flushed staging uses atomic publication on the same volume; cross-volume
+      output fails closed. Concurrent filesystem replacement is not fully guarded.
+      No public retrieve command wiring or discovery is delivered by this slice.
+
 - [x] Read-only authenticated Connect REST transport, structured errors and redaction.
       Synthetic verification only; CLI integration and resource contracts remain pending.
 - [x] DMO-only offset pagination, duplicate/loop and ceiling detection, synthetic tests.

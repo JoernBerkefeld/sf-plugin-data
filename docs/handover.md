@@ -1,3 +1,86 @@
+# Bounded authored Other file writer
+
+Start: 2026-10-25T17:35:58+01:00, clean requested baseline
+`b03857ee0191620650f2e9eb426284d2e111a3f9`. Read master plan, actual CMS retrieve
+flags, service, serializer and mapper before edits. Written slice plan and
+simplicity check preceded edits. Reviewed narrow Gate 1/2 inherited complete;
+Gate 3 applied by splitting writer/test from dependent command wiring. Whole
+milestone Gate 4 remains coordinator-owned; no new workers or root edits.
+
+## Done and exact interface
+
+`writeOtherDmoDocument(value: unknown, projectRoot: string, overwrite: boolean)`
+returns `Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }>` from
+src/artifacts/write-other-dmo.ts. Independently map authored candidate through
+buildOtherDmoCreateRequestFromDocument(value, 'default'), validate and serialize
+only schemaVersion/kind/identity/spec with existing canonical serializer. Exact
+output: `<project-root>/data360/default/dmo/<api-name>.json`. Family is `dmo` per
+master plan; no new artifact contract or request transport exists.
+
+Identical bytes preserve file/mtime without overwrite; differing regular-file
+bytes require overwrite. Directory destinations, file ancestors, links/junctions
+at root/ancestors/destination reject. Ancestors and prior bytes rechecked before
+publication. Stage flushed bytes in new verified OS-temp mkdtemp root, keep random
+ownership marker; atomic rename for replacements, exclusive hard-link for new
+files, then unlink only own staging file entry to remove alias. Cross-volume
+publication deliberately fails closed, no non-atomic copy fallback. OUTPUT_FAILED
+must never be reported as partial success: inspect destination before retrying
+because a post-publication operation can fail. No hostile concurrent filesystem
+sandbox guarantee; check-to-use races remain. No recursive cleanup; roots retained.
+
+Six independent synthetic tests cover canonical exact path/authored-only bytes,
+link count, identical true no-op, overwrite refusal/replacement, independent mapper
+rejection before side effects, directory/file collisions, root/all ancestor
+junctions and linked destination. Package allowlist inventory updated 18 -> 20
+for writer JS/declaration pair. Initial Windows mkdir-on-existing-drive-root
+failure fixed by lstat before creation; initial await-member lint issues fixed.
+Scoped autofix, explicit build and full zero-warning lint passed. Focused writer
+suite: 6/6 (174.2806 ms). Full suite: 93 passed, 0 failed/skipped
+(12,839.9695 ms excluding compile); smoke: 6 passed, 0 failed/skipped
+(11,024.286 ms). Sequence ended 2026-10-25T17:41:19.0242703+01:00.
+Final package-help and normal enabled-hook receipts are supplied by coordinator
+output after completion; no self-referential commit hash is embedded here.
+
+## Next command slice (not implemented here)
+
+Wire `sf data360 retrieve -m dmo:Name__dlm` only, with actual CMS definitions:
+repeatable/non-greedy `-m, --metadata`; `-d, --output-dir` directory exists:false,
+project-root default cwd; `-x, --overwrite` boolean default false. Add core default
+org/`-o` override, explicit API 65.0 and default data space. Read actual CMS base
+flag/envelope behavior first. Authenticate only after bounded selector validation;
+acquire retrieveOtherDmo full strict runtime projection, then pass only candidate
+to this writer (which independently maps it). Emit versioned contract/status/
+metadata/diagnostics/provenance/result; failed/blocked nonzero exit and payload-free
+errors. Inject acquisition/auth seam for tests; no live org calls required.
+Discovery/type-only/no-selector retrieval remain temporarily unimplemented, NOT
+removed from approved future semantics. Deploy remains unimplemented. Add CLI
+regressions, full verification/smoke/package-help, normal enabled literal-path
+commit under current approval. No new artifact contract, org write, push/tag/release.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | writer/tests/package inventory, README/artifact/capabilities/handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Gate 5 slice docs audited; whole-feature Gate 4 remains coordinator-owned. No
+wiki/site/tool listing/hover or Git workflow change needed. Root release/dependency
+registration remains coordinator-only. Fetch/status passed; no remote configured.
+Every shell/test entry preflights actual Node tmpdir/TEMP/nonempty TMP/TMPDIR for
+absolute normalized F:/Temp, process-only repair/recheck. Initial inline quoting
+failed closed before workload, corrected by piped Node source then existing script.
+No live calls/writes, global settings, push/tag/release or recursive deletion.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Authored-only Other document mapper
 
 Start: 2026-10-25T17:30:09+01:00, clean baseline

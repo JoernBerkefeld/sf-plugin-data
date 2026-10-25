@@ -5,7 +5,33 @@ expectations and joined projections remain internal, never part of that file.
 The validator/serializer, mappers and raw field projection are offline helpers;
 request mapping alone does not establish deployment acceptance. No CLI integration, filesystem discovery, published
 JSON Schema or live request execution exists. The future layout remains
-`data360/<logical-data-space>/<family>/<api-name>.json`; safe paths are unimplemented.
+`data360/<logical-data-space>/<family>/<api-name>.json`. The internal bounded
+Other writer below implements only `default/dmo`; CLI integration remains pending.
+
+## Internal authored Other file writer
+
+`writeOtherDmoDocument(value: unknown, projectRoot: string, overwrite: boolean)`
+returns `{ path: string, outcome: 'retrieved' | 'unchanged' }`. First independently
+validate through `buildOtherDmoCreateRequestFromDocument(value, 'default')`, then
+use `serializeDmoDocument`. Persist only the approved authored document, never
+expectations, source IDs or runtime observations. Output is exactly
+`<project-root>/data360/default/dmo/<api-name>.json`; the CLI must supply cwd when
+`-d` is absent. No stale-file deletion or directory discovery exists.
+
+Identical bytes preserve the existing file even without overwrite; differing
+bytes require explicit overwrite. All existing ancestors are checked with lstat
+and canonical path checks; symlinks/junctions, directory destinations and file
+ancestors reject. Parents may be created but failed publication is never success.
+Complete flushed staging is created under verified OS temp, then atomically
+renamed for replacement or exclusively hard-linked for a new destination. The
+staging file entry is removed after hard-link publication, leaving no writable
+staging alias. Roots/ownership markers are retained; no recursive cleanup occurs.
+Cross-volume publication fails closed (no copy fallback). The caller must report
+OUTPUT_FAILED as failure and inspect the destination before retrying: publication
+may have completed before a subsequent filesystem failure. Rechecking ancestors
+and prior bytes narrows but cannot eliminate concurrent path-replacement races;
+this is not a filesystem sandbox against a hostile concurrent local process.
+Payload-free DmoWriteError codes: UNSAFE_PATH, OVERWRITE_REQUIRED, OUTPUT_FAILED.
 
 ## Authored document
 

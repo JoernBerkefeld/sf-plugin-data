@@ -80,6 +80,15 @@ object description; unsupported semantics and runtime keys reject. This offline
 mapping is not deploy acceptance: deployment must separately validate the authored
 file and later verify target readback. Profile and Engagement remain
 pending; no writable Metadata projection or CLI mutation is provided. See the exact subset and evidence in the artifact document.
+An internal `writeOtherDmoDocument(candidate, projectRoot, overwrite)` now validates
+standalone Other/default authored JSON independently, serializes canonically and
+writes `data360/default/dmo/<api-name>.json` beneath the project root. Identical
+bytes are unchanged; differing regular files require overwrite. Linked ancestors,
+linked destinations and directory/file collisions reject. Complete flushed staging
+uses OS temp and atomic rename/exclusive hard-link publication; cross-volume
+publication fails closed, with no copy fallback. There is a residual concurrent
+filesystem replacement race between path validation and publication; this is not
+a hostile-process filesystem sandbox. CLI wiring remains the next slice.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),
