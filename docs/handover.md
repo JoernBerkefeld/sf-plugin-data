@@ -1,3 +1,22 @@
+# Gate 4 remediation slice 1: execution admission
+
+Started 2026-10-25 19:19+01:00 from clean 6bb18fe; fetch/status confirmed.
+Only round-1 must-fix admission addressed. Shared `preflightDmoDeploy` now blocks
+non-Other category and non-Text/dynamic primary keys with payload-free
+SOURCE_EXECUTION_UNSUPPORTED before target reads. Offline mapper remains unchanged;
+no field-count or unrelated authored-type restriction. Executor and public batch
+already reuse this preflight, so a later unsupported selection prevents earlier POSTs.
+
+Verification 2026-10-25 19:26+01:00: explicit build, scoped autofix, full lint zero
+warnings, full tests 181/181 (26.530s), smoke 7/7 (24.796s), package smoke 26 entries /
+3 isolated installed help checks all exit 0. Normal enabled-hook commit follows.
+README/capabilities updated; independent package 0.1.0 unchanged, no releases.
+Propagation: sf-plugin-data360 done; all language catalogs/parsers/LSP/extensions/
+MCP/MSO and independent CLI repos N/A. No root edits or live org calls. Scratch
+retained under verified OS temp, no recursive deletion. Original reviewer remains
+coordinator-owned; no separate review claimed. Next slice: operation-local Metadata
+SOAP redirect refusal with actual installed stack regression and unchanged caller.
+
 # Public bounded execution integration slice
 
 Started 2026-10-25 19:05+01:00 from clean requested

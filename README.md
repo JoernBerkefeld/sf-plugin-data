@@ -37,7 +37,10 @@ Field reordering alone is unchanged. All authored differences are blocked until
 the PATCH contract is proven; unknown target semantics fail closed. Its preview
 contains static diagnostics, never requests, raw org IDs or remote payloads.
 `sf data360 deploy --preview` now uses this service for every explicitly selected
-local authored input. API 65.0/default scope remains service-owned.
+local authored input. API 65.0/default scope remains service-owned. Execution
+admission requires Other category with a nondynamic Text primary key; other
+portable offline schemas are blocked before target reads because current readback
+cannot qualify them. Authored counts and other field types remain unrestricted.
 Internal `executeDmoCreate` now performs fresh preflight, a single guarded create only
 on proven absence, and independent qualified readback. Existing equality is a no-op;
 existing differences remain blocked. HTTP success alone is not verified creation;

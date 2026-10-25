@@ -28,6 +28,10 @@ DMO members with bounded no-link authored-only JSON admission. Repeated identica
 inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
 this resolver and per-item target preflight with core org/API/default scope flags.
 Preview returns advisory create/unchanged/blocked-changes/blocked results without writes.
+Shared execution preflight rejects authored categories other than Other and primary
+keys that are non-Text or dynamic before target reads: these cannot qualify through
+the current generated-recipe readback contract. Offline mapping remains broader;
+no authored field-count or unrelated field-type restriction is introduced.
 Without preview the command preflights the whole selection before sequential executor
 calls, stopping on first blocked/failure/unknown mutation and retaining completed and
 explicitly unattempted item receipts. Each executor still preflights independently. Internal `executeDmoCreate` now adds a fixed-endpoint

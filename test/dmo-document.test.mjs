@@ -7,6 +7,7 @@ import path from 'node:path';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { writeDmoDocument } from '../lib/artifacts/write-other-dmo.js';
 import {
+  buildDmoCreateRequestFromDocument,
   buildOtherDmoCreateRequest,
   buildOtherDmoCreateRequestFromDocument,
   classifyDmoRawField,
@@ -1706,6 +1707,16 @@ for (const [code, mutate] of [
     const { source, preview } = preflightFixture();
     mutate(source);
     const result = await preview();
+    const primary = source.spec.fields.find((field) => field.isPrimaryKey);
+    if (
+      source.spec.category !== 'Other' ||
+      primary.dataType !== 'Text' ||
+      primary.isDynamicLookup
+    ) {
+      assert.equal(result.outcome, 'blocked');
+      assert.equal(result.diagnostics[0].code, 'SOURCE_EXECUTION_UNSUPPORTED');
+      return;
+    }
     assert.equal(result.outcome, 'blocked-changes');
     assert.equal(result.target, 'present');
     assert.ok(result.diagnostics.some((item) => item.code === code));
@@ -2068,6 +2079,31 @@ test('executor input and scope failures never POST; preview objects are not auth
   };
   const result = await f.execute();
   assert.equal(result.mutation, 'not-attempted');
+});
+
+test('preview and executor reject known unqualifiable authored properties before target reads', async () => {
+  for (const variant of ['Profile', 'Engagement', 'Number', 'dynamic']) {
+    const f = executionFixture();
+    const primary = f.source.spec.fields.find((field) => field.isPrimaryKey);
+    if (variant === 'Profile' || variant === 'Engagement') {
+      f.source.spec.category = variant;
+      if (variant === 'Engagement')
+        f.source.spec.eventDateTimeFieldName = f.source.spec.fields.find(
+          (field) => field.dataType === 'DateTime',
+        ).name;
+    } else if (variant === 'Number') primary.dataType = variant;
+    else primary.isDynamicLookup = true;
+    // These remain valid portable/offline requests, not execution capabilities.
+    assert.doesNotThrow(() => buildDmoCreateRequestFromDocument(f.source, 'default'));
+    const preview = await f.preview();
+    assert.equal(preview.outcome, 'blocked');
+    assert.equal(preview.diagnostics[0].code, 'SOURCE_EXECUTION_UNSUPPORTED');
+    const result = await f.execute();
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(f.posts.length, 0);
+    assert.equal(f.calls.length, 0);
+  }
 });
 
 test('executor binds detached document before asynchronous preflight caller mutation', async () => {

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import Deploy from '../lib/commands/data360/deploy.js';
+import { preflightDmoDeploy } from '../lib/services/preflight-dmo-deploy.js';
 import { DeployInputError } from '../lib/artifacts/read-deploy-input.js';
 
 const input = (name = 'Preview__dlm') => ({
@@ -168,6 +169,69 @@ test('known later blocker or preflight error prevents all execution', async () =
       failure === 'throw' ? 'blocked' : failure,
     );
     assert.ok(!JSON.stringify(result).includes('private-response'));
+  }
+});
+
+test('real batch preflight blocks later unsupported schemas before any earlier writes', async () => {
+  for (const variant of ['Profile', 'Engagement', 'Number', 'dynamic']) {
+    const { command, calls } = invocation({ preview: false });
+    // eslint-disable-next-line unicorn/consistent-function-scoping -- Fixture is local to this admission regression.
+    const document = (name) => ({
+      schemaVersion: 1,
+      kind: 'dmo',
+      identity: { dataSpace: 'default', apiName: name },
+      spec: {
+        label: 'Synthetic',
+        category: 'Other',
+        fields: [
+          {
+            name: 'Key__c',
+            label: 'Key',
+            dataType: 'Text',
+            isPrimaryKey: true,
+            isDynamicLookup: false,
+          },
+          {
+            name: 'Event__c',
+            label: 'Event',
+            dataType: 'DateTime',
+            isPrimaryKey: false,
+            isDynamicLookup: false,
+          },
+        ],
+      },
+    });
+    const first = document('First__dlm');
+    const later = document('Later__dlm');
+    if (variant === 'Profile' || variant === 'Engagement') {
+      later.spec.category = variant;
+      if (variant === 'Engagement') later.spec.eventDateTimeFieldName = 'Event__c';
+    } else if (variant === 'Number') later.spec.fields[0].dataType = variant;
+    else later.spec.fields[0].isDynamicLookup = true;
+    command.resolveInputs = async () =>
+      [first, later].map((value) => ({ path: 'synthetic.json', document: value }));
+    let reads = 0;
+    const connection = {
+      instanceUrl: 'https://synthetic.example',
+      getApiVersion: () => '65.0',
+      request: async (request) => {
+        assert.equal(request.method, 'GET');
+        reads++;
+        return { dataModelObject: [] };
+      },
+    };
+    command.preflight = (value, _connection, api, space) =>
+      preflightDmoDeploy(value, connection, api, space);
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(exitCode, 1);
+    assert.equal(reads, 1);
+    assert.equal(
+      result.result.items[1].preflight.diagnostics[0].code,
+      'SOURCE_EXECUTION_UNSUPPORTED',
+    );
+    assert.ok(!calls.includes('execute'));
+    assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
   }
 });
 

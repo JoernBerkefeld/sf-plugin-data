@@ -16,6 +16,8 @@ export type DmoDeployPreview = {
 const messages = {
   INVALID_SOURCE: 'Supply one valid authored-only DMO document bound to default.',
   INVALID_SCOPE: 'Use an explicit API 65.0 connection and default target data space.',
+  SOURCE_EXECUTION_UNSUPPORTED:
+    'Execution requires Other category and a nondynamic Text primary key for qualified readback.',
   TARGET_AUTHENTICATION_FAILED: 'Refresh target authentication, then repeat preview.',
   TARGET_INVENTORY_UNAVAILABLE: 'Obtain a complete valid target inventory, then repeat preview.',
   TARGET_UNQUALIFIED:
@@ -113,6 +115,11 @@ export async function preflightDmoDeploy(
   } catch {
     return preview('blocked', 'unknown', ['INVALID_SOURCE']);
   }
+  // Offline mapping is broader than execution: reject authored properties that the
+  // common readback projector already knows cannot qualify, before any target read.
+  const primary = source.fields.find((field) => field.isPrimaryKey)!;
+  if (source.category !== 'Other' || primary.dataType !== 'Text' || primary.isDynamicLookup)
+    return preview('blocked', 'unknown', ['SOURCE_EXECUTION_UNSUPPORTED']);
   try {
     if (
       apiVersion !== '65.0' ||
