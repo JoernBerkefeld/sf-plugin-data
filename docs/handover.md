@@ -1,3 +1,105 @@
+# Portable DMO document slice handover
+
+Start: 2026-10-25T15:40:16+01:00. Clean baseline:
+`df649d00c0b0f0f40df252b38bc9f22667c94a5a`. Approved Gate 1/2 and sized Gate 3
+were inherited and applied: one coherent offline module/test slice, no additional
+workers or whole-feature review. No saved-plan or root edits.
+
+## Interfaces and evidence
+
+- `validateDmoDocument(value: unknown): DmoDocument` validates without projection,
+  coercion or mutation; `serializeDmoDocument(value: unknown): string` produces
+  recursively sorted object keys, two-space JSON, final LF and unchanged arrays
+  and string values. `DmoDocumentError` carries a payload-free constant message.
+- `classifyDmoRawField(level: 'object' | 'field', key: string)` returns
+  `configuration | observation | unknown`. This is key classification only, not
+  an adapter or approval to discard observations during target preflight.
+- Exact version-1 shape: `kind: 'dmo'`,
+  `identity: { dataSpace, apiName }`, `spec: { label, description?, category,
+eventDateTimeFieldName?, recordModifiedFieldName?, fields }`. Canonical custom
+  object/field names end `__dlm`/`__c`; non-namespaced local identifier subset only.
+  Categories: `Profile | Other | Engagement`. Fields preserve original order:
+  `{ name, label, description?, dataType: 'Date' | 'DateTime', isPrimaryKey:
+boolean, isDynamicLookup: false }`. Exactly one primary key, unique names
+  ignoring case; date-time references must resolve exactly to a DateTime field.
+  Engagement requires the event reference. Unknown keys at every level block.
+- [Official endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec),
+  checked 2026-10-25 after local mirror gap: custom DMO POST/PATCH available from
+  61.0; table lists dataSpaceName/description/label/name/category/event date/fields/
+  record-modified/type/status. The table uses title-case categories, its example
+  uppercase; no server normalization or selected-version support is claimed.
+  Independent synthetic fixtures use the documented Date/DateTime sample types.
+  Nested Data Object Field Input rendering was unavailable (direct fetch timed
+  out); therefore broader field types are blocked, not guessed. This small subset
+  is intentionally not a universal schema and publishes no JSON Schema yet.
+- Object raw observations: id/hasExternalDataLakeObjectMappings/isEditable/
+  isEnabled/isSegmentable. Object configuration: name/dataSpaceName/label/
+  description/category/eventDateTimeFieldName/recordModifiedFieldName/fields/
+  creationType. Field configuration: name/label/description/type/isPrimaryKey/
+  isDynamicLookup/creationType/keyQualifierName/isDistinct/usageTag. All other
+  keys are unknown; no generic field-ID exemption. Qualifiers/distinctness/usage
+  remain meaningful even though not admitted to this authored subset. A future
+  raw exporter must preserve/resolve them or block, never drop them.
+- Input-versus-output name suffixes, dataType-versus-type, generated qualifiers,
+  relationships and safe PATCH semantics are explicit future adapter checkpoints.
+  No round trip or deployability is claimed. No filesystem/CLI/live changes.
+
+## Verification receipt
+
+Standalone build, lint:fix and zero-warning lint passed; full package tests
+28 passed, 0 failed/skipped; CLI smoke 6 passed, 0 failed/skipped. Packaged install
+and all 3 outside-repository help checks passed with exactly 16 package entries.
+Seven new synthetic tests cover accepted
+shape, deterministic bytes/order/string fidelity, identity/version/unknown-field
+rejection, duplicate/primary keys/references/types, accessors/hooks and raw key
+classification. The package smoke now checks 16 files (previous transport had
+already expanded the bootstrap's stale 12-file assertion), explicitly including
+the new JS/declaration module; no public schema exists to package.
+
+The first lint surfaced JSDoc/style issues and the build caught the existing
+TypeScript library target's lack of toSorted declarations; both fixed without
+config/runtime changes. One rule-scoped documented suppression sorts a fresh
+entries array, preserving input. Initial package smoke exposed the stale count;
+dry-run inventory confirmed the exact 16 shipped files. Nothing recursively
+removed. All scratch is retained in script-owned OS-temp roots. Shell/test entry
+checks actual Node tmpdir plus TEMP/nonempty TMP/TMPDIR; only process environment
+repair was used. Initial inline PowerShell quoting failed closed before workload,
+then the existing repository preflight script was used consistently.
+
+## Next coherent slice
+
+Evidence-first DMO raw projection: establish full nested writable field schema,
+raw field attributes, qualifier generation and separate relationship retrieval;
+then implement a bounded lossless projection or explicit unsupported-variant
+blocker with synthetic detail fixtures. Do not broaden this artifact enum on SQL
+or unrelated object evidence. If evidence requires extending the subset, evolve
+it here before publishing JSON Schema. No discovery/CLI/live mutation is implicit.
+
+## Propagation Table
+
+| Component                                                                            | Needs update? | What to update                                    | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, artifact contract, capabilities, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                       | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumer                                       | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent package                               | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                       | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                       | not needed |
+
+Wiki/sites/hover data need no update for this unpublished internal module. Git
+workflow unchanged; no changelog under npm-package policy. Coordinator-only root
+release/dependency registration remains pending, explicitly outside this slice.
+No full-feature propagation/review completion is claimed.
+
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
+
+No push, tag, publication, remote/global configuration or org call was performed.
+The personal local Git identity was verified. Final commit hash/clean status and
+hook counts are supplied in the coordinator receipt (self-hash cannot be stored).
+
 # DMO pagination slice handover
 
 ## Current bounded slice: 2026-10-25

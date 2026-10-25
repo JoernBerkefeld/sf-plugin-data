@@ -42,7 +42,12 @@ no resource-family support is implied. Internal DMO list pagination now uses the
 official offset contract, rejects malformed/overlapping pages and unexpected next
 links, and fails closed at the documented offset ceiling rather than returning a
 partial inventory. It does not provide a consistent snapshot during concurrent
-org changes. Other families and portable artifacts remain unimplemented.
+org changes. An internal portable DMO validator/serializer now covers a narrow,
+offline custom Date/DateTime schema subset, with strict unknown-field rejection
+and ordered-field preservation. Raw qualifier/semantic metadata remains meaningful
+and cannot be discarded by a future adapter. This is not yet an export/deploy
+format; broader types, raw projection, filesystem handling and other families
+remain unimplemented. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),
