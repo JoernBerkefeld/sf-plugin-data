@@ -27,7 +27,9 @@ assert.equal(packed.status, 0, packed.stderr);
 // Lifecycle output precedes npm's JSON result.
 const [artifact] = JSON.parse(packed.stdout.slice(packed.stdout.indexOf('[\n')));
 assert.equal(artifact.name, '@joernberkefeld/sf-plugin-data360');
-assert.equal(artifact.entryCount, 24);
+assert.equal(artifact.entryCount, 26);
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-create.js'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-create.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/preflight-dmo-deploy.js'));

@@ -59,7 +59,7 @@ function preview(
  * @param {DmoCreateRequest} target Independently mapped qualified target.
  * @returns {Code[]} Deterministically ordered change reasons, without payload values.
  */
-function changes(source: DmoCreateRequest, target: DmoCreateRequest): Code[] {
+export function compareDmoMeaning(source: DmoCreateRequest, target: DmoCreateRequest): Code[] {
   const codes: Code[] = [];
   if (
     (['label', 'description', 'eventDateTimeFieldName', 'recordModifiedFieldName'] as const).some(
@@ -128,7 +128,7 @@ export async function preflightDmoDeploy(
     try {
       const acquired = await retrieveDmo(connection, apiName, apiVersion, dataSpace);
       const target = buildDmoCreateRequestFromDocument(acquired.candidate, dataSpace);
-      const codes = changes(source, target);
+      const codes = compareDmoMeaning(source, target);
       return codes.length === 0
         ? preview('unchanged', 'present')
         : preview('blocked-changes', 'present', [...codes, 'UPDATE_UNSUPPORTED']);

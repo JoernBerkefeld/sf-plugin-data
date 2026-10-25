@@ -2,7 +2,8 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inspect } from 'node:util';
-import { Org } from '@salesforce/core';
+import { Org, Connection } from '@salesforce/core';
+import { PassThrough } from 'node:stream';
 import { ConnectClient, ConnectError } from '../lib/transport/connect-client.js';
 
 const origin = 'https://synthetic.my.salesforce.com';
@@ -132,6 +133,71 @@ test('factory delegates org authentication and version to Salesforce core withou
     };
   });
   assert.ok((await ConnectClient.create('synthetic-alias', '65.0')) instanceof ConnectClient);
+});
+
+const authored = {
+  schemaVersion: 1,
+  kind: 'dmo',
+  identity: { dataSpace: 'default', apiName: 'Synthetic__dlm' },
+  spec: {
+    label: 'Synthetic',
+    category: 'Other',
+    fields: [
+      { name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true, isDynamicLookup: false },
+    ],
+  },
+};
+
+test('guarded create refuses invalid payload/version before any request', async () => {
+  const connection = { instanceUrl: origin, request: async () => assert.fail('no request') };
+  await assert.rejects(new ConnectClient(connection, '66.0').createDataModelObject(authored), {
+    code: 'INVALID_REQUEST',
+  });
+  await assert.rejects(new ConnectClient(connection, '65.0').createDataModelObject({}));
+});
+
+test('actual core request stack never refreshes/replays guarded POST on 401', async () => {
+  let requests = 0;
+  const refresh = {
+    isRefreshing: () => assert.fail('must not consult refresh delegate'),
+    refresh: () => assert.fail('must not refresh'),
+  };
+  const connection = Object.create(Connection.prototype);
+  Object.assign(connection, {
+    instanceUrl: origin,
+    version: '65.0',
+    accessToken: 'synthetic-token',
+    logger: { getRawLogger: () => ({ debug: () => {} }) },
+    _refreshDelegate: refresh,
+    _propagators: [],
+    _transport: {
+      httpRequest: (request, options) => {
+        requests++;
+        assert.equal(request.method, 'POST');
+        assert.equal(options.retry.maxRetries, 0);
+        const response = Promise.resolve({
+          statusCode: 401,
+          headers: { 'content-type': 'application/json' },
+          body: '[{"errorCode":"INVALID_SESSION_ID","message":"secret"}]',
+        });
+        response.stream = () => new PassThrough();
+        return response;
+      },
+    },
+  });
+  let observed;
+  const request = Connection.prototype.request;
+  connection.request = function (...arguments_) {
+    return request.apply(this, arguments_).catch((error) => {
+      observed = error;
+      throw error;
+    });
+  };
+  const client = new ConnectClient(connection, '65.0');
+  await assert.rejects(client.createDataModelObject(authored));
+  assert.equal(observed?.name, 'INVALID_SESSION_ID', String(observed));
+  assert.equal(requests, 1);
+  assert.equal(connection._refreshDelegate, refresh);
 });
 
 test('factory rejects missing inputs and redacts authentication failures', async (t) => {

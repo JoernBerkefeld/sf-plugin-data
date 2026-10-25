@@ -37,7 +37,13 @@ Field reordering alone is unchanged. All authored differences are blocked until
 the PATCH contract is proven; unknown target semantics fail closed. Its preview
 contains static diagnostics, never requests, raw org IDs or remote payloads.
 `sf data360 deploy --preview` now uses this service for every explicitly selected
-local authored input. API 65.0/default scope remains service-owned; no mutation execution exists.
+local authored input. API 65.0/default scope remains service-owned.
+Internal `executeDmoCreate` now performs fresh preflight, a single guarded create only
+on proven absence, and independent qualified readback. Existing equality is a no-op;
+existing differences remain blocked. HTTP success alone is not verified creation;
+ambiguous failures retain `mutation: unknown` and require target inspection, never
+automatic retry or rollback. This service is not wired to public CLI execution and
+has synthetic tests only, not broader deployment or live acceptance.
 
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths

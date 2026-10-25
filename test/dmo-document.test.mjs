@@ -21,6 +21,7 @@ import {
 
 import { retrieveDmo, DmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
 import { preflightDmoDeploy } from '../lib/services/preflight-dmo-deploy.js';
+import { executeDmoCreate } from '../lib/services/execute-dmo-create.js';
 
 const fixture = () => ({
   schemaVersion: 1,
@@ -1990,6 +1991,151 @@ test('retrieval propagates payload-free acquisition failure and never returns a 
     });
   }
 });
+
+const executionFixture = () => {
+  const fixture = preflightFixture();
+  const read = fixture.connection.request;
+  const posts = [];
+  fixture.connection.request = async function (request, options) {
+    if (request.method === 'POST') {
+      posts.push(request);
+      assert.equal(this._refreshDelegate, undefined);
+      assert.equal(options.retry.maxRetries, 0);
+      assert.throws(() => options.followRedirect('https://foreign.example'), {
+        code: 'INVALID_REQUEST',
+      });
+      return; // Even malformed/empty HTTP success requires independent verification.
+    }
+    if (request.url.includes('data-model-objects?')) {
+      fixture.calls.push(request);
+      return { dataModelObject: [] };
+    }
+    return read(request, options);
+  };
+  return {
+    ...fixture,
+    posts,
+    execute: () => executeDmoCreate(fixture.source, fixture.connection, '65.0', 'default'),
+  };
+};
+
+test('executor re-preflights, creates once and independently qualifies readback, not POST response', async () => {
+  const f = executionFixture();
+  f.source.spec.fields.reverse();
+  const result = await f.execute();
+  assert.equal(result.outcome, 'created');
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.equal(f.posts.length, 1);
+  assert.equal(f.calls[0].method, 'GET');
+  assert.equal(
+    f.posts[0].url,
+    'https://synthetic.example/services/data/v65.0/ssot/data-model-objects',
+  );
+  const body = JSON.parse(f.posts[0].body);
+  assert.equal(body.name, f.source.identity.apiName.slice(0, -5));
+  assert.equal(body.fields.length, f.source.spec.fields.length);
+  assert.ok(f.calls.some((call) => call.type === 'CustomObject'));
+  assert.ok(f.calls.some((call) => call.url?.includes('/relationships?')));
+});
+
+test('executor fresh existing target is noop or blocked differences with no POST', async () => {
+  for (const different of [false, true]) {
+    const f = preflightFixture();
+    if (different) f.source.spec.label += ' changed';
+    const result = await executeDmoCreate(f.source, f.connection, '65.0', 'default');
+    assert.equal(result.outcome, different ? 'blocked' : 'unchanged');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.ok(f.calls.every((call) => !call.method || call.method === 'GET'));
+  }
+});
+
+test('executor input and scope failures never POST; preview objects are not authorization', async () => {
+  for (const [document, api, space] of [
+    [{}, '65.0', 'default'],
+    [{ outcome: 'create' }, '65.0', 'default'],
+    [undefined, '66.0', 'default'],
+    [undefined, '65.0', 'foreign'],
+  ]) {
+    const f = executionFixture();
+    const result = await executeDmoCreate(document ?? f.source, f.connection, api, space);
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(f.posts.length, 0);
+    assert.equal(f.calls.length, 0);
+  }
+  const f = executionFixture();
+  f.connection.request = async () => {
+    throw new Error('secret');
+  };
+  const result = await f.execute();
+  assert.equal(result.mutation, 'not-attempted');
+});
+
+test('executor binds detached document before asynchronous preflight caller mutation', async () => {
+  const f = executionFixture();
+  const original = JSON.stringify(f.source);
+  const read = f.connection.request;
+  f.connection.request = async function (request, options) {
+    if (request.method === 'GET' && request.url.includes('data-model-objects?')) {
+      f.source.spec.label = 'changed during await';
+      f.source.spec.fields[0].label = 'changed field';
+      f.source.identity.apiName = 'Different__dlm';
+    }
+    return read.call(this, request, options);
+  };
+  const result = await f.execute();
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.equal(JSON.parse(f.posts[0].body).label, JSON.parse(original).spec.label);
+});
+
+test('executor POST errors retain unknown possible mutation, redact payloads and never retry', async () => {
+  for (const statusCode of [undefined, 401, 403, 409, 500]) {
+    const f = executionFixture();
+    const read = f.connection.request;
+    f.connection.request = async function (request, options) {
+      if (request.method === 'POST') {
+        f.posts.push(request);
+        throw Object.assign(new Error('secret-token'), { statusCode });
+      }
+      return read.call(this, request, options);
+    };
+    const result = await f.execute();
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.diagnostics[0].code, 'CREATE_UNCONFIRMED');
+    assert.match(result.diagnostics[0].message, /may have occurred/u);
+    assert.ok(!JSON.stringify(result).includes('secret-token'));
+    assert.equal(f.posts.length, 1);
+    assert.equal(f.calls.length, 1);
+  }
+});
+
+for (const failure of ['read', 'mismatch', 'generated', 'qualifier', 'malformed']) {
+  test(`executor ${failure} readback never reports verified success or retries`, async () => {
+    const f = executionFixture();
+    if (failure === 'mismatch') f.source.spec.label += ' changed';
+    if (failure === 'generated')
+      f.input.connect.fields.find((field) => field.creationType === 'System').label = 'unknown';
+    if (failure === 'qualifier')
+      f.input.connect.fields.find((field) => field.keyQualifierName).keyQualifierName = 'missing';
+    const read = f.connection.request;
+    f.connection.request = async function (request, options) {
+      if (request.method === 'GET' && !request.url.includes('data-model-objects?')) {
+        if (failure === 'read') throw new Error('secret-token');
+        if (failure === 'malformed') return {};
+      }
+      return read.call(this, request, options);
+    };
+    const result = await f.execute();
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(
+      result.diagnostics[0].code,
+      failure === 'mismatch' ? 'READBACK_MISMATCH' : 'READBACK_UNQUALIFIED',
+    );
+    assert.equal(f.posts.length, 1);
+    assert.ok(!JSON.stringify(result).includes('secret-token'));
+  });
+}
 
 test('raw classification keeps qualifier and semantic metadata meaningful and unknowns blocked', () => {
   for (const key of ['keyQualifierName', 'isDistinct', 'usageTag', 'creationType', 'type'])

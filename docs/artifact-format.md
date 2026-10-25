@@ -5,7 +5,7 @@ expectations and joined projections remain internal, never part of that file.
 The validator/serializer, mappers and raw field projection are offline helpers;
 request mapping alone does not establish deployment acceptance. Explicit CLI
 retrieval now delegates to the existing service and writer; filesystem discovery,
-published JSON Schema and deployment request execution remain unimplemented. The future layout remains
+published JSON Schema and public CLI deployment execution remain unimplemented. The future layout remains
 `data360/<logical-data-space>/<family>/<api-name>.json`. The internal bounded
 DMO writer below implements only `default/dmo`; explicit CLI retrieval is wired
 to the service and this writer without adding command-level profile restrictions.
@@ -68,6 +68,33 @@ service outcome/target/absenceProof/diagnostics. Aggregate success means preview
 only; any blocked item yields blocked/exit 1, unexpected failure yields failed/exit 1.
 All input resolution precedes command-owned org inspection. No writes or mutation
 transport; parser/auth flag errors use core diagnostics.
+
+## Internal guarded create executor
+
+`executeDmoCreate(document: unknown, connection: TargetConnection, apiVersion: unknown,
+dataSpace: unknown): Promise<DmoCreateExecution>` accepts independently validated
+authored input and actual core connection subset (instanceUrl/request/metadata/
+getApiVersion), with explicit API65/default. It reconstructs a detached artifact
+before awaiting, then repeats preflight at execution time. No saved preview is
+accepted. Qualified unchanged targets do nothing; any existing differences block.
+Only complete-inventory absence authorizes the single fixed-route POST.
+
+Result `{outcome, mutation, preflight?, diagnostics}` uses outcome unchanged/blocked/
+created/failed and mutation not-attempted/confirmed-created/unknown. POST errors
+are unknown even when a status exists: creation may have occurred. POST bodies,
+including empty or malformed success bodies, are not completion evidence or trusted
+identities. Independent exact-name Connect detail + core Metadata read + complete
+relationships must pass common projector generated/qualifier integrity and
+identity-keyed authored comparison before confirmed-created. Missing/unqualified
+readback is READBACK_UNQUALIFIED; qualified semantic differences READBACK_MISMATCH.
+Unknown outcomes require target inspection; no automatic retry or rollback exists.
+The transport disables network retries and masks only the per-call JSforce refresh
+delegate to prevent its automatic 401 POST replay, without changing the original
+connection. Redirects, arbitrary write paths, PATCH and DELETE are unavailable.
+Inventory is not a transaction: concurrent creation cannot be ruled out. Tests are
+synthetic only; the mapper's wider input admission does not establish broader
+projector qualification or live deployment acceptance. Public CLI execution is
+still blocked and is the next slice, not enabled here.
 
 ## Internal common authored DMO file writer
 

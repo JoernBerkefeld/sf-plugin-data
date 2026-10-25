@@ -1,3 +1,90 @@
+# Internal guarded-create executor slice
+
+Started 2026-10-25 18:54+01:00 from clean requested
+`89079fd06204097c0250d7bce1ee1111218139e7`. Fetch/status clean main; no remote
+configured. Initial inline temp check quoting failed closed, corrected before
+workload. Written slice plan and explicit simplicity check preceded edits;
+inherited reviewed shared-DMO plan applies (Gates 1/2 complete). Gate 3 one small
+coupled transport/executor/test slice; no additional worker or root edit.
+Whole-feature Gate 4 remains coordinator-owned, not claimed complete here.
+
+## Exact executor and mutation interface
+
+New `src/services/execute-dmo-create.ts` exports
+`executeDmoCreate(document: unknown, connection: TargetConnection, apiVersion: unknown,
+dataSpace: unknown): Promise<DmoCreateExecution>`. TargetConnection is actual core
+Connection instanceUrl/request/metadata/getApiVersion subset, explicit API65/default.
+Result `{outcome:'unchanged'|'blocked'|'created'|'failed',
+mutation:'not-attempted'|'confirmed-created'|'unknown',
+preflight?:DmoDeployPreview,diagnostics:Array<{code:string,message:string}>}`.
+No public command execution wiring, saved preview input, file discovery or reports.
+
+Independently authored-maps and reconstructs a private detached snapshot/request
+synchronously before first await. No caller document references survive into
+execution. Fresh `preflightDmoDeploy` runs, never trusts prior preview. Unchanged
+is not-attempted no-op; differences/unqualified existing/inventory/scope/input
+failures block without POST. Only complete-inventory exact scoped absence permits
+one create. Existing `compareDmoMeaning` is exported/reused (exact name-keyed fields,
+reorder ignored; optional absence distinct, all authored fixed fields compared).
+
+`ConnectClient.createDataModelObject(document:unknown):Promise<unknown>` independently
+maps input to JSON and fixed API65 SSOT data-model-objects POST only. Existing
+same-origin/path/redirect/error-redaction protections reused, retry.maxRetries=0.
+Actual core JSforce automatically replays on 401 unless its refresh delegate is
+masked: per-call receiver inherits original connection, shadows _refreshDelegate
+only, original connection unchanged. Synthetic actual Connection.prototype request
+stack regression proves one POST/401 and no refresh; no credential extraction or
+runtime dependency addition. No generic arbitrary writes/PATCH/delete/rollback.
+
+POST body is untrusted and not completion evidence; malformed/empty success still
+needs independent exact authored identity `retrieveDmo` Connect detail + core
+Metadata + complete relationships. Common projector must establish actual generated
+recipe and qualifier integrity, then common mapped authored meaning must match.
+Only this yields created/confirmed-created. POST errors -> failed/unknown with
+CREATE_UNCONFIRMED; failed/unqualified readback -> READBACK_UNQUALIFIED; qualified
+meaning mismatch -> READBACK_MISMATCH. All explicitly retain creation-may-have-
+occurred evidence and manual inspect-before-retry guidance; no automatic retry.
+Inventory absence is not a concurrency transaction; a racing creator cannot be
+ruled out. Common mapper admits wider semantics than demonstrated projector;
+unsupported recipes cannot report verified. No broader/live deployment acceptance.
+
+## Verification, propagation and next slice
+
+Ten executor regressions use actual existing independent common schema fixtures:
+fresh preflight/equality/differences, invalid source/scope/preview, mutation during
+await, successful independently verified empty POST body, status/network errors,
+readback missing/malformed/mismatched/generated/qualifier errors, no retries.
+Two transport cases cover invalid admission and actual core-stack 401 replay guard.
+Focused 97 document + 8 transport tests passed. Explicit build, scoped ESLint
+--fix, full zero-warning lint, full 175/175 tests (25524.0349 ms), 7/7 CLI smoke
+(23770.1966 ms), package smoke (26 entries, 3 installed help checks) all passed
+2026-10-25 at approximately 19:03+01:00 (complete verification command exit 0,
+90869 ms). Normal enabled-hook commit receipt follows in coordinator response. Package
+inventory updated to 26 entries, including executor JS/declarations. Existing
+README/artifact-format/capabilities/handover updated; no npm changelog.
+
+Every shell/test checks absolute normalized TEMP/actual Node os.tmpdir/nonempty
+TMP/TMPDIR F:/Temp, process-only repair/recheck. Package/test scratch uses existing
+verified OS-temp mkdtemp scripts and is retained; no recursive cleanup. No live org
+calls, reference names, push/tag/release/version bump. Current package remains 0.1.0,
+new version unassigned. Gate 5 slice propagation: sf-plugin-data360 done; language
+catalog/parser/LSP/extensions/MCP/MSO and independent CMS/MCNext N/A, no downstream
+updates, wiki/site/listing/hover changes. Whole-feature review still parent-owned.
+
+NEXT bounded CLI executor slice: begin from this committed clean tree, read this
+interface and existing deploy command. Keep explicit source-dir/metadata selection
+and preview behavior. Only wire actual execution under fresh authorized scope;
+resolve and validate all selected authored inputs first, then call executor per
+selection with actual core API65/default target connection. Extend versioned public
+envelope to carry truthful mutation evidence, failed/unknown exit status, human
+no-retry/manual-inspection guidance, and never present HTTP success as deployment
+success. Preserve preview-only no-mutation tests and add actual-execution seam tests.
+Do not invent all-or-nothing transaction, whole-selection atomicity or rollback;
+preflight per item is not a batch concurrency guarantee. Reassess whole-selection
+fresh preflight acceptance with coordinator before CLI semantics if needed. Normal
+build/scoped-autofix/lint0/full-tests/smoke/package/enabled-hook own-path commit only
+under current approval. No public execution is enabled by this internal slice.
+
 # Command-only read-only deploy preview slice
 
 Started 2026-10-25 approximately 18:46+01:00 from clean requested

@@ -1,5 +1,6 @@
 import { Org } from '@salesforce/core';
 import type { Connection } from '@salesforce/core';
+import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
 
 export type TransportErrorCode =
   | 'INVALID_REQUEST'
@@ -25,7 +26,7 @@ export class ConnectError extends Error {
 
 type AuthenticatedConnection = Pick<Connection, 'instanceUrl' | 'request'>;
 
-/** Read-only SSOT transport; Salesforce core owns credentials and session refresh. */
+/** Bounded SSOT transport; Salesforce core owns credentials. */
 export class ConnectClient {
   private readonly origin: string;
   private readonly prefix: string;
@@ -81,14 +82,49 @@ export class ConnectClient {
     return this.read<T>(path);
   }
 
+  /**
+   * Create one validated authored DMO at the fixed API65 endpoint, without retry or redirect.
+   * A per-call receiver masks JSforce's refresh delegate (which otherwise replays POST on 401).
+   * Never mutates the supplied connection or exposes a generic write route.
+   * @param {unknown} document Independently validated authored-only default-space document.
+   * @returns {Promise<unknown>} Untrusted response, never proof of successful creation.
+   */
+  public async createDataModelObject(document: unknown): Promise<unknown> {
+    if (this.apiVersion !== '65.0') throw new ConnectError('INVALID_REQUEST');
+    const body = JSON.stringify(buildDmoCreateRequestFromDocument(document, 'default'));
+    const receiver = Object.create(this.connection) as AuthenticatedConnection;
+    Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+    return this.send(
+      {
+        method: 'POST',
+        url: this.safeUrl(`${this.prefix}data-model-objects`),
+        body,
+        headers: { 'content-type': 'application/json' },
+      },
+      receiver,
+    );
+  }
+
   private async read<T>(path: string, noContentResponse?: unknown): Promise<T> {
-    const url = this.safeUrl(path);
+    return this.send<T>(
+      { method: 'GET', url: this.safeUrl(path) },
+      this.connection,
+      noContentResponse,
+    );
+  }
+
+  private async send<T>(
+    request: Parameters<Connection['request']>[0],
+    receiver: AuthenticatedConnection,
+    noContentResponse?: unknown,
+  ): Promise<T> {
     try {
-      return await this.connection.request<T>(
-        { method: 'GET', url },
+      return await receiver.request<T>(
+        request,
         // Core narrows options to JSON, but its JSforce transport supports a redirect guard.
         {
           noContentResponse,
+          retry: { maxRetries: 0 },
           followRedirect: () => {
             throw new ConnectError('INVALID_REQUEST');
           },

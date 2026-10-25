@@ -28,8 +28,14 @@ DMO members with bounded no-link authored-only JSON admission. Repeated identica
 inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
 this resolver and per-item target preflight with core org/API/default scope flags.
 Only advisory create/unchanged/blocked-changes/blocked results exist; actual deploy
-without preview is unsupported. No mutation transport, artifact/report writes or
-new live acceptance is introduced.
+without preview is unsupported. Internal `executeDmoCreate` now adds a fixed-endpoint
+API65/default guarded POST following fresh complete-inventory absence proof. No-op
+and blocked differences never POST. Independent common retrieval must qualify
+identity, generated/qualifier integrity, relationships and authored meaning before
+confirmed-created; missing/mismatched qualification or POST errors retain unknown
+possible mutation with no retry/rollback. Public execution, artifact/report writes
+and new live acceptance are not introduced. The common mapper remains more
+permissive than the demonstrated projector; unqualified recipes never verify.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.
