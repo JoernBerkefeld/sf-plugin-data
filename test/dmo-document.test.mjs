@@ -1498,6 +1498,7 @@ const retrievalFixture = () => {
   const connection = {
     instanceUrl: 'https://synthetic.example',
     getApiVersion: () => '65.0',
+    _transport: { httpRequest: () => assert.fail('synthetic Metadata read must not use HTTP') },
     metadata: {
       read: async (type, names) => {
         calls.push({ type, names });

@@ -42,7 +42,14 @@ INVALID_SOURCE, DUPLICATE_IDENTITY. No connection or mutation transport is used.
 apiVersion: unknown, dataSpace: unknown): Promise<DmoDeployPreview>` accepts one
 standalone authored document and explicit API 65.0/default target binding. It maps
 the source independently before reads and detaches the mapped request in memory.
-No CLI, file discovery, saved plan or mutation route is introduced.
+Shared execution admission rejects non-Other categories and non-Text/dynamic primary
+keys with `SOURCE_EXECUTION_UNSUPPORTED` before target reads; the offline mapper
+remains broader, without authored-count or unrelated field-type restrictions.
+Metadata qualification uses `readDmoMetadata(connection, objectApiName)` with an
+operation-local Metadata receiver and redirect-refusing transport. Core retains
+SOAP credentials/envelope/parsing; caller connection and global defaults are unchanged.
+Redirects fail with payload-free `METADATA_REDIRECT_REFUSED` before any follow-up.
+No file discovery, saved plan or mutation route is introduced by this service.
 
 The result is `{outcome, target, absenceProof, diagnostics}`. Outcomes are `create`,
 `unchanged`, `blocked-changes` or `blocked`; target is `absent`, `present` or

@@ -153,6 +153,10 @@ permissive than the demonstrated projector; unqualified recipes never verify.
       mutation. Profile and Engagement remain pending; dmo family gates remain open.
 - [x] Internal common read-only DMO retrieval at explicit API 65.0/default scope.
       Existing core Connection supplies Connect GET and Metadata CustomObject read;
+      Metadata uses an operation-local connection/transport receiver that refuses
+      all redirects without changing the caller or global defaults. Installed
+      core/Metadata/SOAP/HTTP stack regressions cover same/cross-origin redirects,
+      no second request, payload-free errors and retained core SOAP parsing;
       exact identity/cardinality, complete relationships, strict joined projection
       and offline mapper are required before returning full expectations. Synthetic
       acquisition/failure tests plus injected CLI/file boundary tests; no write transport added.

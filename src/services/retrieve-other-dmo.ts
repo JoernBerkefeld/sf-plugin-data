@@ -17,6 +17,46 @@ export class DmoRetrieveError extends Error {
 
 type ReadConnection = Pick<Connection, 'instanceUrl' | 'request' | 'metadata' | 'getApiVersion'>;
 
+type MetadataTransport = {
+  httpRequest: (request: unknown, options: Record<string, unknown>) => unknown;
+};
+
+/**
+ * Read through core's Metadata/SOAP implementation with operation-local redirect refusal.
+ * Installed jsforce Metadata binds SOAP to _conn, bypassing Connection.request options.
+ * Shadow that receiver and transport only; retain core credentials, envelope and parser.
+ * @param {ReadConnection} connection Existing authenticated core connection.
+ * @param {string} objectApiName Exact independently validated DMO identity.
+ * @returns {Promise<unknown>} Untrusted parsed Metadata records, never a raw SOAP envelope.
+ */
+export async function readDmoMetadata(
+  connection: ReadConnection,
+  objectApiName: string,
+): Promise<unknown> {
+  try {
+    const transport = (connection as unknown as { _transport: MetadataTransport })._transport;
+    if (typeof transport?.httpRequest !== 'function')
+      throw new DmoRetrieveError('ACQUISITION_FAILED');
+    const receiver = Object.create(connection) as ReadConnection;
+    const guardedTransport = Object.create(transport) as MetadataTransport;
+    guardedTransport.httpRequest = (request, options) =>
+      transport.httpRequest(request, {
+        ...options,
+        followRedirect: () => {
+          throw new DmoRetrieveError('METADATA_REDIRECT_REFUSED');
+        },
+        retry: { maxRetries: 0 },
+      });
+    Object.defineProperty(receiver, '_transport', { value: guardedTransport });
+    const metadata = Object.create(connection.metadata) as Connection['metadata'];
+    Object.defineProperty(metadata, '_conn', { value: receiver });
+    return await metadata.read('CustomObject', [objectApiName]);
+  } catch (error: unknown) {
+    if (error instanceof DmoRetrieveError) throw error;
+    throw new DmoRetrieveError('ACQUISITION_FAILED');
+  }
+}
+
 /**
  * Acquire complete API 65/default inputs and qualify them through the common DMO projector.
  * Core owns authentication; Metadata read returns records, not a raw SOAP envelope.
@@ -48,7 +88,7 @@ export async function retrieveDmo(
       `/services/data/v${apiVersion}/ssot/data-model-objects/${objectApiName}`,
     );
     // Array input preserves record cardinality so missing/ambiguous reads cannot be selected away.
-    const records: unknown = await connection.metadata.read('CustomObject', [objectApiName]);
+    const records = await readDmoMetadata(connection, objectApiName);
     if (!Array.isArray(records) || records.length !== 1)
       throw new DmoRetrieveError('INVALID_METADATA');
     const metadata: unknown = records[0];

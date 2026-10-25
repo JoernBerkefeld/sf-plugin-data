@@ -1,3 +1,41 @@
+# Gate 4 remediation slice 2: operation-local SOAP redirect refusal
+
+Started 2026-10-25 19:28+01:00 from clean admission commit ec15e2d.
+Installed stack inspection: jsforce MetadataApi._invoke constructs SOAP with its
+_conn; SOAP/HttpApi selects conn._transport instead of Connection.request.
+Transport defaults followRedirect true, request-helper retains request headers in
+its follow-up path. A Connect request-option guard alone therefore cannot protect
+Metadata reads.
+
+`readDmoMetadata(connection: ReadConnection, objectApiName: string): Promise<unknown>`
+in retrieve-other-dmo.ts shadows a per-operation receiver and Metadata _conn,
+wrapping the existing transport with a throwing followRedirect callback and zero
+transport retries. No caller/global defaults are changed; no token extraction,
+manual SOAP serialization, parser replacement or dependency addition. Missing
+transport fails closed. Existing retrieveDmo now calls this helper; raw failures
+are static ACQUISITION_FAILED, redirect refusal METADATA_REDIRECT_REFUSED.
+
+Actual core Connection construction + installed Metadata/SOAP/HTTP/request against
+loopback servers proves all 301/302/303/307/308 same/cross-origin redirects issue
+exactly one request and zero requests to redirect destination, with payload-free
+errors and unchanged caller transport/Metadata receiver/refresh delegate. SOAP
+session header and readMetadata body are verified; separate 200 XML fixture proves
+core cardinality/fullName/label parsing survives. Focused tests 100/100 passed.
+All fixture traffic is loopback only, no live org calls or writes.
+
+README, artifact contract, capabilities and this handover updated, no optional
+findings or stale-doc cleanup. Normal full verification and enabled-hook commit
+receipt are recorded in coordinator handoff. Gate 4 round 2 belongs to original
+read-only reviewer; this worker does not launch another review. Propagation:
+primary sf-plugin-data360 done; catalogs/parsers/LSP/extensions/MCP/MSO and other
+independent CLI repos N/A. Package 0.1.0 unchanged; no root edits/push/tag/release.
+Full verification completed 2026-10-25 19:31:55+01:00: explicit build, scoped
+autofix, full lint zero warnings, full tests 183/183 (27.718s), smoke 7/7 (25.411s),
+package smoke 26 entries / 3 installed isolated help checks, all exit 0 (96.624s).
+Temp checks at each shell/test entry use actual os.tmpdir and absolute normalized
+TEMP/nonempty TMP/TMPDIR F:/Temp, process repair/recheck only; scratch retained,
+no recursive cleanup.
+
 # Gate 4 remediation slice 1: execution admission
 
 Started 2026-10-25 19:19+01:00 from clean 6bb18fe; fetch/status confirmed.

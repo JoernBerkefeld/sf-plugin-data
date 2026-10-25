@@ -47,6 +47,9 @@ existing differences remain blocked. HTTP success alone is not verified creation
 ambiguous failures retain `mutation: unknown` and require target inspection, never
 automatic retry or rollback. Public CLI execution now uses this existing service;
 qualification remains synthetic only, not broader deployment or live acceptance.
+Metadata SOAP reads refuse same-origin and cross-origin redirects through an
+operation-local transport guard; core still owns credentials and SOAP parsing,
+and the caller connection/global transport defaults are unchanged.
 
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
