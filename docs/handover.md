@@ -1,4 +1,79 @@
-# Transport/authentication slice handover
+# DMO pagination slice handover
+
+## Current bounded slice: 2026-10-25
+
+Start: 2026-10-25T15:33:29+01:00. Baseline clean HEAD:
+`a9a01d8f473dd06920420a715c9257455a3e951a`. Gate 1/2 and sized Gate 3 were
+inherited approved; no whole-feature review is claimed. This slice changes only
+transport, synthetic tests, README, capability checklist and this handover.
+
+### Official evidence and interface
+
+Local authoritative text mirrors had no DMO list contract. Approved official-site
+lookup supplied the full endpoint-specific reference section:
+[Data360 Connect REST reference](https://developer.salesforce.com/docs/data/connectapi/references/spec).
+Checked 2026-10-25: `GET /ssot/data-model-objects` (available 61.0), `limit`
+(default 50), `offset`, `orderBy` (ASC/DESC), response `dataModelObject` array.
+The documented 400 diagnostic identifies a maximum offset of 2000. The reference
+sample includes `name`, `dataSpaceName` and fields on each entry, with no total,
+page-token or next-link envelope. Search-result synthesis initially mixed in
+another endpoint's pagination; only the full DMO-specific section was used.
+No org inspection was needed; no live calls or org fixtures exist for this slice.
+
+- `ConnectClient.listDataModelObjects(): Promise<Array<Record<string, unknown>>>`
+  requests 50 entries at offsets 0, 50, ... 2000 with `orderBy=ASC`, using only
+  guarded `get`. Returns raw objects without canonical projection or filtering.
+- A short page (including empty) establishes exhaustion under limit/offset
+  semantics. An exactly full page requires another request. A full offset-2000
+  page fails closed; there is no illegal offset-2050 request or partial return.
+- Requires a valid array, maximum 50 items, and nonempty string `name` and
+  `dataSpaceName` identities. Duplicate qualified identities within/across pages
+  fail rather than accepting overlap/repetition. No stable snapshot is promised
+  during concurrent org changes; offset pagination cannot detect every omission.
+- New payload-free `ConnectError.code` values: `INVALID_PAGE` for malformed pages
+  or non-null continuation URLs/tokens, `INCOMPLETE_LIST` for overlap or exhausted
+  safe offset range. No response-supplied link is followed, even same-origin.
+  Existing authentication/request diagnostics remain unchanged.
+- API-version selection remains explicit. The reference's minimum endpoint
+  version is evidence, not live acceptance of every field at every version;
+  adapter availability preflight is still pending.
+
+### Verification / commit receipt
+
+Standalone verification completed 2026-10-25T15:37:11+01:00:
+`npm run lint:fix`, explicit build and zero-warning lint all exit 0;
+full `npm test` 21 passed, 0 failed/skipped (11,612.0617 ms excluding compile);
+`npm run smoke` 6 passed, 0 failed/skipped (11,327.6367 ms).
+Seven new pagination test cases cover completion, empty/exact-multiple endings,
+malformed later pages, unsafe/unexpected next links, overlaps/loops, ceiling
+truncation, terminal ceiling page and mid-list transport failure. Normal hooks
+repeat registry lock validation, zero-warning lint, build/full tests and smoke.
+The coordinator receipt records their exact counts, successful commit exit,
+commit hash and clean status after commit (the commit cannot embed its own hash).
+Normal hooks remain enabled. No pushes, tags,
+publication, remote setup, root edits, recursive cleanup or scratch allocation by
+this slice. Existing CLI smoke owns retained OS-temp fixtures. All shell/test
+entries checked actual Node tmpdir and TEMP/nonempty TMP/TMPDIR against F:/Temp;
+the initial shell quoting failure stopped before Git/workload execution, then
+process-only environment recheck succeeded.
+
+### Next smallest artifact slice
+
+Implement only portable DMO identity/document validation and deterministic JSON
+serialization with synthetic fixtures: `schemaVersion`, `kind`, qualified
+`identity`, and the smallest evidence-backed `spec`. Establish writable/read-only
+field classification before freezing that spec; stop if evidence is insufficient.
+No filesystem discovery, adapters, CLI changes or writes yet. Avoid a seven-family
+schema framework. Do not extend this pagination helper to unrelated envelopes.
+
+Propagation: package README/capabilities/handover updated; artifact-format and Git
+workflow remain accurate (no artifacts/CLI behavior delivered). No downstream
+consumers. Language/data/parser/LSP/extensions/MCP/MSO, CMS and MCNext are N/A;
+wiki/sites/hover data need no changes for an unpublished internal helper. Root
+release/dependency registration remains a coordinator-only follow-up, not an
+approved edit. Package stays 0.1.0; no release/version bump is being prepared.
+
+# Previous transport/authentication slice handover
 
 ## Current receipt: 2026-10-25T15:28+01:00
 

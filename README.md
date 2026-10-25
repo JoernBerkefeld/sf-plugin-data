@@ -38,7 +38,11 @@ Seven planned families are tracked in [capabilities](docs/capabilities.md).
 An internal read-only Salesforce-core transport now accepts an explicit API
 version and only same-origin `/services/data/v<version>/ssot/` requests. It rejects
 redirects and emits payload-free structured errors. It is not wired to the CLI;
-no resource-family support is implied. Pagination is the next bounded slice.
+no resource-family support is implied. Internal DMO list pagination now uses the
+official offset contract, rejects malformed/overlapping pages and unexpected next
+links, and fails closed at the documented offset ceiling rather than returning a
+partial inventory. It does not provide a consistent snapshot during concurrent
+org changes. Other families and portable artifacts remain unimplemented.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),

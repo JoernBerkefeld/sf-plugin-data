@@ -1,7 +1,12 @@
 import { Org } from '@salesforce/core';
 import type { Connection } from '@salesforce/core';
 
-export type TransportErrorCode = 'INVALID_REQUEST' | 'AUTHENTICATION_FAILED' | 'REQUEST_FAILED';
+export type TransportErrorCode =
+  | 'INVALID_REQUEST'
+  | 'AUTHENTICATION_FAILED'
+  | 'REQUEST_FAILED'
+  | 'INVALID_PAGE'
+  | 'INCOMPLETE_LIST';
 
 /** An intentionally payload-free diagnostic safe for JSON and console output. */
 export class ConnectError extends Error {
@@ -102,6 +107,56 @@ export class ConnectClient {
         statusCode,
       );
     }
+  }
+
+  /**
+   * Read the offset-paginated DMO inventory, without projecting resource fields.
+   * A short page terminates the list; unsupported continuation shapes fail closed.
+   * @returns {Promise<Array<Record<string, unknown>>>} Complete raw DMO entries or an error, never a partial list.
+   */
+  public async listDataModelObjects(): Promise<Array<Record<string, unknown>>> {
+    const result: Array<Record<string, unknown>> = [];
+    const identities = new Set<string>();
+    const limit = 50;
+    // The official endpoint caps SOQL offsets at 2000. Never probe beyond it.
+    for (let offset = 0; offset <= 2000; offset += limit) {
+      const page = await this.get<unknown>(
+        `${this.prefix}data-model-objects?limit=${limit}&offset=${offset}&orderBy=ASC`,
+      );
+      if (!page || typeof page !== 'object' || Array.isArray(page)) {
+        throw new ConnectError('INVALID_PAGE');
+      }
+      const envelope = page as Record<string, unknown>;
+      if (
+        !Array.isArray(envelope.dataModelObject) ||
+        envelope.dataModelObject.length > limit ||
+        // DMO pagination has no documented server-provided continuation URL/token.
+        ['nextPageUrl', 'nextPageToken'].some((key) => envelope[key] != undefined)
+      ) {
+        throw new ConnectError('INVALID_PAGE');
+      }
+      for (const entry of envelope.dataModelObject as unknown[]) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new ConnectError('INVALID_PAGE');
+        }
+        const item = entry as Record<string, unknown>;
+        if (
+          typeof item.name !== 'string' ||
+          !item.name.trim() ||
+          typeof item.dataSpaceName !== 'string' ||
+          !item.dataSpaceName.trim()
+        ) {
+          throw new ConnectError('INVALID_PAGE');
+        }
+        const identity = JSON.stringify([item.dataSpaceName, item.name]);
+        if (identities.has(identity)) throw new ConnectError('INCOMPLETE_LIST');
+        identities.add(identity);
+        result.push(item);
+      }
+      if (envelope.dataModelObject.length < limit) return result;
+    }
+    // A full final permitted page cannot prove exhaustion, even if exactly full.
+    throw new ConnectError('INCOMPLETE_LIST');
   }
 
   private safeUrl(path: string): string {

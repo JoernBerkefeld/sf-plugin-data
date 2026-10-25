@@ -57,7 +57,15 @@ Every family must complete all gates below before support can be declared.
 
 - [x] Read-only authenticated Connect REST transport, structured errors and redaction.
       Synthetic verification only; CLI integration and resource contracts remain pending.
-- [ ] Complete pagination, loop/truncation detection and synthetic fixtures.
+- [x] DMO-only offset pagination, duplicate/loop and ceiling detection, synthetic tests.
+      Official list endpoint is available from API 61.0: `limit` (default 50),
+      `offset` (maximum 2000), `orderBy`; response array is `dataModelObject`.
+      Internal helper requires `name` and `dataSpaceName`, returns raw entries,
+      and requires a short terminal page. Non-null next URLs/tokens are rejected,
+      never followed. No snapshot consistency under concurrent changes is claimed.
+      [Official endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec)
+      checked 2026-10-25; endpoint-specific text, not search-result synthesis.
+      Other resource pagination and live API/version acceptance remain pending.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
 - [ ] Whole-selection dependency/diff preflight and input/target drift guards.
