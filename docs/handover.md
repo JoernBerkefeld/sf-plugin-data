@@ -1,3 +1,83 @@
+# Strict offline Other Connect/Metadata projection
+
+Start: 2026-10-25T16:54:34+01:00. Clean baseline
+`dfec01f2983ceb8be725120a3445fd2b07673975`. Inherited approved master/narrowed
+plan review a2f47117 and one-fixture semantic-equivalence evidence. Written
+bounded slice plan preceded edits; smallest-design check rejected a general
+framework. One sequential slice with shared join invariants; no additional
+worker or whole-milestone Gate 4 (coordinator responsibility).
+
+## Evidence and interfaces
+
+Read only existing experiment comparison and source snapshot at
+`F:/Temp/data360-other-replay-S4bRkD`. The comparison reports full equality,
+excluding Connect ID and field-array ordering, no source drift, for ONLY one
+Other fixture. No live org calls or mutation in this slice. Synthetic test
+names/labels/data space are independently authored, not copied fixture values.
+
+`projectDmoConnectMetadata(connect: unknown, metadata: unknown, relationships:
+unknown): DmoConnectMetadataProjection` is internal/offline. Exact DMO and field
+identities join Connect to Metadata; no case folding/suffix guessing. Qualifiers
+resolve keyQualifierName -> refAttrDeveloperName -> exact generated fullName.
+Metadata primaryIndexOrder '1' and explicit dynamic 'false' supply candidate
+flags; any supplied Connect flags must agree. Only the observed disabled,
+unsegmentable, unmapped Other variant with Text primary/DateTime authored
+fields, four System Text fields and empty relationships is accepted. Metadata
+required/length presence, usage/distinctness, labels, creation types, taxonomy,
+empty auxiliary collections and unknown keys are checked, not presumed writable.
+
+Result: status incomplete; blockers ['CREATE_IDENTITY_UNVERIFIED']; two-field
+DmoDocument candidate; createIdentity {status: 'unverified', sourceApiName};
+qualifierBindings [{fieldName, qualifierFieldName}]; complete independent
+expectations {connect, metadata}. Generated fields and all admitted readback
+properties remain in expectations, never writable Metadata API input. Source
+identity is not verified autonomous request-name provenance; no portable/export
+or deploy claim, public command wiring or transport writes. Profile/Engagement,
+relationships, other shapes, repeat no-op/update remain pending.
+
+## Verification and next slice
+
+Two new synthetic tests cover successful field-order-independent joins,
+non-suffix qualifier binding, authoritative omitted Connect flags, independent
+expectations, nondeployable envelope and 22 unsupported/malformed cases. Scoped
+ESLint autofix, build, zero-warning lint, full tests and smoke run before normal
+enabled focused commit hooks. Exact counts/hash/timestamps/clean state are in
+the coordinator receipt. An initial npm argument placement incorrectly passed
+--no-workspaces to ESLint and stopped; corrected npm exec scoped autofix. One
+clone-style lint error was resolved with structuredClone, no suppression.
+
+Next smallest actionable slice: preserve verified create-name provenance as an
+explicit input/evidence binding, then construct a bounded offline Other request
+only when that binding exists. Stop rather than derive a request name from the
+readback suffix. No new live proof/writes implicit; Profile needs its own semantic
+equivalence gate and Engagement designation remains separate.
+
+Every shell/test entry checks absolute normalized TEMP, actual os.tmpdir and
+nonempty TMP/TMPDIR against F:/Temp, repairing/rechecking process-only if needed.
+No recursive cleanup, scratch allocation, root edits, push/tag/release or global
+configuration change. No remote configured; upstream cannot be verified. Version
+read directly from package.json: @joernberkefeld/sf-plugin-data360 0.1.0, unchanged.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | README, capabilities, artifact evidence, handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Wiki/sites/tool listings/hover and Git workflow need no update. No npm changelog.
+Root registration is coordinator-only and remains outside this slice. Gate 5
+slice docs are applied; whole-milestone review is deliberately not claimed.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Live API 65 relationship contract correction
 
 Start: 2026-10-25T16:12:47+01:00. Clean baseline:

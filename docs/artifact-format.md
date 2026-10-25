@@ -65,6 +65,42 @@ All other admitted object keys are configuration. Field configuration includes
 `isDynamicLookup`, `creationType`, `keyQualifierName`, `isDistinct`, `usageTag`.
 No field-ID exemption or generic unknown-metadata stripping exists.
 
+## Strict Connect/Metadata Other diagnostic slice
+
+`projectDmoConnectMetadata(connect: unknown, metadata: unknown, relationships: unknown):
+DmoConnectMetadataProjection` joins the exact DMO identity and every field's
+Connect `name` to Metadata `fullName`, independently of field-array order. Only
+one proven API 65 Other variant is admitted: two authored fields (Text primary,
+DateTime nonprimary), four System Text fields including one explicit qualifier,
+no relationships, disabled/unsegmentable/unmapped custom schema. Profile and
+Engagement are not accepted by this helper.
+
+Metadata `primaryIndexOrder: '1'` and `isDynamicLookup: 'false'` are authoritative;
+Connect flags, if present, must agree. Qualifiers bind only through exact
+`keyQualifierName` to `refAttrDeveloperName`, then the joined generated field
+identity. No suffix conversion or field-name inference occurs. Required false,
+Text length 60, DateTime length absence, usage tags, distinctness, labels and
+creation types are checked. Unknown properties, nonempty Metadata collections,
+extra/missing/duplicate fields and incompatible semantics throw payload-free
+`DmoDocumentError` rather than being discarded. These constraints describe the
+observed narrow variant, not all valid Salesforce schemas.
+
+The result always has `status: 'incomplete'`, blocker
+`CREATE_IDENTITY_UNVERIFIED`, a two-field `candidate`, explicit unverified
+`createIdentity` with the source API name, `qualifierBindings`, and independently
+copied full `expectations: { connect, metadata }`. Expectations retain generated
+fields, primary/dynamic attributes, length/required presence and all admitted
+readback metadata; they are not writable Metadata API input. The source Connect
+ID is retained as an observation, not a portable create identity. The candidate
+must never be detached and presented as deployable.
+
+Offline evidence inspected 2026-10-25: a separately authorized Other experiment
+reported full Connect/Metadata equality across orgs, excluding only Connect ID
+and field-array ordering, with no source drift. This gate is satisfied only for
+that fixture and does not establish autonomous create-name provenance, repeat
+no-op/update behavior, Profile/Engagement support or generic generated schemas.
+No live calls occur in this helper or its independently authored synthetic tests.
+
 ## Authoritative contract evidence (2026-10-25)
 
 Local official mirrors had no nested field contract. The

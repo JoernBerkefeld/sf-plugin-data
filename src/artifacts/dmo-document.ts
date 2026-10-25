@@ -270,6 +270,179 @@ export function projectDmoRawFields(value: unknown): DmoFieldProjection {
   return { status: 'incomplete', blockers: [...new Set(blockers)], candidate, configuration };
 }
 
+export type DmoConnectMetadataProjection = {
+  status: 'incomplete';
+  blockers: ['CREATE_IDENTITY_UNVERIFIED'];
+  candidate: DmoDocument;
+  createIdentity: { status: 'unverified'; sourceApiName: string };
+  qualifierBindings: Array<{ fieldName: string; qualifierFieldName: string }>;
+  /** Complete admitted readback contracts, not writable Metadata API input. */
+  expectations: { connect: Record<string, unknown>; metadata: Record<string, unknown> };
+};
+
+/**
+ * Join the proven relationship-free Other shape without guessing create names or suffixes.
+ * @param {unknown} connect Connect DMO detail.
+ * @param {unknown} metadata Matching Metadata API CustomObject.
+ * @param {unknown} relationships Complete separately acquired relationship inventory.
+ * @returns {DmoConnectMetadataProjection} Nondeployable diagnostic and exact readback expectations.
+ */
+export function projectDmoConnectMetadata(
+  connect: unknown,
+  metadata: unknown,
+  relationships: unknown,
+): DmoConnectMetadataProjection {
+  requireValid(Array.isArray(relationships) && relationships.length === 0);
+  const raw = record(connect, [...rawObjectConfiguration, ...rawObjectObservations]);
+  const emptyCollections = [
+    'actionOverrides',
+    'businessProcesses',
+    'compactLayouts',
+    'fieldSets',
+    'indexes',
+    'listViews',
+    'profileSearchLayouts',
+    'recordTypes',
+    'sharingReasons',
+    'sharingRecalculations',
+    'validationRules',
+    'webLinks',
+  ];
+  const meta = record(metadata, [
+    'fullName',
+    'fields',
+    'label',
+    'mktDataModelAttributes',
+    ...emptyCollections,
+  ]);
+  requireValid(raw.category === 'OTHER' && raw.creationType === 'Custom');
+  requireValid(!('eventDateTimeFieldName' in raw) && !('recordModifiedFieldName' in raw));
+  requireValid(meta.fullName === raw.name && meta.label === raw.label);
+  for (const key of emptyCollections)
+    requireValid(Array.isArray(meta[key]) && meta[key].length === 0);
+  const attributes = record(meta.mktDataModelAttributes, [
+    'creationType',
+    'dataModelTaxonomy',
+    'dataSpaceName',
+    'description',
+    'isEnabled',
+    'isSegmentable',
+    'isUsedForMetrics',
+    'labelOverride',
+    'masterLabel',
+    'objectCategory',
+  ]);
+  requireValid(
+    attributes.creationType === 'Custom' && attributes.dataSpaceName === raw.dataSpaceName,
+  );
+  requireValid(attributes.description === raw.description);
+  requireValid(attributes.labelOverride === raw.label && attributes.masterLabel === raw.label);
+  requireValid(attributes.dataModelTaxonomy === 'Salesforce_SFDCReferenceModel_0_93');
+  requireValid(attributes.objectCategory === 'Salesforce_SFDCReferenceModel_0_93.Related');
+  requireValid(attributes.isUsedForMetrics === 'false');
+  for (const key of ['isEnabled', 'isSegmentable'])
+    requireValid(raw[key] === false && attributes[key] === 'false');
+  requireValid(raw.hasExternalDataLakeObjectMappings === false && raw.isEditable === true);
+  requireValid(Array.isArray(raw.fields) && raw.fields.length === 6);
+  requireValid(Array.isArray(meta.fields) && meta.fields.length === raw.fields.length);
+  const joined = new Map<
+    string,
+    { field: Record<string, unknown>; attributes: Record<string, unknown> }
+  >();
+  const references = new Map<string, string>();
+  for (const item of meta.fields) {
+    const field = record(item, [
+      'fullName',
+      'label',
+      'length',
+      'required',
+      'type',
+      'summaryFilterItems',
+      'mktDataModelFieldAttributes',
+    ]);
+    requireValid(customName(field.fullName, '__c') && !joined.has(field.fullName));
+    requireValid(field.required === false);
+    requireValid(Array.isArray(field.summaryFilterItems) && field.summaryFilterItems.length === 0);
+    requireValid(
+      field.type === 'Text'
+        ? field.length === 60
+        : field.type === 'DateTime' && !('length' in field),
+    );
+    const detail = record(field.mktDataModelFieldAttributes, [
+      'definitionCreationType',
+      'isDynamicLookup',
+      'labelOverride',
+      'masterLabel',
+      'primaryIndexOrder',
+      'usageTag',
+      'refAttrDeveloperName',
+    ]);
+    requireValid(detail.isDynamicLookup === 'false');
+    requireValid(!('primaryIndexOrder' in detail) || detail.primaryIndexOrder === '1');
+    requireValid(detail.labelOverride === field.label && detail.masterLabel === field.label);
+    if ('refAttrDeveloperName' in detail) {
+      requireValid(
+        text(detail.refAttrDeveloperName) && !references.has(detail.refAttrDeveloperName),
+      );
+      requireValid(
+        detail.definitionCreationType === 'System' && detail.usageTag === 'KeyQualifier',
+      );
+      references.set(detail.refAttrDeveloperName, field.fullName);
+    }
+    joined.set(field.fullName, { field, attributes: detail });
+  }
+  const qualifierBindings: DmoConnectMetadataProjection['qualifierBindings'] = [];
+  let generated = 0;
+  const checkedFields = raw.fields.map((item: unknown) => {
+    const field = record(item, rawFieldConfiguration);
+    requireValid(typeof field.name === 'string');
+    const match = joined.get(field.name);
+    requireValid(match);
+    joined.delete(field.name);
+    requireValid(field.label === match.field.label && field.type === match.field.type);
+    requireValid(field.creationType === match.attributes.definitionCreationType);
+    requireValid(field.usageTag === match.attributes.usageTag && field.isDistinct === false);
+    requireValid(!('description' in field) && !('category' in field));
+    const primary = match.attributes.primaryIndexOrder === '1';
+    requireValid(!('isPrimaryKey' in field) || field.isPrimaryKey === primary);
+    requireValid(!('isDynamicLookup' in field) || field.isDynamicLookup === false);
+    if (field.creationType === 'Custom') {
+      requireValid(field.usageTag === 'None');
+      requireValid(primary ? field.type === 'Text' : field.type === 'DateTime');
+      if (primary) {
+        requireValid(typeof field.keyQualifierName === 'string');
+        const qualifierFieldName = references.get(field.keyQualifierName);
+        requireValid(qualifierFieldName);
+        qualifierBindings.push({ fieldName: field.name, qualifierFieldName });
+      } else requireValid(!('keyQualifierName' in field));
+      requireValid(!('refAttrDeveloperName' in match.attributes));
+    } else {
+      requireValid(field.creationType === 'System' && field.type === 'Text' && !primary);
+      requireValid(!('keyQualifierName' in field));
+      requireValid(
+        field.usageTag === ('refAttrDeveloperName' in match.attributes ? 'KeyQualifier' : 'None'),
+      );
+      generated++;
+    }
+    return { ...field, isPrimaryKey: primary, isDynamicLookup: false };
+  });
+  requireValid(
+    joined.size === 0 && generated === 4 && references.size === 1 && qualifierBindings.length === 1,
+  );
+  const { candidate } = projectDmoRawFields({ ...raw, fields: checkedFields });
+  requireValid(candidate.spec.fields.length === 2);
+  // Validation above admits JSON scalars/records only; retain all presence and generated metadata.
+  const expectations = structuredClone({ connect: raw, metadata: meta });
+  return {
+    status: 'incomplete',
+    blockers: ['CREATE_IDENTITY_UNVERIFIED'],
+    candidate,
+    createIdentity: { status: 'unverified', sourceApiName: candidate.identity.apiName },
+    qualifierBindings,
+    expectations,
+  };
+}
+
 /**
  * Sort only object keys; all arrays and string contents retain their order.
  * @param {unknown} value Validated JSON value.

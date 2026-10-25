@@ -78,6 +78,14 @@ Every family must complete all gates below before support can be declared.
       Qualified portable projection and replay remain blocked: the prior synthetic
       Engagement DMO detail omits eventDateTimeFieldName, despite a DateTime field.
       No inference or portable export is permitted from that response.
+- [x] Offline strict Connect/Metadata projection for one relationship-free Other shape.
+      Exact object/field joins, explicit qualifier binding and Metadata-authoritative
+      primary/dynamic semantics; two authored fields and complete generated/readback
+      expectations. Independently authored synthetic refusals cover unsupported variants.
+      A separate experiment proved semantic equivalence only for one Other fixture.
+      Always incomplete with CREATE_IDENTITY_UNVERIFIED; no create-name guessing,
+      public wiring, writable Metadata projection or transport mutation. Profile and
+      Engagement remain pending. This does not complete the dmo family gates.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

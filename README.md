@@ -54,7 +54,12 @@ optional count metadata, and sourceObject/targetObject endpoint records. Unknown
 bound to field projection: candidates still carry RELATIONSHIPS_NOT_ACQUIRED and
 must never be exported alone. This is not yet an export/deploy format; qualified
 relationship projection, generated-field replay and filesystem handling remain
-unimplemented. See the exact subset and evidence in the artifact document.
+unimplemented. A second offline helper joins exact Connect/Metadata identities for
+one proven relationship-free Other shape, binds qualifiers by explicit metadata
+reference, and uses authoritative primary/dynamic flags. It retains full readback
+expectations but remains incomplete: autonomous create-name provenance is not
+verified. Profile and Engagement remain pending; no suffix guessing or writable
+Metadata projection is provided. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),
