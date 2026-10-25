@@ -3,10 +3,12 @@
 The approved Git artifact is the authored-only document below. Runtime source
 expectations and joined projections remain internal, never part of that file.
 The validator/serializer, mappers and raw field projection are offline helpers;
-request mapping alone does not establish deployment acceptance. No CLI integration, filesystem discovery, published
-JSON Schema or live request execution exists. The future layout remains
+request mapping alone does not establish deployment acceptance. Explicit CLI
+retrieval now delegates to the existing service and writer; filesystem discovery,
+published JSON Schema and deployment request execution remain unimplemented. The future layout remains
 `data360/<logical-data-space>/<family>/<api-name>.json`. The internal bounded
-Other writer below implements only `default/dmo`; CLI integration remains pending.
+Other writer below implements only `default/dmo`; explicit CLI retrieval is wired
+to the service and this writer without adding command-level profile restrictions.
 
 ## Internal authored Other file writer
 

@@ -28,6 +28,17 @@ for (const command of ['data360', 'data360 retrieve', 'data360 deploy']) {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Data360/u);
+    if (command === 'data360 retrieve') {
+      for (const flag of [
+        '--metadata',
+        '--output-dir',
+        '--overwrite',
+        '--target-org',
+        '--api-version',
+        '--data-space',
+      ])
+        assert.ok(result.stdout.includes(flag), flag);
+    }
   });
 }
 
@@ -40,8 +51,13 @@ for (const command of ['retrieve', 'deploy']) {
     });
     assert.notEqual(result.status, 0);
     const output = JSON.parse(result.stdout);
-    assert.equal(output.name, 'NotImplemented');
-    assert.match(output.message, /not implemented/u);
+    if (command === 'deploy') {
+      assert.equal(output.name, 'NotImplemented');
+      assert.match(output.message, /not implemented/u);
+    } else {
+      assert.equal(output.result.status, 'blocked');
+      assert.equal(output.result.diagnostics.errors[0].code, 'RETRIEVE_SELECTION_NOT_IMPLEMENTED');
+    }
   });
 }
 

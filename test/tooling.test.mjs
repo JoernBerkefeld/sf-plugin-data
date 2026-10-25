@@ -13,7 +13,7 @@ test('ESLint autofix preserves standard starred JSDoc', async () => {
   assert.equal(configuration.rules['unicorn/no-asterisk-prefix-in-documentation-comments'][0], 0);
 });
 
-test('capability checklist keeps every family unimplemented', async () => {
+test('capability checklist accurately distinguishes bounded DMO retrieval from general support', async () => {
   const checklist = await readFile('docs/capabilities.md', 'utf8');
   for (const family of [
     'dlo',
@@ -24,6 +24,13 @@ test('capability checklist keeps every family unimplemented', async () => {
     'segment',
     'calculated-insight',
   ]) {
-    assert.ok(checklist.includes(`## ${family}: unimplemented`), family);
+    assert.ok(
+      checklist.includes(
+        family === 'dmo'
+          ? '## dmo: general support unimplemented; bounded explicit retrieval available'
+          : `## ${family}: unimplemented`,
+      ),
+      family,
+    );
   }
 });

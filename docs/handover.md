@@ -1,3 +1,90 @@
+# Explicit retrieve command wiring
+
+Start: 2026-10-25T17:45:08+01:00, clean requested baseline
+`f0c7e6b12ac5dbeaa8a5614f6cdaf3da9fb95d06`. Fetch/status completed; no remote is
+configured. Actual CMS flags/base finalization and installed core org/API flags
+read before edits. Written bounded plan and simplicity check preceded edits;
+reviewed narrow Gate 1/2 inherited complete, Gate 3 one coupled command/test slice.
+Whole-milestone Gate 4 remains coordinator-owned. Independent shared-DMO planning
+worker owns model expansion; no artifact/service/writer model changes in this slice.
+
+## Command and boundaries
+
+`sf data360 retrieve [-o source] [--api-version 65.0] [--data-space default]
+-m dmo:Name__dlm [-d project-root] [-x] [--json]`.
+
+Actual CMS metadata/output/overwrite semantics mirrored: metadata repeatable and
+multipleNonGreedy, currently exactly one explicit dmo member; output-dir directory
+exists:false and default cwd; overwrite boolean default false. Core optionalOrg
+supports -o override/configured default; missing org gets blocked envelope. Core
+orgApiVersion defaults to explicit 65.0 and passes through unchanged, as does data
+space. Command validates selector syntax only, not names/categories/field counts/
+profile/version/data-space capability. Existing service owns those decisions.
+Current fixture-specific service capability is temporary, not permanent design.
+Type-only, no-selector and discovery retrieval remain pending future semantics.
+Deploy unchanged/unimplemented; no new deploy path or artifact contract.
+
+Protected acquire/writeDocument seams default to retrieveOtherDmo and
+writeOtherDmoDocument. Actual authenticated core connection -> full strict runtime
+projection -> candidate only -> independent writer mapper/serializer. Output stays
+`<project-root>/data360/default/dmo/Name__dlm.json`; runtime expectations and org IDs
+never enter that JSON. Source org identity belongs only to result provenance.
+
+Versioned `sf-data360-retrieve` / 1.0.0 envelope: status success/blocked/failed,
+metadata operation/plugin/version/API, diagnostics warnings/errors, provenance
+producer/sourceOrgId/pluginVersion/command/time, result scope/selection/items.
+Normal SfCommand --json outer wrapper contains this envelope in result; no custom
+JSON emitter/framework. Blocked/failed exits 1, success normal exit 0. Parser/auth
+flag failures retain core CLI errors. Service/document refusals are blocked;
+writer OUTPUT_FAILED or unexpected exceptions are failed. No remote cause/body
+is exposed, no silent partial success; publication ambiguity stays failure.
+
+## Tests and verification
+
+Six injected command tests cover full boundary invocation/candidate-only writing,
+forward-compatible version/space pass-through without command schema checks,
+explicit temporary selector refusal before acquisition/writes, missing org,
+redacted acquisition/service failure and all writer failures. Existing CLI tests
+now assert retrieve blocked envelope and help flags; deploy refusal unchanged.
+Capability test now honestly distinguishes general unsupported families from
+bounded implemented DMO retrieval. Scoped autofix, explicit build and full lint
+passed with zero warnings. Full suite: 99 passed, 0 failed/skipped (12,514.017 ms
+excluding compile). Smoke: 6 passed, 0 failed/skipped (12,380.0983 ms). Sequence
+ended 2026-10-25T17:49:10.9918441+01:00. Packaged help and normal enabled hook
+receipts are supplied in coordinator output after commit; no self hash embedded here.
+
+## Next slice
+
+Consume independent shared-common-DMO plan and approved scope before changing
+models; do not make this command's current service shape permanent. Tests use
+injected synthetic seams; no live org calls/writes occurred. Discovery/type-only/
+no-selector future behavior stays pending. Preserve writer path/publication safety
+and independently validated authored artifact. No deployment expansion implicit.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | command/tests/topic/help, README/artifact/capability/handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Gate 5 slice docs checked; whole-feature Gate 4 remains coordinator-owned. Root
+release/dependency registration remains coordinator-only. No wiki/site/tool listing/
+hover update needed for unpublished slice; no npm changelog/version/release prepared.
+Every shell/test entry checks TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+as absolute normalized F:/Temp with process-only repair/recheck. Existing smoke
+owns OS-temp fixtures; command tests require no scratch. No recursive cleanup,
+root/global edits, org calls/writes, push/tag/release or additional workers.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Bounded authored Other file writer
 
 Start: 2026-10-25T17:35:58+01:00, clean requested baseline

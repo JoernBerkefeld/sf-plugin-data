@@ -1,6 +1,8 @@
 # Capability contract checklist
 
-All seven families are **unimplemented**. No endpoint or writable variant is
+General seven-family support is **unimplemented**; explicit bounded DMO retrieval
+is available through current service-owned capability checks, not a permanent
+fixture-specific architecture. No endpoint or writable variant is
 claimed verified. Historical API observations are not implemented contracts.
 Every family must complete all gates below before support can be declared.
 
@@ -11,7 +13,14 @@ Every family must complete all gates below before support can be declared.
 - [ ] Classify writable/read-only/unknown fields and connector prerequisites.
 - [ ] Prove configuration-only create/update/no-op without starting ingestion.
 
-## dmo: unimplemented
+## dmo: general support unimplemented; bounded explicit retrieval available
+
+`sf data360 retrieve -m dmo:ApiName` delegates capability checks to the existing
+service, then writes authored-only canonical JSON through the existing writer.
+No command-level category/field-count restriction is added. Current service
+supports API 65.0/default and one evidenced Other shape; shared common DMO
+expansion is pending independently. Type-only/no-selector discovery remains
+pending without changing its approved future meaning. Deployment is unimplemented.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.
@@ -60,10 +69,10 @@ Every family must complete all gates below before support can be declared.
       unchanged-byte no-op, explicit overwrite and link/directory refusal tests.
       OS-temp flushed staging uses atomic publication on the same volume; cross-volume
       output fails closed. Concurrent filesystem replacement is not fully guarded.
-      No public retrieve command wiring or discovery is delivered by this slice.
+      Explicit retrieve command now delegates here; discovery remains pending.
 
 - [x] Read-only authenticated Connect REST transport, structured errors and redaction.
-      Synthetic verification only; CLI integration and resource contracts remain pending.
+      Explicit DMO CLI integration is implemented; broader resource contracts remain pending.
 - [x] DMO-only offset pagination, duplicate/loop and ceiling detection, synthetic tests.
       Official list endpoint is available from API 61.0: `limit` (default 50),
       `offset` (maximum 2000), `orderBy`; response array is `dataModelObject`.
@@ -103,7 +112,7 @@ Every family must complete all gates below before support can be declared.
       Existing core Connection supplies Connect GET and Metadata CustomObject read;
       exact identity/cardinality, complete relationships, strict joined projection
       and offline mapper are required before returning full expectations. Synthetic
-      acquisition/failure tests only; no CLI/file wiring or write transport added.
+      acquisition/failure tests plus injected CLI/file boundary tests; no write transport added.
 - [x] Separate offline authored-document Other/default request mapping.
       Approved Git shape is schemaVersion/kind/identity/spec only; runtime source
       expectations remain internal. Standalone JSON validates without a projection:

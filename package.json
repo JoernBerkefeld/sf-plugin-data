@@ -24,7 +24,7 @@
     "topicSeparator": " ",
     "topics": {
       "data360": {
-        "description": "Portable Data360 configuration (bootstrap; operations not implemented)."
+        "description": "Portable Data360 configuration (bounded explicit DMO retrieval; deployment pending)."
       }
     }
   },
