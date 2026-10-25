@@ -7,6 +7,7 @@ import {
   classifyDmoRawField,
   projectDmoRawFields,
   projectDmoConnectMetadata,
+  joinDmoConnectMetadataFields,
   DmoDocumentError,
   serializeDmoDocument,
   validateDmoDocument,
@@ -536,6 +537,199 @@ test('strict joined projection rejects mismatched joins and unsupported semantic
   const { connect, metadata } = joinedFixture();
   assert.throws(() => projectDmoConnectMetadata(connect, metadata, [{}]), DmoDocumentError);
   assert.throws(() => projectDmoConnectMetadata(connect, metadata), DmoDocumentError);
+});
+
+const commonFields = (types) => {
+  const connect = types.map((type, index) => ({
+    name: `Attribute${index}__c`,
+    label: `Attribute ${index}`,
+    type,
+    creationType: 'Custom',
+    isDistinct: false,
+    usageTag: 'None',
+    isDynamicLookup: index % 2 === 0,
+  }));
+  const metadata = connect
+    .map((field, index) => ({
+      fullName: field.name,
+      label: field.label,
+      type: field.type,
+      mktDataModelFieldAttributes: {
+        definitionCreationType: 'Custom',
+        isDynamicLookup: String(field.isDynamicLookup),
+        ...(index === 0 ? { primaryIndexOrder: '1' } : {}),
+      },
+    }))
+    .toReversed();
+  return { connect, metadata };
+};
+
+test('common field join supports varied counts and all documented types without fixture snapshots', () => {
+  const types = [
+    'Number',
+    'Text',
+    'Date',
+    'DateTime',
+    'Url',
+    'Phone',
+    'Email',
+    'Percent',
+    'Boolean',
+    'Currency',
+    'ArrayOfFloats',
+    'ArrayOfTexts',
+  ];
+  for (const count of [1, 3, 12, 19]) {
+    const input = commonFields(
+      Array.from({ length: count }, (_, index) => types[index % types.length]),
+    );
+    input.connect[0].description = '';
+    input.connect[0].category = 'Independent category';
+    const before = structuredClone(input);
+    const result = joinDmoConnectMetadataFields(input.connect, input.metadata);
+    assert.equal(result.fields.length, count);
+    assert.deepEqual(
+      result.fields.map((field) => field.dataType),
+      input.connect.map((field) => field.type),
+    );
+    assert.equal(result.fields[0].isPrimaryKey, true);
+    assert.equal(result.fields[0].description, '');
+    assert.equal(result.fields[0].category, 'Independent category');
+    assert.deepEqual(result.blockers, []);
+    result.expectations.connect[0].label = 'changed';
+    result.fields[0].label = 'changed';
+    assert.deepEqual(input, before);
+  }
+});
+
+test('common join resolves complete explicit qualifiers and classifies generated semantics', () => {
+  const { connect, metadata } = joinedFixture();
+  const result = joinDmoConnectMetadataFields(connect.fields, metadata.fields);
+  assert.equal(result.fields.length, 2);
+  assert.deepEqual(result.qualifierBindings, [
+    { fieldName: 'Ticket__c', qualifierFieldName: 'Partition__c' },
+  ]);
+  assert.ok(result.blockers.includes('GENERATED_FIELD_REPLAY_UNVERIFIED'));
+  assert.ok(result.blockers.includes('FIELD_LENGTH_REPLAY_UNVERIFIED'));
+  const input = commonFields(['Text', 'Date']);
+  input.metadata[1].length = 247;
+  input.metadata[1].required = true;
+  input.connect[1].isDistinct = true;
+  assert.deepEqual(
+    new Set(joinDmoConnectMetadataFields(input.connect, input.metadata).blockers),
+    new Set([
+      'FIELD_LENGTH_REPLAY_UNVERIFIED',
+      'FIELD_REQUIRED_REPLAY_UNVERIFIED',
+      'FIELD_DISTINCT_REPLAY_UNVERIFIED',
+    ]),
+  );
+});
+
+test('common join resolves multiple independent qualifiers without fixed generated counts', () => {
+  const { connect, metadata } = joinedFixture();
+  const second = structuredClone(connect.fields[5]);
+  second.name = 'SeparateQualifier__c';
+  connect.fields.push(second);
+  connect.fields[1].keyQualifierName = 'SecondReference';
+  const secondMeta = structuredClone(metadata.fields[0]);
+  secondMeta.fullName = second.name;
+  secondMeta.mktDataModelFieldAttributes.refAttrDeveloperName = 'SecondReference';
+  metadata.fields.push(secondMeta);
+  const result = joinDmoConnectMetadataFields(connect.fields, metadata.fields);
+  assert.deepEqual(result.qualifierBindings, [
+    { fieldName: 'Ticket__c', qualifierFieldName: 'Partition__c' },
+    { fieldName: 'Recorded__c', qualifierFieldName: 'SeparateQualifier__c' },
+  ]);
+  assert.equal(result.fields.length, 2);
+  assert.ok(result.blockers.includes('GENERATED_QUALIFIER_REPLAY_UNVERIFIED'));
+  secondMeta.mktDataModelFieldAttributes.refAttrDeveloperName = 'ExplicitPartitionReference';
+  assert.throws(
+    () => joinDmoConnectMetadataFields(connect.fields, metadata.fields),
+    DmoDocumentError,
+  );
+});
+
+test('common join reconciles supplied dynamic flags and refuses unknown absence or conflict', () => {
+  const input = commonFields(['Text', 'Date']);
+  delete input.metadata[1].mktDataModelFieldAttributes.isDynamicLookup;
+  delete input.connect[1].isDynamicLookup;
+  assert.deepEqual(
+    joinDmoConnectMetadataFields(input.connect, input.metadata).fields.map(
+      (f) => f.isDynamicLookup,
+    ),
+    [true, false],
+  );
+  delete input.connect[0].isDynamicLookup;
+  assert.throws(
+    () => joinDmoConnectMetadataFields(input.connect, input.metadata),
+    DmoDocumentError,
+  );
+});
+
+test('common join rejects incomplete identities, conflicting sources and unsupported semantics', () => {
+  for (const mutate of [
+    (c, m) => {
+      m.pop();
+    },
+    (c, m) => {
+      m[0].fullName = m[1].fullName;
+    },
+    (c, m) => {
+      m[0].fullName = 'attribute1__c';
+    },
+    (c) => {
+      c[0].isPrimaryKey = false;
+    },
+    (c, m) => {
+      m[0].mktDataModelFieldAttributes.isDynamicLookup = 'true';
+    },
+    (c, m) => {
+      delete m[1].mktDataModelFieldAttributes.primaryIndexOrder;
+    },
+    (c, m) => {
+      m[0].mktDataModelFieldAttributes.definitionCreationType = 'System';
+    },
+    (c) => {
+      c[0].keyQualifierName = 'Unresolved';
+    },
+    (c) => {
+      c[1].usageTag = 'UnsupportedMeaning';
+    },
+    (c) => {
+      c[1].relationship = {};
+    },
+    (c, m) => {
+      m[0].precision = 12;
+    },
+    (c, m) => {
+      m[0].summaryFilterItems = [{}];
+    },
+  ]) {
+    const input = commonFields(['Text', 'Date']);
+    mutate(input.connect, input.metadata);
+    assert.throws(
+      () => joinDmoConnectMetadataFields(input.connect, input.metadata),
+      DmoDocumentError,
+    );
+  }
+  for (const mutate of [
+    (c) => {
+      delete c[0].keyQualifierName;
+    },
+    (c, m) => {
+      m[0].mktDataModelFieldAttributes.refAttrDeveloperName = 'Wrong';
+    },
+    (c) => {
+      c[2].futureMeaning = false;
+    },
+  ]) {
+    const { connect, metadata } = joinedFixture();
+    mutate(connect.fields, metadata.fields);
+    assert.throws(
+      () => joinDmoConnectMetadataFields(connect.fields, metadata.fields),
+      DmoDocumentError,
+    );
+  }
 });
 
 const defaultProjection = () => {

@@ -1,3 +1,94 @@
+# Common offline field join slice
+
+Start: 2026-10-25T17:58+01:00; clean requested baseline
+`5ef6cea3deab3fb50f1d4aa69ff437d847a08c69`. Fetch/status completed; no remote
+configured, so upstream cannot be verified. Written slice plan/simplicity check
+preceded edits; inherited revised review 2873b976 zero must-fix, Gate 1/2 complete.
+Gate 3 applied: full object projection was split at the shared field-join boundary
+rather than attempting taxonomy/designation integration in the same worker.
+Whole-feature Gate 4 stays coordinator-owned. No extra workers or root edits.
+
+## Exact interface and completed range
+
+`joinDmoConnectMetadataFields(connectFields: unknown, metadataFields: unknown):
+DmoJoinedFields` in src/artifacts/dmo-document.ts returns
+`{ fields: DmoField[], qualifierBindings: {fieldName,qualifierFieldName}[],
+blockers: string[], expectations: {connect: Record<string,unknown>[],
+metadata: Record<string,unknown>[]} }`.
+
+Exact case-sensitive qualified one-to-one collection joins, all 12 authored types,
+any nonempty count, original authored order and optional description/category
+presence. Creation type/label/type agree across sources. Metadata primaryIndexOrder
+'1' designates exactly one authored primary; supplied Connect primary must agree.
+Metadata string dynamic boolean or supplied Connect boolean supplies dynamic;
+conflict or missing-both rejects. Missing primaryIndexOrder is nonprimary under
+complete Metadata collection semantics, not Connect-only primary inference.
+Explicit unique qualifier reference collection resolves each supplied authored
+keyQualifierName to exact System fullName; all references consumed, no suffix
+inference, zero/multiple qualifiers allowed. Generated fields never authored.
+
+Unknown properties, unsupported creation/usage values, nonempty summary semantics,
+invalid/dangling/duplicate references and source conflicts throw payload-free
+DmoDocumentError. Known meaningful semantics classify into blockers instead of
+being silently deleted: FIELD_REQUIRED_REPLAY_UNVERIFIED, FIELD_LENGTH_REPLAY_UNVERIFIED
+(any positive integer Text storage length, no fixed 60 requirement),
+FIELD_DISTINCT_REPLAY_UNVERIFIED, GENERATED_FIELD_REPLAY_UNVERIFIED,
+GENERATED_QUALIFIER_REPLAY_UNVERIFIED and GENERATED_FIELD_SEMANTICS_REPLAY_UNVERIFIED.
+Independent complete admitted collections remain expectations. Empty blockers
+qualify only field joins, NEVER complete object projection/deploy acceptance.
+
+Compatibility projector, service, command, writer and both mappers unchanged.
+No new live calls, org writes, reference-plugin identifiers, frameworks or API
+acceptance claims. No generated recipe is guessed from arbitrary System fields.
+
+## Next coherent object integration slice
+
+Compose this field join beside the narrow compatibility projector. Reconcile
+exact object identity/default scope/category/taxonomy using approved official
+contracts and retained evidence; preserve meaningful unknown object config as
+specific blockers/rejections. Object eventDateTimeFieldName and
+recordModifiedFieldName must come from a valid authoritative source and resolve
+exactly to authored DateTime fields, with conflicts rejected. Missing required
+Engagement event must return a specific blocker, not infer from a lone DateTime
+or ban unrelated categories. Acquire complete relationships; unsupported nonempty
+relationships remain diagnostic. No service/writer/command generalization until
+common object projection and generated replay qualification are separately green.
+
+## Verification and propagation
+
+Synthetic regressions cover 1/3/12/19 authored counts, every type, reordered joins,
+optional values, fresh independent output, dynamic source/absence/conflicts,
+complete single/multiple qualifiers, arbitrary length/required/distinct blockers,
+unknown extra generated properties and unsupported semantics. Scoped autofix,
+explicit build and full zero-warning lint passed. Full tests: 120 passed, zero
+failed/skipped, 13941.2236 ms excluding compile. Smoke: 6 passed, zero failed/skipped,
+13313.8161 ms. Standalone sequence ended 2026-10-25T18:03:44.6231511+01:00.
+Package-check and normal-hook commit receipt follow in the coordinator response
+(no self-referential hash in tracked docs).
+
+Every shell/test entry checks TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+against absolute normalized F:/Temp; process-only repair/recheck. Initial inline
+PowerShell quoting failed closed before Git workload; piped Node source fixed it.
+No recursive cleanup. Existing package-smoke retains owned OS-temp roots.
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | field join/tests, README/artifact/capability/handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Slice docs reviewed; whole-feature Gate 4/root release registration stay coordinator
+responsibilities. Wiki/sites/tool listings/hover unchanged for unpublished internal
+slice. No npm changelog/version bump/push/tag/release/global edits.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Common authored DMO mapper slice
 
 Start: 2026-10-25T17:52+01:00; clean requested HEAD

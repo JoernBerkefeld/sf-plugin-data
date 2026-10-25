@@ -96,6 +96,41 @@ All other admitted object keys are configuration. Field configuration includes
 `isDynamicLookup`, `creationType`, `keyQualifierName`, `isDistinct`, `usageTag`.
 No field-ID exemption or generic unknown-metadata stripping exists.
 
+## Common offline field join (integration pending)
+
+`joinDmoConnectMetadataFields(connectFields: unknown, metadataFields: unknown):
+DmoJoinedFields` returns `{ fields, qualifierBindings, blockers, expectations }`.
+It is the shared field-level slice, **not** a complete DMO projection, portable
+export or deployment gate. Existing narrow compatibility helpers are unchanged.
+
+Complete collections join one-to-one by exact qualified Connect `name` / Metadata
+`fullName`, regardless of order. Any nonempty count and all 12 authored types are
+admitted. Labels/types/creation semantics must agree; optional descriptions and
+categories preserve presence and value. Exactly one authored primary is designated
+by Metadata `primaryIndexOrder: '1'`; a supplied Connect flag must agree. Dynamic
+lookup uses a supplied Metadata string boolean or a supplied Connect boolean;
+conflicts or absence in both sources reject, never silently default false.
+
+System fields never enter authored `fields`. Explicit qualifier references bind
+Connect `keyQualifierName` to unique Metadata `refAttrDeveloperName`, then exact
+System field identity, with complete reference consumption. Multiple qualifiers
+and no qualifiers are supported without suffix inference or fixed field counts.
+Unknown keys, unsupported usage/creation values, nonempty summary semantics,
+ambiguous/dangling references and incomplete collections throw payload-free
+`DmoDocumentError`. Other admitted non-authored semantics remain diagnostics:
+required true, arbitrary positive Text storage length, distinct true, generated
+fields, generated qualifiers and generated descriptions/categories add specific
+`*_REPLAY_UNVERIFIED` blockers. Even an empty blocker array proves only this field
+join; it does not qualify object taxonomy, relationships or generated recreation.
+Independent full admitted collections remain in `expectations`.
+
+Next integrate this join with object configuration/category/taxonomy validation,
+explicit source designation of event and modified DateTime references and complete
+relationship inventory. Missing required Engagement event designation must become
+a specific object-level blocker, not inference from field count/type. No source
+service, command or writer integration occurs in this slice. Live acceptance is
+not expanded beyond retained evidence.
+
 ## Strict Connect/Metadata Other diagnostic slice
 
 `projectDmoConnectMetadata(connect: unknown, metadata: unknown, relationships: unknown):

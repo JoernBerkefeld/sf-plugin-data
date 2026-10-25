@@ -95,6 +95,13 @@ pending without changing its approved future meaning. Deployment is unimplemente
       Qualified portable projection and replay remain blocked: the prior synthetic
       Engagement DMO detail omits eventDateTimeFieldName, despite a DateTime field.
       No inference or portable export is permitted from that response.
+- [x] Common offline field join, independent of the compatibility projector.
+      All 12 authored types, varied counts, exact one-to-one identity joins,
+      authoritative primary/dynamic semantics and explicit multi-qualifier joins.
+      Generated fields are excluded from authored candidates, not silently accepted:
+      generated/qualifier/length/required/distinct replay remains diagnostic.
+      Object taxonomy/designations, relationships and service/writer integration
+      are the next bounded slice; no complete common projection is claimed.
 - [x] Offline strict Connect/Metadata projection for one relationship-free Other shape.
       Exact object/field joins, explicit qualifier binding and Metadata-authoritative
       primary/dynamic semantics; two authored fields and complete generated/readback

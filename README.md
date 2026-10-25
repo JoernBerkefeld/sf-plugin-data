@@ -23,6 +23,13 @@ Core API/version flags are passed unchanged to the service capability boundary.
 result. Blocked/failed work exits 1, success exits 0. Parser/auth flag failures use
 core CLI diagnostics; runtime errors never include remote payloads. No org mutation.
 
+A common offline `joinDmoConnectMetadataFields` helper now joins arbitrary
+nonempty field counts and all 12 authored types with exact identity, primary,
+dynamic and explicit qualifier semantics. Generated fields stay outside authored
+fields; unqualified replay semantics remain blockers. This is a field-level slice,
+not a general source projection: object taxonomy/designations, relationships and
+service/writer integration remain pending. Compatibility retrieval is unchanged.
+
 ## Local development
 
 Requires Node `^22.22.2 || ^24.15.0` and npm. Run from this independent repository:

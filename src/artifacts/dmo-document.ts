@@ -270,6 +270,170 @@ export function projectDmoRawFields(value: unknown): DmoFieldProjection {
   return { status: 'incomplete', blockers: [...new Set(blockers)], candidate, configuration };
 }
 
+export type DmoJoinedFields = {
+  fields: DmoField[];
+  qualifierBindings: Array<{ fieldName: string; qualifierFieldName: string }>;
+  blockers: string[];
+  expectations: {
+    connect: Array<Record<string, unknown>>;
+    metadata: Array<Record<string, unknown>>;
+  };
+};
+
+/**
+ * Join common field semantics without qualifying object configuration or generated replay.
+ * @param {unknown} connectFields Complete Connect field collection.
+ * @param {unknown} metadataFields Complete Metadata field collection.
+ * @returns {DmoJoinedFields} Authored fields, exact qualifier bindings and unresolved replay semantics.
+ */
+export function joinDmoConnectMetadataFields(
+  connectFields: unknown,
+  metadataFields: unknown,
+): DmoJoinedFields {
+  requireValid(Array.isArray(connectFields) && Array.isArray(metadataFields));
+  requireValid(connectFields.length === metadataFields.length && connectFields.length > 0);
+  const joined = new Map<
+    string,
+    { field: Record<string, unknown>; detail: Record<string, unknown> }
+  >();
+  const references = new Map<string, string>();
+  const blockers = new Set<string>();
+  for (const item of metadataFields) {
+    const field = record(item, [
+      'fullName',
+      'label',
+      'description',
+      'length',
+      'required',
+      'type',
+      'summaryFilterItems',
+      'mktDataModelFieldAttributes',
+    ]);
+    requireValid(customName(field.fullName, '__c') && !joined.has(field.fullName));
+    requireValid(text(field.label) && fieldTypes.includes(field.type as DmoField['dataType']));
+    requireValid(!('description' in field) || typeof field.description === 'string');
+    requireValid(!('required' in field) || typeof field.required === 'boolean');
+    if (field.required === true) blockers.add('FIELD_REQUIRED_REPLAY_UNVERIFIED');
+    if ('length' in field) {
+      requireValid(
+        field.type === 'Text' && Number.isSafeInteger(field.length) && Number(field.length) > 0,
+      );
+      // Retain arbitrary storage lengths; the authored Connect input has no length property.
+      blockers.add('FIELD_LENGTH_REPLAY_UNVERIFIED');
+    }
+    requireValid(
+      !('summaryFilterItems' in field) ||
+        (Array.isArray(field.summaryFilterItems) && field.summaryFilterItems.length === 0),
+    );
+    const detail = record(field.mktDataModelFieldAttributes, [
+      'definitionCreationType',
+      'isDynamicLookup',
+      'labelOverride',
+      'masterLabel',
+      'primaryIndexOrder',
+      'usageTag',
+      'refAttrDeveloperName',
+    ]);
+    requireValid(['Custom', 'System'].includes(detail.definitionCreationType as string));
+    requireValid(
+      !('isDynamicLookup' in detail) ||
+        ['true', 'false'].includes(detail.isDynamicLookup as string),
+    );
+    requireValid(!('primaryIndexOrder' in detail) || detail.primaryIndexOrder === '1');
+    for (const key of ['labelOverride', 'masterLabel'])
+      requireValid(!(key in detail) || detail[key] === field.label);
+    requireValid(
+      !('usageTag' in detail) || ['None', 'KeyQualifier'].includes(detail.usageTag as string),
+    );
+    if ('refAttrDeveloperName' in detail) {
+      requireValid(
+        text(detail.refAttrDeveloperName) && !references.has(detail.refAttrDeveloperName),
+      );
+      requireValid(
+        detail.definitionCreationType === 'System' && detail.usageTag === 'KeyQualifier',
+      );
+      references.set(detail.refAttrDeveloperName, field.fullName);
+    } else requireValid(detail.usageTag !== 'KeyQualifier');
+    joined.set(field.fullName, { field, detail });
+  }
+  const fields: DmoField[] = [];
+  const qualifierBindings: DmoJoinedFields['qualifierBindings'] = [];
+  const usedReferences = new Set<string>();
+  const names = new Set<string>();
+  for (const item of connectFields) {
+    const field = record(item, rawFieldConfiguration);
+    requireValid(customName(field.name, '__c') && !names.has(field.name.toLowerCase()));
+    names.add(field.name.toLowerCase());
+    const match = joined.get(field.name);
+    requireValid(match);
+    joined.delete(field.name);
+    const { detail } = match;
+    requireValid(field.label === match.field.label && field.type === match.field.type);
+    requireValid(field.creationType === detail.definitionCreationType);
+    requireValid(!('description' in field) || typeof field.description === 'string');
+    requireValid(!('category' in field) || typeof field.category === 'string');
+    requireValid(!('description' in match.field) || match.field.description === field.description);
+    requireValid(
+      !('usageTag' in field) || ['None', 'KeyQualifier'].includes(field.usageTag as string),
+    );
+    requireValid(
+      !('usageTag' in field && 'usageTag' in detail) || field.usageTag === detail.usageTag,
+    );
+    requireValid(!('isDistinct' in field) || typeof field.isDistinct === 'boolean');
+    if (field.isDistinct === true) blockers.add('FIELD_DISTINCT_REPLAY_UNVERIFIED');
+    const primary = detail.primaryIndexOrder === '1';
+    requireValid(!('isPrimaryKey' in field) || field.isPrimaryKey === primary);
+    requireValid(!('isDynamicLookup' in field) || typeof field.isDynamicLookup === 'boolean');
+    requireValid(
+      !('isDynamicLookup' in field && 'isDynamicLookup' in detail) ||
+        field.isDynamicLookup === (detail.isDynamicLookup === 'true'),
+    );
+    // A supplied source may designate dynamic lookup; absence in both is not evidence of false.
+    const dynamic =
+      'isDynamicLookup' in detail ? detail.isDynamicLookup === 'true' : field.isDynamicLookup;
+    requireValid(typeof dynamic === 'boolean');
+    if (field.creationType === 'System') {
+      requireValid(!primary && dynamic === false && !('keyQualifierName' in field));
+      if ('refAttrDeveloperName' in detail) {
+        requireValid(field.type === 'Text' && field.usageTag === 'KeyQualifier');
+        blockers.add('GENERATED_QUALIFIER_REPLAY_UNVERIFIED');
+      } else {
+        requireValid(!('usageTag' in field) || field.usageTag === 'None');
+        blockers.add('GENERATED_FIELD_REPLAY_UNVERIFIED');
+      }
+      if ('description' in field || 'category' in field || field.isDistinct === true)
+        blockers.add('GENERATED_FIELD_SEMANTICS_REPLAY_UNVERIFIED');
+      continue;
+    }
+    requireValid(!('refAttrDeveloperName' in detail));
+    requireValid(!('usageTag' in field) || field.usageTag === 'None');
+    if ('keyQualifierName' in field) {
+      requireValid(text(field.keyQualifierName) && !usedReferences.has(field.keyQualifierName));
+      const qualifierFieldName = references.get(field.keyQualifierName);
+      requireValid(qualifierFieldName);
+      usedReferences.add(field.keyQualifierName);
+      qualifierBindings.push({ fieldName: field.name, qualifierFieldName });
+    }
+    fields.push({
+      name: field.name,
+      label: field.label as string,
+      dataType: field.type as DmoField['dataType'],
+      ...('description' in field ? { description: field.description as string } : {}),
+      ...('category' in field ? { category: field.category as string } : {}),
+      isPrimaryKey: primary,
+      isDynamicLookup: dynamic,
+    });
+  }
+  requireValid(joined.size === 0 && references.size === usedReferences.size);
+  requireValid(fields.filter((field) => field.isPrimaryKey).length === 1);
+  return {
+    fields,
+    qualifierBindings,
+    blockers: [...blockers],
+    expectations: structuredClone({ connect: connectFields, metadata: metadataFields }),
+  };
+}
+
 export type DmoConnectMetadataProjection = {
   status: 'projected';
   blockers: [];
