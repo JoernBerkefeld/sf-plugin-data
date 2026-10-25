@@ -105,7 +105,7 @@ API >=64.0 and the documented route only. It requests 20 rows, offsets 0..2000,
 ASC/DeveloperName; 2000 is a local budget, not an endpoint limit claim. It ignores
 response links/tokens for navigation and never forwards them. A terminal page
 requires accumulated rows equal totalSize and absent/null/empty next URL/token.
-Missing total/count, changing totals, overlap, out-of-scope records, unknown
+Missing total, inconsistent optional count, changing totals, overlap, out-of-scope records, unknown
 envelope keys, premature short pages or budget exhaustion block without returning
 partial data. The helper accepts only identifier-form data spaces and DMO names
 ending __dlm (including namespaces); other names block before network access.
@@ -113,10 +113,23 @@ ending __dlm (including namespaces); other names block before network access.
 Raw entry fields, including unknown nested metadata, qualifiers, cardinality,
 status, owner, generated names and optional/absent targetField, survive untouched.
 This is transport preservation, not approval of unknown semantics for portable
-export. Entries require unique nonblank names and source/target entity names;
+export. Entries require unique nonblank names and sourceObject/targetObject names;
 at least one endpoint must match the requested DMO. Data-space scope relies on
 the server query, not an invented per-record data-space field. Offset pagination
 has no snapshot guarantee and equal-total concurrent changes can evade detection.
-Selected-version live acceptance and qualified logical reference projection are
-still pending. Field projection stays explicitly incomplete. Generated qualifier
-replay and safe PATCH semantics remain unverified. No portable round trip is claimed.
+Read-only API 65.0 acceptance on 2026-10-25 corrected the reference sample's
+assumptions: count/sortBy are absent, endpoints are sourceObject/targetObject,
+and the empty synthetic DMO returns HTTP 204. The helper uses JSforce's private
+noContentResponse sentinel to distinguish 204 from a missing/malformed JSON body;
+204 is accepted only on the initial page, never after an advertised nonzero total.
+A standard DMO returned 142 records across eight pages of limit 20, ending with
+two records and no next URL. Qualifier properties were null in that inspected set;
+this is not evidence that populated qualifier structures may be discarded.
+
+The prior synthetic custom Engagement DMO has two custom and four system fields,
+a qualifier reference lacking the __c suffix of its generated field, and no
+eventDateTimeFieldName in detail. Its projection therefore fails closed: a single
+DateTime field does not prove event-time designation. No suffix-based binding or
+portable output is claimed. The next prerequisite is an authoritative metadata
+source for the designated event field (and record-modified designation), followed
+by generated-qualifier replay evidence. No rows or org changes were used.

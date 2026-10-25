@@ -1,3 +1,93 @@
+# Live API 65 relationship contract correction
+
+Start: 2026-10-25T16:12:47+01:00. Clean baseline:
+`0e096f96d5890e974f1442a0a8a23637f47d99d6`. Approved Gate 1/2 and sized Gate 3
+inherited and explicitly confirmed. One sequential evidence-first slice; no
+additional workers, saved plans, whole-feature review or root edits. Smallest
+design check rejected a general binding framework and guessed event designation.
+
+## Read-only live evidence
+
+Salesforce source org MCP discover/describe ran first (`data360-schema-get`);
+its recipe exposed no dispatch operations and recommended credential-displaying
+CLI output, which was not used. Existing Salesforce core auth verified exactly
+`00Daj000010xkZNEAY` for `mcnext-sdo` before metadata reads, without tokens.
+All requests used explicit API 65.0 and dataspace default. Our ConnectClient
+performed detail and relationship reads. A CLI GET status-only check confirmed
+HTTP 204; response headers were not printed. No org/customer payload was saved.
+
+- Prior-run synthetic DMO: zero relationships, HTTP 204 with no JSON envelope.
+- Standard Individual DMO: totalSize 142; limit 1 returned one record, limit 20
+  returned 20 at offsets 0/20 and two at offset 140. Complete corrected helper
+  returned all 142 across eight pages. No count/sortBy properties were returned.
+  Nonterminal pages have nextPageUrl; terminal page does not. No link was followed.
+- Relationship keys: cardinality, creationType, id, name, owner, sourceField,
+  sourceObject, status, targetField, targetObject. Field objects have label/name/
+  type; endpoint objects have keyQualifierField/label/name. All 284 endpoint
+  qualifier properties were null; no populated-qualifier contract is inferred.
+  All inspected records had targetField; absence remains preserved, not invented.
+- Synthetic detail: category ENGAGEMENT, two custom and four system fields.
+  Primary key qualifier reference omits __c while the generated field has it;
+  that observation is not a generally proven suffix binding rule.
+- Critical blocker: detail omits eventDateTimeFieldName. Even a single DateTime
+  field does not prove designation. Existing projection correctly throws
+  DmoDocumentError; a new independent regression locks in refusal to guess.
+  No usable portable export is claimed. Generated replay also remains unverified.
+
+## Implemented correction and exact interface
+
+`ConnectClient.listDataModelObjectRelationships(name, dataSpace)` retains its
+Promise<Array<Record<string, unknown>>> interface, but validates the actual
+sourceObject/targetObject identities. totalSize remains mandatory/stable;
+count is optional but checked when supplied. The private read method passes a
+private Symbol through JSforce noContentResponse: only actual HTTP 204 becomes
+empty initial inventory. Undefined JSON still fails INVALID_PAGE; 204 after a
+nonzero advertised total fails INCOMPLETE_LIST. Existing same-origin/redirect/
+budget/overlap guards remain. All record metadata is returned untouched.
+`get` and field projection public interfaces are unchanged; no new scaffolding.
+
+## Verification and next slice
+
+Standalone lint:fix, explicit build and zero-warning lint passed. Full final
+suite and smoke counts/commit/clean receipt follow in coordinator output.
+No remote is configured; git fetch returned successfully but cannot verify
+upstream. Personal repo email verified. Initial inline PowerShell quoting failed
+before execution; piped Node source resolved it. requestRaw is not available on
+this core connection, so CLI GET supplied status evidence; our client exercised
+all actual metadata retrieval and final complete pagination.
+
+Next implementable slice: use approved read-only authoritative metadata inspection
+to locate the designated Engagement event field and record-modified designation
+(e.g. selected-version metadata entity contract), reconcile by qualified DMO/field
+identity, then project the explicitly relationship-free synthetic profile. Stop
+if no authoritative designation exists; do not infer it from field type/name.
+Populated qualifier resolution and generated-field replay require separate proof
+before a portable deployment artifact can be accepted. No writes to prior-run
+fixtures, rows, compute or activation are authorized.
+
+All shell/test entries checked TEMP, actual os.tmpdir and nonempty TMP/TMPDIR
+against absolute normalized F:/Temp, with process-only repair/recheck. No recursive
+cleanup, scratch allocation, push, tag, publication or global config changes.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | README, capability, artifact evidence, handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Wiki/sites/hover and Git workflow need no update. No npm changelog or release.
+Root registration remains coordinator-only and was not edited.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Read-only DMO relationship acquisition slice
 
 Start: 2026-10-25T16:05:03+01:00. Clean baseline:

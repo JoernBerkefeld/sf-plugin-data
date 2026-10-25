@@ -288,6 +288,15 @@ test('raw projection blocks unknown data, malformed flags, duplicate and non-cus
   assert.deepEqual(projectDmoRawFields(raw).blockers, ['RELATIONSHIPS_NOT_ACQUIRED']);
 });
 
+test('Engagement detail without an event reference blocks instead of guessing its DateTime field', () => {
+  const raw = rawFixture();
+  raw.category = 'ENGAGEMENT';
+  raw.fields[1].type = 'DateTime';
+  assert.throws(() => projectDmoRawFields(raw), DmoDocumentError);
+  raw.eventDateTimeFieldName = 'Weight__c';
+  assert.equal(projectDmoRawFields(raw).candidate.spec.eventDateTimeFieldName, 'Weight__c');
+});
+
 test('raw classification keeps qualifier and semantic metadata meaningful and unknowns blocked', () => {
   for (const key of ['keyQualifierName', 'isDistinct', 'usageTag', 'creationType', 'type'])
     assert.equal(classifyDmoRawField('field', key), 'configuration');

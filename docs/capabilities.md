@@ -69,10 +69,15 @@ Every family must complete all gates below before support can be declared.
 - [x] Internal incoming/outgoing raw relationship acquisition with synthetic tests.
       API 64.0 endpoint: `GET /ssot/data-model-objects/{dataModelObjectName}/relationships`.
       Explicit `dataspace`, unfiltered status/creation type, offset/limit pagination;
-      count/totalSize must prove completion. Unknown envelopes and inconsistencies
-      block; all entry metadata survives. Response continuation links are never
-      followed. Local offset budget is 2000, not an asserted server limit.
-      No live acceptance, qualified portable projection or replay is claimed.
+      totalSize must prove completion; count, when present, must match page length.
+      API 65.0 read-only acceptance confirmed HTTP 204 for empty initial results
+      and 142 relationships across eight pages for a standard DMO. Records use
+      sourceObject/targetObject; qualifier objects remain raw, never guessed.
+      Unknown envelopes and inconsistencies block; all entry metadata survives.
+      Continuation links are never followed. Local offset budget is 2000.
+      Qualified portable projection and replay remain blocked: the prior synthetic
+      Engagement DMO detail omits eventDateTimeFieldName, despite a DateTime field.
+      No inference or portable export is permitted from that response.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

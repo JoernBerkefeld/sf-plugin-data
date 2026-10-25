@@ -48,8 +48,9 @@ field category, strict unknown-field rejection and ordered-field preservation.
 Raw projection produces an explicitly incomplete diagnostic candidate, retaining
 qualifiers, semantic metadata and generated fields in separate configuration.
 A separate internal relationship helper now acquires incoming/outgoing raw metadata
-in an explicit data space, requiring count/total-size consistency and bounded offset
-completion. Unknown envelopes block; raw entry fields are preserved. It is not yet
+in an explicit data space, requiring total-size consistency and bounded offset
+completion. API 65.0 live inspection confirmed HTTP 204 for an empty initial list,
+optional count metadata, and sourceObject/targetObject endpoint records. Unknown envelopes block; raw entry fields are preserved. It is not yet
 bound to field projection: candidates still carry RELATIONSHIPS_NOT_ACQUIRED and
 must never be exported alone. This is not yet an export/deploy format; qualified
 relationship projection, generated-field replay and filesystem handling remain

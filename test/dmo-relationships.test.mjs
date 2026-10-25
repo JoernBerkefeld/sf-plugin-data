@@ -7,8 +7,8 @@ const dmo = 'Demo__dlm';
 const jsonNull = JSON.parse('null');
 const relationship = (index, incoming = false) => ({
   name: `Synthetic_${index}`,
-  sourceEntity: { name: incoming ? 'Other__dlm' : dmo, keyQualifierField: 'KQ__c' },
-  targetEntity: { name: incoming ? dmo : 'Other__dlm' },
+  sourceObject: { name: incoming ? 'Other__dlm' : dmo, keyQualifierField: 'KQ__c' },
+  targetObject: { name: incoming ? dmo : 'Other__dlm' },
   sourceField: { name: 'Reference__c' },
   cardinality: 'ManyToOne',
   status: 'INACTIVE',
@@ -16,7 +16,6 @@ const relationship = (index, incoming = false) => ({
 });
 const page = (relationships, totalSize = relationships.length, extra = {}) => ({
   relationships,
-  count: relationships.length,
   totalSize,
   ...extra,
 });
@@ -25,11 +24,12 @@ const clientFor = (pages, version = '65.0') => {
   const client = new ConnectClient(
     {
       instanceUrl: 'https://synthetic.my.salesforce.com',
-      request: async ({ method, url }) => {
+      request: async ({ method, url }, options) => {
         assert.equal(method, 'GET');
         urls.push(new URL(url));
         const response = pages[urls.length - 1];
         if (response instanceof Error) throw response;
+        if (response === 204) return options.noContentResponse;
         return response;
       },
     },
@@ -78,6 +78,20 @@ test('empty and exactly full terminal pages require consistent exhaustion eviden
   }
 });
 
+test('HTTP 204 establishes an empty initial list, never a missing JSON or truncated later page', async () => {
+  const { client } = clientFor([204]);
+  assert.deepEqual(await client.listDataModelObjectRelationships(dmo, 'default'), []);
+  const missing = clientFor([undefined]).client;
+  await assert.rejects(missing.listDataModelObjectRelationships(dmo, 'default'), {
+    code: 'INVALID_PAGE',
+  });
+  const rows = Array.from({ length: 20 }, (_, index) => relationship(index));
+  const truncated = clientFor([page(rows, 21), 204]).client;
+  await assert.rejects(truncated.listDataModelObjectRelationships(dmo, 'default'), {
+    code: 'INCOMPLETE_LIST',
+  });
+});
+
 test('malformed, unknown or contradictory envelopes and out-of-scope records block', async () => {
   for (const response of [
     jsonNull,
@@ -93,7 +107,7 @@ test('malformed, unknown or contradictory envelopes and out-of-scope records blo
     page([{}]),
     page([relationship(1)], 0),
     page([
-      { ...relationship(1), sourceEntity: { name: 'A__dlm' }, targetEntity: { name: 'B__dlm' } },
+      { ...relationship(1), sourceObject: { name: 'A__dlm' }, targetObject: { name: 'B__dlm' } },
     ]),
   ]) {
     const { client } = clientFor([response]);

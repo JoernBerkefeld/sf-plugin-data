@@ -78,12 +78,17 @@ export class ConnectClient {
    * @returns {Promise<T>} The unmodified resource response; callers must validate its schema.
    */
   public async get<T = unknown>(path: string): Promise<T> {
+    return this.read<T>(path);
+  }
+
+  private async read<T>(path: string, noContentResponse?: unknown): Promise<T> {
     const url = this.safeUrl(path);
     try {
       return await this.connection.request<T>(
         { method: 'GET', url },
         // Core narrows options to JSON, but its JSforce transport supports a redirect guard.
         {
+          noContentResponse,
           followRedirect: () => {
             throw new ConnectError('INVALID_REQUEST');
           },
@@ -194,9 +199,16 @@ export class ConnectClient {
     ]);
     // Local safety budget, not a claim about this endpoint's server offset ceiling.
     for (let offset = 0; offset <= 2000; offset += limit) {
-      const page = await this.get<unknown>(
+      // JSforce substitutes this private sentinel only for HTTP 204, not malformed JSON.
+      const emptyResponse = Symbol('relationship-no-content');
+      const page = await this.read<unknown>(
         `${this.prefix}data-model-objects/${dataModelObjectName}/relationships?dataspace=${dataSpace}&limit=${limit}&offset=${offset}&orderBy=ASC&sortBy=DeveloperName`,
+        emptyResponse,
       );
+      if (page === emptyResponse) {
+        if (offset === 0) return [];
+        throw new ConnectError('INCOMPLETE_LIST');
+      }
       if (!page || typeof page !== 'object' || Array.isArray(page))
         throw new ConnectError('INVALID_PAGE');
       const envelope = page as Record<string, unknown>;
@@ -204,7 +216,7 @@ export class ConnectClient {
         Object.keys(envelope).some((key) => !envelopeKeys.has(key)) ||
         !Array.isArray(envelope.relationships) ||
         envelope.relationships.length > limit ||
-        envelope.count !== envelope.relationships.length ||
+        (envelope.count !== undefined && envelope.count !== envelope.relationships.length) ||
         !Number.isSafeInteger(envelope.totalSize) ||
         (envelope.totalSize as number) < 0 ||
         (envelope.sortBy != undefined && envelope.sortBy !== 'DeveloperName') ||
@@ -223,7 +235,7 @@ export class ConnectClient {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry))
           throw new ConnectError('INVALID_PAGE');
         const item = entry as Record<string, unknown>;
-        const entities = [item.sourceEntity, item.targetEntity];
+        const entities = [item.sourceObject, item.targetObject];
         if (
           typeof item.name !== 'string' ||
           !item.name.trim() ||
