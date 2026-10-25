@@ -1,3 +1,77 @@
+# Command-only read-only deploy preview slice
+
+Started 2026-10-25 approximately 18:46+01:00 from clean requested
+`767f773b092568a0366ea019083ebf105a3899f5`. Fetch/status passed, no remote
+configured. Written plan/simplicity check preceded edits; existing shared-plan
+review remains applicable (Gates 1/2 complete). Gate 3 one small coupled command /
+test slice; no resolver/model changes, extra workers, root edits or live org calls.
+Whole-feature Gate 4 remains coordinator-owned. Normal focused commit follows
+verification under the parent's per-finished-slice approval.
+
+## Public CLI and exact result shape
+
+`sf data360 deploy --preview` now requires exactly one repeatable/non-greedy source
+mode: `-d/--source-dir` explicit authored JSON file OR directory, repeated as needed;
+OR `-m/--metadata dmo:ExactName__dlm`, repeated, resolving project artifacts from
+captured cwd. Existing resolver owns all strict authored-only JSON, no-link bounded
+path, duplicate/missing/malformed selection semantics. No bare type, implicit all,
+mixed modes or no-selection deploy. No model/resolver refactor in this slice.
+Without --preview, DEPLOY_EXECUTION_NOT_IMPLEMENTED blocks before local/target work.
+
+Core optionalOrg exposes -o/--target-org override/configured default. Core API flag
+default 65.0, data-space default default; passed unchanged to service capability
+checks. Command resolves/validates ALL sources before calling getOrgId/getConnection.
+Core parser/auth flag errors may occur earlier and retain core formatting.
+Protected injectable command seams: resolveInputs = readDeployInputs;
+preflight = preflightDmoDeploy. No mutation, filesystem writer or report dependency.
+
+Normal core JSON result wraps DeployEnvelope contract sf-data360-deploy, version
+1.0.0; status success/blocked/failed; metadata {operation:'deploy',preview,plugin,
+apiVersion}; diagnostics {warnings,errors:[{code,message,retryable:false}]};
+provenance {producer,targetOrgId:null|string,pluginVersion,command,generatedAt};
+result {scope:{dataSpace},selection:{sourceDir:string[],metadata:string[]},items}.
+Each item {identity:{dataSpace,apiName},operation:'preview',path,outcome,target,
+absenceProof,diagnostics} retains service classification/proof unchanged. create
+means advisory absence by complete inventory only, never an executed operation.
+unchanged means qualified equality. Any blocked-changes/blocked => aggregate
+blocked/exit 1. Unexpected per-item error => static PREFLIGHT_FAILED item diagnostic,
+aggregate failed/exit 1, retaining subsequent item results. Other unexpected local /
+auth failures => static DEPLOY_PREVIEW_FAILED, no raw exception text. Human summary
+always states no deployment executed. No local artifact/report/scratch writes.
+
+## Verification / documentation / safety
+
+Ten command seam regressions cover source modes/overrides/order, every outcome,
+aggregation, malformed local admission, missing org, redaction, real resolver
+no-write integration and explicit human wording. CLI smoke adds real parser
+repeated flags/non-greedy/mixed/no-selector/bare-type/missing sources and defaults;
+help assertions cover all deploy flags. Existing README/artifact/capabilities and
+handover updated. Full verification and normal enabled-hook receipts follow in
+coordinator response. Package inventory remains 24 entries, no new runtime module.
+
+Every shell/test checks TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR absolute
+normalized F:/Temp; process-only repair/recheck when necessary. New test fixture
+uses mkdtemp under verified OS temp and is retained; no recursive cleanup. No live
+calls, reference names, root edits, push/tag/release or version bump (0.1.0).
+Gate 5 slice documentation propagation checked: sf-plugin-data360 done; language
+catalog/parser/LSP/extensions/MCP/MSO and independent CMS/MCNext are N/A, no downstream
+updates, wiki/site/listing/hover surface or npm changelog. Changed folder only
+sf-plugin-data360, current 0.1.0, new version unassigned (no release prepared).
+
+## Next bounded slice: guarded-create executor (not implemented)
+
+Begin only with fresh authorized execution scope. Reuse authored resolver/preflight,
+API65/default and complete-inventory absence proof. Build a small guarded-create
+service/executor, never add broad update/PATCH/delete/recreate fallbacks. Actual
+execution must not be enabled just by preview success: re-preflight selected authored
+input at execution time, gate creation to proven supported semantics, handle
+ambiguous mutation failures without blind retry and qualify readback before claiming
+completion. Existing unchanged targets remain no-op; blocked-changes/blocked never
+mutate. Establish the precise mutation/readback acceptance contract before edits;
+no live calls are authorized by this handover. Add injected-transport regressions,
+normal build/lint0/tests/smoke/package and own-path hook commit under current approval.
+Whole-feature Gate 4 coordinator runs once after final feature integration.
+
 # Bounded deploy authored-input resolver slice
 
 Started 2026-10-25 approximately 18:37+01:00 from requested clean

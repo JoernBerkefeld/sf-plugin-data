@@ -2,7 +2,7 @@
 
 `@joernberkefeld/sf-plugin-data360` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
-implemented; deployment remains unimplemented.** Current retrieval capability is
+implemented; read-only deployment preview is available. Actual deployment remains unimplemented.** Current retrieval capability is
 owned by the common service (API 65.0/default, qualified generated recipe and semantics),
 not a permanent DMO architecture. This is not yet a general migration tool or a
 published release.
@@ -36,7 +36,8 @@ inventory alone proves absence; existing targets must pass common full retrieval
 Field reordering alone is unchanged. All authored differences are blocked until
 the PATCH contract is proven; unknown target semantics fail closed. Its preview
 contains static diagnostics, never requests, raw org IDs or remote payloads.
-This internal service is not yet wired to `deploy --preview` or mutation execution.
+`sf data360 deploy --preview` now uses this service for every explicitly selected
+local authored input. API 65.0/default scope remains service-owned; no mutation execution exists.
 
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
@@ -44,7 +45,7 @@ coalesce; different files claiming the same identity fail. No selection, bare ty
 mixed modes, malformed JSON, duplicate JSON keys, runtime projections and linked
 paths fail closed. Directory mode is bounded and strict: every descendant file must
 be authored DMO JSON; unrelated files are not silently ignored. This input-only
-slice does not expose deploy flags or claim a completed preview/deployment.
+resolver is now wired to the read-only preview command; it never authorizes execution.
 
 ## Local development
 
@@ -68,11 +69,29 @@ Do not install into a shared CLI profile for acceptance: other installed plugins
 may own the same topic. Packaged CLI installation acceptance will use a dedicated
 profile and exact unsigned-package allowlist in a later slice.
 
-The intended interface is `sf data360 retrieve` and `sf data360 deploy`, with
-`deploy --preview` for read-only target-aware comparison. Deployment selectors and
-preview are **not implemented** yet. Explicit retrieve selectors/org flags/files
-are implemented only within the current service capability. There
-is no public plan command or saved-plan infrastructure.
+### Read-only deploy preview
+
+```sh
+sf data360 deploy --preview -o target -d ./project/data360/default/dmo --json
+sf data360 deploy --preview -o target -d ./authored.json -d ./more-authored.json
+sf data360 deploy --preview -o target -m dmo:Example__dlm -m dmo:Another__dlm --json
+```
+
+Exactly one repeatable/non-greedy mode is required: `-d/--source-dir` selects explicit
+files or directories; `-m/--metadata` selects exact project members from cwd.
+No bare type, omitted selection or implicit deploy-all is allowed. All sources
+resolve and validate before target inspection. Core `-o/--target-org` supports the
+configured default org and explicit override; `--api-version` defaults to 65.0 and
+`--data-space` to default, with capability checks delegated to preflight.
+
+The normal core JSON wrapper contains `sf-data360-deploy` contract version 1.0.0,
+status/metadata/diagnostics/provenance/result and one advisory `preview` item per
+input. `create` means complete-inventory absence, not an executed create;
+`unchanged` means qualified equality. `blocked-changes` and `blocked` make aggregate
+status blocked/exit 1; unexpected failures make status failed/exit 1. Mixed results
+remain visible. Preview writes no local artifact/report and performs no mutations.
+Without `--preview`, execution returns DEPLOY_EXECUTION_NOT_IMPLEMENTED/exit 1.
+Parser/auth flag errors retain core formatting. No public plan or saved-plan infrastructure.
 
 ## Scope and safety
 

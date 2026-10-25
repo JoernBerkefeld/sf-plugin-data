@@ -25,8 +25,11 @@ Incomplete or unknown variants diagnose without publication. Type-only/no-select
 pending without changing its approved future meaning. Deployment is unimplemented.
 Internal `readDeployInputs` now resolves explicit files/directories or exact project
 DMO members with bounded no-link authored-only JSON admission. Repeated identical
-inputs coalesce; conflicting identities block. No deploy flags, public preview,
-mutation transport, artifact/report writes or live acceptance are introduced.
+inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
+this resolver and per-item target preflight with core org/API/default scope flags.
+Only advisory create/unchanged/blocked-changes/blocked results exist; actual deploy
+without preview is unsupported. No mutation transport, artifact/report writes or
+new live acceptance is introduced.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.

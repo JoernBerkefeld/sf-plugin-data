@@ -18,8 +18,8 @@ explicit files/directories, or exact `dmo:ApiName` selectors resolving
 `<cwd>/data360/default/dmo/<ApiName>.json`. Repeated identical selections and
 overlapping paths coalesce; distinct files with case-conflicting identities reject.
 Metadata filenames must exactly match their document identity. No implicit all or
-bare-type selection exists. The CLI wiring remains pending; these are internal
-input semantics, not a new public command.
+bare-type selection exists. `deploy --preview` now calls this resolver using
+repeatable non-greedy source-dir or metadata flags, before target inspection.
 
 All directory descendants are selected, so non-JSON members reject rather than
 silently narrowing a directory. Limits: 256 files, 1024 visited entries, 16 nested
@@ -59,8 +59,15 @@ category, dynamic flags and date designations. Static reasons distinguish object
 category, field-set, field and immutable changes; every difference appends
 `UPDATE_UNSUPPORTED`. Unqualified target semantics produce `blocked`, never no-op.
 Diagnostics contain code/message only, without authored values or remote payloads.
-The public command will later enforce CMS-style explicit deploy selection; no
-selector/discovery semantics change here.
+The public command enforces CMS-style explicit deploy selection, never bare types
+or implicit deploy-all. `--preview` is required: actual execution remains blocked.
+Core JSON wraps `sf-data360-deploy` version 1.0.0 with metadata operation deploy /
+preview boolean, diagnostics, targetOrgId provenance and result scope/selection/items.
+Each item includes authored identity, local path, operation preview and the unchanged
+service outcome/target/absenceProof/diagnostics. Aggregate success means preview
+only; any blocked item yields blocked/exit 1, unexpected failure yields failed/exit 1.
+All input resolution precedes command-owned org inspection. No writes or mutation
+transport; parser/auth flag errors use core diagnostics.
 
 ## Internal common authored DMO file writer
 

@@ -28,6 +28,17 @@ for (const command of ['data360', 'data360 retrieve', 'data360 deploy']) {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Data360/u);
+    if (command === 'data360 deploy') {
+      for (const flag of [
+        '--metadata',
+        '--source-dir',
+        '--preview',
+        '--target-org',
+        '--api-version',
+        '--data-space',
+      ])
+        assert.ok(result.stdout.includes(flag), flag);
+    }
     if (command === 'data360 retrieve') {
       for (const flag of [
         '--metadata',
@@ -52,14 +63,40 @@ for (const command of ['retrieve', 'deploy']) {
     assert.notEqual(result.status, 0);
     const output = JSON.parse(result.stdout);
     if (command === 'deploy') {
-      assert.equal(output.name, 'NotImplemented');
-      assert.match(output.message, /not implemented/u);
+      assert.equal(output.result.status, 'blocked');
+      assert.equal(output.result.diagnostics.errors[0].code, 'DEPLOY_EXECUTION_NOT_IMPLEMENTED');
     } else {
       assert.equal(output.result.status, 'blocked');
       assert.equal(output.result.diagnostics.errors[0].code, 'RETRIEVE_SELECTION_NOT_IMPLEMENTED');
     }
   });
 }
+
+test('deploy parser admits repeated non-greedy explicit flags but blocks invalid selections before org work', () => {
+  for (const arguments_ of [
+    [],
+    ['-m', 'dmo'],
+    ['-m', 'dmo:A__dlm', '-m', 'dmo:B__dlm', '-d', 'x.json'],
+    ['-d', 'missing-one.json', '-d', 'missing-two.json'],
+    ['-m', 'dmo:MissingOne__dlm', '-m', 'dmo:MissingTwo__dlm'],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', 'data360', 'deploy', '--preview', ...arguments_, '--json'],
+      { encoding: 'utf8', env: environment, timeout: 30_000 },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.result.contract, 'sf-data360-deploy');
+    assert.equal(output.result.metadata.apiVersion, '65.0');
+    assert.equal(output.result.result.scope.dataSpace, 'default');
+    assert.equal(output.result.status, 'blocked');
+    assert.ok(
+      ['INVALID_SELECTION', 'UNSAFE_SOURCE'].includes(output.result.diagnostics.errors[0].code),
+    );
+    assert.deepEqual(output.result.result.items, []);
+  }
+});
 
 test('oclif discovers exactly the two approved command entry points', async () => {
   const config = await Config.load({ root: process.cwd() });
