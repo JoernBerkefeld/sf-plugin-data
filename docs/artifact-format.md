@@ -85,23 +85,43 @@ extra/missing/duplicate fields and incompatible semantics throw payload-free
 `DmoDocumentError` rather than being discarded. These constraints describe the
 observed narrow variant, not all valid Salesforce schemas.
 
-The result always has `status: 'incomplete'`, blocker
-`CREATE_IDENTITY_UNVERIFIED`, a two-field `candidate`, explicit unverified
-`createIdentity` with the source API name, `qualifierBindings`, and independently
-copied full `expectations: { connect, metadata }`. Expectations retain generated
-fields, primary/dynamic attributes, length/required presence and all admitted
-readback metadata; they are not writable Metadata API input. The source Connect
-ID is retained as an observation, not a portable create identity. The candidate
-must never be detached and presented as deployable.
+The result has `status: 'projected'`, `blockers: []`, a two-field `candidate`,
+`createIdentity: { status: 'verified', name, sourceApiName }`, `qualifierBindings`,
+and independently copied full `expectations: { connect, metadata }`. Only after
+all existing profile checks pass, `name` removes exactly one terminal case-sensitive
+`__dlm` from the validated qualified `sourceApiName`. The base starts with an ASCII
+letter, contains only ASCII letters/digits and internal single underscores, and
+cannot start with SSOT (case-insensitive). Missing/wrong/repeated suffixes,
+namespace-like doubles, invalid characters and trailing underscores reject;
+there is no sanitization, case folding or internal replacement. Candidate and
+both expectations retain the original qualified name. Metadata `fullName` equals
+Connect `name`; no separate developerName is inferred.
+
+Expectations retain generated fields, primary/dynamic attributes, length/required
+presence and all admitted readback metadata; they are not writable Metadata API
+input. The source Connect ID remains an observation. `projected` establishes only
+this offline profile projection and identity, not general deployment support.
+The candidate must never be detached and presented as deployable. No request
+builder exists: the nested field request-name contract remains a separate checkpoint.
 
 Offline evidence inspected 2026-10-25: a separately authorized Other experiment
 reported full Connect/Metadata equality across orgs, excluding only Connect ID
 and field-array ordering, with no source drift. This gate is satisfied only for
-that fixture and does not establish autonomous create-name provenance, repeat
-no-op/update behavior, Profile/Engagement support or generic generated schemas.
+that fixture and does not establish repeat no-op/update behavior,
+Profile/Engagement support or generic generated schemas.
 No live calls occur in this helper or its independently authored synthetic tests.
 
 ## Authoritative contract evidence (2026-10-25)
+
+The coordinator's resolved official naming research uses the
+[Connect Data Model Object Input contract](https://developer.salesforce.com/docs/data/connectapi/references/spec?meta=type%3AData+Model+Object+Input):
+its paired create/read example maps `CustomDMO` to `CustomDMO__dlm`. Documented
+name diagnostics require a leading letter, alphanumeric/underscore characters,
+no consecutive or trailing underscores, and no custom SSOT prefix. The official
+object reference identifies the `__dlm` DMO suffix. Together these support the
+narrow inverse above for the already admitted non-namespaced custom profile,
+without retaining an old create request or introducing a provenance subsystem.
+This slice uses that supplied research offline; it performs no online/org calls.
 
 Local official mirrors had no nested field contract. The
 [official Connect REST reference](https://developer.salesforce.com/docs/data/connectapi/references/spec)
@@ -115,8 +135,9 @@ returned the nested `DataModelObjectInputRepresentation` schema. Its field item
 has exactly `category`, `dataType` (the 12-value enum above), `description`,
 `isDynamicLookup`, `isPrimaryKey`, `label`, `name`; no nested required list.
 The tool schema is current metadata without per-property minimum API versions.
-Its description/example disagree about suffixes, so no create-name conversion
-or version-specific runtime acceptance is claimed. The wider object schema also
+Its description/example disagree about suffixes; the separate official naming
+contract below resolves only the object create identity, not nested field request
+names or version-specific runtime acceptance. The wider object schema also
 exposes additional categories and SQL/flex settings; these are explicitly blocked
 rather than added to this bounded custom-schema slice.
 

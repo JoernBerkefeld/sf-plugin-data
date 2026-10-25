@@ -384,14 +384,15 @@ const joinedFixture = () => {
   return { connect, metadata };
 };
 
-test('strict joined Other projection binds exact identities and authoritative flags without create provenance', () => {
+test('strict joined Other projection binds exact identities and flags with verified create identity', () => {
   const input = joinedFixture();
   const before = structuredClone(input);
   const result = projectDmoConnectMetadata(input.connect, input.metadata, []);
-  assert.deepEqual(result.blockers, ['CREATE_IDENTITY_UNVERIFIED']);
-  assert.equal(result.status, 'incomplete');
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.status, 'projected');
   assert.deepEqual(result.createIdentity, {
-    status: 'unverified',
+    status: 'verified',
+    name: 'Audit_Ledger',
     sourceApiName: input.connect.name,
   });
   assert.deepEqual(result.qualifierBindings, [
@@ -406,6 +407,54 @@ test('strict joined Other projection binds exact identities and authoritative fl
   result.expectations.metadata.fields[0].required = true;
   assert.deepEqual(input, before);
   assert.throws(() => validateDmoDocument(result), DmoDocumentError);
+});
+
+test('create identity removes one exact terminal suffix and preserves ordinary mixed-case bases', () => {
+  for (const name of ['Ledger__dlm', 'aUdIt_Ledger2__dlm', 'A_B_C__dlm']) {
+    const { connect, metadata } = joinedFixture();
+    connect.name = name;
+    metadata.fullName = name;
+    const result = projectDmoConnectMetadata(connect, metadata, []);
+    assert.deepEqual(result.createIdentity, {
+      status: 'verified',
+      name: name.slice(0, -5),
+      sourceApiName: name,
+    });
+    assert.equal(result.candidate.identity.apiName, name);
+    assert.equal(result.expectations.connect.name, name);
+    assert.equal(result.expectations.metadata.fullName, name);
+    assert.deepEqual(result.qualifierBindings, [
+      { fieldName: 'Ticket__c', qualifierFieldName: 'Partition__c' },
+    ]);
+  }
+});
+
+test('create identity rejects unsupported suffixes, namespaces and invalid bases without repair', () => {
+  for (const name of [
+    'Ledger',
+    'Ledger__DLM',
+    'Ledger__dlM',
+    'Ledger__dlm__dlm',
+    '__dlm',
+    'ns__Ledger__dlm',
+    'Ledger__Part__dlm',
+    'Ledger___dlm',
+    'Ledger-Row__dlm',
+    'Ledger Row__dlm',
+    'Lédger__dlm',
+    'Ledger.__dlm',
+    '1Ledger__dlm',
+    '_Ledger__dlm',
+    'SSOTLedger__dlm',
+    'ssotLedger__dlm',
+    'SsOt_Ledger__dlm',
+    'Ledger__dlm\n',
+  ]) {
+    const { connect, metadata } = joinedFixture();
+    connect.name = name;
+    metadata.fullName = name;
+    assert.throws(() => projectDmoConnectMetadata(connect, metadata, []), DmoDocumentError);
+  }
 });
 
 test('strict joined projection rejects mismatched joins and unsupported semantics rather than dropping them', () => {

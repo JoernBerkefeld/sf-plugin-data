@@ -83,9 +83,13 @@ Every family must complete all gates below before support can be declared.
       primary/dynamic semantics; two authored fields and complete generated/readback
       expectations. Independently authored synthetic refusals cover unsupported variants.
       A separate experiment proved semantic equivalence only for one Other fixture.
-      Always incomplete with CREATE_IDENTITY_UNVERIFIED; no create-name guessing,
-      public wiring, writable Metadata projection or transport mutation. Profile and
-      Engagement remain pending. This does not complete the dmo family gates.
+      Autonomous create identity is verified only for this exact local profile:
+      remove one terminal case-sensitive __dlm from the validated non-namespaced
+      custom name. Result is offline projected with no identity blocker, retaining
+      qualified readback identity and case; invalid names are rejected, not repaired.
+      No request builder, public wiring, writable Metadata projection or transport
+      mutation. Profile and Engagement remain pending. This does not complete the
+      dmo family gates.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

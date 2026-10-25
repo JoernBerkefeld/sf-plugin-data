@@ -271,21 +271,21 @@ export function projectDmoRawFields(value: unknown): DmoFieldProjection {
 }
 
 export type DmoConnectMetadataProjection = {
-  status: 'incomplete';
-  blockers: ['CREATE_IDENTITY_UNVERIFIED'];
+  status: 'projected';
+  blockers: [];
   candidate: DmoDocument;
-  createIdentity: { status: 'unverified'; sourceApiName: string };
+  createIdentity: { status: 'verified'; name: string; sourceApiName: string };
   qualifierBindings: Array<{ fieldName: string; qualifierFieldName: string }>;
   /** Complete admitted readback contracts, not writable Metadata API input. */
   expectations: { connect: Record<string, unknown>; metadata: Record<string, unknown> };
 };
 
 /**
- * Join the proven relationship-free Other shape without guessing create names or suffixes.
+ * Join the proven relationship-free Other shape and invert its documented custom DMO suffix.
  * @param {unknown} connect Connect DMO detail.
  * @param {unknown} metadata Matching Metadata API CustomObject.
  * @param {unknown} relationships Complete separately acquired relationship inventory.
- * @returns {DmoConnectMetadataProjection} Nondeployable diagnostic and exact readback expectations.
+ * @returns {DmoConnectMetadataProjection} Offline projection, verified create identity and exact readback expectations.
  */
 export function projectDmoConnectMetadata(
   connect: unknown,
@@ -434,10 +434,15 @@ export function projectDmoConnectMetadata(
   // Validation above admits JSON scalars/records only; retain all presence and generated metadata.
   const expectations = structuredClone({ connect: raw, metadata: meta });
   return {
-    status: 'incomplete',
-    blockers: ['CREATE_IDENTITY_UNVERIFIED'],
+    status: 'projected',
+    blockers: [],
     candidate,
-    createIdentity: { status: 'unverified', sourceApiName: candidate.identity.apiName },
+    // Candidate validation proves the non-namespaced base; remove only the terminal suffix.
+    createIdentity: {
+      status: 'verified',
+      name: candidate.identity.apiName.slice(0, -'__dlm'.length),
+      sourceApiName: candidate.identity.apiName,
+    },
     qualifierBindings,
     expectations,
   };

@@ -1,3 +1,82 @@
+# Autonomous offline Other create identity
+
+Start: 2026-10-25T17:04:30+01:00. Clean baseline
+`2b7766331238abe69e3dc19d6f46a36b65fb8103`. Written narrow slice plan and
+simplicity check preceded edits. Inherited approved Gate 2 applies; one small
+coupled sequential module/test slice satisfies Gate 3. Whole-milestone Gate 4
+remains coordinator-owned, not claimed here.
+
+## Exact interface and semantics
+
+`projectDmoConnectMetadata(connect: unknown, metadata: unknown, relationships:
+unknown): DmoConnectMetadataProjection` keeps every prior strict Other profile,
+exact object/field join and explicit qualifier binding check. Its result now has
+`status: 'projected'`, `blockers: []`, and
+`createIdentity: { status: 'verified'; name: string; sourceApiName: string }`.
+After all profile checks and candidate validation, `name` removes exactly one
+terminal case-sensitive __dlm. The existing validated base grammar requires a
+leading ASCII letter, ASCII alphanumerics/internal single underscores, no trailing
+or double underscores and no case-insensitive SSOT prefix. Case is preserved;
+no sanitization, namespaces, internal replacement or retained-request subsystem.
+Candidate identity, Connect name and Metadata fullName remain qualified and exact.
+No developerName is invented. Generated fields/readback expectations and qualifier
+joins are unchanged. projectDmoRawFields remains explicitly incomplete unchanged.
+
+Official naming research supplied by the coordinator resolves the paired custom
+create/read name and documented name restrictions; artifact-format records the
+exact official input URL. No new online lookup or live org call occurred.
+No request builder: nested field create-name suffix evidence is still unresolved.
+Projected means this offline shape/identity only, not deployment, writable Metadata,
+CLI, Profile/Engagement, update/no-op or general schema support.
+
+## Verification and commit receipt
+
+Scoped ESLint autofix, explicit build and full zero-warning lint passed.
+Full tests: 43 passed, 0 failed/skipped, 10,952.087 ms excluding compile.
+Smoke: 6 passed, 0 failed/skipped, 11,498.0891 ms. Standalone sequence ended
+2026-10-25T17:06:05.7988945+01:00. Two new naming tests cover ordinary/mixed-case/
+internal-single-underscore names and 18 malformed/unsupported names; existing
+strict joins, malformed profile and qualifier tests remain unchanged except the
+expected identity/status. Normal enabled hooks repeat lint/build/full tests/smoke;
+exact hook counts, commit hash/end time/clean state are supplied in the receipt
+outside this commit (a commit cannot embed its own hash).
+
+Every shell/test entry verifies TEMP, actual Node tmpdir and nonempty TMP/TMPDIR
+against absolute normalized F:/Temp, with process-only repair/recheck. The initial
+inline Node quoting failed closed before Git/workload; piped code corrected it.
+No recursive cleanup or scratch allocation by this slice, root edits, remote/global
+settings, push, tags, release or org mutation. No remote exists, so fetch cannot
+verify upstream. Only literal own paths are staged under focused-slice approval.
+
+## Next smallest implementation slice
+
+Resolve only the nested custom field request-name contract from authoritative
+input/readback evidence, then construct a tiny bounded offline Other create
+request from this exact validated projection and verified base object identity.
+Keep target data-space binding explicit. Stop if field identity inversion cannot
+be proved; do not expand to deployment orchestration, Profile/Engagement, update,
+CLI or org calls. No retained create-request/provenance framework is needed.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | README, capabilities, artifact contract, handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+README/capability/artifact surfaces updated. Wiki/sites/tool listings/hover and
+Git workflow need no change. No npm changelog. Gate 5 slice propagation done;
+root registration/release dependency map remain coordinator-only follow-ups.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Strict offline Other Connect/Metadata projection
 
 Start: 2026-10-25T16:54:34+01:00. Clean baseline
