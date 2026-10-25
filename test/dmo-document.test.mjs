@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildOtherDmoCreateRequest,
+  buildOtherDmoCreateRequestFromDocument,
   classifyDmoRawField,
   projectDmoRawFields,
   projectDmoConnectMetadata,
@@ -677,6 +678,317 @@ test('Other mapper preserves exact authored names and omits absent optional desc
     ['Case_Sensitive2__c', 'Recorded_AT__c'],
   );
   assert.ok(!('description' in request));
+});
+
+// Standalone authored JSON: no source response, generated fields or projection needed.
+const authoredFixture = () => ({
+  schemaVersion: 1,
+  kind: 'dmo',
+  identity: { dataSpace: 'default', apiName: 'aUdIt_Entry2__dlm' },
+  spec: {
+    label: '  Café entry  ',
+    description: 'Authored\r\nnotes',
+    category: 'Other',
+    fields: [
+      {
+        name: 'Recorded_AT__c',
+        label: 'Recorded at',
+        dataType: 'DateTime',
+        isPrimaryKey: false,
+        isDynamicLookup: false,
+      },
+      {
+        name: 'Case_Sensitive2__c',
+        label: '  Entry key  ',
+        dataType: 'Text',
+        isPrimaryKey: true,
+        isDynamicLookup: false,
+      },
+    ],
+  },
+});
+
+test('authored mapper maps standalone serialized JSON to the exact ordered request', () => {
+  const document = JSON.parse(serializeDmoDocument(authoredFixture()));
+  const before = structuredClone(document);
+  Object.freeze(document.identity);
+  for (const field of document.spec.fields) Object.freeze(field);
+  Object.freeze(document.spec.fields);
+  Object.freeze(document.spec);
+  Object.freeze(document);
+  const request = buildOtherDmoCreateRequestFromDocument(document, 'default');
+  assert.deepEqual(request, {
+    name: 'aUdIt_Entry2',
+    label: '  Café entry  ',
+    description: 'Authored\r\nnotes',
+    dataSpaceName: 'default',
+    category: 'Other',
+    fields: [
+      {
+        name: 'Recorded_AT__c',
+        label: 'Recorded at',
+        dataType: 'DateTime',
+        isPrimaryKey: false,
+        isDynamicLookup: false,
+      },
+      {
+        name: 'Case_Sensitive2__c',
+        label: '  Entry key  ',
+        dataType: 'Text',
+        isPrimaryKey: true,
+        isDynamicLookup: false,
+      },
+    ],
+  });
+  assert.deepEqual(document, before);
+  const second = buildOtherDmoCreateRequestFromDocument(document, 'default');
+  assert.notEqual(request, second);
+  assert.notEqual(request.fields, second.fields);
+  assert.notEqual(request.fields[0], second.fields[0]);
+  request.fields[0].label = 'changed';
+  request.fields.reverse();
+  assert.deepEqual(document, before);
+  assert.deepEqual(second.fields, before.spec.fields);
+});
+
+test('authored mapper preserves optional description presence including empty text', () => {
+  for (const description of [undefined, '', 'Independent description']) {
+    const document = authoredFixture();
+    if (description === undefined) delete document.spec.description;
+    else document.spec.description = description;
+    const bytes = JSON.stringify(document);
+    const request = buildOtherDmoCreateRequestFromDocument(JSON.parse(bytes), 'default');
+    assert.equal(Object.hasOwn(request, 'description'), description !== undefined);
+    assert.equal(request.description, description);
+  }
+});
+
+const unsupportedAuthoredMutations = [
+  [
+    'source space',
+    (d) => {
+      d.identity.dataSpace = 'research';
+    },
+  ],
+  [
+    'source space case',
+    (d) => {
+      d.identity.dataSpace = 'Default';
+    },
+  ],
+  [
+    'Profile category',
+    (d) => {
+      d.spec.category = 'Profile';
+    },
+  ],
+  [
+    'Engagement category',
+    (d) => {
+      d.spec.category = 'Engagement';
+      d.spec.eventDateTimeFieldName = 'Recorded_AT__c';
+    },
+  ],
+  [
+    'extra field',
+    (d) => {
+      d.spec.fields.push({ ...d.spec.fields[0], name: 'Extra__c' });
+    },
+  ],
+  [
+    'missing field',
+    (d) => {
+      d.spec.fields.shift();
+    },
+  ],
+  [
+    'primary type',
+    (d) => {
+      d.spec.fields[1].dataType = 'Date';
+    },
+  ],
+  [
+    'nonprimary type',
+    (d) => {
+      d.spec.fields[0].dataType = 'Text';
+    },
+  ],
+  [
+    'primary dynamic lookup',
+    (d) => {
+      d.spec.fields[1].isDynamicLookup = true;
+    },
+  ],
+  [
+    'nonprimary dynamic lookup',
+    (d) => {
+      d.spec.fields[0].isDynamicLookup = true;
+    },
+  ],
+  [
+    'field description',
+    (d) => {
+      d.spec.fields[0].description = '';
+    },
+  ],
+  [
+    'field category',
+    (d) => {
+      d.spec.fields[1].category = '';
+    },
+  ],
+  [
+    'event reference',
+    (d) => {
+      d.spec.eventDateTimeFieldName = 'Recorded_AT__c';
+    },
+  ],
+  [
+    'modified reference',
+    (d) => {
+      d.spec.recordModifiedFieldName = 'Recorded_AT__c';
+    },
+  ],
+  [
+    'unknown root',
+    (d) => {
+      d.future = false;
+    },
+  ],
+  [
+    'unknown identity',
+    (d) => {
+      d.identity.future = false;
+    },
+  ],
+  [
+    'unknown spec',
+    (d) => {
+      d.spec.future = false;
+    },
+  ],
+  [
+    'unknown field',
+    (d) => {
+      d.spec.fields[0].future = false;
+    },
+  ],
+  [
+    'relationships',
+    (d) => {
+      d.spec.relationships = [];
+    },
+  ],
+  [
+    'runtime expectations',
+    (d) => {
+      d.expectations = {};
+    },
+  ],
+  [
+    'runtime identity',
+    (d) => {
+      d.createIdentity = {};
+    },
+  ],
+  [
+    'runtime qualifiers',
+    (d) => {
+      d.qualifierBindings = [];
+    },
+  ],
+  [
+    'runtime status',
+    (d) => {
+      d.status = 'projected';
+    },
+  ],
+  [
+    'runtime blockers',
+    (d) => {
+      d.blockers = [];
+    },
+  ],
+  [
+    'runtime field metadata',
+    (d) => {
+      d.spec.fields[1].keyQualifierName = 'Qualifier';
+    },
+  ],
+  [
+    'object suffix case',
+    (d) => {
+      d.identity.apiName = 'Entry__DLM';
+    },
+  ],
+  [
+    'repeated suffix',
+    (d) => {
+      d.identity.apiName = 'Entry__dlm__dlm';
+    },
+  ],
+  [
+    'namespaced object',
+    (d) => {
+      d.identity.apiName = 'ns__Entry__dlm';
+    },
+  ],
+  [
+    'reserved prefix',
+    (d) => {
+      d.identity.apiName = 'SSOTEntry__dlm';
+    },
+  ],
+  [
+    'duplicate field',
+    (d) => {
+      d.spec.fields[0].name = 'case_sensitive2__c';
+    },
+  ],
+  [
+    'missing primary',
+    (d) => {
+      d.spec.fields[1].isPrimaryKey = false;
+    },
+  ],
+  [
+    'extra primary',
+    (d) => {
+      d.spec.fields[0].isPrimaryKey = true;
+    },
+  ],
+];
+for (const [name, mutate] of unsupportedAuthoredMutations) {
+  test(`authored mapper rejects ${name}`, () => {
+    const document = authoredFixture();
+    mutate(document);
+    const bytes = JSON.stringify(document);
+    assert.throws(
+      () => buildOtherDmoCreateRequestFromDocument(JSON.parse(bytes), 'default'),
+      DmoDocumentError,
+    );
+  });
+}
+
+test('authored mapper requires explicit exact target and refuses projections or malformed documents', () => {
+  for (const target of [undefined, '', 'Default', 'research', '../default', {}, 1])
+    assert.throws(
+      () => buildOtherDmoCreateRequestFromDocument(authoredFixture(), target),
+      DmoDocumentError,
+    );
+  for (const value of [undefined, {}, [], defaultProjection()])
+    assert.throws(() => buildOtherDmoCreateRequestFromDocument(value, 'default'), DmoDocumentError);
+  const document = authoredFixture();
+  Object.defineProperty(document.spec.fields[0], 'label', {
+    enumerable: true,
+    get() {
+      throw new Error('secret');
+    },
+  });
+  assert.throws(
+    () => buildOtherDmoCreateRequestFromDocument(document, 'default'),
+    DmoDocumentError,
+  );
 });
 
 // Exercise the production adapter against the same independent joined schema, never an org.

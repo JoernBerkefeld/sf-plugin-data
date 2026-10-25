@@ -1,7 +1,9 @@
 # Internal DMO field contract
 
-The validator/serializer and raw field projection are internal offline helpers,
-not an export/deploy format. No CLI integration, filesystem discovery, published
+The approved Git artifact is the authored-only document below. Runtime source
+expectations and joined projections remain internal, never part of that file.
+The validator/serializer, mappers and raw field projection are offline helpers;
+request mapping alone does not establish deployment acceptance. No CLI integration, filesystem discovery, published
 JSON Schema or live request execution exists. The future layout remains
 `data360/<logical-data-space>/<family>/<api-name>.json`; safe paths are unimplemented.
 
@@ -40,7 +42,8 @@ It never returns a complete portable export. `candidate` is the writable-field
 subset for inspection only. `configuration` independently retains every admitted
 raw configuration property, including field order, original category spelling,
 flag presence, custom qualifiers and all system fields. It is not deploy input.
-Do not serialize the candidate alone as a portable retrieval result.
+Do not serialize this incomplete candidate as a portable retrieval result.
+Only a separately qualified strict retrieval may emit the approved authored document.
 
 - Read `type` maps to candidate `dataType`; missing boolean flags become false
   only in the candidate. Explicit invalid flags block. Uppercase PROFILE/OTHER/
@@ -101,8 +104,11 @@ Expectations retain generated fields, primary/dynamic attributes, length/require
 presence and all admitted readback metadata; they are not writable Metadata API
 input. The source Connect ID remains an observation. `projected` establishes only
 this offline profile projection and identity, not general deployment support.
-The candidate must never be detached and presented as deployable. No request
-execution exists. The bounded offline mapper below constructs an authored-only request.
+The projection itself is not a Git artifact. After strict retrieval qualification,
+only the authored candidate belongs in the approved Git file; its runtime source
+expectations remain internal. A detached document is not proof of runtime source
+state or deployment acceptance. No request execution exists. The bounded offline
+mappers below distinguish source revalidation from authored-file mapping.
 
 Offline evidence inspected 2026-10-25: a separately authorized Other experiment
 reported full Connect/Metadata equality across orgs, excluding only Connect ID
@@ -143,6 +149,30 @@ both orgs. Its comparison passed with no source drift. That observed evidence
 resolves this exact Other/default profile: field-name inversion is unnecessary.
 It does not establish every naming form, arbitrary spaces or every API version.
 No live org call or write was made while implementing this mapper.
+
+## Standalone authored-document Other mapper
+
+`buildOtherDmoCreateRequestFromDocument(value: unknown, targetDataSpace: unknown):
+OtherDmoCreateRequest` first calls `validateDmoDocument`. It accepts the standalone
+approved `{ schemaVersion, kind, identity, spec }` JSON after serialize/parse,
+without a projection, source expectations, qualifier binding or fabricated metadata.
+The existing `buildOtherDmoCreateRequest` remains the separate strict runtime
+projection revalidator; its forged-projection checks are unchanged.
+
+Source and explicit target must both equal case-sensitive `default`. The supported
+spec is exactly Other with two authored fields: one Text primary key and one
+DateTime nonprimary, both `isDynamicLookup: false`. Field description/category and
+object event/record-modified references are rejected even if empty. Unknown keys,
+relationships and runtime projection keys reject rather than disappear.
+
+The fresh request derives the object base using the already validated terminal
+`__dlm` rule, preserves exact authored `__c` field names, labels and array order,
+and preserves optional object description presence, including empty text. It does
+not mutate or share field objects with its input. No expectations are fabricated.
+This is offline request construction only: deployment must independently validate
+the authored file and later compare actual target readback, with internal runtime
+expectations acquired as needed. It does not provide CLI/file handling, transport,
+target preflight, create/update/no-op orchestration or general DMO acceptance.
 
 ## Internal read-only Other retrieval
 

@@ -97,6 +97,15 @@ Every family must complete all gates below before support can be declared.
       exact identity/cardinality, complete relationships, strict joined projection
       and offline mapper are required before returning full expectations. Synthetic
       acquisition/failure tests only; no CLI/file wiring or write transport added.
+- [x] Separate offline authored-document Other/default request mapping.
+      Approved Git shape is schemaVersion/kind/identity/spec only; runtime source
+      expectations remain internal. Standalone JSON validates without a projection:
+      exactly one Text primary and one DateTime nonprimary, dynamic lookup false,
+      no field description/category or event/modified references. Names, labels,
+      order and optional object description survive; unknown/runtime keys reject.
+      Existing strict projection mapper and forged-profile refusals remain intact.
+      Deploy still needs independent authored-file validation and target readback;
+      no CLI, filesystem or transport write is implemented by this mapper.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

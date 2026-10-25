@@ -52,8 +52,8 @@ in an explicit data space, requiring total-size consistency and bounded offset
 completion. API 65.0 live inspection confirmed HTTP 204 for an empty initial list,
 optional count metadata, and sourceObject/targetObject endpoint records. Unknown envelopes block; raw entry fields are preserved. It is not yet
 bound to field projection: candidates still carry RELATIONSHIPS_NOT_ACQUIRED and
-must never be exported alone. This is not yet an export/deploy format; qualified
-relationship projection, generated-field replay and filesystem handling remain
+must never be exported alone from that incomplete helper. Qualified
+relationship projection, broader generated-field replay and filesystem handling remain
 unimplemented. A second offline helper joins exact Connect/Metadata identities for
 one proven relationship-free Other shape, binds qualifiers by explicit metadata
 reference, and uses authoritative primary/dynamic flags. It retains full readback
@@ -70,7 +70,15 @@ relationships using an existing Salesforce core connection, explicitly at API
 65.0/default only. It validates both projection and mapper, returning the full
 projection/expectations rather than a detached candidate. Missing/ambiguous
 Metadata or incomplete relationships fail without partial results. No CLI or
-filesystem wiring exists. Profile and Engagement remain
+filesystem wiring exists. The approved Git artifact contains only
+`schemaVersion`, `kind`, `identity` and `spec`; runtime source expectations remain
+internal. A separate `buildOtherDmoCreateRequestFromDocument` mapper accepts this
+standalone authored JSON with explicit default target binding, validates it and
+maps only Other with one Text primary and one DateTime nonprimary field, both
+without dynamic lookup. It preserves exact names, labels, field order and optional
+object description; unsupported semantics and runtime keys reject. This offline
+mapping is not deploy acceptance: deployment must separately validate the authored
+file and later verify target readback. Profile and Engagement remain
 pending; no writable Metadata projection or CLI mutation is provided. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows

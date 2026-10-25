@@ -513,6 +513,43 @@ export function buildOtherDmoCreateRequest(
 }
 
 /**
+ * Map an authored document independently of internal source-readback expectations.
+ * @param {unknown} value Parsed authored document, never a runtime projection.
+ * @param {unknown} targetDataSpace Explicit target binding; only default has replay evidence.
+ * @returns {OtherDmoCreateRequest} Fresh request for the evidenced two-field Other subset.
+ */
+export function buildOtherDmoCreateRequestFromDocument(
+  value: unknown,
+  targetDataSpace: unknown,
+): OtherDmoCreateRequest {
+  const document = validateDmoDocument(value);
+  requireValid(document.identity.dataSpace === 'default' && targetDataSpace === 'default');
+  const { spec } = document;
+  requireValid(spec.category === 'Other' && spec.fields.length === 2);
+  requireValid(!('eventDateTimeFieldName' in spec) && !('recordModifiedFieldName' in spec));
+  for (const field of spec.fields) {
+    requireValid(!('description' in field) && !('category' in field));
+    requireValid(field.isDynamicLookup === false);
+    requireValid(field.isPrimaryKey ? field.dataType === 'Text' : field.dataType === 'DateTime');
+  }
+  return {
+    // Document validation proves the local base; remove only the terminal suffix.
+    name: document.identity.apiName.slice(0, -'__dlm'.length),
+    label: spec.label,
+    ...('description' in spec ? { description: spec.description } : {}),
+    dataSpaceName: targetDataSpace,
+    category: 'Other',
+    fields: spec.fields.map(({ name, label, dataType, isPrimaryKey, isDynamicLookup }) => ({
+      name,
+      label,
+      dataType,
+      isPrimaryKey,
+      isDynamicLookup,
+    })),
+  };
+}
+
+/**
  * Sort only object keys; all arrays and string contents retain their order.
  * @param {unknown} value Validated JSON value.
  * @returns {unknown} Canonical JSON value.

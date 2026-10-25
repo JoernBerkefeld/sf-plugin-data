@@ -1,3 +1,81 @@
+# Authored-only Other document mapper
+
+Start: 2026-10-25T17:30:09+01:00, clean baseline
+`d02eed6cad10c2f1c8fedb148ec22a546d938043`. Written slice plan and
+simplicity check preceded edits. Final plan review d198e9ac had zero must-fix;
+Gate 1/2 complete, Gate 3 one small coupled sequential mapper/test slice. No
+additional review or worker; whole-feature Gate 4 remains coordinator-owned.
+
+## Exact interface and approved artifact
+
+`buildOtherDmoCreateRequestFromDocument(value: unknown, targetDataSpace: unknown):
+OtherDmoCreateRequest` is a separate export in src/artifacts/dmo-document.ts.
+It calls validateDmoDocument, then accepts only source/explicit target default,
+category Other, exactly one Text primary and one DateTime nonprimary field,
+both dynamicLookup false. Field description/category and event/record-modified
+references reject. Unknown/relationship/runtime keys reject through validation.
+The validated terminal __dlm rule derives the object base; exact authored __c
+names, labels, order and optional object description presence survive. Outputs
+are fresh and input is immutable. No framework, fabricated expectations or calls.
+
+Approved Git JSON contains only schemaVersion/kind/identity/spec. Internal source
+expectations remain in the runtime projection, not the Git file. Existing
+buildOtherDmoCreateRequest strict projection revalidation and forged-projection
+tests are intact. Deploy must independently validate the authored file, acquire
+any necessary runtime expectations and later verify actual target readback.
+This section supersedes earlier handover instructions to persist projections.
+No deploy/CLI/transport/org behavior was added.
+
+## Verification receipt
+
+Scoped ESLint autofix, explicit build and full zero-warning lint passed. Full
+suite: 87 passed, 0 failed/skipped (11,654.072 ms excluding compile). There are
+35 new tests: exact standalone JSON request, optional description presence,
+frozen input/fresh independent output, 32 individual unsupported mutations,
+and explicit target/malformed/projection/accessor refusals. Initial lint clone
+heuristic was fixed by naming serialized bytes, keeping actual JSON parse tests.
+Smoke: 6 passed, 0 failed/skipped (11,793.1526 ms); standalone sequence ended
+2026-10-25T17:33:00.7611133+01:00. Normal enabled hook/commit final receipts follow
+in coordinator output; self-referential commit hash is not embedded here.
+
+Every shell/test entry verifies TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+as absolute normalized F:/Temp. Initial inline quoting failed closed; piped
+preflight passed after process-only repair/recheck. No recursive cleanup or
+scratch allocation by this slice. Existing smoke retains owned OS-temp fixtures.
+Fetch/status done; no remote, so upstream unavailable. Personal Git identity
+verified. Only literal own paths staged; no push/tag/release/root/global edits.
+
+## Next CLI output slice
+
+Wire one explicit Other/default retrieve command to retrieveOtherDmo using core
+authentication and explicit API 65.0. Qualify full internal source projection,
+then serialize only its authored candidate with serializeDmoDocument and validate
+with the new authored mapper; never persist expectations or synthesize them.
+Define deterministic safe output path and overwrite refusal before edits. Add
+isolated verified OS-temp filesystem/CLI tests and payload-free refusals. Keep
+deploy/write transport, discovery, broader categories/spaces and frameworks out.
+Gate 4 and root release/dependency registration remain coordinator follow-ups.
+
+## Propagation Table
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | mapper/tests, README, artifact contract, capabilities, handover | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+Gate 5 slice documentation checked after green checks; whole-feature Gate 4 is
+coordinator-owned. Wiki/sites/tool listings/hover and Git workflow need no update.
+No npm changelog. No release/version bump prepared; keep all commits local.
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
 # Internal read-only Other retrieval service
 
 Start: 2026-10-25T17:15:49+01:00. Clean baseline
