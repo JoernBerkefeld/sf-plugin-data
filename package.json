@@ -1,0 +1,66 @@
+{
+  "name": "@joernberkefeld/sf-plugin-data360",
+  "version": "0.1.0",
+  "description": "Salesforce CLI bootstrap for portable Data360 configuration",
+  "author": {
+    "name": "Jörn Berkefeld",
+    "email": "joern.berkefeld@gmail.com"
+  },
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "oclif": {
+    "bin": "sf",
+    "commands": "./lib/commands",
+    "topicSeparator": " ",
+    "topics": {
+      "data360": {
+        "description": "Portable Data360 configuration (bootstrap; operations not implemented)."
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src test scripts bin eslint.config.js --max-warnings 0",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "smoke": "node --test test/cli.test.mjs",
+    "smoke:package": "node scripts/package-smoke.mjs",
+    "prepare": "husky || true",
+    "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "@oclif/core": "4.13.2",
+    "@salesforce/core": "8.31.3",
+    "@salesforce/sf-plugins-core": "12.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "@types/node": "22.19.0",
+    "eslint": "9.39.4",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-jsdoc": "54.7.0",
+    "eslint-plugin-prettier": "5.5.6",
+    "eslint-plugin-unicorn": "64.0.0",
+    "globals": "17.9.0",
+    "husky": "9.1.7",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0"
+  }
+}
