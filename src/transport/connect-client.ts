@@ -32,7 +32,7 @@ export class ConnectClient {
 
   public constructor(
     private readonly connection: AuthenticatedConnection,
-    apiVersion: string,
+    private readonly apiVersion: string,
   ) {
     if (!/^\d{2,3}\.0$/u.test(apiVersion)) throw new ConnectError('INVALID_REQUEST');
     try {
@@ -156,6 +156,104 @@ export class ConnectClient {
       if (envelope.dataModelObject.length < limit) return result;
     }
     // A full final permitted page cannot prove exhaustion, even if exactly full.
+    throw new ConnectError('INCOMPLETE_LIST');
+  }
+
+  /**
+   * Acquire raw incoming and outgoing relationships in one explicit data space.
+   * Pagination metadata must prove exhaustion; raw records are not portable artifacts.
+   * @param {string} dataModelObjectName Exact DMO API name, including any namespace.
+   * @param {string} dataSpace Exact server data-space name; never silently defaults.
+   * @returns {Promise<Array<Record<string, unknown>>>} Complete raw relationships or an error.
+   */
+  public async listDataModelObjectRelationships(
+    dataModelObjectName: string,
+    dataSpace: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    if (
+      Number(this.apiVersion) < 64 ||
+      !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName) ||
+      !/^[A-Za-z][A-Za-z0-9_]*$/u.test(dataSpace)
+    )
+      throw new ConnectError('INVALID_REQUEST');
+    const result: Array<Record<string, unknown>> = [];
+    const identities = new Set<string>();
+    const limit = 20;
+    let total: number | undefined;
+    const envelopeKeys = new Set([
+      'relationships',
+      'count',
+      'totalSize',
+      'sortBy',
+      'currentPageToken',
+      'currentPageUrl',
+      'nextPageToken',
+      'nextPageUrl',
+      'previousPageToken',
+      'previousPageUrl',
+    ]);
+    // Local safety budget, not a claim about this endpoint's server offset ceiling.
+    for (let offset = 0; offset <= 2000; offset += limit) {
+      const page = await this.get<unknown>(
+        `${this.prefix}data-model-objects/${dataModelObjectName}/relationships?dataspace=${dataSpace}&limit=${limit}&offset=${offset}&orderBy=ASC&sortBy=DeveloperName`,
+      );
+      if (!page || typeof page !== 'object' || Array.isArray(page))
+        throw new ConnectError('INVALID_PAGE');
+      const envelope = page as Record<string, unknown>;
+      if (
+        Object.keys(envelope).some((key) => !envelopeKeys.has(key)) ||
+        !Array.isArray(envelope.relationships) ||
+        envelope.relationships.length > limit ||
+        envelope.count !== envelope.relationships.length ||
+        !Number.isSafeInteger(envelope.totalSize) ||
+        (envelope.totalSize as number) < 0 ||
+        (envelope.sortBy != undefined && envelope.sortBy !== 'DeveloperName') ||
+        [...envelopeKeys].some(
+          (key) =>
+            (key.endsWith('Url') || key.endsWith('Token')) &&
+            envelope[key] != undefined &&
+            typeof envelope[key] !== 'string',
+        )
+      )
+        throw new ConnectError('INVALID_PAGE');
+      if (total !== undefined && total !== envelope.totalSize)
+        throw new ConnectError('INCOMPLETE_LIST');
+      total = envelope.totalSize as number;
+      for (const entry of envelope.relationships as unknown[]) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+          throw new ConnectError('INVALID_PAGE');
+        const item = entry as Record<string, unknown>;
+        const entities = [item.sourceEntity, item.targetEntity];
+        if (
+          typeof item.name !== 'string' ||
+          !item.name.trim() ||
+          entities.some(
+            (entity) =>
+              !entity ||
+              typeof entity !== 'object' ||
+              Array.isArray(entity) ||
+              typeof (entity as Record<string, unknown>).name !== 'string' ||
+              !(entity as Record<string, unknown>).name,
+          ) ||
+          !entities.some(
+            (entity) => (entity as Record<string, unknown>).name === dataModelObjectName,
+          )
+        )
+          throw new ConnectError('INVALID_PAGE');
+        if (identities.has(item.name)) throw new ConnectError('INCOMPLETE_LIST');
+        identities.add(item.name);
+        // Preserve every field, including unfamiliar semantics, for later strict projection.
+        result.push(item);
+      }
+      if (result.length > total) throw new ConnectError('INVALID_PAGE');
+      if (result.length === total) {
+        if (envelope.nextPageUrl || envelope.nextPageToken)
+          throw new ConnectError('INCOMPLETE_LIST');
+        return result;
+      }
+      if (envelope.relationships.length !== limit) throw new ConnectError('INCOMPLETE_LIST');
+      // Response URLs can reference legacy routes/versions. Never follow them.
+    }
     throw new ConnectError('INCOMPLETE_LIST');
   }
 

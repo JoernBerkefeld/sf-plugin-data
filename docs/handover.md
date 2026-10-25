@@ -1,3 +1,91 @@
+# Read-only DMO relationship acquisition slice
+
+Start: 2026-10-25T16:05:03+01:00. Clean baseline:
+`a077193c1c92ed4b3830dc423d82fc819b03d40f`. Gate 1/2 complete and Gate 3 sized
+were inherited and explicitly confirmed. One small sequential transport slice;
+no additional workers, whole-feature review or root edits. Smallest design check:
+no universal relationship/schema framework, CLI, discovery or mutation added.
+
+## Evidence and exact interface
+
+Local mirrors had no relationship response contract. Approved official online
+lookup supplied the full endpoint-specific section of the
+[Connect REST reference](https://developer.salesforce.com/docs/data/connectapi/references/spec),
+checked 2026-10-25. GET `/ssot/data-model-objects/{dataModelObjectName}/relationships`
+is available from API 64.0 and covers the DMO as source OR target. Documented query:
+creationType, dataspace, limit (default 20), offset, orderBy, sortBy, status.
+Response example: relationships/count/totalSize/sortBy plus current/next/previous
+URL/token pairs. The sample's URLs reference a different v63 legacy route; do not
+follow them or infer its equivalence. The example abbreviates records relative to
+count, so count-as-page-length validation is intentionally conservative and needs
+selected-version live acceptance; incompatible responses block, never get silently
+reinterpreted. No org call was necessary. An MCP search initially supplied an
+unsupported limit argument despite its advertised schema; removing it succeeded.
+No tool execution or customer-row access occurred.
+
+- `ConnectClient.listDataModelObjectRelationships(dataModelObjectName: string,
+dataSpace: string): Promise<Array<Record<string, unknown>>>` returns complete
+  raw metadata under validated pagination assumptions or throws payload-free
+  ConnectError. Version <64 and unsupported identifier scope reject before calls.
+- Requests documented route, explicit dataspace, limit 20, offsets 0..2000,
+  orderBy ASC and sortBy DeveloperName. No status/creation filtering. Offset 2000
+  is our local safety budget, NOT a documented relationship server ceiling.
+- Completion requires stable nonnegative integer totalSize, count equal page
+  length, accumulated total equality and no truthy next URL/token. A full page
+  can terminate when total proves exhaustion; short nonterminal pages block.
+  Unknown envelope keys, malformed metadata, duplicates, foreign DMO records,
+  total drift, budget exhaustion and transport errors never return partial data.
+- Raw records retain ALL metadata including unknown nested fields, qualifiers,
+  generated names, status and optional/absent targetField. Source/target names
+  must exist and one must match the requested DMO. Query establishes data-space
+  scope; no undocumented per-entry dataspace property is invented. No consistent
+  snapshot or detection of equal-total concurrent changes is claimed.
+- Existing `projectDmoRawFields` stays unchanged and ALWAYS incomplete with
+  RELATIONSHIPS_NOT_ACQUIRED. No portable binding, replay or deploy support claimed.
+
+## Verification and commit boundary
+
+Standalone lint:fix, explicit build, zero-warning lint all exit 0. Full tests:
+37 passed, 0 failed/skipped (12,807.7177 ms excluding compile). CLI smoke:
+6 passed, 0 failed/skipped (12,468.1862 ms). Six new independently authored
+synthetic tests cover directions/scope/raw fidelity, pagination, terminal pages,
+malformed/unknown envelopes, overlap/drift/budget/failure and invalid inputs.
+Initial lint found null fixture style and await-member style; fixed without
+suppressions. Package smoke and normal enabled commit hook receipt follow in the
+coordinator response, including exact commit hash and clean state.
+All shell/test entries verified TEMP, actual Node tmpdir and nonempty TMP/TMPDIR
+against F:/Temp; process-local repair/recheck only. No recursive cleanup.
+No push/tag/publication, remote/global settings, tokens or live fixtures.
+
+## Next smallest slice
+
+Bind acquired relationships to qualified DMO/field identities in a lossless
+incomplete projection, including calculated-insight endpoints and absent target
+fields as explicit blockers where replay is unverified. Decide portable schema
+only from full authoritative input schema; do not guess generated-name/qualifier
+replay or remove existing incompleteness prematurely. A later bounded read-only
+primary-org check can validate selected-version count/total assumptions if needed.
+
+## Propagation Table
+
+| Component                                                                            | Needs update? | What to update                                    | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, capabilities, artifact evidence, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                       | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumers                                      | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                              | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                       | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                       | not needed |
+
+Wiki/sites/hover and Git workflow need no update for this unpublished internal
+transport helper. No npm changelog; whole-feature review and root registration
+remain coordinator follow-ups outside this slice.
+
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
+
 # Nested DMO field projection slice
 
 Start: 2026-10-25T15:51:01+01:00. Clean baseline:

@@ -47,10 +47,13 @@ offline custom schema with all 12 nested input field types, dynamic lookup and
 field category, strict unknown-field rejection and ordered-field preservation.
 Raw projection produces an explicitly incomplete diagnostic candidate, retaining
 qualifiers, semantic metadata and generated fields in separate configuration.
-Relationships are not acquired; candidates must never be exported alone as
-portable documents. This is not yet an export/deploy format; relationship
-acquisition, generated-field replay, filesystem handling and other families
-remain unimplemented. See the exact subset and evidence in the artifact document.
+A separate internal relationship helper now acquires incoming/outgoing raw metadata
+in an explicit data space, requiring count/total-size consistency and bounded offset
+completion. Unknown envelopes block; raw entry fields are preserved. It is not yet
+bound to field projection: candidates still carry RELATIONSHIPS_NOT_ACQUIRED and
+must never be exported alone. This is not yet an export/deploy format; qualified
+relationship projection, generated-field replay and filesystem handling remain
+unimplemented. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),

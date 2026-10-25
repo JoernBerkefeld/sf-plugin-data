@@ -53,7 +53,8 @@ Do not serialize the candidate alone as a portable retrieval result.
   The nested input contract does not make these directly writable.
 - Every result includes `RELATIONSHIPS_NOT_ACQUIRED`. DMO detail does not establish
   incoming/outgoing relationship completeness. An empty detail field list of
-  relationships is not evidence of absence. Separate acquisition is next.
+  relationships is not evidence of absence. The separate raw acquisition helper
+  below is not yet bound to this projection.
 - Unknown keys, nested semantic values, accessors, duplicate names, unsupported
   creation variants and invalid candidates throw payload-free `DmoDocumentError`.
 
@@ -85,7 +86,37 @@ rather than added to this bounded custom-schema slice.
 
 `payload_examples('d360_dmo_relationship_list')` independently describes a
 separate source-or-target relationship list, required `dataModelObjectName`,
-optional `dataspace`, `status`, `creationType`. No org call was executed. Pagination,
-response envelope, qualified references and complete incoming/outgoing acquisition
-remain the next contract checkpoint. Generated qualifier replay and safe PATCH
-semantics also remain unverified. No portable round trip is claimed.
+optional `dataspace`, `status`, `creationType`. No org call was executed.
+
+## Read-only relationship acquisition
+
+The full official endpoint section (checked 2026-10-25) establishes API 64.0
+`GET /ssot/data-model-objects/{dataModelObjectName}/relationships`, covering the
+selected DMO as either source or target. Query parameters: `creationType`,
+`dataspace` (server default is default), `limit` (default 20), `offset`, `orderBy`,
+`sortBy`, `status`. Acquisition deliberately omits status/creation filters.
+The documented response has `relationships`, `count`, `totalSize`, `sortBy` and
+current/next/previous page token/URL pairs. Its sample links use an older v63
+route absent from the operation table; no equivalence is inferred from those URLs.
+
+`ConnectClient.listDataModelObjectRelationships(dataModelObjectName: string,
+dataSpace: string): Promise<Array<Record<string, unknown>>>` uses explicit scope,
+API >=64.0 and the documented route only. It requests 20 rows, offsets 0..2000,
+ASC/DeveloperName; 2000 is a local budget, not an endpoint limit claim. It ignores
+response links/tokens for navigation and never forwards them. A terminal page
+requires accumulated rows equal totalSize and absent/null/empty next URL/token.
+Missing total/count, changing totals, overlap, out-of-scope records, unknown
+envelope keys, premature short pages or budget exhaustion block without returning
+partial data. The helper accepts only identifier-form data spaces and DMO names
+ending __dlm (including namespaces); other names block before network access.
+
+Raw entry fields, including unknown nested metadata, qualifiers, cardinality,
+status, owner, generated names and optional/absent targetField, survive untouched.
+This is transport preservation, not approval of unknown semantics for portable
+export. Entries require unique nonblank names and source/target entity names;
+at least one endpoint must match the requested DMO. Data-space scope relies on
+the server query, not an invented per-record data-space field. Offset pagination
+has no snapshot guarantee and equal-total concurrent changes can evade detection.
+Selected-version live acceptance and qualified logical reference projection are
+still pending. Field projection stays explicitly incomplete. Generated qualifier
+replay and safe PATCH semantics remain unverified. No portable round trip is claimed.

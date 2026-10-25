@@ -66,6 +66,13 @@ Every family must complete all gates below before support can be declared.
       [Official endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec)
       checked 2026-10-25; endpoint-specific text, not search-result synthesis.
       Other resource pagination and live API/version acceptance remain pending.
+- [x] Internal incoming/outgoing raw relationship acquisition with synthetic tests.
+      API 64.0 endpoint: `GET /ssot/data-model-objects/{dataModelObjectName}/relationships`.
+      Explicit `dataspace`, unfiltered status/creation type, offset/limit pagination;
+      count/totalSize must prove completion. Unknown envelopes and inconsistencies
+      block; all entry metadata survives. Response continuation links are never
+      followed. Local offset budget is 2000, not an asserted server limit.
+      No live acceptance, qualified portable projection or replay is claimed.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input
