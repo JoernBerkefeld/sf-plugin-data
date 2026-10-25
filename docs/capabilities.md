@@ -21,8 +21,13 @@ No command-level category/field-count restriction is added. Current service
 supports API 65.0/default through the common DMO projector with recognized generated
 recipe, exact semantics and arbitrary nonempty authored counts/types. Only projected,
 blocker-free, validated candidates reach the independently common-mapped writer.
-Incomplete or unknown variants diagnose without publication. Type-only/no-selector discovery remains
-pending without changing its approved future meaning. General deployment remains unimplemented.
+Incomplete or unknown variants diagnose without publication. Repeatable exact selectors,
+`-m dmo`, and omitted selectors (all currently implemented families: DMO only) now
+resolve deduplicated sorted selection. Type/all reads complete inventory before
+writing and filters the explicit default space; exact-only does not list. Each
+unsupported or failed object has an identity-bearing diagnostic, retained successful
+receipts, and a nonzero aggregate. Empty inventory succeeds without files. API 65.0/default
+and selection validation precede authentication. General deployment remains unimplemented.
 Internal `readDeployInputs` now resolves explicit files/directories or exact project
 DMO members with bounded no-link authored-only JSON admission. Repeated identical
 inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
@@ -105,7 +110,7 @@ permissive than the demonstrated projector; unqualified recipes never verify.
       unchanged-byte no-op, explicit overwrite and link/directory refusal tests.
       OS-temp flushed staging uses atomic publication on the same volume; cross-volume
       output fails closed. Concurrent filesystem replacement is not fully guarded.
-      Explicit retrieve command now delegates here; discovery remains pending.
+      Exact/type/all retrieve selection now delegates here; each object still qualifies independently.
 
 - [x] Read-only authenticated Connect REST transport, structured errors and redaction.
       Explicit DMO CLI integration is implemented; broader resource contracts remain pending.

@@ -11,7 +11,13 @@ const root = mkdtempSync(path.join(os.tmpdir(), 'data360-package-'));
 const npm = process.env.npm_execpath;
 assert.ok(npm, 'Run this script through npm run smoke:package.');
 const environment = {
-  ...process.env,
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !/^(?:SF|SFDX)_/iu.test(key)),
+  ),
+  USERPROFILE: root,
+  HOME: root,
+  SF_TARGET_ORG: 'offline-unconfigured-synthetic',
+  SFDX_DEFAULTUSERNAME: 'offline-unconfigured-synthetic',
   SF_STATE_FOLDER: path.join(root, 'sf'),
   SF_DISABLE_TELEMETRY: 'true',
   SF_AUTOUPDATE_DISABLE: 'true',
@@ -86,10 +92,12 @@ for (const operation of ['retrieve', 'deploy']) {
   const command = Object.create(Command.prototype);
   command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({
-    flags: { 'api-version': '65.0', 'data-space': 'default', preview: true },
+    flags: { 'api-version': '65.0', 'data-space': 'default', preview: true, metadata: ['invalid'] },
   });
   command.jsonEnabled = () => true;
   command.resolveInputs = async () => [];
+  command.resolveOrg = command.selectDocuments = () =>
+    assert.fail('Must validate before auth or inventory.');
   command.acquire =
     command.writeDocument =
     command.preflight =
@@ -106,10 +114,7 @@ for (const operation of ['retrieve', 'deploy']) {
       version: metadata.version,
     });
     assert.equal(envelope.provenance.pluginVersion, metadata.version);
-    assert.equal(
-      envelope.diagnostics.errors[0].code,
-      operation === 'retrieve' ? 'RETRIEVE_SELECTION_NOT_IMPLEMENTED' : 'INVALID_SELECTION',
-    );
+    assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
     assert.deepEqual(envelope.result.items, []);
   } finally {
     process.exitCode = previous;

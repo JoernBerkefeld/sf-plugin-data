@@ -10,6 +10,21 @@ published JSON Schema and general deployment remain unimplemented. The future la
 DMO writer below implements only `default/dmo`; explicit CLI retrieval is wired
 to the service and this writer without adding command-level profile restrictions.
 
+## Retrieval selection and aggregate outcomes
+
+`selectDmos(connection, selectors, apiVersion, dataSpace)` validates API 65.0/default
+and selector syntax. Exact-only names need no inventory; `dmo` or omitted selectors
+expand the complete transport inventory for default space, coalescing and sorting
+with exact selections. No-selector means all currently implemented families (DMO
+only), not a promise about unimplemented families. There is no `--all` flag.
+The command validates before resolving core org authentication. Each selected name
+still passes `retrieveDmo` and `writeDmoDocument`; no category is silently filtered.
+Envelope `result.selection` records expanded exact selectors. Successful items
+retain their writer receipts even when other objects fail. Object errors carry
+`identity: { dataSpace, apiName }` and a payload-free precise code. Any error yields
+blocked/failed and exit 1; transport/output failures yield failed. Empty inventory
+is success with no items. File shape, canonical bytes and overwrite rules are unchanged.
+
 ## Internal read-only deploy input resolver
 
 `readDeployInputs({cwd, sourceDir?, metadata?})` returns sorted

@@ -12,12 +12,17 @@ sf data360 retrieve -o source --api-version 65.0 --data-space default -m dmo:Exa
 sf data360 retrieve -o source -m dmo:Example__dlm -d ./project -x
 ```
 
-`-m/--metadata` is repeatable/non-greedy but currently requires exactly one explicit
-`dmo:ApiName`; type-only, discovery and no-selector retrieval remain pending future
-semantics. `-o/--target-org` overrides the configured default org. `-d/--output-dir`
+`-m/--metadata` is repeatable/non-greedy: exact `dmo:ApiName` selectors coalesce
+and sort without an inventory request. `-m dmo` retrieves all DMOs in the selected
+space using complete inventory; omitting selectors retrieves all implemented
+families (currently DMO only). There is no `--all` flag. Mixed type/exact selections
+coalesce. Empty inventory succeeds with no files. Unsupported objects are not
+silently skipped: diagnostics identify each object and precise capability/error
+code, successful file receipts are retained, and the aggregate exits nonzero. `-o/--target-org` overrides the configured default org. `-d/--output-dir`
 is a project root, default cwd; output is `data360/default/dmo/<api-name>.json`.
 `-x/--overwrite` permits differing file replacement; identical bytes are unchanged.
-Core API/version flags are passed unchanged to the service capability boundary.
+Selectors and API 65.0/default scope are validated before core org resolution or
+resource reads; the common service remains the per-object capability boundary.
 `--json` uses Salesforce CLI's normal outer result wrapper containing a versioned
 `sf-data360-retrieve` envelope with status, metadata, diagnostics, provenance and
 result. Both retrieve and deploy resolve `metadata.plugin.version` and

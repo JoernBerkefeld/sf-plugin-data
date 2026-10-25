@@ -1,8 +1,14 @@
 import path from 'node:path';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
+import { Org } from '@salesforce/core';
 import { DmoDocumentError } from '../../artifacts/dmo-document.js';
 import { DmoWriteError, writeDmoDocument } from '../../artifacts/write-other-dmo.js';
-import { DmoRetrieveError, retrieveDmo } from '../../services/retrieve-other-dmo.js';
+import {
+  DmoRetrieveError,
+  retrieveDmo,
+  selectDmos,
+  validateDmoSelection,
+} from '../../services/retrieve-other-dmo.js';
 import { ConnectError } from '../../transport/connect-client.js';
 import { plugin as packageMetadata } from '../../plugin.js';
 
@@ -17,7 +23,12 @@ export type RetrieveEnvelope = {
   };
   diagnostics: {
     warnings: string[];
-    errors: Array<{ code: string; message: string; retryable: false }>;
+    errors: Array<{
+      code: string;
+      message: string;
+      retryable: false;
+      identity?: { dataSpace: string; apiName: string };
+    }>;
   };
   provenance: {
     producer: string;
@@ -38,13 +49,16 @@ export type RetrieveEnvelope = {
   };
 };
 
-/** Retrieve explicit DMO configuration through existing service-owned capability checks. */
+/** Retrieve selected DMO configuration through existing service-owned capability checks. */
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
-  public static readonly summary = 'Retrieve an explicit Data360 DMO into a local project.';
+  public static readonly summary = 'Retrieve Data360 DMOs into a local project.';
   public static readonly description =
-    'Currently supports one explicit -m dmo:ApiName selector through the bounded retrieval service. Type-only, discovery and no-selector retrieval are pending, not permanently excluded. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Repeat -m dmo:ApiName for exact selection, use -m dmo for all DMOs in the selected space, or omit selectors for all implemented families (currently DMO only). Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
-    'target-org': Flags.optionalOrg(),
+    'target-org': Flags.string({
+      char: 'o',
+      summary: 'Authenticated org alias or username; defaults to the configured target org.',
+    }),
     'api-version': Flags.orgApiVersion({
       default: '65.0',
       summary: 'Explicit Salesforce API version (current service supports 65.0).',
@@ -57,7 +71,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Type[:ApiName]; currently one explicit dmo:ApiName only.',
+      summary: 'Repeat dmo[:ApiName]; omitted selectors retrieve all implemented families.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -72,6 +86,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   };
 
   protected acquire = retrieveDmo;
+  protected selectDocuments = selectDmos;
+  protected resolveOrg = (aliasOrUsername?: string): Promise<Org> =>
+    Org.create({ aliasOrUsername });
   protected writeDocument = writeDmoDocument;
 
   /**
@@ -117,48 +134,104 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           retryable: false,
         });
       if (status !== 'success') process.exitCode = 1;
-      if (!this.jsonEnabled()) this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
+      if (!this.jsonEnabled()) {
+        this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
+        for (const diagnostic of envelope.diagnostics.errors)
+          this.log(
+            `${diagnostic.identity ? `dmo:${diagnostic.identity.apiName}: ` : ''}${diagnostic.code}: ${diagnostic.message}`,
+          );
+      }
       return envelope;
     };
-    // Selection shape only: the service owns every schema/profile/version/space capability check.
     const selectors = flags.metadata ?? [];
-    if (selectors.length !== 1 || !/^dmo:[^:\s]+$/u.test(selectors[0]))
-      return finish('blocked', 'RETRIEVE_SELECTION_NOT_IMPLEMENTED');
-    const apiName = selectors[0].slice(4);
-    const org = flags['target-org'];
-    if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
+    try {
+      validateDmoSelection(selectors, flags['api-version'], flags['data-space']);
+    } catch (error: unknown) {
+      return finish(
+        'blocked',
+        error instanceof DmoRetrieveError ? error.code : 'INVALID_SELECTION',
+      );
+    }
+    let org: Org;
+    try {
+      org = await this.resolveOrg(flags['target-org']);
+    } catch {
+      return finish('blocked', 'TARGET_ORG_REQUIRED');
+    }
+    let failed = false;
+    const diagnose = (error: unknown, apiName?: string): void => {
+      let code = 'RETRIEVE_FAILED';
+      if (
+        error instanceof DmoWriteError ||
+        error instanceof DmoRetrieveError ||
+        error instanceof ConnectError
+      )
+        code = error.code;
+      else if (error instanceof DmoDocumentError) code = 'UNSUPPORTED_DMO_DOCUMENT';
+      else failed = true;
+      if (
+        code === 'OUTPUT_FAILED' ||
+        error instanceof ConnectError ||
+        code === 'ACQUISITION_FAILED'
+      )
+        failed = true;
+      envelope.diagnostics.errors.push({
+        code,
+        message: apiName
+          ? 'This DMO was not retrieved. Resolve its capability, acquisition or output diagnostic.'
+          : 'DMO inventory could not be resolved completely; no files were written.',
+        retryable: false,
+        ...(apiName ? { identity: { dataSpace: flags['data-space'], apiName } } : {}),
+      });
+    };
     try {
       envelope.provenance.sourceOrgId = org.getOrgId();
-      const projection = await this.acquire(
-        org.getConnection(flags['api-version']),
-        apiName,
+      const connection = org.getConnection(flags['api-version']);
+      const names = await this.selectDocuments(
+        connection,
+        selectors,
         flags['api-version'],
         flags['data-space'],
       );
-      if (
-        projection.status !== 'projected' ||
-        projection.blockers.length > 0 ||
-        !projection.candidate
-      )
-        return finish('blocked', projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
-      const receipt = await this.writeDocument(
-        projection.candidate,
-        flags['output-dir'] ?? process.cwd(),
-        flags.overwrite,
-      );
-      envelope.result.items.push({
-        identity: { ...projection.candidate.identity },
-        operation: 'retrieve',
-        ...receipt,
-      });
-      return finish('success');
+      envelope.result.selection = names.map((name) => `dmo:${name}`);
+      for (const apiName of names) {
+        try {
+          const projection = await this.acquire(
+            connection,
+            apiName,
+            flags['api-version'],
+            flags['data-space'],
+          );
+          if (
+            projection.status !== 'projected' ||
+            projection.blockers.length > 0 ||
+            !projection.candidate
+          )
+            throw new DmoRetrieveError(projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
+          if (
+            projection.candidate.identity.apiName !== apiName ||
+            projection.candidate.identity.dataSpace !== flags['data-space']
+          )
+            throw new DmoRetrieveError('INVALID_METADATA');
+          const receipt = await this.writeDocument(
+            projection.candidate,
+            flags['output-dir'] ?? process.cwd(),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: { ...projection.candidate.identity },
+            operation: 'retrieve',
+            ...receipt,
+          });
+        } catch (error: unknown) {
+          diagnose(error, apiName);
+        }
+      }
     } catch (error: unknown) {
-      if (error instanceof DmoWriteError)
-        return finish(error.code === 'OUTPUT_FAILED' ? 'failed' : 'blocked', error.code);
-      if (error instanceof DmoRetrieveError || error instanceof ConnectError)
-        return finish('blocked', error.code);
-      if (error instanceof DmoDocumentError) return finish('blocked', 'UNSUPPORTED_DMO_DOCUMENT');
-      return finish('failed', 'RETRIEVE_FAILED');
+      diagnose(error);
     }
+    return finish(
+      envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
+    );
   }
 }

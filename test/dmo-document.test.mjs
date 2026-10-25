@@ -1792,7 +1792,12 @@ test('retrieval rejects unsupported explicit scope and mismatched core version b
     ['Ledger', '65.0', 'default'],
   ]) {
     const { connection, calls } = retrievalFixture();
-    await assert.rejects(retrieveDmo(connection, ...arguments_), { code: 'INVALID_SCOPE' });
+    await assert.rejects(retrieveDmo(connection, ...arguments_), {
+      code:
+        arguments_[1] === '65.0' && arguments_[2] === 'default'
+          ? 'UNSUPPORTED_DMO_IDENTITY'
+          : 'INVALID_SCOPE',
+    });
     assert.deepEqual(calls, []);
   }
   const { connection, calls, run } = retrievalFixture();
@@ -1919,6 +1924,11 @@ test('common service through command and writer publishes varied authored types 
       },
     });
     command.jsonEnabled = () => true;
+    command.resolveOrg = async () => ({
+      getOrgId: () => 'synthetic-org',
+      getConnection: () => connection,
+    });
+    command.selectDocuments = async () => ['Audit_Ledger__dlm'];
     command.acquire = retrieveDmo;
     command.writeDocument = writeDmoDocument;
     const result = await command.run();

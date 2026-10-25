@@ -1,3 +1,107 @@
+# DMO retrieve selector/discovery slice
+
+Started 2026-10-26 00:08+01:00 from clean
+ce85828a6f6d59237a88e640d9a526c01a50e105; fetch/status completed (main, no remote
+configured). Existing common/recovery reviews 2873b976 and 1922fc5a had no
+must-fix; written bounded slice plan/simplicity check preceded edits. One coupled
+service/command slice, no subworker/reviewer; whole-DMO Gate 4 stays coordinator-owned.
+No Windows containment investigation or intentional live org operation was authorized.
+The earlier verification isolation incident below supersedes the initial no-live claim.
+
+`validateDmoSelection(selectors: string[], apiVersion: string, dataSpace: string): void`
+checks syntax and unchanged API65/default before authentication.
+`selectDmos(connection, selectors, apiVersion, dataSpace): Promise<string[]>`
+reuses complete offset-paginated Connect inventory only for `-m dmo` or omitted
+selectors. Exact-only repeated `-m dmo:ApiName__dlm` avoids inventory. Mixed selectors
+coalesce and sort exact identities. No-selector means all implemented families,
+currently DMO only, not seven-family support; no `--all` flag. Nondefault-space
+inventory entries are excluded by explicit scope; unsupported identities within
+scope are retained for precise `UNSUPPORTED_DMO_IDENTITY` object diagnostics,
+not silently skipped. Unprovable inventory fails before any object writes.
+
+CLI `-o` is parsed as a string and then resolved with core `Org.create` only after
+selection/scope validation; core still owns aliases/configured target-org/auth.
+The existing per-object `retrieveDmo` projector and `writeDmoDocument` remain the
+only acquisition/publication path. `-d` project root, `-x` differing-byte permission,
+canonical authored-only files, plugin-owned version provenance and standard outer
+CLI envelope are unchanged. Envelope selection is expanded exact names; diagnostics
+add optional per-object identity, static safe code/message. All selected objects
+are attempted sequentially. Successful item receipts survive later failures.
+Unsupported-only is blocked/exit1, transport/unexpected/output failures failed/exit1;
+empty inventory is success/no files. Human output includes object/code diagnostics.
+No deploy bare-type or deployment behavior changes.
+
+Synthetic regressions cover exact/type/none/mixed/duplicates, complete multipage
+inventory, explicit scope, empty/malformed/incomplete inventory, validation before
+auth, default-org absence, partial receipts and precise unsupported failures,
+human diagnostics, existing actual projector/writer integration and installed
+plugin provenance. Offline CLI subprocesses now await completion without wrapper
+forced timeout. Test/package CLI environments isolate USERPROFILE/HOME and use an
+unconfigured synthetic default alias, because installed core derives its auth state
+from os.homedir rather than SF_STATE_FOLDER alone. Existing README/capabilities/artifact notes updated.
+
+Next safe bounded slice: establish the documented existing-DMO PATCH contract from
+local authoritative evidence, separately qualify request/response/update/no-op
+semantics with synthetic fixtures, and leave unproven category/relationship/event
+variants explicitly blocked. Do not infer update support from CREATE mapping.
+First release waits for complete DMO milestone and coordinator Gate 4; user performs
+manual npm login/publish bootstrap and npm GUI configuration before GitHub release;
+existing-version hosted workflow skip remains a later separate task. No root-rule
+edits, push/tag/release/publication, package remains 0.1.0.
+
+Verification checkpoint 2026-10-26 00:28:21+01:00: explicit build, scoped autofix,
+full lint zero warnings, focused selectors 17/17, isolated CLI 8/8, current full
+suite 194/194 (54.589s) and smoke 8/8 (54.439s), package smoke 28 entries,
+3 installed help checks and 2 injected installed envelope checks all exit0.
+Current-tree full pipeline completed in 152.620s. An earlier full-suite invocation started before auth-home isolation was
+corrected finished 2026-10-26 00:29:14+01:00 (733.484s, exit1). Its no-org CLI
+tests unexpectedly reached the configured org: observed diagnostic
+ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE instead of TARGET_ORG_REQUIRED and one
+untracked output path data360/default/dmo/SchemaOther59062c54c9d6__dlm.json.
+The earlier invocation is NOT a green receipt. It ran from 00:17:00.709 to
+00:29:14.193+01:00; the failure output proves unintended real-org acquisition.
+Reconcile started 00:30:44.815+01:00; no relevant node/sf/npm/cmd test process was
+still running. No workload was killed. Core 8.31.3 Global.SF_DIR/SFDX_DIR are
+os.homedir()/.sf and /.sfdx; SF_STATE_FOLDER alone did not isolate authentication.
+All offline subprocess environments now also drop inherited SF_/SFDX_ overrides
+before setting a synthetic nonexistent target, fresh USERPROFILE/HOME and XDG paths.
+A real subprocess regression asserts os.homedir and core SF/SFDX directories plus
+the exact allowed override keys. Full verification and normal enabled hooks run
+inside a separate marked mkdtemp home; no user/global environment is modified.
+
+Only the literal untracked incident artifact was inspected locally for file/link
+status, timestamps and top-level authored-document shape, without dumping payload.
+It was a 675-byte regular non-link schemaVersion 1/kind dmo document whose identity
+matched the filename/default scope, created 00:22:16.023+01:00 during the failed
+run. This corroborates prior-run ownership; it was removed using the specialized
+single-file Delete operation, never staged. Existing user files, directory parents
+and all F:/Temp evidence were preserved; no recursive deletion occurred.
+The implicated path is retrieve-only: Connect inventory/detail/relationship GETs,
+core Metadata CustomObject read and local document writer, not the deploy/create
+executor. Auth refresh remains core-owned. This is source-path evidence, not a
+remote audit or a claim that zero remote state mutations occurred.
+
+Reconcile verification completed 00:36:06.657+01:00 (209.878s pipeline): scoped
+ESLint autofix, explicit build and full zero-warning lint exit0; focused selection,
+command and CLI tests 26/26 (53.806s); full tests 195/195 (55.381s); smoke 9/9
+(52.282s); installed package 28 entries, three help checks, two injected envelope
+checks exit0. Verification home F:/Temp/data360-reconcile-vOyW26; package evidence
+F:/Temp/data360-package-hp5zGJ. No relevant workloads remained at 00:36:19+01:00.
+The final documentation receipt is repacked, then all eleven literal changed
+source/test/script/docs paths are staged and bound to a recorded Git tree.
+Normal enabled pre-commit independently reruns temporary/lockfile guards, lint,
+full build/tests and smoke in a fresh isolated home. Commit hash, hook counts,
+exact tree equality and final clean status are returned to the coordinator, not
+self-referentially embedded here. No hooks are changed or bypassed.
+
+Propagation: primary sf-plugin-data360 source/tests/README/existing capability,
+artifact and handover docs updated. Other language catalogs/parsers/LSP/extensions,
+MCP/MSO, independent CMS/MCNext repos, wiki and public guides/tool listings are N/A;
+no dependency propagation. Verification/commit receipts are returned to coordinator.
+All shell/test entries preflight actual os.tmpdir plus TEMP/nonempty TMP/TMPDIR at
+absolute normalized F:/Temp, process-only repair/recheck; scratch retained, no
+recursive deletion. No independent live-acceptance or full-DMO completion claim.
+
 # Recovery slice 2: plugin-owned version provenance
 
 Started 2026-10-25 23:31:28+01:00 from clean b58d8e6205418cdf771acd9aa060ce467e98859d.
