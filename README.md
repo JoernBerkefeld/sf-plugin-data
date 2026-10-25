@@ -38,6 +38,14 @@ the PATCH contract is proven; unknown target semantics fail closed. Its preview
 contains static diagnostics, never requests, raw org IDs or remote payloads.
 This internal service is not yet wired to `deploy --preview` or mutation execution.
 
+An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
+files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
+coalesce; different files claiming the same identity fail. No selection, bare types,
+mixed modes, malformed JSON, duplicate JSON keys, runtime projections and linked
+paths fail closed. Directory mode is bounded and strict: every descendant file must
+be authored DMO JSON; unrelated files are not silently ignored. This input-only
+slice does not expose deploy flags or claim a completed preview/deployment.
+
 ## Local development
 
 Requires Node `^22.22.2 || ^24.15.0` and npm. Run from this independent repository:

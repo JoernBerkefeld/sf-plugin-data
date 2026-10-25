@@ -1,3 +1,76 @@
+# Bounded deploy authored-input resolver slice
+
+Started 2026-10-25 approximately 18:37+01:00 from requested clean
+`66c71fd7ddae51982b53f671be9c83a24cb2ba67`. Fetch/status clean main, no remote
+configured. Inline temp preflight quoting initially failed closed before Git;
+corrected invocation passed actual Node tmpdir and all nonempty environment checks.
+Written slice plan/simplicity check preceded edits. Inherited reviewed shared plan
+remains complete (Gates 1/2); one small coupled resolver/test slice applies Gate 3.
+Whole-feature Gate 4 remains coordinator-owned. Master plan link named in the
+existing deferred-plan handover is missing locally; its retained explicit-selection
+contract, current user instructions and actual CMS source selector were inspected.
+
+## Done and exact supported internal input semantics
+
+New `src/artifacts/read-deploy-input.ts` exports:
+`readDeployInputs(flags: {cwd: string; sourceDir?: readonly string[];
+metadata?: readonly string[]}): Promise<Array<{path: string; document: DmoDocument}>>`
+and payload-free `DeployInputError` with INVALID_SELECTION, UNSAFE_SOURCE,
+INVALID_SOURCE or DUPLICATE_IDENTITY. Captured cwd must be absolute.
+Exactly one nonempty mode: explicit file/directory paths (absolute or cwd-relative),
+or repeated exact `dmo:ApiName__dlm` selectors resolving only
+`<cwd>/data360/default/dmo/<ApiName>.json`. Identical paths/repeated selectors and
+overlapping directory/file selections coalesce. Distinct files claiming the same
+case-insensitive identity block; metadata basename and authored identity must match
+exactly. Bare types, absent selection, mixed modes, parent traversal, wildcard and
+drive-relative paths block. No implicit deploy-all or future contract redefinition.
+
+Explicit directory traversal selects all descendants: unrelated non-JSON files
+block rather than silently disappearing. Limits 256 files, 1024 visited entries,
+16 levels, 1 MiB/file. Every ancestor checked by lstat/canonical path; links,
+junctions, aliased ancestors and hardlinked files rejected. Bounded handle reads
+check regular-file identity, size and timestamps; not a sandbox against malicious
+concurrent local replacement. Strict UTF-8/BOM-free JSON, duplicate decoded key
+rejection, authored validator and independent default mapper before returning.
+No filesystem writes, reports, scratch roots, connection imports or org operations.
+No recursive cleanup. Test roots retained under verified OS temp.
+
+## Verification and propagation
+
+Eight focused resolver cases added (directory budgets, repeated/multi selection,
+exact conventional lookup, selector refusal, strict JSON, duplicate identities,
+no writes, link/size safety). Full build and zero-warning lint passed; full tests
+152/152 passed (13316.1318 ms). Smoke/package and enabled-hook receipts are recorded
+in coordinator response after completion. Package smoke checks 24 entries including
+resolver JS and declaration. Existing README, artifact-format, capabilities and
+handover updated. Version remains 0.1.0, no release/tag/push or root changes.
+
+Propagation: sf-plugin-data360 implementation/tests/package/docs done; language
+catalogs/parsers/LSP/extensions/MCP/MSO, CMS and MCNext are independent (N/A, no
+updates). Wiki/site/listing/hover have no changed surface. No npm changelog.
+Changed folder: sf-plugin-data360 yes, current 0.1.0, new version not assigned
+(no release prepared). All other tracked folders unchanged.
+
+## Next execution slice: wire preview CLI (not implemented here)
+
+`deploy` is still the existing NotImplemented stub. This is intentionally the
+input-resolver-only fallback authorized by the parent to avoid oversized command +
+filesystem + envelope work. Next worker starts in src/commands/data360/deploy.ts,
+reads retrieve.ts envelope/core flags and preflight-dmo-deploy.ts. Add repeatable,
+non-greedy `-d/--source-dir` string (file OR directory, NOT Flags.directory) OR
+`-m/--metadata`; call resolver with captured cwd. No implicit selection/bare types.
+Add --preview, core optionalOrg/API 65.0/default scope; preflight every validated
+item with preflightDmoDeploy(document, connection, apiVersion, dataSpace). Read-only
+versioned sf-data360-deploy envelope inside core JSON; create/unchanged are advisory
+preview outcomes, blocked-changes/blocked/failures exit nonzero. Never mutation
+transport, report/artifact writes, saved public plan or actual-deploy success claim.
+Test public flags/default/overrides, all outcomes/redaction and no mutations/writes;
+then normal full verification/smoke/package checks and approved own-path commit.
+Preview selection cannot be claimed publicly until that slice lands. Repeat
+TEMP/os.tmpdir/all nonempty TMP/TMPDIR absolute normalized F:/Temp preflight at every
+shell/test entry, process-only repair and recheck; no recursive cleanup except fully
+guarded run-owned registered strict descendants. No live calls/reference IDs.
+
 # Internal read-only deploy preflight slice
 
 Started 2026-10-25 approximately 18:26+01:00 from requested clean

@@ -10,6 +10,32 @@ published JSON Schema and deployment request execution remain unimplemented. The
 DMO writer below implements only `default/dmo`; explicit CLI retrieval is wired
 to the service and this writer without adding command-level profile restrictions.
 
+## Internal read-only deploy input resolver
+
+`readDeployInputs({cwd, sourceDir?, metadata?})` returns sorted
+`Array<{path: string, document: DmoDocument}>`. Exactly one nonempty mode is required:
+explicit files/directories, or exact `dmo:ApiName` selectors resolving
+`<cwd>/data360/default/dmo/<ApiName>.json`. Repeated identical selections and
+overlapping paths coalesce; distinct files with case-conflicting identities reject.
+Metadata filenames must exactly match their document identity. No implicit all or
+bare-type selection exists. The CLI wiring remains pending; these are internal
+input semantics, not a new public command.
+
+All directory descendants are selected, so non-JSON members reject rather than
+silently narrowing a directory. Limits: 256 files, 1024 visited entries, 16 nested
+levels and 1 MiB per file. Absolute or cwd-relative explicit paths are supported;
+wildcards, parent traversal, drive-relative paths, filesystem roots as directory
+selections, links/junctions/aliased ancestors and hardlinked files reject. Existing
+paths only: no mkdir, artifact, report or scratch writes. File handles are bounded
+and checked against observed identity/size/timestamps; ancestor checks narrow but
+do not eliminate hostile concurrent filesystem replacement races.
+
+UTF-8 must decode strictly, without a BOM. JSON must parse with unique object keys
+(including escaped equivalents), and pass both authored validation and independent
+default-space mapping. Raw projections, observations and unknown keys reject.
+Payload-free `DeployInputError` codes: INVALID_SELECTION, UNSAFE_SOURCE,
+INVALID_SOURCE, DUPLICATE_IDENTITY. No connection or mutation transport is used.
+
 ## Internal read-only deploy preflight
 
 `preflightDmoDeploy(document: unknown, connection: ReadConnection,

@@ -23,6 +23,10 @@ recipe, exact semantics and arbitrary nonempty authored counts/types. Only proje
 blocker-free, validated candidates reach the independently common-mapped writer.
 Incomplete or unknown variants diagnose without publication. Type-only/no-selector discovery remains
 pending without changing its approved future meaning. Deployment is unimplemented.
+Internal `readDeployInputs` now resolves explicit files/directories or exact project
+DMO members with bounded no-link authored-only JSON admission. Repeated identical
+inputs coalesce; conflicting identities block. No deploy flags, public preview,
+mutation transport, artifact/report writes or live acceptance are introduced.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.
