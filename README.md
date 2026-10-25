@@ -43,10 +43,13 @@ official offset contract, rejects malformed/overlapping pages and unexpected nex
 links, and fails closed at the documented offset ceiling rather than returning a
 partial inventory. It does not provide a consistent snapshot during concurrent
 org changes. An internal portable DMO validator/serializer now covers a narrow,
-offline custom Date/DateTime schema subset, with strict unknown-field rejection
-and ordered-field preservation. Raw qualifier/semantic metadata remains meaningful
-and cannot be discarded by a future adapter. This is not yet an export/deploy
-format; broader types, raw projection, filesystem handling and other families
+offline custom schema with all 12 nested input field types, dynamic lookup and
+field category, strict unknown-field rejection and ordered-field preservation.
+Raw projection produces an explicitly incomplete diagnostic candidate, retaining
+qualifiers, semantic metadata and generated fields in separate configuration.
+Relationships are not acquired; candidates must never be exported alone as
+portable documents. This is not yet an export/deploy format; relationship
+acquisition, generated-field replay, filesystem handling and other families
 remain unimplemented. See the exact subset and evidence in the artifact document.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows

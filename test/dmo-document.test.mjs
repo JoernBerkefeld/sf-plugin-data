@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   classifyDmoRawField,
+  projectDmoRawFields,
   DmoDocumentError,
   serializeDmoDocument,
   validateDmoDocument,
@@ -124,10 +125,10 @@ test('rejects invalid fields, ambiguous keys, unsupported types and dangling ref
       d.spec.fields[1].isPrimaryKey = true;
     },
     (d) => {
-      d.spec.fields[0].dataType = 'Text';
+      d.spec.fields[0].dataType = 'UnknownType';
     },
     (d) => {
-      d.spec.fields[0].isDynamicLookup = true;
+      d.spec.fields[0].isDynamicLookup = 'true';
     },
     (d) => {
       d.spec.fields[0].label = undefined;
@@ -162,6 +163,129 @@ test('does not invoke accessors or JSON conversion hooks or leak invalid payload
   const symbolic = fixture();
   symbolic[Symbol('hidden')] = 1;
   assert.throws(() => validateDmoDocument(symbolic), DmoDocumentError);
+});
+
+test('accepts every nested official input type and preserves dynamic lookup and category', () => {
+  for (const type of [
+    'Number',
+    'Text',
+    'Date',
+    'DateTime',
+    'Url',
+    'Phone',
+    'Email',
+    'Percent',
+    'Boolean',
+    'Currency',
+    'ArrayOfFloats',
+    'ArrayOfTexts',
+  ]) {
+    const document = fixture();
+    document.spec.fields[0].dataType = type;
+    document.spec.fields[0].category = 'Independent semantic category';
+    document.spec.fields[0].isDynamicLookup = true;
+    assert.deepEqual(JSON.parse(serializeDmoDocument(document)), document);
+  }
+});
+
+const rawFixture = () => ({
+  name: 'Research_Log__dlm',
+  dataSpaceName: 'research',
+  label: 'Research log',
+  category: 'OTHER',
+  creationType: 'Custom',
+  id: 'not-portable',
+  fields: [
+    {
+      name: 'Reference__c',
+      label: 'Reference',
+      type: 'Text',
+      creationType: 'Custom',
+      isPrimaryKey: true,
+      keyQualifierName: 'KQ_Reference',
+      isDistinct: true,
+      usageTag: 'None',
+    },
+    {
+      name: 'Weight__c',
+      label: 'Weight',
+      type: 'Number',
+      creationType: 'Custom',
+      isDynamicLookup: true,
+      category: 'Synthetic',
+    },
+    {
+      name: 'KQ_Reference__c',
+      label: 'Qualifier',
+      type: 'Text',
+      creationType: 'System',
+      usageTag: 'KeyQualifier',
+      isDistinct: false,
+    },
+  ],
+});
+
+test('raw projection preserves qualifier and generated configuration with explicit incomplete status', () => {
+  const raw = rawFixture();
+  const before = structuredClone(raw);
+  const result = projectDmoRawFields(raw);
+  assert.equal(result.status, 'incomplete');
+  assert.deepEqual(result.blockers, [
+    'RELATIONSHIPS_NOT_ACQUIRED',
+    'FIELD_SEMANTICS_REPLAY_UNVERIFIED',
+    'GENERATED_FIELD_REPLAY_UNVERIFIED',
+  ]);
+  assert.deepEqual(result.configuration.fields, raw.fields);
+  assert.ok(!('id' in result.configuration));
+  assert.equal(result.candidate.spec.category, 'Other');
+  assert.equal(result.candidate.spec.fields[1].dataType, 'Number');
+  assert.equal(result.candidate.spec.fields[1].isDynamicLookup, true);
+  assert.equal(result.candidate.spec.fields.length, 2);
+  assert.deepEqual(raw, before);
+  result.configuration.fields[0].keyQualifierName = 'changed';
+  assert.deepEqual(raw, before);
+  assert.throws(() => validateDmoDocument(result), DmoDocumentError);
+});
+
+test('raw projection blocks unknown data, malformed flags, duplicate and non-custom variants', () => {
+  for (const change of [
+    (r) => {
+      r.fields[0].precision = 18;
+    },
+    (r) => {
+      r.relationships = [];
+    },
+    (r) => {
+      r.creationType = 'Derived';
+    },
+    (r) => {
+      r.fields[0].isPrimaryKey = undefined;
+    },
+    (r) => {
+      r.fields[1].name = 'reference__c';
+    },
+    (r) => {
+      r.fields[0].keyQualifierName = { value: 'secret' };
+    },
+    (r) => {
+      Object.defineProperty(r.fields[0], 'type', {
+        enumerable: true,
+        get() {
+          throw new Error('must not execute');
+        },
+      });
+    },
+  ]) {
+    const raw = rawFixture();
+    change(raw);
+    assert.throws(() => projectDmoRawFields(raw), DmoDocumentError);
+  }
+  const raw = rawFixture();
+  raw.fields = raw.fields.slice(0, 2);
+  delete raw.fields[0].keyQualifierName;
+  delete raw.fields[0].isDistinct;
+  delete raw.fields[0].usageTag;
+  assert.deepEqual(projectDmoRawFields(raw).blockers, ['RELATIONSHIPS_NOT_ACQUIRED']);
 });
 
 test('raw classification keeps qualifier and semantic metadata meaningful and unknowns blocked', () => {

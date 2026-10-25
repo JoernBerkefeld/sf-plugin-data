@@ -68,11 +68,13 @@ Every family must complete all gates below before support can be declared.
       Other resource pagination and live API/version acceptance remain pending.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
-      Partial internal DMO-only contract: qualified identity, ordered Date/DateTime
-      custom fields, deterministic JSON and strict unknown-field validation are
-      synthetic-tested. Raw configuration/observation classification is explicit;
-      qualifiers/distinctness/usage remain meaningful. No raw projection, published
-      schema, safe paths, filesystem discovery or live portable round trip yet.
+      Partial internal DMO-only contract: qualified identity, all 12 nested input
+      field types, dynamic lookup, field category, deterministic JSON and strict
+      unknown-field validation are synthetic-tested. Raw field projection retains
+      qualifiers/distinctness/usage and generated fields separately; every result
+      is explicitly incomplete until separate relationships are acquired. Generated
+      field/qualifier replay is unverified. No published schema, safe paths,
+      filesystem discovery or live portable round trip yet.
       See [current contract and official evidence](artifact-format.md).
 - [ ] Whole-selection dependency/diff preflight and input/target drift guards.
 - [ ] Read-back verification and partial/uncertain failure handling.

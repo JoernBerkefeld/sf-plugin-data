@@ -1,10 +1,26 @@
+const fieldTypes = [
+  'Number',
+  'Text',
+  'Date',
+  'DateTime',
+  'Url',
+  'Phone',
+  'Email',
+  'Percent',
+  'Boolean',
+  'Currency',
+  'ArrayOfFloats',
+  'ArrayOfTexts',
+] as const;
+
 export type DmoField = {
   name: string;
   label: string;
   description?: string;
-  dataType: 'Date' | 'DateTime';
+  dataType: (typeof fieldTypes)[number];
+  category?: string;
   isPrimaryKey: boolean;
-  isDynamicLookup: false;
+  isDynamicLookup: boolean;
 };
 
 export type DmoDocument = {
@@ -37,9 +53,18 @@ const objectKeys = [
   'recordModifiedFieldName',
   'fields',
 ];
-const fieldKeys = ['name', 'label', 'description', 'dataType', 'isPrimaryKey', 'isDynamicLookup'];
+const fieldKeys = [
+  'name',
+  'label',
+  'description',
+  'category',
+  'dataType',
+  'isPrimaryKey',
+  'isDynamicLookup',
+];
 const rawObjectConfiguration = ['name', 'dataSpaceName', ...objectKeys, 'creationType'];
 const rawFieldConfiguration = [
+  'category',
   'name',
   'label',
   'description',
@@ -147,8 +172,11 @@ export function validateDmoDocument(value: unknown): DmoDocument {
     const field = record(item, fieldKeys);
     requireValid(customName(field.name, '__c') && text(field.label));
     requireValid(!('description' in field) || typeof field.description === 'string');
-    requireValid(['Date', 'DateTime'].includes(field.dataType as string));
-    requireValid(typeof field.isPrimaryKey === 'boolean' && field.isDynamicLookup === false);
+    requireValid(fieldTypes.includes(field.dataType as DmoField['dataType']));
+    requireValid(!('category' in field) || typeof field.category === 'string');
+    requireValid(
+      typeof field.isPrimaryKey === 'boolean' && typeof field.isDynamicLookup === 'boolean',
+    );
     requireValid(!names.has(field.name.toLowerCase()));
     names.add(field.name.toLowerCase());
     if (field.isPrimaryKey) primaryKeys++;
@@ -165,6 +193,81 @@ export function validateDmoDocument(value: unknown): DmoDocument {
   }
   requireValid(spec.category !== 'Engagement' || 'eventDateTimeFieldName' in spec);
   return value as DmoDocument;
+}
+
+export type DmoFieldProjection = {
+  status: 'incomplete';
+  blockers: string[];
+  candidate: DmoDocument;
+  /** All raw configuration, including generated fields; never a deploy input. */
+  configuration: Record<string, unknown>;
+};
+
+/**
+ * Project custom fields while retaining every raw configuration value in an incomplete result.
+ * @param {unknown} value Raw custom DMO detail, not a list or a portable document.
+ * @returns {DmoFieldProjection} Diagnostic candidate only; relationship acquisition is still required.
+ */
+export function projectDmoRawFields(value: unknown): DmoFieldProjection {
+  const raw = record(value, [...rawObjectConfiguration, ...rawObjectObservations]);
+  requireValid(raw.creationType === 'Custom' && Array.isArray(raw.fields));
+  const configuration: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(raw)) {
+    if (key === 'fields') continue;
+    requireValid(item === null || ['string', 'boolean'].includes(typeof item));
+    if (classifyDmoRawField('object', key) === 'configuration') configuration[key] = item;
+  }
+  const fields: DmoField[] = [];
+  const retained: Array<Record<string, unknown>> = [];
+  const blockers = ['RELATIONSHIPS_NOT_ACQUIRED'];
+  const names = new Set<string>();
+  for (const item of raw.fields) {
+    const field = record(item, rawFieldConfiguration);
+    requireValid(customName(field.name, '__c') && !names.has(field.name.toLowerCase()));
+    names.add(field.name.toLowerCase());
+    requireValid(
+      Object.values(field).every(
+        (entry) => entry === null || ['string', 'boolean'].includes(typeof entry),
+      ),
+    );
+    requireValid(['Custom', 'System'].includes(field.creationType as string));
+    retained.push({ ...field });
+    if (field.creationType === 'System') {
+      blockers.push('GENERATED_FIELD_REPLAY_UNVERIFIED');
+      continue;
+    }
+    const projected: Record<string, unknown> = {};
+    for (const key of ['name', 'label', 'description', 'category'])
+      if (key in field) projected[key] = field[key];
+    projected.dataType = field.type;
+    // The documented response omits false flags; keep original presence in configuration.
+    projected.isPrimaryKey = field.isPrimaryKey ?? false;
+    projected.isDynamicLookup = field.isDynamicLookup ?? false;
+    requireValid(!('isPrimaryKey' in field) || typeof field.isPrimaryKey === 'boolean');
+    requireValid(!('isDynamicLookup' in field) || typeof field.isDynamicLookup === 'boolean');
+    fields.push(projected as DmoField);
+    if (['keyQualifierName', 'isDistinct', 'usageTag'].some((key) => key in field))
+      blockers.push('FIELD_SEMANTICS_REPLAY_UNVERIFIED');
+  }
+  configuration.fields = retained;
+  const spec: Record<string, unknown> = { fields };
+  for (const key of objectKeys) {
+    if (key !== 'fields' && key in raw) spec[key] = raw[key];
+  }
+  const categories: Record<string, string> = {
+    PROFILE: 'Profile',
+    OTHER: 'Other',
+    ENGAGEMENT: 'Engagement',
+  };
+  if (typeof spec.category === 'string' && Object.hasOwn(categories, spec.category))
+    spec.category = categories[spec.category];
+  const candidate = validateDmoDocument({
+    schemaVersion: 1,
+    kind: 'dmo',
+    identity: { dataSpace: raw.dataSpaceName, apiName: raw.name },
+    spec,
+  });
+  return { status: 'incomplete', blockers: [...new Set(blockers)], candidate, configuration };
 }
 
 /**

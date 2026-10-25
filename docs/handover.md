@@ -1,3 +1,100 @@
+# Nested DMO field projection slice
+
+Start: 2026-10-25T15:51:01+01:00. Clean baseline:
+`8508b58261a40cca6da9744c0195503737fd2474`. Approved Gate 1/2 and sized Gate 3
+inherited; one coherent small sequential contract/projection slice. No additional
+worker, whole-feature review, public plan infrastructure or root edits.
+
+## Evidence and exact interfaces
+
+Local mirrors lacked the nested contract. Official reference HTML linked
+`/static/datacloud/connectapi/spec/cdp-connect-api-Swagger.yaml`; the linked
+asset returned 404, nested rendering timed out. Search summaries crossed API
+boundaries and were not used as contract evidence. Official Salesforce Data360
+MCP `payload_examples('d360_dmo_create')` exposed the complete nested field
+schema of `DataModelObjectInputRepresentation`: category/string, dataType/enum,
+description/string, isDynamicLookup/boolean, isPrimaryKey/boolean, label/string,
+name/string; no nested required list. Enum: Number, Text, Date, DateTime, Url,
+Phone, Email, Percent, Boolean, Currency, ArrayOfFloats, ArrayOfTexts. This is
+current tool metadata, not selected-version live acceptance. Name-suffix example
+and description disagree; request-name conversion remains unimplemented.
+See artifact-format for official URL, schema distinction and limits.
+
+- `DmoField.dataType` now covers those 12 values; optional `category: string` and
+  `isDynamicLookup: boolean` are preserved. Existing validator/serializer
+  signatures and other authored subset invariants remain unchanged.
+- `projectDmoRawFields(value: unknown): DmoFieldProjection` returns exactly
+  `{ status: 'incomplete', blockers: string[], candidate: DmoDocument,
+configuration: Record<string, unknown> }`. Candidate is diagnostic only, never
+  an export/deploy artifact. Configuration retains all admitted raw config,
+  original spelling/presence/order and every generated field; records are copied.
+- Read type maps to candidate dataType; absent flags default false in candidate
+  only; explicit malformed flags block. Uppercase categories normalize only in
+  candidate. Unknown fields/variants/nested semantic objects/accessors/duplicates
+  throw payload-free DmoDocumentError rather than discarding data.
+- Qualifiers, usage tags, distinctness remain verbatim in configuration and add
+  FIELD_SEMANTICS_REPLAY_UNVERIFIED. System fields remain verbatim and add
+  GENERATED_FIELD_REPLAY_UNVERIFIED. No guessed generated-field deletion or
+  creation recipe. No arbitrary field IDs are stripped.
+- Every result has RELATIONSHIPS_NOT_ACQUIRED. Official
+  `payload_examples('d360_dmo_relationship_list')` describes a separate list
+  covering source or target, required dataModelObjectName, optional dataspace,
+  status and creationType. No relationship response/pagination contract yet.
+  No complete portability, replay, qualifier-reference resolution or deploy claim.
+- Object observations excluded from configuration are exactly id,
+  hasExternalDataLakeObjectMappings, isEditable, isEnabled, isSegmentable.
+  These still require future target preflight handling. No org call or customer
+  row access, credential inspection or mutation occurred.
+
+## Verification and boundary
+
+Standalone build, lint:fix and zero-warning lint exit 0; full tests 31 passed,
+0 failed/skipped (10,708.6355 ms excluding compile); CLI smoke 6 passed,
+0 failed/skipped (10,751.2654 ms). Three new synthetic tests exercise all 12 types,
+category/dynamic flags, retained qualifier/generated fields, independent copies,
+explicit incompleteness, unknown/duplicate/invalid input and accessor refusal.
+Initial lint caught a null style issue and compile caught an autofix-induced
+includes type narrowing; both corrected before green verification.
+Packaged installation/help smoke passed: 16 entries, 3 help checks, retained root
+`F:/Temp/data360-package-0lTI3a`. Normal enabled commit hooks repeat lock check,
+zero-warning lint, build/full tests and smoke; exact hook counts/hash/end/clean
+state supplied in coordinator receipt. Personal identity verified. No recursive
+cleanup. Every executing shell/test checked actual Node tmpdir and TEMP/nonempty
+TMP/TMPDIR; process-only repair/recheck when necessary. One inline PowerShell
+quoting error stopped before workload and was corrected.
+
+## Next smallest slice
+
+Relationship contract/acquisition only: establish exact endpoint, source-or-target
+scope, pagination envelope and complete termination; implement read-only transport
+with synthetic completeness/unknown-field tests. Then separately bind qualified
+relationship identities and verified generated-key replay to a portable artifact.
+Do not remove incomplete blockers until evidence and tests replace them. No CLI,
+discovery, request construction or org mutation is implicit.
+
+## Propagation Table
+
+| Component                                                                            | Needs update? | What to update                                    | Status     |
+| ------------------------------------------------------------------------------------ | ------------- | ------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                    | Yes           | README, artifact evidence, capabilities, handover | done       |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser                              | N/A           | No coupling                                       | not needed |
+| sfmc-language-lsp, vscode-sfmc-language                                              | N/A           | No language change                                | not needed |
+| mcp-server-sfmc, mcp-server-mcdev                                                    | N/A           | No consumer                                       | not needed |
+| sf-plugin-mcnext, sf-plugin-cms                                                      | N/A           | Independent packages                              | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc                        | N/A           | No coupling                                       | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A           | No coupling                                       | not needed |
+
+Wiki/sites/hover need no update for this unpublished helper. Git workflow unchanged;
+no npm changelog. Whole-feature review and root release/dependency registration
+remain coordinator-only follow-ups, not claimed complete or edited here.
+
+| Folder            | Changed? | Current version | New version                  |
+| ----------------- | -------- | --------------- | ---------------------------- |
+| sf-plugin-data360 | Yes      | 0.1.0           | No bump; no release prepared |
+
+No push/tag/publication or remote/global settings change. Keep this slice local
+under the user's explicit no-push instruction.
+
 # Portable DMO document slice handover
 
 Start: 2026-10-25T15:40:16+01:00. Clean baseline:
