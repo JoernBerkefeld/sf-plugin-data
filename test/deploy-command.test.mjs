@@ -61,6 +61,11 @@ const invocation = (overrides = {}) => {
       diagnostics: [],
     };
   };
+  command.execute = async () => {
+    calls.push('execute');
+    assert.equal(flags.preview, false, 'preview must never invoke the executor');
+    return { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
+  };
   return { command, calls };
 };
 const run = async (command) => {
@@ -91,13 +96,123 @@ test('preview resolves local input before org inspection and returns advisory ve
   assert.ok(!JSON.stringify(result).includes('deployed'));
 });
 
-test('without preview execution is always blocked before local or target work', async () => {
+test('nonpreview runs executor after selection preflight and returns mutation envelope', async () => {
   const { command, calls } = invocation({ preview: false });
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.diagnostics.errors[0].code, 'DEPLOY_EXECUTION_NOT_IMPLEMENTED');
+  assert.equal(result.status, 'success');
+  assert.equal(result.contractVersion, '1.0.0');
+  assert.equal(result.metadata.preview, false);
+  assert.equal(exitCode, undefined);
+  assert.deepEqual(calls, ['inputs', 'org', 'connection', 'preflight', 'execute']);
+  assert.equal(result.result.items[0].operation, 'execute');
+  assert.equal(result.result.items[0].outcome, 'created');
+  assert.equal(result.result.items[0].mutation, 'confirmed-created');
+});
+
+const previewResult = (outcome = 'create') => ({
+  outcome,
+  target: outcome === 'create' ? 'absent' : 'present',
+  absenceProof: outcome === 'create' ? 'complete-inventory' : 'none',
+  diagnostics: [],
+});
+const batchInvocation = () => {
+  const setup = invocation({ preview: false });
+  setup.command.resolveInputs = async () => [input('A__dlm'), input('B__dlm'), input('C__dlm')];
+  setup.command.preflight = async () => {
+    setup.calls.push('preflight');
+    return previewResult();
+  };
+  return setup;
+};
+
+test('whole selection preflight finishes before execution; unchanged stays no-op', async () => {
+  const { command, calls } = batchInvocation();
+  command.execute = async (...arguments_) => {
+    calls.push('execute');
+    assert.equal(calls.filter((call) => call === 'preflight').length, 3);
+    assert.equal(arguments_[2], '65.0');
+    assert.equal(arguments_[3], 'default');
+    return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
+  };
+  const { result, exitCode } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(exitCode, undefined);
+  assert.ok(
+    result.result.items.every(
+      (item) => item.outcome === 'unchanged' && item.mutation === 'not-attempted',
+    ),
+  );
+});
+
+test('known later blocker or preflight error prevents all execution', async () => {
+  for (const failure of ['blocked', 'blocked-changes', 'throw']) {
+    const { command, calls } = batchInvocation();
+    let count = 0;
+    command.preflight = async () => {
+      if (++count !== 2) return previewResult();
+      if (failure === 'throw') throw new Error('private-response');
+      return previewResult(failure);
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(count, 3);
+    assert.equal(result.status, failure === 'throw' ? 'failed' : 'blocked');
+    assert.equal(exitCode, 1);
+    assert.ok(!calls.includes('execute'));
+    assert.ok(
+      result.result.items.every(
+        (item) => item.outcome === 'not-attempted' && item.mutation === 'not-attempted',
+      ),
+    );
+    assert.equal(
+      result.result.items[1].preflight.outcome,
+      failure === 'throw' ? 'blocked' : failure,
+    );
+    assert.ok(!JSON.stringify(result).includes('private-response'));
+  }
+});
+
+test('sequential execution retains prior creation, stops and distinguishes remaining unattempted', async () => {
+  for (const stop of ['blocked', 'failed', 'unknown', 'throw']) {
+    const { command } = batchInvocation();
+    let count = 0;
+    command.execute = async () => {
+      if (++count === 1)
+        return { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
+      if (stop === 'throw') throw new Error('token-and-remote-payload');
+      return {
+        outcome: stop === 'blocked' ? 'blocked' : 'failed',
+        mutation: stop === 'unknown' ? 'unknown' : 'not-attempted',
+        diagnostics: [],
+      };
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(count, 2);
+    assert.equal(result.status, stop === 'blocked' ? 'blocked' : 'failed');
+    assert.equal(exitCode, 1);
+    assert.equal(result.result.items[0].mutation, 'confirmed-created');
+    assert.equal(result.result.items[0].outcome, 'created');
+    assert.equal(
+      result.result.items[1].mutation,
+      ['unknown', 'throw'].includes(stop) ? 'unknown' : 'not-attempted',
+    );
+    assert.equal(result.result.items[2].outcome, 'not-attempted');
+    assert.equal(result.result.items[2].mutation, 'not-attempted');
+    assert.ok(!JSON.stringify(result).includes('token-and-remote-payload'));
+  }
+});
+
+test('human execution output reports unknown creation and never aggregate success', async () => {
+  const { command } = batchInvocation();
+  const logs = [];
+  command.jsonEnabled = () => false;
+  command.log = (message) => logs.push(message);
+  command.execute = async () => ({ outcome: 'failed', mutation: 'unknown', diagnostics: [] });
+  const { exitCode } = await run(command);
   assert.equal(exitCode, 1);
-  assert.deepEqual(calls, []);
+  assert.match(logs.join('\n'), /Deploy execution: failed/u);
+  assert.match(logs.join('\n'), /Creation may have occurred/u);
+  assert.match(logs.join('\n'), /Execution: not-attempted; mutation: not-attempted/u);
+  assert.doesNotMatch(logs.join('\n'), /No deployment executed|execution: success/u);
 });
 
 test('repeated source and metadata flags plus API/scope override pass unchanged to owning services', async () => {
@@ -119,15 +234,17 @@ test('all local selection refusals occur before target inspection and remain pay
     'INVALID_SOURCE',
     'DUPLICATE_IDENTITY',
   ]) {
-    const { command, calls } = invocation();
-    command.resolveInputs = async () => {
-      throw new DeployInputError(code);
-    };
-    const { result, exitCode } = await run(command);
-    assert.equal(result.diagnostics.errors[0].code, code);
-    assert.equal(exitCode, 1);
-    assert.deepEqual(calls, []);
-    assert.deepEqual(result.result.items, []);
+    for (const preview of [true, false]) {
+      const { command, calls } = invocation({ preview });
+      command.resolveInputs = async () => {
+        throw new DeployInputError(code);
+      };
+      const { result, exitCode } = await run(command);
+      assert.equal(result.diagnostics.errors[0].code, code);
+      assert.equal(exitCode, 1);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(result.result.items, []);
+    }
   }
 });
 

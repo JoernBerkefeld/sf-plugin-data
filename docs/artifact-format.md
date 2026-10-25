@@ -5,7 +5,7 @@ expectations and joined projections remain internal, never part of that file.
 The validator/serializer, mappers and raw field projection are offline helpers;
 request mapping alone does not establish deployment acceptance. Explicit CLI
 retrieval now delegates to the existing service and writer; filesystem discovery,
-published JSON Schema and public CLI deployment execution remain unimplemented. The future layout remains
+published JSON Schema and general deployment remain unimplemented. The future layout remains
 `data360/<logical-data-space>/<family>/<api-name>.json`. The internal bounded
 DMO writer below implements only `default/dmo`; explicit CLI retrieval is wired
 to the service and this writer without adding command-level profile restrictions.
@@ -60,7 +60,7 @@ category, field-set, field and immutable changes; every difference appends
 `UPDATE_UNSUPPORTED`. Unqualified target semantics produce `blocked`, never no-op.
 Diagnostics contain code/message only, without authored values or remote payloads.
 The public command enforces CMS-style explicit deploy selection, never bare types
-or implicit deploy-all. `--preview` is required: actual execution remains blocked.
+or implicit deploy-all. `--preview` is strictly read-only; omission enables bounded execution.
 Core JSON wraps `sf-data360-deploy` version 1.0.0 with metadata operation deploy /
 preview boolean, diagnostics, targetOrgId provenance and result scope/selection/items.
 Each item includes authored identity, local path, operation preview and the unchanged
@@ -93,8 +93,17 @@ delegate to prevent its automatic 401 POST replay, without changing the original
 connection. Redirects, arbitrary write paths, PATCH and DELETE are unavailable.
 Inventory is not a transaction: concurrent creation cannot be ruled out. Tests are
 synthetic only; the mapper's wider input admission does not establish broader
-projector qualification or live deployment acceptance. Public CLI execution is
-still blocked and is the next slice, not enabled here.
+projector qualification or live deployment acceptance. Public CLI execution now calls
+this executor only after resolving/validating all inputs and preflighting the whole
+selection. A known blocked item or any preflight error prevents all execution.
+Each execution item carries operation execute, authored identity/path, outcome
+created/unchanged/blocked/failed/not-attempted, mutation evidence, optional preflight
+and diagnostics in the same version 1.0.0 envelope. Sequential execution stops on the
+first blocked/failure/unknown mutation; prior receipts survive and remaining items
+are explicitly not-attempted. An unexpected executor throw conservatively retains
+unknown mutation. Aggregate success requires every execution to be created or
+unchanged; otherwise blocked/failed exits 1, even when earlier creation succeeded.
+No transaction, concurrency guarantee, retry, rollback, PATCH, update or saved plan.
 
 ## Internal common authored DMO file writer
 

@@ -2,7 +2,7 @@
 
 `@joernberkefeld/sf-plugin-data360` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
-implemented; read-only deployment preview is available. Actual deployment remains unimplemented.** Current retrieval capability is
+implemented; strictly read-only deployment preview and bounded guarded creation are available.** Current retrieval capability is
 owned by the common service (API 65.0/default, qualified generated recipe and semantics),
 not a permanent DMO architecture. This is not yet a general migration tool or a
 published release.
@@ -42,8 +42,8 @@ Internal `executeDmoCreate` now performs fresh preflight, a single guarded creat
 on proven absence, and independent qualified readback. Existing equality is a no-op;
 existing differences remain blocked. HTTP success alone is not verified creation;
 ambiguous failures retain `mutation: unknown` and require target inspection, never
-automatic retry or rollback. This service is not wired to public CLI execution and
-has synthetic tests only, not broader deployment or live acceptance.
+automatic retry or rollback. Public CLI execution now uses this existing service;
+qualification remains synthetic only, not broader deployment or live acceptance.
 
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
@@ -51,7 +51,7 @@ coalesce; different files claiming the same identity fail. No selection, bare ty
 mixed modes, malformed JSON, duplicate JSON keys, runtime projections and linked
 paths fail closed. Directory mode is bounded and strict: every descendant file must
 be authored DMO JSON; unrelated files are not silently ignored. This input-only
-resolver is now wired to the read-only preview command; it never authorizes execution.
+resolver is wired to preview and execution; input admission alone never authorizes writes.
 
 ## Local development
 
@@ -96,7 +96,17 @@ input. `create` means complete-inventory absence, not an executed create;
 `unchanged` means qualified equality. `blocked-changes` and `blocked` make aggregate
 status blocked/exit 1; unexpected failures make status failed/exit 1. Mixed results
 remain visible. Preview writes no local artifact/report and performs no mutations.
-Without `--preview`, execution returns DEPLOY_EXECUTION_NOT_IMPLEMENTED/exit 1.
+Without `--preview`, the same explicit selection performs guarded creation. The whole
+selection is preflighted before any executor call; a known blocker or preflight failure
+prevents all writes. Each executor independently repeats fresh preflight; unchanged
+items do not write. Execution is sequential and stops on the first blocked, failed or
+unknown-mutation item. This is not atomic and provides no concurrency guarantee.
+Execution items use `operation: execute`, `outcome: created|unchanged|blocked|failed|not-attempted`,
+`mutation: confirmed-created|not-attempted|unknown`, optional preflight and diagnostics.
+Prior completed receipts remain visible; remaining items are explicitly not-attempted.
+Only all-created/unchanged results yield aggregate success/exit 0; blocked/failed
+execution exits 1 even after prior creation. Unknown mutation means creation may have
+occurred: inspect target before another attempt. No retry, rollback, PATCH or updates.
 Parser/auth flag errors retain core formatting. No public plan or saved-plan infrastructure.
 
 ## Scope and safety
@@ -155,7 +165,7 @@ without dynamic lookup. It preserves exact names, labels, field order and option
 object description; unsupported semantics and runtime keys reject. This offline
 mapping is not deploy acceptance: deployment must separately validate the authored
 file and later verify target readback. Profile and Engagement remain
-pending; no writable Metadata projection or CLI mutation is provided. See the exact subset and evidence in the artifact document.
+pending; no writable Metadata projection is provided. Public creation uses the guarded common executor, not this narrow mapper alone. See the exact subset and evidence in the artifact document.
 The separate common `buildDmoCreateRequestFromDocument` offline mapper accepts
 all 12 documented field types, Profile/Other/Engagement, any nonempty authored
 field count, boolean dynamic lookup, optional field category/description and

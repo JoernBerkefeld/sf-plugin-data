@@ -64,7 +64,7 @@ for (const command of ['retrieve', 'deploy']) {
     const output = JSON.parse(result.stdout);
     if (command === 'deploy') {
       assert.equal(output.result.status, 'blocked');
-      assert.equal(output.result.diagnostics.errors[0].code, 'DEPLOY_EXECUTION_NOT_IMPLEMENTED');
+      assert.equal(output.result.diagnostics.errors[0].code, 'INVALID_SELECTION');
     } else {
       assert.equal(output.result.status, 'blocked');
       assert.equal(output.result.diagnostics.errors[0].code, 'RETRIEVE_SELECTION_NOT_IMPLEMENTED');

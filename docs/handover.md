@@ -1,3 +1,73 @@
+# Public bounded execution integration slice
+
+Started 2026-10-25 19:05+01:00 from clean requested
+`c83e39c7757ef8d1f1d8221a8fd32b5f5b2f292e`. Fetch/status clean main, no
+remote configured. Inline temp-check quoting failed closed, corrected before Git.
+Written slice plan and simplicity check preceded edits; inherited common-plan
+review has zero must-fix (Gates 1/2 complete). Gate 3 one small coupled command/test
+slice, no model/resolver/executor refactor or extra worker. Whole-milestone Gate 4
+remains coordinator-owned, not claimed here.
+
+## Exact public execution and aggregate semantics
+
+`sf data360 deploy` now invokes existing `executeDmoCreate` unless `--preview`.
+Explicit repeatable file/directory OR exact project member mode, no bare type or
+implicit all, API65/default and core org flags are unchanged. ALL local documents
+resolve/validate before command-owned target inspection. ALL selected items get
+read-only preflight before any executor call; any blocked-changes/blocked/error
+prevents the entire selection from execution. This prevents known avoidable
+partial deployment, not concurrent races or transactional partial writes.
+
+After admission executor calls are sequential, each still independently runs fresh
+preflight. Unchanged is mutation not-attempted, no POST. First blocked/failed/unknown
+mutation stops calls. Earlier completed receipts remain; later selection members
+are outcome not-attempted and mutation not-attempted, with admission preflight.
+Unexpected executor throws conservatively become failed/unknown with static
+EXECUTION_UNCONFIRMED; no raw exception, remote payload or token enters output.
+Known earlier creation evidence is never replaced by a batch failure receipt.
+
+Core JSON wraps sf-data360-deploy version 1.0.0. Existing preview item shape is
+unchanged and executor is never called. New discriminant operation execute adds
+outcome created/unchanged/blocked/failed/not-attempted, mutation confirmed-created/
+not-attempted/unknown, optional preflight and diagnostics to identity/path. Aggregate
+success/exit 0 only after all executions created/unchanged. Blocked => blocked/exit 1;
+failed/unknown => failed/exit 1, even after prior creation. Whole-selection errors
+carry DEPLOY_EXECUTION_FAILED, blockers DEPLOY_EXECUTION_BLOCKED. Human output
+reports each mutation and warns creation may have occurred for unknown; manual
+inspection before another attempt, no retry/rollback/PATCH/update/saved plan.
+No local artifact or report is written.
+
+## Verification and next bounded acceptance
+
+Command tests cover preview never executor, created envelope, all-selection
+preflight ordering, unchanged no-op, later blocked/error prevents all execution,
+partial blocked/failure/unknown/throw retains earlier creation, remaining unattempted,
+redaction, exit and human guidance, plus both-mode local admission before inspection.
+CLI invalid no-selection execution now reports INVALID_SELECTION, not unimplemented.
+Final explicit build, scoped autofix, full zero-warning lint, full 179/179 tests
+(25655.9307 ms), CLI smoke 7/7 (23438.1903 ms) and package smoke (26 entries,
+3 installed help checks) passed 2026-10-25 about 19:13+01:00, command exit 0.
+Normal enabled-hook commit receipt is recorded in coordinator response. Existing README, artifact
+contract, capabilities and handover updated; package remains 0.1.0, no version bump,
+tag/push/release. Initial autofix invocation did not pass npm's fix flag; corrected
+by direct local eslint CLI before final verification. No live org calls/writes.
+
+Gate 5 slice propagation: primary sf-plugin-data360 done; catalogs/parsers/LSP/
+extensions/MCP/MSO and independent CLI projects N/A, no downstream code, wiki/site
+listing/hover changes. No root edits. All shell/test entry temp checks validate
+absolute normalized TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR F:/Temp with
+process-only repair/recheck. Existing OS-temp run-owned scratch is retained, no
+recursive cleanup. Whole-milestone review remains coordinator-owned.
+
+NEXT recommend LIVE bounded acceptance only after coordinator authorization and
+whole-milestone review: isolated CLI profile/unsigned allowlist, explicit API65/
+default source-target and one approved qualified authored DMO. First read-only
+preview, then separately authorized single create, independent target inspection,
+unchanged replay/no writes, and one deliberate authored difference blocked/no writes.
+Capture versioned envelopes and target evidence without payloads/tokens. Stop on
+any unknown mutation and inspect manually; never retry or rollback automatically.
+Do not start live acceptance, installations or org actions from this slice.
+
 # Internal guarded-create executor slice
 
 Started 2026-10-25 18:54+01:00 from clean requested

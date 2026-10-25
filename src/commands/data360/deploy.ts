@@ -2,6 +2,15 @@ import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { DeployInputError, readDeployInputs } from '../../artifacts/read-deploy-input.js';
 import { preflightDmoDeploy } from '../../services/preflight-dmo-deploy.js';
 import type { DmoDeployPreview } from '../../services/preflight-dmo-deploy.js';
+import { executeDmoCreate } from '../../services/execute-dmo-create.js';
+import type { DmoCreateExecution } from '../../services/execute-dmo-create.js';
+
+type ExecutionItem = Omit<DmoCreateExecution, 'outcome'> & {
+  outcome: DmoCreateExecution['outcome'] | 'not-attempted';
+  identity: { dataSpace: string; apiName: string };
+  operation: 'execute';
+  path: string;
+};
 
 export type DeployEnvelope = {
   contract: 'sf-data360-deploy';
@@ -28,20 +37,22 @@ export type DeployEnvelope = {
     scope: { dataSpace: string };
     selection: { sourceDir: string[]; metadata: string[] };
     items: Array<
-      DmoDeployPreview & {
-        identity: { dataSpace: string; apiName: string };
-        operation: 'preview';
-        path: string;
-      }
+      | (DmoDeployPreview & {
+          identity: { dataSpace: string; apiName: string };
+          operation: 'preview';
+          path: string;
+        })
+      | ExecutionItem
     >;
   };
 };
 
-/** Read-only target preview of explicitly selected authored Data360 configuration. */
+/** Preview or sequential guarded creation of explicitly selected authored configuration. */
 export default class Deploy extends SfCommand<DeployEnvelope> {
-  public static readonly summary = 'Preview explicit authored Data360 deployment without writes.';
+  public static readonly summary =
+    'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires --preview and explicit files/directories OR exact dmo:ApiName selectors. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Create is advisory only; actual deployment is not implemented. No org mutations or local report/artifact writes.';
+    'Requires explicit files/directories OR exact dmo:ApiName selectors. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates sequentially with fresh checks and qualified readback. Stops on first blocked or failed item; no retry, rollback or updates. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.optionalOrg(),
     'api-version': Flags.orgApiVersion({
@@ -66,16 +77,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
     preview: Flags.boolean({
       default: false,
-      summary: 'Read-only target comparison; required until execution is implemented.',
+      summary: 'Strictly read-only target comparison; never executes deployment.',
     }),
   };
 
   protected resolveInputs = readDeployInputs;
   protected preflight = preflightDmoDeploy;
+  protected execute = executeDmoCreate;
 
   /**
-   * Resolve every local input before inspecting the target, then preview each item without writes.
-   * @returns {Promise<DeployEnvelope>} Versioned advisory outcomes, never mutation receipts.
+   * Validate all inputs and preflight the whole selection before any sequential execution.
+   * @returns {Promise<DeployEnvelope>} Versioned preview or execution outcomes with mutation evidence.
    */
   public async run(): Promise<DeployEnvelope> {
     const { flags } = await this.parse(Deploy);
@@ -114,18 +126,30 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       if (code)
         envelope.diagnostics.errors.push({
           code,
-          message:
-            'Preview did not complete. Check explicit authored inputs, target authentication and supported scope. Actual deployment is not implemented.',
+          message: flags.preview
+            ? 'Preview did not complete. Check explicit authored inputs, target authentication and supported scope. No deployment executed.'
+            : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Creation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
           retryable: false,
         });
       if (status !== 'success') process.exitCode = 1;
       if (!this.jsonEnabled()) {
-        this.log(`Deploy preview: ${status}${code ? ` (${code})` : ''}. No deployment executed.`);
-        for (const item of envelope.result.items) this.log(`Preview: ${item.outcome}.`);
+        this.log(
+          flags.preview
+            ? `Deploy preview: ${status}${code ? ` (${code})` : ''}. No deployment executed.`
+            : `Deploy execution: ${status}${code ? ` (${code})` : ''}. No automatic retry or rollback performed.`,
+        );
+        for (const item of envelope.result.items) {
+          this.log(
+            item.operation === 'preview'
+              ? `Preview: ${item.outcome}.`
+              : `Execution: ${item.outcome}; mutation: ${item.mutation}.`,
+          );
+          if (item.operation === 'execute' && item.mutation === 'unknown')
+            this.log('Creation may have occurred. Inspect target before any further attempt.');
+        }
       }
       return envelope;
     };
-    if (!flags.preview) return finish('blocked', 'DEPLOY_EXECUTION_NOT_IMPLEMENTED');
     try {
       const inputs = await this.resolveInputs({
         cwd,
@@ -173,13 +197,72 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           });
         }
       }
+      if (!flags.preview) {
+        const items: ExecutionItem[] = inputs.map((input, index) => {
+          const { outcome, target, absenceProof, diagnostics } = envelope.result.items[
+            index
+          ] as DmoDeployPreview;
+          return {
+            identity: { ...input.document.identity },
+            operation: 'execute',
+            path: input.path,
+            outcome: 'not-attempted',
+            mutation: 'not-attempted',
+            preflight: { outcome, target, absenceProof, diagnostics },
+            diagnostics: [],
+          };
+        });
+        // Keep whole-selection evidence, but never mistake admission for attempted execution.
+        envelope.result.items = items;
+        if (!failed && !blocked) {
+          for (const [index, input] of inputs.entries()) {
+            const item = items[index];
+            // Set conservative evidence before awaiting; an unexpected throw cannot erase it.
+            item.outcome = 'failed';
+            item.mutation = 'unknown';
+            try {
+              const result = await this.execute(
+                input.document,
+                connection,
+                flags['api-version'],
+                flags['data-space'],
+              );
+              Object.assign(item, result);
+            } catch {
+              item.diagnostics = [
+                {
+                  code: 'EXECUTION_UNCONFIRMED',
+                  message:
+                    'Creation may have occurred. Inspect target before any further attempt; no retry or rollback was performed.',
+                },
+              ];
+            }
+            if (item.mutation === 'unknown' || item.outcome === 'failed') {
+              failed = true;
+              break;
+            }
+            if (item.outcome === 'blocked') {
+              blocked = true;
+              break;
+            }
+          }
+        }
+      }
       return finish(
         failed ? 'failed' : blocked ? 'blocked' : 'success',
-        failed ? 'PREFLIGHT_FAILED' : blocked ? 'DEPLOY_PREVIEW_BLOCKED' : undefined,
+        failed
+          ? flags.preview
+            ? 'PREFLIGHT_FAILED'
+            : 'DEPLOY_EXECUTION_FAILED'
+          : blocked
+            ? flags.preview
+              ? 'DEPLOY_PREVIEW_BLOCKED'
+              : 'DEPLOY_EXECUTION_BLOCKED'
+            : undefined,
       );
     } catch (error: unknown) {
       if (error instanceof DeployInputError) return finish('blocked', error.code);
-      return finish('failed', 'DEPLOY_PREVIEW_FAILED');
+      return finish('failed', flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED');
     }
   }
 }

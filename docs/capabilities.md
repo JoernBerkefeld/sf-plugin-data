@@ -22,19 +22,21 @@ supports API 65.0/default through the common DMO projector with recognized gener
 recipe, exact semantics and arbitrary nonempty authored counts/types. Only projected,
 blocker-free, validated candidates reach the independently common-mapped writer.
 Incomplete or unknown variants diagnose without publication. Type-only/no-selector discovery remains
-pending without changing its approved future meaning. Deployment is unimplemented.
+pending without changing its approved future meaning. General deployment remains unimplemented.
 Internal `readDeployInputs` now resolves explicit files/directories or exact project
 DMO members with bounded no-link authored-only JSON admission. Repeated identical
 inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
 this resolver and per-item target preflight with core org/API/default scope flags.
-Only advisory create/unchanged/blocked-changes/blocked results exist; actual deploy
-without preview is unsupported. Internal `executeDmoCreate` now adds a fixed-endpoint
+Preview returns advisory create/unchanged/blocked-changes/blocked results without writes.
+Without preview the command preflights the whole selection before sequential executor
+calls, stopping on first blocked/failure/unknown mutation and retaining completed and
+explicitly unattempted item receipts. Each executor still preflights independently. Internal `executeDmoCreate` now adds a fixed-endpoint
 API65/default guarded POST following fresh complete-inventory absence proof. No-op
 and blocked differences never POST. Independent common retrieval must qualify
 identity, generated/qualifier integrity, relationships and authored meaning before
 confirmed-created; missing/mismatched qualification or POST errors retain unknown
-possible mutation with no retry/rollback. Public execution, artifact/report writes
-and new live acceptance are not introduced. The common mapper remains more
+possible mutation with no retry/rollback. Public bounded execution is wired; artifact/report
+writes and new live acceptance are not introduced. The common mapper remains more
 permissive than the demonstrated projector; unqualified recipes never verify.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
