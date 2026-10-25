@@ -1,3 +1,61 @@
+# DMO pure offline update-delta slice
+
+Started 2026-10-26 00:44+01:00 from clean
+dc5ae81b275c6f28a34a3cedd5eb4409139d72b5; fetch/status completed, main clean.
+Existing common/recovery reviews apply; written slice plan and explicit simplicity
+check preceded edits. One coupled helper/test slice fits a single worker; no
+additional reviewer dispatched. Whole finished DMO Gate 4 stays coordinator-owned.
+
+`src/artifacts/dmo-update-delta.ts` exports
+`buildDmoUpdateDelta(desired: unknown, current: unknown, targetDataSpace: unknown): DmoUpdateDelta`.
+Both authored documents validate independently; current qualification is a caller
+precondition, not proven by fabricated JSON. Exact default/default/default scope
+and qualified object identity required. Invalid shapes throw DmoDocumentError;
+blocked returns only status/blockers. Unchanged returns detached expected target;
+candidate returns minimal patch plus detached expected overlay. No partial
+payload escapes on any unsupported overlap. Public preflight/executor unchanged,
+existing differences still blocked; no PATCH transport or update-enabled outcome.
+
+Object label and changed explicit nonblank description map; omitted descriptions
+preserve. Existing labels map exact name/unchanged dataType provisionally. New
+nonprimary/nondynamic fields map only name/label/dataType and explicit nonblank
+description/category. Overlay retains target-only fields, order and omitted
+values, appending sorted additions. Missing desired fields never imply deletion;
+a different name adds while old identity survives, case-only collisions block.
+Unsupported type/primary/dynamic/field-description/category/date differences
+block atomically. Unknown status/relationships/generated/tombstone keys reject.
+No input/output aliasing or mutation; candidate entries are exact-name sorted.
+
+Supplied authoritative PATCH checkpoint establishes API65 qualified __dlm route,
+forbids name/type changes, and warns HTTP200 can contain old state. Existing field
+label encoding and server omission preservation remain UNPROVEN. The expected
+overlay describes local nondestructive policy only, not server evidence. Next
+minimal slice: separately authorized synthetic preservation/label experiment,
+then narrowly guarded transport plus independent GET/common qualification only
+if evidence supports it. Do not wire candidate status into public execution.
+No live org calls/writes, Windows harness detour, root edits, release/tag/push or
+publication. Package remains 0.1.0; first release waits for completed DMO milestone.
+
+Propagation checked: README, artifact-format, capabilities and this existing
+handover updated; package inventory includes the helper JS/declarations. No npm
+changelog or version change. Language catalogs/parsers/LSP/extensions/MCP/MSO,
+CMS/MCNext, wiki and public sites/listings/hover have no dependency or changed
+surface; no downstream update is needed. Full verification/normal enabled-hook,
+exact tree and clean commit receipts are returned to coordinator below task output.
+All verification uses fresh marked OS-temp homes, stripped inherited SF_/SFDX_
+overrides and isolated USERPROFILE/HOME/XDG. TEMP/actual os.tmpdir/nonempty TMP/
+TMPDIR check F:/Temp at every shell entry; scratch retained, no recursive cleanup.
+
+Verification checkpoint 2026-10-26 00:52+01:00: scoped ESLint autofix, explicit
+build and full zero-warning lint exit0; final focused update tests 25/25. Initial
+isolated full suite 217/217 (57.296s), smoke 9/9 (53.202s), packaged artifact
+30 entries with helper JS/declarations, three installed help and two injected
+installed envelope checks exit0 (157.036s pipeline). Three additional focused
+regressions landed during that first run; the normal enabled commit hook reruns
+the final full suite and smoke. Verification roots retained:
+F:/Temp/data360-delta-W1oNTG and F:/Temp/data360-package-8M3qhO. Final hook counts,
+commit hash and staged-tree/HEAD equality are reported in the coordinator handover.
+
 # DMO retrieve selector/discovery slice
 
 Started 2026-10-26 00:08+01:00 from clean

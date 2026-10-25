@@ -58,6 +58,14 @@ Metadata SOAP reads refuse same-origin and cross-origin redirects through an
 operation-local transport guard; core still owns credentials and SOAP parsing,
 and the caller connection/global transport defaults are unchanged.
 
+Internal offline `buildDmoUpdateDelta` constructs a minimal candidate PATCH and a
+nondestructive expected overlay, or returns blockers only. It preserves target-only
+fields and omitted descriptions; no removal/tombstone syntax exists. This is not
+connected to preview or execution: existing differences still block. API 65 PATCH
+routing is documented, but omission preservation and existing-field label encoding
+remain pending a separately authorized synthetic server experiment. HTTP 200 can
+contain old state, so future execution must independently GET and qualify readback.
+
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
 coalesce; different files claiming the same identity fail. No selection, bare types,

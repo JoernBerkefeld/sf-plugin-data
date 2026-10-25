@@ -91,6 +91,53 @@ only; any blocked item yields blocked/exit 1, unexpected failure yields failed/e
 All input resolution precedes command-owned org inspection. No writes or mutation
 transport; parser/auth flag errors use core diagnostics.
 
+## Pure offline update-delta contract candidate
+
+`buildDmoUpdateDelta(desired: unknown, current: unknown, targetDataSpace: unknown):
+DmoUpdateDelta` independently validates both authored documents. The caller must
+already have acquired/qualified current state; this helper cannot establish org
+provenance, generated/status or relationship qualification from authored JSON.
+Both identities and explicit target scope must be case-sensitive default; object
+API names must match exactly. Invalid document shapes throw `DmoDocumentError`;
+scope/identity/unsupported changes return `{status: 'blocked', blockers: string[]}`
+without a patch or expected state. Unknown keys (including status, relationships,
+runtime projections and tombstones) reject rather than disappear.
+
+The candidate allowlist is object label, explicitly supplied changed nonblank
+object description, existing field label identified by exact name plus unchanged
+`dataType`, and new nonprimary/nondynamic authored fields. New fields map only
+name/label/dataType and explicitly supplied category/nonblank description; false
+primary/dynamic flags remain in the overlay, not the minimal PATCH. No create body
+reuse, object name/dataSpaceName/category/date/status/generated values enter it.
+Existing field description differences (including clearing), category presence or
+value differences, primary/dynamic/type changes, object category and either date
+designation changes block the entire candidate, even alongside admitted changes.
+A changed empty/whitespace object description or new-field description blocks;
+identical existing empty descriptions are no-ops, not clearing operations.
+
+Omitted object/field descriptions preserve current values. Desired missing target
+fields preserve them, never delete them: there is no tombstone and no heuristic
+rename inference. A different new name is an addition while the old field remains;
+a case-only collision blocks. Existing field order alone is unchanged. Candidate
+field entries and additions are sorted by exact name; the expected overlay retains
+target order and appends sorted additions. The overlay is detached from both inputs
+and the PATCH. Any blocker returns no partial payload. Unchanged returns
+`{status: 'unchanged', blockers: [], expected: DmoDocument}`; admitted differences
+return `{status: 'candidate', blockers: [], patch: DmoUpdatePatch, expected: DmoDocument}`.
+Neither status is a public update-enabled result or mutation authorization.
+
+Authoritative supplied checkpoint (2026-10-26): the official
+[Connect Data Model Object Input reference](https://developer.salesforce.com/docs/data/connectapi/references/spec?meta=type%3AData+Model+Object+Input)
+documents API 65 `PATCH /ssot/data-model-objects/{qualifiedName__dlm}`. Name/type
+changes are forbidden; its additions example does not prove omission preservation
+or existing-field label behavior. HTTP 200 may return the old state; future
+execution must separately GET and qualify actual post-state. Existing-label entry
+encoding above is explicitly a provisional tested contract candidate. Overlay
+preservation expresses local policy, not demonstrated server behavior. Public
+preflight and guarded creation are unchanged and still block existing differences.
+Next prerequisite: separately authorized synthetic omission/label preservation
+experiment; no live calls, PATCH transport or mocks enabling execution in this slice.
+
 ## Internal guarded create executor
 
 `executeDmoCreate(document: unknown, connection: TargetConnection, apiVersion: unknown,

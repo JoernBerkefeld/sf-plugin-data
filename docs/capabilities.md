@@ -48,6 +48,13 @@ possible mutation with no retry/rollback. Public bounded execution is wired; art
 writes and new live acceptance are not introduced. The common mapper remains more
 permissive than the demonstrated projector; unqualified recipes never verify.
 
+The pure offline `buildDmoUpdateDelta` helper constructs an allowlisted candidate
+PATCH/expected overlay without authorizing updates. API 65 PATCH uses the exact
+qualified DMO name; its documented response can contain old state. Separate GET
+qualification is mandatory for future execution. Server preservation of omitted
+fields/properties and existing-field label updates is not yet proven; public
+preview/execution remain update-blocked. Candidate tests are not server evidence.
+
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.
 - [ ] Distinguish standalone custom versus standard/system/generated variants.
