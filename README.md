@@ -3,7 +3,7 @@
 `@joernberkefeld/sf-plugin-data360` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
 implemented; deployment remains unimplemented.** Current retrieval capability is
-owned by the existing service (API 65.0/default, evidenced two-field Other profile),
+owned by the common service (API 65.0/default, qualified generated recipe and semantics),
 not a permanent DMO architecture. This is not yet a general migration tool or a
 published release.
 
@@ -26,9 +26,9 @@ core CLI diagnostics; runtime errors never include remote payloads. No org mutat
 A common offline `joinDmoConnectMetadataFields` helper now joins arbitrary
 nonempty field counts and all 12 authored types with exact identity, primary,
 dynamic and explicit qualifier semantics. Generated fields stay outside authored
-fields; unqualified replay semantics remain blockers. This is a field-level slice,
-not a general source projection: object taxonomy/designations, relationships and
-service/writer integration remain pending. Compatibility retrieval is unchanged.
+fields; unqualified replay semantics remain blockers. The common object projector
+now qualifies complete acquired inputs before the service/command publishes an
+authored candidate; no fixed authored count or fixture-specific command rule applies.
 
 ## Local development
 
@@ -61,14 +61,13 @@ is no public plan command or saved-plan infrastructure.
 ## Scope and safety
 
 `projectCommonDmoConnectMetadata` now composes the shared offline field join and
-object semantics in one common implementation beside the unchanged compatibility
-path. Recognized Other generated defaults retain a successful projection across
+object semantics in one common implementation used by actual retrieval. Recognized Other generated defaults retain a successful projection across
 varied authored counts/types; unproven generated recipes, taxonomy, storage or
 execution semantics remain explicit blockers. Explicit date references resolve
 exactly to authored DateTime fields; missing Engagement event designation is a
 specific blocker, never inferred. Complete nonempty relationships are retained
-but unsupported. Service/command/writer integration is the next slice, not shipped
-by this helper; no new live replay acceptance is claimed.
+but unsupported. Incomplete status, blockers or absent candidates prevent publication;
+no new live replay acceptance is claimed.
 
 Seven planned families are tracked in [capabilities](docs/capabilities.md).
 An internal read-only Salesforce-core transport now accepts an explicit API
@@ -89,8 +88,8 @@ completion. API 65.0 live inspection confirmed HTTP 204 for an empty initial lis
 optional count metadata, and sourceObject/targetObject endpoint records. Unknown envelopes block; raw entry fields are preserved. It is not yet
 bound to field projection: candidates still carry RELATIONSHIPS_NOT_ACQUIRED and
 must never be exported alone from that incomplete helper. Qualified
-relationship projection, broader generated-field replay and filesystem handling remain
-unimplemented. A second offline helper joins exact Connect/Metadata identities for
+relationship replay and broader generated-field replay remain unimplemented;
+qualified authored filesystem publication is available below. A second offline helper joins exact Connect/Metadata identities for
 one proven relationship-free Other shape, binds qualifiers by explicit metadata
 reference, and uses authoritative primary/dynamic flags. It retains full readback
 expectations and now verifies the autonomous create identity for that exact local
@@ -101,7 +100,7 @@ A pure internal Other create-request mapper now rechecks the complete joined
 projection and explicitly binds only evidenced source/target `default` space.
 It preserves authored `__c` field names and excludes generated fields, org IDs
 and read-only metadata. It performs no transport. An internal read-only
-`retrieveOtherDmo` service now acquires detail, Metadata CustomObject and complete
+`retrieveDmo` service now acquires detail, Metadata CustomObject and complete
 relationships using an existing Salesforce core connection, explicitly at API
 65.0/default only. It validates both projection and mapper, returning the full
 projection/expectations rather than a detached candidate. Missing/ambiguous
@@ -121,11 +120,13 @@ all 12 documented field types, Profile/Other/Engagement, any nonempty authored
 field count, boolean dynamic lookup, optional field category/description and
 explicit exact DateTime event/record-modified references. It constructs a fresh
 allowlisted request from authored JSON; source and explicit target remain default.
-This does not broaden the existing narrow service, writer or command, and does
-not claim live API acceptance or general export/deployment support.
+Actual retrieval now uses the common projector and mapper; unknown or incomplete
+semantic variants return specific blockers and no file. Profile/Engagement generated
+replay remains unqualified, not a separate category implementation. No general
+export/deployment or new live API acceptance is claimed.
 
-An internal `writeOtherDmoDocument(candidate, projectRoot, overwrite)` now validates
-standalone Other/default authored JSON independently, serializes canonically and
+An internal `writeDmoDocument(candidate, projectRoot, overwrite)` validates
+standalone DMO/default authored JSON independently through the common mapper, serializes canonically and
 writes `data360/default/dmo/<api-name>.json` beneath the project root. Identical
 bytes are unchanged; differing regular files require overwrite. Linked ancestors,
 linked destinations and directory/file collisions reject. Complete flushed staging

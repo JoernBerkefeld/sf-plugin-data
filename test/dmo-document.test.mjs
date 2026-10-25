@@ -1,6 +1,11 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, readFile, lstat } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import Retrieve from '../lib/commands/data360/retrieve.js';
+import { writeDmoDocument } from '../lib/artifacts/write-other-dmo.js';
 import {
   buildOtherDmoCreateRequest,
   buildOtherDmoCreateRequestFromDocument,
@@ -14,7 +19,7 @@ import {
   validateDmoDocument,
 } from '../lib/artifacts/dmo-document.js';
 
-import { retrieveOtherDmo, OtherDmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
+import { retrieveDmo, DmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
 
 const fixture = () => ({
   schemaVersion: 1,
@@ -1483,7 +1488,7 @@ test('authored mapper requires explicit exact target and refuses projections or 
 
 // Exercise the production adapter against the same independent joined schema, never an org.
 const retrievalFixture = () => {
-  const input = joinedFixture();
+  const input = commonFixture();
   input.connect.dataSpaceName = 'default';
   input.metadata.mktDataModelAttributes.dataSpaceName = 'default';
   const calls = [];
@@ -1504,15 +1509,15 @@ const retrievalFixture = () => {
     },
   };
   const objectApiName = input.connect.name;
-  const run = () => retrieveOtherDmo(connection, objectApiName, '65.0', 'default');
+  const run = () => retrieveDmo(connection, objectApiName, '65.0', 'default');
   return { input, calls, connection, run };
 };
 
 test('retrieval uses real core Metadata read and Connect adapters and retains validated expectations', async () => {
   const { input, calls, run } = retrievalFixture();
   const result = await run();
-  assert.deepEqual(result, projectDmoConnectMetadata(input.connect, input.metadata, []));
-  assert.equal(buildOtherDmoCreateRequest(result, 'default').fields.length, 2);
+  assert.deepEqual(result, projectCommonDmoConnectMetadata(input.connect, input.metadata, []));
+  assert.equal(result.candidate.spec.fields.length, 2);
   assert.deepEqual(calls[1], { type: 'CustomObject', names: ['Audit_Ledger__dlm'] });
   assert.equal(calls.length, 3);
   assert.equal(calls[0].method, 'GET');
@@ -1541,7 +1546,7 @@ test('retrieval rejects unsupported explicit scope and mismatched core version b
     ['Ledger', '65.0', 'default'],
   ]) {
     const { connection, calls } = retrievalFixture();
-    await assert.rejects(retrieveOtherDmo(connection, ...arguments_), { code: 'INVALID_SCOPE' });
+    await assert.rejects(retrieveDmo(connection, ...arguments_), { code: 'INVALID_SCOPE' });
     assert.deepEqual(calls, []);
   }
   const { connection, calls, run } = retrievalFixture();
@@ -1573,12 +1578,6 @@ test('retrieval validates exact joins category default binding and complete rela
   for (const change of [
     (index) => {
       index.connect.name = 'Foreign__dlm';
-    },
-    (index) => {
-      index.connect.category = 'PROFILE';
-    },
-    (index) => {
-      index.connect.category = 'ENGAGEMENT';
     },
     (index) => {
       index.metadata.fields[0].fullName = 'Foreign__c';
@@ -1613,6 +1612,129 @@ test('retrieval validates exact joins category default binding and complete rela
   }
 });
 
+test('common service through command and writer publishes varied authored types only', async () => {
+  for (const count of [1, 12]) {
+    const { input, connection } = retrievalFixture();
+    input.connect.fields = input.connect.fields.filter((field) => field.name !== 'Recorded__c');
+    input.metadata.fields = input.metadata.fields.filter(
+      (field) => field.fullName !== 'Recorded__c',
+    );
+    const types = [
+      'Number',
+      'Date',
+      'DateTime',
+      'Url',
+      'Phone',
+      'Email',
+      'Percent',
+      'Boolean',
+      'Currency',
+      'ArrayOfFloats',
+      'ArrayOfTexts',
+    ];
+    for (let index = 0; index < count - 1; index++) {
+      const name = `Metric${index}__c`;
+      const type = types[index];
+      input.connect.fields.push({
+        name,
+        label: name,
+        type,
+        creationType: 'Custom',
+        usageTag: 'None',
+        isDistinct: false,
+        isDynamicLookup: true,
+        category: 'Synthetic',
+        description: '',
+      });
+      input.metadata.fields.push({
+        fullName: name,
+        label: name,
+        type,
+        required: false,
+        description: '',
+        mktDataModelFieldAttributes: {
+          definitionCreationType: 'Custom',
+          usageTag: 'None',
+          isDynamicLookup: 'true',
+        },
+      });
+    }
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'data360-integration-'));
+    const command = Object.create(Retrieve.prototype);
+    command.config = { pjson: { version: '0.1.0' } };
+    command.parse = async () => ({
+      flags: {
+        metadata: ['dmo:Audit_Ledger__dlm'],
+        'api-version': '65.0',
+        'data-space': 'default',
+        'output-dir': directory,
+        overwrite: false,
+        'target-org': { getOrgId: () => 'synthetic-org', getConnection: () => connection },
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.acquire = retrieveDmo;
+    command.writeDocument = writeDmoDocument;
+    const result = await command.run();
+    assert.equal(result.status, 'success');
+    const file = result.result.items[0].path;
+    assert.equal(file, path.join(directory, 'data360', 'default', 'dmo', 'Audit_Ledger__dlm.json'));
+    const document = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(document.spec.fields.length, count);
+    assert.deepEqual(Object.keys(document).toSorted(), [
+      'identity',
+      'kind',
+      'schemaVersion',
+      'spec',
+    ]);
+    assert.ok(!JSON.stringify(document).includes('synthetic-org'));
+    const unchanged = await command.run();
+    assert.equal(unchanged.result.items[0].outcome, 'unchanged');
+  }
+});
+
+test('incomplete common service variants expose specific diagnostics and never publish', async () => {
+  for (const [change, code] of [
+    [
+      (input) => {
+        input.connect.category = 'PROFILE';
+      },
+      'OBJECT_CATEGORY_TAXONOMY_REPLAY_UNVERIFIED',
+    ],
+    [
+      (input) => {
+        input.connect.category = 'ENGAGEMENT';
+      },
+      'ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE',
+    ],
+    [
+      (input) => {
+        input.metadata.mktDataModelAttributes.dataModelTaxonomy = 'Unknown';
+      },
+      'OBJECT_TAXONOMY_REPLAY_UNVERIFIED',
+    ],
+    [
+      (input) => {
+        input.metadata.fields.find((field) => field.fullName === 'Ticket__c').required = true;
+      },
+      'FIELD_REQUIRED_REPLAY_UNVERIFIED',
+    ],
+  ]) {
+    const { input, run } = retrievalFixture();
+    change(input);
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'data360-blocked-'));
+    const output = path.join(directory, 'absent');
+    await assert.rejects(
+      async () => {
+        const projection = await run();
+        await writeDmoDocument(projection.candidate, output, false);
+      },
+      { code },
+    );
+    await assert.rejects(lstat(output), { code: 'ENOENT' });
+  }
+});
+
 const fail = () => {
   throw new Error('secret remote payload');
 };
@@ -1627,7 +1749,7 @@ test('retrieval propagates payload-free acquisition failure and never returns a 
         return input.connect;
       };
     await assert.rejects(run(), (error) => {
-      assert.ok(error instanceof OtherDmoRetrieveError || error.name === 'ConnectError');
+      assert.ok(error instanceof DmoRetrieveError || error.name === 'ConnectError');
       assert.ok(!JSON.stringify(error).includes('secret'));
       assert.ok(!error.message.includes('secret'));
       assert.equal(error.cause, undefined);

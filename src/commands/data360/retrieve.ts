@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { DmoDocumentError } from '../../artifacts/dmo-document.js';
-import { DmoWriteError, writeOtherDmoDocument } from '../../artifacts/write-other-dmo.js';
-import { OtherDmoRetrieveError, retrieveOtherDmo } from '../../services/retrieve-other-dmo.js';
+import { DmoWriteError, writeDmoDocument } from '../../artifacts/write-other-dmo.js';
+import { DmoRetrieveError, retrieveDmo } from '../../services/retrieve-other-dmo.js';
 import { ConnectError } from '../../transport/connect-client.js';
 
 export type RetrieveEnvelope = {
@@ -70,8 +70,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
-  protected acquire = retrieveOtherDmo;
-  protected writeDocument = writeOtherDmoDocument;
+  protected acquire = retrieveDmo;
+  protected writeDocument = writeDmoDocument;
 
   /**
    * Acquire the complete runtime projection, then publish only its authored candidate.
@@ -134,6 +134,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         flags['api-version'],
         flags['data-space'],
       );
+      if (
+        projection.status !== 'projected' ||
+        projection.blockers.length > 0 ||
+        !projection.candidate
+      )
+        return finish('blocked', projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
       const receipt = await this.writeDocument(
         projection.candidate,
         flags['output-dir'] ?? process.cwd(),
@@ -148,7 +154,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     } catch (error: unknown) {
       if (error instanceof DmoWriteError)
         return finish(error.code === 'OUTPUT_FAILED' ? 'failed' : 'blocked', error.code);
-      if (error instanceof OtherDmoRetrieveError || error instanceof ConnectError)
+      if (error instanceof DmoRetrieveError || error instanceof ConnectError)
         return finish('blocked', error.code);
       if (error instanceof DmoDocumentError) return finish('blocked', 'UNSUPPORTED_DMO_DOCUMENT');
       return finish('failed', 'RETRIEVE_FAILED');

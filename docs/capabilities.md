@@ -18,9 +18,10 @@ Every family must complete all gates below before support can be declared.
 `sf data360 retrieve -m dmo:ApiName` delegates capability checks to the existing
 service, then writes authored-only canonical JSON through the existing writer.
 No command-level category/field-count restriction is added. Current service
-supports API 65.0/default and one evidenced Other shape; shared common DMO
-offline common authored request mapping is now implemented independently; generalized
-source projection/service/writer integration is still pending. Type-only/no-selector discovery remains
+supports API 65.0/default through the common DMO projector with recognized generated
+recipe, exact semantics and arbitrary nonempty authored counts/types. Only projected,
+blocker-free, validated candidates reach the independently common-mapped writer.
+Incomplete or unknown variants diagnose without publication. Type-only/no-selector discovery remains
 pending without changing its approved future meaning. Deployment is unimplemented.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
@@ -70,10 +71,10 @@ pending without changing its approved future meaning. Deployment is unimplemente
       DateTime references and complete retained relationships. Recognized Other
       generated defaults project with varied authored counts/types; unproven
       recipes/storage/taxonomy remain blockers. Missing Engagement event is a
-      specific diagnostic; nonempty relationships are unsupported. No integration
-      or broader live acceptance is implied; compatibility path is unchanged.
+      specific diagnostic; nonempty relationships are unsupported. Actual retrieval
+      now uses this common path; no broader live acceptance is implied.
 
-- [x] Internal bounded Other/default authored-document writer with canonical JSON,
+- [x] Internal common DMO/default authored-document writer with canonical JSON,
       independent persisted-candidate mapping validation, exact `default/dmo` path,
       unchanged-byte no-op, explicit overwrite and link/directory refusal tests.
       OS-temp flushed staging uses atomic publication on the same volume; cross-volume
@@ -108,8 +109,8 @@ pending without changing its approved future meaning. Deployment is unimplemente
       authoritative primary/dynamic semantics and explicit multi-qualifier joins.
       Generated fields are excluded from authored candidates, not silently accepted:
       generated/qualifier/length/required/distinct replay remains diagnostic.
-      Object taxonomy/designations, relationships and service/writer integration
-      are the next bounded slice; no complete common projection is claimed.
+      Common object taxonomy/designations and complete relationships are now joined
+      at the service boundary; incomplete projections never reach publication.
 - [x] Offline strict Connect/Metadata projection for one relationship-free Other shape.
       Exact object/field joins, explicit qualifier binding and Metadata-authoritative
       primary/dynamic semantics; two authored fields and complete generated/readback
@@ -124,7 +125,7 @@ pending without changing its approved future meaning. Deployment is unimplemente
       Source and explicit target must both be default; arbitrary space acceptance
       is unproven. No public wiring, writable Metadata projection or transport
       mutation. Profile and Engagement remain pending; dmo family gates remain open.
-- [x] Internal read-only Other retrieval at explicit API 65.0/default scope.
+- [x] Internal common read-only DMO retrieval at explicit API 65.0/default scope.
       Existing core Connection supplies Connect GET and Metadata CustomObject read;
       exact identity/cardinality, complete relationships, strict joined projection
       and offline mapper are required before returning full expectations. Synthetic
@@ -143,7 +144,8 @@ pending without changing its approved future meaning. Deployment is unimplemente
       category/description, true/false dynamic flags and exact DateTime references
       map individually into fresh allowlisted output. Source/explicit target default
       only. Unknown/runtime JSON rejects. Schema mapping is not selected-version live
-      acceptance; generalized projection/service/writer and deployment remain pending.
+      acceptance. Common projection/service/writer integration is synthetic-tested;
+      deployment remains pending.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
       Partial internal DMO-only contract: qualified identity, all 12 nested input

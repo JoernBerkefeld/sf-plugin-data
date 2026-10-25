@@ -13,7 +13,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import {
-  buildOtherDmoCreateRequestFromDocument,
+  buildDmoCreateRequestFromDocument,
   serializeDmoDocument,
   validateDmoDocument,
 } from './dmo-document.js';
@@ -21,9 +21,7 @@ import {
 /** Payload-free filesystem refusals, including failed atomic publication. */
 export class DmoWriteError extends Error {
   public constructor(public readonly code: 'UNSAFE_PATH' | 'OVERWRITE_REQUIRED' | 'OUTPUT_FAILED') {
-    super(
-      'Other DMO output could not be completed; inspect the selected destination before retrying.',
-    );
+    super('DMO output could not be completed; inspect the selected destination before retrying.');
     this.name = 'DmoWriteError';
   }
 }
@@ -73,20 +71,20 @@ async function existingBytes(file: string): Promise<Buffer | undefined> {
 }
 
 /**
- * Publish only independently validated authored Other/default JSON, with atomic file visibility.
+ * Publish only independently validated authored DMO/default JSON, with atomic file visibility.
  * Staging is retained in owned OS temp; cross-volume atomic publication fails closed.
  * @param {unknown} value Authored candidate, never the runtime projection.
  * @param {string} projectRoot Output project root (the CLI supplies cwd when omitted).
  * @param {boolean} overwrite Permit replacing differing existing regular-file bytes.
  * @returns {Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }>} Exact path and outcome.
  */
-export async function writeOtherDmoDocument(
+export async function writeDmoDocument(
   value: unknown,
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   // Validate the standalone candidate independently before any filesystem side effect.
-  buildOtherDmoCreateRequestFromDocument(value, 'default');
+  buildDmoCreateRequestFromDocument(value, 'default');
   const document = validateDmoDocument(value);
   const bytes = Buffer.from(serializeDmoDocument(document), 'utf8');
   if (!projectRoot.trim()) throw new DmoWriteError('UNSAFE_PATH');

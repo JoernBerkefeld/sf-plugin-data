@@ -1,3 +1,88 @@
+# Common retrieval integration slice
+
+Start: 2026-10-25T18:16:32.6761590+01:00, clean requested baseline
+`54c9ddfce9c83a8893b0b907307af5492b378465`. Fetch/status completed; no remote
+configured, so upstream cannot be verified. Written slice plan/simplicity preceded
+edits; inherited reviewed shared-DMO plan complete (Gates 1/2). Gate 3 one small
+coupled service/writer/command slice, no extra workers/root edits. Whole-feature
+Gate 4 remains coordinator-owned, not claimed here.
+
+## Exact interfaces and completed scope
+
+`retrieveDmo(connection: ReadConnection, objectApiName: unknown, apiVersion: unknown,
+dataSpace: unknown): Promise<DmoCommonProjection & { candidate: DmoDocument }>`
+in src/services/retrieve-other-dmo.ts replaces the unpublished narrow export.
+ReadConnection still uses actual core instanceUrl/request/metadata/getApiVersion.
+Explicit API 65.0/matching connection, default scope and exact object binding
+remain. Real `metadata.read('CustomObject', [objectApiName])` cardinality/fullName
+checks and complete relationship acquisition are unchanged. Common projector
+status must be projected, blockers empty and candidate present; common authored
+mapper validates candidate before success. DmoRetrieveError carries a payload-free
+code, preferring ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE when present, otherwise
+the first specific blocker. Unknown malformed semantics remain DmoDocumentError.
+
+`writeDmoDocument(value: unknown, projectRoot: string, overwrite: boolean)` in
+src/artifacts/write-other-dmo.ts keeps Promise<{path:string,outcome:'retrieved'|
+'unchanged'}>. It independently calls buildDmoCreateRequestFromDocument, not the
+narrow two-field mapper. No new file/alias is needed for unpublished internals.
+Command imports common names and refuses incomplete/nonempty-blocker/absent
+candidate results before writer invocation; selection is syntax-only unchanged.
+Authored-only canonical JSON path, overwrite/no-op, links/ancestor checks and atomic
+publication remain intact. No new family, discovery, deployment or live acceptance.
+
+Recognized generated recipe now passes actual acquisition -> command -> writer
+for one and twelve authored fields (all twelve types across primary plus variants),
+including dynamic/category/description values and unchanged replay. Profile and
+Engagement generated semantics remain unqualified in this one common path; missing
+event designation is explicit, never inferred. No sample/category implementation
+tracks or fixed field count. Existing narrow offline compatibility helpers/tests
+remain but are not used for retrieval.
+
+## Verification and safety
+
+Scoped autofix, explicit build and full zero-warning lint passed. Full tests:
+129 passed, 0 failed/skipped, 14052.5083 ms excluding compile; standalone sequence
+ended 2026-10-25T18:22:00.533+01:00. New regressions cover common service->writer/
+command success, specific incomplete/absent candidate diagnostics with no output,
+and existing acquisition failure/CLI envelope/path-safety regressions. Initial
+lint caught an await-member style error, fixed without suppression. Smoke/package
+and normal enabled hook commit receipts follow in coordinator response, including
+exact hash/end/clean status; self-hash cannot live in this tracked document.
+
+Every shell/test entry preflights TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+as absolute normalized F:/Temp, with process-only repair/recheck. Scratch uses
+verified OS-temp mkdtemp and is retained; no recursive cleanup/global edits/live
+org calls or mutations/push/tag/release. Package remains 0.1.0.
+
+Gate 5 slice propagation: README/artifact/capability/handover updated after green
+checks. Wiki/sites/tool listings/hover have no affected surface for unpublished
+internal integration. Root release/dependency registration remains coordinator-only.
+
+| Component | Needs update? | What to update | Status |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | common service/writer/command/tests and existing docs | done |
+| ampscript-data, ssjs-data, csv-parser, ampscript-parser | N/A | No coupling | not needed |
+| sfmc-language-lsp, vscode-sfmc-language | N/A | No language change | not needed |
+| mcp-server-sfmc, mcp-server-mcdev | N/A | No consumers | not needed |
+| sf-plugin-mcnext, sf-plugin-cms | N/A | Independent packages | not needed |
+| eslint-plugin-sfmc, eslint-plugin-mcdev, prettier-plugin-sfmc | N/A | No coupling | not needed |
+| ssjs.guide, mso-conditional-parser, eslint-plugin-mso-email, vscode-mso-conditionals | N/A | No coupling | not needed |
+
+| Folder | Changed? | Current version | New version |
+| --- | --- | --- | --- |
+| sf-plugin-data360 | Yes | 0.1.0 | No bump; no release prepared |
+
+## Next bounded deploy-preview slice
+
+Read actual approved deploy/preview scope before edits. Independently acquire one
+explicit target DMO through the common read-only service, validate an explicit
+authored input through the common mapper, and compare canonical authored semantics
+in memory with deterministic diagnostics. Establish absence versus acquisition
+failure and generated/relationship qualification before classifying target changes.
+No mutation transport, create/update execution, selector discovery, new family,
+saved-plan framework or live org calls implicit. Stop on unqualified target state;
+whole-feature Gate 4 still belongs to the coordinator after final slice.
+
 # Common offline object projection slice
 
 Start: 2026-10-25T18:06+01:00, clean requested baseline

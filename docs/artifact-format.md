@@ -7,14 +7,14 @@ request mapping alone does not establish deployment acceptance. Explicit CLI
 retrieval now delegates to the existing service and writer; filesystem discovery,
 published JSON Schema and deployment request execution remain unimplemented. The future layout remains
 `data360/<logical-data-space>/<family>/<api-name>.json`. The internal bounded
-Other writer below implements only `default/dmo`; explicit CLI retrieval is wired
+DMO writer below implements only `default/dmo`; explicit CLI retrieval is wired
 to the service and this writer without adding command-level profile restrictions.
 
-## Internal authored Other file writer
+## Internal common authored DMO file writer
 
-`writeOtherDmoDocument(value: unknown, projectRoot: string, overwrite: boolean)`
+`writeDmoDocument(value: unknown, projectRoot: string, overwrite: boolean)`
 returns `{ path: string, outcome: 'retrieved' | 'unchanged' }`. First independently
-validate through `buildOtherDmoCreateRequestFromDocument(value, 'default')`, then
+validate through `buildDmoCreateRequestFromDocument(value, 'default')`, then
 use `serializeDmoDocument`. Persist only the approved authored document, never
 expectations, source IDs or runtime observations. Output is exactly
 `<project-root>/data360/default/dmo/<api-name>.json`; the CLI must supply cwd when
@@ -96,7 +96,7 @@ All other admitted object keys are configuration. Field configuration includes
 `isDynamicLookup`, `creationType`, `keyQualifierName`, `isDistinct`, `usageTag`.
 No field-ID exemption or generic unknown-metadata stripping exists.
 
-## Common offline object projection (integration pending)
+## Common object projection (retrieval-integrated)
 
 `projectCommonDmoConnectMetadata(connect: unknown, metadata: unknown,
 relationships: unknown): DmoCommonProjection` returns status `projected` or
@@ -126,9 +126,12 @@ Synthetic varied-count/type success is offline qualification, not new live proof
 No-generated shapes also retain an unverified recipe blocker. Complete nonempty
 relationships remain retained with `RELATIONSHIP_REPLAY_UNSUPPORTED`; malformed,
 foreign or unknown relationship shapes reject. Empty auxiliary Metadata
-collections are checked, not silently dropped. No command/service/writer changes.
+collections are checked, not silently dropped. The read service now runs this common
+projection and requires projected status, empty blockers and a common-mapper-validated
+candidate before returning success. The command repeats the completeness gate; the
+writer independently validates authored JSON, never a runtime projection.
 
-## Common offline field join (integration pending)
+## Common offline field join (composed by common projection)
 
 `joinDmoConnectMetadataFields(connectFields: unknown, metadataFields: unknown):
 DmoJoinedFields` returns `{ fields, qualifierBindings, blockers, expectations }`.
@@ -156,11 +159,10 @@ fields, generated qualifiers and generated descriptions/categories add specific
 join; it does not qualify object taxonomy, relationships or generated recreation.
 Independent full admitted collections remain in `expectations`.
 
-Next integrate this join with object configuration/category/taxonomy validation,
-explicit source designation of event and modified DateTime references and complete
-relationship inventory. Missing required Engagement event designation must become
-a specific object-level blocker, not inference from field count/type. No source
-service, command or writer integration occurs in this slice. Live acceptance is
+The common object projector composes this join with object/category/taxonomy
+validation, explicit event/modified references and complete relationship inputs.
+The common retrieval service acquires those inputs; missing Engagement designation
+is a specific blocker rather than field-count/type inference. Live acceptance is
 not expanded beyond retained evidence.
 
 ## Strict Connect/Metadata Other diagnostic slice
@@ -262,8 +264,9 @@ name, explicit target to dataSpaceName, and spec label/description/category/date
 references individually. Each fresh field maps only name/label/dataType/description/
 category/isPrimaryKey/isDynamicLookup. No spec spread, generated fields, response
 flags, source expectations or relationships are accepted. Existing narrow Other
-mappers and their compatibility tests remain unchanged; service/writer/command
-still use those narrow helpers. No runtime acceptance is implied by construction.
+mappers and their compatibility tests remain unchanged but no longer drive retrieval.
+Service/writer/command now use the common path. No new runtime acceptance is implied
+by construction.
 
 Evidence rechecked 2026-10-25 after local mirror gaps: official nested page fetches
 timed out. Indexed full official [Connect endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec?meta=type%3AData+Model+Object+Input)
@@ -304,10 +307,10 @@ the authored file and later compare actual target readback, with internal runtim
 expectations acquired as needed. It does not provide CLI/file handling, transport,
 target preflight, create/update/no-op orchestration or general DMO acceptance.
 
-## Internal read-only Other retrieval
+## Internal common read-only DMO retrieval
 
-`retrieveOtherDmo(connection: ReadConnection, objectApiName: unknown,
-apiVersion: unknown, dataSpace: unknown): Promise<DmoConnectMetadataProjection>`
+`retrieveDmo(connection: ReadConnection, objectApiName: unknown,
+apiVersion: unknown, dataSpace: unknown): Promise<DmoCommonProjection & { candidate: DmoDocument }>`
 is internal; ReadConnection is a Pick of core Connection's instanceUrl, request,
 metadata and getApiVersion. Caller supplies existing authenticated core connection.
 Both explicit API and the connection version must be 65.0; data space must be
@@ -325,15 +328,18 @@ the strict projector unchanged; there is no property-stripping envelope adapter.
 The retained successful API 65 Other experiment used the same core metadata.read
 seam with scalar input. No new live execution was needed here.
 
-Strict joined projection and buildOtherDmoCreateRequest both run before success.
+Common joined projection and buildDmoCreateRequestFromDocument both run before success.
 Return value retains complete independent expectations, create identity and
 qualifier binding; no detached candidate or create request is returned instead.
 Acquisition errors have payload-free diagnostics; failures never return a partial
 projection. Existing ConnectError/DmoDocumentError remain intact; other failures
-become OtherDmoRetrieveError with ACQUISITION_FAILED. INVALID_SCOPE and
+become DmoRetrieveError with ACQUISITION_FAILED. INVALID_SCOPE and
 INVALID_METADATA identify rejected scope or decoded record cardinality/identity.
-No snapshot consistency, authenticity of arbitrary JSON, CLI/file wiring,
-Profile/Engagement/general DMO support, request execution or mutation is claimed.
+Incomplete variants expose a specific projector blocker (missing Engagement event
+is preferred when present), not a candidate. No snapshot consistency, authenticity
+of arbitrary JSON, general category acceptance, request execution or mutation is
+claimed. Existing module paths remain unchanged; common export names replace the
+unpublished narrow service/writer names without compatibility aliases.
 
 ## Authoritative contract evidence (2026-10-25)
 

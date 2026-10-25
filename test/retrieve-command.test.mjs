@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { DmoWriteError } from '../lib/artifacts/write-other-dmo.js';
-import { OtherDmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
+import { DmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
 
 const candidate = {
   schemaVersion: 1,
@@ -38,7 +38,12 @@ const invocation = (overrides = {}) => {
       flags['api-version'],
       flags['data-space'],
     ]);
-    return { candidate, expectations: { secret: 'never persisted' } };
+    return {
+      status: 'projected',
+      blockers: [],
+      candidate,
+      expectations: { secret: 'never persisted' },
+    };
   };
   command.writeDocument = async (...arguments_) => {
     assert.deepEqual(arguments_, [
@@ -118,10 +123,7 @@ test('missing default org is an explicit blocked envelope', async () => {
 });
 
 test('service refusals and remote failures never publish candidates or leak error payloads', async () => {
-  for (const error of [
-    new OtherDmoRetrieveError('INVALID_SCOPE'),
-    new Error('private remote body'),
-  ]) {
+  for (const error of [new DmoRetrieveError('INVALID_SCOPE'), new Error('private remote body')]) {
     const command = invocation();
     command.acquire = async () => {
       throw error;
@@ -131,7 +133,28 @@ test('service refusals and remote failures never publish candidates or leak erro
     assert.equal(exitCode, 1);
     assert.ok(!JSON.stringify(result).includes('private remote body'));
     assert.deepEqual(result.result.items, []);
-    assert.equal(result.status, error instanceof OtherDmoRetrieveError ? 'blocked' : 'failed');
+    assert.equal(result.status, error instanceof DmoRetrieveError ? 'blocked' : 'failed');
+  }
+});
+
+test('incomplete or absent service candidates never reach publication', async () => {
+  for (const projection of [
+    { status: 'incomplete', blockers: ['GENERATED_RECIPE_REPLAY_UNVERIFIED'], candidate },
+    { status: 'projected', blockers: ['RELATIONSHIP_REPLAY_UNSUPPORTED'], candidate },
+    { status: 'projected', blockers: [] },
+    { status: 'incomplete', blockers: ['ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE'] },
+  ]) {
+    const command = invocation();
+    command.acquire = async () => projection;
+    command.writeDocument = () => assert.fail('must not publish');
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(exitCode, 1);
+    assert.equal(
+      result.diagnostics.errors[0].code,
+      projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION',
+    );
+    assert.deepEqual(result.result.items, []);
   }
 });
 
