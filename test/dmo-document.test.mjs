@@ -23,6 +23,7 @@ import {
 import { retrieveDmo, DmoRetrieveError } from '../lib/services/retrieve-other-dmo.js';
 import { preflightDmoDeploy } from '../lib/services/preflight-dmo-deploy.js';
 import { executeDmoCreate } from '../lib/services/execute-dmo-create.js';
+import { executeDmoDeploy, executeDmoDeploySelection } from '../lib/services/execute-dmo-deploy.js';
 
 const fixture = () => ({
   schemaVersion: 1,
@@ -905,6 +906,81 @@ test('common field join supports varied counts and all documented types without 
     assert.deepEqual(input, before);
   }
 });
+
+test('common join qualifies effective override while preserving base and master observations', () => {
+  const input = commonFields(['Text', 'Text']);
+  const source = input.metadata.find((field) => field.fullName === 'Attribute1__c');
+  source.label = 'First value';
+  source.mktDataModelFieldAttributes.masterLabel = 'First value';
+  source.mktDataModelFieldAttributes.labelOverride = 'First value renamed';
+  input.connect[1].label = 'First value renamed';
+  const before = structuredClone(input);
+  const result = joinDmoConnectMetadataFields(input.connect, input.metadata);
+  assert.equal(result.fields[1].label, 'First value renamed');
+  assert.deepEqual(result.expectations.connect, input.connect);
+  assert.deepEqual(result.expectations.metadata, input.metadata);
+  assert.deepEqual(input, before);
+  result.expectations.metadata.find((field) => field.fullName === 'Attribute1__c').label =
+    'Changed output';
+  assert.deepEqual(input, before);
+});
+
+test('common join uses base label only when override is absent', () => {
+  const input = commonFields(['Text', 'Text']);
+  const source = input.metadata.find((field) => field.fullName === 'Attribute1__c');
+  source.mktDataModelFieldAttributes.masterLabel = source.label;
+  assert.equal(
+    joinDmoConnectMetadataFields(input.connect, input.metadata).fields[1].label,
+    source.label,
+  );
+  input.connect[1].label = 'Unexplained rename';
+  assert.throws(
+    () => joinDmoConnectMetadataFields(input.connect, input.metadata),
+    DmoDocumentError,
+  );
+});
+
+for (const [name, override] of [
+  ['undefined', undefined],
+  // eslint-disable-next-line unicorn/no-null -- Exercise malformed JSON null rather than absent override.
+  ['null', null],
+  ['empty', ''],
+  ['blank', '   '],
+  ['number', 7],
+  ['boolean', true],
+  ['object', {}],
+  ['array', []],
+  ['overlong', 'x'.repeat(256)],
+]) {
+  test(`common join rejects present ${name} label override`, () => {
+    const input = commonFields(['Text', 'Text']);
+    input.metadata[0].mktDataModelFieldAttributes.labelOverride = override;
+    input.connect[1].label = override;
+    assert.throws(
+      () => joinDmoConnectMetadataFields(input.connect, input.metadata),
+      DmoDocumentError,
+    );
+  });
+}
+
+for (const mismatch of ['connect-base', 'connect-unrelated', 'master-effective', 'base-master']) {
+  test(`common join rejects ${mismatch} label disagreement`, () => {
+    const input = commonFields(['Text', 'Text']);
+    const source = input.metadata[0];
+    const detail = source.mktDataModelFieldAttributes;
+    detail.masterLabel = source.label;
+    detail.labelOverride = 'Effective label';
+    input.connect[1].label = detail.labelOverride;
+    if (mismatch === 'connect-base') input.connect[1].label = source.label;
+    if (mismatch === 'connect-unrelated') input.connect[1].label = 'Other label';
+    if (mismatch === 'master-effective') detail.masterLabel = detail.labelOverride;
+    if (mismatch === 'base-master') source.label = 'Different base';
+    assert.throws(
+      () => joinDmoConnectMetadataFields(input.connect, input.metadata),
+      DmoDocumentError,
+    );
+  });
+}
 
 test('common join resolves complete explicit qualifiers and classifies generated semantics', () => {
   const { connect, metadata } = joinedFixture();
@@ -2183,6 +2259,254 @@ for (const failure of ['read', 'mismatch', 'generated', 'qualifier', 'malformed'
     assert.ok(!JSON.stringify(result).includes('secret-token'));
   });
 }
+
+const updateFixture = (afterPatch = () => {}) => {
+  const f = preflightFixture();
+  const read = f.connection.request;
+  const patches = [];
+  let attempted = false;
+  f.connection.request = async function (request, options) {
+    if (request.method === 'PATCH') {
+      attempted = true;
+      patches.push(JSON.parse(request.body));
+      const stale = structuredClone(f.input.connect);
+      const patch = patches.at(-1);
+      if (patch.label) {
+        f.input.connect.label = patch.label;
+        f.input.metadata.label = patch.label;
+        f.input.metadata.mktDataModelAttributes.labelOverride = patch.label;
+        f.input.metadata.mktDataModelAttributes.masterLabel = patch.label;
+      }
+      for (const field of patch.fields ?? []) {
+        f.input.connect.fields.find((item) => item.name === field.name).label = field.label;
+        f.input.metadata.fields.find(
+          (item) => item.fullName === field.name,
+        ).mktDataModelFieldAttributes.labelOverride = field.label;
+      }
+      afterPatch(f);
+      return stale;
+    }
+    if (attempted && f.failReadback) throw new Error('private-read-error');
+    return read.call(this, request, options);
+  };
+  return {
+    ...f,
+    patches,
+    execute: () => executeDmoDeploy(f.source, f.connection, '65.0', 'default'),
+  };
+};
+
+test('public command uses real guarded label preview, execution and mixed-selection admission', async () => {
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  for (const scenario of ['preview', 'updated', 'blocked', 'unknown']) {
+    const f = updateFixture((state) => {
+      if (scenario === 'unknown') state.failReadback = true;
+    });
+    f.source.spec.label += ' renamed';
+    f.source.spec.fields.find((field) => !field.isPrimaryKey).label += ' renamed';
+    const blocked = structuredClone(f.source);
+    blocked.spec.description = 'unsupported mixed description';
+    const command = new Deploy([], {});
+    command.parse = async () => ({
+      flags: {
+        preview: scenario === 'preview',
+        'source-dir': ['authored.json'],
+        'api-version': '65.0',
+        'data-space': 'default',
+        'target-org': { getOrgId: () => 'synthetic-target', getConnection: () => f.connection },
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveInputs = async () =>
+      (scenario === 'blocked' ? [f.source, blocked] : [f.source]).map((document) => ({
+        document,
+        path: 'authored.json',
+      }));
+    const previous = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      const envelope = await command.run();
+      assert.equal(
+        envelope.status,
+        scenario === 'blocked' ? 'blocked' : scenario === 'unknown' ? 'failed' : 'success',
+      );
+      assert.equal(f.patches.length, ['updated', 'unknown'].includes(scenario) ? 1 : 0);
+      assert.equal(
+        envelope.result.items[0].outcome,
+        scenario === 'preview'
+          ? 'update'
+          : scenario === 'updated'
+            ? 'updated'
+            : scenario === 'blocked'
+              ? 'not-attempted'
+              : 'failed',
+      );
+      if (scenario === 'updated')
+        assert.equal(envelope.result.items[0].mutation, 'confirmed-updated');
+      if (scenario === 'blocked')
+        assert.ok(envelope.result.items.every((item) => item.mutation === 'not-attempted'));
+      if (scenario === 'unknown') assert.equal(envelope.result.items[0].mutation, 'unknown');
+      assert.ok(!JSON.stringify(envelope).includes('private-'));
+    } finally {
+      process.exitCode = previous;
+    }
+  }
+});
+
+test('internal label execution confirms independent overlay and full preserved runtime, not stale PATCH body', async () => {
+  const f = updateFixture();
+  f.source.spec.label += ' renamed';
+  f.source.spec.fields.find((field) => !field.isPrimaryKey).label += ' renamed';
+  f.source.spec.fields.reverse();
+  const outcome = await f.execute();
+  assert.equal(outcome.outcome, 'updated');
+  assert.equal(outcome.mutation, 'confirmed-updated');
+  assert.equal(f.patches.length, 1);
+  assert.ok(f.calls.filter((call) => call.type === 'CustomObject').length >= 3);
+  assert.ok(f.calls.filter((call) => call.url?.includes('/relationships?')).length >= 3);
+});
+
+for (const variant of [
+  'new-field',
+  'description',
+  'primary-label',
+  'type',
+  'field-description',
+  'category',
+]) {
+  test(`internal update blocks mixed labels and ${variant} before every write`, async () => {
+    const f = updateFixture();
+    f.source.spec.label += ' renamed';
+    const field = f.source.spec.fields.find((item) => !item.isPrimaryKey);
+    if (variant === 'new-field') f.source.spec.fields.push({ ...field, name: 'Added__c' });
+    if (variant === 'description') f.source.spec.description = 'unproven description edit';
+    if (variant === 'primary-label')
+      f.source.spec.fields.find((item) => item.isPrimaryKey).label += ' renamed';
+    if (variant === 'type') field.dataType = field.dataType === 'Text' ? 'Number' : 'Text';
+    if (variant === 'field-description') field.description = 'unproven';
+    if (variant === 'category') f.source.spec.category = 'Profile';
+    const outcome = await f.execute();
+    assert.equal(outcome.mutation, 'not-attempted');
+    assert.equal(f.patches.length, 0);
+  });
+}
+
+test('internal omissions preserve target-only fields and description; reorder and subset are noops', async () => {
+  const f = updateFixture();
+  delete f.source.spec.description;
+  f.source.spec.fields = f.source.spec.fields.filter((field) => field.isPrimaryKey).toReversed();
+  const noop = await f.execute();
+  assert.equal(noop.outcome, 'unchanged');
+  f.source.spec.label += ' renamed';
+  const updated = await f.execute();
+  assert.equal(updated.mutation, 'confirmed-updated');
+  assert.deepEqual(f.patches, [{ label: f.source.spec.label }]);
+});
+
+for (const variant of ['read', 'authored', 'runtime', 'generated', 'relationships', 'dispatch']) {
+  test(`internal update ${variant} ambiguity stays unknown and never retries`, async () => {
+    const f = updateFixture((state) => {
+      if (variant === 'read') state.failReadback = true;
+      if (variant === 'authored') state.input.connect.label = 'stale';
+      if (variant === 'runtime') state.input.connect.id = 'changed-runtime-identity';
+      if (variant === 'generated')
+        state.input.connect.fields.find((item) => item.creationType === 'System').label = 'changed';
+      if (variant === 'relationships')
+        state.input.metadata.fields.find(
+          (item) => item.mktDataModelFieldAttributes.primaryIndexOrder,
+        ).mktDataModelFieldAttributes.primaryIndexOrder = '2';
+      if (variant === 'dispatch') throw new Error('private-dispatch-error');
+    });
+    f.source.spec.label += ' renamed';
+    const outcome = await f.execute();
+    assert.equal(outcome.outcome, 'failed');
+    assert.equal(outcome.mutation, 'unknown');
+    assert.equal(f.patches.length, 1);
+    assert.ok(!JSON.stringify(outcome).includes('private-'));
+  });
+}
+
+test('fresh target drift is qualified and blocks unsupported delta before dispatch', async () => {
+  const f = updateFixture();
+  f.source.spec.label += ' renamed';
+  const read = f.connection.metadata.read;
+  let reads = 0;
+  f.connection.metadata.read = async (...arguments_) => {
+    if (++reads === 2) {
+      const sourceField = f.source.spec.fields.find((field) => !field.isPrimaryKey);
+      sourceField.dataType = sourceField.dataType === 'Text' ? 'Number' : 'Text';
+      // Caller changes cannot alter the detached source; drift the qualified target instead.
+      f.input.connect.description = 'fresh description';
+      f.input.metadata.mktDataModelAttributes.description = 'fresh description';
+    }
+    return read(...arguments_);
+  };
+  // Explicit source description now differs from fresh state and is an unproven edit.
+  f.source.spec.description = f.input.connect.description ?? 'original';
+  f.input.connect.description = f.source.spec.description;
+  f.input.metadata.mktDataModelAttributes.description = f.source.spec.description;
+  const blocked = await f.execute();
+  assert.equal(blocked.mutation, 'not-attempted');
+  assert.equal(f.patches.length, 0);
+});
+
+test('selection validates all documents before reads and rejects duplicates without writes', async () => {
+  for (const invalid of [{}, undefined]) {
+    const f = updateFixture();
+    const outcomes = await executeDmoDeploySelection(
+      [f.source, invalid],
+      f.connection,
+      '65.0',
+      'default',
+    );
+    assert.ok(outcomes.every((item) => item.mutation === 'not-attempted'));
+    assert.equal(f.calls.length, 0);
+  }
+  const f = updateFixture();
+  await executeDmoDeploySelection([f.source, f.source], f.connection, '65.0', 'default');
+  assert.equal(f.calls.length, 0);
+});
+
+test('selection unsupported tail blocks first supported update before any write', async () => {
+  const f = updateFixture();
+  f.source.spec.label += ' renamed';
+  const second = structuredClone(f.source);
+  second.identity.apiName = 'Second__dlm';
+  second.spec.category = 'Profile';
+  const outcomes = await executeDmoDeploySelection(
+    [f.source, second],
+    f.connection,
+    '65.0',
+    'default',
+  );
+  assert.equal(outcomes[0].outcome, 'not-attempted');
+  assert.equal(outcomes[1].outcome, 'blocked');
+  assert.equal(f.patches.length, 0);
+});
+
+test('selection stops after ambiguous first update and leaves admitted tail unattempted', async () => {
+  const f = updateFixture((state) => {
+    state.failReadback = true;
+  });
+  f.source.spec.label += ' renamed';
+  const second = structuredClone(f.source);
+  second.identity.apiName = 'Second__dlm';
+  const read = f.connection.request;
+  f.connection.request = async function (request, options) {
+    if (request.url.includes('data-model-objects?'))
+      return { dataModelObject: [{ name: f.source.identity.apiName, dataSpaceName: 'default' }] };
+    return read.call(this, request, options);
+  };
+  const outcomes = await executeDmoDeploySelection(
+    [f.source, second],
+    f.connection,
+    '65.0',
+    'default',
+  );
+  assert.equal(outcomes[0].mutation, 'unknown');
+  assert.equal(outcomes[1].outcome, 'not-attempted');
+  assert.equal(f.patches.length, 1);
+});
 
 test('raw classification keeps qualifier and semantic metadata meaningful and unknowns blocked', () => {
   for (const key of ['keyQualifierName', 'isDistinct', 'usageTag', 'creationType', 'type'])

@@ -156,48 +156,206 @@ test('guarded create refuses invalid payload/version before any request', async 
   await assert.rejects(new ConnectClient(connection, '65.0').createDataModelObject({}));
 });
 
-test('actual core request stack never refreshes/replays guarded POST on 401', async () => {
-  let requests = 0;
-  const refresh = {
-    isRefreshing: () => assert.fail('must not consult refresh delegate'),
-    refresh: () => assert.fail('must not refresh'),
-  };
-  const connection = Object.create(Connection.prototype);
-  Object.assign(connection, {
-    instanceUrl: origin,
-    version: '65.0',
-    accessToken: 'synthetic-token',
-    logger: { getRawLogger: () => ({ debug: () => {} }) },
-    _refreshDelegate: refresh,
-    _propagators: [],
-    _transport: {
-      httpRequest: (request, options) => {
-        requests++;
-        assert.equal(request.method, 'POST');
-        assert.equal(options.retry.maxRetries, 0);
-        const response = Promise.resolve({
-          statusCode: 401,
-          headers: { 'content-type': 'application/json' },
-          body: '[{"errorCode":"INVALID_SESSION_ID","message":"secret"}]',
-        });
-        response.stream = () => new PassThrough();
-        return response;
+for (const [method, statusCode] of [
+  ['POST', 401],
+  ['PATCH', 401],
+  ['PATCH', 503],
+])
+  test(`actual core request stack never refreshes/replays/retries guarded ${method} on ${statusCode}`, async () => {
+    let requests = 0;
+    const refresh = {
+      isRefreshing: () => assert.fail('must not consult refresh delegate'),
+      refresh: () => assert.fail('must not refresh'),
+    };
+    const connection = Object.create(Connection.prototype);
+    Object.assign(connection, {
+      instanceUrl: origin,
+      version: '65.0',
+      accessToken: 'synthetic-token',
+      logger: { getRawLogger: () => ({ debug: () => {} }) },
+      _refreshDelegate: refresh,
+      _propagators: [],
+      _transport: {
+        httpRequest: (request, options) => {
+          requests++;
+          assert.equal(request.method, method);
+          assert.equal(options.retry.maxRetries, 0);
+          const response = Promise.resolve({
+            statusCode,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify([
+              {
+                errorCode: statusCode === 401 ? 'INVALID_SESSION_ID' : 'SERVER_ERROR',
+                message: 'secret',
+              },
+            ]),
+          });
+          response.stream = () => new PassThrough();
+          return response;
+        },
       },
-    },
-  });
-  let observed;
-  const request = Connection.prototype.request;
-  connection.request = function (...arguments_) {
-    return request.apply(this, arguments_).catch((error) => {
-      observed = error;
-      throw error;
     });
+    let observed;
+    const request = Connection.prototype.request;
+    connection.request = function (...arguments_) {
+      return request.apply(this, arguments_).catch((error) => {
+        observed = error;
+        throw error;
+      });
+    };
+    const client = new ConnectClient(connection, '65.0');
+    await assert.rejects(
+      method === 'POST'
+        ? client.createDataModelObject(authored)
+        : client.patchDataModelObject('Synthetic__dlm', { label: 'Updated' }),
+      { code: statusCode === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED' },
+    );
+    assert.equal(
+      observed?.name,
+      statusCode === 401 ? 'INVALID_SESSION_ID' : 'SERVER_ERROR',
+      String(observed),
+    );
+    assert.equal(requests, 1);
+    assert.equal(connection._refreshDelegate, refresh);
+  });
+
+test('guarded PATCH preserves exact qualified route, method, body and untrusted response', async () => {
+  const patch = { label: 'Updated', fields: [{ name: 'Id__c', label: 'Key', dataType: 'Text' }] };
+  const response = { label: 'Old state' };
+  const refresh = {};
+  const connection = {
+    instanceUrl: origin,
+    _refreshDelegate: refresh,
+    request: async function (request, options) {
+      assert.notEqual(this, connection);
+      assert.equal(this._refreshDelegate, undefined);
+      assert.deepEqual(request, {
+        method: 'PATCH',
+        url: `${origin}${path}/Synthetic__dlm`,
+        body: JSON.stringify(patch),
+        headers: { 'content-type': 'application/json' },
+      });
+      assert.equal(options.retry.maxRetries, 0);
+      return response;
+    },
   };
-  const client = new ConnectClient(connection, '65.0');
-  await assert.rejects(client.createDataModelObject(authored));
-  assert.equal(observed?.name, 'INVALID_SESSION_ID', String(observed));
-  assert.equal(requests, 1);
+  assert.equal(
+    await new ConnectClient(connection, '65.0').patchDataModelObject('Synthetic__dlm', patch),
+    response,
+  );
   assert.equal(connection._refreshDelegate, refresh);
+  assert.deepEqual(patch, {
+    label: 'Updated',
+    fields: [{ name: 'Id__c', label: 'Key', dataType: 'Text' }],
+  });
+});
+
+test('guarded PATCH rejects version and route injection before any request', async () => {
+  let calls = 0;
+  const connection = {
+    instanceUrl: origin,
+    request: async () => {
+      calls++;
+    },
+  };
+  for (const name of [
+    '',
+    'Synthetic',
+    '../Synthetic__dlm',
+    'Synthetic__dlm/other',
+    'Synthetic__dlm?secret',
+    'Synthetic__dlm#secret',
+    'Synthetic%2f__dlm',
+    String.raw`Synthetic\\__dlm`,
+    'Synthetic__dlm\n',
+    `${origin}${path}/Synthetic__dlm`,
+  ])
+    await assert.rejects(new ConnectClient(connection, '65.0').patchDataModelObject(name, {}), {
+      code: 'INVALID_REQUEST',
+    });
+  await assert.rejects(
+    new ConnectClient(connection, '66.0').patchDataModelObject('Synthetic__dlm', {}),
+    { code: 'INVALID_REQUEST' },
+  );
+  assert.equal(calls, 0);
+});
+
+test('guarded PATCH refuses same-origin and cross-origin redirects', async () => {
+  for (const redirect of [`${origin}${path}/Other__dlm`, `https://other.test${path}`]) {
+    let calls = 0;
+    const client = new ConnectClient(
+      {
+        instanceUrl: origin,
+        request: async (_request, options) => {
+          calls++;
+          options.followRedirect(redirect);
+          assert.fail('redirect must throw');
+        },
+      },
+      '65.0',
+    );
+    await assert.rejects(client.patchDataModelObject('Synthetic__dlm', { label: 'secret' }), {
+      code: 'INVALID_REQUEST',
+    });
+    assert.equal(calls, 1);
+  }
+});
+
+test('guarded PATCH errors discard request payload, credentials, response and causes', async () => {
+  for (const [failure, code, statusCode] of [
+    [{ statusCode: 401 }, 'AUTHENTICATION_FAILED', 401],
+    [{ name: 'INVALID_SESSION_ID' }, 'AUTHENTICATION_FAILED', undefined],
+    [{ statusCode: 403 }, 'REQUEST_FAILED', 403],
+    [{ statusCode: 503 }, 'REQUEST_FAILED', 503],
+    [{ statusCode: 'secret' }, 'REQUEST_FAILED', undefined],
+    [new Error('secret'), 'REQUEST_FAILED', undefined],
+  ]) {
+    let calls = 0;
+    const client = new ConnectClient(
+      {
+        instanceUrl: origin,
+        request: async () => {
+          calls++;
+          throw Object.assign(failure, {
+            message: 'secret',
+            body: 'secret',
+            accessToken: 'secret',
+            cause: 'secret',
+          });
+        },
+      },
+      '65.0',
+    );
+    await assert.rejects(
+      client.patchDataModelObject('Synthetic__dlm', { label: 'secret' }),
+      (error) => {
+        assert.equal(error.code, code);
+        assert.equal(error.statusCode, statusCode);
+        assert.equal(error.cause, undefined);
+        for (const text of [String(error), JSON.stringify(error), inspect(error)])
+          assert.ok(!text.includes('secret'));
+        return true;
+      },
+    );
+    assert.equal(calls, 1);
+  }
+});
+
+test('guarded PATCH serialization errors are payload-free and never request', async () => {
+  const patch = {
+    toJSON() {
+      throw new Error('secret');
+    },
+  };
+  const client = new ConnectClient(
+    { instanceUrl: origin, request: async () => assert.fail('no request') },
+    '65.0',
+  );
+  await assert.rejects(client.patchDataModelObject('Synthetic__dlm', patch), (error) => {
+    assert.equal(error.code, 'INVALID_REQUEST');
+    assert.ok(!inspect(error).includes('secret'));
+    return true;
+  });
 });
 
 test('factory rejects missing inputs and redacts authentication failures', async (t) => {

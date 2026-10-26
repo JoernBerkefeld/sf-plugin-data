@@ -32,7 +32,7 @@ Internal `readDeployInputs` now resolves explicit files/directories or exact pro
 DMO members with bounded no-link authored-only JSON admission. Repeated identical
 inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
 this resolver and per-item target preflight with core org/API/default scope flags.
-Preview returns advisory create/unchanged/blocked-changes/blocked results without writes.
+Preview returns advisory create/update/unchanged/blocked-changes/blocked results without writes.
 Shared execution preflight rejects authored categories other than Other and primary
 keys that are non-Text or dynamic before target reads: these cannot qualify through
 the current generated-recipe readback contract. Offline mapping remains broader;
@@ -51,9 +51,21 @@ permissive than the demonstrated projector; unqualified recipes never verify.
 The pure offline `buildDmoUpdateDelta` helper constructs an allowlisted candidate
 PATCH/expected overlay without authorizing updates. API 65 PATCH uses the exact
 qualified DMO name; its documented response can contain old state. Separate GET
-qualification is mandatory for future execution. Server preservation of omitted
-fields/properties and existing-field label updates is not yet proven; public
-preview/execution remain update-blocked. Candidate tests are not server evidence.
+qualification is mandatory for future execution. Retained synthetic PATCH2 evidence
+now qualifies the full expected overlay offline, including effective field-label
+override with distinct unchanged Metadata base/master labels and complete raw
+expectations. This single checkpoint does not prove general omission/new-field
+preservation. Only the bounded label subset below is enabled publicly. Candidate tests alone
+are not server evidence.
+
+Public CLI label execution is now available through `executeDmoDeploy`; the command
+admits the whole selection before writes and the service freshly qualifies each target/delta.
+Preview explicitly opts into label deltas. Only object and existing non-primary
+field labels within qualified Other/default/API 65 scope execute. New fields,
+descriptions, primary-key labels and other unproven mixed changes block before writes.
+Independent full readback verifies authored overlay plus raw runtime preservation;
+HTTP 200 alone never confirms success. Ambiguity stops without retry or rollback.
+Recorded Other evidence does not establish other categories or general updates.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.

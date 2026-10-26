@@ -33,7 +33,9 @@ assert.equal(packed.status, 0, packed.stderr);
 // Lifecycle output precedes npm's JSON result.
 const [artifact] = JSON.parse(packed.stdout.slice(packed.stdout.indexOf('[\n')));
 assert.equal(artifact.name, '@joernberkefeld/sf-plugin-data360');
-assert.equal(artifact.entryCount, 30);
+assert.equal(artifact.entryCount, 32);
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.js'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-update-delta.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-update-delta.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.js'));
@@ -122,6 +124,84 @@ for (const operation of ['retrieve', 'deploy']) {
     process.exitCode = previous;
   }
 }
+const { default: Deploy } = await import(
+  pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', 'deploy.js')).href
+);
+const { executeDmoDeploy } = await import(
+  pathToFileURL(path.join(packageRoot, 'lib', 'services', 'execute-dmo-deploy.js')).href
+);
+assert.equal(new Deploy([], {}).execute, executeDmoDeploy);
+for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unknown']) {
+  const command = Object.create(Deploy.prototype);
+  const preview = scenario === 'preview-update';
+  const inputs = ['First__dlm', 'Second__dlm', 'Third__dlm'].map((apiName) => ({
+    path: `${apiName}.json`,
+    document: { identity: { apiName, dataSpace: 'default' } },
+  }));
+  const connection = {};
+  command.parse = async () => ({
+    flags: {
+      preview,
+      'source-dir': ['synthetic.json'],
+      'api-version': '65.0',
+      'data-space': 'default',
+      'target-org': { getOrgId: () => 'synthetic-target', getConnection: () => connection },
+    },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveInputs = async () => inputs;
+  let admissions = 0;
+  let executions = 0;
+  command.preflight = async (_document, target, api, space, allowLabelUpdates) => {
+    assert.equal(target, connection);
+    assert.equal(api, '65.0');
+    assert.equal(space, 'default');
+    assert.equal(allowLabelUpdates, true);
+    return {
+      outcome: scenario === 'blocked-mixed' && ++admissions === 2 ? 'blocked-changes' : 'update',
+      target: 'present',
+      absenceProof: 'none',
+      diagnostics: [],
+    };
+  };
+  command.execute = async () => {
+    assert.equal(preview, false);
+    executions++;
+    if (scenario === 'unknown') throw new Error('private-update-response');
+    return executions === 1
+      ? { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] }
+      : { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
+  };
+  const previous = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    const envelope = await command.run();
+    const blocked = scenario === 'blocked-mixed';
+    const unknown = scenario === 'unknown';
+    assert.equal(envelope.status, blocked ? 'blocked' : unknown ? 'failed' : 'success');
+    assert.equal(process.exitCode, blocked || unknown ? 1 : undefined);
+    assert.equal(executions, preview || blocked ? 0 : unknown ? 1 : 3);
+    assert.equal(
+      envelope.result.items[0].outcome,
+      preview ? 'update' : blocked ? 'not-attempted' : unknown ? 'failed' : 'updated',
+    );
+    if (!preview) {
+      assert.equal(
+        envelope.result.items[0].mutation,
+        blocked ? 'not-attempted' : unknown ? 'unknown' : 'confirmed-updated',
+      );
+      assert.equal(
+        envelope.result.items[2].outcome,
+        blocked || unknown ? 'not-attempted' : 'unchanged',
+      );
+    }
+    if (unknown)
+      assert.match(envelope.diagnostics.errors[0].message, /Mutation may have occurred/u);
+    assert.ok(!JSON.stringify(envelope).includes('private-update-response'));
+  } finally {
+    process.exitCode = previous;
+  }
+}
 process.stdout.write(
-  `${JSON.stringify({ root, artifact, helpChecks: 3, installedEnvelopeChecks: 2, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
+  `${JSON.stringify({ root, artifact, helpChecks: 3, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
 );

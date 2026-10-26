@@ -2,12 +2,12 @@ import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { DeployInputError, readDeployInputs } from '../../artifacts/read-deploy-input.js';
 import { preflightDmoDeploy } from '../../services/preflight-dmo-deploy.js';
 import type { DmoDeployPreview } from '../../services/preflight-dmo-deploy.js';
-import { executeDmoCreate } from '../../services/execute-dmo-create.js';
-import type { DmoCreateExecution } from '../../services/execute-dmo-create.js';
+import { executeDmoDeploy } from '../../services/execute-dmo-deploy.js';
+import type { DmoDeployExecution } from '../../services/execute-dmo-deploy.js';
 import { plugin as packageMetadata } from '../../plugin.js';
 
-type ExecutionItem = Omit<DmoCreateExecution, 'outcome'> & {
-  outcome: DmoCreateExecution['outcome'] | 'not-attempted';
+type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
+  outcome: DmoDeployExecution['outcome'] | 'not-attempted';
   identity: { dataSpace: string; apiName: string };
   operation: 'execute';
   path: string;
@@ -48,12 +48,12 @@ export type DeployEnvelope = {
   };
 };
 
-/** Preview or sequential guarded creation of explicitly selected authored configuration. */
+/** Preview or sequential guarded deployment of explicitly selected authored configuration. */
 export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact dmo:ApiName selectors. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates sequentially with fresh checks and qualified readback. Stops on first blocked or failed item; no retry, rollback or updates. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact dmo:ApiName selectors. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates only object and existing non-primary field labels sequentially with fresh checks and qualified readback. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.optionalOrg(),
     'api-version': Flags.orgApiVersion({
@@ -84,7 +84,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
 
   protected resolveInputs = readDeployInputs;
   protected preflight = preflightDmoDeploy;
-  protected execute = executeDmoCreate;
+  protected execute = executeDmoDeploy;
 
   /**
    * Validate all inputs and preflight the whole selection before any sequential execution.
@@ -129,7 +129,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           code,
           message: flags.preview
             ? 'Preview did not complete. Check explicit authored inputs, target authentication and supported scope. No deployment executed.'
-            : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Creation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
+            : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
           retryable: false,
         });
       if (status !== 'success') process.exitCode = 1;
@@ -146,7 +146,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               : `Execution: ${item.outcome}; mutation: ${item.mutation}.`,
           );
           if (item.operation === 'execute' && item.mutation === 'unknown')
-            this.log('Creation may have occurred. Inspect target before any further attempt.');
+            this.log('Mutation may have occurred. Inspect target before any further attempt.');
         }
       }
       return envelope;
@@ -171,6 +171,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             connection,
             flags['api-version'],
             flags['data-space'],
+            true,
           );
           envelope.result.items.push({
             ...preview,
@@ -234,7 +235,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 {
                   code: 'EXECUTION_UNCONFIRMED',
                   message:
-                    'Creation may have occurred. Inspect target before any further attempt; no retry or rollback was performed.',
+                    'Mutation may have occurred. Inspect target before any further attempt; no retry or rollback was performed.',
                 },
               ];
             }

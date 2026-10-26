@@ -1,6 +1,7 @@
 import { Org } from '@salesforce/core';
 import type { Connection } from '@salesforce/core';
 import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
+import type { DmoUpdatePatch } from '../artifacts/dmo-update-delta.js';
 
 export type TransportErrorCode =
   | 'INVALID_REQUEST'
@@ -92,8 +93,6 @@ export class ConnectClient {
   public async createDataModelObject(document: unknown): Promise<unknown> {
     if (this.apiVersion !== '65.0') throw new ConnectError('INVALID_REQUEST');
     const body = JSON.stringify(buildDmoCreateRequestFromDocument(document, 'default'));
-    const receiver = Object.create(this.connection) as AuthenticatedConnection;
-    Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
     return this.send(
       {
         method: 'POST',
@@ -101,8 +100,43 @@ export class ConnectClient {
         body,
         headers: { 'content-type': 'application/json' },
       },
-      receiver,
+      this.writeReceiver(),
     );
+  }
+
+  /**
+   * Send one PATCH to an exact API65 DMO route without refresh, retry or redirect.
+   * Callers must qualify the patch and authorize execution independently; this is transport only.
+   * @param {string} dataModelObjectName Exact qualified DMO API name.
+   * @param {DmoUpdatePatch} patch Caller-qualified update payload, not validated here.
+   * @returns {Promise<unknown>} Untrusted response, never proof of a successful update.
+   */
+  public async patchDataModelObject(
+    dataModelObjectName: string,
+    patch: DmoUpdatePatch,
+  ): Promise<unknown> {
+    if (this.apiVersion !== '65.0' || !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName))
+      throw new ConnectError('INVALID_REQUEST');
+    try {
+      return await this.send(
+        {
+          method: 'PATCH',
+          url: this.safeUrl(`${this.prefix}data-model-objects/${dataModelObjectName}`),
+          body: JSON.stringify(patch),
+          headers: { 'content-type': 'application/json' },
+        },
+        this.writeReceiver(),
+      );
+    } catch (error: unknown) {
+      if (error instanceof ConnectError) throw error;
+      throw new ConnectError('INVALID_REQUEST');
+    }
+  }
+
+  private writeReceiver(): AuthenticatedConnection {
+    const receiver = Object.create(this.connection) as AuthenticatedConnection;
+    Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+    return receiver;
   }
 
   private async read<T>(path: string, noContentResponse?: unknown): Promise<T> {

@@ -1,17 +1,34 @@
 import type { Connection } from '@salesforce/core';
 import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
 import type { DmoCreateRequest } from '../artifacts/dmo-document.js';
+import { buildDmoUpdateDelta } from '../artifacts/dmo-update-delta.js';
+import type { DmoDocument } from '../artifacts/dmo-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { retrieveDmo } from './retrieve-other-dmo.js';
 
 type ReadConnection = Pick<Connection, 'instanceUrl' | 'request' | 'metadata' | 'getApiVersion'>;
 
 export type DmoDeployPreview = {
-  outcome: 'create' | 'unchanged' | 'blocked-changes' | 'blocked';
+  outcome: 'create' | 'update' | 'unchanged' | 'blocked-changes' | 'blocked';
   target: 'absent' | 'present' | 'unknown';
   absenceProof: 'complete-inventory' | 'none';
   diagnostics: Array<{ code: string; message: string }>;
 };
+
+/**
+ * Reconstruct detached authored input from its already validated request.
+ * @param {DmoCreateRequest} request Mapped request.
+ * @returns {DmoDocument} Authored snapshot.
+ */
+function documentFromRequest(request: DmoCreateRequest): DmoDocument {
+  const { name, dataSpaceName, ...spec } = request;
+  return {
+    schemaVersion: 1,
+    kind: 'dmo',
+    identity: { apiName: `${name}__dlm`, dataSpace: dataSpaceName },
+    spec,
+  };
+}
 
 const messages = {
   INVALID_SOURCE: 'Supply one valid authored-only DMO document bound to default.',
@@ -93,6 +110,27 @@ export function compareDmoMeaning(source: DmoCreateRequest, target: DmoCreateReq
 }
 
 /**
+ * Admit only evidenced object/non-primary existing-field label changes, atomically.
+ * The broader offline candidate is not execution authorization.
+ * @param {unknown} desired Authored input.
+ * @param {DmoDocument} current Fresh qualified target.
+ * @returns {ReturnType<typeof buildDmoUpdateDelta>} Safe label delta or blockers.
+ */
+export function buildExecutableDmoDelta(desired: unknown, current: DmoDocument) {
+  const delta = buildDmoUpdateDelta(desired, current, 'default');
+  if (delta.status !== 'candidate') return delta;
+  if (
+    'description' in delta.patch ||
+    delta.patch.fields?.some((field) => {
+      const prior = current.spec.fields.find((item) => item.name === field.name);
+      return !prior || prior.isPrimaryKey;
+    })
+  )
+    return { status: 'blocked' as const, blockers: ['UPDATE_UNPROVEN'] };
+  return delta;
+}
+
+/**
  * Read-only preflight for one authored standalone DMO; never discovers files or mutates an org.
  * Only the complete inventory contract proves absence; no HTTP error is treated as missing.
  * Existing targets must pass the same full common retrieval semantics as authored export.
@@ -100,6 +138,7 @@ export function compareDmoMeaning(source: DmoCreateRequest, target: DmoCreateReq
  * @param {ReadConnection} connection Explicit authenticated target connection (core owns tokens).
  * @param {unknown} apiVersion Explicit supported API version.
  * @param {unknown} dataSpace Explicit target data space.
+ * @param {boolean} allowLabelUpdates Internal opt-in; public command remains create-only.
  * @returns {Promise<DmoDeployPreview>} Deterministic payload-free classification and remediation.
  */
 export async function preflightDmoDeploy(
@@ -107,6 +146,7 @@ export async function preflightDmoDeploy(
   connection: ReadConnection,
   apiVersion: unknown,
   dataSpace: unknown,
+  allowLabelUpdates = false,
 ): Promise<DmoDeployPreview> {
   let source: DmoCreateRequest;
   try {
@@ -134,6 +174,12 @@ export async function preflightDmoDeploy(
       return preview('create', 'absent');
     try {
       const acquired = await retrieveDmo(connection, apiName, apiVersion, dataSpace);
+      if (allowLabelUpdates) {
+        const delta = buildExecutableDmoDelta(documentFromRequest(source), acquired.candidate);
+        return delta.status === 'blocked'
+          ? preview('blocked-changes', 'present', ['UPDATE_UNSUPPORTED'])
+          : preview(delta.status === 'candidate' ? 'update' : 'unchanged', 'present');
+      }
       const target = buildDmoCreateRequestFromDocument(acquired.candidate, dataSpace);
       const codes = compareDmoMeaning(source, target);
       return codes.length === 0

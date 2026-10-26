@@ -2,7 +2,7 @@
 
 `@joernberkefeld/sf-plugin-data360` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
-implemented; strictly read-only deployment preview and bounded guarded creation are available.** Current retrieval capability is
+implemented; strictly read-only deployment preview, bounded guarded creation and label updates are available.** Current retrieval capability is
 owned by the common service (API 65.0/default, qualified generated recipe and semantics),
 not a permanent DMO architecture. This is not yet a general migration tool or a
 published release.
@@ -40,8 +40,8 @@ authored candidate; no fixed authored count or fixture-specific command rule app
 Internal `preflightDmoDeploy` now performs read-only target-aware comparison for
 one explicitly supplied authored DMO and API 65.0/default connection. Complete
 inventory alone proves absence; existing targets must pass common full retrieval.
-Field reordering alone is unchanged. All authored differences are blocked until
-the PATCH contract is proven; unknown target semantics fail closed. Its preview
+Field reordering alone is unchanged. Public preview opts into qualified object and
+existing non-primary field label updates; unsupported differences and unknown target semantics fail closed. Its preview
 contains static diagnostics, never requests, raw org IDs or remote payloads.
 `sf data360 deploy --preview` now uses this service for every explicitly selected
 local authored input. API 65.0/default scope remains service-owned. Execution
@@ -52,7 +52,7 @@ Internal `executeDmoCreate` now performs fresh preflight, a single guarded creat
 on proven absence, and independent qualified readback. Existing equality is a no-op;
 existing differences remain blocked. HTTP success alone is not verified creation;
 ambiguous failures retain `mutation: unknown` and require target inspection, never
-automatic retry or rollback. Public CLI execution now uses this existing service;
+automatic retry or rollback. Public CLI creation delegates to this service through `executeDmoDeploy`;
 qualification remains synthetic only, not broader deployment or live acceptance.
 Metadata SOAP reads refuse same-origin and cross-origin redirects through an
 operation-local transport guard; core still owns credentials and SOAP parsing,
@@ -61,10 +61,20 @@ and the caller connection/global transport defaults are unchanged.
 Internal offline `buildDmoUpdateDelta` constructs a minimal candidate PATCH and a
 nondestructive expected overlay, or returns blockers only. It preserves target-only
 fields and omitted descriptions; no removal/tombstone syntax exists. This is not
-connected to preview or execution: existing differences still block. API 65 PATCH
-routing is documented, but omission preservation and existing-field label encoding
-remain pending a separately authorized synthetic server experiment. HTTP 200 can
-contain old state, so future execution must independently GET and qualify readback.
+itself mutation authorization. Public preview and `executeDmoDeploy` now admit only object and existing
+non-primary field label changes within the qualified Other/default/API 65 scope.
+The selection is fully admitted before writes, then freshly qualified per item;
+independent readback must match the overlay and preserve full runtime state. New
+fields, descriptions, primary-key labels and other unproven changes block atomically.
+Results distinguish `confirmed-updated`, `not-attempted` and `unknown`; ambiguity
+stops the public selection without retry or rollback.
+API 65 PATCH
+routing is documented. Retained synthetic PATCH evidence now qualifies the observed
+existing-field display override and complete authored overlay offline; the common
+projector reconciles Connect labels with Metadata field overrides while preserving
+base/master observations. This is one recorded checkpoint, not general update or
+new-field preservation acceptance. HTTP 200 can contain old state, so
+execution independently GETs and qualifies readback.
 
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
@@ -114,20 +124,22 @@ configured default org and explicit override; `--api-version` defaults to 65.0 a
 The normal core JSON wrapper contains `sf-data360-deploy` contract version 1.0.0,
 status/metadata/diagnostics/provenance/result and one advisory `preview` item per
 input. `create` means complete-inventory absence, not an executed create;
-`unchanged` means qualified equality. `blocked-changes` and `blocked` make aggregate
+`update` means an admitted object/existing non-primary field label delta, not an executed update;
+`unchanged` means qualified no-op. `blocked-changes` and `blocked` make aggregate
 status blocked/exit 1; unexpected failures make status failed/exit 1. Mixed results
 remain visible. Preview writes no local artifact/report and performs no mutations.
-Without `--preview`, the same explicit selection performs guarded creation. The whole
+Without `--preview`, the same explicit selection performs guarded creation or bounded label updates. The whole
 selection is preflighted before any executor call; a known blocker or preflight failure
 prevents all writes. Each executor independently repeats fresh preflight; unchanged
 items do not write. Execution is sequential and stops on the first blocked, failed or
 unknown-mutation item. This is not atomic and provides no concurrency guarantee.
-Execution items use `operation: execute`, `outcome: created|unchanged|blocked|failed|not-attempted`,
-`mutation: confirmed-created|not-attempted|unknown`, optional preflight and diagnostics.
+Execution items use `operation: execute`, `outcome: created|updated|unchanged|blocked|failed|not-attempted`,
+`mutation: confirmed-created|confirmed-updated|not-attempted|unknown`, optional preflight and diagnostics.
 Prior completed receipts remain visible; remaining items are explicitly not-attempted.
-Only all-created/unchanged results yield aggregate success/exit 0; blocked/failed
-execution exits 1 even after prior creation. Unknown mutation means creation may have
-occurred: inspect target before another attempt. No retry, rollback, PATCH or updates.
+Only all-created/updated/unchanged results yield aggregate success/exit 0; blocked/failed
+execution exits 1 even after prior mutations. Unknown mutation means creation or update may have
+occurred: inspect target before another attempt. No retry or rollback. Additions, descriptions,
+primary-key labels and other unproven changes (including mixed edits) block before writes.
 Parser/auth flag errors retain core formatting. No public plan or saved-plan infrastructure.
 
 ## Scope and safety

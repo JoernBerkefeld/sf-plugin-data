@@ -54,6 +54,7 @@ const invocation = (overrides = {}) => {
       connection,
       flags['api-version'],
       flags['data-space'],
+      true,
     ]);
     return {
       outcome: 'create',
@@ -270,7 +271,61 @@ test('sequential execution retains prior creation, stops and distinguishes remai
   }
 });
 
-test('human execution output reports unknown creation and never aggregate success', async () => {
+test('label update preview and execution retain update, noop and unknown evidence', async () => {
+  const { executeDmoDeploy } = await import('../lib/services/execute-dmo-deploy.js');
+  assert.equal(new Deploy([], {}).execute, executeDmoDeploy);
+  const preview = invocation();
+  preview.command.preflight = async (...arguments_) => {
+    assert.equal(arguments_[4], true);
+    return previewResult('update');
+  };
+  const advisory = await run(preview.command);
+  assert.equal(advisory.result.result.items[0].outcome, 'update');
+  assert.ok(!preview.calls.includes('execute'));
+  for (const unknown of [false, true]) {
+    const { command } = batchInvocation();
+    command.preflight = async () => previewResult('update');
+    let executions = 0;
+    command.execute = async () => {
+      executions++;
+      return executions === 1
+        ? { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] }
+        : unknown
+          ? { outcome: 'failed', mutation: 'unknown', diagnostics: [] }
+          : { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, unknown ? 'failed' : 'success');
+    assert.equal(exitCode, unknown ? 1 : undefined);
+    assert.equal(result.result.items[0].outcome, 'updated');
+    assert.equal(result.result.items[0].mutation, 'confirmed-updated');
+    assert.equal(executions, unknown ? 2 : 3);
+    assert.equal(result.result.items[2].outcome, unknown ? 'not-attempted' : 'unchanged');
+    if (unknown) {
+      assert.match(result.diagnostics.errors[0].message, /Mutation may have occurred/u);
+      assert.doesNotMatch(result.diagnostics.errors[0].message, /Creation may/u);
+    }
+  }
+});
+
+test('supported label update plus mixed unsupported tail blocks whole selection without writes', async () => {
+  const { command, calls } = batchInvocation();
+  let admissions = 0;
+  command.preflight = async (...arguments_) => {
+    assert.equal(arguments_[4], true);
+    return previewResult(++admissions === 2 ? 'blocked-changes' : 'update');
+  };
+  const { result, exitCode } = await run(command);
+  assert.equal(admissions, 3);
+  assert.equal(result.status, 'blocked');
+  assert.equal(exitCode, 1);
+  assert.ok(!calls.includes('execute'));
+  assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+  assert.equal(result.result.items[0].preflight.outcome, 'update');
+  assert.equal(result.result.items[1].preflight.outcome, 'blocked-changes');
+});
+
+test('human execution output reports unknown mutation and never aggregate success', async () => {
   const { command } = batchInvocation();
   const logs = [];
   command.jsonEnabled = () => false;
@@ -279,7 +334,7 @@ test('human execution output reports unknown creation and never aggregate succes
   const { exitCode } = await run(command);
   assert.equal(exitCode, 1);
   assert.match(logs.join('\n'), /Deploy execution: failed/u);
-  assert.match(logs.join('\n'), /Creation may have occurred/u);
+  assert.match(logs.join('\n'), /Mutation may have occurred/u);
   assert.match(logs.join('\n'), /Execution: not-attempted; mutation: not-attempted/u);
   assert.doesNotMatch(logs.join('\n'), /No deployment executed|execution: success/u);
 });
@@ -331,7 +386,7 @@ test('empty resolved selection and missing org cannot yield successful preview',
 });
 
 test('all four preflight outcomes preserve service proof and aggregate blocked nonzero', async () => {
-  for (const outcome of ['create', 'unchanged', 'blocked-changes', 'blocked']) {
+  for (const outcome of ['create', 'update', 'unchanged', 'blocked-changes', 'blocked']) {
     const { command } = invocation();
     command.resolveInputs = async () => [input('First__dlm'), input('Second__dlm')];
     let count = 0;

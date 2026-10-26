@@ -340,8 +340,12 @@ export function joinDmoConnectMetadataFields(
         ['true', 'false'].includes(detail.isDynamicLookup as string),
     );
     requireValid(!('primaryIndexOrder' in detail) || detail.primaryIndexOrder === '1');
-    for (const key of ['labelOverride', 'masterLabel'])
-      requireValid(!(key in detail) || detail[key] === field.label);
+    requireValid(
+      !('labelOverride' in detail) ||
+        (text(detail.labelOverride) && detail.labelOverride.length <= 255),
+    );
+    // Keep base/master agreement as a narrow qualification, independent of display override.
+    requireValid(!('masterLabel' in detail) || detail.masterLabel === field.label);
     requireValid(
       !('usageTag' in detail) || ['None', 'KeyQualifier'].includes(detail.usageTag as string),
     );
@@ -368,7 +372,8 @@ export function joinDmoConnectMetadataFields(
     requireValid(match);
     joined.delete(field.name);
     const { detail } = match;
-    requireValid(field.label === match.field.label && field.type === match.field.type);
+    const effectiveLabel = 'labelOverride' in detail ? detail.labelOverride : match.field.label;
+    requireValid(field.label === effectiveLabel && field.type === match.field.type);
     requireValid(field.creationType === detail.definitionCreationType);
     requireValid(!('description' in field) || typeof field.description === 'string');
     requireValid(!('category' in field) || typeof field.category === 'string');

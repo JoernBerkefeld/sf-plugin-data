@@ -54,7 +54,7 @@ INVALID_SOURCE, DUPLICATE_IDENTITY. No connection or mutation transport is used.
 ## Internal read-only deploy preflight
 
 `preflightDmoDeploy(document: unknown, connection: ReadConnection,
-apiVersion: unknown, dataSpace: unknown): Promise<DmoDeployPreview>` accepts one
+apiVersion: unknown, dataSpace: unknown, allowLabelUpdates = false): Promise<DmoDeployPreview>` accepts one
 standalone authored document and explicit API 65.0/default target binding. It maps
 the source independently before reads and detaches the mapped request in memory.
 Shared execution admission rejects non-Other categories and non-Text/dynamic primary
@@ -67,7 +67,7 @@ Redirects fail with payload-free `METADATA_REDIRECT_REFUSED` before any follow-u
 No file discovery, saved plan or mutation route is introduced by this service.
 
 The result is `{outcome, target, absenceProof, diagnostics}`. Outcomes are `create`,
-`unchanged`, `blocked-changes` or `blocked`; target is `absent`, `present` or
+`update` (when opted in), `unchanged`, `blocked-changes` or `blocked`; target is `absent`, `present` or
 `unknown`. Only a successful complete offset inventory filtered by exact default
 space/API-name identity yields `absenceProof: 'complete-inventory'`; otherwise it
 is `none`. No 404 or other error establishes absence. Existing inventory entries
@@ -78,8 +78,9 @@ transactional snapshot or permission to execute a later create.
 Comparison uses fixed authored properties and exact identity-keyed fields, ignoring
 field array order but preserving absent versus empty strings, case, primary/type,
 category, dynamic flags and date designations. Static reasons distinguish object,
-category, field-set, field and immutable changes; every difference appends
-`UPDATE_UNSUPPORTED`. Unqualified target semantics produce `blocked`, never no-op.
+category, field-set, field and immutable changes in default create-only mode. With
+`allowLabelUpdates`, the bounded executable delta gate admits only labels and rejects
+unsupported or mixed changes with `UPDATE_UNSUPPORTED`. Unqualified target semantics produce `blocked`, never no-op.
 Diagnostics contain code/message only, without authored values or remote payloads.
 The public command enforces CMS-style explicit deploy selection, never bare types
 or implicit deploy-all. `--preview` is strictly read-only; omission enables bounded execution.
@@ -132,11 +133,47 @@ documents API 65 `PATCH /ssot/data-model-objects/{qualifiedName__dlm}`. Name/typ
 changes are forbidden; its additions example does not prove omission preservation
 or existing-field label behavior. HTTP 200 may return the old state; future
 execution must separately GET and qualify actual post-state. Existing-label entry
-encoding above is explicitly a provisional tested contract candidate. Overlay
-preservation expresses local policy, not demonstrated server behavior. Public
-preflight and guarded creation are unchanged and still block existing differences.
-Next prerequisite: separately authorized synthetic omission/label preservation
-experiment; no live calls, PATCH transport or mocks enabling execution in this slice.
+encoding above remains an internal candidate, not public update support. Retained
+synthetic PATCH2 readback now qualifies offline against the entire expected authored
+overlay with unchanged raw runtime observations: the changed Connect label matches
+Metadata labelOverride, while Metadata base/master labels retain their old values.
+This bounded checkpoint does not establish arbitrary omission or new-field behavior.
+Public preview/execution now admit only the bounded label subset below; the broader
+candidate is not execution permission. New-field preservation still needs a separately
+authorized experiment.
+No live calls or PATCH transport were added in the label-reconciliation slice.
+
+## Bounded public label-update execution
+
+`executeDmoDeploy(document, connection, apiVersion, dataSpace)` and
+`executeDmoDeploySelection(documents, connection, apiVersion, dataSpace)` expose
+internal create/unchanged/update orchestration. `preflightDmoDeploy` accepts an
+optional fifth `allowLabelUpdates` boolean (default false); public preview/selection
+admission and internal execution opt in. Public CLI invokes `executeDmoDeploy` per
+item after whole-selection admission and never reports an update as a creation.
+
+Admission retains Other/default/API 65 and nondynamic Text primary-key restrictions.
+Only object labels and existing non-primary field labels execute. Primary-key labels
+would conflict with the current generated qualifier recipe; they remain blocked.
+New fields, object/field descriptions and every other unproven delta block atomically,
+even when mixed with labels. Omitted fields/descriptions preserve target values;
+field reordering is a no-op. The offline delta helper remains deliberately broader.
+
+Selection snapshots all valid inputs before reads and rejects duplicate identities.
+It preflights every item before the first write, then requalifies each executing target
+and derives its delta anew immediately before dispatch. One mutation per item, no
+retry/rollback. PATCH bodies (including stale HTTP 200 state) are never confirmation.
+Independent Connect detail, Metadata read and complete relationship inventory must
+qualify the expected authored overlay AND exact raw runtime preservation. Only the
+changed Connect/object Metadata label slots and existing-field Metadata labelOverride
+may differ; base/master field labels, generated qualifiers and all other raw values
+must remain. Only Connect/Metadata field collections normalize identity ordering.
+
+Results include `outcome: updated` with `mutation: confirmed-updated` only after all
+checks pass. Pre-write refusal is `not-attempted`; dispatch/readback ambiguity is
+`failed`/`unknown` and stops the selection with an unattempted tail. The recorded
+Other preservation checkpoint informs this narrow policy, not proof for other
+categories, new fields or general update semantics. No live calls were made here.
 
 ## Internal guarded create executor
 
@@ -162,17 +199,18 @@ delegate to prevent its automatic 401 POST replay, without changing the original
 connection. Redirects, arbitrary write paths, PATCH and DELETE are unavailable.
 Inventory is not a transaction: concurrent creation cannot be ruled out. Tests are
 synthetic only; the mapper's wider input admission does not establish broader
-projector qualification or live deployment acceptance. Public CLI execution now calls
-this executor only after resolving/validating all inputs and preflighting the whole
+projector qualification or live deployment acceptance. Public CLI execution delegates
+creation here through `executeDmoDeploy`, after resolving/validating all inputs and preflighting the whole
 selection. A known blocked item or any preflight error prevents all execution.
 Each execution item carries operation execute, authored identity/path, outcome
-created/unchanged/blocked/failed/not-attempted, mutation evidence, optional preflight
+created/updated/unchanged/blocked/failed/not-attempted, mutation evidence (including
+confirmed-updated for qualified label readback), optional preflight
 and diagnostics in the same version 1.0.0 envelope. Sequential execution stops on the
 first blocked/failure/unknown mutation; prior receipts survive and remaining items
 are explicitly not-attempted. An unexpected executor throw conservatively retains
-unknown mutation. Aggregate success requires every execution to be created or
-unchanged; otherwise blocked/failed exits 1, even when earlier creation succeeded.
-No transaction, concurrency guarantee, retry, rollback, PATCH, update or saved plan.
+unknown mutation. Aggregate success requires every execution to be created, updated or
+unchanged; otherwise blocked/failed exits 1, even when earlier mutations succeeded.
+No transaction, concurrency guarantee, retry, rollback or saved plan.
 
 ## Internal common authored DMO file writer
 
@@ -304,8 +342,16 @@ export or deployment gate. Existing narrow compatibility helpers are unchanged.
 
 Complete collections join one-to-one by exact qualified Connect `name` / Metadata
 `fullName`, regardless of order. Any nonempty count and all 12 authored types are
-admitted. Labels/types/creation semantics must agree; optional descriptions and
-categories preserve presence and value. Exactly one authored primary is designated
+admitted. Types/creation semantics must agree. Connect field labels must equal the
+Metadata `mktDataModelFieldAttributes.labelOverride` when present, otherwise the
+Metadata field `label`. A present override must be nonblank text of at most 255
+characters; malformed/empty values do not trigger fallback. The Metadata base
+`label` remains independently validated, and an optional `masterLabel` must still
+equal that base as this projector's bounded qualification (not a universal
+Salesforce equality claim). Independent raw expectations retain all three label
+representations unchanged. This API 65 effective-label contract is documented in
+the official [CustomField reference, MktDataModelFieldAttributes section](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/customfield.htm).
+Optional descriptions and categories preserve presence and value. Exactly one authored primary is designated
 by Metadata `primaryIndexOrder: '1'`; a supplied Connect flag must agree. Dynamic
 lookup uses a supplied Metadata string boolean or a supplied Connect boolean;
 conflicts or absence in both sources reject, never silently default false.
