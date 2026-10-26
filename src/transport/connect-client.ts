@@ -2,6 +2,7 @@ import { Org } from '@salesforce/core';
 import type { Connection } from '@salesforce/core';
 import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
 import type { DmoUpdatePatch } from '../artifacts/dmo-update-delta.js';
+import type { ApiVersionSelection } from './api-version.js';
 
 export type TransportErrorCode =
   | 'INVALID_REQUEST'
@@ -31,12 +32,33 @@ type AuthenticatedConnection = Pick<Connection, 'instanceUrl' | 'request'>;
 export class ConnectClient {
   private readonly origin: string;
   private readonly prefix: string;
+  private readonly selection: ApiVersionSelection;
 
   public constructor(
     private readonly connection: AuthenticatedConnection,
-    private readonly apiVersion: string,
+    selection: ApiVersionSelection | string,
   ) {
-    if (!/^\d{2,3}\.0$/u.test(apiVersion)) throw new ConnectError('INVALID_REQUEST');
+    // Numeric compatibility is normalized immediately; bare latest needs resolved SOAP evidence.
+    const candidate =
+      typeof selection === 'string'
+        ? { requested: selection, restSelector: `v${selection}`, soapNumeric: selection }
+        : selection;
+    if (
+      !candidate ||
+      typeof candidate.soapNumeric !== 'string' ||
+      !/^\d{2,3}\.0$/u.test(candidate.soapNumeric) ||
+      !(
+        (candidate.requested === 'latest' && candidate.restSelector === 'latest') ||
+        (candidate.requested === candidate.soapNumeric &&
+          candidate.restSelector === `v${candidate.soapNumeric}`)
+      )
+    )
+      throw new ConnectError('INVALID_REQUEST');
+    this.selection = Object.freeze({
+      requested: candidate.requested,
+      restSelector: candidate.restSelector,
+      soapNumeric: candidate.soapNumeric,
+    });
     try {
       const instance = new URL(connection.instanceUrl);
       if (
@@ -52,7 +74,7 @@ export class ConnectClient {
     } catch {
       throw new ConnectError('INVALID_REQUEST');
     }
-    this.prefix = `/services/data/v${apiVersion}/ssot/`;
+    this.prefix = `/services/data/${this.selection.restSelector}/ssot/`;
   }
 
   /**
@@ -91,7 +113,7 @@ export class ConnectClient {
    * @returns {Promise<unknown>} Untrusted response, never proof of successful creation.
    */
   public async createDataModelObject(document: unknown): Promise<unknown> {
-    if (this.apiVersion !== '65.0') throw new ConnectError('INVALID_REQUEST');
+    if (this.selection.requested !== '65.0') throw new ConnectError('INVALID_REQUEST');
     const body = JSON.stringify(buildDmoCreateRequestFromDocument(document, 'default'));
     return this.send(
       {
@@ -115,7 +137,10 @@ export class ConnectClient {
     dataModelObjectName: string,
     patch: DmoUpdatePatch,
   ): Promise<unknown> {
-    if (this.apiVersion !== '65.0' || !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName))
+    if (
+      this.selection.requested !== '65.0' ||
+      !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName)
+    )
       throw new ConnectError('INVALID_REQUEST');
     try {
       return await this.send(
@@ -246,7 +271,7 @@ export class ConnectClient {
     dataSpace: string,
   ): Promise<Array<Record<string, unknown>>> {
     if (
-      Number(this.apiVersion) < 64 ||
+      Number(this.selection.soapNumeric) < 64 ||
       !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName) ||
       !/^[A-Za-z][A-Za-z0-9_]*$/u.test(dataSpace)
     )

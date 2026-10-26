@@ -52,7 +52,7 @@ const invocation = (overrides = {}) => {
     assert.deepEqual(arguments_, [
       input().document,
       connection,
-      flags['api-version'],
+      { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
       flags['data-space'],
       true,
     ]);
@@ -79,6 +79,95 @@ const run = async (command) => {
     process.exitCode = previous;
   }
 };
+
+test('latest preview resolves once and passes immutable selection unchanged to preflight', async () => {
+  let discoveries = 0;
+  const pins = [];
+  let version = '64.0';
+  const connection = {
+    request: async function (request, options) {
+      assert.equal(request.url, '/services/data');
+      assert.equal(request.method, 'GET');
+      assert.equal(this._refreshDelegate, undefined);
+      assert.equal(options.retry.maxRetries, 0);
+      assert.throws(options.followRedirect);
+      discoveries++;
+      return [{ version: '65.0' }];
+    },
+    getApiVersion: () => version,
+  };
+  const { command } = invocation({
+    'api-version': 'latest',
+    'target-org': {
+      getOrgId: () => 'synthetic-target',
+      getConnection: (numeric) => {
+        pins.push(numeric);
+        if (numeric) version = numeric;
+        return connection;
+      },
+    },
+  });
+  command.resolveInputs = async () => [input('A__dlm'), input('B__dlm')];
+  let selection;
+  command.preflight = async (document, conn, actualSelection) => {
+    assert.equal(conn.getApiVersion(), '65.0');
+    assert.deepEqual(actualSelection, {
+      requested: 'latest',
+      restSelector: 'latest',
+      soapNumeric: '65.0',
+    });
+    assert.ok(Object.isFrozen(actualSelection));
+    if (selection) assert.equal(actualSelection, selection);
+    selection = actualSelection;
+    return previewResult();
+  };
+  command.execute = () => assert.fail('latest never executes');
+  const { result } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.metadata.apiVersion, 'latest');
+  assert.equal(result.metadata.soapApiVersion, '65.0');
+  assert.equal(discoveries, 1);
+  assert.deepEqual(pins, [undefined, '65.0']);
+});
+
+test('latest deploy fails closed on malformed/failed/newer discovery and refuses direct execution', async () => {
+  for (const advertised of [
+    [],
+    {},
+    [{ version: 'secret-invalid' }],
+    new Error('private-token'),
+    [{ version: '68.0' }],
+    'direct',
+  ]) {
+    let requests = 0;
+    const { command } = invocation({
+      'api-version': 'latest',
+      preview: advertised !== 'direct',
+      'target-org': {
+        getOrgId: () => 'synthetic-target',
+        getConnection: (version) => {
+          assert.equal(version, undefined);
+          return {
+            request: async () => {
+              requests++;
+              if (advertised instanceof Error) throw advertised;
+              return advertised;
+            },
+          };
+        },
+      },
+    });
+    command.preflight = command.execute = () => assert.fail('no DMO reads, POST or PATCH');
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(exitCode, 1);
+    assert.equal(requests, advertised === 'direct' ? 0 : 1);
+    assert.doesNotMatch(JSON.stringify(result), /secret-invalid|private-token/u);
+    assert.match(result.diagnostics.errors[0].message, /--api-version 65\.0/u);
+    if (advertised === 'direct')
+      assert.equal(result.diagnostics.errors[0].code, 'LATEST_READ_ONLY');
+  }
+});
 
 test('preview resolves local input before org inspection and returns advisory versioned envelope', async () => {
   const { command, calls } = invocation();
@@ -137,7 +226,11 @@ test('whole selection preflight finishes before execution; unchanged stays no-op
   command.execute = async (...arguments_) => {
     calls.push('execute');
     assert.equal(calls.filter((call) => call === 'preflight').length, 3);
-    assert.equal(arguments_[2], '65.0');
+    assert.deepEqual(arguments_[2], {
+      requested: '65.0',
+      restSelector: 'v65.0',
+      soapNumeric: '65.0',
+    });
     assert.equal(arguments_[3], 'default');
     return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
   };

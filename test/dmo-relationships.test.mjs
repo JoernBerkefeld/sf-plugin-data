@@ -38,6 +38,35 @@ const clientFor = (pages, version = '65.0') => {
   return { client, urls };
 };
 
+test('latest relationship pages keep literal alias despite hostile continuation URLs', async () => {
+  const rows = Array.from({ length: 20 }, (_, index) => relationship(index));
+  const { client, urls } = clientFor(
+    [page(rows, 21, { nextPageUrl: 'https://hostile.test/secret' }), page([relationship(20)], 21)],
+    { requested: 'latest', restSelector: 'latest', soapNumeric: '68.0' },
+  );
+  const result = await client.listDataModelObjectRelationships(dmo, 'default');
+  assert.equal(result.length, 21);
+  for (const url of urls)
+    assert.equal(
+      url.pathname,
+      `/services/data/latest/ssot/data-model-objects/${dmo}/relationships`,
+    );
+  assert.deepEqual(
+    urls.map((url) => url.searchParams.get('offset')),
+    ['0', '20'],
+  );
+});
+
+test('latest numeric evidence below relationship endpoint minimum blocks before requests', async () => {
+  const { client, urls } = clientFor([], {
+    requested: 'latest',
+    restSelector: 'latest',
+    soapNumeric: '63.0',
+  });
+  await assert.rejects(client.listDataModelObjectRelationships(dmo, 'default'));
+  assert.deepEqual(urls, []);
+});
+
 test('relationship acquisition covers both directions, explicit scope and lossless raw metadata', async () => {
   const rows = [relationship(1), relationship(2, true)];
   const { client, urls } = clientFor([page(rows)]);

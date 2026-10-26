@@ -6,6 +6,18 @@ fixture-specific architecture. No endpoint or writable variant is
 claimed verified. Historical API observations are not implemented contracts.
 Every family must complete all gates below before support can be declared.
 
+Explicit `--api-version latest` is experimental and read-only (retrieve or deploy
+`--preview`); numeric `65.0` remains the default. Commands discover advertised
+versions once with authenticated `/services/data`, without cache/fallback/retry,
+retain literal REST `/latest/ssot/`, and pin SOAP to the numeric maximum. Auth
+initialization uses explicit numeric bootstrap `65.0` so core cannot perform an
+earlier unguarded cached/network version discovery (including optional target auth). Existing
+DMO capability evidence must still be `65.0`; any newer evidence, including `68.0`,
+blocks before DMO calls. No API 68 or actual REST-version qualification is claimed.
+Direct latest deployment is refused before preflight/mutation; exported execution
+and transport guards remain. Envelope `apiVersion` reports the request, optional
+`soapApiVersion` reports numeric SOAP evidence only. Failed discovery is payload-free.
+
 ## dlo: unimplemented
 
 - [ ] Record official list/detail/create/update endpoints and API versions.

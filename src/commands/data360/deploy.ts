@@ -1,10 +1,45 @@
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
+import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
+import { resolveApiVersion } from '../../transport/api-version.js';
+import { dmoApiSelection, DmoRetrieveError } from '../../services/retrieve-other-dmo.js';
 import { DeployInputError, readDeployInputs } from '../../artifacts/read-deploy-input.js';
 import { preflightDmoDeploy } from '../../services/preflight-dmo-deploy.js';
 import type { DmoDeployPreview } from '../../services/preflight-dmo-deploy.js';
 import { executeDmoDeploy } from '../../services/execute-dmo-deploy.js';
 import type { DmoDeployExecution } from '../../services/execute-dmo-deploy.js';
 import { plugin as packageMetadata } from '../../plugin.js';
+
+/**
+ * Resolve optional target auth with an explicit bootstrap version before core initialization.
+ * @param {string} [aliasOrUsername] Explicit target or configured default when omitted.
+ * @returns {Promise<object | undefined>} Command-owned target connection or absent optional auth.
+ */
+const resolveTargetOrg = async (
+  aliasOrUsername?: string,
+): Promise<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined> => {
+  try {
+    const aggregator = await ConfigAggregator.create();
+    const state = await StateAggregator.getInstance();
+    const target = aliasOrUsername ?? aggregator.getPropertyValue<string>('target-org');
+    const username = target ? state.aliases.resolveUsername(target) : undefined;
+    const connection = await Connection.create({
+      authInfo: await AuthInfo.create({ username }),
+      connectionOptions: { version: '65.0' },
+    });
+    // Org.create would probe org traits through another unversioned connection.
+    return {
+      getOrgId: () => connection.getAuthInfoFields().orgId!,
+      getUsername: () => connection.getUsername(),
+      getConnection: (version?: string) => {
+        if (version) connection.setApiVersion(version);
+        return connection;
+      },
+    };
+  } catch (error: unknown) {
+    if (aliasOrUsername) throw error;
+    return undefined;
+  }
+};
 
 type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
   outcome: DmoDeployExecution['outcome'] | 'not-attempted';
@@ -22,6 +57,7 @@ export type DeployEnvelope = {
     preview: boolean;
     plugin: { name: string; version: string };
     apiVersion: string;
+    soapApiVersion?: string;
   };
   diagnostics: {
     warnings: string[];
@@ -56,10 +92,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly description =
     'Requires explicit files/directories OR exact dmo:ApiName selectors. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates only object and existing non-primary field labels sequentially with fresh checks and qualified readback. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
-    'target-org': Flags.optionalOrg(),
+    'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
+      {
+        char: 'o',
+        noCacheDefault: true,
+        summary: 'Authenticated org alias or username; defaults to the configured target org.',
+        parse: async (input) => resolveTargetOrg(input),
+        default: async () => resolveTargetOrg(),
+        defaultHelp: async () => {
+          const org = await resolveTargetOrg();
+          return org?.getUsername();
+        },
+      },
+    )(),
     'api-version': Flags.orgApiVersion({
       default: '65.0',
-      summary: 'Target API version (currently 65.0).',
+      summary: 'Numeric API version or experimental read-only latest (SOAP evidence must be 65.0).',
+      parse: async (value, context, options) =>
+        value === 'latest' ? value : Flags.orgApiVersion().parse(value, context, options),
     }),
     'data-space': Flags.string({
       default: 'default',
@@ -162,7 +212,51 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const org = flags['target-org'];
       if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
       envelope.provenance.targetOrgId = org.getOrgId();
-      const connection = org.getConnection(flags['api-version']);
+      if (flags['api-version'] === 'latest' && !flags.preview) {
+        envelope.diagnostics.errors.push({
+          code: 'LATEST_READ_ONLY',
+          message:
+            'latest is experimental and read-only. Use --preview, or explicitly select --api-version 65.0 for guarded deployment.',
+          retryable: false,
+        });
+        return finish('blocked');
+      }
+      let selection;
+      try {
+        selection = await resolveApiVersion(flags['api-version'], async () => {
+          // Parse-time auth owns this numerically initialized connection; services have not used it.
+          const receiver = Object.create(org.getConnection()) as Connection;
+          Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+          return receiver.request({ method: 'GET', url: '/services/data' }, {
+            retry: { maxRetries: 0 },
+            followRedirect: () => {
+              throw new Error('Discovery redirect refused.');
+            },
+          } as unknown as Parameters<Connection['request']>[1]);
+        });
+      } catch {
+        envelope.diagnostics.errors.push({
+          code: 'API_VERSION_DISCOVERY_FAILED',
+          message:
+            'Version discovery failed or returned invalid data. Check org access or use --api-version 65.0.',
+          retryable: false,
+        });
+        return finish('blocked');
+      }
+      envelope.metadata.soapApiVersion = selection.soapNumeric;
+      try {
+        dmoApiSelection(selection);
+      } catch (error: unknown) {
+        if (!(error instanceof DmoRetrieveError)) throw error;
+        envelope.diagnostics.errors.push({
+          code: 'INVALID_SCOPE',
+          message:
+            'DMO support requires numeric SOAP evidence 65.0. Use --api-version 65.0; newer API versions are not qualified.',
+          retryable: false,
+        });
+        return finish('blocked');
+      }
+      const connection = org.getConnection(selection.soapNumeric);
       let failed = false;
       let blocked = false;
       for (const input of inputs) {
@@ -170,7 +264,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           const preview = await this.preflight(
             input.document,
             connection,
-            flags['api-version'],
+            selection,
             flags['data-space'],
             true,
           );
@@ -227,7 +321,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               const result = await this.execute(
                 input.document,
                 connection,
-                flags['api-version'],
+                selection,
                 flags['data-space'],
               );
               Object.assign(item, result);

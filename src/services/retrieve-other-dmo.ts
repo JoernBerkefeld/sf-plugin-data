@@ -6,6 +6,33 @@ import {
 } from '../artifacts/dmo-document.js';
 import type { DmoCommonProjection, DmoDocument } from '../artifacts/dmo-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
+import type { ApiVersionSelection } from '../transport/api-version.js';
+
+/**
+ * Snapshot current DMO version capability while retaining literal REST selector provenance.
+ * @param {unknown} value Numeric compatibility input or resolved version selection.
+ * @returns {ApiVersionSelection} Validated API65 evidence and original REST selector.
+ */
+export function dmoApiSelection(value: unknown): ApiVersionSelection {
+  const selection =
+    typeof value === 'string'
+      ? { requested: value, restSelector: `v${value}`, soapNumeric: value }
+      : (value as ApiVersionSelection);
+  if (
+    !selection ||
+    selection.soapNumeric !== '65.0' ||
+    !(
+      (selection.requested === 'latest' && selection.restSelector === 'latest') ||
+      (selection.requested === '65.0' && selection.restSelector === 'v65.0')
+    )
+  )
+    throw new DmoRetrieveError('INVALID_SCOPE');
+  return Object.freeze({
+    requested: selection.requested,
+    restSelector: selection.restSelector,
+    soapNumeric: selection.soapNumeric,
+  });
+}
 
 /** Payload-free acquisition diagnostics; no remote errors or partial projections escape. */
 export class DmoRetrieveError extends Error {
@@ -25,12 +52,13 @@ type ReadConnection = Pick<Connection, 'instanceUrl' | 'request' | 'metadata' | 
  */
 export function validateDmoSelection(
   selectors: string[],
-  apiVersion: string,
+  apiVersion: string | ApiVersionSelection,
   dataSpace: string,
 ): void {
   if (selectors.some((selector) => !/^dmo(?::[A-Za-z][A-Za-z0-9_]*__dlm)?$/u.test(selector)))
     throw new DmoRetrieveError('INVALID_SELECTION');
-  if (apiVersion !== '65.0' || dataSpace !== 'default') throw new DmoRetrieveError('INVALID_SCOPE');
+  dmoApiSelection(apiVersion);
+  if (dataSpace !== 'default') throw new DmoRetrieveError('INVALID_SCOPE');
 }
 
 /**
@@ -44,16 +72,18 @@ export function validateDmoSelection(
 export async function selectDmos(
   connection: ReadConnection,
   selectors: string[],
-  apiVersion: string,
+  apiVersion: string | ApiVersionSelection,
   dataSpace: string,
 ): Promise<string[]> {
   validateDmoSelection(selectors, apiVersion, dataSpace);
-  if (connection.getApiVersion() !== apiVersion) throw new DmoRetrieveError('INVALID_SCOPE');
+  const selection = dmoApiSelection(apiVersion);
+  if (connection.getApiVersion() !== selection.soapNumeric)
+    throw new DmoRetrieveError('INVALID_SCOPE');
   const names = selectors
     .filter((selector) => selector !== 'dmo')
     .map((selector) => selector.slice(4));
   if (selectors.length === 0 || selectors.includes('dmo')) {
-    const inventory = await new ConnectClient(connection, apiVersion).listDataModelObjects();
+    const inventory = await new ConnectClient(connection, selection).listDataModelObjects();
     for (const item of inventory) {
       if (item.dataSpaceName !== dataSpace) continue;
       if (typeof item.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(item.name))
@@ -120,7 +150,8 @@ export async function retrieveDmo(
   apiVersion: unknown,
   dataSpace: unknown,
 ): Promise<DmoCommonProjection & { candidate: DmoDocument }> {
-  if (apiVersion !== '65.0' || dataSpace !== 'default') throw new DmoRetrieveError('INVALID_SCOPE');
+  dmoApiSelection(apiVersion);
+  if (dataSpace !== 'default') throw new DmoRetrieveError('INVALID_SCOPE');
   if (
     typeof objectApiName !== 'string' ||
     !/^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(objectApiName) ||
@@ -129,10 +160,12 @@ export async function retrieveDmo(
     throw new DmoRetrieveError('UNSUPPORTED_DMO_IDENTITY');
   try {
     // Metadata's SOAP endpoint uses the connection version, not the Connect URL version.
-    if (connection.getApiVersion() !== apiVersion) throw new DmoRetrieveError('INVALID_SCOPE');
-    const client = new ConnectClient(connection, apiVersion);
+    const selection = dmoApiSelection(apiVersion);
+    if (connection.getApiVersion() !== selection.soapNumeric)
+      throw new DmoRetrieveError('INVALID_SCOPE');
+    const client = new ConnectClient(connection, selection);
     const connect = await client.get(
-      `/services/data/v${apiVersion}/ssot/data-model-objects/${objectApiName}`,
+      `/services/data/${selection.restSelector}/ssot/data-model-objects/${objectApiName}`,
     );
     // Array input preserves record cardinality so missing/ambiguous reads cannot be selected away.
     const records = await readDmoMetadata(connection, objectApiName);

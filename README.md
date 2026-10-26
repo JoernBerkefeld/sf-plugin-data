@@ -21,8 +21,22 @@ silently skipped: diagnostics identify each object and precise capability/error
 code, successful file receipts are retained, and the aggregate exits nonzero. `-o/--target-org` overrides the configured default org. `-d/--output-dir`
 is a project root, default cwd; output is `data360/default/dmo/<api-name>.json`.
 `-x/--overwrite` permits differing file replacement; identical bytes are unchanged.
-Selectors and API 65.0/default scope are validated before core org resolution or
+Selectors and numeric API 65.0/default scope are validated before core org resolution or
 resource reads; the common service remains the per-object capability boundary.
+
+`--api-version latest` is an explicit experimental read-only option for retrieval
+and deployment `--preview`; the default stays `65.0`. Each invocation performs one
+fresh authenticated `GET /services/data`, without cache, fallback, retry or redirect,
+to discover numeric SOAP evidence. REST retains literal `/services/data/latest/ssot/`;
+SOAP alone is pinned numerically. Authentication initializes a command-owned core
+connection at numeric bootstrap `65.0`, preventing core's implicit cached/network
+version discovery before the guarded request. The capability boundary still requires SOAP
+`65.0`: discovery of `68.0` (or any other version) blocks before DMO resource calls
+and advises explicit `--api-version 65.0`. This is not API 68 support or live
+qualification of the REST alias. Direct deployment with `latest` is refused before
+preflight or mutation. `metadata.apiVersion` is the requested selector and optional
+`metadata.soapApiVersion` is discovered/pinned numeric SOAP evidence, **not** the
+actual version served by REST. Discovery errors omit remote payloads.
 `--json` uses Salesforce CLI's normal outer result wrapper containing a versioned
 `sf-data360-retrieve` envelope with status, metadata, diagnostics, provenance and
 result. Both retrieve and deploy resolve `metadata.plugin.version` and
@@ -145,7 +159,8 @@ sf data360 deploy --preview -o target -m dmo:Example__dlm -m dmo:Another__dlm --
 Exactly one repeatable/non-greedy mode is required: `-d/--source-dir` selects explicit
 files or directories; `-m/--metadata` selects exact project members from cwd.
 No bare type, omitted selection or implicit deploy-all is allowed. All sources
-resolve and validate before target inspection. Core `-o/--target-org` supports the
+resolve and validate before runtime target inspection; core optional-org flag authentication
+still happens during parsing, before input resolution. Core `-o/--target-org` supports the
 configured default org and explicit override; `--api-version` defaults to 65.0 and
 `--data-space` to default, with capability checks delegated to preflight.
 
@@ -183,7 +198,8 @@ no new live replay acceptance is claimed.
 
 Seven planned families are tracked in [capabilities](docs/capabilities.md).
 An internal read-only Salesforce-core transport now accepts an explicit API
-version and only same-origin `/services/data/v<version>/ssot/` requests. It rejects
+selection and only same-origin `/services/data/v<version>/ssot/` or experimental
+literal `/services/data/latest/ssot/` reads; latest never permits writes. It rejects
 redirects and emits payload-free structured errors. Explicit DMO retrieval is now wired to the CLI;
 no resource-family support is implied. Internal DMO list pagination now uses the
 official offset contract, rejects malformed/overlapping pages and unexpected next

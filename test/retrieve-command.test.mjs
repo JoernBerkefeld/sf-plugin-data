@@ -34,7 +34,7 @@ const invocation = (overrides = {}) => {
     assert.deepEqual(arguments_, [
       connection,
       'Sample__dlm',
-      flags['api-version'],
+      { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
       flags['data-space'],
     ]);
     return {
@@ -54,6 +54,99 @@ const invocation = (overrides = {}) => {
   };
   return command;
 };
+
+test('latest discovers once, pins numeric SOAP and retains literal REST through selection and acquisition', async () => {
+  const command = invocation({ metadata: ['dmo'], 'api-version': 'latest' });
+  const requests = [];
+  const pins = [];
+  let version = '64.0';
+  let selection;
+  const actualConnection = {
+    instanceUrl: 'https://synthetic.example',
+    _refreshDelegate: () => assert.fail('discovery must not refresh/replay'),
+    getApiVersion: () => version,
+    request: async function (request, options) {
+      requests.push(request);
+      if (request.url === '/services/data') {
+        assert.equal(this._refreshDelegate, undefined);
+        assert.equal(options.retry.maxRetries, 0);
+        assert.throws(options.followRedirect);
+        return [{ version: '64.0' }, { version: '65.0' }];
+      }
+      assert.match(request.url, /\/services\/data\/latest\/ssot\//u);
+      return { dataModelObject: [{ name: 'Sample__dlm', dataSpaceName: 'default' }] };
+    },
+  };
+  command.resolveOrg = async () => ({
+    getOrgId: () => 'synthetic-org',
+    getConnection: (numeric) => {
+      pins.push(numeric);
+      if (numeric) version = numeric;
+      return actualConnection;
+    },
+  });
+  command.selectDocuments = async (...arguments_) => {
+    selection = arguments_[2];
+    assert.ok(Object.isFrozen(selection));
+    return selectDmos(...arguments_);
+  };
+  command.acquire = async (conn, name, actualSelection) => {
+    assert.equal(conn.getApiVersion(), '65.0');
+    assert.equal(actualSelection, selection);
+    assert.equal(name, 'Sample__dlm');
+    return { status: 'projected', blockers: [], candidate };
+  };
+  const { result } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.metadata.apiVersion, 'latest');
+  assert.equal(result.metadata.soapApiVersion, '65.0');
+  assert.deepEqual(pins, [undefined, '65.0']);
+  assert.equal(requests.filter((request) => request.url === '/services/data').length, 1);
+  assert.equal(requests.length, 2);
+  assert.equal(typeof actualConnection._refreshDelegate, 'function');
+});
+
+test('latest malformed, failed and newer discovery blocks before every DMO or file call', async () => {
+  for (const advertised of [
+    [],
+    {},
+    [{ version: 'invalid-secret' }],
+    new Error('private-token'),
+    [{ version: '68.0' }],
+  ]) {
+    const command = invocation({ 'api-version': 'latest' });
+    let discoveries = 0;
+    command.resolveOrg = async () => ({
+      getOrgId: () => 'synthetic-org',
+      getConnection: (version) => {
+        assert.equal(version, undefined, 'unsupported discovery must not repin');
+        return {
+          request: async () => {
+            discoveries++;
+            if (advertised instanceof Error) throw advertised;
+            return advertised;
+          },
+        };
+      },
+    });
+    command.selectDocuments =
+      command.acquire =
+      command.writeDocument =
+        () => assert.fail('no DMO or file work');
+    const { result, exitCode } = await run(command);
+    assert.equal(discoveries, 1);
+    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'blocked');
+    assert.equal(
+      result.diagnostics.errors[0].code,
+      Array.isArray(advertised) && advertised[0]?.version === '68.0'
+        ? 'INVALID_SCOPE'
+        : 'API_VERSION_DISCOVERY_FAILED',
+    );
+    assert.doesNotMatch(JSON.stringify(result), /private-token|invalid-secret/u);
+    assert.match(result.diagnostics.errors[0].message, /--api-version 65\.0/u);
+  }
+});
 
 // Restore process exit state after checking envelope failures, not an actual CLI process.
 const run = async (command) => {
@@ -184,7 +277,7 @@ test('type, omitted and repeated selectors reach selection and retain per-object
     command.selectDocuments = async (actualConnection, selectors, version, space) => {
       assert.equal(actualConnection, connection);
       assert.deepEqual(selectors, metadata ?? []);
-      assert.equal(version, '65.0');
+      assert.deepEqual(version, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
       assert.equal(space, 'default');
       return ['Alpha__dlm', 'Broken__dlm', 'Unsupported__dlm', 'Zeta__dlm'];
     };

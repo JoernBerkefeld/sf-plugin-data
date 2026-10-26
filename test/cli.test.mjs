@@ -65,6 +65,105 @@ test('package metadata points to the renamed repository without changing npm ide
   });
 });
 
+test('API flags opt into exact latest while preserving core numeric validation and defaults', async () => {
+  const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  for (const command of [Retrieve, Deploy]) {
+    const flag = command.flags['api-version'];
+    assert.equal(flag.default, '65.0');
+    assert.equal(await flag.parse('latest', {}, {}), 'latest');
+    assert.equal(await flag.parse('65.0', {}, {}), '65.0');
+    for (const invalid of ['Latest', 'v65.0', '65', 'latest ', '20.0'])
+      await assert.rejects(flag.parse(invalid, {}, {}));
+  }
+});
+
+test('actual core initialization never discovers or saves cached versions before guarded command discovery', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    import assert from 'node:assert/strict';
+    import { AuthInfo, ConfigAggregator, Connection } from '@salesforce/core';
+    import Retrieve from './lib/commands/data360/retrieve.js';
+    import Deploy from './lib/commands/data360/deploy.js';
+    const config = await ConfigAggregator.create();
+    assert.equal(config.getPropertyValue('org-api-version'), undefined);
+    let fields;
+    const usernames = [];
+    AuthInfo.create = async ({ username }) => {
+      usernames.push(username);
+      assert.equal(username, 'offline-unconfigured-synthetic');
+      return {
+        getUsername: () => username,
+        getConnectionOptions: () => ({ instanceUrl: 'https://synthetic.example', accessToken: 'offline-token' }),
+        getFields: () => fields,
+        save: () => assert.fail('must not save discovered version cache'),
+      };
+    };
+    Connection.prototype.isResolvable = () => assert.fail('no initialization DNS');
+    const requests = [];
+    Connection.prototype.request = async function(request, options) {
+      requests.push(request);
+      assert.deepEqual(request, { method: 'GET', url: '/services/data' });
+      assert.equal(this.getApiVersion(), '65.0');
+      assert.equal(this._refreshDelegate, undefined);
+      assert.equal(options.retry.maxRetries, 0);
+      assert.throws(options.followRedirect);
+      if (fields.failDiscovery) throw new Error('private-discovery-token');
+      return [{ version: '65.0' }];
+    };
+    for (const cached of [false, true]) {
+      for (const requested of ['65.0', 'latest']) {
+        for (const kind of ['retrieve', 'deploy']) {
+          for (const failDiscovery of [false, true]) {
+            fields = { orgId: '00Dsynthetic', failDiscovery, ...(cached ? {
+              instanceApiVersion: '68.0', instanceApiVersionLastRetrieved: '2000-01-01',
+            } : {}) };
+            const before = requests.length;
+            const command = kind === 'retrieve' ? new Retrieve([], {}) : new Deploy([], {});
+            let org;
+            if (kind === 'deploy') {
+              const flag = Deploy.flags['target-org'];
+              org = cached ? await flag.parse('offline-unconfigured-synthetic', {}, {}) : await flag.default();
+              assert.equal(org.getConnection().getApiVersion(), '65.0');
+              assert.equal(requests.length, before, 'parse-time auth must not discover');
+              assert.equal(await flag.defaultHelp(), 'offline-unconfigured-synthetic');
+            }
+            command.parse = async () => ({ flags: {
+              'api-version': requested, 'data-space': 'default',
+              'target-org': org, metadata: ['dmo:Sample__dlm'], preview: true,
+            } });
+            command.jsonEnabled = () => true;
+            command.selectDocuments = async (connection) => {
+              assert.equal(connection.getApiVersion(), '65.0');
+              return [];
+            };
+            command.resolveInputs = async () => [{ path: 'synthetic.json', document: {} }];
+            command.preflight = async () => ({ outcome: 'unchanged', diagnostics: [] });
+            const envelope = await command.run();
+            assert.equal(requests.length - before, requested === 'latest' ? 1 : 0);
+            assert.equal(envelope.status, requested === 'latest' && failDiscovery ? 'blocked' : 'success');
+            assert.ok(!JSON.stringify(envelope).includes('private-discovery-token'));
+            if (requested === 'latest' && failDiscovery)
+              assert.equal(envelope.diagnostics.errors[0].code, 'API_VERSION_DISCOVERY_FAILED');
+            process.exitCode = undefined;
+          }
+        }
+      }
+    }
+    assert.ok(usernames.length > 0);
+    console.log('core bootstrap cases passed');
+  `,
+    ],
+    { encoding: 'utf8', env: environment },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /core bootstrap cases passed/u);
+});
+
 const topics = ['data360', 'datacloud', 'd360', 'dc'];
 for (const command of topics.flatMap((topic) => [topic, `${topic} retrieve`, `${topic} deploy`])) {
   test(`${command} help loads without org authentication`, () => {

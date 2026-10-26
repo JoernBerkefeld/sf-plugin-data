@@ -6,7 +6,7 @@ import {
 import { ConnectClient } from '../transport/connect-client.js';
 import { compareDmoMeaning, preflightDmoDeploy } from './preflight-dmo-deploy.js';
 import type { DmoDeployPreview } from './preflight-dmo-deploy.js';
-import { retrieveDmo } from './retrieve-other-dmo.js';
+import { dmoApiSelection, retrieveDmo } from './retrieve-other-dmo.js';
 
 type TargetConnection = Pick<Connection, 'instanceUrl' | 'request' | 'metadata' | 'getApiVersion'>;
 
@@ -58,13 +58,15 @@ export async function executeDmoCreate(
     };
   }
   try {
+    const selection = dmoApiSelection(apiVersion);
     if (
-      apiVersion !== '65.0' ||
+      selection.requested !== '65.0' ||
       dataSpace !== 'default' ||
-      connection.getApiVersion() !== apiVersion
+      connection.getApiVersion() !== selection.soapNumeric
     )
       throw new Error('Invalid scope');
-    client = new ConnectClient(connection, apiVersion);
+    apiVersion = selection;
+    client = new ConnectClient(connection, selection);
     source = buildDmoCreateRequestFromDocument(snapshot, dataSpace);
   } catch {
     return {

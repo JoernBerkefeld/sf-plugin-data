@@ -15,7 +15,7 @@ import {
   preflightDmoDeploy,
 } from './preflight-dmo-deploy.js';
 import type { DmoDeployPreview } from './preflight-dmo-deploy.js';
-import { retrieveDmo } from './retrieve-other-dmo.js';
+import { dmoApiSelection, retrieveDmo } from './retrieve-other-dmo.js';
 
 type TargetConnection = Pick<Connection, 'instanceUrl' | 'request' | 'metadata' | 'getApiVersion'>;
 export type DmoDeployExecution = {
@@ -128,6 +128,13 @@ export async function executeDmoDeploy(
   apiVersion: unknown,
   dataSpace: unknown,
 ): Promise<DmoDeployExecution> {
+  try {
+    const selection = dmoApiSelection(apiVersion);
+    if (selection.requested !== '65.0') return result('blocked', 'not-attempted', 'INVALID_SCOPE');
+    apiVersion = selection;
+  } catch {
+    return result('blocked', 'not-attempted', 'INVALID_SCOPE');
+  }
   let snapshot: DmoDocument;
   try {
     snapshot = snapshotDocument(document);
@@ -166,7 +173,7 @@ export async function executeDmoDeploy(
     preflight,
   };
   try {
-    await new ConnectClient(connection, '65.0').patchDataModelObject(
+    await new ConnectClient(connection, dmoApiSelection(apiVersion)).patchDataModelObject(
       snapshot.identity.apiName,
       delta.patch,
     );
@@ -209,6 +216,13 @@ export async function executeDmoDeploySelection(
   const items = documents.map(() =>
     result('not-attempted', 'not-attempted', 'SELECTION_NOT_ATTEMPTED'),
   );
+  try {
+    const selection = dmoApiSelection(apiVersion);
+    if (selection.requested !== '65.0') throw new Error('Invalid mutation scope');
+    apiVersion = selection;
+  } catch {
+    return items.map(() => result('blocked', 'not-attempted', 'INVALID_SCOPE'));
+  }
   let snapshots;
   try {
     snapshots = documents.map((document) => snapshotDocument(document));

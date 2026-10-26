@@ -4,7 +4,7 @@ import type { DmoCreateRequest } from '../artifacts/dmo-document.js';
 import { buildDmoUpdateDelta } from '../artifacts/dmo-update-delta.js';
 import type { DmoDocument } from '../artifacts/dmo-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
-import { retrieveDmo } from './retrieve-other-dmo.js';
+import { dmoApiSelection, retrieveDmo } from './retrieve-other-dmo.js';
 
 type ReadConnection = Pick<Connection, 'instanceUrl' | 'request' | 'metadata' | 'getApiVersion'>;
 
@@ -32,7 +32,8 @@ function documentFromRequest(request: DmoCreateRequest): DmoDocument {
 
 const messages = {
   INVALID_SOURCE: 'Supply one valid authored-only DMO document bound to default.',
-  INVALID_SCOPE: 'Use an explicit API 65.0 connection and default target data space.',
+  INVALID_SCOPE:
+    'Current DMO capability requires numeric API 65.0 evidence and default target data space. Newer versions are not qualified.',
   SOURCE_EXECUTION_UNSUPPORTED:
     'Execution requires Other category and a nondynamic Text primary key for qualified readback.',
   TARGET_AUTHENTICATION_FAILED: 'Refresh target authentication, then repeat preview.',
@@ -161,19 +162,21 @@ export async function preflightDmoDeploy(
   if (source.category !== 'Other' || primary.dataType !== 'Text' || primary.isDynamicLookup)
     return preview('blocked', 'unknown', ['SOURCE_EXECUTION_UNSUPPORTED']);
   try {
-    if (
-      apiVersion !== '65.0' ||
-      dataSpace !== 'default' ||
-      connection.getApiVersion() !== apiVersion
-    )
+    let selection;
+    try {
+      selection = dmoApiSelection(apiVersion);
+    } catch {
       return preview('blocked', 'unknown', ['INVALID_SCOPE']);
-    const client = new ConnectClient(connection, apiVersion);
+    }
+    if (dataSpace !== 'default' || connection.getApiVersion() !== selection.soapNumeric)
+      return preview('blocked', 'unknown', ['INVALID_SCOPE']);
+    const client = new ConnectClient(connection, selection);
     const inventory = await client.listDataModelObjects();
     const apiName = `${source.name}__dlm`;
     if (!inventory.some((item) => item.dataSpaceName === dataSpace && item.name === apiName))
       return preview('create', 'absent');
     try {
-      const acquired = await retrieveDmo(connection, apiName, apiVersion, dataSpace);
+      const acquired = await retrieveDmo(connection, apiName, selection, dataSpace);
       if (allowLabelUpdates) {
         const delta = buildExecutableDmoDelta(documentFromRequest(source), acquired.candidate);
         return delta.status === 'blocked'

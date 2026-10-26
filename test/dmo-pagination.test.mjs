@@ -15,6 +15,33 @@ const item = (index, dataSpaceName = 'default') => ({
 const full = (start = 0) => Array.from({ length: 50 }, (_, index) => item(start + index));
 const clientFor = (request) => new ConnectClient({ instanceUrl: origin, request }, '65.0');
 
+test('latest DMO inventory pagination reconstructs literal alias paths', async () => {
+  const requests = [];
+  const client = new ConnectClient(
+    {
+      instanceUrl: origin,
+      request: async ({ url }) => {
+        requests.push(new URL(url));
+        return { dataModelObject: requests.length === 1 ? full() : [item(50)] };
+      },
+    },
+    { requested: 'latest', restSelector: 'latest', soapNumeric: '68.0' },
+  );
+  const result = await client.listDataModelObjects();
+  assert.equal(result.length, 51);
+  assert.deepEqual(
+    requests.map((url) => url.pathname),
+    [
+      '/services/data/latest/ssot/data-model-objects',
+      '/services/data/latest/ssot/data-model-objects',
+    ],
+  );
+  assert.deepEqual(
+    requests.map((url) => url.searchParams.get('offset')),
+    ['0', '50'],
+  );
+});
+
 test('DMO list completes with raw entries, fixed offsets and explicit version', async () => {
   const pages = [full(), [item(50), item(0, 'other-space')]];
   const requests = [];

@@ -9,6 +9,72 @@ import { ConnectClient, ConnectError } from '../lib/transport/connect-client.js'
 const origin = 'https://synthetic.my.salesforce.com';
 const path = '/services/data/v65.0/ssot/data-model-objects';
 
+const latest = { requested: 'latest', restSelector: 'latest', soapNumeric: '65.0' };
+
+test('latest detail uses literal REST alias while preserving numeric SOAP evidence', async () => {
+  const calls = [];
+  const selection = { ...latest };
+  const client = new ConnectClient(
+    {
+      instanceUrl: origin,
+      request: async (request) => {
+        calls.push(request);
+        return { name: 'Synthetic__dlm' };
+      },
+    },
+    selection,
+  );
+  selection.restSelector = 'v65.0';
+  await client.get('/services/data/latest/ssot/data-model-objects/Synthetic__dlm');
+  assert.equal(
+    calls[0].url,
+    `${origin}/services/data/latest/ssot/data-model-objects/Synthetic__dlm`,
+  );
+});
+
+test('latest rejects prefix switching and unsafe paths before network access', async () => {
+  const client = new ConnectClient(
+    { instanceUrl: origin, request: () => assert.fail('Unexpected request') },
+    latest,
+  );
+  for (const route of [
+    '/services/data/vlatest/ssot/data-model-objects',
+    path,
+    '/services/data/latest/ssot/data-model-objects/%2e%2e/secret',
+    '/services/data/latest/ssot/data-model-objects/%252fsecret',
+    'https://hostile.test/services/data/latest/ssot/data-model-objects',
+  ])
+    await assert.rejects(client.get(route), ConnectError);
+});
+
+test('inconsistent version selections cannot forge a numeric mutation capability', () => {
+  const connection = { instanceUrl: origin, request: () => assert.fail('Unexpected request') };
+  for (const selection of [
+    { ...latest, soapNumeric: 'latest' },
+    { ...latest, restSelector: 'v65.0' },
+    { requested: '65.0', restSelector: 'latest', soapNumeric: '65.0' },
+    { requested: '65.0', restSelector: 'v65.0', soapNumeric: '68.0' },
+    { ...latest, restSelector: 'latest/../v65.0' },
+  ])
+    assert.throws(() => new ConnectClient(connection, selection), ConnectError);
+});
+
+test('latest rejects POST and PATCH without requests even with numeric API65 evidence', async () => {
+  let calls = 0;
+  const client = new ConnectClient(
+    {
+      instanceUrl: origin,
+      request: async () => {
+        calls += 1;
+      },
+    },
+    latest,
+  );
+  await assert.rejects(client.createDataModelObject({}), ConnectError);
+  await assert.rejects(client.patchDataModelObject('Synthetic__dlm', {}), ConnectError);
+  assert.equal(calls, 0);
+});
+
 test('authenticated request preserves explicit version, query and response', async () => {
   const response = { items: [{ name: 'Synthetic__dlm' }] };
   const client = new ConnectClient(

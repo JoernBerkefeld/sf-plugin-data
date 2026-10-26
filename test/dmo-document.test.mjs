@@ -2296,6 +2296,87 @@ const updateFixture = (afterPatch = () => {}) => {
   };
 };
 
+const latest65 = Object.freeze({
+  requested: 'latest',
+  restSelector: 'latest',
+  soapNumeric: '65.0',
+});
+
+test('service latest retrieval keeps literal REST and numeric Metadata connection', async () => {
+  const f = retrievalFixture();
+  const acquired = await retrieveDmo(f.connection, f.input.connect.name, latest65, 'default');
+  assert.equal(acquired.status, 'projected');
+  const urls = f.calls.filter((call) => call.url).map((call) => call.url);
+  assert.ok(urls.length >= 2);
+  for (const url of urls) assert.ok(url.includes('/services/data/latest/ssot/'), url);
+  assert.ok(f.calls.some((call) => call.type === 'CustomObject'));
+});
+
+test('service latest API68 and mismatched SOAP connection block before DMO reads', async () => {
+  for (const selection of [{ ...latest65, soapNumeric: '68.0' }, latest65]) {
+    const f = retrievalFixture();
+    f.connection.getApiVersion = () => '68.0';
+    await assert.rejects(retrieveDmo(f.connection, f.input.connect.name, selection, 'default'));
+    assert.deepEqual(f.calls, []);
+  }
+});
+
+test('latest preview retains alias routing while API68 remains unqualified', async () => {
+  const f = preflightFixture();
+  const preview = await preflightDmoDeploy(f.source, f.connection, latest65, 'default', true);
+  assert.equal(preview.outcome, 'unchanged');
+  for (const call of f.calls.filter((call) => call.url))
+    assert.ok(call.url.includes('/services/data/latest/ssot/'), call.url);
+  f.calls.length = 0;
+  const blocked = await preflightDmoDeploy(
+    f.source,
+    f.connection,
+    { ...latest65, soapNumeric: '68.0' },
+    'default',
+    true,
+  );
+  assert.equal(blocked.outcome, 'blocked');
+  assert.deepEqual(f.calls, []);
+});
+
+test('exported create and update reject latest with API65 evidence before requests', async () => {
+  const create = executionFixture();
+  const update = updateFixture();
+  update.source.spec.label += ' changed';
+  for (const [execute, fixture] of [
+    [executeDmoCreate, create],
+    [executeDmoDeploy, create],
+    [executeDmoDeploy, update],
+  ]) {
+    const outcome = await execute(fixture.source, fixture.connection, latest65, 'default');
+    assert.equal(outcome.outcome, 'blocked');
+    assert.equal(outcome.mutation, 'not-attempted');
+    assert.deepEqual(fixture.calls, []);
+  }
+  assert.deepEqual(create.posts, []);
+  assert.deepEqual(update.patches, []);
+  const outcomes = await executeDmoDeploySelection(
+    [update.source],
+    update.connection,
+    latest65,
+    'default',
+  );
+  assert.equal(outcomes[0].outcome, 'blocked');
+  assert.deepEqual(update.calls, []);
+});
+
+test('numeric selection object preserves qualified API65 create execution', async () => {
+  const f = executionFixture();
+  const outcome = await executeDmoCreate(
+    f.source,
+    f.connection,
+    { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
+    'default',
+  );
+  assert.equal(outcome.outcome, 'created');
+  assert.equal(f.posts.length, 1);
+});
+
 test('public command uses real guarded label preview, execution and mixed-selection admission', async () => {
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   for (const scenario of ['preview', 'updated', 'blocked', 'unknown']) {

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
-import { Org } from '@salesforce/core';
+import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
+import { resolveApiVersion } from '../../transport/api-version.js';
 import { DmoDocumentError } from '../../artifacts/dmo-document.js';
 import { DmoWriteError, writeDmoDocument } from '../../artifacts/write-other-dmo.js';
 import {
@@ -20,6 +21,7 @@ export type RetrieveEnvelope = {
     operation: 'retrieve';
     plugin: { name: string; version: string };
     apiVersion: string;
+    soapApiVersion?: string;
   };
   diagnostics: {
     warnings: string[];
@@ -62,7 +64,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
     'api-version': Flags.orgApiVersion({
       default: '65.0',
-      summary: 'Explicit Salesforce API version (current service supports 65.0).',
+      summary: 'Numeric API version or experimental read-only latest (SOAP evidence must be 65.0).',
+      parse: async (value, context, options) =>
+        value === 'latest' ? value : Flags.orgApiVersion().parse(value, context, options),
     }),
     'data-space': Flags.string({
       default: 'default',
@@ -88,8 +92,26 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
 
   protected acquire = retrieveDmo;
   protected selectDocuments = selectDmos;
-  protected resolveOrg = (aliasOrUsername?: string): Promise<Org> =>
-    Org.create({ aliasOrUsername });
+  protected resolveOrg = async (
+    aliasOrUsername?: string,
+  ): Promise<Pick<Org, 'getConnection' | 'getOrgId'>> => {
+    const aggregator = await ConfigAggregator.create();
+    const state = await StateAggregator.getInstance();
+    const target = aliasOrUsername ?? aggregator.getPropertyValue<string>('target-org');
+    const username = target ? state.aliases.resolveUsername(target) : undefined;
+    const connection = await Connection.create({
+      authInfo: await AuthInfo.create({ username }),
+      connectionOptions: { version: '65.0' },
+    });
+    // Org.create also probes org traits using another unversioned connection; avoid it.
+    return {
+      getOrgId: () => connection.getAuthInfoFields().orgId!,
+      getConnection: (version?: string) => {
+        if (version) connection.setApiVersion(version);
+        return connection;
+      },
+    };
+  };
   protected writeDocument = writeDmoDocument;
 
   /**
@@ -146,14 +168,19 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
     const selectors = flags.metadata ?? [];
     try {
-      validateDmoSelection(selectors, flags['api-version'], flags['data-space']);
+      // Validate syntax/scope before auth; latest capability evidence arrives after discovery.
+      validateDmoSelection(
+        selectors,
+        flags['api-version'] === 'latest' ? '65.0' : flags['api-version'],
+        flags['data-space'],
+      );
     } catch (error: unknown) {
       return finish(
         'blocked',
         error instanceof DmoRetrieveError ? error.code : 'INVALID_SELECTION',
       );
     }
-    let org: Org;
+    let org: Pick<Org, 'getConnection' | 'getOrgId'>;
     try {
       org = await this.resolveOrg(flags['target-org']);
     } catch {
@@ -187,11 +214,46 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
     try {
       envelope.provenance.sourceOrgId = org.getOrgId();
-      const connection = org.getConnection(flags['api-version']);
+      let selection;
+      try {
+        selection = await resolveApiVersion(flags['api-version'], async () => {
+          // This command owns the initialized connection; suppress refresh replay and redirects.
+          const receiver = Object.create(org.getConnection()) as Connection;
+          Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+          return receiver.request({ method: 'GET', url: '/services/data' }, {
+            retry: { maxRetries: 0 },
+            followRedirect: () => {
+              throw new Error('Discovery redirect refused.');
+            },
+          } as unknown as Parameters<Connection['request']>[1]);
+        });
+      } catch {
+        envelope.diagnostics.errors.push({
+          code: 'API_VERSION_DISCOVERY_FAILED',
+          message:
+            'Version discovery failed or returned invalid data. Check org access or use --api-version 65.0.',
+          retryable: false,
+        });
+        return finish('blocked');
+      }
+      envelope.metadata.soapApiVersion = selection.soapNumeric;
+      try {
+        validateDmoSelection(selectors, selection, flags['data-space']);
+      } catch {
+        envelope.diagnostics.errors.push({
+          code: 'INVALID_SCOPE',
+          message:
+            'DMO support requires numeric SOAP evidence 65.0. Use --api-version 65.0; newer API versions are not qualified.',
+          retryable: false,
+        });
+        return finish('blocked');
+      }
+      // Pin only this command-owned connection, before any service uses it.
+      const connection = org.getConnection(selection.soapNumeric);
       const names = await this.selectDocuments(
         connection,
         selectors,
-        flags['api-version'],
+        selection,
         flags['data-space'],
       );
       envelope.result.selection = names.map((name) => `dmo:${name}`);
@@ -200,7 +262,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const projection = await this.acquire(
             connection,
             apiName,
-            flags['api-version'],
+            selection,
             flags['data-space'],
           );
           if (

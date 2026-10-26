@@ -1,3 +1,159 @@
+# Gate4 iteration1 core-bootstrap remediation — iteration2 review pending
+
+Fixed the reviewer's single must-fix only: prevent implicit core version discovery
+before guarded command discovery, including deploy parse-time/default-help auth.
+Actual Connection.create initialization is covered offline with absent API config
+and absent/stale version-cache evidence. The subprocess spies at the request/save/DNS
+boundaries rather than mocking resolveOrg or command parse-time auth construction;
+16 cases assert numeric zero discovery, latest exactly one guarded discovery,
+payload-free failed discovery, and zero cache save or DNS calls. Existing guarded
+request and capability boundaries remain unchanged. Actual core connection
+initialization runs; AuthInfo persistence/credentials are synthetic and isolated.
+
+Remediation files: src/commands/data360/{retrieve,deploy}.ts, test/cli.test.mjs,
+README.md, docs/capabilities.md and this handover. Existing 19-path dirty state
+preserved. No shared abstraction, global config/env default changes, live network,
+cleanup, history/version/tag/release changes or root edits.
+
+Verification: scoped lint:fix 0 (7.468s), explicit build 0 (2.769s), lint 0 warnings
+(6.784s), npm test 318/318 (105.959s including build), smoke 29/29 (103.400s).
+Pipeline 226.383s; shell end-to-end 226.754s. Focused actual-core initialization
+regression 1/1 (1.652s test runtime). Only explanatory comments and handover receipt
+were corrected after that full green run; final lint (0 warnings), build,
+focused regression (1/1) and git diff --check all passed, combined shell 11.969s.
+Parent must return to the same reviewer for iteration2; this is not final review green.
+
+# Command version-selection chunk 3b — whole-feature review pending
+
+Retrieve and deploy now accept exact opt-in `--api-version latest`; numeric input
+uses the existing core flag parser (including retired-version refusal), and default
+`65.0` remains unchanged. Retrieve preserves pre-auth selector/default-space
+validation. Deploy retains optionalOrg parse-time auth and local-input-before-runtime
+target inspection. Latest direct execution returns `LATEST_READ_ONLY` before
+preflight/discovery/mutation; exported service and POST/PATCH guards remain.
+
+For latest reads/previews each command calls authenticated `GET /services/data`
+once through an operation-local receiver with refresh replay disabled, maxRetries
+zero and redirect refusal. No cached versions, fallback, remote payload diagnostics
+or live calls. The resolver's immutable selection passes unchanged to every
+command/service handoff. Capability validation requires numeric SOAP evidence
+`65.0` before selecting/reading DMOs; discovered `68.0` blocks with actionable
+explicit-65 guidance, not an API68 support claim. Metadata `apiVersion` remains
+the requested selector; additive optional `soapApiVersion` is numeric SOAP evidence,
+not the version actually served by REST latest.
+
+Corrected ownership inspection (Gate4 iteration1): @salesforce/core 8.31.3
+Org.create can initialize an unversioned connection, and its determineOrg probe can
+create a second unversioned connection even when supplied one. Both commands now
+resolve target/default configuration and aliases with core, load AuthInfo, and
+construct Connection.create with explicit bootstrap version 65.0 before initialization.
+They expose only the existing connection/identity methods needed by commands;
+no Org.create trait probe or shared connection is involved. Deploy's optional flag
+retains parse-time auth, configured-default resolution, explicit-invalid-auth errors
+and absent-default tolerance; default help also uses the numeric bootstrap.
+The single guarded latest discovery remains separate and later pins numeric SOAP
+before any service receives the connection. No global config/environment change.
+
+Changed in this chunk only: src/commands/data360/{retrieve,deploy}.ts,
+test/{retrieve-command,deploy-command,cli}.test.mjs, README.md,
+docs/capabilities.md and this handover. Prior chunks' dirty inputs are preserved.
+Tests cover once-only discovery, payload-free failures, malformed/newer refusal,
+zero downstream DMO/file/mutation calls on refusal, literal REST inventory with
+numeric SOAP pinning, immutable same-selection handoffs, numeric compatibility,
+flag parsing and topic aliases. Parent must run Gate 4 over all chunks then Gate 5;
+no commit/push/version/tag/release, root edits or live org qualification authorized.
+
+Verification for exact chunk-3b code: scoped lint:fix exit 0 (7.619s), build exit 0
+(2.535s), zero-warning lint exit 0 (7.228s), full npm test 317/317 exit 0
+(110.196s including compile; Node test duration 106.976s), smoke 28/28 exit 0
+(104.747s). Full verification pipeline exit 0, wall time 232.746s. Focused command
+suite also passed 33/33 (1.722s test duration). Five new tests versus chunk3a's
+312/27 baseline. TEMP, nonempty TMP/TMPDIR and actual Node os.tmpdir checked via
+existing scripts/check-temporary.mjs before every shell workload; no cleanup ran.
+Only this evidence/handover text changed after the green pipeline.
+
+# Service version-selection chunk 3a — historical handover
+
+Existing service version arguments now accept resolved selections alongside
+numeric compatibility inputs. Exported `dmoApiSelection(value: unknown)` snapshots
+and validates current API65 evidence: either numeric `65.0`/`v65.0`/`65.0` or
+`latest`/`latest`/`65.0`. Newer SOAP evidence and inconsistent selections fail scope
+checks before DMO requests. Retrieval/inventory/preflight use the retained REST
+selector, while Metadata qualification checks the connection's numeric SOAP version.
+The helper does not claim REST actually served the discovered numeric version.
+
+Exported create, deploy and selection executors refuse latest before execution,
+including SOAP65 selections. Numeric provenance is retained across preflight,
+readback and create delegation; PATCH no longer constructs a hardcoded API65 client.
+Current numeric API65 mutation behavior remains supported. No command flags,
+auth/discovery behavior, service capability widening or defaults changed.
+
+Chunk 3b must resolve once in command-owned discovery, pin only numeric SOAP
+connections, preserve one selection through all service calls/envelope reporting,
+and refuse latest direct deployment before mutation. Inspect core's shared
+connection behavior; never call `Org.getConnection('latest')` or silently repin a
+connection already in use. Parent owns the final whole-feature review.
+
+Chunk 3a verification: scoped autofix, build, zero-warning lint, full tests
+312/312 and smoke 27/27 passed; pipeline exit 0 in 243.817 seconds. Five new
+service regressions cover latest retrieval/preview, unsupported numeric evidence,
+connection mismatch, exported mutation refusals and numeric selection creation.
+No commit, push, release, root edits or live calls occurred.
+
+# Literal REST latest transport chunk — no public integration yet
+
+`ConnectClient(connection, selection)` now accepts `ApiVersionSelection` and
+copies/freezes its validated fields. Numeric string constructor compatibility is
+retained temporarily for existing service/test callers and immediately normalized
+to the same selection representation; bare `latest` strings are rejected.
+Numeric selections require matching requested/SOAP values and `v${numeric}` REST
+selector. Latest requires exact requested/REST `latest` and numeric SOAP evidence.
+The prefix is `/services/data/${selection.restSelector}/ssot/`, so literal latest
+never becomes `/vlatest/` or numeric REST. Endpoint minimums use SOAP numeric
+evidence, not an assertion of the version actually served by the REST alias.
+
+POST/PATCH require requested numeric `65.0`; literal latest rejects before any
+request even with SOAP numeric `65.0`. Existing redirect/no-retry, same-origin,
+namespace, traversal, pagination and payload-free error safeguards remain intact.
+Lists and relationships reconstruct every page from the chosen fixed prefix.
+Commands, API65 service gates/defaults and production discovery are unchanged.
+Chunk 3 must thread one selection through callers and refuse latest at exported
+mutation entries so the existing hardcoded numeric PATCH construction cannot
+bypass requested-selector provenance. The static `create(alias, numeric)` helper
+remains numeric-only; command-owned discovery must never pass latest to core.
+
+Chunk 2 verification: scoped autofix, build, zero-warning lint, full tests
+307/307 and CLI smoke 27/27 passed; pipeline exit 0 in 234.025 seconds.
+No commands/services, live org state, root files, history or releases changed.
+
+# API version resolver chunk — no public integration yet
+
+`src/transport/api-version.ts` exports `ApiVersionSelection = Readonly<{
+requested: string; restSelector: string; soapNumeric: string }>` and
+`resolveApiVersion(requested: string, discover: () => Promise<unknown>): Promise<ApiVersionSelection>`.
+Numeric selectors preserve the requested value, produce `v${numeric}` for REST,
+and perform no discovery. Exact `latest` invokes the supplied discovery once,
+validates a nonempty advertised-version array, selects the numeric maximum for
+SOAP, and keeps REST selector `latest`. Results are frozen. Invalid input and
+failed/malformed discovery have fixed payload-free errors; no cache, fallback,
+retry or logging is introduced. Fresh discovery is the future caller's duty.
+Numeric SOAP evidence is not attestation of the version served by REST latest.
+
+This helper is not wired into commands or transport. Current API65 defaults,
+capability gates, commands and mutation behavior are unchanged. Next chunks must
+pass one selection through transport/retrieval/preflight, pin only numeric SOAP
+connections, and refuse latest at command and exported mutation entry points.
+Preserve literal `/services/data/latest/ssot/` REST routes; never call
+`Org.getConnection('latest')`. Parent owns final review after integration.
+
+Chunk verification on 2026-10-26: scoped ESLint autofix, explicit build,
+zero-warning full lint, full tests 300/300 and CLI smoke 27/27 passed. The final
+pipeline exited 0 in 241.155 seconds. Nine new resolver tests exercise numeric
+pinning, numeric maximum selection, exact latest, malformed input/discovery,
+redacted failure and no cross-invocation caching. Initial lint findings in the
+new tests were fixed before the successful run. No production discovery, command
+integration, root edits, live calls, commit, push or release occurred.
+
 # Current repository and directory identity — release paused
 
 The repository is now [JoernBerkefeld/sf-plugin-data](https://github.com/JoernBerkefeld/sf-plugin-data),
