@@ -87,11 +87,12 @@ resolver is wired to preview and execution; input admission alone never authoriz
 ## Package identity and command aliases
 
 The user-selected current npm identity is **`sf-plugin-data`**, unscoped, at
-version `0.1.0`. The repository and directory remain `sf-plugin-data360` under
-GitHub owner `JoernBerkefeld`. This is a local product-naming change, not a claim
-that npm will accept the name or an attempt to bypass npm restrictions. No lookup
-or publication of the new name has been performed; restriction resolution and
-release approval remain separate work.
+version `0.1.0`. The repository is
+[`JoernBerkefeld/sf-plugin-data`](https://github.com/JoernBerkefeld/sf-plugin-data),
+and the local directory is `sf-plugin-data`. Repository metadata uses the same
+identity. This repository/folder rename does not change command topics, version
+or published artifacts; release finalization and npm trusted-publisher setup
+remain separate work.
 
 Canonical commands remain `sf data360 retrieve` and `sf data360 deploy`.
 `datacloud`, `d360` and `dc` are equivalent topic aliases for both operations,
@@ -104,10 +105,11 @@ Historical evidence: the old unscoped `sf-plugin-data360` lookup returned `E404`
 on 2026-10-26, but its later manual publication was rejected with npm `E403`
 spam detection. Earlier scoped artifacts and the rejected unscoped artifacts
 remain historical evidence only and must not be reused for the current name.
-The existing `v0.1.0` tag at `a328066` still identifies `sf-plugin-data360`, not
-this local rename. Earlier commit/push/tag approval does not authorize new
-history changes or reuse of that tag. Any future release requires fresh explicit
-approval, a tree-bound inspected artifact and separate npm restriction resolution.
+An earlier `v0.1.0` tag at `a328066` identified `sf-plugin-data360`; the subsequently
+authorized replacement now points to `8bcbe63` with npm identity `sf-plugin-data`.
+The repository/folder rename leaves that tag unchanged. Earlier approvals do not
+authorize further history changes. Future release work requires fresh explicit
+approval and a tree-bound inspected artifact.
 
 ## Local development
 

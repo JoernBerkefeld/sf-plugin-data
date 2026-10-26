@@ -1,11 +1,12 @@
 # Git workflow status
 
-Current local npm identity is `sf-plugin-data`; repository/path remain
-`sf-plugin-data360`. The existing `v0.1.0` tag still contains the previous npm
-identity. This local rename does not authorize tag reuse, publication or history
-changes. The previous name's manual npm publication was rejected with `E403`;
-resolve npm restrictions separately rather than assuming the new name is
-publishable. No new-name registry query or publication has been performed.
+Current npm identity and local directory are `sf-plugin-data`; the repository is
+[`JoernBerkefeld/sf-plugin-data`](https://github.com/JoernBerkefeld/sf-plugin-data).
+The `origin` remote points to `https://github.com/JoernBerkefeld/sf-plugin-data.git`.
+The repository/folder rename preserves history, canonical commands and the
+existing `v0.1.0` tag at `8bcbe63`. It does not authorize a commit, push,
+publication or further tag change. Release finalization is paused while npm
+trusted-publisher configuration is updated for the renamed repository.
 
 The repository implements bounded DMO retrieval, read-only deployment preview,
 guarded creation and qualified object/existing non-primary field label updates.

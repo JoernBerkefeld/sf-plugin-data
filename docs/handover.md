@@ -1,4 +1,16 @@
-# Current local identity and alias update — no release authorization
+# Current repository and directory identity — release paused
+
+The repository is now [JoernBerkefeld/sf-plugin-data](https://github.com/JoernBerkefeld/sf-plugin-data),
+with local path `F:/Git/ide-root/sf-plugin-data` and matching `origin` remote.
+Repository ID `R_kgDOVXr9kA`, HEAD `8bcbe6374ace9f6a55580b3efb48c02f16726abb`
+and the existing `v0.1.0` tag were preserved by the rename. Package identity stays
+`sf-plugin-data@0.1.0`; canonical commands and aliases are unchanged. The user
+reported manual publication processing; registry/install verification and release
+finalization remain paused while trusted-publisher configuration is updated.
+This rename task does not authorize commits, pushes, publication or tag changes.
+The earlier receipts below describe their original state and remain historical.
+
+## Historical local identity and alias update — no release authorization
 
 User selection on 2026-10-26: unscoped npm **`sf-plugin-data`** at `0.1.0`.
 Repository/path remain `sf-plugin-data360`. Canonical `data360:retrieve` and

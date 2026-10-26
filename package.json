@@ -7,6 +7,14 @@
     "email": "joern.berkefeld@gmail.com"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoernBerkefeld/sf-plugin-data.git"
+  },
+  "homepage": "https://github.com/JoernBerkefeld/sf-plugin-data#readme",
+  "bugs": {
+    "url": "https://github.com/JoernBerkefeld/sf-plugin-data/issues"
+  },
   "type": "module",
   "engines": {
     "node": "^22.22.2 || ^24.15.0"

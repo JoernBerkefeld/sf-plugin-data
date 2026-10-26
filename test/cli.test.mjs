@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -49,6 +49,20 @@ test('offline subprocess core auth directories stay under the isolated home with
     'SF_STATE_FOLDER',
     'SF_TARGET_ORG',
   ]);
+});
+
+test('package metadata points to the renamed repository without changing npm identity', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.name, 'sf-plugin-data');
+  assert.equal(manifest.version, '0.1.0');
+  assert.deepEqual(manifest.repository, {
+    type: 'git',
+    url: 'git+https://github.com/JoernBerkefeld/sf-plugin-data.git',
+  });
+  assert.equal(manifest.homepage, 'https://github.com/JoernBerkefeld/sf-plugin-data#readme');
+  assert.deepEqual(manifest.bugs, {
+    url: 'https://github.com/JoernBerkefeld/sf-plugin-data/issues',
+  });
 });
 
 const topics = ['data360', 'datacloud', 'd360', 'dc'];
