@@ -51,6 +51,7 @@ export type RetrieveEnvelope = {
 
 /** Retrieve selected DMO configuration through existing service-owned capability checks. */
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
+  public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary = 'Retrieve Data360 DMOs into a local project.';
   public static readonly description =
     'Repeat -m dmo:ApiName for exact selection, use -m dmo for all DMOs in the selected space, or omit selectors for all implemented families (currently DMO only). Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';

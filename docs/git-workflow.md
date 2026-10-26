@@ -1,5 +1,12 @@
 # Git workflow status
 
+Current local npm identity is `sf-plugin-data`; repository/path remain
+`sf-plugin-data360`. The existing `v0.1.0` tag still contains the previous npm
+identity. This local rename does not authorize tag reuse, publication or history
+changes. The previous name's manual npm publication was rejected with `E403`;
+resolve npm restrictions separately rather than assuming the new name is
+publishable. No new-name registry query or publication has been performed.
+
 The repository implements bounded DMO retrieval, read-only deployment preview,
 guarded creation and qualified object/existing non-primary field label updates.
 Broader DMO deployment and other resource families remain unsupported. Offline CI

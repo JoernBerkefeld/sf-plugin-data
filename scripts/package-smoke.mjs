@@ -2,7 +2,9 @@ import './check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -32,7 +34,10 @@ const packed = spawnSync(process.execPath, [npm, 'pack', '--pack-destination', r
 assert.equal(packed.status, 0, packed.stderr);
 // Lifecycle output precedes npm's JSON result.
 const [artifact] = JSON.parse(packed.stdout.slice(packed.stdout.indexOf('[\n')));
-assert.equal(artifact.name, 'sf-plugin-data360');
+assert.equal(artifact.name, 'sf-plugin-data');
+const sha256 = createHash('sha256')
+  .update(readFileSync(path.join(root, artifact.filename)))
+  .digest('hex');
 assert.equal(artifact.entryCount, 32);
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.d.ts'));
@@ -67,21 +72,82 @@ const installed = spawnSync(
   { encoding: 'utf8', env: environment },
 );
 assert.equal(installed.status, 0, installed.stderr);
-const runner = path.join(installation, 'node_modules', 'sf-plugin-data360', 'bin', 'run.js');
-for (const command of [[], ['retrieve'], ['deploy']]) {
-  const result = spawnSync(process.execPath, [runner, 'data360', ...command, '--help'], {
+const runner = path.join(installation, 'node_modules', 'sf-plugin-data', 'bin', 'run.js');
+let helpChecks = 0;
+for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => [
+  [topic],
+  [topic, 'retrieve'],
+  [topic, 'deploy'],
+])) {
+  const result = spawnSync(process.execPath, [runner, ...command, '--help'], {
     cwd: root,
     encoding: 'utf8',
     env: environment,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Data360/u);
+  if (command.length === 1) {
+    assert.match(result.stdout, /retrieve/u);
+    assert.match(result.stdout, /deploy/u);
+  } else {
+    assert.match(result.stdout, /ALIASES/u);
+    for (const flag of [
+      '--metadata',
+      '--target-org',
+      '--api-version',
+      '--data-space',
+      ...(command[1] === 'retrieve'
+        ? ['--output-dir', '--overwrite']
+        : ['--source-dir', '--preview']),
+    ])
+      assert.ok(result.stdout.includes(flag), flag);
+  }
+  helpChecks++;
 }
 // Exercise the installed command implementation, not only help or the source tree.
 // Parsing and service boundaries are injected: no org resolution or remote work is reachable.
 const packageRoot = path.dirname(path.dirname(runner));
 const metadata = JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+assert.equal(metadata.name, 'sf-plugin-data');
+assert.equal(artifact.filename, `sf-plugin-data-${metadata.version}.tgz`);
 assert.equal(metadata.version, '0.1.0');
+const { Config } = await import(
+  pathToFileURL(createRequire(path.join(packageRoot, 'package.json')).resolve('@oclif/core')).href
+);
+const config = await Config.load({ root: packageRoot });
+assert.deepEqual(
+  config.commandIDs.toSorted(),
+  ['data360', 'datacloud', 'd360', 'dc']
+    .flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`])
+    .toSorted(),
+);
+const implementations = new Set();
+for (const operation of ['retrieve', 'deploy']) {
+  const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
+  for (const topic of ['data360', 'datacloud', 'd360', 'dc']) {
+    const implementation = await config.findCommand(`${topic}:${operation}`, { must: true }).load();
+    assert.equal(implementation, canonical);
+    implementations.add(implementation);
+    const result = spawnSync(
+      process.execPath,
+      [runner, topic, operation, '-m', 'invalid', '--json'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: environment,
+      },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const envelope = JSON.parse(result.stdout).result;
+    assert.equal(envelope.contract, `sf-data360-${operation}`);
+    assert.equal(envelope.metadata.plugin.name, metadata.name);
+    assert.equal(envelope.provenance.command, `sf data360 ${operation}`);
+    assert.equal(envelope.status, 'blocked');
+    assert.deepEqual(envelope.result.items, []);
+    assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
+  }
+}
+assert.equal(implementations.size, 2);
 for (const operation of ['retrieve', 'deploy']) {
   const { default: Command } = await import(
     pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', `${operation}.js`)).href
@@ -196,5 +262,5 @@ for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unkn
   }
 }
 process.stdout.write(
-  `${JSON.stringify({ root, artifact, helpChecks: 3, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
+  `${JSON.stringify({ root, artifact, sha256, helpChecks, aliasValidationChecks: 8, implementations: implementations.size, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
 );

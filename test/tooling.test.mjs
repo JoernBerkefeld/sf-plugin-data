@@ -64,6 +64,7 @@ test('publication blocks a first-ever package until user bootstrap', () => {
 
 for (const failure of [
   { status: 1, stdout: JSON.stringify({ error: { code: 'E401' } }), stderr: '' },
+  { status: 1, stdout: JSON.stringify({ error: { code: 'E403' } }), stderr: '' },
   { status: 1, stdout: JSON.stringify({ error: { code: 'ENETUNREACH' } }), stderr: '' },
   { status: 1, stdout: 'E404 not structured JSON', stderr: '' },
   { status: 1, stdout: '{invalid', stderr: '' },

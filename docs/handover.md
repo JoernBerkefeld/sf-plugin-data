@@ -1,4 +1,58 @@
-# Unscoped npm identity correction — approved tag replacement
+# Current local identity and alias update — no release authorization
+
+User selection on 2026-10-26: unscoped npm **`sf-plugin-data`** at `0.1.0`.
+Repository/path remain `sf-plugin-data360`. Canonical `data360:retrieve` and
+`data360:deploy` have full-ID `datacloud`, `d360` and `dc` aliases, eight IDs
+resolving to exactly two classes. All four topics have explicit help descriptions.
+No `data` IDs, wrappers, API expansion, artifact/schema changes or capability
+expansion. Envelope producer/plugin names follow the new package; contract and
+provenance command strings stay canonical. API 65.0/default remains unchanged.
+
+The former unscoped `sf-plugin-data360` manual publish was rejected with `E403`
+spam detection, following the scoped `E404Scope` failure recorded below. This
+product-naming choice is not a restriction bypass or a publishability guarantee.
+At 14:42 local time on 2026-10-26 the user explicitly authorized committing and
+pushing these 13 reviewed package files to `main` with normal enabled hooks.
+This supersedes the local-only commit/push restriction for this change only.
+No new-name registry queries, publication, login, GitHub release or tag edits are
+authorized. Root registrations/plans remain outside this package commit/push.
+Resolve npm restrictions separately. The existing
+`v0.1.0` at `a328066` still carries the old identity; previous tag-replacement
+approval is historical and cannot be reused. All previous artifacts are invalid
+for this new identity. Fresh local verification receipts follow this section;
+historical live acceptance does not qualify the renamed package.
+
+## Local verification and propagation
+
+Build, scoped ESLint autofix and full lint passed with zero warnings. Full tests
+passed 290/290 (18 above the 272-test baseline); final-tree smoke and retained
+installed-package artifact receipts are reported by the coordinator. Checks cover
+four bare topics, all eight full command help paths, alias listings/flag parity,
+eight IDs backed by two identical class references, injected pre-auth validation,
+canonical JSON contracts/provenance, new package metadata and offline workflow
+E403 rejection. Tests strip inherited SF_/SFDX_ settings, isolate HOME/state in
+verified F:/Temp run roots and perform no org work or recursive cleanup.
+
+| Component | Needs update? | What to update | Status |
+|---|---|---|---|
+| sf-plugin-data360 | Yes | Package identity, aliases, help, regressions, current docs | done |
+| ampscript-data / ssjs-data / csv-parser / ampscript-parser / sfmc-language-lsp | N/A | No dependency or language behavior change | not needed |
+| vscode-sfmc-language / mcp-server-sfmc / mcp-server-mcdev | N/A | No consumer relationship | not needed |
+| sf-plugin-mcnext / sf-plugin-cms | N/A | Independent plugins | not needed |
+| eslint-plugin-sfmc / eslint-plugin-mcdev / prettier-plugin-sfmc | N/A | No consumer relationship | not needed |
+| ssjs.guide / mso-conditional-parser / eslint-plugin-mso-email / vscode-mso-conditionals | N/A | No consumer relationship | not needed |
+
+Root release/dependency registration and the existing plan record the new current
+identity; unrelated root changes, CSV work and author-identity rules are preserved.
+README and Git workflow are current. Artifact/capability docs, mcdev wiki, public
+sites/tool listings and hover/doc-URL catalogs need no edits: this local-only
+naming/alias change does not expand capability or change artifact schemas.
+
+| Folder | Changed? | Current version | New version |
+|---|---|---|---|
+| ./sf-plugin-data360 | Yes | 0.1.0 | Unassigned; fresh release/tag approval required |
+
+# Historical unscoped npm identity correction — approved tag replacement
 
 On 2026-10-26 the user superseded the scoped-name correction and selected
 `sf-plugin-data360` if absent from npm. One authorized read-only exact-name lookup

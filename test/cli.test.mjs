@@ -51,7 +51,8 @@ test('offline subprocess core auth directories stay under the isolated home with
   ]);
 });
 
-for (const command of ['data360', 'data360 retrieve', 'data360 deploy']) {
+const topics = ['data360', 'datacloud', 'd360', 'dc'];
+for (const command of topics.flatMap((topic) => [topic, `${topic} retrieve`, `${topic} deploy`])) {
   test(`${command} help loads without org authentication`, () => {
     const result = spawnSync(process.execPath, ['bin/run.js', ...command.split(' '), '--help'], {
       encoding: 'utf8',
@@ -59,7 +60,14 @@ for (const command of ['data360', 'data360 retrieve', 'data360 deploy']) {
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Data360/u);
-    if (command === 'data360 deploy') {
+    if (command.includes(' ')) {
+      assert.match(result.stdout, /ALIASES/u);
+      for (const topic of topics.slice(1)) assert.ok(result.stdout.includes(topic), topic);
+    } else {
+      assert.match(result.stdout, /retrieve/u);
+      assert.match(result.stdout, /deploy/u);
+    }
+    if (command.endsWith(' deploy')) {
       for (const flag of [
         '--metadata',
         '--source-dir',
@@ -70,7 +78,7 @@ for (const command of ['data360', 'data360 retrieve', 'data360 deploy']) {
       ])
         assert.ok(result.stdout.includes(flag), flag);
     }
-    if (command === 'data360 retrieve') {
+    if (command.endsWith(' retrieve')) {
       for (const flag of [
         '--metadata',
         '--output-dir',
@@ -159,7 +167,70 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
   }
 });
 
-test('oclif discovers exactly the two approved command entry points', async () => {
+test('oclif discovers eight IDs backed by exactly two canonical implementations', async () => {
   const config = await Config.load({ root: process.cwd() });
-  assert.deepEqual(config.commandIDs.toSorted(), ['data360:deploy', 'data360:retrieve']);
+  assert.deepEqual(
+    config.commandIDs.toSorted(),
+    topics.flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`]).toSorted(),
+  );
+  const implementations = new Set();
+  for (const operation of ['retrieve', 'deploy']) {
+    const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
+    assert.deepEqual(
+      canonical.aliases,
+      topics.slice(1).map((topic) => `${topic}:${operation}`),
+    );
+    for (const topic of topics) {
+      const implementation = await config
+        .findCommand(`${topic}:${operation}`, { must: true })
+        .load();
+      assert.equal(implementation, canonical);
+      assert.equal(implementation.flags, canonical.flags);
+      const command = Object.create(implementation.prototype);
+      command.config = { pjson: { version: '2.151.7' } };
+      command.parse = async () => ({
+        flags: { metadata: ['invalid'], 'api-version': '65.0', 'data-space': 'default' },
+      });
+      command.jsonEnabled = () => true;
+      command.resolveInputs = async () => [];
+      command.resolveOrg =
+        command.selectDocuments =
+        command.acquire =
+        command.preflight =
+        command.execute =
+          () => assert.fail('Invalid alias input must not reach org resolution or services.');
+      const previous = process.exitCode;
+      try {
+        const envelope = await command.run();
+        assert.equal(process.exitCode, 1);
+        assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
+        assert.equal(envelope.metadata.plugin.name, 'sf-plugin-data');
+        assert.equal(envelope.provenance.command, `sf data360 ${operation}`);
+      } finally {
+        process.exitCode = previous;
+      }
+      implementations.add(implementation);
+    }
+  }
+  assert.equal(implementations.size, 2);
 });
+
+for (const topic of topics) {
+  for (const operation of ['retrieve', 'deploy']) {
+    test(`${topic} ${operation} preserves canonical validation and JSON identity`, async () => {
+      const result = spawnSync(
+        process.execPath,
+        ['bin/run.js', topic, operation, '-m', 'invalid', '--json'],
+        { encoding: 'utf8', env: environment },
+      );
+      assert.equal(result.status, 1, result.stderr);
+      const envelope = JSON.parse(result.stdout).result;
+      assert.equal(envelope.contract, `sf-data360-${operation}`);
+      assert.equal(envelope.provenance.command, `sf data360 ${operation}`);
+      assert.equal(envelope.metadata.plugin.name, 'sf-plugin-data');
+      assert.equal(envelope.status, 'blocked');
+      assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
+      assert.deepEqual(envelope.result.items, []);
+    });
+  }
+}

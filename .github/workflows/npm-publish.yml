@@ -33,7 +33,7 @@ jobs:
           const assert = require('node:assert/strict');
           const { spawnSync } = require('node:child_process');
           const pkg = require('./package.json');
-          assert.equal(pkg.name, 'sf-plugin-data360');
+          assert.equal(pkg.name, 'sf-plugin-data');
           assert.equal(pkg.publishConfig.access, 'public');
           assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
           const registry = '--registry=https://registry.npmjs.org/';

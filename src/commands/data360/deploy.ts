@@ -50,6 +50,7 @@ export type DeployEnvelope = {
 
 /** Preview or sequential guarded deployment of explicitly selected authored configuration. */
 export default class Deploy extends SfCommand<DeployEnvelope> {
+  public static readonly aliases = ['datacloud:deploy', 'd360:deploy', 'dc:deploy'];
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =

@@ -1,5 +1,5 @@
 {
-  "name": "sf-plugin-data360",
+  "name": "sf-plugin-data",
   "version": "0.1.0",
   "description": "Salesforce CLI bootstrap for portable Data360 configuration",
   "author": {
@@ -24,7 +24,16 @@
     "topicSeparator": " ",
     "topics": {
       "data360": {
-        "description": "Portable Data360 configuration (bounded explicit DMO retrieval; deployment pending)."
+        "description": "Portable Data360 configuration: bounded DMO retrieval, deployment preview and guarded writes."
+      },
+      "datacloud": {
+        "description": "Alias for data360: portable Data360 configuration."
+      },
+      "d360": {
+        "description": "Alias for data360: portable Data360 configuration."
+      },
+      "dc": {
+        "description": "Alias for data360: portable Data360 configuration."
       }
     }
   },

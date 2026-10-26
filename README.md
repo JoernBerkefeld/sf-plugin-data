@@ -1,6 +1,6 @@
 # Data360 Salesforce CLI plugin
 
-`sf-plugin-data360` is an independently authored TypeScript/ESM
+`sf-plugin-data` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
 implemented; strictly read-only deployment preview, bounded guarded creation and label updates are available.** Current retrieval capability is
 owned by the common service (API 65.0/default, qualified generated recipe and semantics),
@@ -84,22 +84,30 @@ paths fail closed. Directory mode is bounded and strict: every descendant file m
 be authored DMO JSON; unrelated files are not silently ignored. This input-only
 resolver is wired to preview and execution; input admission alone never authorizes writes.
 
-## Package identity correction
+## Package identity and command aliases
 
-The intended npm name is now `sf-plugin-data360`. A read-only lookup on
-2026-10-26 returned structured `E404` for that exact unscoped name; this means no
-accessible existing package was found, not guaranteed publishability (npm may
-apply reserved-name or security restrictions). GitHub ownership remains
-`JoernBerkefeld`.
+The user-selected current npm identity is **`sf-plugin-data`**, unscoped, at
+version `0.1.0`. The repository and directory remain `sf-plugin-data360` under
+GitHub owner `JoernBerkefeld`. This is a local product-naming change, not a claim
+that npm will accept the name or an attempt to bypass npm restrictions. No lookup
+or publication of the new name has been performed; restriction resolution and
+release approval remain separate work.
 
-On 2026-10-26 the user approved committing and pushing this correction and
-replacing the never-published `v0.1.0` tag with the verified corrected commit.
-Version remains `0.1.0`. The previous tag pointed to the scoped identity at
-`b2d18d45b44a302888c3abfbdb1236831f13051c`; do not reuse its scoped tarballs.
-Before publication, require the remote tag and `main` to match the corrected
-commit and use a freshly inspected artifact bound to that tree. Completion and
-artifact integrity are reported in the execution receipt, not predicted here.
-First publication remains manual and user-executed.
+Canonical commands remain `sf data360 retrieve` and `sf data360 deploy`.
+`datacloud`, `d360` and `dc` are equivalent topic aliases for both operations,
+including their flags and help. There are only two command implementations and
+no `sf data` registrations. Aliases retain canonical `sf-data360-*` envelopes,
+provenance command strings, `data360/...` layout and DMO schema/kind; only plugin
+identity metadata changes. API 65.0/default limitations remain unchanged.
+
+Historical evidence: the old unscoped `sf-plugin-data360` lookup returned `E404`
+on 2026-10-26, but its later manual publication was rejected with npm `E403`
+spam detection. Earlier scoped artifacts and the rejected unscoped artifacts
+remain historical evidence only and must not be reused for the current name.
+The existing `v0.1.0` tag at `a328066` still identifies `sf-plugin-data360`, not
+this local rename. Earlier commit/push/tag approval does not authorize new
+history changes or reuse of that tag. Any future release requires fresh explicit
+approval, a tree-bound inspected artifact and separate npm restriction resolution.
 
 ## Local development
 
@@ -118,7 +126,8 @@ npm pack --dry-run --json
 ```
 
 The `bin/run.js` executable is a development/help runner, not a replacement `sf`
-binary. The package's oclif metadata exposes the `data360` topic to Salesforce CLI.
+binary. The package's oclif metadata exposes `data360` and the `datacloud`, `d360`,
+`dc` alias topics to Salesforce CLI. Each supports bare topic help and command help.
 Do not install into a shared CLI profile for acceptance: other installed plugins
 may own the same topic. Packaged CLI installation acceptance will use a dedicated
 profile and exact unsigned-package allowlist in a later slice.
