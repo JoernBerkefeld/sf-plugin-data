@@ -1,3 +1,327 @@
+# Approved commit-and-push execution checkpoint
+
+On 2026-10-26 the user confirmed creation of
+https://github.com/JoernBerkefeld/sf-plugin-data360 and authorized committing and
+pushing this reviewed baseline. The empty hosted repository was verified through
+GitHub CLI with owner administration access, then attached as `origin` using
+`https://github.com/JoernBerkefeld/sf-plugin-data360.git`; fetch succeeded. This
+supersedes historical no-remote statements below, not their qualification limits.
+The package remains `0.1.0`; API-version discovery/latest-version work is deferred
+to the next release. No tag, GitHub release, npm publication, registry lookup or
+new live-org operation is part of this execution. Root changes remain untouched.
+
+All 60 acceptance input hashes and the retained acceptance tarball SHA-256 matched
+before commit splitting. Implementation, regression tests, package smoke and
+primary docs were committed together as `6dc2406` after fresh isolated autofix,
+build, zero-warning lint, full tests, smoke and package checks, then normal enabled
+pre-commit verification. Workflow, its offline tests and release documentation
+form the next coherent commit. Final commit IDs, fresh verification outcomes,
+artifact integrity and push status are reported by the coordinator after the
+commands complete rather than predicted in this document. Documentation changes
+mean a freshly packed tarball differs from the historical acceptance archive;
+compare runtime bytes before carrying its bounded acceptance forward.
+
+# Local release-workflow preparation checkpoint
+
+This slice preserves the prior reviewed bounded DMO code and its 263-test / nine-smoke
+baseline at HEAD 5b0ed1b432417c364f3eae87532fe41c0125cd49. Root fetch/status showed
+main ahead two, not behind; package fetch/status showed main with no configured
+remote or local tags. Upstream package publication state is deliberately unqueried.
+No remote, version baseline, published release or consumer chain is inferred.
+
+Written simplicity-first plan and dedicated read-only senior plan review
+8fd7ceab-1b1a-4bf4-83b8-99c6b29f36c7 returned zero must-fix before edits. One small
+coupled workflow/test/docs slice, not a generic release framework. The workflow
+pins npm 11.5.1, checks the exact scoped name/version using structured JSON, skips
+only a matching returned version and treats only structured E404 as absent.
+A second package-name lookup distinguishes first-ever package absence (user-only
+manual bootstrap) from a later unpublished version (approved hosted publication).
+Auth/network/malformed or mismatched responses fail closed. It never retries a
+publication automatically. Tests execute the actual inline block in a VM with
+synthetic npm responses; no registry or publication subprocess is reachable.
+
+Git workflow documentation now describes bounded retrieval/preview/create/label
+updates rather than unsupported-only entry points, and separates manual bootstrap,
+verified trusted-publisher binding and post-acceptance availability/install checks.
+Root release-tracking and cross-component sync rules register exactly
+`@joernberkefeld/sf-plugin-data360` as independent Tier 4 with external Salesforce
+CLI dependencies only, no workspace consumers, configured remote or release tags.
+Prior CSV/parser/root rule edits were retained. No production DMO file was edited.
+
+## Completed bounded packaged-CLI acceptance receipt
+
+Installed packaged-CLI cross-org acceptance passed on 2026-10-26, as recorded in
+`F:/Temp/data360-live-G6R8BE/accept-complete.json`. This final receipt supersedes
+`accept-timeboxed-handover.json`, which stopped before PATCH. The accepted local
+`@joernberkefeld/sf-plugin-data360` `0.1.0` tarball has SHA-256
+`a923a30ab11f992fa569e863e52f89152f9541961cdfb9496f1ff01a35819f4a`;
+all 60 recorded input hashes remained unchanged. This binds acceptance to that
+packaged baseline, not a newly packed artifact after this documentation edit.
+
+Source `00Daj000010xkZNEAY` retrieval completed. Complete target inventory (1,102
+objects) proved absence before CREATE in target `00Dfj00000bRQabEAG`. CREATE was
+confirmed, followed by independent authored readback equality and an unchanged
+replay. Label-update preview and UPDATE were confirmed, followed by independent
+complete authored equality/full raw runtime preservation and a final unchanged
+replay. Fixture `Preservedfc5841d3a141b__dlm` remains undeleted in the target as
+`0gjfj00000HQpt7AAD`. Reported mutations: source 0, target CREATE 1, target PATCH 1,
+DELETE 0; both unchanged replays reported `not-attempted`. Underlying transport
+and historical OAuth counts were not independently instrumented.
+
+Qualified scope is API 65.0, `default` data space, `Other` category, object label
+and existing nonprimary `FirstValue__c` label only. Field additions, description
+changes, primary-label changes and other APIs/data spaces/categories remain
+unproven and blocked. The optional unsupported-change preview was not exercised.
+All launched acceptance processes completed; no retry, rollback or cleanup ran.
+This is bounded local installed-tarball acceptance, not general DMO qualification
+or registry publication verification.
+
+Release remains blocked pending approved hosted repository setup, publisher
+ownership and verified trusted binding, normal release qualification, user-only
+first npm publication and post-publication registry artifact/integrity verification.
+No remote or local tags are configured, and `package.json` has no `repository`
+field or expected hosted URL; the user must choose the destination and authorize
+creation/setup. The prepared workflow distinguishes user-manual first publication
+from later trusted-publisher releases and skips only a returned exact version;
+that skip is not registry/install/integrity verification. No login/bootstrap
+executable commands are handed off before release qualification; broader DMO
+support is not complete. The candidate remains `0.1.0`; next version is unassigned.
+
+The factual receipt update changes only this existing handover. Source, runtime,
+tests and workflows are unchanged by this documentation slice; the historical
+verification below belongs to the prior package baseline.
+No registry query, npm publish, GitHub command, remote creation, org call, commit,
+push, tag, release or global setting change was performed by this slice. Scratch
+roots are retained without recursive cleanup.
+
+Final release-slice verification on 2026-10-26 completed exit 0 in 164.740s:
+scoped ESLint autofix, explicit build, full zero-warning lint, full tests 272/272
+(57.084s; nine new workflow guard tests), smoke 9/9 (53.905s), registry-only lock
+check and package smoke (32 entries, three help and six installed injected-envelope
+checks). HOME/USERPROFILE/XDG isolation: `F:/Temp/data360-release-hO8TK8`;
+retained package installation: `F:/Temp/data360-package-dq3Xpo`. All shell/test
+entries verified TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR against
+absolute normalized F:/Temp; inherited SF_/SFDX_ overrides were stripped.
+An initial autofix-generated incomplete JSDoc produced lint warnings and stopped
+verification before tests; fixed documentation, then reran the full sequence green.
+LF/no-BOM checks and package/root scoped git diff --check passed. Root changes are
+only rule files, so no root tests/build were required. Package identity/version
+remain `@joernberkefeld/sf-plugin-data360` / `0.1.0`, with no version assignment or
+release inferred from the absent tags/remote.
+
+Dedicated read-only release-slice code review
+67c0e30b-24ed-4a3b-8f08-5d814b6ff4aa returned zero must-fix. Optional subprocess
+error/signal/nonzero-publish-exit regression expansion was reported, not applied.
+The coordinator's existing whole-feature review remains undisturbed.
+
+## Release-slice propagation
+
+| Component                 | Needs update? | What to update                                        | Status     |
+| ------------------------- | ------------- | ----------------------------------------------------- | ---------- |
+| `sf-plugin-data360`       | Yes           | Workflow, offline regressions and release status docs | done       |
+| `ampscript-data`          | N/A           | —                                                     | not needed |
+| `ssjs-data`               | N/A           | —                                                     | not needed |
+| `csv-parser`              | No            | Reference workflow read only                          | not needed |
+| `ampscript-parser`        | N/A           | —                                                     | not needed |
+| `sfmc-language-lsp`       | N/A           | —                                                     | not needed |
+| `vscode-sfmc-language`    | N/A           | —                                                     | not needed |
+| `mcp-server-sfmc`         | N/A           | —                                                     | not needed |
+| `mcp-server-mcdev`        | N/A           | —                                                     | not needed |
+| `sf-plugin-mcnext`        | N/A           | —                                                     | not needed |
+| `sf-plugin-cms`           | N/A           | —                                                     | not needed |
+| `eslint-plugin-sfmc`      | N/A           | —                                                     | not needed |
+| `eslint-plugin-mcdev`     | N/A           | —                                                     | not needed |
+| `prettier-plugin-sfmc`    | N/A           | —                                                     | not needed |
+| `ssjs.guide`              | N/A           | —                                                     | not needed |
+| `mso-conditional-parser`  | N/A           | —                                                     | not needed |
+| `eslint-plugin-mso-email` | N/A           | —                                                     | not needed |
+| `vscode-mso-conditionals` | N/A           | —                                                     | not needed |
+
+README reviewed: already states unpublished bounded capability and hosted setup
+limitations; no change needed for this release-only slice. No npm CHANGELOG.
+Wiki, sfmc.guide, joernberkefeld.com, hover/doc-URL data: unrelated, no updates.
+Both root registration/dependency-map surfaces updated; no pending propagation.
+
+| Folder                | Changed? | Current version | New version                                             |
+| --------------------- | -------- | --------------- | ------------------------------------------------------- |
+| `./sf-plugin-data360` | Yes      | `0.1.0`         | Unassigned; no remote/local tags, publication unqueried |
+
+All other tracked package folders were unchanged by this release-preparation slice.
+Keep everything local as explicitly requested; push/GitHub release may be offered
+only after the remaining acceptance/setup gates and fresh explicit approval.
+
+# Public bounded DMO label-update CLI checkpoint
+
+Started 2026-10-26 from HEAD 5b0ed1b432417c364f3eae87532fe41c0125cd49;
+fetch/status succeeded (main, no configured upstream), preserving all eleven dirty
+paths from the service checkpoint. Written simplicity-first plan and dedicated
+read-only senior plan review 304c2ce8-cb2b-4cb2-9799-4029963291c1 completed before edits,
+with zero must-fix. One small coupled CLI/test slice; no new architecture or flags.
+The coordinator must still run the once-whole-feature code review after this checkpoint.
+
+Public `deploy --preview` passes `allowLabelUpdates: true` (fifth positional argument)
+to `preflightDmoDeploy`. Nonpreview delegates each admitted item to `executeDmoDeploy`
+instead of `executeDmoCreate`; whole-selection admission, exact CMS-style selectors,
+sequential fresh checks and stop-on-block/failure/unknown remain command-owned.
+`ExecutionItem` uses `DmoDeployExecution`, preserving the version 1.0.0 envelope with
+`updated` / `confirmed-updated`, honest unchanged/not-attempted/blocked/failed evidence,
+and generic unknown-mutation diagnostics covering creation or update. No raw payloads.
+Qualified Other/default/API65 object and existing non-primary field labels are public;
+primary labels, additions, descriptions and other mixed unsupported deltas block
+before writes. No arbitrary fixture-name restriction, new category architecture,
+live call/mutation/third PATCH, root edit, commit, push, tag, version or release.
+No field-addition preservation proof exists yet; it needs separate authorization.
+
+Regressions cover injected command and installed envelopes for preview update,
+confirmed update/noop, whole-selection zero execution on mixed blockers and honest
+unknown-stop/redaction; a real command+guarded-service fixture additionally proves
+label update/readback and mixed description refusal. Existing create tests remain.
+README, capabilities and artifact contract now describe public narrow support and
+limitations. Package stays 0.1.0. Final isolated verification completed
+2026-10-26T00:52:11.856Z (155.915s): scoped ESLint autofix, explicit build, full
+zero-warning lint, tests 263/263 (56.404s), smoke 9/9 (53.105s), registry-only
+lock check, package smoke with 32 entries / three help / six installed injected
+envelope checks, Markdown formatting and git diff --check all passed exit0.
+Retained isolated HOME/USERPROFILE/XDG F:/Temp/data360-cli-ArCjNW and packaged
+installation F:/Temp/data360-package-cdfXW4; inherited SF_/SFDX_ overrides stripped
+before explicit offline settings. Every shell entry verified TEMP/actual Node
+os.tmpdir/nonempty TMP/TMPDIR against F:/Temp. Scratch retained without cleanup.
+Initial full run also passed 262/262 before adding the real-service regression;
+final 263/263 run supersedes it. No hooks altered or commit attempted.
+Propagation: independent CLI only; all language-data/parser/LSP/MCP/MSO/CMS/MCNext,
+wiki/site/listing/hover surfaces are unrelated and need no update. No changelog.
+
+# Internal bounded DMO label-update service checkpoint
+
+Started 2026-10-26 from HEAD 5b0ed1b with the existing eight verified dirty files;
+fetch/status succeeded (main, not behind). Preserved effective-label reconciliation
+and guarded PATCH transport. Written plan, explicit simplicity check and dedicated
+read-only senior plan review d1c090d8-7d90-4d2b-a0ea-174fefb72ed9 preceded edits.
+One must-fix incorporated: primary-key label changes block because the current
+generated qualifier recipe derives its label from the primary label. No generic
+category architecture or synthetic-name execution gate was introduced. This is a
+coherent service-only checkpoint; CLI integration and once-whole-feature Gate 4
+remain coordinator-owned, not represented as complete here.
+
+## Exact interfaces and bounded execution
+
+`preflightDmoDeploy(document: unknown, connection: ReadConnection, apiVersion:
+unknown, dataSpace: unknown, allowLabelUpdates = false): Promise<DmoDeployPreview>`
+retains create-only defaults and adds opt-in `update` classification. Exported
+`buildExecutableDmoDelta(desired: unknown, current: DmoDocument)` wraps the broader
+offline candidate with the narrow execution gate. New service exports:
+`executeDmoDeploy(document: unknown, connection: TargetConnection, apiVersion:
+unknown, dataSpace: unknown): Promise<DmoDeployExecution>` and
+`executeDmoDeploySelection(documents: unknown[], connection: TargetConnection,
+apiVersion: unknown, dataSpace: unknown): Promise<DmoDeployExecution[]>`.
+Connection requires instanceUrl/request/metadata/getApiVersion. Result outcome is
+unchanged/blocked/created/failed/updated/not-attempted; mutation is
+not-attempted/confirmed-created/confirmed-updated/unknown, with optional preflight
+and static payload-free diagnostics. No candidate/PATCH/runtime payload escapes.
+
+All inputs validate/detach synchronously, duplicate identities reject. Whole
+selection admission precedes any write; sequential execution reacquires target
+qualification and derives delta from fresh target immediately before its one
+mutation. Create reuses the existing guarded-create executor and fresh absence
+proof. Unsupported/fresh drift blocks before dispatch. Unknown mutation stops
+with remaining selection items not attempted. PATCH return body is ignored;
+independent retrieveDmo obtains detail, Metadata and full relationship inventory.
+Confirmation requires expected authored overlay plus full raw runtime equality,
+normalizing only Connect/Metadata field order by exact identity. Allowed raw
+changes are changed object label at Connect label, Metadata label and object
+labelOverride/masterLabel, and changed existing non-primary field Connect label
+plus Metadata labelOverride. All other values/presence/generated qualifiers remain.
+Attempt evidence is marked before dispatch; no retry/rollback.
+
+Only qualified supported custom Other/default/API 65 with nondynamic Text primary
+key executes. Object and existing non-primary field labels are enabled internally.
+New fields, object/field descriptions, primary labels and all other unproven changes
+(including mixed label edits) remain atomically blocked. Omitted target-only fields
+and descriptions preserve; field reordering is noop. This policy is grounded in
+retained Other preservation evidence F:/Temp/data360-preserve-mO2XMa and effective
+label offline replay F:/Temp/data360-label-MdL05T/replay-receipt.json. It does not
+prove other categories or new-field semantics. No live call, mutation, third PATCH,
+commit/push/version/release/publication was performed by this slice.
+
+## Verification and remaining work
+
+Focused document/service suite 131/131 passed after scoped autofix/build. Full
+isolated verification completed 2026-10-26T00:41:49.853Z, pipeline 162.544s:
+explicit build exit0, full zero-warning lint exit0, full tests 260/260 (57.840s),
+smoke 9/9 (54.781s), registry-only lock check exit0, package smoke exit0 with
+32 artifact entries, three installed help checks and two installed injected envelope
+checks. Normal hook command sequence was executed standalone, hooks unchanged;
+no commit/hook invocation. Retained isolated HOME/USERPROFILE/XDG root
+F:/Temp/data360-executor-hVeEx6, inherited SF_/SFDX_ overrides stripped. Every
+shell entry checked TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR against F:/Temp;
+scratch retained without cleanup. Changed Markdown format and git diff --check pass. Added regressions cover
+mixed unsupported changes/no writes, omissions/noop, fresh target drift, stale PATCH
+body versus independently confirmed update, raw runtime/generated/read failures,
+selection validation/admission and stop-on-ambiguity. Existing create tests retained.
+
+Remaining: a separately planned CLI slice can opt into service selection execution,
+update command/envelope/human diagnostics and preview contract deliberately, then
+run its verification. Current CLI remains create-only and cannot misreport an update
+as created. Run coordinator-owned whole-feature review only once all planned slices
+land. No new live experiment is authorized.
+
+Propagation: README/artifact-format/capabilities and this handover updated. No
+changelog/version change; package stays 0.1.0. No language data, parser, LSP, MCP,
+MSO, CMS/MCNext, wiki/site/listing/hover dependency or changed surface; no downstream
+propagation needed. Scope remains local and unreleased.
+
+# DMO API 65 effective field-label reconciliation
+
+Started 2026-10-26 from clean 5b0ed1b; fetch/status succeeded. Written plan,
+explicit simplicity check and dedicated read-only senior plan review preceded
+edits (zero must-fix). One small coupled field-join/test slice; no transport,
+public update enablement, live calls, writes, new org fixture, third PATCH,
+commits, pushes, versions or releases.
+
+Local documentation search found no effective-label contract. With prior approval
+for official online documentation, fetched the official
+[CustomField reference](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/customfield.htm),
+MktDataModelFieldAttributes section: API 65 `labelOverride` replaces the default
+field display label when specified, otherwise the default applies; maximum 255
+characters. `masterLabel` is separately documented. The schema MCP returned no
+nested-type content and supplied no additional evidence. Search summaries omitted
+these newer attributes; the fetched English reference explicitly contains them.
+
+The common join now validates a present override as nonblank text <=255 characters
+and compares Connect label to that override, falling back only on absence.
+Metadata base label validation and optional masterLabel===base qualification are
+retained independently. The latter remains this projector's narrow acceptance
+constraint, not a universal Salesforce identity claim. Raw observations remain
+unchanged and detached in expectations. Narrow compatibility helpers and generated
+recipe gates are unchanged. Tests cover observed split, absence fallback, present
+malformed values and Connect/effective/base/master disagreements.
+
+Offline replay of retained diagnosis snapshots for the existing owned synthetic
+Preservedfc5841d3a141b__dlm returns projected with zero blockers, exactly matches the
+entire patch-2-intent authored expected overlay, retains the entire raw runtime
+expectations and leaves inputs unchanged. Receipt retained under
+F:/Temp/data360-label-MdL05T/replay-receipt.json; this is offline qualification of
+the recorded checkpoint, not a new live observation or proof of new-field behavior.
+Third PATCH remains unattempted. Next smallest integration step is separately
+reviewed guarded PATCH transport plus independent GET/common qualification; any
+new-field preservation experiment still needs explicit separate authorization.
+
+Verification complete: focused 113/113; full 235/235 (57.004s); smoke 9/9
+(54.984s); explicit build, lint autofix and full zero-warning lint exit0;
+registry-only lock check exit0; packaged 30-entry artifact with three installed
+help checks and two installed injected envelope checks exit0. Full verification
+pipeline 153.953s. Normal pre-commit command sequence was run standalone with
+hooks unchanged; no commit/hook invocation was authorized. Changed Markdown
+Prettier check and git diff --check pass. Verification used marked isolated
+F:/Temp/data360-label-MdL05T USERPROFILE/HOME/XDG with inherited SF_/SFDX_ variables
+stripped; package harness retained F:/Temp/data360-package-aXz4QJ. No cleanup.
+Final read-only senior code review ae6f91e1-c22b-47ad-aee2-3fa91f933a1f returned
+zero must-fix. Optional exact-255 acceptance regression was reported, not auto-added.
+An earlier review invocation aborted without a result; a fresh review completed.
+Documentation propagation: README, artifact-format, capabilities and this handover
+explain bounded checkpoint qualification without claiming public update support. No changelog/version change. All language packages, wiki/sites/listings,
+hover data, CMS/MCNext and other packages have no dependency or changed surface.
+
 # DMO pure offline update-delta slice
 
 Started 2026-10-26 00:44+01:00 from clean
