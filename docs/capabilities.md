@@ -136,6 +136,12 @@ binding and SQL companion selection remain unimplemented; roadmap chunk 6 is par
 
 ## Shared gates
 
+ConnectClient SSOT GETs now use an operation-local no-refresh receiver, like guarded
+writes: expired authentication fails immediately without OAuth refresh or replay.
+Repair authentication before a new explicit invocation. Retry and redirect refusal
+remain in place; the caller's connection and unrelated consumers are unchanged.
+This does not change API-version discovery or the separate Metadata/SOAP guard.
+
 - [x] Internal single-authored-DMO read-only deploy preflight independently maps
       source, proves absence through complete scoped inventory, and retrieves
       existing target through full common semantics. Identity-keyed field comparison

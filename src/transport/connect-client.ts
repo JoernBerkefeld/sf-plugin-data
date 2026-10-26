@@ -122,7 +122,7 @@ export class ConnectClient {
         body,
         headers: { 'content-type': 'application/json' },
       },
-      this.writeReceiver(),
+      this.noRefreshReceiver(),
     );
   }
 
@@ -150,7 +150,7 @@ export class ConnectClient {
           body: JSON.stringify(patch),
           headers: { 'content-type': 'application/json' },
         },
-        this.writeReceiver(),
+        this.noRefreshReceiver(),
       );
     } catch (error: unknown) {
       if (error instanceof ConnectError) throw error;
@@ -158,7 +158,7 @@ export class ConnectClient {
     }
   }
 
-  private writeReceiver(): AuthenticatedConnection {
+  private noRefreshReceiver(): AuthenticatedConnection {
     const receiver = Object.create(this.connection) as AuthenticatedConnection;
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
     return receiver;
@@ -167,7 +167,7 @@ export class ConnectClient {
   private async read<T>(path: string, noContentResponse?: unknown): Promise<T> {
     return this.send<T>(
       { method: 'GET', url: this.safeUrl(path) },
-      this.connection,
+      this.noRefreshReceiver(),
       noContentResponse,
     );
   }

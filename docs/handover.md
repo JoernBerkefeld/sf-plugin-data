@@ -1,3 +1,41 @@
+# GET single-attempt prerequisite — verified, parent review pending
+
+Started from clean 1983e07aa8d105af947fd69a0c082c4dceffa905; fetch/status succeeded
+(main ahead three). Separate written GET plan and parent Gate2 reviewer 936fdbf9
+completed with zero must-fix/optional findings; Gate3 selected one small coupled slice.
+No DELETE transport, DLO acquisition, root, dependency or version changes.
+
+src/transport/connect-client.ts renames the private writeReceiver to
+noRefreshReceiver and uses a fresh receiver for read() as well as POST/PATCH.
+Public interfaces, paths, version selection, response parsing, noContentResponse,
+retry/redirect guards and payload-free errors are unchanged. Only operation-local
+_refreshDelegate is masked; caller connection, credentials, version and globals
+are not modified. Expired ConnectClient SSOT authentication now fails immediately
+rather than refreshing/replaying; repair auth before a new explicit invocation.
+This does not cover version discovery or change the separate Metadata/SOAP guard.
+
+test/connect-client.test.mjs extends installed Connection.prototype.request stack
+regressions with GET 401/503/200 on synthetic DMO and DLO routes. They prove one
+HTTP attempt, no delegate/OAuth refresh/replay, inherited original bearer token,
+exact method/path/no body, secret-free errors and unchanged connection descriptors
+and prototype. Actual-core GET redirect callback refusal covers same/cross-origin
+with no second request. Existing path/version and relationship-204 tests stay green.
+Generic DLO transport coverage is not a DLO acquisition/support claim.
+
+Verification: scoped ESLint autofix, explicit build and focused regressions passed
+52/52 (1.314s test runtime; 9.528s focused pipeline / 10.055s shell). Full zero-warning
+lint, npm test --no-workspaces 357/357 (117.676s Node runtime), CLI smoke 30/30
+(113.473s), and git diff --check all passed: 243.528s measured full pipeline /
+245.468s shell, exit 0. TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR passed
+F:/Temp preflight at every shell entry. No live org/API calls, recursive cleanup,
+fixture deletion, stage/commit/push/release or root edits occurred. Only this
+handover receipt was added after green verification; production code stayed fixed.
+
+Parent owns Gate4 review and Gate5 propagation before any coordinated commit.
+Next sequence: commit this guard only after those gates; separately approved DELETE
+transport; then DLO acquisition. DLO constant-incomplete detail blocking and explicit
+default-space evidence constraints are unchanged. Existing live fixtures preserved.
+
 # Gate4 iteration1 Git status remediation — iteration2 review pending
 
 Parent reviewer e38670f7 returned one must-fix: tokens(worktree).includes('D')
