@@ -32,7 +32,7 @@ const packed = spawnSync(process.execPath, [npm, 'pack', '--pack-destination', r
 assert.equal(packed.status, 0, packed.stderr);
 // Lifecycle output precedes npm's JSON result.
 const [artifact] = JSON.parse(packed.stdout.slice(packed.stdout.indexOf('[\n')));
-assert.equal(artifact.name, '@joernberkefeld/sf-plugin-data360');
+assert.equal(artifact.name, 'sf-plugin-data360');
 assert.equal(artifact.entryCount, 32);
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.d.ts'));
@@ -67,14 +67,7 @@ const installed = spawnSync(
   { encoding: 'utf8', env: environment },
 );
 assert.equal(installed.status, 0, installed.stderr);
-const runner = path.join(
-  installation,
-  'node_modules',
-  '@joernberkefeld',
-  'sf-plugin-data360',
-  'bin',
-  'run.js',
-);
+const runner = path.join(installation, 'node_modules', 'sf-plugin-data360', 'bin', 'run.js');
 for (const command of [[], ['retrieve'], ['deploy']]) {
   const result = spawnSync(process.execPath, [runner, 'data360', ...command, '--help'], {
     cwd: root,

@@ -1,5 +1,5 @@
 {
-  "name": "@joernberkefeld/sf-plugin-data360",
+  "name": "sf-plugin-data360",
   "version": "0.1.0",
   "description": "Salesforce CLI bootstrap for portable Data360 configuration",
   "author": {

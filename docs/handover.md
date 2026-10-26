@@ -1,3 +1,36 @@
+# Unscoped npm identity correction — approved tag replacement
+
+On 2026-10-26 the user superseded the scoped-name correction and selected
+`sf-plugin-data360` if absent from npm. One authorized read-only exact-name lookup
+at 10:07 UTC returned structured `E404` from
+`https://registry.npmjs.org/sf-plugin-data360`. No accessible package was found;
+reserved-name/security restrictions and final publishability remain unverified.
+The earlier manual scoped publication failed with `E404Scope`; no successful
+publication is known. GitHub owner `JoernBerkefeld` is unchanged.
+
+Current local package/lock metadata, workflow guard, package-smoke installation
+path, command-envelope expectations, README and root registrations now use the
+unscoped identity. Version stays `0.1.0`; API-version work remains deferred.
+Historical scoped identities and hashes below describe old artifacts only, not
+the corrected release candidate. Every prior scoped tarball is invalid for the
+new npm identity; fresh packaging/integrity and release-tree binding are required.
+
+At 11:53 local time on 2026-10-26 the user explicitly approved committing and
+pushing the correction and replacing local/remote `v0.1.0` with the corrected
+commit, retaining version `0.1.0`. The observed old annotated tag object is
+`2865ef032290872f7e049c67c9f395df0edc39e9`, peeled to
+`b2d18d45b44a302888c3abfbdb1236831f13051c` (old scoped identity). Replace only
+that tag using its observed object ID as the remote force-with-lease condition;
+push `main` without force. Require staged-tree/commit equality, successful normal
+hooks, remote branch/tag equality and a clean package tree before handoff.
+The external execution receipt records actual commit/tag results and fresh
+artifact integrity; this paragraph records approval and requirements, not a
+prediction of success. Root changes remain outside the package commit/push.
+No GitHub release, login, global auth change, registry lookup or publication is
+authorized by this step. First npm publication remains user-executed.
+Verification runs offline with isolated HOME/state and stripped inherited
+SF_/SFDX_ overrides; retained artifact evidence is reported separately.
+
 # Approved commit-and-push execution checkpoint
 
 On 2026-10-26 the user confirmed creation of

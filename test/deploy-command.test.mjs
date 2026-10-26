@@ -91,7 +91,7 @@ test('preview resolves local input before org inspection and returns advisory ve
   assert.equal(result.metadata.preview, true);
   assert.equal(result.metadata.operation, 'deploy');
   assert.deepEqual(result.metadata.plugin, {
-    name: '@joernberkefeld/sf-plugin-data360',
+    name: 'sf-plugin-data360',
     version: '0.1.0',
   });
   assert.equal(result.provenance.pluginVersion, '0.1.0');

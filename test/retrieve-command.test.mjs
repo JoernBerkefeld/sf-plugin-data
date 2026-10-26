@@ -72,7 +72,7 @@ test('command delegates acquisition and authored-only output without duplicating
   assert.equal(result.contractVersion, '1.0.0');
   assert.equal(result.status, 'success');
   assert.deepEqual(result.metadata.plugin, {
-    name: '@joernberkefeld/sf-plugin-data360',
+    name: 'sf-plugin-data360',
     version: '0.1.0',
   });
   assert.equal(result.provenance.pluginVersion, '0.1.0');

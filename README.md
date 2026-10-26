@@ -1,6 +1,6 @@
 # Data360 Salesforce CLI plugin
 
-`@joernberkefeld/sf-plugin-data360` is an independently authored TypeScript/ESM
+`sf-plugin-data360` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
 implemented; strictly read-only deployment preview, bounded guarded creation and label updates are available.** Current retrieval capability is
 owned by the common service (API 65.0/default, qualified generated recipe and semantics),
@@ -83,6 +83,23 @@ mixed modes, malformed JSON, duplicate JSON keys, runtime projections and linked
 paths fail closed. Directory mode is bounded and strict: every descendant file must
 be authored DMO JSON; unrelated files are not silently ignored. This input-only
 resolver is wired to preview and execution; input admission alone never authorizes writes.
+
+## Package identity correction
+
+The intended npm name is now `sf-plugin-data360`. A read-only lookup on
+2026-10-26 returned structured `E404` for that exact unscoped name; this means no
+accessible existing package was found, not guaranteed publishability (npm may
+apply reserved-name or security restrictions). GitHub ownership remains
+`JoernBerkefeld`.
+
+On 2026-10-26 the user approved committing and pushing this correction and
+replacing the never-published `v0.1.0` tag with the verified corrected commit.
+Version remains `0.1.0`. The previous tag pointed to the scoped identity at
+`b2d18d45b44a302888c3abfbdb1236831f13051c`; do not reuse its scoped tarballs.
+Before publication, require the remote tag and `main` to match the corrected
+commit and use a freshly inspected artifact bound to that tree. Completion and
+artifact integrity are reported in the execution receipt, not predicted here.
+First publication remains manual and user-executed.
 
 ## Local development
 
