@@ -224,6 +224,9 @@ test('guarded create refuses invalid payload/version before any request', async 
 
 for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
   ['POST', 401],
+  ['DELETE', 401],
+  ['DELETE', 503],
+  ['DELETE', 204],
   ['PATCH', 401],
   ['PATCH', 503],
   ...[
@@ -249,7 +252,7 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
         httpRequest: (request, options) => {
           requests++;
           assert.equal(request.method, method);
-          if (method === 'GET') {
+          if (method === 'GET' || method === 'DELETE') {
             assert.equal(request.url, `${origin}${route}`);
             assert.equal(request.body, undefined);
             assert.equal(request.headers.Authorization, 'Bearer synthetic-token');
@@ -291,10 +294,14 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
     const operation =
       method === 'GET'
         ? client.get(route)
-        : method === 'POST'
-          ? client.createDataModelObject(authored)
-          : client.patchDataModelObject('Synthetic__dlm', { label: 'Updated' });
-    if (statusCode === 200) {
+        : method === 'DELETE'
+          ? client.deleteDataModelObject('Synthetic__dlm')
+          : method === 'POST'
+            ? client.createDataModelObject(authored)
+            : client.patchDataModelObject('Synthetic__dlm', { label: 'Updated' });
+    if (statusCode === 204) {
+      assert.equal(await operation, undefined);
+    } else if (statusCode === 200) {
       assert.deepEqual(await operation, { name: 'Synthetic' });
     } else {
       await assert.rejects(operation, (error) => {
@@ -314,29 +321,117 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
     assert.equal(connection._refreshDelegate, refresh);
   });
 
-test('actual core GET refuses same-origin and cross-origin redirects without a second request', async () => {
-  for (const location of [`${origin}${path}/Other__dlm`, `https://other.test${path}`]) {
-    let requests = 0;
-    const connection = Object.create(Connection.prototype);
-    Object.assign(connection, {
-      instanceUrl: origin,
-      version: '65.0',
-      accessToken: 'synthetic-token',
-      logger: { getRawLogger: () => ({ debug: () => {} }) },
-      _refreshDelegate: { refresh: () => assert.fail('must not refresh') },
-      _propagators: [],
-      _transport: {
-        httpRequest: (_request, options) => {
-          requests++;
-          options.followRedirect(location);
-          assert.fail('redirect must throw');
+for (const method of ['GET', 'DELETE'])
+  test(`actual core ${method} refuses same-origin and cross-origin redirects without a second request`, async () => {
+    for (const location of [`${origin}${path}/Other__dlm`, `https://other.test${path}`]) {
+      let requests = 0;
+      const connection = Object.create(Connection.prototype);
+      Object.assign(connection, {
+        instanceUrl: origin,
+        version: '65.0',
+        accessToken: 'synthetic-token',
+        logger: { getRawLogger: () => ({ debug: () => {} }) },
+        _refreshDelegate: { refresh: () => assert.fail('must not refresh') },
+        _propagators: [],
+        _transport: {
+          httpRequest: (_request, options) => {
+            requests++;
+            options.followRedirect(location);
+            assert.fail('redirect must throw');
+          },
         },
+      });
+      const client = new ConnectClient(connection, '65.0');
+      await assert.rejects(
+        method === 'GET' ? client.get(path) : client.deleteDataModelObject('Synthetic__dlm'),
+        { code: 'INVALID_REQUEST' },
+      );
+      assert.equal(requests, 1);
+    }
+  });
+
+test('guarded DELETE preserves exact custom-subset route and untrusted response without body or options', async () => {
+  for (const name of ['Synthetic__dlm', 'Synthetic_2__dlm']) {
+    const response = { untrusted: 'not deletion evidence' };
+    const refresh = {};
+    const connection = {
+      instanceUrl: origin,
+      _refreshDelegate: refresh,
+      request: async function (request, options) {
+        assert.notEqual(this, connection);
+        assert.equal(this._refreshDelegate, undefined);
+        assert.deepEqual(request, { method: 'DELETE', url: `${origin}${path}/${name}` });
+        assert.equal(options.retry.maxRetries, 0);
+        return response;
       },
-    });
-    await assert.rejects(new ConnectClient(connection, '65.0').get(path), {
+    };
+    assert.equal(await new ConnectClient(connection, '65.0').deleteDataModelObject(name), response);
+    assert.equal(connection._refreshDelegate, refresh);
+  }
+});
+
+test('guarded DELETE rejects unsupported versions and malformed or known standard/namespaced names before dispatch', async () => {
+  const connection = { instanceUrl: origin, request: () => assert.fail('no request') };
+  for (const version of ['64.0', '66.0', latest])
+    await assert.rejects(
+      new ConnectClient(connection, version).deleteDataModelObject('Synthetic__dlm'),
+      {
+        code: 'INVALID_REQUEST',
+      },
+    );
+  for (const name of [
+    undefined,
+    // eslint-disable-next-line unicorn/no-null -- Exercise a literal invalid runtime caller value.
+    null,
+    123,
+    {},
+    '',
+    ' Synthetic__dlm',
+    'Synthetic__dlm ',
+    'Synthetic',
+    'Synthetic__c',
+    '1Synthetic__dlm',
+    'Synthetic___dlm',
+    'Synthetic___Name__dlm',
+    'ns__Synthetic__dlm',
+    'ssot__Individual__dlm',
+    'SSOTIndividual__dlm',
+    'Synthetic__dlm?cascade=true',
+    'Synthetic__dlm/other',
+    'Synthetic%2fOther__dlm',
+    'Synthetic__dlm#fragment',
+    'Synthetic\n__dlm',
+  ])
+    await assert.rejects(new ConnectClient(connection, '65.0').deleteDataModelObject(name), {
       code: 'INVALID_REQUEST',
     });
-    assert.equal(requests, 1);
+});
+
+test('guarded DELETE sanitizes failures without retry or absence claims', async () => {
+  for (const status of [400, 401, 403, 404, 409, undefined]) {
+    let calls = 0;
+    const client = new ConnectClient(
+      {
+        instanceUrl: origin,
+        request: async () => {
+          calls++;
+          throw Object.assign(new Error('secret dependency or timeout'), {
+            statusCode: status,
+            body: 'secret',
+            accessToken: 'secret',
+            cause: 'secret',
+          });
+        },
+      },
+      '65.0',
+    );
+    await assert.rejects(client.deleteDataModelObject('Synthetic__dlm'), (error) => {
+      assert.equal(error.code, status === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED');
+      assert.equal(error.statusCode, status);
+      assert.equal(inspect(error).includes('secret'), false);
+      return true;
+    });
+    assert.equal(calls, 1);
   }
 });
 

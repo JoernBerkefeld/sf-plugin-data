@@ -1,3 +1,43 @@
+# Internal DMO DELETE transport — verified, parent review pending
+
+Started clean at fb6968bda21f6c107107f26868265cde2b077977; fetch/status passed,
+main ahead four. Written bounded DELETE plan and parent Gate2 reviewer 4e5593ea
+completed with zero must-fix; optional test-placement suggestion was not adopted.
+Gate3 kept this coupled transport/test slice small. No enabled service/CLI or DLO
+acquisition was added; parent owns Gate4/Gate5 before coordinated commit.
+
+ConnectClient.deleteDataModelObject(dataModelObjectName: string): Promise<unknown>
+in src/transport/connect-client.ts requires requested numeric 65.0 and the existing
+non-namespaced custom-subset spelling (no ssot prefix); it sends exactly DELETE
+/services/data/v65.0/ssot/data-model-objects/{name}, without body/query/cascade option.
+It reuses noRefreshReceiver/send for no refresh/replay, retry or redirect and
+payload-free errors. Name syntax cannot establish target Custom kind, ownership,
+default-space binding or dependency safety. Response remains untrusted; 204/404
+are not confirmed deletion or absence. No dependency, artifact or fixture cleanup.
+
+Existing test/connect-client.test.mjs contains all synthetic coverage: exact route
+and retained response, malformed/runtime/known-standard/namespaced-name rejection,
+64/66/latest refusal before requests, sanitized 400/401/403/404/409/network-timeout
+errors, actual-core DELETE 401/503/204 one-attempt/no-refresh/no-replay and unchanged
+caller descriptors/prototype. Actual-core redirect refusal covers same/cross-origin.
+Existing GET/POST/PATCH, path/version and relationship-204 regressions remain green.
+Capabilities and artifact-format notes retain blockers A-C: unknown REST collateral
+and complete dependency admission, unapproved public interface, and absent scoped
+disposable-fixture live-delete approval. No non-cascading/live/async-contract claim.
+
+Verification: initial scoped lint flagged the intentionally invalid null test input;
+a named one-line suppression documents that precise test reason. Corrected scoped
+autofix, explicit build and focused tests passed 59/59 (1.239s Node; 7.500s pipeline /
+7.974s shell). Full zero-warning lint, npm test --no-workspaces 364/364 (105.548s),
+CLI smoke 30/30 (101.972s), git diff --check passed, exit 0: full pipeline 217.094s /
+218.668s shell. TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR passed F:/Temp
+checks at every shell entry. Only this handover receipt followed green code.
+No org/auth/API calls, live deletion, recursive cleanup, root/dependency/version
+changes, stage/commit/push/tag/release. Existing fixtures remain preserved.
+Next: parent review/propagation and coordinated commit; then separately approved
+DLO acquisition with constant-incomplete detail blocker and explicit default-space
+evidence constraints. Enabled DMO deletion remains blocked, not silently complete.
+
 # GET single-attempt prerequisite — verified, parent review pending
 
 Started from clean 1983e07aa8d105af947fd69a0c082c4dceffa905; fetch/status succeeded

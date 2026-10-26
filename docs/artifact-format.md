@@ -1,5 +1,23 @@
 # Internal DMO field contract
 
+## Internal delete transport boundary
+
+`ConnectClient.deleteDataModelObject(name): Promise<unknown>` sends one DELETE to
+`/services/data/v65.0/ssot/data-model-objects/{name}` only for requested numeric
+65.0 and the existing non-namespaced custom-name syntax subset. It sends no body,
+query or cascade option, and disables refresh/replay, retry and redirects locally.
+The [official endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec)
+documents availability since 61.0 and responses 204/404; this is not live API65
+acceptance. Neither status proves confirmed deletion. No DMO-specific async status
+contract was established, so no polling or fallback is implemented.
+
+This transport is not an enabled delete service or public command. Name syntax
+cannot prove target kind/ownership, default-space binding or absent dependencies.
+Direct REST collateral effects and complete dependency admission remain unresolved;
+UI mapping-removal behavior is not proof of REST semantics. Public delete interface
+and explicitly scoped disposable-fixture live approval remain separate blockers.
+No local artifact, mapping or dependency deletion is implemented or authorized.
+
 The approved Git artifact is the authored-only document below. Runtime source
 expectations and joined projections remain internal, never part of that file.
 The validator/serializer, mappers and raw field projection are offline helpers;

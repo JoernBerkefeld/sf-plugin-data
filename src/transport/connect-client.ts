@@ -158,6 +158,30 @@ export class ConnectClient {
     }
   }
 
+  /**
+   * Send one fixed-route API65 DELETE without refresh, retry or redirect.
+   * Name syntax does not prove target ownership, kind, scope or dependency safety.
+   * No enabled service authorizes this transport; responses never confirm deletion.
+   * @param {string} dataModelObjectName Exact non-namespaced custom-subset API name.
+   * @returns {Promise<unknown>} Untrusted response, never an absence proof.
+   */
+  public async deleteDataModelObject(dataModelObjectName: string): Promise<unknown> {
+    if (
+      this.selection.requested !== '65.0' ||
+      typeof dataModelObjectName !== 'string' ||
+      !/^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(dataModelObjectName) ||
+      /^ssot/iu.test(dataModelObjectName)
+    )
+      throw new ConnectError('INVALID_REQUEST');
+    return this.send(
+      {
+        method: 'DELETE',
+        url: this.safeUrl(`${this.prefix}data-model-objects/${dataModelObjectName}`),
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
   private noRefreshReceiver(): AuthenticatedConnection {
     const receiver = Object.create(this.connection) as AuthenticatedConnection;
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });

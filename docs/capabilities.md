@@ -84,6 +84,14 @@ Recorded Other evidence does not establish other categories or general updates.
 - [ ] Distinguish standalone custom versus standard/system/generated variants.
 - [ ] Prove export-to-target create, nondestructive update and unchanged replay.
 
+Internal `ConnectClient.deleteDataModelObject(name)` now provides a fixed API65
+DELETE transport only, with non-namespaced custom-subset name syntax, no body/query,
+refresh, retry or redirect. It has no enabled service or CLI. Syntax does not prove
+Custom kind, default-space binding, ownership or dependency safety; 204/404 do not
+confirm deletion. Dependency/collateral admission, public interface approval and
+explicit disposable-fixture live-delete approval remain blockers. No live deletion,
+non-cascading behavior or asynchronous status contract is claimed.
+
 ## mapping: unimplemented
 
 - [ ] Record official endpoints, versions, pagination and inventory scope.
