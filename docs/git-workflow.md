@@ -20,8 +20,32 @@ deploy that approved commit with fresh whole-selection preflight. Preview is
 advisory, not an executable saved plan or a promise of identical future actions.
 Never expose org credentials to untrusted pull-request code.
 
-Deployment jobs, Git-change selectors, report files and approval-bound execution
-are deferred. No repository, branch protection, remote or npm publisher is
+`sf data360 deploy --changed-since <ref> --preview --api-version 65.0` selects
+current canonical `data360/default/dmo/ApiName.json` files relative to the Git
+repository root, even from a nested working directory. It is exclusive with
+`--metadata` and `--source-dir`. Selection includes changes from the unique merge
+base to HEAD, staged/unstaged edits and relevant untracked files. Each file's
+default-space document identity must exactly match its filename. Other resource
+families and SQL companion pairs are not selected.
+
+Relevant renames and deletions block the whole selection. Explicit Git rename
+detection is enabled regardless of repository configuration and inspects both
+endpoints, but Git-inferred renames cannot establish historical intent. A relevant
+untracked DMO addition combined with **any tracked worktree deletion** also blocks,
+including an unrelated deletion: Git cannot infer an inbound move to an untracked
+destination. Stage intended changes to permit Git-inferred rename detection, then
+resolve unsupported lifecycle changes. This conservative ambiguity policy is intentional.
+
+A valid empty selection succeeds without downstream target inspection, preflight
+or execution. Existing Salesforce core parse-time authentication behavior remains;
+this is not an authentication-free invocation guarantee. Selection failures return
+blocked diagnostics. Optional `provenance.git` records repository root, requested
+ref and resolved reference/HEAD/merge-base commits; it is not exact-byte binding.
+Nonempty selections use the existing whole-selection preflight and guarded API65
+execution unchanged. Preview remains advisory.
+
+Deployment jobs, report files, exact-byte/approved-commit binding and approval-bound execution
+remain deferred. This implements only the Git-selection portion of roadmap chunk 6. No repository, branch protection, remote or npm publisher is
 configured automatically. Release publication requires separate explicit approval
 and verified hosted trusted-publisher configuration. Hosted publication uses npm
 11.5.1 and an exact `name@version` registry check: an existing matching version

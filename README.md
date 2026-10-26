@@ -90,6 +90,18 @@ base/master observations. This is one recorded checkpoint, not general update or
 new-field preservation acceptance. HTTP 200 can contain old state, so
 execution independently GETs and qualifies readback.
 
+Deploy also accepts `--changed-since <ref>`, exclusive with `--metadata` and
+`--source-dir`, for current canonical DMO files selected from the unique Git merge
+base, staged/unstaged changes and relevant untracked files. It resolves the
+repository root even from nested directories. Relevant renames/deletions block;
+a relevant untracked DMO addition plus **any tracked worktree deletion** also
+blocks conservatively. Stage intended changes to permit Git-inferred rename
+detection; unsupported lifecycle changes still block. A valid empty selection
+succeeds without downstream target/resource/service work, but existing parse-time
+core authentication remains. Optional Git provenance records resolved commits,
+not exact-byte binding. See [Git workflow](docs/git-workflow.md) for scope and
+limitations; report files, CI delivery and SQL companions remain deferred.
+
 An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
 files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
 coalesce; different files claiming the same identity fail. No selection, bare types,

@@ -119,6 +119,21 @@ Recorded Other evidence does not establish other categories or general updates.
 - [ ] Classify implicit compute/enable/schedule side effects and block unsafe routes.
 - [ ] Prove safe export-to-target create/update/no-op without computation.
 
+## Bounded Git deployment selection
+
+`deploy --changed-since <ref>` is exclusive with metadata/source-dir and supports
+only current canonical default-space DMO JSON, admitted through the existing input
+resolver. Repository-root resolution, unique merge-base/HEAD changes, index,
+worktree and untracked selection are local. Relevant rename/delete blocks the
+whole selection, regardless of diff.renames configuration. Git inference is not
+historical rename-intent proof. A relevant untracked DMO addition plus any tracked
+worktree deletion blocks conservatively; staging intended changes permits Git
+rename inference, not unsupported lifecycle deployment. Empty selection succeeds
+before downstream target inspection/services, without changing core parse-time auth.
+Optional Git provenance records commits, not file-byte hashes or executable plans.
+API65 preflight/execution guards are unchanged. Reports, CI delivery, exact-byte
+binding and SQL companion selection remain unimplemented; roadmap chunk 6 is partial.
+
 ## Shared gates
 
 - [x] Internal single-authored-DMO read-only deploy preflight independently maps

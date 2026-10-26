@@ -8,6 +8,8 @@ import type { DmoDeployPreview } from '../../services/preflight-dmo-deploy.js';
 import { executeDmoDeploy } from '../../services/execute-dmo-deploy.js';
 import type { DmoDeployExecution } from '../../services/execute-dmo-deploy.js';
 import { plugin as packageMetadata } from '../../plugin.js';
+import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
+import type { GitDeploySelection } from '../../artifacts/git-deploy-selection.js';
 
 /**
  * Resolve optional target auth with an explicit bootstrap version before core initialization.
@@ -69,10 +71,11 @@ export type DeployEnvelope = {
     pluginVersion: string;
     command: string;
     generatedAt: string;
+    git?: GitDeploySelection['provenance'];
   };
   result: {
     scope: { dataSpace: string };
-    selection: { sourceDir: string[]; metadata: string[] };
+    selection: { sourceDir: string[]; metadata: string[]; changedSince?: string };
     items: Array<
       | (DmoDeployPreview & {
           identity: { dataSpace: string; apiName: string };
@@ -90,7 +93,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact dmo:ApiName selectors. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates only object and existing non-primary field labels sequentially with fresh checks and qualified readback. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact dmo:ApiName selectors OR --changed-since Git selection. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates only object and existing non-primary field labels sequentially with fresh checks and qualified readback. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
       {
@@ -120,12 +123,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary: 'Explicit authored JSON file or directory; repeatable.',
+      exclusive: ['changed-since'],
     }),
     metadata: Flags.string({
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
       summary: 'Exact dmo:ApiName project member; repeatable.',
+      exclusive: ['changed-since'],
+    }),
+    'changed-since': Flags.string({
+      summary: 'Select canonical DMO Git changes since the merge base with a commit reference.',
+      exclusive: ['source-dir', 'metadata'],
     }),
     preview: Flags.boolean({
       default: false,
@@ -134,6 +143,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   };
 
   protected resolveInputs = readDeployInputs;
+  protected selectGitInputs = selectGitDeployInputs;
   protected preflight = preflightDmoDeploy;
   protected execute = executeDmoDeploy;
 
@@ -203,9 +213,23 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       return envelope;
     };
     try {
+      const changedSince = flags['changed-since'];
+      if (
+        changedSince !== undefined &&
+        (flags['source-dir'] !== undefined || flags.metadata !== undefined)
+      )
+        return finish('blocked', 'INVALID_SELECTION');
+      let sourceDirectories = flags['source-dir'];
+      if (changedSince !== undefined) {
+        envelope.result.selection.changedSince = changedSince;
+        const selected = await this.selectGitInputs({ cwd, ref: changedSince });
+        envelope.provenance.git = selected.provenance;
+        if (selected.paths.length === 0) return finish('success');
+        sourceDirectories = selected.paths;
+      }
       const inputs = await this.resolveInputs({
         cwd,
-        sourceDir: flags['source-dir'],
+        sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
       if (inputs.length === 0) return finish('blocked', 'INVALID_SELECTION');
@@ -358,6 +382,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : undefined,
       );
     } catch (error: unknown) {
+      if (error instanceof GitSelectionError) {
+        envelope.diagnostics.errors.push({
+          code: error.code,
+          message:
+            error.code === 'BLOCKED_GIT_LIFECYCLE'
+              ? 'Git selection blocks DMO renames/deletions and a relevant untracked DMO addition combined with any tracked worktree deletion. Stage intended changes to permit Git-inferred rename detection, then resolve unsupported lifecycle changes. Git cannot guarantee historical rename intent.'
+              : 'Git selection failed. Use a valid commit reference in a repository and canonical data360/default/dmo/ApiName.json files whose default-space identity matches the filename.',
+          retryable: false,
+        });
+        return finish('blocked');
+      }
       if (error instanceof DeployInputError) return finish('blocked', error.code);
       return finish('failed', flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED');
     }

@@ -1,3 +1,138 @@
+# Gate4 iteration1 Git status remediation — iteration2 review pending
+
+Parent reviewer e38670f7 returned one must-fix: tokens(worktree).includes('D')
+matched a pathname D, not only deletion status records. Fixed only that finding:
+collect now returns whether a parsed status is exactly D, recording it before
+relevance filtering; worktree ambiguity policy consumes that boolean. Both rename
+paths remain parsed correctly. No change to the approved conservative policy.
+Two regressions prove modified unrelated tracked file D plus untracked canonical
+DMO selects successfully, while genuine unrelated tracked deletion still blocks.
+Only src/artifacts/git-deploy-selection.ts, test/git-deploy-selection.test.mjs
+and this handover changed in remediation. No CLI/docs expansion or other edits.
+
+Optional reviewer note about README wording listing two versus three selection
+modes was reported but NOT accepted or implemented. Parent must return to the
+same reviewer for iteration2; no final review-green or commit is claimed here.
+Remediation verification exit 0: scoped ESLint autofix, explicit build, full lint
+zero warnings, focused selector tests 23/23 (31.836s), full npm test
+--no-workspaces 350/350 (119.247s Node duration), smoke 30/30 (106.296s), and
+scoped git diff --check. Full test/smoke portion 234.635s; entire shell including
+focused checks/build/lint 282.618s. TEMP, actual Node os.tmpdir and nonempty
+TMP/TMPDIR checked against F:/Temp before the shell. Only this handover receipt
+changed after green code; no org calls, cleanup, commit/push/tag/release or root
+edits. Feature remains parked pending parent's same-reviewer iteration2.
+
+# API65 Git-selection boundary — parked for parent review
+
+User priority changed to component retrieve/deploy/delete on 2026-10-26 23:41.
+Stop Git-convenience expansion at this coherent boundary; parent is independently
+planning the DMO delete contract read-only. No shared-source concurrency is needed.
+Current commit approval exists but parent Gate4 must clear before any commit.
+No package history operation was performed by this worker.
+
+The previously reported ambiguity policy is now explicitly user-approved: relevant
+untracked DMO additions plus ANY tracked worktree deletion block. Staging intended
+changes permits Git-inferred rename detection, never historical intent guarantees.
+
+Command integration is implemented in src/commands/data360/deploy.ts:
+- --changed-since string flag, parser/runtime exclusive with metadata/source-dir.
+- protected selectGitInputs seam delegates to selectGitDeployInputs({cwd, ref}).
+- Nonempty selected absolute paths pass through existing resolveInputs sourceDir
+  admission and unchanged API65 preflight/execution. Existing selectors unchanged.
+- Empty valid selection returns success/no items before downstream org identity,
+  connection, discovery, preflight or execution; parse-time core auth remains.
+- Optional provenance.git uses the helper provenance verbatim; result.selection
+  gains changedSince only in Git mode. No file-byte binding claim.
+- Both GitSelectionError codes return actionable blocked/nonzero envelopes;
+  lifecycle diagnostics explain conservative ambiguity and staging guidance.
+
+New test/git-deploy-command.test.mjs covers eight injected command cases. Existing
+cli.test.mjs now checks --changed-since help across canonical/aliases and parser
+exclusivity metadata. Focused command regressions passed 27/27 (1.345s Node,
+8.976s shell including autofix/build). README.md, docs/git-workflow.md and
+capabilities.md document current scope, approved ambiguity policy, auth/provenance
+limits and unfinished reports/CI/exact-byte binding/SQL companions. Roadmap chunk6
+is partial. No new dependencies, API policy, live org work or root edits.
+Final verification passed: scoped ESLint autofix, explicit build, full zero-warning
+lint, full npm test --no-workspaces 348/348 (109.024s Node duration), smoke 30/30
+(102.416s), git diff --check. Pipeline exit 0, 223.865s measured workload /
+225.435s shell. Initial scoped lint found one variable abbreviation and one
+contract-null assertion; fixed both then focused and full verification passed.
+Only this handover receipt changed after green code. TEMP/actual Node os.tmpdir
+and nonempty TMP/TMPDIR were verified against F:/Temp at every shell entry.
+
+Park/resume: do not add more Git functionality. Parent reviews the entire helper
+and command feature once (Gate4), then documentation propagation (Gate5), then may
+commit approved literal paths with normal enabled hooks and personal identity.
+No reset, stash, removal or selective rollback was used: CLI integration is already
+coherent, so separating it from the helper would add risk without advancing the
+new priority. Resume actual portability on parent's DMO delete contract plan.
+
+# API65 roadmap chunk 6a — historical selector-only handover
+
+Parent Gate2 review b7128a56 completed; both must-fixes incorporated before edits.
+Gate3 deliberately split selector/admission tests from command integration to keep
+this chunk bounded. Clean starting HEAD ef1e460, main ahead two; package fetch
+succeeded and status was clean. Root bookkeeping remains deferred and untouched.
+
+New src/artifacts/git-deploy-selection.ts exports:
+
+- selectGitDeployInputs({ cwd: string, ref: string }): Promise<GitDeploySelection>.
+- GitDeploySelection: { paths: string[], provenance: { repositoryRoot,
+  requestedRef, referenceCommit, headCommit, mergeBase } }, all provenance strings.
+- GitSelectionError.code: INVALID_GIT_SELECTION or BLOCKED_GIT_LIFECYCLE.
+
+The helper resolves repository root from nested cwd, resolves requested ref and
+HEAD once into commits, requires exactly one merge base, then uses SHAs for the
+committed/index comparisons. Argument-array bounded Git subprocesses return strict
+UTF-8/NUL name-status data. Explicit --find-renames overrides diff.renames=false
+for committed/index/worktree reads; both rename endpoints are inspected before
+filtering. Relevant rename/deletion blocks the whole selection. Current paths
+coalesce across committed, staged, unstaged and relevant untracked changes.
+Only canonical data360/default/dmo/ApiName.json paths reach the existing
+readDeployInputs metadata mode: same filename, identity, default-space, no-link,
+regular-file and authored JSON validation; no second JSON parser or admission seam.
+Empty selection returns paths=[] without invoking the nonempty input resolver.
+
+Execution-discovered checkpoint for parent: ordinary Git worktree diff cannot
+infer a tracked deletion moved to an untracked destination. The helper therefore
+conservatively blocks a relevant untracked addition combined with ANY worktree
+deletion (including an unrelated deletion). This prevents inbound cross-boundary
+moves silently becoming creates, but is broader than ignoring unrelated changes.
+Parent must explicitly resolve/approve this conservative behavior before CLI
+integration; no claim of complete historical rename-intent detection is made.
+Git-inferred rename detection remains heuristic, not proof of historical intent.
+
+New test/git-deploy-selection.test.mjs uses newly allocated OS-temp synthetic Git
+repositories with run ownership markers and personal local Git identity. Tests
+cover nested cwd, merge-base divergence, committed/index/worktree/untracked union,
+empty selection, Unicode/space paths, all nine phase/direction rename combinations
+with diff.renames=false, three deletion phases, wrong filename/space/invalid JSON,
+and no-link admission/invalid refs. Synthetic fixture commits only; no package
+history operations, org/auth/network requests, API changes, cleanup or release.
+Verification: scoped ESLint autofix passed, explicit build and full lint passed
+with zero warnings; focused regressions 21/21 (30.288s Node duration; 39.229s
+shell including formatting/build). Full npm test --no-workspaces passed 339/339
+(121.152s Node duration, intrinsic build included in pipeline); smoke passed 29/29
+(115.025s). Full build/lint/test/smoke/diff-check pipeline exit 0, 252.022s measured
+workload / 253.926s shell. TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+checked before each shell. An initial npm/npx option-order error did not apply
+fixes; corrected to the local ESLint executable, resolved lint findings and reran
+all required checks green. Only this handover receipt changed after green code.
+
+Next chunk: after parent's behavior decision, wire --changed-since exclusively
+against metadata/source-dir in deploy.ts; propagate optional Git provenance;
+translate selector errors into blocked envelope; empty valid selection succeeds
+with no downstream org/service work (existing parse-time auth is not redesigned).
+Add deploy-command/CLI regressions, then README/git-workflow/capability updates.
+Parent owns once-whole-feature Gate4 and Gate5 after final integration; no review
+or whole-feature completion is claimed by this internal-only chunk.
+
+Propagation checkpoint: sf-plugin-data implementation/tests/handover only; no
+workspace consumers or language/SDK/CMS/MCNext dependency changes. Public docs
+remain unchanged because no new CLI behavior is exposed. No npm changelog.
+Package sf-plugin-data remains 0.1.0; new version unassigned, release paused.
+
 # Gate4 iteration1 core-bootstrap remediation — iteration2 review pending
 
 Fixed the reviewer's single must-fix only: prevent implicit core version discovery

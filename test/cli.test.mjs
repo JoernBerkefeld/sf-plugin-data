@@ -184,6 +184,7 @@ for (const command of topics.flatMap((topic) => [topic, `${topic} retrieve`, `${
       for (const flag of [
         '--metadata',
         '--source-dir',
+        '--changed-since',
         '--preview',
         '--target-org',
         '--api-version',
@@ -278,6 +279,13 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
     );
     assert.deepEqual(output.result.result.items, []);
   }
+});
+
+test('Git selector flag declares parser exclusivity against both existing modes', async () => {
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  assert.deepEqual(Deploy.flags['changed-since'].exclusive, ['source-dir', 'metadata']);
+  assert.ok(Deploy.flags['source-dir'].exclusive.includes('changed-since'));
+  assert.ok(Deploy.flags.metadata.exclusive.includes('changed-since'));
 });
 
 test('oclif discovers eight IDs backed by exactly two canonical implementations', async () => {
