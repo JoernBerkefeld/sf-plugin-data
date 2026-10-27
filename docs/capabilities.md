@@ -20,6 +20,22 @@ and transport guards remain. Envelope `apiVersion` reports the request, optional
 
 ## dlo: unimplemented
 
+Internal `retrieveDlo(connection, apiName, apiVersion, dataSpace)` now acquires one
+exact non-namespaced custom `__dll` detail with explicit numeric API65/default
+scope and matching connection version before HTTP. The existing guarded GET
+transport disables refresh, retry and redirects using an operation-local receiver.
+The detached `dlo-acquisition` snapshot is always `incomplete`: generated replay,
+external bindings, lineage and detail collection completeness remain unqualified.
+Unknown configuration, generated fields and observation metadata are retained;
+unknown keys add a blocker. Explicit default-space evidence is required; filtered
+or multiple spaces remain retained and blocked, not silently treated as portable.
+No list/stream/lineage calls, public artifact, deploy admission or CLI wiring exist.
+An empty field collection is diagnostic only, never proof of portable empty data.
+Official routes are documented from API60, but this internal read does not qualify
+API65 create/update/delete or connector-specific behavior. The current reference
+marks DLO `dataSource` and atomic `dataModelObjectConfig` inputs as API67-only.
+[Official DLO reference](https://developer.salesforce.com/docs/data/connectapi/references/spec#tag/Data-Lake-Objects).
+
 - [ ] Record official list/detail/create/update endpoints and API versions.
 - [ ] Prove pagination, complete schema and stream/connection/lineage bindings.
 - [ ] Classify writable/read-only/unknown fields and connector prerequisites.

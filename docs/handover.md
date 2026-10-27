@@ -1,3 +1,55 @@
+# Internal DLO exact-name acquisition — parent review pending
+
+Gate1 and parent Gate2 e082ac4e completed before implementation (zero must-fix,
+zero optional). Gate3 used one small coupled artifact/service/test slice; no nested
+workers or root edits. Pre-edit TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR
+checks passed at F:/Temp; fetch/status confirmed clean main at
+1a10abc46050d441d55900e9709a7ae92f5b8945, ahead five.
+
+New internal interfaces:
+
+- `retrieveDlo(connection, apiName, apiVersion, dataSpace): Promise<DloAcquisition>`
+  in `src/services/retrieve-dlo.ts`; existing connection only, explicit API65 and
+  default-space/name guards before its sole fixed Connect detail GET. Connection
+  version mismatch fails before GET. ConnectClient's landed operation-local
+  no-refresh GET receiver is reused, not reimplemented.
+- `validateDloAcquisition(value: unknown): DloAcquisition` in
+  `src/artifacts/dlo-acquisition.ts`; detached JSON-safe clone, exact returned
+  name and explicit matching default-space evidence, strict boolean typing,
+  retained generated/unknown fields, metadata, all spaces and filters.
+- Envelope: schemaVersion 1, kind dlo-acquisition, apiVersion 65.0,
+  identity `{ dataSpace: 'default', apiName }`, status always incomplete,
+  blockers string[], detail raw record. Four mandatory blockers:
+  GENERATED_FIELD_REPLAY_UNVERIFIED, EXTERNAL_BINDINGS_NOT_ACQUIRED,
+  LINEAGE_NOT_ACQUIRED, DETAIL_COLLECTION_COMPLETENESS_UNVERIFIED.
+- Extra derived blockers: UNKNOWN_CONFIGURATION, MULTIPLE_DATA_SPACES,
+  DATA_SPACE_FILTER_REPLAY_UNVERIFIED, EMPTY_FIELD_COLLECTION,
+  SCHEMA_VARIANT_UNVERIFIED. Existing caller blocker codes remain retained.
+
+Tests live in `test/dlo-acquisition.test.mjs` and `test/dlo-retrieve.test.mjs`.
+Verification: scoped ESLint autofix passed; explicit build passed; full lint
+passed with zero warnings; focused DLO tests 33/33; full tests 397/397
+(106.756 seconds), CLI smoke 30/30 (103.298 seconds), git diff --check passed.
+Combined final verification workload completed with exit 0 in 226.603 seconds.
+Implementation plus verification took approximately nine minutes. Parent owns whole-feature
+Gate4/Gate5 and any later explicitly approved commit. No live org/auth/API network
+calls, artifact output, CLI exposure, deploy admission, list, stream, lineage,
+write, version/tag/release, commit or push occurred. Git fetch was the sole remote
+operation.
+
+Next read-only contract gaps: prove API65 detail collection completeness and
+schema variants; classify generated replay versus authored fields; separately
+acquire external connector/data-stream bindings and lineage. Confirm API65 PATCH
+field payload discrepancy and connector prerequisites before write planning.
+Current API67 additions are not evidence of API65 write support. Nothing here
+claims empty fields mean empty ingested records or portable configuration.
+
+Propagation assessment for parent Gate5: sf-plugin-data internal code, tests and
+capabilities/handover docs updated. No workspace consumers; language packages,
+mcdev wiki, guide/site listings and hover URL data are unrelated. Public README
+command surface remains unchanged. Working package version remains 0.1.0;
+new version unassigned until fresh release approval. Keep all work local.
+
 # Internal DMO DELETE transport — verified, parent review pending
 
 Started clean at fb6968bda21f6c107107f26868265cde2b077977; fetch/status passed,
