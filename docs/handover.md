@@ -1,4 +1,55 @@
-# Internal DLO exact-name acquisition — parent review pending
+# Internal DLO raw inventory acquisition — Gate5 documentation handover
+
+Parent Gate4 reviewer ba84604a reviewed actual code with zero must-fix and zero
+optional findings. Gate5 is limited to `docs/capabilities.md` and this handover;
+existing source/test changes are preserved. Fetch/status confirmed main at
+b832bd5d0209bbeadd25aa97aac4a42aa613b34e, ahead six and not behind, with only
+`src/transport/connect-client.ts` and `test/connect-client.test.mjs` modified
+before documentation edits. TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR
+were normalized absolute F:/Temp before shell workloads; no cleanup is needed.
+
+Internal interface:
+`ConnectClient.listDataLakeObjects(): Promise<DloInventoryAcquisition>` starts
+at `GET /services/data/v65.0/ssot/data-lake-objects?limit=20`. Its schemaVersion 1,
+kind `dlo-inventory-acquisition`, apiVersion `65.0` envelope retains raw `pages`,
+always has status `incomplete` and blocker `INVENTORY_COMPLETENESS_UNVERIFIED`.
+Optional page/entry metadata survives. Pagination is `no-next-observed` when the
+next link is absent/empty or `request-budget-reached` after the local 100-request
+budget. This budget is not a documented server ceiling; neither termination
+state proves completeness, default-space scope or absence, even for empty pages
+or optional totals. There is no complete-inventory or portable-export admission.
+
+Continuations must be same-origin on the exact API65 collection route with only
+unique allowlisted positive numeric limit/offset or ASC/DESC orderBy parameters.
+Malformed envelopes, unsafe continuations and repeated requests fail closed;
+query ordering is canonicalized for loop detection. Existing operation-local
+no-refresh, no-retry and no-redirect guards are reused. API68 official-reference
+annotations showing list/detail availability from API60 are reference evidence,
+not live API65 qualification. Detail completeness, stream/connector acquisition,
+lineage, generated replay, public CLI and write blockers remain unchanged.
+
+Verification receipt supplied by the coordinator, not rerun by this docs slice:
+explicit build green, full lint zero warnings, focused transport tests 81/81,
+full suite 445/445 and CLI smoke 30/30. The older 397/397 receipt below belongs to
+the prior exact-name acquisition slice and is not the current inventory receipt.
+Gate5 documentation verification: scoped Prettier check passed for both approved
+files after formatting this handover; tooling tests passed 12/12, including the
+required capability-heading check; git diff --check passed. These checks do not
+repeat or replace the supplied full-suite receipt. The final combined exact tree still requires
+binding and full verification through the normal enabled pre-commit hook before
+any authorized commit; this handover does not claim that hook has run.
+
+Propagation assessment: capabilities and handover updated; public README needs no
+change because no public command surface changes. No npm CHANGELOG is created
+(release notes belong to GitHub Releases). sf-plugin-data has no workspace
+consumers; language data/LSP/hover URLs, mcdev wiki, sfmc.guide and
+joernberkefeld.com listings are unrelated and need no update. No dependency,
+root, version or release bookkeeping files are modified. Working package version
+is 0.1.0; next version remains unassigned until fresh release approval. No org,
+network documentation, artifact output, staging, commit, push or release is
+performed. Git fetch is the only remote operation in this documentation slice.
+
+# Internal DLO exact-name acquisition — historical receipt
 
 Gate1 and parent Gate2 e082ac4e completed before implementation (zero must-fix,
 zero optional). Gate3 used one small coupled artifact/service/test slice; no nested
@@ -165,6 +216,7 @@ untracked DMO additions plus ANY tracked worktree deletion block. Staging intend
 changes permits Git-inferred rename detection, never historical intent guarantees.
 
 Command integration is implemented in src/commands/data360/deploy.ts:
+
 - --changed-since string flag, parser/runtime exclusive with metadata/source-dir.
 - protected selectGitInputs seam delegates to selectGitDeployInputs({cwd, ref}).
 - Nonempty selected absolute paths pass through existing resolveInputs sourceDir
@@ -466,14 +518,14 @@ canonical JSON contracts/provenance, new package metadata and offline workflow
 E403 rejection. Tests strip inherited SF_/SFDX_ settings, isolate HOME/state in
 verified F:/Temp run roots and perform no org work or recursive cleanup.
 
-| Component | Needs update? | What to update | Status |
-|---|---|---|---|
-| sf-plugin-data360 | Yes | Package identity, aliases, help, regressions, current docs | done |
-| ampscript-data / ssjs-data / csv-parser / ampscript-parser / sfmc-language-lsp | N/A | No dependency or language behavior change | not needed |
-| vscode-sfmc-language / mcp-server-sfmc / mcp-server-mcdev | N/A | No consumer relationship | not needed |
-| sf-plugin-mcnext / sf-plugin-cms | N/A | Independent plugins | not needed |
-| eslint-plugin-sfmc / eslint-plugin-mcdev / prettier-plugin-sfmc | N/A | No consumer relationship | not needed |
-| ssjs.guide / mso-conditional-parser / eslint-plugin-mso-email / vscode-mso-conditionals | N/A | No consumer relationship | not needed |
+| Component                                                                               | Needs update? | What to update                                             | Status     |
+| --------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------- | ---------- |
+| sf-plugin-data360                                                                       | Yes           | Package identity, aliases, help, regressions, current docs | done       |
+| ampscript-data / ssjs-data / csv-parser / ampscript-parser / sfmc-language-lsp          | N/A           | No dependency or language behavior change                  | not needed |
+| vscode-sfmc-language / mcp-server-sfmc / mcp-server-mcdev                               | N/A           | No consumer relationship                                   | not needed |
+| sf-plugin-mcnext / sf-plugin-cms                                                        | N/A           | Independent plugins                                        | not needed |
+| eslint-plugin-sfmc / eslint-plugin-mcdev / prettier-plugin-sfmc                         | N/A           | No consumer relationship                                   | not needed |
+| ssjs.guide / mso-conditional-parser / eslint-plugin-mso-email / vscode-mso-conditionals | N/A           | No consumer relationship                                   | not needed |
 
 Root release/dependency registration and the existing plan record the new current
 identity; unrelated root changes, CSV work and author-identity rules are preserved.
@@ -481,9 +533,9 @@ README and Git workflow are current. Artifact/capability docs, mcdev wiki, publi
 sites/tool listings and hover/doc-URL catalogs need no edits: this local-only
 naming/alias change does not expand capability or change artifact schemas.
 
-| Folder | Changed? | Current version | New version |
-|---|---|---|---|
-| ./sf-plugin-data360 | Yes | 0.1.0 | Unassigned; fresh release/tag approval required |
+| Folder              | Changed? | Current version | New version                                     |
+| ------------------- | -------- | --------------- | ----------------------------------------------- |
+| ./sf-plugin-data360 | Yes      | 0.1.0           | Unassigned; fresh release/tag approval required |
 
 # Historical unscoped npm identity correction — approved tag replacement
 

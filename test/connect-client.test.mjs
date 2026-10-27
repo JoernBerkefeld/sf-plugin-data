@@ -574,6 +574,191 @@ test('guarded PATCH serialization errors are payload-free and never request', as
   });
 });
 
+const dloPath = '/services/data/v65.0/ssot/data-lake-objects';
+
+/**
+ * Construct a synthetic inventory client with request evidence.
+ * @param {Array<unknown>} pages Sequential responses or errors.
+ * @param {string | object} version Explicit transport selector.
+ * @returns {object} Client, caller connection and recorded requests.
+ */
+function dloInventory(pages, version = '65.0') {
+  const calls = [];
+  const refresh = {};
+  const connection = {
+    instanceUrl: origin,
+    _refreshDelegate: refresh,
+    async request(request, options) {
+      calls.push(request);
+      assert.equal(this._refreshDelegate, undefined);
+      assert.notEqual(this, connection);
+      assert.equal(options.retry.maxRetries, 0);
+      assert.throws(() => options.followRedirect(), ConnectError);
+      const page = pages[calls.length - 1];
+      if (page instanceof Error) throw page;
+      return page;
+    },
+  };
+  return { client: new ConnectClient(connection, version), calls, connection, refresh };
+}
+
+for (const rows of [[], [{}], Array.from({ length: 20 }, () => ({}))]) {
+  test(`DLO inventory retains ${rows.length} raw entries without assuming identity or completeness`, async () => {
+    const page = { dataLakeObjects: rows, future: { retained: true } };
+    const { client, calls, connection, refresh } = dloInventory([page]);
+    assert.deepEqual(await client.listDataLakeObjects(), {
+      schemaVersion: 1,
+      kind: 'dlo-inventory-acquisition',
+      apiVersion: '65.0',
+      status: 'incomplete',
+      blockers: ['INVENTORY_COMPLETENESS_UNVERIFIED'],
+      pagination: 'no-next-observed',
+      pages: [page],
+    });
+    assert.deepEqual(calls, [{ method: 'GET', url: `${origin}${dloPath}?limit=20` }]);
+    assert.equal(connection._refreshDelegate, refresh);
+  });
+}
+
+test('DLO inventory follows short pages and preserves duplicate entries, empty spaces and changing totals', async () => {
+  const entry = { dataSpaceInfo: [], future: { retained: true } };
+  const pages = [
+    {
+      dataLakeObjects: [entry],
+      currentPageUrl: '',
+      totalSize: 100,
+      nextPageUrl: `${dloPath}?offset=1&limit=20&orderBy=ASC`,
+    },
+    {
+      dataLakeObjects: [entry],
+      totalSize: 0,
+      nextPageUrl: `${origin}${dloPath}?limit=20&offset=2&orderBy=DESC`,
+    },
+    { dataLakeObjects: [], nextPageUrl: '' },
+  ];
+  const { client, calls } = dloInventory(pages);
+  const result = await client.listDataLakeObjects();
+  assert.deepEqual(result.pages, pages);
+  assert.equal(result.status, 'incomplete');
+  assert.equal(result.pagination, 'no-next-observed');
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    [
+      `${origin}${dloPath}?limit=20`,
+      `${origin}${dloPath}?limit=20&offset=1&orderBy=ASC`,
+      `${origin}${dloPath}?limit=20&offset=2&orderBy=DESC`,
+    ],
+  );
+});
+
+for (const version of ['64.0', '66.0', latest]) {
+  test(`DLO inventory refuses ${JSON.stringify(version)} before HTTP`, async () => {
+    const { client, calls } = dloInventory([], version);
+    await assert.rejects(client.listDataLakeObjects(), { code: 'INVALID_REQUEST' });
+    assert.equal(calls.length, 0);
+  });
+}
+
+// eslint-disable-next-line unicorn/no-null -- Explicit JSON null exercises the nonnullable response contract.
+const invalidNull = null;
+for (const page of [
+  undefined,
+  invalidNull,
+  [],
+  {},
+  { dataLakeObjects: invalidNull },
+  { dataLakeObjects: {} },
+  ...[invalidNull, [], 1, 'entry'].map((entry) => ({ dataLakeObjects: [entry] })),
+  ...['currentPageUrl', 'nextPageUrl', 'totalSize'].flatMap((key) =>
+    [invalidNull, {}, false].map((value) => ({ dataLakeObjects: [], [key]: value })),
+  ),
+  { dataLakeObjects: [], totalSize: 1.5 },
+  { dataLakeObjects: [], totalSize: '1' },
+]) {
+  test(`DLO inventory refuses malformed page ${JSON.stringify(page)}`, async () => {
+    const { client, calls } = dloInventory([page]);
+    await assert.rejects(client.listDataLakeObjects(), { code: 'INVALID_PAGE' });
+    assert.equal(calls.length, 1);
+  });
+}
+
+for (const nextPageUrl of [
+  `https://other.test${dloPath}?offset=20`,
+  `//other.test${dloPath}`,
+  '/services/data/v66.0/ssot/data-lake-objects?offset=20',
+  `${path}?offset=20`,
+  `${dloPath}/Example__dll`,
+  `${dloPath}/../data-lake-objects?offset=20`,
+  `${dloPath}/%2e%2e/data-lake-objects`,
+  `${dloPath}?offset=20#fragment`,
+  `${dloPath}?offset=20&offset=40`,
+  `${dloPath}?offset=0`,
+  `${dloPath}?offset=-1`,
+  `${dloPath}?offset=1.5`,
+  `${dloPath}?limit=0`,
+  `${dloPath}?orderBy=asc`,
+  `${dloPath}?dataspace=default`,
+  `${dloPath}?unknown=secret`,
+]) {
+  test(`DLO inventory refuses unsafe continuation ${nextPageUrl}`, async () => {
+    const { client, calls } = dloInventory([{ dataLakeObjects: [], nextPageUrl }]);
+    await assert.rejects(client.listDataLakeObjects(), { code: 'INVALID_REQUEST' });
+    assert.equal(calls.length, 1);
+  });
+}
+
+test('DLO inventory rejects repeated normalized URLs before another request', async () => {
+  for (const pages of [
+    [{ dataLakeObjects: [], nextPageUrl: `${origin}${dloPath}?limit=20` }],
+    [
+      { dataLakeObjects: [], nextPageUrl: `${dloPath}?offset=20&limit=20` },
+      { dataLakeObjects: [], nextPageUrl: `${dloPath}?limit=20&offset=20` },
+    ],
+  ]) {
+    const { client, calls } = dloInventory(pages);
+    await assert.rejects(client.listDataLakeObjects(), { code: 'INCOMPLETE_LIST' });
+    assert.equal(calls.length, pages.length);
+  }
+});
+
+test('DLO inventory stops at its local budget without claiming completion', async () => {
+  const pages = Array.from({ length: 100 }, (_, index) => ({
+    dataLakeObjects: [],
+    nextPageUrl: `${dloPath}?offset=${index + 1}`,
+  }));
+  const { client, calls } = dloInventory(pages);
+  const result = await client.listDataLakeObjects();
+  assert.equal(calls.length, 100);
+  assert.equal(result.pagination, 'request-budget-reached');
+  assert.equal(result.status, 'incomplete');
+  assert.deepEqual(result.pages, pages);
+});
+
+test('DLO inventory validates continuation even at the budget boundary', async () => {
+  const pages = Array.from({ length: 100 }, (_, index) => ({
+    dataLakeObjects: [],
+    nextPageUrl: index === 99 ? `${path}?offset=100` : `${dloPath}?offset=${index + 1}`,
+  }));
+  const { client, calls } = dloInventory(pages);
+  await assert.rejects(client.listDataLakeObjects(), { code: 'INVALID_REQUEST' });
+  assert.equal(calls.length, 100);
+});
+
+test('DLO inventory errors discard partial pages and secret transport payloads', async () => {
+  for (const statusCode of [401, 503]) {
+    const { client, calls } = dloInventory([
+      { dataLakeObjects: [{ secret: true }], nextPageUrl: `${dloPath}?offset=1` },
+      Object.assign(new Error('secret'), { statusCode, body: 'secret' }),
+    ]);
+    await assert.rejects(client.listDataLakeObjects(), (error) => {
+      assert.equal(error.code, statusCode === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED');
+      assert.equal(inspect(error).includes('secret'), false);
+      return true;
+    });
+    assert.equal(calls.length, 2);
+  }
+});
+
 test('factory rejects missing inputs and redacts authentication failures', async (t) => {
   t.mock.method(Org, 'create', async () => {
     throw new Error('secret refresh token');

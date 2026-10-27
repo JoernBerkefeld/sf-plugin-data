@@ -29,8 +29,26 @@ external bindings, lineage and detail collection completeness remain unqualified
 Unknown configuration, generated fields and observation metadata are retained;
 unknown keys add a blocker. Explicit default-space evidence is required; filtered
 or multiple spaces remain retained and blocked, not silently treated as portable.
-No list/stream/lineage calls, public artifact, deploy admission or CLI wiring exist.
+No stream/lineage acquisition, public artifact, deploy admission or CLI wiring exists.
 An empty field collection is diagnostic only, never proof of portable empty data.
+
+Internal `ConnectClient.listDataLakeObjects(): Promise<DloInventoryAcquisition>`
+now acquires bounded raw API65 collection pages, beginning with
+`GET /services/data/v65.0/ssot/data-lake-objects?limit=20`. The envelope retains
+raw `pages` and optional page/entry metadata; status is always `incomplete` with
+`INVENTORY_COMPLETENESS_UNVERIFIED`. Pagination records `no-next-observed` when
+no next link is observed, or `request-budget-reached` at the local 100-request
+budget; neither means complete inventory. Continuations must remain same-origin
+on the exact API65 collection route, with only unique allowlisted numeric
+limit/offset or ASC/DESC orderBy parameters. Malformed envelopes, unsafe
+continuations and loops fail closed; existing no-refresh/retry/redirect guards
+remain. No completeness, default-space binding or absence proof follows from
+these pages, an empty collection, optional totals or observed termination.
+Detail completeness, stream/connector bindings, lineage and generated replay
+blockers are unchanged; this helper enables no public CLI, artifact or write path.
+
+API68 official-reference annotations mark list/detail routes available from API60;
+that reference availability is not live API65 qualification.
 Official routes are documented from API60, but this internal read does not qualify
 API65 create/update/delete or connector-specific behavior. The current reference
 marks DLO `dataSource` and atomic `dataModelObjectConfig` inputs as API67-only.

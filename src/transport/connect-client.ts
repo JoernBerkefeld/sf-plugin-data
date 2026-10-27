@@ -26,6 +26,16 @@ export class ConnectError extends Error {
   }
 }
 
+export type DloInventoryAcquisition = {
+  schemaVersion: 1;
+  kind: 'dlo-inventory-acquisition';
+  apiVersion: '65.0';
+  status: 'incomplete';
+  blockers: ['INVENTORY_COMPLETENESS_UNVERIFIED'];
+  pagination: 'no-next-observed' | 'request-budget-reached';
+  pages: Array<Record<string, unknown>>;
+};
+
 type AuthenticatedConnection = Pick<Connection, 'instanceUrl' | 'request'>;
 
 /** Bounded SSOT transport; Salesforce core owns credentials. */
@@ -231,6 +241,70 @@ export class ConnectClient {
         statusCode,
       );
     }
+  }
+
+  /**
+   * Retain bounded raw API65 DLO pages; observed termination never proves completeness.
+   * @returns {Promise<DloInventoryAcquisition>} Internal, always-incomplete inventory evidence.
+   */
+  public async listDataLakeObjects(): Promise<DloInventoryAcquisition> {
+    if (this.selection.requested !== '65.0') throw new ConnectError('INVALID_REQUEST');
+    const route = `${this.prefix}data-lake-objects`;
+    let next = this.safeUrl(`${route}?limit=20`);
+    const visited = new Set<string>();
+    const pages: Array<Record<string, unknown>> = [];
+    const result: DloInventoryAcquisition = {
+      schemaVersion: 1,
+      kind: 'dlo-inventory-acquisition',
+      apiVersion: '65.0',
+      status: 'incomplete',
+      blockers: ['INVENTORY_COMPLETENESS_UNVERIFIED'],
+      pagination: 'request-budget-reached',
+      pages,
+    };
+    // This request budget is local, not a documented server pagination ceiling.
+    for (let request = 0; request < 100; request++) {
+      visited.add(next);
+      const page = await this.get<unknown>(next);
+      if (!page || typeof page !== 'object' || Array.isArray(page))
+        throw new ConnectError('INVALID_PAGE');
+      const envelope = page as Record<string, unknown>;
+      if (
+        !Array.isArray(envelope.dataLakeObjects) ||
+        envelope.dataLakeObjects.some(
+          (entry) => !entry || typeof entry !== 'object' || Array.isArray(entry),
+        ) ||
+        ['currentPageUrl', 'nextPageUrl'].some(
+          (key) => key in envelope && typeof envelope[key] !== 'string',
+        ) ||
+        ('totalSize' in envelope && !Number.isInteger(envelope.totalSize))
+      )
+        throw new ConnectError('INVALID_PAGE');
+      pages.push(envelope);
+      if (envelope.nextPageUrl === undefined || envelope.nextPageUrl === '') {
+        result.pagination = 'no-next-observed';
+        return result;
+      }
+      const continuation = new URL(this.safeUrl(envelope.nextPageUrl as string));
+      if (continuation.pathname !== route) throw new ConnectError('INVALID_REQUEST');
+      const keys = new Set<string>();
+      for (const [key, value] of continuation.searchParams) {
+        if (
+          keys.has(key) ||
+          !(
+            ((key === 'limit' || key === 'offset') && /^[1-9]\d*$/u.test(value)) ||
+            (key === 'orderBy' && (value === 'ASC' || value === 'DESC'))
+          )
+        )
+          throw new ConnectError('INVALID_REQUEST');
+        keys.add(key);
+      }
+      // Canonical query ordering catches a repeated request with reordered parameters.
+      continuation.searchParams.sort();
+      next = continuation.href;
+      if (visited.has(next)) throw new ConnectError('INCOMPLETE_LIST');
+    }
+    return result;
   }
 
   /**
