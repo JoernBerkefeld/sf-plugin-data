@@ -1,7 +1,9 @@
 import './check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { verifyPackageInventory } from './package-inventory.mjs';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
@@ -38,7 +40,14 @@ assert.equal(artifact.name, 'sf-plugin-data');
 const sha256 = createHash('sha256')
   .update(readFileSync(path.join(root, artifact.filename)))
   .digest('hex');
-assert.equal(artifact.entryCount, 32);
+const sourceRoot = fileURLToPath(new URL('../src/', import.meta.url));
+const sources = readdirSync(sourceRoot, { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+  .map(
+    (entry) =>
+      `src/${path.relative(sourceRoot, path.join(entry.parentPath, entry.name)).split(path.sep).join('/')}`,
+  );
+verifyPackageInventory(sources, artifact);
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-update-delta.js'));
@@ -195,7 +204,7 @@ for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unkn
   const preview = scenario === 'preview-update';
   const inputs = ['First__dlm', 'Second__dlm', 'Third__dlm'].map((apiName) => ({
     path: `${apiName}.json`,
-    document: { identity: { apiName, dataSpace: 'default' } },
+    document: { kind: 'dmo', identity: { apiName, dataSpace: 'default' } },
   }));
   const connection = {};
   command.parse = async () => ({
@@ -213,7 +222,7 @@ for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unkn
   let executions = 0;
   command.preflight = async (_document, target, api, space, allowLabelUpdates) => {
     assert.equal(target, connection);
-    assert.equal(api, '65.0');
+    assert.deepEqual(api, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
     assert.equal(space, 'default');
     assert.equal(allowLabelUpdates, true);
     return {
