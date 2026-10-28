@@ -1,3 +1,78 @@
+# Segment A2 source live acceptance — PRE-LIVE BUDGET BLOCKED — 2026-10-28
+
+Baseline `75afe7f400e8233bd5c7856ae5a1d380feef0a30` reconciled clean and equal
+to origin/main after fetch. Existing planning/review stays closed. This is one
+bounded acceptance worker, not implementation or another research branch.
+Source MCP identity was verified through discover -> describe -> readonly dispatch;
+actual `sf org display --target-org mcnext-sdo --json` exited 0 and matched the
+expected source org. Core AuthInfo via aliases.resolveUsername independently
+matched too. An initial aliases.get lookup failed locally because it was the wrong
+lookup method, not absent authentication; no auth settings were changed. The
+persistent validation project's API65/package-directory configuration was inspected;
+its contents and unrelated root work were preserved. No target operations occurred.
+
+## Hard blocker before fixture provisioning
+
+The predeclared limits remain <=20 minutes, <=2 provisions, <=2 updates, <=2 exact
+qualified cleanup deletes, <=40 nonpoll reads, <=24 polls. Service poll limits stay
+12 reads / 1000ms / 120000ms per update. Static current-source accounting proves
+that even ONE fixture's full requested workflow exceeds 40 nonpoll logical reads:
+
+- retrieve: 2 (runtime detail plus standard Metadata acquisition);
+- preview: 4 (dependency detail/Metadata plus Segment detail/Metadata);
+- no-ack deploy: 4 (whole-selection preflight, then blocked before executor);
+- acknowledged update: 22 (initial preflight 4 + pending fresh admission 4 + service
+  14, including independent post-settlement pair/dependency readback);
+- repeated deploy: 18 (initial 4 + pending fresh admission 4 + service 10).
+
+Total lower bound: **50 nonpoll logical acquisitions**, excluding setup settlement,
+dependency precheck, cleanup/absence reads and underlying standard Metadata job
+wire overhead. Two fixtures require at least **108**, since pending admission
+rechecks both before the first item and the second before its execution. This is
+static lower-bound accounting, NOT measured live HTTP traffic. Do not raise the
+budget, cache across guard boundaries or weaken safety checks silently.
+
+Actual Segment setup/update/delete attempts, Segment reads and polls: **0 each**.
+The source MCP identity check was one recorded readonly org query; CLI org display
+and private AuthInfo binding were identity checks, not Segment API65 acceptance.
+No public Segment command was invoked; therefore command exits and independent
+mutation/job transport counts for the requested workflow are **N/A**, not a claimed
+zero-write repeat. No observer was attached. Public-flow success, preserved live
+semantics, settlement, dependency compatibility and no-op transport proof remain
+unexecuted. Live-fixture clock never started; local preflight reached this stop at
+2026-10-28T03:06:40.523Z (about six minutes after the task timestamp).
+
+Ownership ledger: **empty**. No provision attempts, new fixtures, historical fixture
+adoption, generated resources or new cleanup debt. Exact cleanup is N/A because
+nothing was created. No replay, rollback, shared-resource mutation or deletion.
+TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR preflight passed on shell entries;
+no disposable acceptance project was created and no recursive cleanup was run.
+
+Durable sanitized blocked evidence subject:
+`data360:segment.dbt.a2-source-acceptance-budget-blocked.api65` in the root
+verification database, bound to the exact committed baseline above. It records
+NOT-INVOKED command/readback/processing/cleanup states without manufacturing live
+receipts. Existing native create/update, A1 roundtrip and permission/shell evidence
+were consulted; none is relabelled current successful A2 acceptance. Root evidence
+is left for the coordinator; no shared-index rebuild or root history publication.
+
+Resume requires coordinator/user direction: explicitly revise the read budget, or
+scope a narrow redundancy reduction with regression and full verification before
+restarting bounded acceptance. Do not provision while the unchanged workflow cannot
+fit. Creation remains BLOCKED; no release. Once-feature review, public docs, final
+DB rebuild/validate/gaps and cross-org acceptance remain with the coordinator.
+Independent B/C family work may proceed under separate owners; common command and
+transport edits and full-suite inputs must still be serialized. Remaining family
+gaps include DLO operational creation/update, broader DMO schema, Segment meaningful
+DBT changes/create admission, CI expression/update/no-op, Graph eligibility and IR
+complete comparison/generated binding; this stop changes none of those contracts.
+
+Propagation: handover plus distinct blocked DB subject only. No behavior change,
+new code or test case required. README/capabilities/artifact/Git/guide propagation
+remains coordinator-owned and is not marked complete. No language/LSP/hover/wiki/
+site-listing or consumer update is needed. Changed folder sf-plugin-data yes,
+current version 0.1.0, new version unassigned; no release/tag/install.
+
 # Segment A2 command integration checkpoint — 2026-10-28
 
 Started at 2026-10-28T02:38Z (03:38+01:00), from exact clean pushed baseline
