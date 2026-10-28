@@ -1,4 +1,63 @@
-# Graph strict read transport checkpoint — 2026-10-28
+# Graph root-only family services — 2026-10-28
+
+Continuation from clean fetched `93d4149b1d18e6d5e7c1212e441dd157d9795321`.
+The earlier schema/creation-intent blocker below is superseded: retained complete
+GET, creation receipt/input and before/after transform definitions were inspected
+offline first. They prove exact computed inventories, absent creationMode, generated
+node devName, returned owner/transform/output association and updated load fields.
+No new org calls, mutations or cleanup were needed. Raw receipts remain private.
+Written scoped plan and dedicated read-only plan review completed before code;
+reviewer returned zero must-fix. Single coupled family worker, no shared-package
+writers. Am I overengineering this? Existing family/transport seams only, no framework.
+
+Implemented interfaces (all internal, no public routing):
+- `validateDataGraphDocument`, `projectDataGraph`, `serializeDataGraphDocument` in
+  `src/artifacts/data-graph-document.ts`: strict observed root/node/field inventory,
+  only qualified none/NONE and day/Day normalization, private full expectations;
+  `DataGraphCreationIntent={apiName,ownerId,dataSpace:'default',creationMode:'DEFAULT'}`
+  must match actual returned owner. Never manufacture it from desired input.
+- `retrieveDataGraph(connection,apiName,selection,dataSpace,options)` exact Graph →
+  returned transform → fresh identical Graph. Transform ACTIVE/SUCCESS with completed
+  run no earlier than owner creation; pre-existing run need not postdate invocation.
+  Root load fields, key grouping and value output mappings must match private owner.
+- `bindDataGraphDependencies(document,connection,selection,dataSpace,acquire?)` uses
+  independent API65 REST/Metadata on an operation-local receiver (caller stays67),
+  exact logical root/space/id, three Text fields and explicit sole Id primary key.
+- `preflightDataGraphDeploy` permits unchanged or exact forward LastName append,
+  all other changes/absence/create fail closed, default fixed API67 only.
+- `executeDataGraphDeploy` requires input verifier, explicit processing acknowledgement
+  for update and private `recordObservation`; fresh double eligibility/dependency/input
+  checks, exactly one full update (`editScheduleOnly:false`). Poll observation callback
+  records raw body before classifier. Budget is 40min/41 Graph reads at60sec, with
+  eligibility/independent confirmation acquisitions additional. Processing/editing_post_sync
+  stay pending regardless of transform success; independent ready/full equality,
+  preserved generated bindings and same transform with later completed run required.
+  Timeout/errors/unknown/recorder/drift remain unknown, no replay/refresh/activation.
+- `test/data-graph.test.mjs`: synthetic complete schema, exact intent, strict unknown
+  properties, wrong owner/root/transform/group/output, independent root binding,
+  zero-mutation unchanged, one full preserved update, ~30-minute fake-clock settlement,
+  unknown preclassification capture, stale runs, nested errors and uncertain outcomes.
+
+**Resume/remaining:** route through existing public selection/file/Git/version/effect
+pipelines only in a later coherent chunk; internal services do not claim installed
+command support, live plugin/no-op computation or cross-org acceptance. General Graph
+create/nested/schedule/label/reverse changes remain blocked. Coordinator retains the
+once-whole-feature Gate4 and final documentation propagation across all roadmap chunks.
+Package docs updated locally; no guide/root/index/evidence DB edits, release or version bump.
+Current npm identity/version remains `sf-plugin-data@0.1.0`; next release unassigned.
+
+Verification before checkpoint: lint:fix then lint zero warnings; explicit build;
+full npm test973/973, no skips/failures, test runner121.219s, intrinsic build+test
+approximately127s (combined lint/build/full-test shell148.871s). Normal enabled
+pre-commit separately reruns lint/full build+tests/smoke; its result and exact-SHA
+hosted status are recorded in the handoff response, not presumed here. No tested
+source/test/config inputs remain unstaged outside the literal checkpoint scope.
+Propagation assessment: this independent external-tooling plugin has no workspace
+consumers; language packages, CMS/MCNext, wiki, hover URLs and guide need no updates
+for these un-routed internal services. README remains accurate about public support;
+capability/artifact/handover docs describe the new internal boundary.
+
+# Historical Graph strict read transport checkpoint — 2026-10-28
 
 Sole-editor continuation from fetched clean HEAD/origin
 c1823f00d2fa137713c314e23aaab326a2d50502. Full operational plan, current handover,

@@ -1,6 +1,39 @@
 # Capability contract checklist
 
-## Internal Graph transport checkpoint
+## Internal Graph root-only family services
+
+The internal Graph document/acquisition/preflight/executor now admit only the
+qualified default-space root-only NONE/DEFAULT configuration: unified Individual
+logical root, ordered Text Id key/FirstName and the single forward non-key LastName
+append, seven-day refresh and incremental disabled. They are not wired into public
+selectors, file/Git input or artifact publication yet; create/delete remain blocked.
+A strict GET inventory rejects unknown meaningful properties rather than dropping
+them. Computed node/field/output identities stay in private expectations, separate
+from the logical portable root. Missing GET `creationMode` requires explicit private
+known DEFAULT creation intent bound to the exact returned owner id/name/default;
+it is never inferred from desired input or presented as portable provenance.
+
+Acquisition reads exact Graph, its returned day-zero transform, then a fresh identical
+Graph. Eligibility requires ACTIVE/SUCCESS, a completed dated run and matching
+load-field/key/output lineage; an existing completed run may predate invocation.
+Preflight independently binds API65 REST/Metadata root identity, required Text fields
+and explicit key. Only equality or the complete preserved LastName append is admitted.
+Execution rechecks input, dependencies and owner baseline, acknowledges processing,
+and attempts one full update with `editScheduleOnly: false`. A zero-mutation unchanged
+result does not require processing acknowledgement. Unknown intent limits existing-owner
+admission; it does not claim every Graph is unsupported.
+
+Settlement defaults to a finite 40-minute window, at most 41 Graph poll reads spaced
+60 seconds (eligibility/confirmation reads are additional bounded acquisitions).
+`processing` and `editing_post_sync` remain pending even after transform SUCCESS.
+Private detached application observations are recorded before status/error classification;
+unknown status, nested errors, recorder failure, timeout or preserved-binding drift
+stop without replay. Confirmation requires independent ready/complete equality, the
+same exact owner transform with a later completed run and fresh dependency binding.
+Clock/read/delay seams exercise approximately thirty minutes synthetically. No live
+plugin, installed command, no-op computation or cross-org acceptance is claimed.
+
+## Internal Graph transport boundary
 
 The fixed API67 facade now admits semantically read-only `d360_transform_get`
 with exact `dataTransformNameOrId`. It requires matching returned name/id,
@@ -15,9 +48,8 @@ private detached raw application-body observation before strict result/status/er
 classification. Unknown Graph status and nested errors are recorded then rejected;
 recorder failure fails closed. It does not expose observations in public results,
 permit mutation recording, retry transport failures or weaken supported status guards.
-Graph artifacts, acquisition, preflight, executor, public file/Git routing and
-zero-write acceptance are still unimplemented. Missing complete Graph GET schema
-and exact-owner creation-intent binding must be resolved without inventing defaults.
+The family services above consume this boundary. Public file/Git routing and live
+zero-write acceptance remain unimplemented/unverified respectively.
 
 ## Public CI command boundary
 

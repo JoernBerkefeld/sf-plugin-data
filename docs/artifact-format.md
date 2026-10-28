@@ -1,5 +1,20 @@
 # Internal DMO field contract
 
+## Internal Graph document
+
+The un-routed Graph family uses `schemaVersion: 1`, `kind: data-graph`, an exact
+`identity: {dataSpace: default, apiName}` and complete qualified `spec`: label,
+description, known creation-time DEFAULT intent, logical unified Individual root,
+NONE type, seven-day full-refresh schedule, incremental disabled, and root source
+with empty path/relatedObjects and ordered Text Id key/FirstName/optional appended
+LastName. `sourceObject.devName` is the logical input root, not the generated GET
+node developer name. GET absence of creationMode is not silently defaulted: private
+exact-owner creation intent is required for acquisition, never serialized as source
+provenance. Full computed GET/transform bodies and owner/node/field/output IDs remain
+private expectations. Unknown root/node/field/config properties block projection.
+No public Graph path, writer, file/Git reader, request envelope or create lifecycle
+is enabled by this internal document contract.
+
 ## Public calculated insight pairs
 
 For exact `calculated-insight:Name__cio`, retrieve publishes independent standard
