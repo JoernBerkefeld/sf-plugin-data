@@ -11,12 +11,7 @@ import { irFixture, selection } from './identity-resolution-fixtures.mjs';
  */
 function harness(method = 'lastupdated') {
   const pair = irFixture(method);
-  const projection = projectIdentityResolution(
-    pair.facade,
-    pair.native,
-    'Individual_A1b2',
-    'CustomerResolution',
-  );
+  const projection = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
   const acquisition = { identity: projection.candidate.identity, ...projection, blockers: [] };
   const calls = { acquire: 0, dependencies: 0, writes: 0 };
   const connection = {
@@ -133,7 +128,7 @@ test('IR exact target scope and mandatory dependency verifier fail closed', asyn
     'wrongOwner',
     'wrongSpace',
     'wrongConnection',
-    'badBinding',
+    'differentApi',
   ]) {
     const h = harness();
     if (variant === 'missingVerifier') {
@@ -146,7 +141,7 @@ test('IR exact target scope and mandatory dependency verifier fail closed', asyn
     }
     if (variant === 'wrongOwner') h.options.targetApiName = '../private';
     if (variant === 'wrongConnection') h.connection.getApiVersion = () => '65.0';
-    if (variant === 'badBinding') h.options.targetApiName = undefined;
+    if (variant === 'differentApi') h.options.targetApiName = 'Individual_Z9z9';
     const result = await h.run(
       undefined,
       selection,
@@ -202,10 +197,22 @@ test('IR complete native/facade, candidate and generated-output correlation cann
       a.expectations.native.rulesetStatus = 'UNKNOWN';
     },
     (a) => {
+      a.expectations.facade.dataSpaceName = 'other';
+      a.expectations.native.dataSpaceName = 'other';
+    },
+    (a) => {
+      delete a.expectations.facade.dataSpaceName;
+      delete a.expectations.native.dataSpaceName;
+    },
+    (a) => {
+      a.expectations.facade.configurationType = 'household';
+      a.expectations.native.configurationType = 'household';
+    },
+    (a) => {
       a.candidate.spec.label = 'forged';
     },
     (a) => {
-      a.identity.logicalName = 'Other';
+      a.identity.apiName = 'Other';
     },
     (a) => {
       a.expectations.outputs[0].sourceApiName = 'Forged__dlm';
@@ -224,6 +231,37 @@ test('IR complete native/facade, candidate and generated-output correlation cann
     assert.equal(result.outcome, 'blocked');
     assert.equal(h.calls.writes, 0);
   }
+});
+
+test('IR resolves authored exact API automatically and admits differing target-local IDs only', async () => {
+  const h = harness();
+  delete h.options.targetApiName;
+  h.acquisition.expectations.facade.id = 'different-target-owner-id';
+  h.acquisition.expectations.native.id = 'different-target-owner-id';
+  h.options.acquire = async (_connection, apiName, version, space) => {
+    assert.equal(apiName, h.projection.candidate.identity.apiName);
+    assert.deepEqual(version, selection);
+    assert.equal(space, 'default');
+    return structuredClone(h.acquisition);
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'unchanged');
+  assert.equal(h.calls.writes, 0);
+});
+
+test('IR target API mismatch never falls back to a matching label or another suffix', async () => {
+  const h = harness();
+  h.options.acquire = async (_connection, apiName) => {
+    assert.equal(apiName, 'Individual_A1b2');
+    const acquired = structuredClone(h.acquisition);
+    acquired.expectations.facade.objectApiName = 'Individual_Z9z9';
+    acquired.expectations.native.objectApiName = 'Individual_Z9z9';
+    return acquired;
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.absenceProof, 'none');
+  assert.equal(h.calls.writes, 0);
 });
 
 test('IR verifies dependencies on every preview and blocks fresh failure without retries', async () => {

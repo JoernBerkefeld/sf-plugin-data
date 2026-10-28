@@ -40,7 +40,7 @@ export type IdentityResolutionPollEvidence = {
   statusValue: unknown;
 };
 export type IdentityResolutionExecutionOptions = {
-  targetApiName: string;
+  targetApiName?: string;
   allowProcessing: boolean;
   verifyInput: () => Promise<void>;
   verifyDependencies?: (
@@ -114,7 +114,7 @@ export async function executeIdentityResolutionDeploy(
     const desired = validateIdentityResolutionDocument(value);
     const selection = { ...apiVersion };
     const {
-      targetApiName,
+      targetApiName = desired.identity.apiName,
       allowProcessing,
       verifyInput,
       verifyDependencies = bindIdentityResolutionDependencies,
@@ -140,7 +140,7 @@ export async function executeIdentityResolutionDeploy(
         selection.soapNumeric !== '67.0' ||
         connection.getApiVersion() !== '67.0' ||
         dataSpace !== 'default' ||
-        !/^Individual_[A-Za-z0-9]{4}$/u.test(targetApiName) ||
+        targetApiName !== desired.identity.apiName ||
         !isDeepStrictEqual(apiVersion, selection)
       )
         throw new Error('Scope drift');
@@ -166,13 +166,7 @@ export async function executeIdentityResolutionDeploy(
     };
     const capture = async (): Promise<IdentityResolutionProjection> => {
       scope();
-      const acquired = await acquire(
-        connection,
-        targetApiName,
-        desired.identity.logicalName,
-        { ...selection },
-        dataSpace,
-      );
+      const acquired = await acquire(connection, targetApiName, { ...selection }, dataSpace);
       if (
         !acquired.candidate ||
         !acquired.expectations ||
@@ -185,7 +179,6 @@ export async function executeIdentityResolutionDeploy(
         acquired.expectations.facade,
         acquired.expectations.native,
         targetApiName,
-        desired.identity.logicalName,
       );
       if (
         !isDeepStrictEqual(
@@ -380,12 +373,7 @@ export async function executeIdentityResolutionDeploy(
       elapsed();
       if (status === 'PUBLISHING') continue;
       const native = await readNative(targetApiName);
-      const settled = projectIdentityResolution(
-        observation,
-        native,
-        targetApiName,
-        desired.identity.logicalName,
-      );
+      const settled = projectIdentityResolution(observation, native, targetApiName);
       if (
         !isDeepStrictEqual(settled.candidate, desired) ||
         !isDeepStrictEqual(settled.expectations.facade, expected) ||

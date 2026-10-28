@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 export type IdentityResolutionIdentity = {
   kind: 'identity-resolution';
   dataSpace: 'default';
-  logicalName: string;
+  apiName: string;
 };
 export type IdentityResolutionDmoReference = { kind: 'dmo'; dataSpace: 'default'; apiName: string };
 export type IdentityResolutionFieldReference = {
@@ -20,7 +20,7 @@ export type IdentityResolutionOutputIdentity = {
 export type IdentityResolutionDocument = {
   schemaVersion: 1;
   kind: 'identity-resolution';
-  identity: { dataSpace: 'default'; logicalName: string };
+  identity: { dataSpace: 'default'; apiName: string };
   spec: {
     configurationType: 'Individual';
     label: string;
@@ -160,13 +160,19 @@ function text(value: unknown, empty = false): void {
 export function validateIdentityResolutionDocument(value: unknown): IdentityResolutionDocument {
   json(value);
   const root = record(value, ['schemaVersion', 'kind', 'identity', 'spec']);
-  const identity = record(root.identity, ['dataSpace', 'logicalName']);
+  if (
+    root.identity &&
+    typeof root.identity === 'object' &&
+    Object.hasOwn(root.identity, 'logicalName')
+  )
+    throw new IdentityResolutionError('LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED');
+  const identity = record(root.identity, ['dataSpace', 'apiName']);
   requireValid(
     root.schemaVersion === 1 &&
       root.kind === 'identity-resolution' &&
       identity.dataSpace === 'default' &&
-      typeof identity.logicalName === 'string' &&
-      identityResolutionName.test(identity.logicalName),
+      typeof identity.apiName === 'string' &&
+      identityResolutionName.test(identity.apiName),
   );
   const spec = record(root.spec, [
     'configurationType',
@@ -227,7 +233,7 @@ export function validateIdentityResolutionDocument(value: unknown): IdentityReso
       reconciliation.ruleType === 'LastUpdated' ||
         (index === 0 && reconciliation.ruleType === 'MostFrequent'),
     );
-    requireValid(isDeepStrictEqual(reconciliation.outputs, outputs(identity.logicalName, entity)));
+    requireValid(isDeepStrictEqual(reconciliation.outputs, outputs(identity.apiName, entity)));
   }
   return structuredClone(value) as IdentityResolutionDocument;
 }
@@ -253,13 +259,13 @@ function field(parentApiName: string, apiName: string): IdentityResolutionFieldR
 
 /**
  * Identify generated outputs only through their logical owner, entity and role.
- * @param {string} logicalName Authored owner identity.
+ * @param {string} apiName Authored owner identity.
  * @param {string} entity Reconciliation input entity.
  * @returns {IdentityResolutionOutputIdentity[]} Ordered output identities.
  */
-function outputs(logicalName: string, entity: string): IdentityResolutionOutputIdentity[] {
+function outputs(apiName: string, entity: string): IdentityResolutionOutputIdentity[] {
   return (['unified', 'link'] as const).map((role) => ({
-    owner: { kind: 'identity-resolution', dataSpace: 'default', logicalName },
+    owner: { kind: 'identity-resolution', dataSpace: 'default', apiName },
     entity: dmo(entity),
     role,
   }));
@@ -270,21 +276,17 @@ function outputs(logicalName: string, entity: string): IdentityResolutionOutputI
  * Only native omission of facade filters:[] is qualified; no other omission/case is normalized between reads.
  * @param {unknown} facade API67 application result from frozen read transport.
  * @param {unknown} native Independent native API65 exact owner response.
- * @param {string} sourceApiName Exact source owner requested by the caller.
- * @param {string} logicalName Explicit portable identity, not inferred from source suffixes.
+ * @param {string} apiName Exact exposed owner API name requested by the caller.
  * @returns {IdentityResolutionProjection} Portable candidate plus private correlation baseline.
  */
 export function projectIdentityResolution(
   facade: unknown,
   native: unknown,
-  sourceApiName: string,
-  logicalName: string,
+  apiName: string,
 ): IdentityResolutionProjection {
   json(facade);
   json(native);
-  requireValid(
-    identityResolutionName.test(sourceApiName) && identityResolutionName.test(logicalName),
-  );
+  requireValid(typeof apiName === 'string' && identityResolutionName.test(apiName));
   const keys = [
     'configurationType',
     'dataSpaceName',
@@ -309,14 +311,13 @@ export function projectIdentityResolution(
   const { filters, ...withoutFilters } = raw;
   requireValid(isDeepStrictEqual(filters, []) && isDeepStrictEqual(withoutFilters, nativeRaw));
   requireValid(
-    raw.objectApiName === sourceApiName &&
+    raw.objectApiName === apiName &&
       raw.dataSpaceName === 'default' &&
       raw.configurationType === 'individual' &&
       raw.secondaryDmo === entities[0],
   );
   text(raw.id);
   requireValid(typeof raw.rulesetId === 'string' && /^[A-Za-z0-9]{4}$/u.test(raw.rulesetId));
-  requireValid(raw.objectApiName === `Individual_${raw.rulesetId}`);
   if (raw.rulesetStatus !== 'PUBLISHED')
     throw new IdentityResolutionError('IDENTITY_RESOLUTION_NOT_SETTLED');
   requireValid(Array.isArray(raw.matchRules) && raw.matchRules.length === 1);
@@ -360,7 +361,7 @@ export function projectIdentityResolution(
     requireValid(
       item.ruleType === 'lastupdated' || (index === 0 && item.ruleType === 'mostfrequent'),
     );
-    const identities = outputs(logicalName, entities[index]);
+    const identities = outputs(apiName, entities[index]);
     for (const [roleIndex, key] of ['unifiedDmoName', 'linkDmoName'].entries()) {
       const name = item[key];
       requireValid(
@@ -383,7 +384,7 @@ export function projectIdentityResolution(
   const candidate = validateIdentityResolutionDocument({
     schemaVersion: 1,
     kind: 'identity-resolution',
-    identity: { dataSpace: 'default', logicalName },
+    identity: { dataSpace: 'default', apiName: raw.objectApiName },
     spec: {
       configurationType: 'Individual',
       label: raw.label,

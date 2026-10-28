@@ -115,7 +115,7 @@ export async function writeIdentityResolutionDocument(
       base,
       'data360',
       'identityResolution',
-      `${document.identity.logicalName}.identityResolution.json`,
+      `${document.identity.apiName}.identityResolution.json`,
     );
     await ensure(path.dirname(destination));
     const previous = await existing(destination);

@@ -218,18 +218,18 @@ export async function verifyIdentityResolutionOutputs(
     owner?.dataSpace === 'default' &&
       typeof owner.targetId === 'string' &&
       owner.targetId.trim() &&
-      /^Individual_[A-Za-z0-9]{4}$/u.test(owner.targetApiName) &&
+      typeof owner.targetApiName === 'string' &&
+      /^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(owner.targetApiName) &&
       Array.isArray(outputs) &&
       outputs.length === 12,
   );
   // Snapshot caller-owned identities/names before asynchronous reads; no generated name is constructed.
   const requested = structuredClone(outputs);
   const target = { ...owner };
-  const logicalName = requested[0].identity.owner.logicalName;
+  requireProof(requested.every((output) => output.identity.owner.apiName === target.targetApiName));
   const acquired = await acquireOwner(
     connection,
     target.targetApiName,
-    logicalName,
     { ...selection },
     'default',
   );
@@ -238,7 +238,6 @@ export async function verifyIdentityResolutionOutputs(
     acquired.expectations.facade,
     acquired.expectations.native,
     target.targetApiName,
-    logicalName,
   );
   const expected = projection.expectations.outputs.map(({ identity, sourceApiName }) => ({
     identity,
@@ -263,19 +262,12 @@ export async function verifyIdentityResolutionOutputs(
     bindings.push({ ...output, targetId: proof.id, creationType, fields: proof.fields });
     scope(connection, selection);
   }
-  const final = await acquireOwner(
-    connection,
-    target.targetApiName,
-    logicalName,
-    { ...selection },
-    'default',
-  );
+  const final = await acquireOwner(connection, target.targetApiName, { ...selection }, 'default');
   requireProof(final.expectations && final.candidate && final.blockers.length === 0);
   const finalProjection = projectIdentityResolution(
     final.expectations.facade,
     final.expectations.native,
     target.targetApiName,
-    logicalName,
   );
   requireProof(isDeepStrictEqual(finalProjection, projection));
   scope(connection, selection);

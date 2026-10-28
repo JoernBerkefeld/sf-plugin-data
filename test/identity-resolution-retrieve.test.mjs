@@ -29,15 +29,9 @@ function connection(input = irFixture()) {
 
 test('IR acquisition uses frozen facade67 plus independent native65 with zero mutations', async () => {
   const { conn, requests } = connection();
-  const result = await retrieveIdentityResolution(
-    conn,
-    'Individual_A1b2',
-    'CustomerResolution',
-    selection,
-    'default',
-  );
+  const result = await retrieveIdentityResolution(conn, 'Individual_A1b2', selection, 'default');
   assert.deepEqual(result.blockers, []);
-  assert.equal(result.candidate.identity.logicalName, 'CustomerResolution');
+  assert.equal(result.candidate.identity.apiName, 'Individual_A1b2');
   assert.equal(requests.length, 2);
   assert.equal(
     requests[0].request.url,
@@ -71,13 +65,7 @@ test('IR acquisition blocks transport/nested201 errors without payload, retry or
       requests.push(r);
       return reply;
     };
-    const result = await retrieveIdentityResolution(
-      conn,
-      'Individual_A1b2',
-      'CustomerResolution',
-      selection,
-      'default',
-    );
+    const result = await retrieveIdentityResolution(conn, 'Individual_A1b2', selection, 'default');
     assert.deepEqual(result.blockers, ['IDENTITY_RESOLUTION_ACQUISITION_FAILED']);
     assert.equal(result.candidate, undefined);
     assert.equal(result.expectations, undefined);
@@ -102,13 +90,7 @@ test('IR acquisition requires complete correlated published native owner', async
         return original.call(this, r, o);
       };
     }
-    const result = await retrieveIdentityResolution(
-      conn,
-      'Individual_A1b2',
-      'CustomerResolution',
-      selection,
-      'default',
-    );
+    const result = await retrieveIdentityResolution(conn, 'Individual_A1b2', selection, 'default');
     assert.equal(result.candidate, undefined);
     assert.equal(result.expectations, undefined);
     assert.equal(result.blockers.length, 1);
@@ -119,13 +101,14 @@ test('IR acquisition requires complete correlated published native owner', async
 });
 
 test('IR rejects invalid scope before any read and never upgrades versions', async () => {
-  for (const [version, space, source, logical, numeric] of [
-    ['65.0', 'default', 'Individual_A1b2', 'Owner', '67.0'],
-    ['latest', 'default', 'Individual_A1b2', 'Owner', '67.0'],
-    ['67.0', 'other', 'Individual_A1b2', 'Owner', '67.0'],
-    ['67.0', 'default', '../escape', 'Owner', '67.0'],
-    ['67.0', 'default', 'Individual_A1b2', '', '67.0'],
-    ['67.0', 'default', 'Individual_A1b2', 'Owner', '65.0'],
+  for (const [version, space, source, numeric] of [
+    ['65.0', 'default', 'Individual_A1b2', '67.0'],
+    ['latest', 'default', 'Individual_A1b2', '67.0'],
+    ['67.0', 'other', 'Individual_A1b2', '67.0'],
+    ['67.0', 'default', '../escape', '67.0'],
+    ['67.0', 'default', '', '67.0'],
+    ['67.0', 'default', undefined, '67.0'],
+    ['67.0', 'default', 'Individual_A1b2', '65.0'],
   ]) {
     const { conn, requests } = connection();
     conn.getApiVersion = () => numeric;
@@ -133,7 +116,6 @@ test('IR rejects invalid scope before any read and never upgrades versions', asy
       retrieveIdentityResolution(
         conn,
         source,
-        logical,
         { requested: version, restSelector: `v${version}`, soapNumeric: version },
         space,
       ),

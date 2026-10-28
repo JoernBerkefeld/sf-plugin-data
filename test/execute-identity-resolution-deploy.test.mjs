@@ -20,7 +20,6 @@ function harness(equality = false) {
   const desired = projectIdentityResolution(
     ...Object.values(irFixture()),
     'Individual_A1b2',
-    'LogicalOwner',
   ).candidate;
   const calls = {
     mutations: [],
@@ -74,7 +73,7 @@ function harness(equality = false) {
       calls.acquisitions++;
       return {
         identity: desired.identity,
-        ...projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2', 'LogicalOwner'),
+        ...projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2'),
         blockers: [],
       };
     },
@@ -190,6 +189,17 @@ test('IR full qualified payload preserves nested matching, labels and all six se
   assert.equal(h.pair.facade.reconciliationRules.length, 6);
   assert.equal(h.calls.native, 1);
   assert.equal(h.calls.outputs, 3);
+});
+
+test('IR executor resolves authored API without a manual binding and blocks conflicting binding', async () => {
+  const h = harness(true);
+  delete h.options.targetApiName;
+  const equal = await h.run();
+  assert.equal(equal.outcome, 'unchanged');
+  h.options.targetApiName = 'Individual_Z9z9';
+  const conflicting = await h.run();
+  assert.equal(conflicting.mutation, 'not-attempted');
+  assert.equal(h.calls.mutations.length, 0);
 });
 
 for (const drift of ['input', 'version', 'dependency', 'target', 'output']) {

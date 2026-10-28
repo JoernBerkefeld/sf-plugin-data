@@ -28,9 +28,11 @@ import Deploy from '../lib/commands/data360/deploy.js';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
 
-const document = (name = 'CustomerResolution') => {
+const document = (name = 'Individual_A1b2') => {
   const { facade, native } = irFixture();
-  return projectIdentityResolution(facade, native, 'Individual_A1b2', name).candidate;
+  facade.objectApiName = name;
+  native.objectApiName = name;
+  return projectIdentityResolution(facade, native, name).candidate;
 };
 const fixture = async (configured = false) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ir-files-'));
@@ -59,7 +61,7 @@ for (const configured of [false, true]) {
       path.join(
         cwd,
         configured ? 'custom' : 'force-app',
-        'main/default/data360/identityResolution/CustomerResolution.identityResolution.json',
+        'main/default/data360/identityResolution/Individual_A1b2.identityResolution.json',
       ),
     );
     const bytes = await readFile(receipt.path);
@@ -69,7 +71,8 @@ for (const configured of [false, true]) {
     assert.equal(repeated.outcome, 'unchanged');
     assert.equal(after.mtimeMs, before.mtimeMs);
     assert.equal(bytes.includes('synthetic-owner-id'), false);
-    assert.equal(bytes.includes('Individual_A1b2'), false);
+    assert.equal(bytes.includes('Individual_A1b2'), true);
+    assert.equal(JSON.parse(bytes).identity.apiName, 'Individual_A1b2');
     value.spec.label = 'Changed';
     await assert.rejects(
       writeIdentityResolutionDocument(value, cwd, false),
@@ -79,10 +82,7 @@ for (const configured of [false, true]) {
     assert.equal(JSON.parse(await readFile(receipt.path, 'utf8')).spec.label, 'Changed');
     const inputs = await readDeployInputs({
       cwd,
-      metadata: [
-        'identity-resolution:CustomerResolution',
-        'identity-resolution:CustomerResolution',
-      ],
+      metadata: ['identity-resolution:Individual_A1b2', 'identity-resolution:Individual_A1b2'],
     });
     assert.equal(inputs.length, 1);
     assert.ok(Object.isFrozen(inputs[0].document.spec.matchRules));
@@ -91,6 +91,31 @@ for (const configured of [false, true]) {
     await assert.rejects(verifyIdentityResolutionInputDigest(inputs[0]), rejects('UNSAFE_SOURCE'));
   });
 }
+
+test('IR legacy identity is refused by writer and file/Git admission without reinterpretation', async () => {
+  const cwd = await fixture();
+  const value = document();
+  const legacy = structuredClone(value);
+  legacy.identity = { dataSpace: 'default', logicalName: 'Individual_A1b2' };
+  await assert.rejects(
+    writeIdentityResolutionDocument(legacy, cwd, false),
+    rejects('LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED'),
+  );
+  const receipt = await writeIdentityResolutionDocument(value, cwd, false);
+  await writeFile(receipt.path, JSON.stringify(legacy));
+  await assert.rejects(
+    readDeployInputs({ cwd, sourceDir: [receipt.path] }),
+    rejects('INVALID_SOURCE'),
+  );
+  git(cwd, 'init', '--initial-branch=main');
+  git(cwd, 'config', '--local', 'user.name', 'Jörn Berkefeld');
+  git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
+  git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
+  git(cwd, 'add', '--all');
+  git(cwd, 'commit', '-m', 'Synthetic legacy baseline');
+  await writeFile(receipt.path, JSON.stringify(legacy) + '\n');
+  await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }));
+});
 
 test('IR file admission rejects duplicate keys, mismatch, duplicate identity and hardlinks', async () => {
   const cwd = await fixture();
@@ -104,7 +129,7 @@ test('IR file admission rejects duplicate keys, mismatch, duplicate identity and
     readDeployInputs({ cwd, sourceDir: [receipt.path] }),
     rejects('INVALID_SOURCE'),
   );
-  await writeFile(receipt.path, bytes.replaceAll('CustomerResolution', 'Different'));
+  await writeFile(receipt.path, bytes.replaceAll('Individual_A1b2', 'Different'));
   await assert.rejects(
     readDeployInputs({ cwd, sourceDir: [receipt.path] }),
     rejects('INVALID_SOURCE'),
@@ -112,7 +137,7 @@ test('IR file admission rejects duplicate keys, mismatch, duplicate identity and
   await writeFile(receipt.path, bytes);
   const other = path.join(
     cwd,
-    'other/main/default/data360/identityResolution/CustomerResolution.identityResolution.json',
+    'other/main/default/data360/identityResolution/Individual_A1b2.identityResolution.json',
   );
   await mkdir(path.dirname(other), { recursive: true });
   await writeFile(other, bytes);
@@ -282,7 +307,7 @@ test('IR public retrieve selector blocked before resolving org', async () => {
   const command = Object.create(Retrieve.prototype);
   command.parse = async () => ({
     flags: {
-      metadata: ['identity-resolution:CustomerResolution'],
+      metadata: ['identity-resolution:Individual_A1b2'],
       'api-version': '65.0',
       'data-space': 'default',
     },

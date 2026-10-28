@@ -1,3 +1,101 @@
+# Chunk D IR exact exposed owner API identity correction — 2026-10-28
+
+User decision closes the identity-design checkpoint: the EXACT exposed IR owner
+`objectApiName`, including its actual suffix, is a permitted portable authored API
+reference. Source and target must expose the same API name in explicit default
+space. This is NOT permission to infer/strip/build suffixes, copy source record IDs
+or generated-output names, or fall back to labels/names after failed API lookup.
+This current correction supersedes the arbitrary-logicalName contract and identity
+blocker in historical sections below; those sections retain their original scope.
+
+Fetched baseline `8f72f6404a3bd135018e98e6f57f130e2e71032b` was clean, pushed and
+equal to origin/main; retained baseline was 767 tests. Existing plan/review remain
+closed; one coupled artifact/retrieve/service/files/test owner, no nested workers.
+Coordinator retains whole-feature review, public documentation and final DB
+rebuild/validate/gaps. No live org calls/mutations or repeated qualification here.
+
+## Exact corrected schema, refusal and interfaces
+
+- `IdentityResolutionDocument` remains schemaVersion 1 / kind identity-resolution,
+  but now strictly requires `identity:{dataSpace:'default',apiName:string}`.
+  The exact-key discriminator is the smallest compatibility break: old top-level
+  identity.logicalName (alone OR alongside apiName) explicitly throws
+  `LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED`; no migration or reinterpretation.
+  Output identities strictly use `{owner:{kind:'identity-resolution',
+  dataSpace:'default',apiName},entity:{kind:'dmo',dataSpace:'default',apiName},role}`.
+  Twelve ordered owner+space+entity+role references remain; generated names and
+  record IDs exist only in private acquisition/target-verification expectations.
+- `projectIdentityResolution(facade:unknown,native:unknown,apiName:string)` requires
+  complete independent facade/native equality (only facade filters:[] omission
+  qualified), exact returned objectApiName, default space, Individual supported
+  configuration and PUBLISHED state. Candidate identity copies the observed
+  objectApiName, never a constructed prefix/rulesetId combination. Private
+  rulesetId remains bounded observed evidence, never an authored field or naming
+  recipe. All previous matching/reconciliation/unsupported-field guards remain.
+- `retrieveIdentityResolution(connection,apiName,selection,dataSpace)` removes the
+  independently authored logicalName argument. Exact API67 facade get plus API65
+  native exact GET produce the checked candidate; no inventory/name fallback.
+- Existing-target resolver is the preflight's direct exact API acquisition:
+  `preflightIdentityResolutionDeploy(value,connection,selection,dataSpace,options={})`.
+  `options.targetApiName?:string` is now an optional compatibility assertion only;
+  when supplied it MUST equal desired.identity.apiName before reads. Omission
+  automatically resolves authored API, not label/rulesetId/generated output name.
+  Acquired identity, complete reprojection, candidate and private outputs must agree.
+  Different source/target record IDs are permitted; no source ID participates in
+  authored identity. Missing/unreadable/unsupported/mismatched owners or spaces
+  block with target unknown / absenceProof none. CREATE remains blocked.
+- `executeIdentityResolutionDeploy` keeps its signature and existing bounded
+  update/settlement semantics. Its optional targetApiName defaults to authored API;
+  conflicting manual assertion blocks. Fresh input/dependency/output/readback
+  guards, required processing acknowledgement and private poll recorder remain.
+  Output verifier also requires every logical owner API to match the exact target
+  and reacquires that owner before/after generated-DMO reads.
+- Writer publishes `<package>/main/default/data360/identityResolution/
+  <apiName>.identityResolution.json`; exact API filename/admission/selector/
+  duplicate-identity checks replace logicalName checks. Original strict JSON,
+  no-link/single-link bytes, immutable recursive freeze and SHA256 digest remain.
+  Existing `readDeployInputs`, `verifyIdentityResolutionInputDigest`,
+  `captureDeployInputDigest` and Git untracked/index/committed/worktree seams now
+  validate the authored API schema. No command, transport, Git helper or public
+  routing expansion is included: public IR selectors are still explicitly blocked.
+
+## Verification boundary and next command-routing slice
+
+Synthetic regressions cover explicit legacy refusal (validator/writer/file/Git),
+exact observed API including suffix, no label fallback or suffix inference,
+different target IDs/same owner API, conflicting API/candidate/owner-output,
+missing/unreadable/unsupported owner and missing/wrong space, API-derived path,
+immutable byte digest and all four Git selection states. Existing executor
+single-attempt, no-op/readback, dependency/output and filesystem safety tests stay.
+Scoped autofix/build/full zero-warning lint/focused/full npm tests and unchanged
+normal-hook checkpoint receipts are reported with exact final counts/timing/hash
+in the worker return. Synthetic tests are NOT live portability acceptance.
+Every shell/test entry validates absolute normalized TEMP/actual Node os.tmpdir/
+nonempty TMP/TMPDIR against F:/Temp, process-only repair/recheck. Fixtures/staging
+use marker-owned mkdtemp roots; no recursive cleanup, persistent-project changes,
+installs, DB writes/index/root history changes, release/version/tag or bypass.
+
+Next bounded command/API-auto owner can consume the corrected apiName identity
+without another identity decision: wire retrieve/deploy exact IR selection through
+existing complete-selection guards, effects, immutable digest verification,
+fresh automatic exact-owner binding, per-operation auto API routing and private
+poll recorder. Keep numeric-version semantics honest; do not silently upgrade65.
+Then separately run source/cross-org actual plugin retrieval/update/readback/
+zero-mutation acceptance. Revised input-binder live acceptance remains unproved;
+IR CREATE absence/conflict and broader matching/reconciliation/source precedence
+remain blocked. Segment setup settlement/raw-evidence and permission/shell CREATE,
+CI expression/no-op, DLO operational/source cleanup and broader DMO gaps remain.
+Graph VALUE debt is unchanged: `GraphDd23cf3b3eb6372_1793161702141_VALUE__dlm`
+was readable at checkpoint D; no direct generated-DMO cleanup authorization or
+physical/eventual/global cleanup claim. All historical resource ledgers remain.
+This is NOT IR-family, Chunk D, cross-org or roadmap completion.
+
+Propagation: sf-plugin-data internal schema/services/files/tests/handover only,
+no workspace consumers/language/LSP/hover/wiki/mcdev/CMS/site changes. Public
+README/capabilities/artifact/Git docs and aggregate propagation/version tables
+remain coordinator-owned. Changed folder sf-plugin-data yes, package version0.1.0
+unchanged; next version unassigned, checkpoint only, no internal release.
+
 # Chunk B DLO source/cleanup feasibility checkpoint — BLOCKED — 2026-10-28
 
 Fetched package baseline `e0786b417603dc8f633c433cea361a4b978f2039`,

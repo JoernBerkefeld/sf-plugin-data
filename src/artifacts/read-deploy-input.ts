@@ -71,7 +71,7 @@ async function readIdentityResolutionInput(file: string): Promise<IdentityResolu
   let document: IdentityResolutionDocument;
   try {
     document = validateIdentityResolutionDocument(strictJson(decode(bytes)));
-    if (document.identity.logicalName !== name) throw new Error('Identity mismatch');
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
   } catch {
     throw new DeployInputError('INVALID_SOURCE');
   }
@@ -390,14 +390,13 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.identityResolution.json')) {
         const input = await readIdentityResolutionInput(file);
         const key =
-          `identity-resolution:${input.document.identity.dataSpace}:${input.document.identity.logicalName}`.toLowerCase();
+          `identity-resolution:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
           !selectors.some(
             (item) =>
-              item.kind === 'identity-resolution' &&
-              item.name === input.document.identity.logicalName,
+              item.kind === 'identity-resolution' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

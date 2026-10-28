@@ -15,7 +15,7 @@ export type IdentityResolutionTargetConnection = Pick<
   'instanceUrl' | 'request' | 'getApiVersion'
 >;
 export type IdentityResolutionPreflightOptions = {
-  targetApiName: string;
+  targetApiName?: string;
   verifyDependencies?: (
     document: IdentityResolutionDocument,
     connection: IdentityResolutionTargetConnection,
@@ -50,7 +50,7 @@ export async function preflightIdentityResolutionDeploy(
   connection: IdentityResolutionTargetConnection,
   apiVersion: ApiVersionSelection,
   dataSpace: string,
-  options: IdentityResolutionPreflightOptions,
+  options: IdentityResolutionPreflightOptions = {},
 ): Promise<IdentityResolutionDeployPreview> {
   const result = (
     outcome: IdentityResolutionDeployPreview['outcome'],
@@ -86,13 +86,12 @@ export async function preflightIdentityResolutionDeploy(
       apiVersion.soapNumeric !== '67.0' ||
       connection.getApiVersion() !== '67.0' ||
       dataSpace !== 'default' ||
-      typeof options?.targetApiName !== 'string' ||
-      !identityResolutionName.test(options.targetApiName) ||
-      !/^Individual_[A-Za-z0-9]{4}$/u.test(options.targetApiName)
+      !identityResolutionName.test(desired.identity.apiName) ||
+      (options.targetApiName !== undefined && options.targetApiName !== desired.identity.apiName)
     )
       return result('blocked', 'unknown', 'INVALID_SCOPE');
     // Snapshot caller-owned routing/options before asynchronous reads; never derive names from suffixes.
-    const targetApiName = options.targetApiName;
+    const targetApiName = desired.identity.apiName;
     const selection = { ...apiVersion };
     const acquire = options.acquire ?? retrieveIdentityResolution;
     const verify = options.verifyDependencies ?? bindIdentityResolutionDependencies;
@@ -100,13 +99,7 @@ export async function preflightIdentityResolutionDeploy(
       return result('blocked', 'unknown', 'IDENTITY_RESOLUTION_DEPENDENCY_VERIFIER_REQUIRED');
     // Verification must independently read existing target dependencies on every invocation, including equality.
     await verify(structuredClone(desired), connection, { ...selection }, dataSpace);
-    const acquired = await acquire(
-      connection,
-      targetApiName,
-      desired.identity.logicalName,
-      selection,
-      dataSpace,
-    );
+    const acquired = await acquire(connection, targetApiName, selection, dataSpace);
     if (
       !acquired.candidate ||
       !acquired.expectations ||
@@ -119,7 +112,6 @@ export async function preflightIdentityResolutionDeploy(
       acquired.expectations.facade,
       acquired.expectations.native,
       targetApiName,
-      desired.identity.logicalName,
     );
     if (
       !isDeepStrictEqual(acquired.identity, desired.identity) ||

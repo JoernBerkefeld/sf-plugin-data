@@ -19,12 +19,7 @@ const connection = {
   },
 };
 const pair = irFixture();
-const projection = projectIdentityResolution(
-  pair.facade,
-  pair.native,
-  'Individual_A1b2',
-  'LogicalOwner',
-);
+const projection = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
 const document = projection.candidate;
 const owner = { targetApiName: 'Individual_A1b2', targetId: pair.facade.id, dataSpace: 'default' };
 const outputs = projection.expectations.outputs.map(({ identity, sourceApiName }) => ({
@@ -367,7 +362,7 @@ test('IR output owner/mapping identity drift and bounds block before DMO reads',
       o[0].targetApiName = 'SourceGeneratedName__dlm';
     },
     (o) => {
-      o[0].identity.owner.logicalName = 'WrongOwner';
+      o[0].identity.owner.apiName = 'WrongOwner';
     },
     (o) => {
       o[0].identity.entity.dataSpace = 'other';

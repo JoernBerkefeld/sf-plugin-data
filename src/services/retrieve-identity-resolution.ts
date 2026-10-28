@@ -22,16 +22,14 @@ export type IdentityResolutionAcquisition = {
  * Acquire one settled qualified owner through independent API67 facade and API65 native reads.
  * Native owner equality is not generated-DMO field/type qualification or target binding.
  * @param {Connection} connection Authenticated command-owned numeric API67 connection.
- * @param {string} sourceApiName Exact source objectApiName, private correlation only.
- * @param {string} logicalName Explicit portable owner identity, never derived from source identity.
+ * @param {string} apiName Exact exposed owner objectApiName, including its actual suffix.
  * @param {ApiVersionSelection} apiVersion Explicit frozen facade version selection.
  * @param {string} dataSpace Requested default data space.
  * @returns {Promise<IdentityResolutionAcquisition>} Candidate only after complete independent correlation.
  */
 export async function retrieveIdentityResolution(
   connection: Pick<Connection, 'instanceUrl' | 'request' | 'getApiVersion'>,
-  sourceApiName: string,
-  logicalName: string,
+  apiName: string,
   apiVersion: ApiVersionSelection,
   dataSpace: string,
 ): Promise<IdentityResolutionAcquisition> {
@@ -41,20 +39,20 @@ export async function retrieveIdentityResolution(
     apiVersion.soapNumeric !== '67.0' ||
     connection.getApiVersion() !== '67.0' ||
     dataSpace !== 'default' ||
-    !identityResolutionName.test(sourceApiName) ||
-    !identityResolutionName.test(logicalName)
+    typeof apiName !== 'string' ||
+    !identityResolutionName.test(apiName)
   )
     throw new IdentityResolutionError('INVALID_SCOPE');
-  const identity = { dataSpace: 'default', logicalName } as const;
+  const identity = { dataSpace: 'default', apiName } as const;
   try {
     const facade = await new McpExecuteClient(connection, apiVersion).read('d360_ir_get', {
-      identityResolution: sourceApiName,
+      identityResolution: apiName,
     });
     // This is a separate exact native GET, not a second interpretation of the facade echo.
     const native = await new ConnectClient(connection, '65.0').get(
-      `/services/data/v65.0/ssot/identity-resolutions/${sourceApiName}`,
+      `/services/data/v65.0/ssot/identity-resolutions/${apiName}`,
     );
-    const projection = projectIdentityResolution(facade, native, sourceApiName, logicalName);
+    const projection = projectIdentityResolution(facade, native, apiName);
     return { identity, ...projection, blockers: [] };
   } catch (error: unknown) {
     return {

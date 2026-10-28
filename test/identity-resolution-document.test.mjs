@@ -8,7 +8,7 @@ import {
 import { irFixture } from './identity-resolution-fixtures.mjs';
 
 const project = ({ facade, native } = irFixture()) =>
-  projectIdentityResolution(facade, native, 'Individual_A1b2', 'CustomerResolution');
+  projectIdentityResolution(facade, native, 'Individual_A1b2');
 
 test('IR projects both observed reconciliation variants losslessly and detaches private correlation', () => {
   for (const method of ['lastupdated', 'mostfrequent']) {
@@ -29,7 +29,7 @@ test('IR projects both observed reconciliation variants losslessly and detaches 
       owner: {
         kind: 'identity-resolution',
         dataSpace: 'default',
-        logicalName: 'CustomerResolution',
+        apiName: 'Individual_A1b2',
       },
       entity: { kind: 'dmo', dataSpace: 'default', apiName: 'ssot__PartyIdentification__dlm' },
       role: 'link',
@@ -38,7 +38,6 @@ test('IR projects both observed reconciliation variants losslessly and detaches 
     assert.equal(bytes.endsWith('\n'), true);
     for (const secret of [
       'synthetic-owner-id',
-      'Individual_A1b2',
       'SyntheticUnified',
       'SyntheticLink',
       'rulesetId',
@@ -51,6 +50,38 @@ test('IR projects both observed reconciliation variants losslessly and detaches 
     input.facade.label = 'changed';
     assert.equal(result.expectations.facade.label, 'Synthetic owner');
   }
+});
+
+test('IR legacy arbitrary logicalName artifacts are explicitly refused, never reinterpreted', () => {
+  const document = project().candidate;
+  for (const keepApiName of [false, true]) {
+    const legacy = structuredClone(document);
+    legacy.identity.logicalName = 'ArbitraryOwner';
+    if (!keepApiName) delete legacy.identity.apiName;
+    assert.throws(() => validateIdentityResolutionDocument(legacy), {
+      code: 'LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED',
+    });
+  }
+});
+
+test('IR projects exact exposed API bytes without suffix inference, labels or generated names', () => {
+  const pair = irFixture();
+  pair.facade.objectApiName = 'ExposedOwner_ActualSuffix';
+  pair.native.objectApiName = pair.facade.objectApiName;
+  const projected = projectIdentityResolution(pair.facade, pair.native, pair.facade.objectApiName);
+  assert.equal(projected.candidate.identity.apiName, 'ExposedOwner_ActualSuffix');
+  assert.throws(() => projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2'));
+  assert.throws(() => projectIdentityResolution(pair.facade, pair.native, pair.facade.label));
+  const bytes = serializeIdentityResolutionDocument(projected.candidate);
+  assert.equal(bytes.includes('ActualSuffix'), true);
+  for (const privateValue of [
+    'synthetic-owner-id',
+    'SyntheticUnified',
+    'SyntheticLink',
+    'rulesetId',
+    'logicalName',
+  ])
+    assert.equal(bytes.includes(privateValue), false);
 });
 
 const unsupported = [
@@ -160,7 +191,7 @@ test('IR portable validation refuses identity drift, unknown settings and execut
   const document = project().candidate;
   for (const mutate of [
     (d) => {
-      d.spec.reconciliationRules[0].outputs[0].owner.logicalName = 'Other';
+      d.spec.reconciliationRules[0].outputs[0].owner.apiName = 'Other';
     },
     (d) => {
       d.spec.unknown = true;
