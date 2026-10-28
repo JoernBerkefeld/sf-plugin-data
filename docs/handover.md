@@ -1,3 +1,111 @@
+# Chunk B DLO source/cleanup feasibility checkpoint — BLOCKED — 2026-10-28
+
+Fetched package baseline `e0786b417603dc8f633c433cea361a4b978f2039`,
+clean and equal to origin/main, with no ahead history. Reused the approved
+operational-routes plan Gates1/2; Gate3 is one narrow qualification/handover owner,
+no nested worker or implementation expansion. IR decision and files are untouched.
+Coordinator owns whole-feature review/public docs/final combined DB rebuild and
+validation. This is a blocked checkpoint, not completion of B or a release.
+
+## Exact question and answer
+
+Can the documented candidate DLO create/update route close its source/stream/key
+prerequisites on newly owned fixtures with qualified cleanup, preserving PK/KQ
+and system semantics? **Not yet.** API67 facade operation metadata advertises
+`d360_dlo_create`, `d360_dlo_update` and `d360_dlo_delete` through POST
+`/services/data/v67.0/ssot/mcp/execute` with serialized `paramsJson`. These are
+candidate contracts, not executed lifecycle proof. No native write endpoint or
+version fallback was inferred. Raw standard Metadata replay remains blocked as
+previously recorded; PK/KQ/system fields must not be stripped.
+
+Create metadata exposes `{input:{name,label,category,dataspaceInfo,
+dataLakeFieldInputRepresentations|fields,...}}`; field entries expose
+`name,label,dataType,isPrimaryKey`. Its `dataSource` branch exposes `sourceId`,
+`sourceType:SfDrive`, `sourceConfig` and directory/file details. No complete
+SfDrive ownership/source closure or KQ replay contract was established. Update
+metadata requires `{recordIdOrDeveloperName,input}` and exposes fields/label and
+record-modified/org-unit fields, but does not qualify omission semantics, field
+addition/type changes, KQ/system preservation or semantic no-op comparison.
+The advertised delete operation is not evidence that its retained-instance
+behavior differs from the historical failed Metadata deletion.
+
+A bounded independent prerequisite read examined the Ingestion API stream variant:
+`d360_datastream_create_ingestion_api` needs an existing connection developer name,
+one connection-schema event, stream name and a primary-key schema field for a new
+DLO. It does not accept a complete arbitrary field replay in place of source
+schema. Two actual `d360_connection_list` calls with IngestApi/limit20/offset0
+returned the same eight preexisting CONNECTED entries and totalSize8. None was
+created by this run, selected for use, adopted or modified. This is a scoped
+observation, not universal inventory completeness/permission-aware absence proof.
+
+Crucially, a credential-free owned source is **advertised as possible**:
+`d360_connection_create_ingestion_api` accepts label and optional three-character
+alias, followed by connection-schema definition. Therefore missing external
+credentials is NOT the established blocker for that variant. The blocker is the
+unqualified owned connection/schema/stream/DLO lifecycle and cleanup gate.
+Stream deletion advertises asynchronous settlement and optional
+`shouldDeleteDataLakeObject:true`, followed by connection deletion only after
+streams are gone. Those semantics are schema/local-reference observations, not
+qualified cleanup. With historical DLO retention risk and no new debt permitted
+before cleanup feasibility, zero mutation remains the correct stop. Third-party
+stream metadata independently requires existing connection/object/field discovery;
+no external connector was invented or business connection adopted.
+
+## Binding, budget, effects and evidence
+
+Headless discover/describe ran before org reads. Separate source-MCP and explicit
+CLI `sf data query --query "SELECT Id FROM Organization WHERE Id != null LIMIT 1"
+--target-org mcnext-sdo --json` (exit0) both matched the intended source org.
+The persistent validation project's API65/force-app configuration was inspected
+and preserved; its git state belongs to the dirty workspace root, not a separate
+clean project repository. No project output or scratch was created.
+
+Predeclared cap: 30 minutes and 30 logical read-only org operations; mutation
+budget zero until route/prerequisite/cleanup feasibility. Completed four logical
+reads (two identity queries, two connection lists), zero provisions/updates/
+deletes/processing/publication calls, within the window ending
+2026-10-28T08:35:34.895Z. Schema/discovery calls were separate; one Data360 search
+rejected its advertised optional limit, then succeeded without it. Underlying
+HTTP/auth/backing requests were not instrumented and are not claimed exact.
+Operation metadata advertises API67, but both actual list responses expose
+`currentPageUrl:/services/data/v68.0/ssot/connections?...`; MCP outer responseCode201
+is not a captured HTTP status or controlled native API67 proof. No version sweep.
+
+Sanitized actual evidence subject:
+`data360:dlo.source-prerequisite-checkpoint.api67-68`, in the root verification DB.
+It records the two real list observations with independent readback and an
+explicit blocked prerequisite claim, not fabricated DLO mutation receipts or
+plugin acceptance. No shared index edit or root staging/push. Root fetch/status
+passed before the distinct subject write; unrelated staged/unstaged work preserved.
+No runtime debt or local scratch cleanup is introduced. Historical retained DLO,
+Graph debt and every prior blocker remain unchanged and unqueried by this slice.
+
+## Resume, interfaces and verification boundary
+
+No production interface, command, artifact format, dependency or public capability
+changed. No definition-only exporter was added: the optional evidence checkpoint
+remains unresolved and expanding code here would not answer it. Next owner needs
+one explicit bounded owned-chain cleanup qualification decision before provisioning:
+new Ingestion API connection + synthetic schema event + one stream/DLO, exact PK
+and generated KQ/system readback, meaningful supported update, independent settled
+comparison, then qualified asynchronous stream/DLO/connection removal. Do not
+silently authorize that future mutation chain from these schema descriptions;
+fix its fixture/operation/time budget and ownership/cleanup stop rules first.
+If that gate cannot be met, retain this blocker rather than adopt a shared source,
+retry historical cleanup, strip keys or resume broad API/kit research.
+
+Only this package handover and the distinct root evidence subject change.
+No behavior test is added for documentation-only work. Fresh explicit build,
+zero-warning full lint, full package tests and unchanged normal commit hooks are
+required; their actual receipts/hash/push are returned separately, not presumed
+here. TEMP/Node os.tmpdir/nonempty TMP/TMPDIR are preflighted at each shell entry;
+no install, release, version/tag, target call, recursive cleanup or IR edit.
+Gate4 code review is inapplicable to this no-code slice; coordinator still owns
+whole-feature review. Gate5 assessment: internal handover/evidence only, README,
+capabilities, artifact docs, Git workflow, guide/site listings, mcdev wiki,
+language/LSP/hover and all other consumers require no change. sf-plugin-data
+changed, working version0.1.0; next version unassigned, blocked checkpoint only.
+
 # Chunk D IR logical-owner identity checkpoint — BLOCKED — 2026-10-28
 
 Reconciled interrupted worker `e2e43088-9be4-4079-af75-3c1c6b7cc34b`
