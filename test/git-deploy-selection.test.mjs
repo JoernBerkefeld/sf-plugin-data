@@ -2,7 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rename, symlink, unlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, rename, symlink, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -319,7 +319,7 @@ for (const [file, value] of [
   });
 }
 
-test('Git selector reuses no-link admission and rejects invalid refs without payload leakage', async () => {
+test('Git selector refuses tracked directory link replacement before deployment', async () => {
   const cwd = await fixture();
   await put(cwd, relative('Linked'), document('Linked'));
   await commit(cwd);
@@ -329,10 +329,31 @@ test('Git selector reuses no-link admission and rejects invalid refs without pay
     ...document('Linked'),
     spec: { ...document('Linked').spec, label: 'Changed' },
   });
+  await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }), (error) => {
+    // Linux Git reports the tracked child as deleted before no-link admission; Windows
+    // can reach no-link admission first. Both exact refusals prevent deployment.
+    assert.ok(refusal('BLOCKED_GIT_LIFECYCLE')(error) || refusal('INVALID_GIT_SELECTION')(error));
+    return true;
+  });
+});
+
+test('Git selector rejects a Git-visible untracked file link through no-link admission', async () => {
+  const cwd = await fixture();
+  await put(cwd, 'linked/Linked__dlm.json', document('Linked'));
+  await mkdir(path.dirname(path.join(cwd, relative('Linked'))), { recursive: true });
+  const target = path.join(cwd, 'linked/Linked__dlm.json');
+  const member = path.join(cwd, relative('Linked'));
+  // Windows file symlinks need privileges unavailable to normal developer processes.
+  // A real hard link exercises the same strict no-link admission (nlink !== 1).
+  await (process.platform === 'win32' ? link(target, member) : symlink(target, member, 'file'));
   await assert.rejects(
     selectGitDeployInputs({ cwd, ref: 'HEAD' }),
     refusal('INVALID_GIT_SELECTION'),
   );
+});
+
+test('Git selector rejects invalid refs without payload leakage', async () => {
+  const cwd = await fixture();
   await assert.rejects(
     selectGitDeployInputs({ cwd, ref: '--output=secret' }),
     refusal('INVALID_GIT_SELECTION'),
