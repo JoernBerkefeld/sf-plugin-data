@@ -1,3 +1,107 @@
+# Chunk D bounded IR document/acquisition checkpoint — 2026-10-28
+
+Baseline `6a622a110251b5e73b64e3c809bff509475864ae` fetched equal to
+origin/main; no preexisting tracked changes or ahead commits. Existing Gate1/2
+reused; Gate3 is one bounded IR document/service/test owner. No nested workers,
+org requests/writes, command integration, writer, preview, executor, installs,
+release, shared transport/version edits, root history or DB/index edits. Coordinator
+retains once-feature review and public documentation/propagation.
+
+## Exact exported follow-on contracts
+
+- `src/artifacts/identity-resolution-document.ts` exports
+  `IdentityResolutionDocument`, `IdentityResolutionIdentity`,
+  `IdentityResolutionDmoReference`, `IdentityResolutionFieldReference`,
+  `IdentityResolutionOutputIdentity`, `IdentityResolutionProjection`,
+  `IdentityResolutionError`, `identityResolutionName`,
+  `validateIdentityResolutionDocument(value: unknown): IdentityResolutionDocument`,
+  `serializeIdentityResolutionDocument(value: unknown): string`, and
+  `projectIdentityResolution(facade: unknown, native: unknown, sourceApiName: string,
+  logicalName: string): IdentityResolutionProjection`.
+- Document v1 kind `identity-resolution` has identity `{dataSpace:'default',
+  logicalName}`. Explicit authored logicalName is supplied separately from source
+  objectApiName; it is never inferred from runtime suffixes. Spec preserves label,
+  description, Individual configuration, automatic=false, isCaseSensitive=true,
+  typed secondary DMO, filters=[], one labelled match rule with all three ordered
+  typed parent/field references and matching flags, and all six ordered
+  reconciliation entities with ruleType/ignore-empty/fields=[]/sources=[].
+  Individual allows LastUpdated or MostFrequent; the five generated reconciliation
+  entries remain LastUpdated. Every entity has unified/link output identities
+  `{owner:{kind:'identity-resolution',dataSpace:'default',logicalName},
+  entity:{kind:'dmo',dataSpace:'default',apiName},role:'unified'|'link'}`.
+- Only observed response lower-case enum spellings are mapped to portable enum
+  spellings. Full native API65 and facade API67 representations must compare
+  deeply equal after removing facade filters:[] only. Exact keys/ordering/settings
+  are validated; no invented defaults or omission normalization. Nonempty filters,
+  fields, sources, unknown keys/meaningful structures, alternate criteria/order,
+  duplicate or malformed generated names and missing values fail closed.
+- Projection returns `{candidate, expectations:{facade,native,outputs}}` with
+  detached complete private raw correlation baselines and 12 owner-returned
+  `{identity,sourceApiName}` mappings. These expectations must NEVER be serialized
+  as portable content. Serializer accepts only the complete validated document,
+  emits stable pretty JSON plus LF, and rejects wrapper/private payloads. No owner
+  source ID/name, ruleset suffix/status, generated name or raw receipt is placed in
+  the document. Display label/description are preserved intentionally.
+- `src/services/retrieve-identity-resolution.ts` exports
+  `IdentityResolutionAcquisition` and
+  `retrieveIdentityResolution(connection: Pick<Connection,
+  'instanceUrl'|'request'|'getApiVersion'>, sourceApiName: string,
+  logicalName: string, apiVersion: ApiVersionSelection, dataSpace: string):
+  Promise<IdentityResolutionAcquisition>`.
+  Selection and numeric connection must explicitly be API67/default; invalid scope
+  throws payload-free INVALID_SCOPE before requests. Frozen McpExecuteClient reads
+  `d360_ir_get` with `{identityResolution:sourceApiName}` at API67, then independently
+  ConnectClient GETs the exact owner at API65. No runtime MCP-server dependency,
+  fallback, retry, mutation or polling. Non-PUBLISHED blocks with
+  IDENTITY_RESOLUTION_NOT_SETTLED; unsupported configuration blocks with
+  UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION; other errors produce
+  IDENTITY_RESOLUTION_ACQUISITION_FAILED. Blocked results contain identity/blockers
+  only, never candidate or raw expectations. No 404/absence claim is made.
+
+Source owner correlation is NOT independent generated-DMO field/type admission,
+permission-aware target absence, target binding or cross-org acceptance. Follow-on
+must independently inspect output definitions/fields/types and bind target outputs
+after the target owner settles PUBLISHED; never infer suffixes or separately
+provision/delete generated objects. Preview, complete comparison with explicit target
+bindings, at-most-one qualified executor, effect acknowledgement, bounded settlement,
+zero-mutation repeat instrumentation, safe file writer and common commands remain
+unimplemented. No IR-family or roadmap completion claim.
+
+## Evidence reconciliation and private retention ledger
+
+Read subjects `data360:ir.lifecycle-qualification.api65-67` and
+`data360:graph.qualification-checkpoint-d.api67` before implementation. The former
+contains the full sanitized final shape, not just a shortened schema. It proves
+ordered FirstName/Fuzzy, LastName/Exact, EmailAddress/ExactNormalized; automatic=false;
+Individual LastUpdated -> MostFrequent with all five generated entries unchanged;
+PUBLISHING -> PUBLISHED and independent facade/native equality except filters:[].
+It proves API behavior only, not this plugin's live/cross-org/no-op acceptance.
+
+Graph checkpoint D supersedes the older generalized cleanup expectation below:
+creating -> ready and exact output correlation were observed, but ready is NOT
+initial-transform success or edit eligibility. Projection update was not attempted;
+complete comparison/update remains blocked (creationMode absent, source devName
+generated). Exact owner delete independently succeeded. ID and fragment were
+missing-or-inaccessible, but owner-generated VALUE DMO
+`GraphDd23cf3b3eb6372_1793161702141_VALUE__dlm` remained readable at final observation.
+This is a private retention ledger, not a new ownership grant. Do not directly
+delete that DMO or shared state; eventual/physical cleanup is unknown. No fixture
+identifier has been added to public user docs.
+
+Verification: synthetic-only family tests cover qualified variants, private-output
+separation, strict unsupported shapes, native divergence, nonsettlement, fixed
+routes/version guards and nested errors. Scoped autofix, explicit build, full
+zero-warning lint and standalone full npm test passed: 653 passed, zero
+failed/skipped/cancelled (31 new IR tests), runner 112398.1134 ms, full npm test
+wall-clock 116.210 seconds; combined verification shell 131.828 seconds. Normal
+unchanged hook counts/wall-clock, checkpoint commit and push are recorded in the
+worker return; no live evidence DB claims were added. Every shell entry uses existing check-temporary.mjs and
+process-only F:/Temp repair/recheck; no scratch or recursive deletion authored.
+Changed folder: sf-plugin-data, version 0.1.0 unchanged, next version unassigned.
+Public README/capabilities/artifact/Git docs remain integration-owned because no
+public capability was enabled. No language/LSP/hover/wiki/site/mcdev/CMS consumer
+updates are needed; independent standalone package.
+
 # Chunk C API67 facade transport checkpoint — 2026-10-28
 
 Baseline `b7173083721b96c09f5347859fd69ddd8d33960e` fetched clean, equal to
