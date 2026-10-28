@@ -1,5 +1,30 @@
 # Capability contract checklist
 
+## Public existing-target Ingestion API DLO
+
+Exact `ingestion-dlo:Name__dll` selectors, canonical JSON files and Git-selected
+members support retrieve/preview/deploy at fixed API67/default space (`auto` or
+numeric67; mixed API65 families require auto). No inventory, creation, deletion,
+connector provisioning or dependency expansion. Acquisition binds exact returned
+DLO/stream/connection identities through complete inventories and a single schema
+event; never parses generated names. Shared sources, multi-event schemas, unknown
+meaningful properties, additional pending fields and unsupported variants block.
+
+Portable configuration contains logical connection name and complete Text event.
+Equality is zero mutations without acknowledgement. Only exactly one Text addition
+is admitted, with `--allow-processing`: one complete source schema PUT followed by
+one stream sync, never a direct DLO patch. Private independent observations establish
+old field/mapping/PK/KQ/system/refresh preservation and ACTIVE settlement. The finite
+default poll window is six reads at60 seconds within360 seconds; no replay/rollback.
+
+Whole-selection admission checks every family/version/input/effect before writes;
+fresh full pending binding fingerprints precede dispatch. The executor's input
+verifier checks local/Git bytes only, including after legitimate schema PUT; its
+phase-specific independent target checks own source/sync preservation. Public
+adapters retain diagnostic codes, stage, mutation certainty and both write routes.
+Synthetic regressions exercise real public command dispatch and two-stage executor;
+installed/live public and cross-org acceptance remain pending independent gates.
+
 ## Public Graph root-only workflow
 
 Exact repeatable `data-graph:ApiName` selectors support public retrieve, preview,

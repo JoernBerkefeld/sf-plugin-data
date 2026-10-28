@@ -1,3 +1,5 @@
+import { validateIngestionDloDocument } from './ingestion-dlo-document.js';
+import type { IngestionDloDocument } from './ingestion-dlo-document.js';
 import { validateDataGraphDocument } from './data-graph-document.js';
 import type { DataGraphDocument } from './data-graph-document.js';
 import { validateCalculatedInsightDocument } from './calculated-insight-document.js';
@@ -10,7 +12,13 @@ import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
 export type DependencyIdentity = {
-  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph';
+  kind:
+    | 'dmo'
+    | 'segment'
+    | 'identity-resolution'
+    | 'calculated-insight'
+    | 'data-graph'
+    | 'ingestion-dlo';
   dataSpace: string;
   apiName: string;
 };
@@ -38,9 +46,14 @@ export class DependencySelectionError extends Error {
  */
 export function dependencyKey(identity: DependencyIdentity): string {
   if (
-    !['dmo', 'segment', 'identity-resolution', 'calculated-insight', 'data-graph'].includes(
-      identity.kind,
-    ) ||
+    ![
+      'dmo',
+      'segment',
+      'identity-resolution',
+      'calculated-insight',
+      'data-graph',
+      'ingestion-dlo',
+    ].includes(identity.kind) ||
     identity.dataSpace !== 'default' ||
     !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName)
   )
@@ -59,8 +72,14 @@ export function documentDependencyNode(
     | SegmentDocument
     | IdentityResolutionDocument
     | CalculatedInsightDocument
-    | DataGraphDocument,
+    | DataGraphDocument
+    | IngestionDloDocument,
 ): DependencyNode {
+  if (value.kind === 'ingestion-dlo') {
+    const document = validateIngestionDloDocument(value);
+    // Source ownership is freshly admitted by its family service, never expanded/provisioned.
+    return { identity: { kind: 'ingestion-dlo', ...document.identity }, dependencies: [] };
+  }
   if (value.kind === 'data-graph') {
     const document = validateDataGraphDocument(value);
     return {

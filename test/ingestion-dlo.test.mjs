@@ -1,6 +1,21 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, writeFile, readFile, mkdir, rename, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import Deploy from '../lib/commands/data360/deploy.js';
+import Retrieve from '../lib/commands/data360/retrieve.js';
+import { writeIngestionDloDocument } from '../lib/artifacts/write-ingestion-dlo.js';
+import {
+  readDeployInputs,
+  captureDeployInputDigest,
+  verifyIngestionDloInputDigest,
+} from '../lib/artifacts/read-deploy-input.js';
+import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
+import { operationApiVersion } from '../lib/transport/api-version.js';
 import {
   ingestionAddition,
   validateIngestionDloDocument,
@@ -128,8 +143,309 @@ function acquisition(value, pending = false) {
   };
 }
 
+const scratch = async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-ingestion-public-'));
+  await writeFile(path.join(cwd, 'ownership'), randomUUID());
+  return cwd;
+};
+const run = async (command) => {
+  const previous = process.exitCode;
+  try {
+    return await command.run();
+  } finally {
+    process.exitCode = previous;
+  }
+};
+const git = (cwd, ...arguments_) =>
+  execFileSync('git', arguments_, { cwd, encoding: 'utf8', windowsHide: true }).trim();
+
 const current = projectIngestionDlo(baseline(), apiName);
 const desired = projectIngestionDlo(baseline(2), apiName);
+
+test('public artifact roundtrip retains canonical identity, strict JSON and immutable digest', async () => {
+  const cwd = await scratch();
+  const receipt = await writeIngestionDloDocument(current, cwd, false);
+  assert.equal(
+    receipt.path,
+    path.join(cwd, 'force-app/main/default/data360/ingestionDlos', `${apiName}.ingestionDlo.json`),
+  );
+  const repeated = await writeIngestionDloDocument(current, cwd, false);
+  assert.equal(repeated.outcome, 'unchanged');
+  const inputs = await readDeployInputs({
+    cwd,
+    metadata: [`ingestion-dlo:${apiName}`, `ingestion-dlo:${apiName}`],
+  });
+  assert.equal(inputs.length, 1);
+  assert.ok(Object.isFrozen(inputs[0].document.spec.event.fields));
+  assert.equal(await captureDeployInputDigest(inputs[0]), inputs[0].inputDigest);
+  const bytes = await readFile(receipt.path, 'utf8');
+  const alias = path.join(
+    cwd,
+    'other/main/default/data360/ingestionDlos',
+    path.basename(receipt.path),
+  );
+  await mkdir(path.dirname(alias), { recursive: true });
+  await writeFile(alias, bytes);
+  await assert.rejects(
+    readDeployInputs({ cwd, sourceDir: [receipt.path, alias] }),
+    (error) => error.code === 'DUPLICATE_IDENTITY',
+  );
+  await assert.rejects(
+    writeIngestionDloDocument(desired, cwd, false),
+    (error) => error.code === 'OVERWRITE_REQUIRED',
+  );
+  await writeIngestionDloDocument(desired, cwd, true);
+  await assert.rejects(
+    verifyIngestionDloInputDigest(inputs[0]),
+    (error) => error.code === 'UNSAFE_SOURCE',
+  );
+  await writeFile(
+    receipt.path,
+    bytes.replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1'),
+  );
+  await assert.rejects(
+    readDeployInputs({ cwd, sourceDir: [receipt.path] }),
+    (error) => error.code === 'INVALID_SOURCE',
+  );
+});
+
+test('public Git ingestion selection binds immutable bytes and refuses rename or deletion', async () => {
+  const cwd = await scratch();
+  const receipt = await writeIngestionDloDocument(current, cwd, false);
+  git(cwd, 'init', '--initial-branch=main');
+  git(cwd, 'config', '--local', 'user.name', 'Jörn Berkefeld');
+  git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
+  git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
+  git(cwd, 'add', '--all');
+  git(cwd, 'commit', '-m', 'Synthetic baseline');
+  await writeIngestionDloDocument(desired, cwd, true);
+  const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(selected.paths, [receipt.path]);
+  assert.equal(selected.ingestionDlos.length, 1);
+  await verifyIngestionDloInputDigest(selected.ingestionDlos[0]);
+  const moved = receipt.path.replace(apiName, 'Different__dll');
+  await rename(receipt.path, moved);
+  await assert.rejects(
+    selectGitDeployInputs({ cwd, ref: 'HEAD' }),
+    (error) => error.code === 'BLOCKED_GIT_LIFECYCLE',
+  );
+  await rename(moved, receipt.path);
+  await unlink(receipt.path);
+  await assert.rejects(
+    selectGitDeployInputs({ cwd, ref: 'HEAD' }),
+    (error) => error.code === 'BLOCKED_GIT_LIFECYCLE',
+  );
+});
+
+const publicDeploy = async (overrides = {}, failure, mixed = false) => {
+  const cwd = await scratch();
+  const receipt = await writeIngestionDloDocument(desired, cwd, false);
+  const inputs = await readDeployInputs({ cwd, sourceDir: [receipt.path] });
+  if (mixed)
+    inputs.push({
+      path: 'legacy.json',
+      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Zed__dlm' } },
+    });
+  const command = Object.create(Deploy.prototype);
+  const calls = [];
+  let phase = 0;
+  const options = {
+    acquire: async (_c, _n, _v, _s, options_) => acquisition(baseline(phase), options_.pending),
+    mutate: async (operation) => {
+      calls.push(operation);
+      if (operation === 'd360_connection_schema_put_ingestion_api') {
+        phase = 1;
+        if (failure === 'schema') throw new Error('private');
+        return { schemas: [baseline(1).schema] };
+      }
+      if (failure === 'sync') throw new Error('private');
+      phase = 2;
+      return {
+        dataLakeObjectInfo: baseline(2).stream.dataLakeObjectInfo,
+        id: 'definition',
+        label: 'Probe',
+        name: 'ReturnedHash',
+        recordId: 'stream-runtime-id',
+        status: 'PROCESSING',
+      };
+    },
+  };
+  command.parse = async () => ({
+    flags: {
+      'source-dir': [receipt.path],
+      'api-version': 'auto',
+      'data-space': 'default',
+      'allow-processing': true,
+      preview: false,
+      ...overrides,
+      'target-org': { getOrgId: () => 'synthetic', getConnection: () => connection },
+    },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveInputs = async () => inputs;
+  command.captureInput = async (input) =>
+    input.document.kind === 'dmo' ? 'legacy' : captureDeployInputDigest(input);
+  command.verifyIngestionDloInput = verifyIngestionDloInputDigest;
+  command.bindIngestionDlo = async () => {
+    calls.push(`binding:${phase}`);
+    return 'stable';
+  };
+  command.preflightIngestionDlo = async (document, conn, v, space) => {
+    calls.push('preview');
+    return preflightIngestionDloDeploy(document, conn, v, space, options);
+  };
+  command.executeIngestionDlo = async (document, conn, v, space, guards) =>
+    executeIngestionDloDeploy(document, conn, v, space, { ...options, ...guards });
+  command.preflight = async () => ({
+    outcome: 'update',
+    target: 'present',
+    absenceProof: 'none',
+    diagnostics: [],
+  });
+  command.execute = async () => {
+    calls.push('legacy-write');
+    return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
+  };
+  return { command, calls, inputs };
+};
+
+test('public two-stage deploy allows legitimate PUT with local-only verifier, preserves routes and repeat certainty', async () => {
+  const d = await publicDeploy({}, undefined, true);
+  const result = await run(d.command);
+  assert.equal(result.status, 'success');
+  const item = result.result.items.find((value) => value.family === 'ingestion-dlo');
+  assert.equal(item.stage, 'settled');
+  assert.equal(item.mutation, 'confirmed-updated');
+  assert.deepEqual(
+    item.routes.map((route) => route.operation),
+    ['d360_connection_schema_put_ingestion_api', 'd360_datastream_patch_ingestion_api'],
+  );
+  assert.deepEqual(
+    d.calls.filter((value) => value.startsWith('d360_')),
+    item.routes.map((route) => route.operation),
+  );
+  assert.ok(!d.calls.includes('binding:1'));
+  const repeated = await run(d.command);
+  assert.equal(repeated.status, 'success');
+  assert.equal(
+    repeated.result.items.find((value) => value.family === 'ingestion-dlo').outcome,
+    'unchanged',
+  );
+  assert.equal(d.calls.filter((value) => value.startsWith('d360_')).length, 2);
+});
+
+for (const failure of ['schema', 'sync'])
+  test(`public ${failure} uncertainty retains typed stage without replay`, async () => {
+    const d = await publicDeploy({}, failure);
+    const result = await run(d.command);
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result.items[0].mutation, 'unknown');
+    assert.equal(
+      result.result.items[0].stage,
+      failure === 'schema' ? 'schema-attempted' : 'sync-attempted',
+    );
+    assert.ok(result.result.items[0].diagnostics.every((value) => typeof value.code === 'string'));
+    assert.ok(!d.calls.includes('legacy-write'));
+    assert.equal(
+      d.calls.filter((value) => value.startsWith('d360_')).length,
+      failure === 'schema' ? 1 : 2,
+    );
+  });
+
+test('public preview, missing acknowledgement, incompatible versions and dependency expansion never mutate', async () => {
+  for (const flags of [
+    { preview: true },
+    { 'allow-processing': false },
+    { 'api-version': '65.0' },
+    { 'api-version': '67.0' },
+    { 'include-dependencies': true },
+  ]) {
+    const d = await publicDeploy(flags, undefined, true);
+    const result = await run(d.command);
+    assert.equal(result.status, flags.preview ? 'success' : 'blocked');
+    assert.ok(!d.calls.some((value) => value.startsWith('d360_') || value === 'legacy-write'));
+  }
+  assert.equal(operationApiVersion('auto', 'ingestion-dlo'), '67.0');
+});
+
+test('public unknown ingestion stage stops every later selected member', async () => {
+  const d = await publicDeploy({}, 'schema');
+  const later = structuredClone(d.inputs[0]);
+  later.path = 'later.json';
+  later.document.identity.apiName = 'Zed__dll';
+  d.inputs.push(later);
+  d.command.captureInput = async () => 'stable';
+  d.command.verifyIngestionDloInput = async () => {};
+  d.command.preflightIngestionDlo = async () => ({
+    family: 'ingestion-dlo',
+    outcome: 'update',
+    requiredEffects: ['processing'],
+    diagnostics: [],
+  });
+  const result = await run(d.command);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].stage, 'schema-attempted');
+  assert.equal(result.result.items[1].outcome, 'not-attempted');
+  assert.equal(result.result.items[1].mutation, 'not-attempted');
+  assert.equal(d.calls.filter((value) => value.startsWith('d360_')).length, 1);
+});
+
+test('public Git snapshot drift blocks before target reads', async () => {
+  const d = await publicDeploy({ 'source-dir': undefined, 'changed-since': 'HEAD' });
+  d.command.selectGitInputs = async () => ({
+    paths: [d.inputs[0].path],
+    ingestionDlos: [{ ...d.inputs[0], inputDigest: 'different' }],
+    provenance: {},
+  });
+  const result = await run(d.command);
+  assert.equal(result.status, 'blocked');
+  assert.ok(!d.calls.includes('preview'));
+});
+
+test('public fresh ingestion binding drift blocks earlier legacy writes', async () => {
+  const d = await publicDeploy({}, undefined, true);
+  d.inputs[1].document.identity.apiName = 'Aaa__dlm';
+  let checks = 0;
+  d.command.bindIngestionDlo = async () => (++checks > 1 ? 'changed' : 'stable');
+  const result = await run(d.command);
+  assert.equal(result.status, 'blocked');
+  assert.ok(!d.calls.some((value) => value.startsWith('d360_') || value === 'legacy-write'));
+});
+
+test('public retrieve routes exact ingestion selector and blocks all output for unsupported binding', async () => {
+  for (const blocked of [false, true]) {
+    const command = Object.create(Retrieve.prototype);
+    const writes = [];
+    command.parse = async () => ({
+      flags: {
+        metadata: [`ingestion-dlo:${apiName}`],
+        'api-version': 'auto',
+        'data-space': 'default',
+        overwrite: false,
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveOrg = async () => ({
+      getOrgId: () => 'synthetic',
+      getConnection: () => connection,
+    });
+    command.selectDocuments = async () => [];
+    command.selectDependencies = async () => ({ entries: [], reasons: new Map() });
+    command.acquireIngestionDlo = async (conn, name, v) => {
+      assert.equal(conn.getApiVersion(), '67.0');
+      assert.equal(v.soapNumeric, '67.0');
+      assert.equal(name, apiName);
+      return blocked ? { blockers: ['SHARED_SOURCE'] } : acquisition(baseline());
+    };
+    command.writeIngestionDlo = async (document) => {
+      writes.push(document);
+      return { path: 'synthetic', outcome: 'retrieved' };
+    };
+    const result = await run(command);
+    assert.equal(result.status, blocked ? 'blocked' : 'success');
+    assert.equal(writes.length, blocked ? 0 : 1);
+  }
+});
 
 test('document retains returned identities, strict labels and unsuffixed source fields', () => {
   assert.equal(desired.identity.apiName, apiName);

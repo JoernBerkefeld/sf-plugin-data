@@ -1,5 +1,25 @@
 # Internal DMO field contract
 
+## Public Ingestion API DLO document
+
+Exact `ingestion-dlo:Name__dll` writes
+`<package>/main/default/data360/ingestionDlos/Name__dll.ingestionDlo.json`, with
+`force-app` as the default package. The strict JSON shape is `schemaVersion:1`,
+`kind:ingestion-dlo`, `identity:{dataSpace:default,apiName:Name__dll}` and
+`spec:{connectionName,event:{name,label,fields:[{name,label,dataType:Text}]}}`.
+Event field names are unsuffixed source names; the existing DLO identity is the
+actual returned API name, not a derivation from connection/event names. Logical
+connection identity is portable configuration, not proof that another target has
+compatible ownership or provisioning. Runtime/generated IDs and raw responses
+remain private. Unknown keys and unsupported event/field variants are rejected.
+
+The writer uses bounded no-link/single-link paths and OS-temp staging, no-clobber
+publication and guarded overwrite. Input admission rejects duplicate JSON keys,
+noncanonical paths, identity mismatch and duplicate component aliases; recursively
+frozen content is bound to exact SHA256 bytes. Explicit file/selector and Git routes
+revalidate the same input. The only admitted edit is one additional Text field,
+with all prior configuration preserved; no XML companion or request file is needed.
+
 ## Public Graph document
 
 Exact `data-graph:ApiName` retrieval writes

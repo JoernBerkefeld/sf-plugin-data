@@ -1,3 +1,5 @@
+import { ingestionName } from './ingestion-dlo-document.js';
+import type { IngestionDloDeployInput } from './read-deploy-input.js';
 import { dataGraphName } from './data-graph-document.js';
 import type { DataGraphDeployInput } from './read-deploy-input.js';
 import { execFile } from 'node:child_process';
@@ -25,6 +27,7 @@ export class GitSelectionError extends Error {
 
 export type GitDeploySelection = {
   paths: string[];
+  ingestionDlos?: readonly IngestionDloDeployInput[];
   dataGraphs?: readonly DataGraphDeployInput[];
   segments?: readonly SegmentDeployInput[];
   calculatedInsights?: readonly CalculatedInsightDeployInput[];
@@ -71,6 +74,7 @@ function tokens(output: string): string[] {
 
 const segmentMember = (file: string): boolean =>
   /\.(?:marketSegmentDefinition-meta\.xml|segment\.json)$/iu.test(file);
+const ingestionMember = (file: string): boolean => /\.ingestionDlo\.json$/iu.test(file);
 const graphMember = (file: string): boolean => /\.dataGraph\.json$/iu.test(file);
 const irMember = (file: string): boolean => /\.identityResolution\.json$/iu.test(file);
 const ciMember = (file: string): boolean =>
@@ -80,6 +84,7 @@ const relevant = (file: string): boolean =>
   segmentMember(file) ||
   ciMember(file) ||
   graphMember(file) ||
+  ingestionMember(file) ||
   irMember(file);
 
 /**
@@ -177,7 +182,12 @@ export async function selectGitDeployInputs(options: {
       throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
     for (const file of untracked) if (relevant(file)) paths.add(file);
     const segmentBase = [...paths].some(
-      (file) => segmentMember(file) || irMember(file) || ciMember(file) || graphMember(file),
+      (file) =>
+        segmentMember(file) ||
+        irMember(file) ||
+        ciMember(file) ||
+        graphMember(file) ||
+        ingestionMember(file),
     )
       ? await segmentSourceRoot(repositoryRoot)
       : undefined;
@@ -198,6 +208,22 @@ export async function selectGitDeployInputs(options: {
         )
           throw new GitSelectionError('INVALID_GIT_SELECTION');
         return `calculated-insight:${name}`;
+      }
+      if (ingestionMember(file)) {
+        const name = path.posix.basename(file).slice(0, -'.ingestionDlo.json'.length);
+        const expected = path.join(
+          segmentBase!,
+          'data360',
+          'ingestionDlos',
+          `${name}.ingestionDlo.json`,
+        );
+        if (
+          !ingestionName(name) ||
+          !name.endsWith('__dll') ||
+          file !== path.relative(repositoryRoot, expected).split(path.sep).join('/')
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        return `ingestion-dlo:${name}`;
       }
       if (graphMember(file)) {
         const name = path.posix.basename(file).slice(0, -'.dataGraph.json'.length);
@@ -259,10 +285,14 @@ export async function selectGitDeployInputs(options: {
       (input): input is CalculatedInsightDeployInput =>
         input.document.kind === 'calculated-insight',
     );
+    const ingestionDlos = inputs.filter(
+      (input): input is IngestionDloDeployInput => input.document.kind === 'ingestion-dlo',
+    );
     const dataGraphs = inputs.filter(
       (input): input is DataGraphDeployInput => input.document.kind === 'data-graph',
     );
     return {
+      ...(ingestionDlos.length > 0 ? { ingestionDlos: Object.freeze(ingestionDlos) } : {}),
       ...(dataGraphs.length > 0 ? { dataGraphs: Object.freeze(dataGraphs) } : {}),
       ...(calculatedInsights.length > 0
         ? { calculatedInsights: Object.freeze(calculatedInsights) }

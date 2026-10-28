@@ -8,7 +8,7 @@ export type ApiVersionSelection = Readonly<{
 const numericVersion = /^\d{2,3}\.0$/u;
 
 export type OperationalFamily =
-  'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph';
+  'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'ingestion-dlo';
 
 /**
  * Select only fixed qualified family routes, never probe, upgrade a pin or fall back.
@@ -18,7 +18,7 @@ export type OperationalFamily =
  * @returns {string} Effective numeric version or unchanged legacy latest selector.
  */
 export function operationApiVersion(requested: string, family: OperationalFamily): string {
-  if (family === 'identity-resolution' || family === 'data-graph') {
+  if (family === 'identity-resolution' || family === 'data-graph' || family === 'ingestion-dlo') {
     if (requested === 'auto' || requested === '67.0') return '67.0';
   } else {
     if (requested === 'auto') return '65.0';

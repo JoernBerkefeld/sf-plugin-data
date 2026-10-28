@@ -1,5 +1,29 @@
 # Data360 Salesforce CLI plugin
 
+## Existing Ingestion API DLO workflow
+
+Exact `-m ingestion-dlo:ReturnedName__dll` supports retrieve, deployment preview,
+explicit file selection and `--changed-since`. Use `--api-version auto`, or numeric
+67.0 for ingestion-only selections, with the default data space. Mixed legacy
+API65 selections require auto. Inventory and dependency expansion are unavailable.
+
+Retrieve writes `<package>/main/default/data360/ingestionDlos/ReturnedName__dll.ingestionDlo.json`
+(default package `force-app`). It preserves the logical connection name and complete
+single-event Text schema, not runtime IDs. Identical output is unchanged; differing
+bytes require `--overwrite`. Complete connection/owning-stream inventory must prove
+sole ownership; shared sources, multiple events and unsupported configuration block.
+
+Deploy supports existing compatible Ingestion API targets only. Complete equality
+issues zero mutations and needs no acknowledgement. The only supported change adds
+one Text source field: one complete source-schema PUT, then one owning-stream schema
+sync. Use `--allow-processing` for that change. Independent readback must confirm
+ACTIVE, full old fields/mappings/PK/KQ/system/refresh preservation and the addition.
+There is no direct DLO patch, create/delete, connector provisioning, schema removal,
+type change or generalized connector support. A partial/unknown result retains its
+mutation stage and never retries or rolls back; inspect the target before resuming.
+Whole-selection admission and fresh pending bindings precede mixed-batch writes.
+Installed/live public and cross-org acceptance remain separate from synthetic tests.
+
 ## Public Graph workflow
 
 Repeat exact `-m data-graph:ApiName` selectors with `retrieve` or `deploy`, including

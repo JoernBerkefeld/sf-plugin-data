@@ -69,7 +69,7 @@ function admit(
  * @param {IngestionDloBaseline} value Raw baseline.
  * @returns {IngestionDloBaseline} Canonical full preservation baseline.
  */
-function canonical(value: IngestionDloBaseline): IngestionDloBaseline {
+export function canonicalIngestionDloBaseline(value: IngestionDloBaseline): IngestionDloBaseline {
   const result = structuredClone(value);
   result.schema.fields = ingestionCollection(result.schema.fields);
   // Availability is source-runtime state, not a writable schema property.
@@ -223,7 +223,13 @@ export async function executeIngestionDloDeploy(
     ingestionRequire(equal || addition);
     await options.verifyInput();
     const fresh = await capture();
-    ingestionRequire(isDeepStrictEqual(canonical(baseline), canonical(fresh)), 'SOURCE_DRIFT');
+    ingestionRequire(
+      isDeepStrictEqual(
+        canonicalIngestionDloBaseline(baseline),
+        canonicalIngestionDloBaseline(fresh),
+      ),
+      'SOURCE_DRIFT',
+    );
     await options.verifyInput();
     scope();
     if (equal) return result('unchanged');
@@ -276,7 +282,10 @@ export async function executeIngestionDloDeploy(
     const expectedPending = structuredClone(baseline);
     expectedPending.schema.fields = desired.spec.event.fields;
     ingestionRequire(
-      isDeepStrictEqual(canonical(expectedPending), canonical(pending)),
+      isDeepStrictEqual(
+        canonicalIngestionDloBaseline(expectedPending),
+        canonicalIngestionDloBaseline(pending),
+      ),
       'POST_SCHEMA_PRESERVATION_FAILED',
     );
     stage = 'schema-confirmed';
@@ -286,7 +295,10 @@ export async function executeIngestionDloDeploy(
     // A second fresh authority read immediately precedes the sync. Do not sync any
     // unrelated source delta or a modified local input after schema publication.
     ingestionRequire(
-      isDeepStrictEqual(canonical(pending), canonical(await capture(true))),
+      isDeepStrictEqual(
+        canonicalIngestionDloBaseline(pending),
+        canonicalIngestionDloBaseline(await capture(true)),
+      ),
       'SOURCE_DRIFT',
     );
     await options.verifyInput();
@@ -346,7 +358,10 @@ export async function executeIngestionDloDeploy(
           { sourceFieldName: addition.name, targetFieldName: addition.name },
         ];
         ingestionRequire(
-          isDeepStrictEqual(canonical(expected), canonical(settled)),
+          isDeepStrictEqual(
+            canonicalIngestionDloBaseline(expected),
+            canonicalIngestionDloBaseline(settled),
+          ),
           'SETTLED_PRESERVATION_FAILED',
         );
         stage = 'settled';

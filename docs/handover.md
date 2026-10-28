@@ -1,3 +1,62 @@
+# Public Ingestion API DLO integration — 2026-10-28
+
+Sole editor continued from fetched main/origin b1195d5, incorporating recovered
+review66423d8c's three must-fixes without another planning loop. Plan and full
+operational roadmap read; one coupled editor owns artifact/command/Git inputs,
+verification serialized. Coordinator retains once-whole-feature Gate4 review.
+No new org mutations, guide/root index/evidence edits, release or version bump.
+
+Public `ingestion-dlo:Name__dll`, canonical file and Git paths support exact
+retrieve, preview and existing-target deployment at auto/numeric67 default space.
+Artifact: `<package>/main/default/data360/ingestionDlos/Name__dll.ingestionDlo.json`;
+strict schemaVersion1/kindingestion-dlo/default identity, spec connectionName and
+single event with complete unsuffixed Text fields. Writer uses owned OS-temp
+staging, no-link/single-link bounded admission, no-clobber/guarded overwrite.
+Reader freezes documents and binds exact bytes to SHA256; Git captures immutable
+snapshots and rejects lifecycle changes. All mixed-family identity/order/version/
+dispatch branches handle ingestion explicitly; expansion blocks before filtering.
+
+Public adapter retains code/message diagnostics, family/stage/outcome/certainty,
+and both API67 facade routes. Exactly one complete source-schema PUT followed by
+one owning-stream sync requires --allow-processing; equality is zero mutation
+without acknowledgement. Complete batch admission and fresh original pending
+binding fingerprints precede every dispatch. `verifyInput` is local/Git-only;
+executor owns phase-aware independent target checks across legitimate schema PUT.
+Unknown/partial outcomes never replay or rollback. Shared sources/multiple events/
+extra pending fields/unsupported meaningful properties block; no direct DLO patch,
+create/delete, connector framework or unrelated DMO implementation.
+
+Exact interfaces: `writeIngestionDloDocument(value,projectRoot,overwrite)`;
+`IngestionDloDeployInput={path,document,inputDigest}`;
+`verifyIngestionDloInputDigest(input)`; Git `ingestionDlos` snapshots;
+`canonicalIngestionDloBaseline(raw)` exported for full pending-binding hashing;
+`publicIngestionDloPreview/Execution` adapt internal string diagnostic codes.
+Public command seams: acquire/writeIngestionDlo on Retrieve, preflight/execute/
+verifyIngestionDloInput/bindIngestionDlo on Deploy. Internal services retain complete
+connection/stream/event/generated-ID admission and six60s/360s bounded settlement.
+New public regressions reside in `test/ingestion-dlo.test.mjs` beside prior internal
+regressions. Final full-test/lint/build/hook/hash/hosted receipts are in the worker
+handoff, not inferred from historical1000tests.
+
+Retained acceptance: coordinator reports Graph SOURCE public acceptance PASSED
+at unchanged b1195d5: no-ack unchanged zero writes; one mode-omitting LastName
+update, independent ready/fresh transform SUCCESS/full preservation and zero-write
+repeat. Existing Graph subject retains historical failure. Do not rerun or treat
+it as ingestion/cross-org proof. Ingestion public installed/live acceptance remains
+next: isolate exact committed package and CLI state, verify intended org and new
+fixture ownership, retrieve/repeat/preview/no-ack/equal/one-field-add/independent
+ACTIVE preservation/repeat zero writes. Bind actual returned connection/stream/DLO
+IDs; never parse generated names or adopt historical leftovers. Source leftovers
+are allowed, cleanup not prerequisite. Broader DMO additive work remains queued.
+
+Safety: every shell/test runs node scripts/check-temporary.mjs; actual TEMP and
+Node os.tmpdir plus nonempty TMP/TMPDIR must be absolute normalized F:\\Temp.
+Process-only repair/recheck; scratch roots use OS mkdtemp + ownership marker.
+Any recursive cleanup requires registered strict descendants and no-link checks;
+never repository/workspace/persistent-root cleanup. No cleanup performed here.
+Independent external-tooling plugin@0.1.0 has no workspace consumers; language,
+hover, CMS/MCNext, wiki/site/guide propagation not needed for this scoped change.
+
 # Public Graph retrieve/preview/deploy — 2026-10-28
 
 Sole package editor continued from fetched clean

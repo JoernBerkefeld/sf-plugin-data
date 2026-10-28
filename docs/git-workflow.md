@@ -1,5 +1,19 @@
 # Git workflow status
 
+## Ingestion API DLO exact selection
+
+`--changed-since` recognizes canonical
+`<package>/main/default/data360/ingestionDlos/Name__dll.ingestionDlo.json` files.
+The complete immutable document and SHA256 digest are captured independently of
+other families, then checked against resolved inputs before target reliance and
+through execution. Deletion/rename, noncanonical location, duplicate identity or
+changed bytes block the selection. No historical rename guarantee is implied.
+Exact selector/file modes use the same reader. Use auto for mixed API65/API67
+selection; incompatible numeric versions block before family services. Source
+schema PUT legitimately changes target state: local/Git input checks stay separate
+from pending-batch binding and executor phase-aware target preservation. Both
+write routes and mutation stage remain visible; raw receipts are not Git content.
+
 ## Graph exact file selection
 
 `--changed-since` includes canonical
