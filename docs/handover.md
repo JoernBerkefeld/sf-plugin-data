@@ -1,3 +1,84 @@
+# Chunk C API67 facade transport checkpoint — 2026-10-28
+
+Baseline `b7173083721b96c09f5347859fd69ddd8d33960e` fetched clean, equal to
+origin/main, with no ahead history to accidentally publish. Existing plan/review
+reused; one transport/test owner, no nested workers. No live mutations, installs,
+release/tag, family documents/services/commands, shared DB/index edits or version
+routing changes. Whole-feature review/public docs/combined DB remain coordinator-owned.
+
+## Frozen internal interface
+
+`src/transport/mcp-execute.ts` exports:
+
+- `McpExecuteClient(connection: Pick<Connection, 'instanceUrl' | 'request'>,
+selection: ApiVersionSelection)`; selection must be exactly requested `67.0`,
+  restSelector `v67.0`, soapNumeric `67.0`. Default65, explicit65 and latest are
+  rejected, never silently upgraded. Existing ConnectClient/API-version files untouched.
+- `read(operation: McpReadOperation, parameters: unknown): Promise<Record<string, unknown>>`
+  for only `d360_data_graph_get` and `d360_ir_get`; semantic reads use POST transport.
+- `mutate(operation: McpMutationOperation, parameters: unknown): Promise<Record<string, unknown>>`
+  for only CI create and Graph/IR create/update/delete. There is no arbitrary writable
+  URL, arbitrary tool, run/publish/refresh, retry or network fallback API.
+
+Both methods validate strict operation-specific keys and qualified nested shapes,
+reject executable/accessor/cyclic/non-JSON inputs, serialize paramsJson once as a
+string and send one core-authenticated POST to the fixed API67 endpoint. CI accepts
+only default-space CalculatedMetric draft input; SQL is preserved, not rewritten or
+qualified by transport. Graph accepts the recorded root-only ordered Id/FirstName
+(optional third LastName) Text projections, seven-Day schedule, incremental=false,
+DEFAULT/NONE; update requires editScheduleOnly=false. IR admits the recorded ordered
+three matching criteria and one Individual reconciliation rule, automatic=false,
+create LastUpdated/update MostFrequent; creation uses a four-character suffix.
+These are internal transport subsets, not complete family/dependency/effects admission.
+
+Per-call inherited core receiver masks refresh without modifying the connection.
+Core's existing transport is wrapped per call only to inspect actual HTTP status
+before core removes it: only HTTP200/201 can reach success parsing; redirects,
+204/other statuses, malformed status and network failure fail closed. Core retains
+credentials and JSON parsing; retry maxRetries=0 and redirect callback throws.
+No-refresh/no-replay actual-core tests cover mutation and semantic-read 401/503/
+disconnect. Errors reuse payload-free ConnectError; failures do not prove no effects.
+
+The admitted direct-wire wrapper is strictly `{result: object}` (recorded core CI
+receipt; documented facade result/error schema; fresh read-only MCP Graph/IR results
+confirmed matching identity/state vocabulary). CLI `body/statusCode` and MCP
+`defaultExc/responseCode` are separate adapters, deliberately NOT guessed wire
+success variants. Unexpected wrappers, any outer error/hint/unknown key, nested
+error/errors/errorCode/body/result or success:false fail closed. Delete requires
+exact `{result:{success:true}}`. Other operations bind exact expected name, default
+space and known observed status; Graph/IR also require a nonempty returned id.
+Return is the validated application result, never settlement, ownership, permission,
+configuration fidelity, absence or computation proof. Any future valid-but-unsupported
+wrapper/state is a bounded evidence checkpoint, not permission to relax parsing.
+
+## Verification and next seams
+
+Synthetic test file `test/mcp-execute.test.mjs`: 59 new regressions, including all
+nine operations, actual core transport counts, params string/bytes, semantic split,
+version/origin guards, malformed/contradictory/missing outcomes and nested HTTP201
+errors. Scoped ESLint autofix, explicit build, full zero-warning lint and standalone
+full npm test passed: **622 passed, zero failed/skipped/cancelled**, runner
+122435.4392 ms; combined autofix/build/lint/test shell 141189 ms. Normal unchanged
+checkpoint hooks independently rerun lint/full tests/smoke; their final outcome,
+commit and push are recorded in the worker return. All shell/test entries checked
+TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR against F:/Temp. No scratch created
+or recursively removed. No synthetic result is recorded as live/plugin acceptance.
+
+Next Graph and IR workers may own their separate family document/service/test files
+listed in Chunk D; neither edits this frozen shared transport or common commands.
+One later integrator owns command/API auto routing and effect acknowledgement.
+Graph eligibility/complete comparison/generated output correlation remain blocked
+until separately qualified; IR settlement/complete no-op/generated binding likewise.
+CI rejected aggregability-changing expression edit and meaningful expression/no-op
+blockers below remain unchanged. All Segment source setup/acceptance/budget blockers
+below are preserved. No full-product or cross-org completion claim.
+
+Changed-folder bookkeeping: sf-plugin-data changed, current version 0.1.0, next
+unassigned (internal unfinished checkpoint, no release). Propagation: internal
+handover updated; README/capabilities/artifacts/Git/guide remain coordinator-owned,
+with no public capability enabled. No language/catalog/LSP/hover/wiki/site listing,
+mcdev, CMS or downstream consumer changes needed (independent CLI package).
+
 # Chunk C independent CI qualification — AGGREGABILITY EDIT BLOCKED — 2026-10-28
 
 Baseline `8cd6f55bf245925dcadcea0914f967232d4d4660` fetched clean and equal
@@ -398,7 +479,7 @@ No live org calls/writes, installs, release/version/tag changes or DB/index edit
   `Promise<SegmentDeployExecution>` (existing DMO execution vocabulary plus
   family segment/fixed API65 PATCH route). Connection needs instanceUrl/request/
   getApiVersion/getUsername. Required options are `{allowProcessing:boolean,
-  verifyInput:()=>Promise<void>}`; optional offline seams are acquire (retrieveSegment
+verifyInput:()=>Promise<void>}`; optional offline seams are acquire (retrieveSegment
   signature), bind (bindSegmentDependencies signature), read(name):Promise<unknown>,
   patch(document):Promise<unknown>, now():number, delay(ms):Promise<void>.
 - Fresh preflight always binds dependencies. A second exact runtime+independent
@@ -674,7 +755,7 @@ no release/version bump, installs, live calls, evidence rows or shared-index edi
 - `src/services/select-deploy-dependencies.ts`: exports
   `selectDeployDependencies(roots:DeployInput[],cwd:string)` returning
   `Promise<{inputs:DeployInput[],reasons:Map<string,SelectionReason>,
-  verify:()=>Promise<void>}>`. Expands Segment references only to exact conventional
+verify:()=>Promise<void>}>`. Expands Segment references only to exact conventional
   local `data360/default/dmo/<ApiName>.json` inputs via existing `readDeployInputs`
   admission. Dedupes explicit/added identities and records root-to-dependency
   chains. Explicit roots retain their original objects/pair digests. Missing local
@@ -749,10 +830,10 @@ identity verified. Package remains sf-plugin-data 0.1.0, no release/version bump
   `bindSegmentDependencies(value, connection, apiVersion, dataSpace, acquire?)`:
   `Promise<SegmentDependencyBinding[]>`. Connection needs instanceUrl/request/
   getApiVersion. Optional raw-read seam is `(name:string) => Promise<{detail:
-  unknown, metadata:unknown}>`. Production reuses guarded Connect exact detail
+unknown, metadata:unknown}>`. Production reuses guarded Connect exact detail
   GET and existing guarded `readDmoMetadata`, not portable DMO retrieval/create.
   Each private binding contains `{identity:{kind:'dmo',dataSpace:'default',apiName},
-  targetId:string, fields:[{apiName,dataType:'Text',isPrimaryKey:true}]}`. Target ID
+targetId:string, fields:[{apiName,dataType:'Text',isPrimaryKey:true}]}`. Target ID
   is independently acquired; never sourced from a portable artifact or exposed
   in the public preview. SQL is untouched.
 - Admission remains A1's one-object/one-field qualified empty-audience SQL.
@@ -832,7 +913,7 @@ Initial fetch/status confirmed clean HEAD = origin/main =
   still returns `{paths,provenance}` for legacy DMO-only/empty selection, with
   additive `segments?: readonly SegmentDeployInput[]` only when a Segment is
   selected. Each frozen entry is the existing A2a `{path,companionPath,document,
-  inputDigest}`; digest length-prefixes both original XML/JSON byte sets, not a
+inputDigest}`; digest length-prefixes both original XML/JSON byte sets, not a
   semantic JSON hash. `paths` contains one canonical XML path per Segment, plus
   legacy DMO paths. Either/both members coalesce via existing strict admission.
   Fixed default/configured package paths are checked against exact Git spelling;
@@ -895,7 +976,7 @@ A2a files listed below were changed. Version remains `0.1.0`; no release/tag.
 
 - `src/artifacts/read-deploy-input.ts`: `DeployInput` is the existing DMO shape
   union `SegmentDeployInput = {path:string, companionPath:string,
-  document:SegmentDocument, inputDigest:string}`. `readDeployInputs(flags)` accepts
+document:SegmentDocument, inputDigest:string}`. `readDeployInputs(flags)` accepts
   exact `segment:Name` or either canonical pair member, coalesces overlapping pair
   selections, rejects duplicate logical identities and correlates strict UTF-8
   duplicate-key-free JSON against XML/name/label/type/exact model SQL. Both members
@@ -982,7 +1063,7 @@ no ahead commits existed to accidentally push. Version remains 0.1.0.
   on this DBT fixture and is deliberately NOT admitted from the earlier UI probe.
 - Only empty `parameters:[]` is admitted; nonempty parameter semantics block.
   `validateSegmentCriteria(document:SegmentDocument, criteria:string,
-  escaped=true):void` validates the runtime's redundant escaped DBT pipeline
+escaped=true):void` validates the runtime's redundant escaped DBT pipeline
   against the typed exact model/name/SQL. Divergence is SEGMENT_PAIR_MISMATCH;
   no silently dropped criteria or opaque parameter content.
 - `writeSegmentDocument` retains its four existing arguments and adds optional
@@ -1022,7 +1103,7 @@ before Metadata), with two successful standard Metadata retrieves. No list sweep
   public retrieve blocked UNKNOWN_SEGMENT_CONFIGURATION, demonstrating the exact
   missing classification fixed above.
 - Actual `node bin/run.js data360 retrieve -o mcnext-sdo -m segment:A1Probe5952383596d846c6
-  -d <owned OS-temp output> --json` succeeded exit0/status success, one retrieved
+-d <owned OS-temp output> --json` succeeded exit0/status success, one retrieved
   XML/JSON pair, errors=[]; public command with installed Metadata CLI 2.151.7.
   Both independently acquired representations passed exact pair correlation.
 - Repeated same actual public command returned exit0/status success/unchanged for
