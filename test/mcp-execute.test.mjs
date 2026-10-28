@@ -165,7 +165,19 @@ function fixture(body, statusCode = 201, failure) {
   return { calls, connection, client: new McpExecuteClient(connection, version), refresh };
 }
 
+const transformRead = { dataTransformNameOrId: 'OwnerReturnedTransform' };
+const transformResult = {
+  name: 'OwnerReturnedTransform',
+  id: 'synthetic-transform-id',
+  dataSpaceName: 'default',
+  creationSource: 'Data Graph',
+  status: 'ACTIVE',
+  lastRunStatus: 'SUCCESS',
+  lastRunDate: '2026-10-01T10:00:00.000Z',
+};
+
 const operations = [
+  ['d360_transform_get', transformRead, transformResult],
   ['d360_ci_create', ci, ciResult],
   ['d360_data_graph_create', graph, graphResult],
   ['d360_data_graph_get', graphRead, graphResult],
@@ -376,6 +388,99 @@ test('accessors, cycles, custom serializers and non-JSON values cannot change va
   ])
     await assert.rejects(client.mutate('d360_ci_create', parameters), { code: 'INVALID_REQUEST' });
   assert.equal(calls.length, 0);
+});
+
+test('transform reads bind exact returned name or id, not a derived name or current invocation time', async () => {
+  const { client, calls } = fixture({ result: transformResult });
+  assert.deepEqual(await client.read('d360_transform_get', transformRead), transformResult);
+  await assert.rejects(
+    client.read('d360_transform_get', { dataTransformNameOrId: 'UnrelatedTransform' }),
+    { code: 'REQUEST_FAILED' },
+  );
+  const byId = fixture({ result: { ...transformResult, id: 'SyntheticTransformId' } });
+  const idRead = await byId.client.read('d360_transform_get', {
+    dataTransformNameOrId: 'SyntheticTransformId',
+  });
+  assert.equal(idRead.name, transformResult.name);
+  assert.equal(calls.length, 2);
+});
+
+for (const change of [
+  { dataSpaceName: 'other' },
+  { creationSource: 'Other' },
+  { id: '' },
+  { name: 'Wrong' },
+  { status: undefined },
+  { lastRunStatus: undefined },
+  { lastRunDate: undefined },
+  { lastRunDate: 'yesterday' },
+  { error: { message: 'private' } },
+  { success: false },
+]) {
+  test(`transform rejects incomplete or contradictory read ${JSON.stringify(change)}`, async () => {
+    const { client, calls } = fixture({ result: { ...transformResult, ...change } });
+    await assert.rejects(client.read('d360_transform_get', transformRead), {
+      code: 'REQUEST_FAILED',
+    });
+    assert.equal(calls.length, 1);
+  });
+}
+
+test('transform pending observations do not manufacture completion or allow mutation', async () => {
+  for (const lastRunStatus of ['PENDING', 'IN_PROGRESS', 'FAILED']) {
+    const resource = { ...transformResult, lastRunStatus, lastRunDate: JSON.parse('null') };
+    const { client } = fixture({ result: resource });
+    assert.deepEqual(await client.read('d360_transform_get', transformRead), resource);
+    await assert.rejects(client.mutate('d360_transform_get', transformRead), {
+      code: 'INVALID_REQUEST',
+    });
+  }
+});
+
+test('private observer records actual unknown status and nested errors before rejection', async () => {
+  for (const resource of [
+    { ...graphResult, status: 'unknown_state' },
+    { ...graphResult, status: 42 },
+    { ...graphResult, status: undefined },
+    { ...graphResult, error: { message: 'private diagnostic' } },
+  ]) {
+    const body = { result: structuredClone(resource) };
+    if (body.result.status === undefined) delete body.result.status;
+    const { client, calls } = fixture(body);
+    const observations = [];
+    await assert.rejects(
+      client.read('d360_data_graph_get', graphRead, async (value) => {
+        observations.push(structuredClone(value));
+        value.result.status = 'ready';
+        delete value.result.error;
+      }),
+      { code: 'REQUEST_FAILED' },
+    );
+    assert.deepEqual(observations, [body]);
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('read observer is awaited, detached and fail-closed, never a mutation authorization', async () => {
+  const { client, calls } = fixture({ result: graphResult });
+  let recorded = false;
+  const output = await client.read('d360_data_graph_get', graphRead, async (value) => {
+    await Promise.resolve();
+    value.result.name = 'tampered';
+    recorded = true;
+  });
+  assert.equal(recorded, true);
+  assert.deepEqual(output, graphResult);
+  await assert.rejects(
+    client.read('d360_data_graph_get', graphRead, async () => {
+      throw new Error('private recorder failure');
+    }),
+    { code: 'REQUEST_FAILED' },
+  );
+  await assert.rejects(client.read('d360_data_graph_get', graphRead, true), {
+    code: 'INVALID_REQUEST',
+  });
+  assert.equal(calls.length, 2);
 });
 
 test('core transport redirect callback never follows any origin', async () => {

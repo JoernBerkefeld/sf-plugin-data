@@ -1,5 +1,24 @@
 # Capability contract checklist
 
+## Internal Graph transport checkpoint
+
+The fixed API67 facade now admits semantically read-only `d360_transform_get`
+with exact `dataTransformNameOrId`. It requires matching returned name/id,
+explicit default space, `creationSource: 'Data Graph'`, status/run-status and
+an explicitly null or dated last run. This is read adaptation, not eligibility:
+family admission must require ACTIVE/SUCCESS and a completed dated run bound to
+fresh Graph-returned `dayZeroTransformDevName`; an older completed run need not
+postdate the current invocation.
+
+`McpExecuteClient.read(operation, parameters, observe?)` optionally awaits a
+private detached raw application-body observation before strict result/status/error
+classification. Unknown Graph status and nested errors are recorded then rejected;
+recorder failure fails closed. It does not expose observations in public results,
+permit mutation recording, retry transport failures or weaken supported status guards.
+Graph artifacts, acquisition, preflight, executor, public file/Git routing and
+zero-write acceptance are still unimplemented. Missing complete Graph GET schema
+and exact-owner creation-intent binding must be resolved without inventing defaults.
+
 ## Public CI command boundary
 
 Exact `calculated-insight:ApiName__cio` retrieve, preview and deploy are routed

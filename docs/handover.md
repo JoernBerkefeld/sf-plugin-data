@@ -1,3 +1,67 @@
+# Graph strict read transport checkpoint — 2026-10-28
+
+Sole-editor continuation from fetched clean HEAD/origin
+c1823f00d2fa137713c314e23aaab326a2d50502. Full operational plan, current handover,
+applicable safety/release/propagation rules and Graph transform-success API67
+verification subject read. Written scoped plan and explicit simplicity/sizing check
+preceded edits; dedicated reviewer5bebe446 returned zero must-fix. Am I
+overengineering this? No new framework; reuse McpExecuteClient. Whole-feature
+Gate4/docprop remains coordinator-owned. CI live acceptance owner is independent
+and must not edit/build this package.
+
+**Verified boundary / exact interfaces:** McpReadOperation adds d360_transform_get;
+parameters exactly {dataTransformNameOrId:string}. Read response requires returned
+name or id equal requested identity, nonblank name/id, default dataSpaceName,
+creationSource Data Graph, nonblank status and lastRunStatus, explicitly null or
+ISO-Z dated lastRunDate. Older completed timestamp is accepted; transport does not
+classify eligibility, pending/failed is not success. Mutation allowlist unchanged.
+McpReadObserver=(observation:unknown)=>Promise<void>;
+McpExecuteClient.read(operation,parameters,observe?) awaits detached raw application
+body observation BEFORE strict result/status/nested-error classification. Observer
+cannot alter admitted original; recorder failure fails closed, no replay. Raw body
+is private only; no public envelope/artifact exposure. HTTP/core failures still
+throw payload-free and do not fabricate a body observation.
+
+**Concrete stop checkpoint / unfinished milestone:** durable Graph evidence gives
+full sent input but only summarizes GET computed root/field metadata, ancillary
+keys and absent creationMode. Existing package has no captured strict Graph GET
+schema or exact-owner creation-intent association. Do NOT invent computed key
+inventories, silently discard unknown fields, or manufacture DEFAULT from desired
+input. Initial service plan is intentionally stopped at this coherent transport
+boundary, not represented as implemented Graph artifact/preflight/execution/public
+support. No org calls or mutations attempted; no fixture/cleanup work needed.
+
+**Resume:** obtain a sanitized complete qualified Graph GET/transform shape and
+explicit known creation intent bound to exact owner id/name/default space (bounded
+read-only follow-up, not mutation replay). Add data-graph-document.ts strict
+projection with generated sourceObject.devName retained as private binding,
+logical root from independent owner definition, ordered Id key/FirstName then
+nonkey Text LastName, empty related/path, seven-day/incrementalfalse; unknown
+meaningful config blocks. Then retrieve-data-graph.ts, preflight-data-graph-deploy.ts,
+execute-data-graph-deploy.ts and synthetic data-graph tests. Fresh Graph ready plus
+owner-returned dayZeroTransformDevName exact transform identity/default/Data Graph
+ACTIVE/SUCCESS completed timestamp and stable config lineage before one full
+update editScheduleOnlyfalse. Do not require old run timestamp after invocation.
+Unchanged requires full comparison and zero mutations. Require input/dependency
+rechecks, acknowledgement, private observations recorded before classification.
+Processing/editing_post_sync remain pending after transformSUCCESS; use explicit
+injectable tens-of-minutes bounded polling (~40min), not IR120sec, and separate
+ready+complete equal readback. Unknown never replays/refreshes/activates. Public
+file/Git/auto67 and explicit65 refusal follow only after services qualify.
+
+Verification: focused transport75/75 passed, lint:fix/full lint0/build passed;
+full unfiltered suite935/935 passed, no skips/cancellations, Node128.398s and
+full npm test including build132.630s. Normal-hook commit/push/exactSHA hosted
+outcome is returned in worker final receipt, not inferred here. Only transport/test/capability/handover
+literal files in scope, version0.1.0 unchanged, no release/guide/root/index edits.
+Propagation: no workspace consumers or language/data/parser/LSP/MCP/extension/MSO
+changes; CMS/MCNext/wiki/sites/hover unchanged. Coordinator owns final tables and
+whole-feature review. All shell/test entries verify absolute normalized TEMP,
+actual Nodeos.tmpdir and nonemptyTMP/TMPDIR F:/Temp; process-only repair/recheck.
+No scratch allocated or recursive cleanup performed; future scratch uses verified
+OSmkdtemp random ownership marker, registered strict-descendant/no-link cleanup,
+never repository/workspace cleanup. Retained source leftovers are not a gate.
+
 # PUBLIC CI command routing — 2026-10-28
 
 Continuation from fetched clean HEAD/origin a03a95a209b905e3e39dc23ffa99d59b7ae7f050.

@@ -2,7 +2,9 @@ import type { Connection } from '@salesforce/core';
 import type { ApiVersionSelection } from './api-version.js';
 import { ConnectError } from './connect-client.js';
 
-export type McpReadOperation = 'd360_data_graph_get' | 'd360_ir_get';
+export type McpReadOperation = 'd360_data_graph_get' | 'd360_ir_get' | 'd360_transform_get';
+/** Private detached wire observation; never include it in artifacts or command results. */
+export type McpReadObserver = (observation: unknown) => Promise<void>;
 export type McpMutationOperation =
   | 'd360_ci_create'
   | 'd360_data_graph_create'
@@ -19,7 +21,7 @@ type CoreTransport = {
   httpRequest: (...arguments_: unknown[]) => WirePromise;
 };
 
-const reads = new Set<string>(['d360_data_graph_get', 'd360_ir_get']);
+const reads = new Set<string>(['d360_data_graph_get', 'd360_ir_get', 'd360_transform_get']);
 const mutations = new Set<string>([
   'd360_ci_create',
   'd360_data_graph_create',
@@ -263,6 +265,11 @@ function parameters(operation: Operation, value: unknown): JsonObject {
       if (update && parameters_.editScheduleOnly !== false) invalid();
       return parameters_;
     }
+    case 'd360_transform_get': {
+      const parameters_ = object(value, ['dataTransformNameOrId']);
+      if (!name(parameters_.dataTransformNameOrId)) invalid();
+      return parameters_;
+    }
     case 'd360_ir_create': {
       const parameters_ = object(value, ['input']);
       ir(parameters_.input, true);
@@ -341,6 +348,25 @@ function result(operation: Operation, parameters_: JsonObject, value: unknown): 
       resource.calculatedInsightStatus !== 'DRAFT'
     )
       throw new ConnectError('REQUEST_FAILED');
+  } else if (operation === 'd360_transform_get') {
+    // Read the exact owner-returned name (or returned id); do not derive a transform name.
+    // Pending/failed runs remain observations, not eligibility or successful processing proof.
+    if (
+      (resource.name !== parameters_.dataTransformNameOrId &&
+        resource.id !== parameters_.dataTransformNameOrId) ||
+      !text(resource.name) ||
+      !name(resource.name) ||
+      !text(resource.id) ||
+      resource.dataSpaceName !== 'default' ||
+      resource.creationSource !== 'Data Graph' ||
+      !text(resource.status) ||
+      !text(resource.lastRunStatus) ||
+      (resource.lastRunDate !== null &&
+        (typeof resource.lastRunDate !== 'string' ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(resource.lastRunDate) ||
+          !Number.isFinite(Date.parse(resource.lastRunDate))))
+    )
+      throw new ConnectError('REQUEST_FAILED');
   } else if (operation.startsWith('d360_data_graph_')) {
     const expected =
       operation === 'd360_data_graph_get'
@@ -405,11 +431,17 @@ export class McpExecuteClient {
    * Execute one semantically read-only tool; POST does not make this a mutation.
    * @param {Operation} operation Allowlisted semantic operation.
    * @param {unknown} parameters_ Operation-specific parameters.
+   * @param {McpReadObserver} [observe] Private receipt sink, awaited before application classification.
    * @returns {Promise<JsonObject>} Validated application result, not settlement proof.
    */
-  public async read(operation: McpReadOperation, parameters_: unknown): Promise<JsonObject> {
-    if (!reads.has(operation)) invalid();
-    return this.execute(operation, parameters_);
+  public async read(
+    operation: McpReadOperation,
+    parameters_: unknown,
+    observe?: McpReadObserver,
+  ): Promise<JsonObject> {
+    if (!reads.has(operation) || (observe !== undefined && typeof observe !== 'function'))
+      invalid();
+    return this.execute(operation, parameters_, observe);
   }
 
   /**
@@ -423,7 +455,11 @@ export class McpExecuteClient {
     return this.execute(operation, parameters_);
   }
 
-  private async execute(operation: Operation, value: unknown): Promise<JsonObject> {
+  private async execute(
+    operation: Operation,
+    value: unknown,
+    observe?: McpReadObserver,
+  ): Promise<JsonObject> {
     try {
       json(value);
       const parametersJson = JSON.stringify(value);
@@ -466,6 +502,10 @@ export class McpExecuteClient {
           },
         } as unknown as Parameters<Connection['request']>[1],
       );
+      // Record actual body (including nested errors/unknown status) before strict classification.
+      // Detach it so an observer cannot alter what is subsequently admitted. Recorder failure
+      // fails closed; mutation calls never accept this observation hook.
+      if (observe) await observe(structuredClone(response));
       return result(operation, parameters_, response);
     } catch (error: unknown) {
       if (error instanceof ConnectError) throw error;
