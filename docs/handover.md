@@ -1,3 +1,99 @@
+# Segment A2 existing-target SERVICE/TRANSPORT checkpoint — 2026-10-28
+
+Started from exact clean pushed baseline `0d443258e4d2bb317c9643df4180c74a6f8a455a`.
+Fetch/status and ahead-history audit passed. Existing plan/Gates1/2 remain closed;
+Gate3 uses the explicitly permitted service+transport split to avoid exhausting a
+single worker with command/batch integration. Coordinator retains once-feature
+Gate4, public docs and final verification-DB rebuild/validate/gaps. This is NOT
+complete A2 or A. CREATE REMAINS BLOCKED; do not restart absence qualification.
+No live org calls/writes, installs, release/version/tag changes or DB/index edits.
+
+## Exact interfaces and preservation contract
+
+- `src/transport/connect-client.ts` adds `patchSegment(value:unknown):Promise<unknown>`.
+  It independently validates a complete bounded Segment document, requires numeric
+  requested API65, builds only fixed `/services/data/v65.0/ssot/segments/{apiName}`
+  PATCH and reuses no-refresh/no-retry/no-redirect receiver. Payload contains only
+  displayName, description, segmentOnApiName, segmentType `Dbt` and complete
+  `includeDbt:{models:{models:[{name,sql}]}}`. BOTH publishSchedule and
+  publishScheduleInfo are absent; lookback is never written or invented.
+- `src/services/execute-segment-deploy.ts` exports
+  `executeSegmentDeploy(value,connection,apiVersion,dataSpace,options)` returning
+  `Promise<SegmentDeployExecution>` (existing DMO execution vocabulary plus
+  family segment/fixed API65 PATCH route). Connection needs instanceUrl/request/
+  getApiVersion/getUsername. Required options are `{allowProcessing:boolean,
+  verifyInput:()=>Promise<void>}`; optional offline seams are acquire (retrieveSegment
+  signature), bind (bindSegmentDependencies signature), read(name):Promise<unknown>,
+  patch(document):Promise<unknown>, now():number, delay(ms):Promise<void>.
+- Fresh preflight always binds dependencies. A second exact runtime+independent
+  Metadata acquisition must admit ACTIVE and agree with its candidate. Fresh binding
+  snapshots after prerequisite settlement are compared again after acquisition and
+  after settled readback. Pair digest callback runs before admission and twice after
+  acquisition/binding, immediately before dispatch. Later command owner MUST supply
+  the actual immutable original pair verifier, never a no-op in production.
+- Equality returns unchanged/not-attempted with zero PATCH or Metadata DEPLOY jobs,
+  no acknowledgement required. Independent Metadata retrieve jobs remain reads.
+  Only label/description deltas pass; missing/unreadable/shell/unsupported targets
+  cannot create. Update requires explicit true processing acknowledgement.
+- One write attempt maximum. Mutation echo must admit exact desired semantics and
+  identity for confirmation, but never substitutes for independent settlement.
+  Timeout/disconnect/error/malformed echo remains failed/unknown even when bounded
+  independent reconciliation sees the expected target. No replay or rollback.
+- Frozen `segmentPollBudget={reads:12,intervalMs:1000,timeoutMs:120000}` bounds
+  read attempts independently of clock progress; first poll immediate, subsequent
+  polls delayed. Error/unknown state fails closed. ACTIVE poll is followed by a
+  separate full runtime+Metadata acquisition and dependency binding. Runtime/definition
+  IDs, ordered exact SQL/models, type, space, segment-on, schedule/lookback and all
+  other admitted nonvolatile fields must preserve. Only displayName/description,
+  segmentStatus, lastModifiedBy/Date and lastSegmentMemberCount are excluded from
+  private preservation comparison. Missing exact runtime/definition IDs block.
+- `test/execute-segment-deploy.test.mjs` covers service no-op/ack, exact payload,
+  single-attempt unknowns, finite frozen-clock polls/deadlines/errors, semantic and
+  final-pair mismatch, late pair/binding drift, and actual installed core PATCH
+  401/503/200 no-refresh/replay with unchanged caller connection descriptors.
+
+## Verification and checkpoint boundaries
+
+Final scoped autofix, explicit build, zero-warning full lint and focused 13/13
+passed. Full package npm test passed 558/558, zero failures/skips: Node phase
+112.1575007s, complete npm wall including build 115.4818379s. Normal unchanged
+hook repeats full lint/tests plus smoke before checkpoint commit; exact hook and
+commit/push receipts are reported in the finishing worker return, never presumed. All shell entries verify TEMP, actual
+Node os.tmpdir and nonempty TMP/TMPDIR against absolute normalized F:/Temp; two
+initial inline Node-quoting attempts failed closed before Git, then piped Node and
+existing check-temporary.mjs succeeded. Process-only repair/recheck, no recursive
+cleanup. Synthetic fixtures retained by existing tests; no live ownership ledger.
+
+## Ordered remaining work and exact resume point
+
+1. Command integration in `src/commands/data360/deploy.ts`: add --allow-processing,
+   protected executeSegment seam, whole-selection effects/admission before ANY
+   writes including DMO; route existing-target Segment execution only. Keep current
+   disabled command guard until integration and its synthetic tests pass. Retain
+   exact pair/Git/expanded digests and pass actual verifier into the service.
+2. Synthetic command regressions: mixed missing ack zero writes, no-op needs no ack,
+   late digest/prerequisite drift, failure/unknown stop with earlier results and
+   unattempted tail, unchanged DMO envelopes/API65/latest safeguards. Unsupported
+   selected PROFILE/prerequisite creation stays blocked before any writes.
+3. Separate source live acceptance task ONLY after command integration: first lookup
+   DB, MCP-first verify actual source org/CLI binding; choose at most two NEW owned
+   fixture identities with explicit ledger, <=2 provision/create attempts, <=2 update
+   attempts, <=2 exact cleanup deletes, <=40 nonpoll reads, <=24 polls, <=20 minutes.
+   Provision solely for acceptance via separately qualified native route, never
+   public create admission or existing business-resource mutation. Actual command
+   retrieve both -> label/description edits -> acknowledged batch update -> independent
+   complete preservation readback -> repeat deploy zero mutation calls/jobs. Stop
+   on unknown; read-only reconcile, no write retry/rollback. Qualified exact cleanup
+   only, report retention/generated-resource uncertainty. No target acceptance here.
+
+Public README/capabilities/artifact/Git docs and guide remain unchanged because no
+public execution is enabled. Coordinator must propagate them with the integrated
+feature. No workspace consumers, language/LSP/hover/wiki/site-listing dependencies.
+Changed folder sf-plugin-data yes, current 0.1.0, new version unassigned/internal
+checkpoint; all other tracked components N/A/not needed. Full-product creation,
+meaningful DBT definition updates, broad SQL, seven-family and cross-org gates remain
+explicitly unfinished. No release is authorized for this partial milestone.
+
 # Segment permission/shell LIVE qualification checkpoint — 2026-10-28
 
 Bounded source-only checkpoint from clean pushed baseline

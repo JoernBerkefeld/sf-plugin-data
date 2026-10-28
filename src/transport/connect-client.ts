@@ -2,6 +2,7 @@ import { Org } from '@salesforce/core';
 import type { Connection } from '@salesforce/core';
 import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
 import type { DmoUpdatePatch } from '../artifacts/dmo-update-delta.js';
+import { validateSegmentDocument } from '../artifacts/segment-document.js';
 import type { ApiVersionSelection } from './api-version.js';
 
 export type TransportErrorCode =
@@ -187,6 +188,32 @@ export class ConnectClient {
       {
         method: 'DELETE',
         url: this.safeUrl(`${this.prefix}data-model-objects/${dataModelObjectName}`),
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
+  /**
+   * PATCH only a validated complete DBT definition on the fixed API65 Segment route.
+   * Neither schedule field nor lookback is writable through this boundary.
+   * @param {unknown} value Complete independently admitted desired Segment document.
+   * @returns {Promise<unknown>} Untrusted single-attempt response, never settlement evidence.
+   */
+  public async patchSegment(value: unknown): Promise<unknown> {
+    if (this.selection.requested !== '65.0') throw new ConnectError('INVALID_REQUEST');
+    const document = validateSegmentDocument(value);
+    return this.send(
+      {
+        method: 'PATCH',
+        url: this.safeUrl(`${this.prefix}segments/${document.identity.apiName}`),
+        body: JSON.stringify({
+          displayName: document.spec.displayName,
+          description: document.spec.description,
+          segmentOnApiName: document.spec.segmentOn.apiName,
+          segmentType: 'Dbt',
+          includeDbt: { models: { models: document.spec.models } },
+        }),
+        headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),
     );
