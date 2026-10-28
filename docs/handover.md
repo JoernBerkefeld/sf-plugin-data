@@ -1,3 +1,266 @@
+# Segment A1 live DBT checkpoint — 2026-10-28
+
+This continuation supersedes the older A1 status immediately below. Gate1/Gate2
+were already closed; Gate3 kept this to one A1 owner with stable serialized
+verification. No A2 executor, public create/update, whole-feature Gate4 or broad
+Gate5 was started. Fetch/status found main at origin/main
+1762ac0ab2264fb78d30ad09165e1e815e62ce28, with only prior A1 owned inputs dirty;
+no ahead commits existed to accidentally push. Version remains 0.1.0.
+
+## Observed contract corrections and exact new interfaces
+
+- `projectSegment(response, apiName)` now returns an independently
+  `validateSegmentDocument`-admitted detached candidate plus private runtime.
+  Exact observed DBT audit references (`createdBy`/`lastModifiedBy` with id only),
+  audit dates, `segmentOnId`, and generated `segmentMembershipDmo` with exactly
+  `historyTable`/`latestTable` are classified private observations, never authored
+  content. Unknown fields still block. `segmentMembershipTable` was not observed
+  on this DBT fixture and is deliberately NOT admitted from the earlier UI probe.
+- Only empty `parameters:[]` is admitted; nonempty parameter semantics block.
+  `validateSegmentCriteria(document:SegmentDocument, criteria:string,
+  escaped=true):void` validates the runtime's redundant escaped DBT pipeline
+  against the typed exact model/name/SQL. Divergence is SEGMENT_PAIR_MISMATCH;
+  no silently dropped criteria or opaque parameter content.
+- `writeSegmentDocument` retains its four existing arguments and adds optional
+  fifth filesystem publication seam `{link,rename,unlink}` for deterministic
+  failure/race tests. Production defaults are native fs/promises functions.
+  A linked destination is counted as published BEFORE unlinking its staging
+  hardlink; a staging unlink failure now correctly reports PARTIAL_SEGMENT_OUTPUT.
+  First-publication failure remains OUTPUT_FAILED; a racing companion is preserved
+  and diagnosed partial rather than overwritten or falsely reported complete.
+- New regression count: four additional tests (observed DBT/private fields and
+  divergent criteria/parameter refusal; staging-unlink failure; racing companion;
+  first-publication failure). Existing synthetic coverage is retained.
+
+## Exact source fixture ledger and evidence scope
+
+Before probes, verification DB subjects `data360:segment.dbt.source-create-update.api65`
+and `data360:segment.metadata-definition.runtime-absence.api65` were consulted.
+MCP discover/describe CompanyProfileInfo followed by independent Organization
+queries verified source 00Daj000010xkZNEAY and target 00Dfj00000bRQabEAG; CLI
+StateAggregator/AuthInfo independently matched mcnext-sdo and mcnext-thuy.
+Persistent validation projects were inspected but never edited. Target was not
+mutated. Existing source PROFILE DMO UnifiedssotIndividualMkt__dlm was read-only
+inspected as isSegmentable with primary field ssot__Id__c; not provisioned/modified.
+
+Owned SOURCE fixture: A1Probe5952383596d846c6, created once with exact SQL
+`SELECT UnifiedssotIndividualMkt__dlm.ssot__Id__c FROM UnifiedssotIndividualMkt__dlm WHERE 1 = 0`,
+one model with matching name, NoRefresh, test-only description. Predeclared
+budget: 12 minutes, <=20 live reads, <=1 create and <=1 delete, no mutation retry.
+Ledger began 2026-10-28T00:12:44.436Z; final read ended 00:16:58.035Z (4m13.599s).
+Direct ledger records four reads including prerequisite/detail/absence; public
+plugin invocations performed three additional exact runtime GETs (one blocked
+before Metadata), with two successful standard Metadata retrieves. No list sweep.
+
+- One core-authenticated API65 POST accepted PROCESSING with NO_REFRESH/P90D.
+  HTTP status is not asserted here: parsed-body receipts do not expose it.
+- Separate exact GET initially confirmed persisted DBT semantics. Initial actual
+  public retrieve blocked UNKNOWN_SEGMENT_CONFIGURATION, demonstrating the exact
+  missing classification fixed above.
+- Actual `node bin/run.js data360 retrieve -o mcnext-sdo -m segment:A1Probe5952383596d846c6
+  -d <owned OS-temp output> --json` succeeded exit0/status success, one retrieved
+  XML/JSON pair, errors=[]; public command with installed Metadata CLI 2.151.7.
+  Both independently acquired representations passed exact pair correlation.
+- Repeated same actual public command returned exit0/status success/unchanged for
+  both paths. No overwrite flag, manual manifest/summary or authored request file.
+- Separate runtime GET reached ACTIVE with original SQL, NO_REFRESH/P90D and
+  lastSegmentMemberCount=0. Empty SQL/NoRefresh did not suppress processing.
+- One qualified exact native DELETE resolved empty. Independent exact GET rejected
+  ITEM_NOT_FOUND; saved error exposes name/errorCode, NOT HTTP status. No retry.
+  Exact fixture is no longer readable. Metadata inventory absence and physical
+  membership/generated-table cleanup were NOT checked; do not claim global cleanup
+  or separately delete generated/shared objects. No retained readable Segment.
+
+Run scratch `F:/Temp/data360-a1-live-pXMjF8` and test/transport/staging scratch
+remain retained. No recursive cleanup or persistent-project edits. No tokens/raw
+responses/customer data are committed. Sanitized durable atomic evidence lives in
+root subject `data360:segment.dbt.a1-worktree-roundtrip.api65`; owned-subject schema
+validation returned zero errors. Shared DB index/rebuild/validate/gaps remain the
+coordinator's job. Evidence deliberately uses api-behavior/live-api rather than
+plugin-acceptance: actual invocation used uncommitted A1 code based on the SHA
+above, not an accepted committed revision or installed release.
+
+## Verification, checkpoint preservation and resume
+
+Stable final code: scoped ESLint autofix, full lint (zero warnings), explicit build,
+focused regressions 49/49 (1.58669s test phase), full npm test 480/480 (110.331879s
+node test phase; intrinsic build additionally ran), zero failures/skips. CLI smoke
+and normal-hook commit receipt are recorded in the continuation final report after
+completion. Earlier 476-test result below is historical, not acceptance of these
+edits. Normal hooks remain enabled. Checkpoint execution began approximately
+2026-10-28T00:08Z; elapsed at stable verification/handover was approximately 15min.
+Only literal A1 source/test paths and this safe handover belong to the package
+checkpoint. Root evidence subject remains a distinct coordinator-owned commit
+input; unrelated root history is not pushed. No version bump/tag/release for A1.
+
+Live one-fixture DBT pair round-trip and repeat-byte contract are now observed.
+Two live selected fixtures were not attempted because the bounded create budget
+was one (synthetic repeated-selection tests still cover dedupe/routing).
+**Permission-aware general absence and exact Metadata-only shell-conflict
+admission remain UNRESOLVED; A2 must keep create blocked.** A successful read and
+subsequent ITEM_NOT_FOUND on this owned fixture do not prove permission behavior
+for arbitrary names or shell absence. No Metadata-only fixture was created.
+
+Next smallest A2 slice: pair disk-input/digest resolution and read-only Segment
+preview against exact present runtime, using these document/acquisition interfaces;
+retain explicit create-blocked diagnostics until a separate bounded permission/
+shell-conflict qualification closes that gap. Defer executor/processing effects,
+reference rebinding/expansion and Git pair integration to follow-on bounded slices.
+No full A2, cross-org migration, deployment no-op or successful computation is
+accepted here. Whole-feature review and public README/capability/artifact/Git/guide
+propagation stay deferred to the coordinator; independent package has no language,
+LSP, hover, wiki or workspace-consumer dependency changes.
+
+# Segment A1 checkpoint — implementation verified, live acceptance incomplete
+
+2026-10-28 execution follows the reviewed operational-routes plan (Gate1/Gate2
+already complete). Fetch reconciled main to origin/main at
+1762ac0ab2264fb78d30ad09165e1e815e62ce28, clean before edits; the previously
+recorded ahead-eight state was stale. No commit, push, release, installation,
+org mutation, recursive deletion, or persistent validation-project edit occurred.
+Coordinator owns history preservation, once-whole-feature Gate4 and broad Gate5.
+
+## Actual exported interfaces and ownership
+
+- `src/artifacts/segment-document.ts`: `SegmentReference = {kind:'dmo',
+dataSpace:'default', apiName:string}`; `SegmentDocument = {schemaVersion:1,
+kind:'segment', identity:{dataSpace:'default',apiName}, spec:{displayName,
+description, segmentType:'DBT', segmentOn:SegmentReference,
+models:Array<{name,sql}>, dependencies:Array<SegmentReference & {fields:string[]}>,
+publishInterval:'NO_REFRESH', lookbackPeriod:'P90D'}}`.
+  `validateSegmentDocument(unknown):SegmentDocument`,
+  `validateSegmentPair(unknown, xml:string):SegmentDocument`,
+  `serializeSegmentDocument(unknown):string`,
+  `segmentSqlDependencies(sql:string):SegmentDocument['spec']['dependencies']`.
+  Validators detach and reject unknown keys. Only one ordered model and the
+  qualified single-object `SELECT Object__dlm.Field__c FROM Object__dlm WHERE 1 = 0`
+  grammar (whitespace/case differences admitted, original SQL retained) currently
+  have dependency admission. This deliberately blocks all other SQL, not a claim
+  of general SQL portability. P90D is preserved observed content, never generated
+  as a writable default. Fixed escaped DBT XML grammar is admission only, not a
+  Salesforce serializer. Divergent model/SQL/label/type and unknown XML block.
+- `src/transport/project-metadata.ts`:
+  `MetadataRunner = (arguments_:string[],cwd:string)=>Promise<{exitCode:number,
+stdout:string}>`; `retrieveSegmentMetadata(targetOrg:string,apiName:string,
+runner?:MetadataRunner):Promise<string>`; `runProjectMetadata` implements that
+  runner. Explicit standard CLI exact API65 retrieve in an owned mkdtemp DX
+  project, wait five minutes, child timeout 330 seconds, max output 4 MiB.
+  Requires terminal done/success/Succeeded, no messages/warnings, exactly one
+  Created MarketSegmentDefinition member, and bounded no-link decomposed XML.
+  Nonterminal results stop unconfirmed; no guessed report contract or retries.
+  Windows uses the installed npm CLI JavaScript entry via Node with argument
+  arrays, no shell interpolation or installation. Exported
+  `verifyTemporaryDirectory():void` and
+  `inspectSegmentPath(file:string):Promise<Stats>` support the pair writer.
+- `src/services/retrieve-segment.ts`:
+  `retrieveSegment(connection,apiName:string,apiVersion:string|ApiVersionSelection,
+dataSpace:string,metadata?:(targetOrg:string,name:string)=>Promise<string>)`
+  returns `Promise<SegmentAcquisition>` with `{identity,candidate?,definitionXml?,
+blockers:string[],expectations?:{runtime:Record<string,unknown>}}`. Connection
+  needs instanceUrl/request/getApiVersion/getUsername. Exact fixed API65 GET
+  reuses ConnectClient's no-refresh/retry/redirect guards; no transport modification
+  or writes. Candidate exists only after independent XML correlation.
+  `projectSegment(response:unknown,apiName:string)` returns private runtime and
+  unvalidated portable projection; callers MUST use validateSegmentPair before
+  publication. Current allowlisted runtime observations are segment/definition
+  IDs, status and last member count only; other fields intentionally block until
+  their exact DBT semantics are classified. Expectations stay private.
+- `src/artifacts/write-segment.ts`:
+  `writeSegmentDocument(value:unknown,definitionXml:string,projectRoot:string,
+overwrite:boolean):Promise<{path:string,companionPath:string,
+outcome:'retrieved'|'unchanged'}>`. XML path is configured/default package root
+  plus `main/default/marketSegmentDefinitions/<name>.marketSegmentDefinition-meta.xml`;
+  companion is `main/default/data360/segments/<name>.segment.json`. Both existing
+  byte sets are checked before publication, staged/flushed under verified OS temp,
+  rechecked and completion-validated. Two renames cannot be transactional;
+  `PARTIAL_SEGMENT_OUTPUT` explicitly diagnoses post-first-publication failure.
+  Normal no-clobber, unchanged byte preservation, no-link and single-link checks
+  apply. Scratch roots retained; no recursive cleanup.
+- `src/commands/data360/retrieve.ts`: additive protected `acquireSegment` and
+  `writeSegment` seams. Exact repeated segment selectors dedupe/sort, no implicit
+  DMO inventory for Segment-only selection, existing DMO flow retained. Results
+  add optional `family:'segment'` and `companionPath`; DMO response items unchanged.
+  Bare segment inventory refuses; omitted/type DMO inventory retains existing
+  behavior and help explicitly states Segment inventory is excluded. Numeric65 /
+  default only for Segment, with failure before auth for latest/unsupported scope.
+- Tests owned: `test/segment-document.test.mjs` (28 tests) and additions to
+  `test/retrieve-command.test.mjs` (17 total). Deploy/read-deploy-input/Git files
+  remain untouched for A2. No package/dependency/version changes; version 0.1.0.
+
+## Verification and evidence
+
+Final code: scoped ESLint autofix passed, full lint passed with zero warnings,
+explicit build passed, focused tests 45/45 (1.431 s test-runner time), full
+`npm test --no-workspaces` passed 476/476, no skips/failures. Full npm-test wall
+110.413 s including intrinsic build; node test phase 106.960 s. Combined final
+lint/build/focused/full shell 125.212 s. This is synthetic package verification,
+not complete A1 live acceptance or package-install smoke. No automatic installs.
+TEMP, actual Node os.tmpdir and nonempty TMP/TMPDIR were checked at shell entries;
+initial malformed shell quoting was corrected before fetch/workload; process-only
+repair used F:/Temp. All created scratch roots use verified OS-temp mkdtemp and
+are retained; no deletion authorization is presumed from placement.
+
+Verification DB lookup before qualification consulted
+`data360:segment.dbt.source-create-update.api65` and
+`data360:segment.metadata-definition.runtime-absence.api65`. These are historical
+API evidence, not current plugin acceptance. No new database acceptance claim
+was created. Headless discover -> describe CompanyProfileInfo -> dispatch_readonly
+Organization query verified both MCP org IDs against the user-provided expected
+bindings. CLI StateAggregator/AuthInfo independently matched both explicit aliases.
+Persistent validation project package directories were read, not altered.
+
+Bounded current read-only evidence: installed CLI 2.151.7 standard exact retrieve
+of the existing documented source UI Segment returned exit0/status0,
+done/success/Succeeded, no warnings, and one Created MarketSegmentDefinition.
+Its result keys are done/fileProperties/id/status/success/messages/files; member
+keys fullName/type/state/filePath. The source-decomposed XML was 3448 characters.
+An independent exact API65 runtime GET exposed one UI/P2Y/NO_REFRESH component,
+not the supported DBT/P90D variant. Runtime keys include audit fields, parameters,
+publishStatus, segmentMembershipDmo/Table and segmentOnId, in addition to core
+identity/configuration. These must not be generically allowlisted for DBT from
+this UI observation; runtime-only meaningful fields need specific classification.
+No member data was queried or published; only field names/state categories were
+reported. Initial Node --input-type invocation conflicted with a core worker and
+was corrected to dynamic import without --input-type; successful read followed.
+
+## Concrete unfinished checkpoints and A2 resume
+
+A1 is NOT fully accepted: no current supported DBT pair exists in the newly owned
+fixture ledger (historical owned fixtures were removed). Read-only A1 cannot
+create one; successful synthetic acquisition/pair tests and UI definition transport
+do not prove current DBT plugin round-trip. Need a bounded authorized fixture
+qualification in A2 or a specifically provided compatible existing exact DBT name
+(read-only acquisition only), classify its complete API65 runtime meaningful fields,
+then verify actual plugin one/two exact retrieval and repeated byte equality.
+Unknown fields and unsupported SQL stay blocked; do not weaken admission to make
+an existing UI segment pass. Source/current target write acceptance remains absent.
+
+Permission-aware exact absence and independent exact Metadata shell-conflict
+admission remain UNRESOLVED. Generic404 returns SEGMENT_ACQUISITION_FAILED and
+never absent; no complete inventory/list/pagination claim. A2 must block create
+until its specific absence/permission/shell evidence is qualified. The standard
+terminal retrieve/decomposition checkpoint is resolved for installed CLI, but
+nonterminal jobs deliberately remain unconfirmed rather than guessed success.
+
+A2 starts at these exact document/service interfaces, reconciles the current
+worktree, and owns preview/execute, processing acknowledgement, target reference
+binding and dependency expansion, paired disk input/digest, command/deploy/Git
+integration, source owned fixtures and bounded independent readback. No Segment
+runtime write transport is enabled here. Add remaining safety tests for pair
+publication I/O/race failures and broader meaningful-field classification before
+claiming full acceptance. Do not predeploy XML before runtime create, invent
+writable schedule/lookback defaults, strip IDs without typed binding, or treat
+historical cleanup as fixture ownership.
+
+Fixture ledger: no newly created or adopted org resources; no existing business
+resource modified. Shared source UI Segment was read only. Target binding verified
+only; no target resource API changes or new fixture. Scratch projects/staging/test
+roots under F:/Temp retained with no recursive deletion. No persistent project
+files modified. Coordinator retains broad docs propagation; README/capability/
+artifact/Git public contracts must be updated accurately before milestone A release.
+No language/LSP/hover/wiki/workspace consumer updates are needed for this independent
+package. No A1 release is permitted; coordinator owns any checkpoint commit/push.
+
 # Internal DLO raw inventory acquisition — Gate5 documentation handover
 
 Parent Gate4 reviewer ba84604a reviewed actual code with zero must-fix and zero

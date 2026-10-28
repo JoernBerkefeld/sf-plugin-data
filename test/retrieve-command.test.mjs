@@ -148,6 +148,66 @@ test('latest malformed, failed and newer discovery blocks before every DMO or fi
   }
 });
 
+test('exact Segment repeat selection deduplicates and writes pairs without DMO inventory', async () => {
+  const command = invocation({
+    metadata: ['segment:Zulu', 'segment:Alpha', 'segment:Zulu'],
+    'output-dir': 'custom-root',
+  });
+  command.selectDocuments = () => assert.fail('Segment exact must not list DMOs');
+  const acquired = [];
+  command.acquireSegment = async (conn, name, version, space) => {
+    assert.equal(conn, connection);
+    assert.equal(version.requested, '65.0');
+    assert.equal(space, 'default');
+    acquired.push(name);
+    return {
+      candidate: { kind: 'segment', identity: { dataSpace: 'default', apiName: name } },
+      definitionXml: '<independent/>',
+      blockers: [],
+    };
+  };
+  command.writeSegment = async (document, xml, root, overwrite) => {
+    assert.equal(xml, '<independent/>');
+    assert.equal(root, 'custom-root');
+    assert.equal(overwrite, false);
+    return {
+      path: `${document.identity.apiName}.xml`,
+      companionPath: `${document.identity.apiName}.json`,
+      outcome: 'unchanged',
+    };
+  };
+  const { result } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.deepEqual(acquired, ['Alpha', 'Zulu']);
+  assert.deepEqual(result.result.selection, ['segment:Alpha', 'segment:Zulu']);
+  assert.ok(
+    result.result.items.every(
+      (item) => item.family === 'segment' && item.companionPath && item.outcome === 'unchanged',
+    ),
+  );
+});
+test('Segment bare inventory/latest/invalid identity refuse before auth', async () => {
+  for (const flags of [
+    { metadata: ['segment'] },
+    { metadata: ['segment:../unsafe'] },
+    { metadata: ['segment:Audience'], 'api-version': 'latest' },
+  ]) {
+    const command = invocation(flags);
+    command.resolveOrg = () => assert.fail('scope before auth');
+    const { result } = await run(command);
+    assert.equal(result.status, 'blocked');
+  }
+});
+test('blocked Segment never publishes while independent DMO retains existing route', async () => {
+  const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
+  command.acquireSegment = async () => ({ blockers: ['UNKNOWN_SEGMENT_CONFIGURATION'] });
+  command.writeSegment = () => assert.fail('must not publish');
+  const { result } = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.result.items.length, 1);
+  assert.equal(result.result.items[0].family, undefined);
+});
+
 // Restore process exit state after checking envelope failures, not an actual CLI process.
 const run = async (command) => {
   const previous = process.exitCode;

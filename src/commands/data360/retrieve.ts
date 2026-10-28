@@ -12,6 +12,9 @@ import {
 } from '../../services/retrieve-other-dmo.js';
 import { ConnectError } from '../../transport/connect-client.js';
 import { plugin as packageMetadata } from '../../plugin.js';
+import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
+import { writeSegmentDocument } from '../../artifacts/write-segment.js';
+import { retrieveSegment } from '../../services/retrieve-segment.js';
 
 export type RetrieveEnvelope = {
   contract: 'sf-data360-retrieve';
@@ -47,6 +50,8 @@ export type RetrieveEnvelope = {
       operation: 'retrieve';
       outcome: 'retrieved' | 'unchanged';
       path: string;
+      companionPath?: string;
+      family?: 'segment';
     }>;
   };
 };
@@ -54,9 +59,10 @@ export type RetrieveEnvelope = {
 /** Retrieve selected DMO configuration through existing service-owned capability checks. */
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
-  public static readonly summary = 'Retrieve Data360 DMOs into a local project.';
+  public static readonly summary =
+    'Retrieve Data360 DMOs or exact DBT Segments into a local project.';
   public static readonly description =
-    'Repeat -m dmo:ApiName for exact selection, use -m dmo for all DMOs in the selected space, or omit selectors for all implemented families (currently DMO only). Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Repeat -m dmo:ApiName or -m segment:ApiName for exact selection. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -76,7 +82,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Repeat dmo[:ApiName]; omitted selectors retrieve all implemented families.',
+      summary: 'Repeat dmo[:ApiName] or segment:ApiName; omitted selectors retain DMO inventory.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -90,6 +96,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireSegment = retrieveSegment;
+  protected writeSegment = writeSegmentDocument;
   protected acquire = retrieveDmo;
   protected selectDocuments = selectDmos;
   protected resolveOrg = async (
@@ -167,17 +175,29 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
+    const dmoSelectors = selectors.filter((value) => !value.startsWith('segment:'));
     try {
+      if (selectors.includes('segment')) throw new SegmentError('SEGMENT_INVENTORY_UNQUALIFIED');
+      if (segmentSelectors.some((value) => !segmentName.test(value.slice(8))))
+        throw new SegmentError('INVALID_SELECTION');
+      if (
+        segmentSelectors.length > 0 &&
+        (flags['api-version'] !== '65.0' || flags['data-space'] !== 'default')
+      )
+        throw new SegmentError('INVALID_SCOPE');
       // Validate syntax/scope before auth; latest capability evidence arrives after discovery.
       validateDmoSelection(
-        selectors,
+        dmoSelectors,
         flags['api-version'] === 'latest' ? '65.0' : flags['api-version'],
         flags['data-space'],
       );
     } catch (error: unknown) {
       return finish(
         'blocked',
-        error instanceof DmoRetrieveError ? error.code : 'INVALID_SELECTION',
+        error instanceof DmoRetrieveError || error instanceof SegmentError
+          ? error.code
+          : 'INVALID_SELECTION',
       );
     }
     let org: Pick<Org, 'getConnection' | 'getOrgId'>;
@@ -190,6 +210,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const diagnose = (error: unknown, apiName?: string): void => {
       let code = 'RETRIEVE_FAILED';
       if (
+        error instanceof SegmentError ||
         error instanceof DmoWriteError ||
         error instanceof DmoRetrieveError ||
         error instanceof ConnectError
@@ -199,6 +220,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       else failed = true;
       if (
         code === 'OUTPUT_FAILED' ||
+        code === 'PARTIAL_SEGMENT_OUTPUT' ||
+        code === 'SEGMENT_ACQUISITION_FAILED' ||
         error instanceof ConnectError ||
         code === 'ACQUISITION_FAILED'
       )
@@ -206,7 +229,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       envelope.diagnostics.errors.push({
         code,
         message: apiName
-          ? 'This DMO was not retrieved. Resolve its capability, acquisition or output diagnostic.'
+          ? 'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.'
           : 'DMO inventory could not be resolved completely; no files were written.',
         retryable: false,
         ...(apiName ? { identity: { dataSpace: flags['data-space'], apiName } } : {}),
@@ -238,7 +261,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       envelope.metadata.soapApiVersion = selection.soapNumeric;
       try {
-        validateDmoSelection(selectors, selection, flags['data-space']);
+        validateDmoSelection(dmoSelectors, selection, flags['data-space']);
       } catch {
         envelope.diagnostics.errors.push({
           code: 'INVALID_SCOPE',
@@ -250,13 +273,51 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
-      const names = await this.selectDocuments(
-        connection,
-        selectors,
-        selection,
-        flags['data-space'],
-      );
-      envelope.result.selection = names.map((name) => `dmo:${name}`);
+      const names =
+        segmentSelectors.length > 0 && dmoSelectors.length === 0
+          ? []
+          : await this.selectDocuments(connection, dmoSelectors, selection, flags['data-space']);
+      // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
+      const segments = [...new Set(segmentSelectors.map((value) => value.slice(8)))].sort();
+      envelope.result.selection = [
+        ...names.map((name) => `dmo:${name}`),
+        ...segments.map((name) => `segment:${name}`),
+      ];
+      for (const apiName of segments) {
+        try {
+          const acquisition = await this.acquireSegment(
+            connection,
+            apiName,
+            selection,
+            flags['data-space'],
+          );
+          if (
+            acquisition.blockers.length > 0 ||
+            !acquisition.candidate ||
+            !acquisition.definitionXml
+          )
+            throw new SegmentError(acquisition.blockers[0] ?? 'INCOMPLETE_SEGMENT');
+          if (
+            acquisition.candidate.identity.apiName !== apiName ||
+            acquisition.candidate.identity.dataSpace !== flags['data-space']
+          )
+            throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
+          const receipt = await this.writeSegment(
+            acquisition.candidate,
+            acquisition.definitionXml,
+            flags['output-dir'] ?? process.cwd(),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: { ...acquisition.candidate.identity },
+            family: 'segment',
+            operation: 'retrieve',
+            ...receipt,
+          });
+        } catch (error: unknown) {
+          diagnose(error, apiName);
+        }
+      }
       for (const apiName of names) {
         try {
           const projection = await this.acquire(
