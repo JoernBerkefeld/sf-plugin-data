@@ -1,3 +1,130 @@
+# CI paired artifact checkpoint — 2026-10-28
+
+Sole-editor continuation from fetched HEAD/origin96adcfee4bd63c4b35b5ce92c8b807075853f457.
+Restored pair edits reconciled before extending; stash77eb8a591fafe8f5a8d38e8d68415f60eb4751f3
+remains backup, not applied/dropped again. Full operational plan read. Written
+bounded artifact plan passed dedicated read-only reviewer5a2fa5ad before edits;
+three must-fixes incorporated: literal invalid XML characters, handle-bound writer
+reads, explicit CI/Segment discrimination and public guard before target work.
+Am I overengineering this? No generic framework/parser added. One coupled owner;
+public command routing/live acceptance deliberately follow this verified boundary.
+
+Interfaces: calculatedInsightName and validateCalculatedInsightPair(value,xml,memberName)
+retain strict three-field source XML versus existing four-field SOAP fullName contract.
+writeCalculatedInsightDocument(value,definitionXml,projectRoot,overwrite,publication?)
+returns {path,companionPath,outcome}. Canonical XML member omits__cio; JSON keeps it:
+mktCalcInsightObjectDefs/<member>.mktCalcInsightObjectDef-meta.xml and
+ data360/calculatedInsights/<apiName>.calculatedInsight.json under configured package
+main/default. Independent XML retained, never synthesized/predeployed by production.
+Writer checks bounded no-link handles before/after read, binds both destinations,
+requires overwrite for differences, reports PARTIAL_CI_OUTPUT after publication drift.
+
+readDeployInputs admits calculated-insight:<apiName> or either paired file, resolves
+both canonical members, strict duplicate-key JSON and pair semantics, immutable deep
+frozen CalculatedInsightDeployInput {path,companionPath,document,inputDigest}; digest
+length-prefix-binds both original byte sets. verifyCalculatedInsightInputDigest(input)
+and captureDeployInputDigest(input) re-admit both. GitDeploySelection.calculatedInsights
+captures exact CI admissions; segments now uses kind rather than companionPath.
+Either-member Git changes coalesce; lifecycle/noncanonical/incomplete pairs block.
+Internal admission is NOT public route support: public deploy stops mixed/CI selection
+with CALCULATED_INSIGHT_ROUTING_UNSUPPORTED before target/dependency work. Existing
+DMO/Segment/IR routes unchanged; isSupportedDeployInput still only DMO/Segment.
+
+Synthetic test/calculated-insight-input.test.mjs covers XML/name/SQL/label/entity/
+literal-invalid admission, configured writer/repeat/clobber/overwrite, either-member
+read/freeze/digest/byte drift/missing/hardlinks, duplicate JSON, publication failure/
+postpublication drift, Git capture/delete/rename. deploy-command adds mixed public
+zero-target-work refusal. Initial focused run32/33: assertion mistakenly read envelope
+diagnostics as array; corrected to diagnostics.errors, not a production failure.
+Verification: scoped/full lint:fix and full zero-warning lint passed; explicit build
+passed; focused33/33 and full unfiltered898/898 passed. Node153.810s, full npm test
+including build157.841s, combined verification187.609s. Normal-hook checkpoint and
+exact commit/hosted receipts follow in worker result; do not infer fresh success from
+historical HEAD. No org calls, guide/root/index edits or releases.
+
+**Resume:** common command integrator enables complete public CI retrieve/preview/
+deploy using existing service signatures below. Pass mandatory verifyInput and
+private observation recorder; recheck Git captured CI inputs just as Segment/IR.
+Retrieve must separately obtain standard project XML and correlate portable candidate,
+not serialize SOAP fullName as source XML. Update current command types/narrowing,
+processing acknowledgement, complete-selection preflight, mixed order and fresh input/
+binding rechecks. Existing executor supports ONLY qualified forward DeviceId IS NOT NULL
+expression update or complete zero-write repeat, not create/label/schedule/broader SQL.
+Then separately budget SOURCE public/live acceptance; no org mutation necessary now.
+Graph/DLO queued. Coordinator owns once-whole-feature Gate4/doc propagation and root
+verification database aggregate/index; guide already current and untouched here.
+
+Safety handoff: all shell/test entries preflight absolute normalized TEMP/actual Node
+os.tmpdir and nonempty TMP/TMPDIR F:/Temp, repair process-only and recheck if wrong.
+Scratch only mkdtemp verified OS temp with random owner marker; no recursive cleanup
+unless registered run-created strict-descendant target with no-link checks; never
+repo/workspace recursive cleanup. This slice performs no recursive cleanup.
+
+# Hosted regression repairs and preserved CI continuation — 2026-10-28
+
+Priority repair completed before further CI integration. Fetched package was clean
+at49418ae. Interrupted CI pair writer transferred editor ownership cleanly after
+syntax-only checks; its two literal paths were preserved in stash object
+77eb8a591fafe8f5a8d38e8d68415f60eb4751f3, then restored by exact-object apply after
+hosted green. Stash retained as backup; no discard, cleanup or feature commit.
+
+Repair1 commit/push24102db2fec2889d2160ff2592c006430dcfb9a2 changed only
+`test/git-deploy-selection.test.mjs`. Tracked directory replacement now accepts
+ONLY INVALID_GIT_SELECTION or BLOCKED_GIT_LIFECYCLE because Linux Git detects
+tracked-child deletion before authored no-link admission. Separate untracked
+Git-visible canonical linked file requires exact INVALID_GIT_SELECTION. Linux
+uses a file symlink; Windows lacks file-symlink privilege (initial EPERM recorded)
+and uses a real hard link to exercise nlink refusal. Invalid refs/payload leakage
+assertions retained; production lifecycle logic and dependency pins unchanged.
+Plan reviewer64c63267 identified Git-visible link requirement, incorporated.
+Local full880/880 Node117.257s/npm120.906s, lintfix/lint0/build passed; normal
+hooks880 plus30 smoke passed, hookcommit235.415s. Treeff28b38e4e4319d9f7788608cd2ef5d584a49f28.
+Hosted run https://github.com/JoernBerkefeld/sf-plugin-data/actions/runs/40693302659
+confirmed both Ubuntu Node22.22.2/24.21.0 passed fulltests/smoke/packdry but exposed
+previously skipped stale package smoke entryCount32(actual84); run remained FAILED.
+
+Repair2 commit/push96adcfee4bd63c4b35b5ce92c8b807075853f457 changed only
+`scripts/package-smoke.mjs`, new`scripts/package-inventory.mjs` and
+`test/package-inventory.test.mjs`. Exact source-derived compiled JS/declaration
+inventory plus explicit LICENSE/README/package/bin/four-doc allowlist replaces
+stale count; missing/extra/duplicate/same-count secret-like substitution tests
+added. Existing required entries retained. Installed smoke fixture now supplies
+kind:dmo and asserts the current exact ApiVersionSelection object, not old string.
+Plan reviewerf4d16f79 constraints incorporated before edits. Local six focused
+inventory tests, installed smoke, lintfix/lint0/build passed. Full886/886
+Node120.364s/npm124.012s; normal hooks886 plus30smoke passed,
+hookcommit263.906s. HEADtree7257d05ca76dd10869b8b26fc71194af16f174c1 equals staged tree.
+
+ACTUAL HOSTED GREEN exact96adcfee4bd63c4b35b5ce92c8b807075853f457:
+https://github.com/JoernBerkefeld/sf-plugin-data/actions/runs/40696660173
+Both Ubuntu Node22.22.2 and24.21.0 jobs completed success: npmci, lint, fulltest,
+smoke, packdry and installed package smoke all success. No skipped acceptance
+steps. Old49418ae run40690144663 remains failed; no retroactive success claim.
+No release, dependency churn, workflow change, org call, guide/root/index edit.
+All shell/test entries verified process-local absolute TEMP/actualNodeos.tmpdir
+and nonemptyTMP/TMPDIR F:/Temp; no alternate Linux scratch or recursive cleanup.
+
+**Restored unfinished CI slice / sole-editor handoff:** tracked modified
+`src/artifacts/calculated-insight-document.ts` exports calculatedInsightName and
+validateCalculatedInsightPair(value,xml,memberName); strict three XML body fields
+creationType/expression/masterLabel, member filename binds name minus__cio,
+SOAP four-field contract unchanged. Untracked `src/artifacts/write-calculated-insight.ts`
+exports writeCalculatedInsightDocument(value,definitionXml,projectRoot,overwrite,
+publication?) -> {path,companionPath,outcome}. Canonical paths planned as
+mktCalcInsightObjectDefs/<nameWithout__cio>.mktCalcInsightObjectDef-meta.xml and
+data360/calculatedInsights/<apiName>.calculatedInsight.json. These two files have
+ONLY prior transpile syntax0 evidence, not lint/typecheck/test acceptance. No
+read-deploy-input diff remains. Pair tests, reader/digest/Git support and all
+public CI command routing are NOT implemented. Backup stash remains intact.
+
+Resume fresh bounded worker on this restored slice, reconcile syntax/types first,
+then strict input/digest/Git and focused/full verification before command owner.
+Existing written integration plan/reviewa53f4fa6 closed XML fullName mustfix.
+Do not claim current dirty feature tree hostedgreen; green applies exactHEAD only.
+Public CI acceptance still separate upfront-budgeted SOURCE-only work; no fresh
+live setup/mutation was attempted. WholefeatureGate4/docprop coordinator-owned.
+Package0.1.0 unchanged; nextrelease unassigned, no workspace consumer sync.
+
 # CI operational service boundary — 2026-10-28
 
 Package ownership reconciled with fetch/status: clean HEAD/origin

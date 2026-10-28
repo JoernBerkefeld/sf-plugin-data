@@ -11,6 +11,11 @@ import {
   validateIdentityResolutionDocument,
 } from './identity-resolution-document.js';
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
+import {
+  calculatedInsightName,
+  validateCalculatedInsightPair,
+} from './calculated-insight-document.js';
+import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 
 /** Payload-free local selection refusal. */
 export class DeployInputError extends Error {
@@ -37,7 +42,14 @@ export type IdentityResolutionDeployInput = {
   document: IdentityResolutionDocument;
   inputDigest: string;
 };
-export type DeployInput = SupportedDeployInput | IdentityResolutionDeployInput;
+export type CalculatedInsightDeployInput = {
+  path: string;
+  companionPath: string;
+  document: CalculatedInsightDocument;
+  inputDigest: string;
+};
+export type DeployInput =
+  SupportedDeployInput | IdentityResolutionDeployInput | CalculatedInsightDeployInput;
 
 /**
  * Narrow executable families; IR admission does not authorize public routing.
@@ -45,7 +57,7 @@ export type DeployInput = SupportedDeployInput | IdentityResolutionDeployInput;
  * @returns {boolean} Whether an existing public route supports this family.
  */
 export function isSupportedDeployInput(input: DeployInput): input is SupportedDeployInput {
-  return input.document.kind !== 'identity-resolution';
+  return input.document.kind === 'dmo' || input.document.kind === 'segment';
 }
 
 /**
@@ -269,6 +281,85 @@ async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput>
 }
 
 /**
+ * Admit either canonical CI member and freeze both exact byte sets as one component.
+ * @param {string} file Absolute selected member.
+ * @returns {Promise<CalculatedInsightDeployInput>} Complete immutable pair admission.
+ */
+async function readCalculatedInsightInput(file: string): Promise<CalculatedInsightDeployInput> {
+  const xmlSuffix = '.mktCalcInsightObjectDef-meta.xml';
+  const jsonSuffix = '.calculatedInsight.json';
+  const xml = file.endsWith(xmlSuffix);
+  const stem = path.basename(file).slice(0, -(xml ? xmlSuffix.length : jsonSuffix.length));
+  const apiName = xml ? `${stem}__cio` : stem;
+  if (!calculatedInsightName.test(apiName)) throw new DeployInputError('INVALID_SOURCE');
+  const member = apiName.slice(0, -5);
+  const directory = path.dirname(file);
+  const base = xml ? path.dirname(directory) : path.dirname(path.dirname(directory));
+  if (
+    path.basename(base) !== 'default' ||
+    path.basename(path.dirname(base)) !== 'main' ||
+    (xml
+      ? path.basename(directory) !== 'mktCalcInsightObjectDefs'
+      : path.basename(directory) !== 'calculatedInsights' ||
+        path.basename(path.dirname(directory)) !== 'data360')
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const xmlPath = path.join(base, 'mktCalcInsightObjectDefs', `${member}${xmlSuffix}`);
+  const companionPath = path.join(base, 'data360', 'calculatedInsights', `${apiName}${jsonSuffix}`);
+  const xmlBytes = await memberBytes(xmlPath);
+  const jsonBytes = await memberBytes(companionPath);
+  let document: CalculatedInsightDocument;
+  try {
+    document = validateCalculatedInsightPair(
+      strictJson(decode(jsonBytes)),
+      decode(xmlBytes),
+      member,
+    );
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const xmlAfter = await memberBytes(xmlPath);
+  const jsonAfter = await memberBytes(companionPath);
+  if (!xmlAfter.equals(xmlBytes) || !jsonAfter.equals(jsonBytes)) refuse();
+  const inputDigest = createHash('sha256')
+    .update(String(xmlBytes.length))
+    .update(':')
+    .update(xmlBytes)
+    .update(String(jsonBytes.length))
+    .update(':')
+    .update(jsonBytes)
+    .digest('hex');
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({ path: xmlPath, companionPath, document, inputDigest });
+}
+
+/**
+ * Re-admit both CI members before relying on captured logical content or bytes.
+ * @param {CalculatedInsightDeployInput} input Original immutable admission.
+ * @returns {Promise<void>} Resolves only for unchanged original pair bytes.
+ */
+export async function verifyCalculatedInsightInputDigest(
+  input: CalculatedInsightDeployInput,
+): Promise<void> {
+  try {
+    const current = await readCalculatedInsightInput(input.path);
+    if (
+      current.companionPath !== input.companionPath ||
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+  } catch {
+    throw new DeployInputError('UNSAFE_SOURCE');
+  }
+}
+
+/**
  * Revalidate the complete paired input before a caller relies on its captured admission.
  * @param {SegmentDeployInput} input Previously admitted pair.
  * @returns {Promise<void>} Resolves only if both original byte sets remain unchanged.
@@ -293,8 +384,12 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
     await verifyIdentityResolutionInputDigest(input as IdentityResolutionDeployInput);
     return (input as IdentityResolutionDeployInput).inputDigest;
   }
+  if (input.document.kind === 'calculated-insight') {
+    await verifyCalculatedInsightInputDigest(input as CalculatedInsightDeployInput);
+    return (input as CalculatedInsightDeployInput).inputDigest;
+  }
   if ('companionPath' in input) {
-    await verifySegmentInputDigest(input);
+    await verifySegmentInputDigest(input as SegmentDeployInput);
     return input.inputDigest;
   }
   const bytes = await memberBytes(input.path);
@@ -327,6 +422,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       return { kind: 'dmo', name: value.slice(4) };
     if (value.startsWith('identity-resolution:') && identityResolutionName.test(value.slice(20)))
       return { kind: 'identity-resolution', name: value.slice(20) };
+    if (value.startsWith('calculated-insight:') && calculatedInsightName.test(value.slice(19)))
+      return { kind: 'calculated-insight', name: value.slice(19) };
     if (value.startsWith('segment:') && segmentName.test(value.slice(8)))
       return { kind: 'segment', name: value.slice(8) };
     throw new DeployInputError('INVALID_SELECTION');
@@ -338,9 +435,11 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     ? selectors.map(({ kind, name }) =>
         kind === 'dmo'
           ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
-          : kind === 'identity-resolution'
-            ? path.join(base!, 'data360', 'identityResolution', `${name}.identityResolution.json`)
-            : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+          : kind === 'calculated-insight'
+            ? path.join(base!, 'data360', 'calculatedInsights', `${name}.calculatedInsight.json`)
+            : kind === 'identity-resolution'
+              ? path.join(base!, 'data360', 'identityResolution', `${name}.identityResolution.json`)
+              : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -365,7 +464,9 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     } else {
       if (
         !stat.isFile() ||
-        (path.extname(file) !== '.json' && !file.endsWith('.marketSegmentDefinition-meta.xml')) ||
+        (path.extname(file) !== '.json' &&
+          !file.endsWith('.marketSegmentDefinition-meta.xml') &&
+          !file.endsWith('.mktCalcInsightObjectDef-meta.xml')) ||
         stat.nlink !== 1 ||
         stat.size > 1_048_576
       )
@@ -387,6 +488,34 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     const identities = new Set<string>();
     // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh candidate array within the existing TypeScript library target.
     for (const file of [...candidates.values()].sort()) {
+      if (
+        file.endsWith('.calculatedInsight.json') ||
+        file.endsWith('.mktCalcInsightObjectDef-meta.xml')
+      ) {
+        const input = await readCalculatedInsightInput(file);
+        const key =
+          `calculated-insight:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        if (
+          inputs.some(
+            (prior) =>
+              prior.document.kind === 'calculated-insight' &&
+              canonical(prior.path) === canonical(input.path),
+          )
+        )
+          continue;
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) =>
+              item.kind === 'calculated-insight' && item.name === input.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
       if (file.endsWith('.identityResolution.json')) {
         const input = await readIdentityResolutionInput(file);
         const key =

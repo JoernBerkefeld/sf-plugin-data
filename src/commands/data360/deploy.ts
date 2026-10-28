@@ -372,11 +372,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         gitSegments = selected.segments;
         gitIdentityResolutions = selected.identityResolutions;
       }
-      const admitted = await this.resolveInputs({
+      const resolved = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      // CI artifacts are admitted internally; public operational routing is a later boundary.
+      if (resolved.some((input) => input.document.kind === 'calculated-insight'))
+        return finish('blocked', 'CALCULATED_INSIGHT_ROUTING_UNSUPPORTED');
+      const admitted = resolved.filter(
+        (input): input is Exclude<DeployInput, { document: { kind: 'calculated-insight' } }> =>
+          input.document.kind !== 'calculated-insight',
+      );
       // Bind every captured Git owner to the original immutable authored bytes, never drop IR.
       if (gitIdentityResolutions) {
         const current = admitted.filter(
@@ -444,7 +451,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const expanded = flags['include-dependencies']
         ? await selectDeployDependencies(
             inputs.filter(
-              (input): input is Exclude<DeployInput, IdentityResolutionDeployInput> =>
+              (input): input is Exclude<typeof input, IdentityResolutionDeployInput> =>
                 input.document.kind !== 'identity-resolution',
             ),
             cwd,

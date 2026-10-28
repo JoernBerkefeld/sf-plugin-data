@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 // eslint-disable-next-line unicorn/no-null -- API65 explicitly distinguishes wire null from omitted fields.
 const wireNull = null;
+export const calculatedInsightName = /^[A-Za-z][A-Za-z0-9_]{0,194}__cio$/u;
 const objectName = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${objectName}.ssot__DeviceId__c`;
 const application = `${objectName}.ssot__SoftwareApplicationId__c`;
@@ -195,7 +196,7 @@ export function validateCalculatedInsightDocument(value: unknown): CalculatedIns
     root.schemaVersion !== 1 ||
     root.kind !== 'calculated-insight' ||
     identity.dataSpace !== 'default' ||
-    !/^[A-Za-z][A-Za-z0-9_]{0,194}__cio$/u.test(apiName)
+    !calculatedInsightName.test(apiName)
   )
     throw new CalculatedInsightError('INVALID_CI_DOCUMENT');
   if (!root.spec || typeof root.spec !== 'object' || Array.isArray(root.spec))
@@ -210,6 +211,95 @@ export function validateCalculatedInsightDocument(value: unknown): CalculatedIns
     identity: { dataSpace: 'default', apiName },
     spec: expected,
   };
+}
+
+/**
+ * Decode only XML text entities; reject markup and invalid XML code points.
+ * @param {string} value Encoded element text.
+ * @returns {string} Exact decoded content.
+ */
+function decodeXml(value: string): string {
+  if (/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\dA-Fa-f]+;)/u.test(value))
+    throw new CalculatedInsightError('INVALID_CI_XML');
+  return value.replaceAll(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\dA-Fa-f]+);/gu, (entity) => {
+    const named: Record<string, string> = {
+      '&amp;': '&',
+      '&lt;': '<',
+      '&gt;': '>',
+      '&quot;': '"',
+      '&apos;': "'",
+    };
+    if (Object.hasOwn(named, entity)) return named[entity];
+    const code = entity.startsWith('&#x')
+      ? Number.parseInt(entity.slice(3, -1), 16)
+      : Number(entity.slice(2, -1));
+    if (
+      !Number.isInteger(code) ||
+      (code < 32 && ![9, 10, 13].includes(code)) ||
+      code > 0x10_ff_ff ||
+      (code >= 0xd8_00 && code <= 0xdf_ff) ||
+      code === 0xff_fe ||
+      code === 0xff_ff
+    )
+      throw new CalculatedInsightError('INVALID_CI_XML');
+    return String.fromCodePoint(code);
+  });
+}
+
+/**
+ * Correlate standard three-field source XML with the companion and canonical member name.
+ * SOAP readMetadata retains its separate four-field contract including fullName.
+ * @param {unknown} value Complete portable companion.
+ * @param {string} xml Independently retrieved standard XML, never synthesized here.
+ * @param {string} memberName Canonical filename/member name without __cio.
+ * @returns {CalculatedInsightDocument} Detached admitted pair.
+ */
+export function validateCalculatedInsightPair(
+  value: unknown,
+  xml: string,
+  memberName: string,
+): CalculatedInsightDocument {
+  const document = validateCalculatedInsightDocument(value);
+  if (memberName !== document.identity.apiName.slice(0, -5))
+    throw new CalculatedInsightError('CI_PAIR_MISMATCH');
+  if (
+    typeof xml !== 'string' ||
+    xml.length > 1_048_576 ||
+    /<!|\r/u.test(xml) ||
+    [...xml].some((character) => {
+      const code = character.codePointAt(0)!;
+      return (
+        (code < 32 && ![9, 10, 13].includes(code)) ||
+        (code >= 0xd8_00 && code <= 0xdf_ff) ||
+        code === 0xff_fe ||
+        code === 0xff_ff
+      );
+    })
+  )
+    throw new CalculatedInsightError('INVALID_CI_XML');
+  const root =
+    /^\s*(?:<\?xml version="1\.0" encoding="UTF-8"\?>\s*)?<MktCalcInsightObjectDef xmlns="http:\/\/soap\.sforce\.com\/2006\/04\/metadata">([\s\S]*)<\/MktCalcInsightObjectDef>\s*$/u.exec(
+      xml,
+    );
+  if (!root) throw new CalculatedInsightError('INVALID_CI_XML');
+  const properties = new Map<string, string>();
+  let remainder = root[1];
+  for (const element of root[1].matchAll(
+    /<(creationType|expression|masterLabel)>([^<]*)<\/\1>/gu,
+  )) {
+    if (properties.has(element[1])) throw new CalculatedInsightError('INVALID_CI_XML');
+    properties.set(element[1], decodeXml(element[2]));
+    remainder = remainder.replace(element[0], '');
+  }
+  if (
+    remainder.trim() ||
+    properties.size !== 3 ||
+    properties.get('creationType') !== document.spec.creationType ||
+    properties.get('expression') !== document.spec.expression ||
+    properties.get('masterLabel') !== document.spec.displayName
+  )
+    throw new CalculatedInsightError('CI_PAIR_MISMATCH');
+  return document;
 }
 
 /**

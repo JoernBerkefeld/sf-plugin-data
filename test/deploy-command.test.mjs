@@ -80,6 +80,23 @@ const run = async (command) => {
   }
 };
 
+test('internal CI admission blocks public mixed selection before target work', async () => {
+  const { command, calls } = invocation({ preview: false, 'include-dependencies': true });
+  command.resolveInputs = async () => [
+    input(),
+    {
+      path: 'ci.xml',
+      companionPath: 'ci.json',
+      inputDigest: 'synthetic',
+      document: { kind: 'calculated-insight' },
+    },
+  ];
+  const { result } = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'CALCULATED_INSIGHT_ROUTING_UNSUPPORTED');
+  assert.deepEqual(calls, []);
+});
+
 test('auto deploy uses fixed API65 without discovery and refuses malformed IR', async () => {
   const { command, calls } = invocation({ 'api-version': 'auto' });
   command.parse = async () => ({
