@@ -303,7 +303,7 @@ test('IR Git renamed and noncanonical members cannot vanish', async () => {
   );
 });
 
-test('IR public retrieve selector blocked before resolving org', async () => {
+test('IR explicit API65 retrieve selector blocked before resolving org', async () => {
   const command = Object.create(Retrieve.prototype);
   command.parse = async () => ({
     flags: {
@@ -320,7 +320,7 @@ test('IR public retrieve selector blocked before resolving org', async () => {
   try {
     const result = await command.run();
     assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors[0].code, 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
   } finally {
     process.exitCode = previous;
   }

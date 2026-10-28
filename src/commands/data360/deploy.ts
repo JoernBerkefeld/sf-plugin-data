@@ -141,9 +141,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     )(),
     'api-version': Flags.orgApiVersion({
       default: '65.0',
-      summary: 'Numeric API version or experimental read-only latest (SOAP evidence must be 65.0).',
+      summary:
+        'Numeric API pin, fixed qualified auto (DMO/Segment65), or read-only latest; IR deploy is blocked.',
       parse: async (value, context, options) =>
-        value === 'latest' ? value : Flags.orgApiVersion().parse(value, context, options),
+        value === 'latest' || value === 'auto'
+          ? value
+          : Flags.orgApiVersion().parse(value, context, options),
     }),
     'data-space': Flags.string({
       default: 'default',
@@ -370,17 +373,20 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }
       let selection;
       try {
-        selection = await resolveApiVersion(flags['api-version'], async () => {
-          // Parse-time auth owns this numerically initialized connection; services have not used it.
-          const receiver = Object.create(org.getConnection()) as Connection;
-          Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
-          return receiver.request({ method: 'GET', url: '/services/data' }, {
-            retry: { maxRetries: 0 },
-            followRedirect: () => {
-              throw new Error('Discovery redirect refused.');
-            },
-          } as unknown as Parameters<Connection['request']>[1]);
-        });
+        selection = await resolveApiVersion(
+          flags['api-version'] === 'auto' ? '65.0' : flags['api-version'],
+          async () => {
+            // Parse-time auth owns this numerically initialized connection; services have not used it.
+            const receiver = Object.create(org.getConnection()) as Connection;
+            Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+            return receiver.request({ method: 'GET', url: '/services/data' }, {
+              retry: { maxRetries: 0 },
+              followRedirect: () => {
+                throw new Error('Discovery redirect refused.');
+              },
+            } as unknown as Parameters<Connection['request']>[1]);
+          },
+        );
       } catch {
         envelope.diagnostics.errors.push({
           code: 'API_VERSION_DISCOVERY_FAILED',

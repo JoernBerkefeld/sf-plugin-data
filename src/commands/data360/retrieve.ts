@@ -1,7 +1,16 @@
 import path from 'node:path';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
-import { resolveApiVersion } from '../../transport/api-version.js';
+import { operationApiVersion, resolveApiVersion } from '../../transport/api-version.js';
+import {
+  IdentityResolutionError,
+  identityResolutionName,
+  validateIdentityResolutionDocument,
+} from '../../artifacts/identity-resolution-document.js';
+import { retrieveIdentityResolution } from '../../services/retrieve-identity-resolution.js';
+import { writeIdentityResolutionDocument } from '../../artifacts/write-identity-resolution.js';
+import type { IdentityResolutionDocument } from '../../artifacts/identity-resolution-document.js';
+import type { RetrieveDependencyEntry } from '../../services/select-retrieve-dependencies.js';
 import { DmoDocumentError } from '../../artifacts/dmo-document.js';
 import { DmoWriteError, writeDmoDocument } from '../../artifacts/write-other-dmo.js';
 import {
@@ -58,7 +67,12 @@ export type RetrieveEnvelope = {
       outcome: 'retrieved' | 'unchanged';
       path: string;
       companionPath?: string;
-      family?: 'segment';
+      family?: 'segment' | 'identity-resolution';
+      routes?: Array<{
+        operation: string;
+        apiVersion: string;
+        transport: 'native' | 'facade' | 'metadata';
+      }>;
     }>;
   };
 };
@@ -67,9 +81,9 @@ export type RetrieveEnvelope = {
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary =
-    'Retrieve Data360 DMOs or exact DBT Segments into a local project.';
+    'Retrieve Data360 DMOs, exact DBT Segments or exact identity resolution configuration.';
   public static readonly description =
-    'Repeat -m dmo:ApiName or -m segment:ApiName for exact selection. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Repeat -m dmo:ApiName, -m segment:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -77,9 +91,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
     'api-version': Flags.orgApiVersion({
       default: '65.0',
-      summary: 'Numeric API version or experimental read-only latest (SOAP evidence must be 65.0).',
+      summary:
+        'Explicit numeric pin, fixed qualified per-operation auto, or experimental DMO-only latest.',
       parse: async (value, context, options) =>
-        value === 'latest' ? value : Flags.orgApiVersion().parse(value, context, options),
+        value === 'latest' || value === 'auto'
+          ? value
+          : Flags.orgApiVersion().parse(value, context, options),
     }),
     'data-space': Flags.string({
       default: 'default',
@@ -89,7 +106,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Repeat dmo[:ApiName] or segment:ApiName; omitted selectors retain DMO inventory.',
+      summary:
+        'Repeat dmo[:ApiName], segment:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -108,6 +126,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireIdentityResolution = retrieveIdentityResolution;
+  protected writeIdentityResolution = writeIdentityResolutionDocument;
   protected acquireSegment = retrieveSegment;
   protected selectDependencies = selectRetrieveDependencies;
   protected writeSegment = writeSegmentDocument;
@@ -188,29 +208,52 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
-    if (
-      selectors.some(
-        (value) => value === 'identity-resolution' || value.startsWith('identity-resolution:'),
-      )
-    )
-      return finish('blocked', 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
+    const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
-    const dmoSelectors = selectors.filter((value) => !value.startsWith('segment:'));
+    const dmoSelectors = selectors.filter(
+      (value) => !value.startsWith('segment:') && !value.startsWith('identity-resolution:'),
+    );
+    const hasDmos = dmoSelectors.length > 0 || selectors.length === 0;
+    let effectiveVersion: string;
+    try {
+      if (selectors.includes('identity-resolution'))
+        throw new IdentityResolutionError('IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED');
+      if (irSelectors.some((value) => !identityResolutionName.test(value.slice(20))))
+        throw new IdentityResolutionError('INVALID_SELECTION');
+      if (irSelectors.length > 0) {
+        operationApiVersion(flags['api-version'], 'identity-resolution');
+        if (flags['data-space'] !== 'default') throw new IdentityResolutionError('INVALID_SCOPE');
+        if (flags['include-dependencies'])
+          throw new IdentityResolutionError('IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      }
+      if (segmentSelectors.length > 0) operationApiVersion(flags['api-version'], 'segment');
+      if (hasDmos) operationApiVersion(flags['api-version'], 'dmo');
+      effectiveVersion = operationApiVersion(
+        flags['api-version'],
+        hasDmos ? 'dmo' : segmentSelectors.length > 0 ? 'segment' : 'identity-resolution',
+      );
+    } catch (error: unknown) {
+      return finish(
+        'blocked',
+        error instanceof IdentityResolutionError ? error.code : 'INVALID_SCOPE',
+      );
+    }
     try {
       if (selectors.includes('segment')) throw new SegmentError('SEGMENT_INVENTORY_UNQUALIFIED');
       if (segmentSelectors.some((value) => !segmentName.test(value.slice(8))))
         throw new SegmentError('INVALID_SELECTION');
       if (
         segmentSelectors.length > 0 &&
-        (flags['api-version'] !== '65.0' || flags['data-space'] !== 'default')
+        (effectiveVersion !== '65.0' || flags['data-space'] !== 'default')
       )
         throw new SegmentError('INVALID_SCOPE');
       // Validate syntax/scope before auth; latest capability evidence arrives after discovery.
-      validateDmoSelection(
-        dmoSelectors,
-        flags['api-version'] === 'latest' ? '65.0' : flags['api-version'],
-        flags['data-space'],
-      );
+      if (hasDmos)
+        validateDmoSelection(
+          dmoSelectors,
+          effectiveVersion === 'latest' ? '65.0' : effectiveVersion,
+          flags['data-space'],
+        );
     } catch (error: unknown) {
       return finish(
         'blocked',
@@ -229,6 +272,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const diagnose = (error: unknown, apiName?: string): void => {
       let code = 'RETRIEVE_FAILED';
       if (
+        error instanceof IdentityResolutionError ||
         error instanceof SegmentError ||
         error instanceof DependencySelectionError ||
         error instanceof RetrieveDependencyError ||
@@ -240,6 +284,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       else if (error instanceof DmoDocumentError) code = 'UNSUPPORTED_DMO_DOCUMENT';
       else failed = true;
       if (
+        code === 'IDENTITY_RESOLUTION_ACQUISITION_FAILED' ||
         code === 'OUTPUT_FAILED' ||
         code === 'PARTIAL_SEGMENT_OUTPUT' ||
         code === 'SEGMENT_ACQUISITION_FAILED' ||
@@ -266,7 +311,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       envelope.provenance.sourceOrgId = org.getOrgId();
       let selection;
       try {
-        selection = await resolveApiVersion(flags['api-version'], async () => {
+        selection = await resolveApiVersion(effectiveVersion, async () => {
           // This command owns the initialized connection; suppress refresh replay and redirects.
           const receiver = Object.create(org.getConnection()) as Connection;
           Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
@@ -288,7 +333,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       envelope.metadata.soapApiVersion = selection.soapNumeric;
       try {
-        validateDmoSelection(dmoSelectors, selection, flags['data-space']);
+        if (hasDmos) validateDmoSelection(dmoSelectors, selection, flags['data-space']);
       } catch {
         envelope.diagnostics.errors.push({
           code: 'INVALID_SCOPE',
@@ -300,35 +345,74 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
-      const names =
-        segmentSelectors.length > 0 && dmoSelectors.length === 0
-          ? []
-          : await this.selectDocuments(connection, dmoSelectors, selection, flags['data-space']);
+      const names = hasDmos
+        ? await this.selectDocuments(connection, dmoSelectors, selection, flags['data-space'])
+        : [];
       // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
       const segments = [...new Set(segmentSelectors.map((value) => value.slice(8)))].sort();
       envelope.result.selection = [
         ...names.map((name) => `dmo:${name}`),
         ...segments.map((name) => `segment:${name}`),
       ];
-      if (segments.length > 0 || flags['include-dependencies']) {
+      if (
+        segments.length > 0 ||
+        flags['include-dependencies'] ||
+        irSelectors.length > 0 ||
+        flags['api-version'] === 'auto'
+      ) {
         // Acquire and resolve the complete bounded selection before publishing any files.
-        const selected = await (this.selectDependencies ?? selectRetrieveDependencies)(
-          [
-            ...names.map((apiName) => ({
-              kind: 'dmo' as const,
-              dataSpace: flags['data-space'],
+        const selected =
+          names.length > 0 || segments.length > 0
+            ? await (this.selectDependencies ?? selectRetrieveDependencies)(
+                [
+                  ...names.map((apiName) => ({
+                    kind: 'dmo' as const,
+                    dataSpace: flags['data-space'],
+                    apiName,
+                  })),
+                  ...segments.map((apiName) => ({
+                    kind: 'segment' as const,
+                    dataSpace: flags['data-space'],
+                    apiName,
+                  })),
+                ],
+                connection,
+                selection,
+                flags['include-dependencies'] ?? false,
+              )
+            : {
+                entries: [] as RetrieveDependencyEntry[],
+                reasons: new Map<string, SelectionReason>(),
+              };
+        const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
+        if (irSelectors.length > 0) {
+          const irVersion = await resolveApiVersion('67.0', async () => {
+            throw new Error('Fixed route must not discover.');
+          });
+          const irConnection = org.getConnection('67.0');
+          // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact-name order.
+          for (const apiName of [...new Set(irSelectors.map((value) => value.slice(20)))].sort()) {
+            const acquired = await this.acquireIdentityResolution(
+              irConnection,
               apiName,
-            })),
-            ...segments.map((apiName) => ({
-              kind: 'segment' as const,
-              dataSpace: flags['data-space'],
-              apiName,
-            })),
-          ],
-          connection,
-          selection,
-          flags['include-dependencies'] ?? false,
-        );
+              irVersion,
+              flags['data-space'],
+            );
+            if (acquired.blockers.length > 0 || !acquired.candidate)
+              throw new IdentityResolutionError(
+                acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
+              );
+            const document = validateIdentityResolutionDocument(acquired.candidate);
+            if (
+              acquired.identity.apiName !== apiName ||
+              acquired.identity.dataSpace !== flags['data-space'] ||
+              document.identity.apiName !== apiName ||
+              document.identity.dataSpace !== flags['data-space']
+            )
+              throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
+            identityResolutions.push({ document });
+          }
+        }
         if (flags['include-dependencies'])
           envelope.result.dependencies = [...selected.reasons].map(([key, reason]) => {
             const [kind, dataSpace, apiName] = key.split(':');
@@ -337,28 +421,67 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               reason,
             };
           });
-        envelope.result.selection = selected.entries.map(
+        const entries = [...selected.entries, ...identityResolutions];
+        envelope.result.selection = entries.map(
           ({ document }) => `${document.kind}:${document.identity.apiName}`,
         );
-        for (const entry of selected.entries) {
+        for (const entry of entries) {
           const { document } = entry;
           try {
             const receipt =
-              'definitionXml' in entry
-                ? await this.writeSegment(
+              document.kind === 'identity-resolution'
+                ? await this.writeIdentityResolution(
                     document,
-                    entry.definitionXml,
                     flags['output-dir'] ?? process.cwd(),
                     flags.overwrite,
                   )
-                : await this.writeDocument(
-                    document,
-                    flags['output-dir'] ?? process.cwd(),
-                    flags.overwrite,
-                  );
+                : 'definitionXml' in entry
+                  ? await this.writeSegment(
+                      document,
+                      entry.definitionXml,
+                      flags['output-dir'] ?? process.cwd(),
+                      flags.overwrite,
+                    )
+                  : await this.writeDocument(
+                      document,
+                      flags['output-dir'] ?? process.cwd(),
+                      flags.overwrite,
+                    );
             envelope.result.items.push({
               identity: { ...document.identity },
-              ...(document.kind === 'segment' ? { family: 'segment' as const } : {}),
+              ...(document.kind === 'segment' || document.kind === 'identity-resolution'
+                ? { family: document.kind }
+                : {}),
+              ...(flags['api-version'] === 'auto' || document.kind === 'identity-resolution'
+                ? {
+                    routes:
+                      document.kind === 'identity-resolution'
+                        ? [
+                            {
+                              operation: 'd360_ir_get',
+                              apiVersion: '67.0',
+                              transport: 'facade' as const,
+                            },
+                            {
+                              operation: 'identity-resolutions.get',
+                              apiVersion: '65.0',
+                              transport: 'native' as const,
+                            },
+                          ]
+                        : [
+                            {
+                              operation: `${document.kind}.get`,
+                              apiVersion: '65.0',
+                              transport: 'native' as const,
+                            },
+                            {
+                              operation: `${document.kind}.metadata`,
+                              apiVersion: '65.0',
+                              transport: 'metadata' as const,
+                            },
+                          ],
+                  }
+                : {}),
               operation: 'retrieve',
               ...receipt,
             });
@@ -399,6 +522,18 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           envelope.result.items.push({
             identity: { ...projection.candidate.identity },
             operation: 'retrieve',
+            ...(flags['api-version'] === 'auto'
+              ? {
+                  routes: [
+                    { operation: 'dmo.get', apiVersion: '65.0', transport: 'native' as const },
+                    {
+                      operation: 'dmo.metadata',
+                      apiVersion: '65.0',
+                      transport: 'metadata' as const,
+                    },
+                  ],
+                }
+              : {}),
             ...receipt,
           });
         } catch (error: unknown) {

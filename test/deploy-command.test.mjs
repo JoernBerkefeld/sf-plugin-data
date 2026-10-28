@@ -80,6 +80,47 @@ const run = async (command) => {
   }
 };
 
+test('auto deploy uses fixed API65 without discovery and keeps IR explicitly blocked', async () => {
+  const { command, calls } = invocation({ 'api-version': 'auto' });
+  command.parse = async () => ({
+    flags: {
+      preview: true,
+      'api-version': 'auto',
+      'data-space': 'default',
+      'source-dir': ['authored.json'],
+      'target-org': {
+        getOrgId: () => 'synthetic',
+        getConnection: (version) => {
+          assert.equal(version, '65.0');
+          return {};
+        },
+      },
+    },
+  });
+  command.preflight = async (_, __, selection) => {
+    assert.deepEqual(selection, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
+    return { outcome: 'unchanged', diagnostics: [] };
+  };
+  const { result } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.metadata.apiVersion, 'auto');
+  assert.equal(result.metadata.soapApiVersion, '65.0');
+  command.resolveInputs = async () => [
+    {
+      path: 'owner.json',
+      document: {
+        kind: 'identity-resolution',
+        identity: { dataSpace: 'default', apiName: 'Individual_A1b2' },
+      },
+    },
+  ];
+  command.preflight = command.execute = () => assert.fail('IR must never dispatch DMO');
+  const blocked = await run(command);
+  assert.equal(blocked.result.status, 'blocked');
+  assert.equal(blocked.result.diagnostics.errors[0].code, 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
+  assert.ok(!calls.includes('execute'));
+});
+
 test('processing acknowledgement parses only the exact boolean flag and defaults false', async () => {
   const { Parser } = await import('@oclif/core');
   const flags = { 'allow-processing': Deploy.flags['allow-processing'] };

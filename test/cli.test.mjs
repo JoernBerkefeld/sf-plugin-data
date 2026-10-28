@@ -72,6 +72,7 @@ test('API flags opt into exact latest while preserving core numeric validation a
     const flag = command.flags['api-version'];
     assert.equal(flag.default, '65.0');
     assert.equal(await flag.parse('latest', {}, {}), 'latest');
+    assert.equal(await flag.parse('auto', {}, {}), 'auto');
     assert.equal(await flag.parse('65.0', {}, {}), '65.0');
     for (const invalid of ['Latest', 'v65.0', '65', 'latest ', '20.0'])
       await assert.rejects(flag.parse(invalid, {}, {}));

@@ -1,3 +1,102 @@
+# Chunk D API-auto and exact IR RETRIEVE integration checkpoint — 2026-10-28
+
+Fetched baseline `31cf00b8100f8385c0c7854f28920515818b1832` was clean and equal
+to origin/main, with no ahead history to include. Existing plan/review remains
+closed. This is one coupled command/routing checkpoint, NOT IR deploy integration,
+family completion, live portability acceptance or a release. Coordinator owns the
+once-whole-feature review, public docs, final DB rebuild/validate/gaps and aggregate
+propagation/version tables. No nested workers or live org calls were used.
+
+## Actual routing and result interfaces
+
+- `operationApiVersion(requested:string,family:OperationalFamily):string` in
+  `src/transport/api-version.ts`, where family is dmo/segment/identity-resolution,
+  admits only fixed routes: auto -> DMO/Segment65 or IR67; numeric65 remains65;
+  numeric67 admits IR only; latest retains existing DMO-only semantics. Existing
+  `resolveApiVersion` stays unchanged: it resolves concrete operation selections,
+  not auto. No version probing/fallback or runtime MCP dependency was introduced.
+- Retrieve parser explicitly accepts auto, default remains65. The envelope's
+  `metadata.apiVersion` retains the USER request; `soapApiVersion` describes the
+  initialized primary selection, not every operation. Successful auto items and
+  all IR items add `routes:Array<{operation,apiVersion,transport}>`. IR evidence is
+  d360_ir_get /67.0/facade plus identity-resolutions.get /65.0/native. Legacy auto
+  items report native65 and separately correlated Metadata65. Existing numeric/
+  latest legacy result items retain their compatible shape.
+- Exact `-m identity-resolution:ExactObjectApiName` (repeatable, deduplicated,
+  deterministic order) uses protected `acquireIdentityResolution` and
+  `writeIdentityResolution` seams bound to the EXISTING qualified acquisition and
+  safe writer. It independently checks acquired identity, validated complete
+  candidate identity and explicit default space before any output. Exact returned
+  API including suffix is retained without construction, label fallback or IDs.
+  Existing writer owns configured package path, overwrite/no-link/publication
+  safety and canonical `<apiName>.identityResolution.json` content.
+- Complete auto/mixed selection resolves legacy DMO/Segment dependencies and all
+  IR candidates before first publication; errors retain explicit blockers, never
+  omit unsupported IR. Writer failure retains earlier successful receipts and
+  stops later publications. No transaction/rollback claim. Bare IR type returns
+  IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED; omitted selectors still mean DMO
+  inventory ONLY. IR `--include-dependencies` explicitly blocks with
+  IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED before authentication,
+  rather than silently ignoring IR or claiming closure. Explicit numeric65,
+  latest, wrong space and unqualified numeric/mixed combinations block before org
+  resolution/output. Existing DMO numeric/latest, Segment, defaults and opt-in
+  dependency selection tests remain green.
+- Deploy parser accepts auto for its existing DMO/Segment65 routes only; request
+  stays auto in metadata and concrete SOAP evidence is65. Existing IR selected
+  input/Git guards still return IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED before any
+  DMO preflight/executor dispatch. NO IR deploy executor/effects integration was
+  added. Existing-target IR service/executor remain internal future seams.
+
+## Verification, evidence and exact resume
+
+Owned files: `src/transport/api-version.ts`, both existing public command files,
+`test/cli.test.mjs`, `test/deploy-command.test.mjs`,
+`test/identity-resolution-files.test.mjs`, new
+`test/identity-resolution-command.test.mjs`, and this existing handover.
+Synthetic coverage includes fixed API matrix/no discovery, explicit65/latest/
+unsupported numeric rejection before org/output, IR-only numeric67, one/two exact
+IR selectors, no implicit inventory, mixed DMO/Segment/IR whole-selection
+acquisition, candidate/acquisition identity/space mismatch, invalid/incomplete
+candidate, writer failure retaining earlier output, default/overwrite forwarding,
+per-operation evidence and deploy auto/IR anti-DMO-dispatch. Earlier safe writer,
+exact facade/native correlation and filesystem/digest/Git tests remain intact.
+These are synthetic results, NOT new live qualification or plugin acceptance.
+No DB entries/index/root history were changed; coordinator owns final DB work.
+
+Scoped ESLint autofix and full zero-warning lint passed; explicit build passed;
+focused routing tests passed52 before the final added deploy regression. Full
+stable-tree `npm test --no-workspaces` passed780, no skipped/cancelled/todo,
+end-to-end149.452 seconds (Node test phase145.778 seconds). Normal unchanged-hook
+checkpoint commit/push receipts are reported in worker return. No install,
+release/version/tag/history rewrite/force/bypass, raw receipts or persistent-project
+edits. Shell/test entries preflight absolute normalized TEMP/actual Node os.tmpdir/
+nonempty TMP/TMPDIR against F:/Temp; process-only correction/recheck was applied
+at entry. Existing tests own scratch roots; this slice performs no recursive
+cleanup or new scratch infrastructure.
+
+NEXT bounded owner: exact IR DEPLOY command integration, not broad research.
+Consume automatic exact authored API binding in preflight/executor; admit complete
+mixed family selection, immutable captured IR digests, target default space,
+processing acknowledgement, fresh dependency/output binding, private poll recorder,
+stop-on-unknown/not-attempted evidence and per-operation API-auto reporting. Keep
+numeric65 from upgrading67 and prevent unsupported expanded IR dependencies from
+disappearing. Extend existing input/Git/whole-selection guards; do not dispatch IR
+through DMO branches. Then separately qualify actual source/cross-org plugin
+retrieval/update/readback/zero-mutation acceptance. IR CREATE absence/conflict,
+broader matching/reconciliation/source precedence and revised binder live acceptance
+remain blocked/unproved. Segment live setup settlement/raw-evidence and permission/
+shell CREATE, CI expression/no-op, DLO operational/source cleanup and broader DMO
+schema gaps are unchanged. Graph VALUE debt remains unchanged:
+`GraphDd23cf3b3eb6372_1793161702141_VALUE__dlm` was readable at checkpoint D;
+no new cleanup, eventual/physical/global absence or direct generated-DMO deletion
+claim/authorization. Historical ledgers below remain authoritative only within
+their original evidence scopes.
+
+Propagation: sf-plugin-data changed only; version0.1.0 unchanged, next version
+unassigned/checkpoint only. No workspace consumers, language/LSP/hover/wiki/mcdev/
+CMS/site changes. Public README/capabilities/artifact/Git docs remain coordinator
+owned; do not advertise full IR deploy or seven-family completion.
+
 # Chunk D IR exact exposed owner API identity correction — 2026-10-28
 
 User decision closes the identity-design checkpoint: the EXACT exposed IR owner
