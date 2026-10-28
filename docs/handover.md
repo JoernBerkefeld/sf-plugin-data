@@ -1,3 +1,94 @@
+# Segment permission/shell LIVE qualification checkpoint — 2026-10-28
+
+Bounded source-only checkpoint from clean pushed baseline
+`9c42d7fb42181b7e8bd04c228c48f610daade831`; fetch/status rechecked before edits,
+no ahead history. Existing Gates1/2 remain closed; one small evidence/handover
+owner, no code changes or nested workers. Coordinator retains once-feature Gate4,
+public documentation propagation and shared DB rebuild/validate/gaps.
+
+## Concrete contract and remaining feasibility blocker
+
+- MCP discover/describe/dispatch identity workflow and independent CLI core alias
+  resolution matched authorized source `mcnext-sdo`, org `00Daj000010xkZNEAY`.
+  No target calls/changes. Persistent validation-project contents were preserved.
+- API65 core permission inspection returned all 138 assignments with done=true
+  and a completed profile permission query. Explicit assigned grants include
+  `PermissionsAccessSegment`, `PermissionsAccessCdpApp`,
+  `PermissionsManageDataspaceScope`, `PermissionsConfigureDataspaceScope`;
+  Metadata/ViewAllData/ModifyAllData flags were true in assigned/profile data.
+  These are actual permission observations, NOT inferred from the admin label.
+  They do not evaluate all group muting/per-dataspace/per-record authorization.
+- API65 default-space runtime inventory returned three entries, totalSize=3,
+  batchSize=200, offset=0. Two independent Metadata list operations returned four
+  definitions. The extra existing DBT definition independently read through
+  Metadata (exact fullName, type, label and criteria) while exact runtime GET
+  returned name/errorCode ITEM_NOT_FOUND. This existing definition was read-only:
+  no ownership adoption, redeploy, cleanup or create-conflict POST.
+- A newly chosen never-created identity omitted from both observed Metadata lists
+  returned the same runtime ITEM_NOT_FOUND. Core errors did not expose numeric
+  HTTP status; do not fabricate a fresh HTTP404 receipt. Local documentation
+  separately documents 401 INVALID_SESSION_ID and 404 ITEM_NOT_FOUND, but supplies
+  no universal Segment visibility or denied-versus-missing guarantee.
+- **CREATE REMAINS BLOCKED.** Positive exact Metadata presence is sufficient to
+  refuse runtime create as a definition conflict, without deleting/overwriting
+  the shell. Inventory omission, runtime ITEM_NOT_FOUND and observed grants are
+  still insufficient for permission-aware arbitrary-name absence. No public
+  completeness/authorization attestation or denied-resource control was found.
+  Four-entry SOAP list is well below known truncation concerns but has no explicit
+  all-user/dataspace completeness attestation. No new owned fixture can establish
+  visibility of arbitrary unrelated records; repeating historical create/delete
+  would not close that gap. Auth/permission/network/generic errors stay blockers.
+
+## Independent next executable slice — existing targets only
+
+Proceed independently with a bounded existing-target update/no-op executor, NOT
+create. Reuse fresh `preflightSegmentDeploy` and exact runtime + independent
+Metadata pair qualification plus `bindSegmentDependencies`. Require supported
+ACTIVE DBT/default/API65, complete admitted semantics and compatible existing
+PROFILE dependency. Equality must produce zero mutations/jobs without needing
+processing acknowledgement. Only label/description deltas may issue a single
+full-preserved-definition PATCH, with explicit allow-processing acknowledgement,
+DBT models doubly wrapped and BOTH schedule properties omitted. Preserve SQL,
+identity, data-space, segment-on, NO_REFRESH and P90D; bound settlement and compare
+independent post-settlement readback against the complete preservation baseline.
+Stop unknown without retry/rollback. Freshly bind after any prerequisite settlement;
+unsupported selected prerequisite creation still blocks the whole selection.
+Missing/unreadable/shell targets remain blocked. This is the next implementable
+contract based on existing qualified API behavior, not current executor acceptance:
+all Segment execution remains disabled in this checkpoint.
+
+## Budget, fixture ledger, evidence and verification boundary
+
+Predeclared limits: 45 minutes; <=40 nonpoll reads; <=20 poll reads; <=2 newly
+owned fixtures; <=4 create/update attempts plus <=1 qualified delete per fixture.
+Live phase ended at 2026-10-28T02:11:02.541Z, approximately six minutes from dispatch.
+Used 13 nonpoll remote read operations (two MCP identity reads, one MCP runtime
+inventory, five permission/Metadata reads, five exact/inventory corroborations),
+zero polls, zero create/update/delete, zero newly owned org fixtures. MCP discovery,
+operation-schema lookup and local auth resolution are not resource reads; no
+implicit core request telemetry is claimed. No credential/token payload published.
+Existing extra definition retained untouched; no new org retention or cleanup debt.
+New owned scratch `F:/Temp/data360-absence-2g0Rni` retained, no recursive cleanup.
+Every shell entry checked TEMP/actual os.tmpdir/nonempty TMP/TMPDIR against F:/Temp.
+
+Sanitized distinct root subject:
+`data360:segment.create-admission.permission-shell.api65` (two proven API
+observations, one blocked authorization claim, overall partial). Evidence uses
+live-api/client, NOT plugin-acceptance; package revision is the baseline above.
+Subject-only schema checks and final package verification/normal-hook commit/push
+receipts are returned by the worker after completion, never presumed here. No
+source/tests/transport/API admission changes, installs, version/tag/release or
+shared-index writes. Root fetch found ahead-five unrelated history and dirty
+inputs; only the distinct subject is added, root history is not pushed.
+
+Propagation: this handover and root operational evidence updated; README,
+capabilities, artifact/Git docs intentionally unchanged because public behavior
+is unchanged. Whole-feature public docs/review remain coordinator-owned. No
+workspace consumers or language/LSP/hover/wiki/site-listing changes. Changed
+folder sf-plugin-data yes, current 0.1.0, new version unassigned; all other tracked
+packages N/A/not needed. Package verification uses existing offline tests and
+normal unchanged hooks; no automatic installation/package-install smoke.
+
 # Segment A2c2 retrieve dependency selection checkpoint — 2026-10-28
 
 This completes the bounded retrieve-side selection checkpoint, NOT Segment A,
