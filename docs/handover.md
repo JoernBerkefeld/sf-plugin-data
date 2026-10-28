@@ -1,3 +1,119 @@
+# Chunk D bounded existing-target IR EXECUTOR checkpoint — 2026-10-28
+
+Baseline `4ee243218c3c23dd5265999a480cdc0a76bbb899` fetched equal to
+origin/main; no prior ahead commits or unrelated package edits. Existing plan and
+review reused, Gate3 remains one bounded executor/test owner; coordinator retains
+once-whole-feature Gate4, public documentation and final DB rebuild/validate/gaps.
+This is NOT IR-family, Chunk D, cross-org or roadmap completion. No org calls,
+command/writer/Git-selection/API-auto integration, installs, DB edits or release.
+
+## Executor interface and required proofs
+
+New `src/services/execute-identity-resolution-deploy.ts` exports:
+
+- `executeIdentityResolutionDeploy(value:unknown,
+  connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
+  dataSpace:string,options:IdentityResolutionExecutionOptions):
+  Promise<IdentityResolutionDeployExecution>`.
+- Options require `targetApiName:string`, `allowProcessing:boolean`,
+  `verifyInput:()=>Promise<void>`. Required runtime callbacks (optional in the
+  type only to support fail-closed invocation) are `verifyDependencies` and
+  `verifyOutputs`; no production implementation or silent no-op exists.
+- `verifyDependencies(document,connection,selection,dataSpace)` must independently
+  verify fresh compatible target input DMOs/fields each time and return
+  `Promise<{fingerprint:string}>`. Nonempty stable fingerprint is compared across
+  preflight, pre-dispatch and settled boundaries; changed proof blocks/fails.
+- `verifyOutputs(owner,outputs,connection,selection)` returns
+  `Promise<IdentityResolutionOutputBinding[]>`. Owner is
+  `{targetApiName,targetId,dataSpace:'default'}`; ordered requested outputs are
+  `{identity:IdentityResolutionOutputIdentity,targetApiName:string}[]`, from
+  target-owned PUBLISHED reconciliation names, never source guesses. Each proof
+  is `{identity,targetApiName,targetId,creationType:'Derived'|'Bridge',
+  fields:Array<{apiName:string,dataType:'Text'}>}`. Exactly 12 ordered bindings,
+  distinct nonempty IDs, exact names/owner+space+entity+role and role-specific
+  creation types/required Text fields are enforced. Unified requires
+  `ssot__Id__c`; link requires `UnifiedRecordId__c`. Callback must independently
+  inspect target definitions and exact default space; returned proof is not
+  itself evidence of live field qualification. Proof remains stable before and
+  after update. Generated objects are never directly provisioned/deleted.
+- Update additionally requires private `recordPoll(evidence):Promise<void>`.
+  Evidence is `{attempt,timestamp,statusPresent,statusType,statusValue}`;
+  classification occurs AFTER awaited recorder, even for missing/unknown values.
+  If frozen McpExecuteClient rejects an invalid response before returning a body,
+  executor records status as unavailable (`statusPresent:false`,
+  `statusType:'unavailable'`, `statusValue:undefined`), never fabricates raw status
+  proof. Raw wire-status recording before transport rejection requires later
+  integration-owned transport instrumentation; shared transport is unchanged.
+- Synthetic seams: `acquire?:typeof retrieveIdentityResolution`,
+  `readFacade?:(targetApiName:string)=>Promise<unknown>`,
+  `readNative?:(targetApiName:string)=>Promise<unknown>`,
+  `mutate?:(parameters:unknown)=>Promise<unknown>`, `now?:()=>number`,
+  `delay?:(milliseconds:number)=>Promise<void>`. Callbacks/routing/options and
+  desired document are captured before asynchronous work.
+- `identityResolutionPollBudget` is frozen at 12 facade reads, 1000ms between
+  reads and 120000ms elapsed deadline. Awaited I/O is not forcibly cancelled;
+  completion after deadline cannot succeed. Independent native API65 full owner
+  read follows facade PUBLISHED; native omission of filters:[] only is admitted.
+- Public result: `{family:'identity-resolution',route:{apiVersion:'67.0',
+  operation:'d360_ir_update'},outcome:'unchanged'|'blocked'|'updated'|'failed',
+  mutation:'not-attempted'|'confirmed-updated'|'unknown',diagnostics}`. No raw
+  owner/output identities, payloads or exception text enter public results.
+
+Equality needs neither acknowledgement nor recorder and performs zero mutations,
+publication/run calls or Metadata jobs, while still requiring fresh dependency
+and output proof. Only existing fully correlated PUBLISHED targets qualify;
+CREATE always blocks. Only Individual LastUpdated -> MostFrequent is admitted,
+with all six ordered reconciliation entries, matching/labels/description and
+automatic=false preserved. Actual frozen wire input has ONE Individual rule,
+complete nested matching and preserved labels/description/automatic=false, as
+qualification requires; six generated entries are verified in complete readback,
+not sent as generated source names. Explicit `allowProcessing:true` acknowledges
+publication and generated-output provisioning even with automatic=false.
+
+Fresh preflight/input/dependency/output checks plus final exact target acquisition
+precede dispatch. Exactly one allowlisted update attempt; 401, network, nested201,
+malformed echo, polling/deadline/readback/verification errors retain mutation
+uncertainty, without retry/replay/rollback. Echo is never settlement evidence.
+
+## Verification and exact remaining slice
+
+Synthetic tests in `test/execute-identity-resolution-deploy.test.mjs` exercise
+zero-write equality/ack failures, missing verifiers, exact payload, input/version/
+dependency/owner/output drift, actual core-authenticated 401/network/nested201
+single-attempt transport, finite PUBLISHING polling and successful transition,
+recorder-before-classification, unavailable status, native/full six-rule/matching
+mismatch, required output fields/types/roles/names/distinct IDs and failures.
+Final scoped autofix, explicit build, full zero-warning lint, 40 focused tests
+and full npm test passed on stable final source/tests: 702 passed, zero failed,
+skipped or cancelled; runner 114110.5443ms, full npm test wall 117.560s,
+combined verification 133.769s. Normal unchanged-hook receipts and exact commit/
+push are reported in the worker return. Initial 696-test run was superseded by
+this fresh full run after adding six output/transition regressions. Every shell/test entry validates TEMP/actual Node os.tmpdir and
+nonempty TMP/TMPDIR against absolute normalized F:/Temp; only process-local repair.
+No scratch or recursive deletion authored.
+
+Next bounded slice is PRODUCTION BINDING ONLY: implement independently fresh
+input-DMO/field compatibility and stable fingerprint, and target-owned output
+lookup/field/type proof callbacks. Inspect exact definition contracts and fail
+closed on missing/ambiguous/default-space mismatch; do not infer qualification
+from these synthetic tests. Separately integrate safe writer/read-input/Git,
+logical-to-target owner binding, commands/effects/API-auto routing and private
+recording. Later actual plugin source and cross-org acceptance must prove
+retrieve/update/readback/zero-write repeat. CREATE still needs separately
+qualified absence/conflict/binding evidence.
+
+Graph VALUE cleanup debt remains unchanged:
+`GraphDd23cf3b3eb6372_1793161702141_VALUE__dlm` was readable at checkpoint D;
+no direct generated-DMO cleanup authority or physical/eventual cleanup claim.
+Segment setup-state/raw-evidence and create permission/shell blockers, CI
+expression/no-op limitations, DLO operational/broader DMO gaps remain unchanged.
+
+Propagation: sf-plugin-data internal executor/tests/handover only; version 0.1.0
+unchanged, next version unassigned, no release. Public README/capabilities/
+artifact/Git docs and sfmc.guide remain coordinator-owned. No language data/LSP,
+hover/wiki/site listing/mcdev/CMS/downstream updates needed. Earlier checkpoints
+below are historical, not current executor absence claims.
+
 # Chunk D existing-target IR PREFLIGHT-ONLY checkpoint — 2026-10-28
 
 Baseline `f046d1de183f22f04d00cd96ae3517c345c0f1d7` fetched equal to
