@@ -1,8 +1,18 @@
 import type { Connection } from '@salesforce/core';
 import type { ApiVersionSelection } from './api-version.js';
 import { ConnectError } from './connect-client.js';
+import { ingestionEvent } from '../artifacts/ingestion-dlo-document.js';
 
-export type McpReadOperation = 'd360_data_graph_get' | 'd360_ir_get' | 'd360_transform_get';
+export type IngestionReadOperation =
+  | 'd360_dlo_get'
+  | 'd360_dlo_kq_list'
+  | 'd360_datastream_get'
+  | 'd360_datastream_list'
+  | 'd360_connection_list'
+  | 'd360_connection_get'
+  | 'd360_connection_schema_get';
+export type McpReadOperation =
+  'd360_data_graph_get' | 'd360_ir_get' | 'd360_transform_get' | IngestionReadOperation;
 /** Private detached wire observation; never include it in artifacts or command results. */
 export type McpReadObserver = (observation: unknown) => Promise<void>;
 export type McpMutationOperation =
@@ -12,7 +22,9 @@ export type McpMutationOperation =
   | 'd360_data_graph_delete'
   | 'd360_ir_create'
   | 'd360_ir_update'
-  | 'd360_ir_delete';
+  | 'd360_ir_delete'
+  | 'd360_connection_schema_put_ingestion_api'
+  | 'd360_datastream_patch_ingestion_api';
 type Operation = McpReadOperation | McpMutationOperation;
 type JsonObject = Record<string, unknown>;
 type WireResponse = { statusCode: number };
@@ -21,9 +33,25 @@ type CoreTransport = {
   httpRequest: (...arguments_: unknown[]) => WirePromise;
 };
 
-const reads = new Set<string>(['d360_data_graph_get', 'd360_ir_get', 'd360_transform_get']);
+const ingestionReads = new Set<string>([
+  'd360_dlo_get',
+  'd360_dlo_kq_list',
+  'd360_datastream_get',
+  'd360_datastream_list',
+  'd360_connection_list',
+  'd360_connection_get',
+  'd360_connection_schema_get',
+]);
+const reads = new Set<string>([
+  'd360_data_graph_get',
+  'd360_ir_get',
+  'd360_transform_get',
+  ...ingestionReads,
+]);
 const mutations = new Set<string>([
   'd360_ci_create',
+  'd360_connection_schema_put_ingestion_api',
+  'd360_datastream_patch_ingestion_api',
   'd360_data_graph_create',
   'd360_data_graph_update',
   'd360_data_graph_delete',
@@ -235,6 +263,62 @@ function ir(value: unknown, create: boolean): JsonObject {
  */
 function parameters(operation: Operation, value: unknown): JsonObject {
   switch (operation) {
+    case 'd360_connection_get':
+    case 'd360_connection_schema_get': {
+      const input = object(value, ['connectionId']);
+      if (
+        typeof input.connectionId !== 'string' ||
+        !/^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u.test(input.connectionId)
+      )
+        invalid();
+      return input;
+    }
+    case 'd360_dlo_get':
+    case 'd360_dlo_kq_list':
+    case 'd360_datastream_get':
+    case 'd360_datastream_patch_ingestion_api': {
+      const sync = operation === 'd360_datastream_patch_ingestion_api';
+      const input = object(
+        value,
+        sync ? ['recordIdOrDeveloperName', 'syncSchema'] : ['recordIdOrDeveloperName'],
+      );
+      if (!name(input.recordIdOrDeveloperName) || (sync && input.syncSchema !== true)) invalid();
+      return input;
+    }
+    case 'd360_connection_list': {
+      const input = object(value, ['connectorType', 'limit', 'offset']);
+      if (input.connectorType !== 'IngestApi' || input.limit !== 200 || input.offset !== 0)
+        invalid();
+      return input;
+    }
+    case 'd360_datastream_list': {
+      const candidate = value as JsonObject;
+      const filtered = candidate && Object.hasOwn(candidate, 'connectionName');
+      const input = object(
+        value,
+        filtered ? ['filter', 'connectionName', 'limit', 'offset'] : ['filter', 'limit', 'offset'],
+      );
+      if (
+        input.filter !== 'INGESTAPI' ||
+        (filtered && !name(input.connectionName)) ||
+        input.limit !== 200 ||
+        input.offset !== 0
+      )
+        invalid();
+      return input;
+    }
+    case 'd360_connection_schema_put_ingestion_api': {
+      const input = object(value, ['connectionId', 'objects']);
+      if (
+        typeof input.connectionId !== 'string' ||
+        !/^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u.test(input.connectionId) ||
+        !Array.isArray(input.objects) ||
+        input.objects.length !== 1
+      )
+        invalid();
+      ingestionEvent(input.objects[0]);
+      return input;
+    }
     case 'd360_ci_create': {
       const parameters_ = object(value, ['input']);
       const input = object(parameters_.input, [
@@ -337,7 +421,14 @@ function result(operation: Operation, parameters_: JsonObject, value: unknown): 
     (Object.hasOwn(resource, 'success') && resource.success !== true)
   )
     throw new ConnectError('REQUEST_FAILED');
-  if (operation.endsWith('_delete')) {
+  if (
+    ingestionReads.has(operation) ||
+    operation === 'd360_connection_schema_put_ingestion_api' ||
+    operation === 'd360_datastream_patch_ingestion_api'
+  ) {
+    // Family admission independently validates full identities, source authority and settlement.
+    if (Object.keys(resource).length === 0) throw new ConnectError('REQUEST_FAILED');
+  } else if (operation.endsWith('_delete')) {
     if (Object.keys(resource).length !== 1 || resource.success !== true)
       throw new ConnectError('REQUEST_FAILED');
   } else if (operation === 'd360_ci_create') {
@@ -448,11 +539,25 @@ export class McpExecuteClient {
    * Attempt one mutation only; never retry, refresh, redirect, fall back or infer settlement.
    * @param {Operation} operation Allowlisted semantic operation.
    * @param {unknown} parameters_ Operation-specific parameters.
+   * @param {McpReadObserver} [observe] Private ingestion-only sink, awaited before classification.
    * @returns {Promise<JsonObject>} Validated application result, not settlement proof.
    */
-  public async mutate(operation: McpMutationOperation, parameters_: unknown): Promise<JsonObject> {
-    if (!mutations.has(operation)) invalid();
-    return this.execute(operation, parameters_);
+  public async mutate(
+    operation: McpMutationOperation,
+    parameters_: unknown,
+    observe?: McpReadObserver,
+  ): Promise<JsonObject> {
+    if (
+      !mutations.has(operation) ||
+      (observe !== undefined &&
+        (typeof observe !== 'function' ||
+          ![
+            'd360_connection_schema_put_ingestion_api',
+            'd360_datastream_patch_ingestion_api',
+          ].includes(operation)))
+    )
+      invalid();
+    return this.execute(operation, parameters_, observe);
   }
 
   private async execute(

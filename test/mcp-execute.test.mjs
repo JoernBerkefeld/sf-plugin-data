@@ -483,6 +483,66 @@ test('read observer is awaited, detached and fail-closed, never a mutation autho
   assert.equal(calls.length, 2);
 });
 
+test('ingestion narrow allowlist rejects unknown writes, malformed fields and records nested201 before classification', async () => {
+  const parameters = {
+    connectionId: '1WM000000000001AAA',
+    objects: [
+      {
+        name: 'ProbeRecord',
+        label: 'ProbeRecord',
+        fields: [{ name: 'ProbeId', label: 'ProbeId', dataType: 'Text' }],
+      },
+    ],
+  };
+  const body = { result: { error: { message: 'private nested error' } } };
+  const { client, calls } = fixture(body);
+  let recorded = false;
+  await assert.rejects(
+    client.mutate('d360_connection_schema_put_ingestion_api', parameters, async (observation) => {
+      await Promise.resolve();
+      assert.deepEqual(observation, body);
+      observation.result = { schemas: [] };
+      recorded = true;
+    }),
+    { code: 'REQUEST_FAILED' },
+  );
+  assert.equal(recorded, true);
+  assert.equal(calls.length, 1);
+  for (const invalid of [
+    { ...parameters, extra: true },
+    { ...parameters, objects: [parameters.objects[0], parameters.objects[0]] },
+    { ...parameters, objects: [{ ...parameters.objects[0], label: 'Probe Record' }] },
+    {
+      ...parameters,
+      objects: [
+        {
+          ...parameters.objects[0],
+          fields: [{ name: 'ProbeId__c', label: 'ProbeId', dataType: 'Text' }],
+        },
+      ],
+    },
+  ])
+    await assert.rejects(client.mutate('d360_connection_schema_put_ingestion_api', invalid));
+  await assert.rejects(client.mutate('d360_dlo_update', {}), { code: 'INVALID_REQUEST' });
+  await assert.rejects(
+    client.mutate('d360_datastream_patch_ingestion_api', {
+      recordIdOrDeveloperName: 'Returned',
+      syncSchema: false,
+    }),
+    { code: 'INVALID_REQUEST' },
+  );
+  await assert.rejects(
+    client.read('d360_datastream_list', {
+      filter: 'INGESTAPI',
+      sourceObjectName: 'Guessed',
+      limit: 200,
+      offset: 0,
+    }),
+    { code: 'INVALID_REQUEST' },
+  );
+  assert.equal(calls.length, 1);
+});
+
 test('core transport redirect callback never follows any origin', async () => {
   for (const destination of [`${origin}/other`, 'https://other.test/secret']) {
     const { client, connection } = fixture();
