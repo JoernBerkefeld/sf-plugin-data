@@ -133,6 +133,102 @@ test('IR input fingerprints are stable, fresh and target-local, ignoring unrelat
   );
 });
 
+test('IR input keys accept unrelated Lookup fields without attribute bags, retaining explicit Text key proof', async () => {
+  const first = await bindIdentityResolutionDependencies(
+    document,
+    connection,
+    selection,
+    'default',
+    inputRead,
+  );
+  let reads = 0;
+  const proof = await bindIdentityResolutionDependencies(
+    document,
+    connection,
+    selection,
+    'default',
+    async (name) => {
+      reads++;
+      const f = await inputRead(name);
+      f.detail.fields[0].isPrimaryKey = true;
+      f.metadata[0].fields.unshift({ fullName: 'RelatedRecord__c', type: 'Lookup' });
+      f.metadata[0].fields.push({ fullName: 'OtherRelatedRecord__c', type: 'Lookup' });
+      return f;
+    },
+  );
+  assert.equal(reads, 6);
+  assert.deepEqual(proof, first);
+});
+
+const inputAttributeFailures = {
+  missingRequiredTextBag: (f) => {
+    delete f.metadata[0].fields[0].mktDataModelFieldAttributes;
+  },
+  missingMatchTextBag: (f) => {
+    if (f.metadata[0].fields.length > 1) delete f.metadata[0].fields[1].mktDataModelFieldAttributes;
+  },
+  missingUnrelatedTextBag: (f) => {
+    f.metadata[0].fields.push({ fullName: 'Unrelated__c', type: 'Text' });
+  },
+  missingUnknownTypeBag: (f) => {
+    f.metadata[0].fields.push({ fullName: 'Unrelated__c', type: 'Unknown' });
+  },
+  missingTypeAndBag: (f) => {
+    f.metadata[0].fields.push({ fullName: 'Unrelated__c' });
+  },
+  duplicatePrimary: (f) => {
+    f.metadata[0].fields.push({
+      fullName: 'AnotherKey__c',
+      type: 'Text',
+      mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
+    });
+  },
+  lookupPrimary: (f) => {
+    f.metadata[0].fields.push({
+      fullName: 'RelatedRecord__c',
+      type: 'Lookup',
+      mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
+    });
+  },
+  numericPrimary: (f) => {
+    f.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder = 1;
+  },
+};
+for (const [name, value] of Object.entries({
+  // eslint-disable-next-line unicorn/no-null -- Null is an explicitly malformed Metadata bag regression.
+  null: null,
+  array: [],
+  string: '1',
+  number: 1,
+  boolean: false,
+  undefined,
+}))
+  inputAttributeFailures[`malformedLookupBag-${name}`] = (f) => {
+    f.metadata[0].fields.push({
+      fullName: 'RelatedRecord__c',
+      type: 'Lookup',
+      mktDataModelFieldAttributes: value,
+    });
+  };
+for (const [name, change] of Object.entries(inputAttributeFailures))
+  test(`IR input attribute evidence fails closed: ${name}`, async () => {
+    await assert.rejects(
+      bindIdentityResolutionDependencies(
+        document,
+        connection,
+        selection,
+        'default',
+        async (apiName) => {
+          const f = await inputRead(apiName);
+          f.metadata[0].fields.push({ fullName: 'AllowedRelationship__c', type: 'Lookup' });
+          change(f);
+          return f;
+        },
+      ),
+      { code: 'IDENTITY_RESOLUTION_BINDING_UNQUALIFIED' },
+    );
+  });
+
 const inputFailures = {
   missing: (f) => {
     f.metadata = [];

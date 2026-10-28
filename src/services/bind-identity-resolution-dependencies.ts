@@ -133,9 +133,12 @@ function compatible(
   let key: string | undefined;
   if (!creationType) {
     // Input keys must be explicitly identified by Metadata, not inferred from a name alone.
-    const primary = [...metaFields.entries()].filter(
-      ([, field]) => record(field.mktDataModelFieldAttributes).primaryIndexOrder === '1',
-    );
+    const primary = [...metaFields.entries()].filter(([, field]) => {
+      // Observed Lookup relationships omit the bag; a present bag must still be a record.
+      if (field.type === 'Lookup' && !Object.hasOwn(field, 'mktDataModelFieldAttributes'))
+        return false;
+      return record(field.mktDataModelFieldAttributes).primaryIndexOrder === '1';
+    });
     requireProof(primary.length === 1 && primary[0][0] === 'ssot__Id__c');
     const rawKey = rawFields.get('ssot__Id__c');
     requireProof(

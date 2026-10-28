@@ -1,3 +1,65 @@
+# Chunk D narrow IR Lookup attribute-bag fix — 2026-10-28
+
+Fetched clean/pushed baseline `41b3530ab8149203ad090558a19011a82c0b0d87`,
+exactly equal to origin/main. Existing plan/review reused; one small coupled
+binder/test slice, no nested workers. Coordinator owns whole-feature review,
+public documentation and final DB rebuild/validate/gaps. No live operations,
+receipt replay, writer/command integration, install, release or root changes.
+
+## Exact fix and evidence boundary
+
+`compatible()` input primary-key enumeration now skips a Metadata field ONLY
+when its type is exactly `Lookup` and it has no own
+`mktDataModelFieldAttributes` property. This matches the independently observed
+relationship inventory described by
+`data360:ir.metadata-binding-qualification.api65-67`; it is not a blanket optional
+attribute bag. A present Lookup bag still passes through `record()`, so null,
+undefined, arrays and primitives fail closed. A present Lookup primary order
+still participates in uniqueness checking. Missing bags on required/unrelated
+Text, unknown and omitted types still fail closed. Required exact names,
+explicit default spaces, Text Id/match fields, unique string primary order '1',
+REST key flag when present, field/target-ID uniqueness, output creation types,
+request bounds and fresh fingerprints are unchanged. No source/type/space/key
+coercion or fabricated default was introduced.
+
+Fifteen new synthetic regressions cover two omitted-bag relationships before
+and after required fields across all six reads with explicit REST primary flag,
+stable fingerprints, missing Text/unknown/omitted-type bags, six malformed
+present Lookup bags, duplicate Text/Lookup primary evidence and numeric primary
+order rejection. These are synthetic offline regressions, NOT live revised-helper
+acceptance. The optional private 18-pair receipts were not opened or replayed;
+no secrets/customer data or receipt payloads were copied into the repository.
+
+## Verification and next coherent slice
+
+Scoped ESLint autofix, explicit build and full zero-warning lint passed. Focused
+binder suite 48/48 passed (runner 937.4605ms); full npm test 750/750 passed with
+zero failures/skips/cancellations (runner 112977.191ms, end-to-end npm test wall
+116.5049267s). Full verification command including autofix/build/focused/lint/test
+completed in 134.640s. Normal unchanged checkpoint hook/commit/push receipts are
+reported in the worker return. Every shell/test entry uses the existing absolute-normalized
+TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR checker, process-only repair and
+recheck against F:/Temp. Initial inline shell preflight quoting failed before
+Git or workloads; corrected by using the existing checker. No scratch creation
+or recursive deletion was authored.
+
+Next slice remains safe IR file writer/read-input/Git selection using the
+existing complete portable document validator: preserve exact bytes/overwrite
+and selection safeguards; no command/executor integration until that boundary
+is independently verified. Explicit logical-name-to-target owner binding,
+commands/effects/API-auto and private poll recorder wiring remain separate.
+Revised input-helper live acceptance is still unproven; previous output-helper
+live evidence and owner cleanup evidence retain their original scope. IR CREATE
+absence/conflict, broader matching/reconciliation/source precedence and actual
+source/cross-org plugin retrieve/update/readback/zero-mutation acceptance remain
+open. This fix is NOT IR-family, Chunk D or roadmap completion.
+
+Propagation assessment: sf-plugin-data internal binder/tests and this handover
+only; version 0.1.0 unchanged, next version unassigned, no release. No language,
+LSP, hover, wiki, mcdev, CMS or workspace consumer updates. Public README/reference
+propagation and the final required aggregate tables remain coordinator-owned.
+Historical entries below are preserved, including the original binder failure.
+
 # Chunk D live IR Metadata binding qualification — 2026-10-28
 
 Fetched clean/pushed baseline `6206f26b41047bd6ea91146cbaeaf365aa5f68cd`.
