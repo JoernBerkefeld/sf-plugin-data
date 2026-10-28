@@ -240,16 +240,14 @@ function attribution(value: unknown): Attribution {
 }
 
 /**
- * Project an independently acquired ACTIVE API65 detail and separate Metadata read.
- * This pure function verifies correlation, not network provenance or target dependencies.
- * @param {unknown} runtimeDetail Exact runtime response body, not a mutation envelope.
- * @param {unknown} metadataDefinition Independent readMetadata definition.
- * @returns {CalculatedInsightProjection} Portable semantics and visible attribution observations.
+ * Validate a complete runtime observation without fabricating Metadata correlation.
+ * Pending observations are usable only for echo/poll preservation, never settled admission.
+ * @param {unknown} runtimeDetail Exact API65 response body.
+ * @returns {CalculatedInsightProjection & {status: 'ACTIVE' | 'PROCESSING'}} Detached runtime observation.
  */
-export function projectCalculatedInsight(
+export function observeCalculatedInsight(
   runtimeDetail: unknown,
-  metadataDefinition: unknown,
-): CalculatedInsightProjection {
+): CalculatedInsightProjection & { status: 'ACTIVE' | 'PROCESSING' } {
   const semanticKeys = Object.keys(specification('label', originalExpression)).filter(
     (key) => key !== 'dependencies',
   );
@@ -268,7 +266,8 @@ export function projectCalculatedInsight(
     ...semanticKeys,
     ...transientKeys,
   ]);
-  if (raw.calculatedInsightStatus !== 'ACTIVE') throw new CalculatedInsightError('CI_NOT_SETTLED');
+  if (raw.calculatedInsightStatus !== 'ACTIVE' && raw.calculatedInsightStatus !== 'PROCESSING')
+    throw new CalculatedInsightError('CI_NOT_SETTLED');
   // Only the recorded never-run, error-free profile is qualified. Timestamps are observations.
   if (
     transientKeys.some((key) => key !== 'lastCalcInsightStatusDateTime' && raw[key] !== wireNull) ||
@@ -297,6 +296,21 @@ export function projectCalculatedInsight(
     identity: { dataSpace: raw.dataSpace, apiName: raw.apiName },
     spec,
   });
+  return { document, observations, status: raw.calculatedInsightStatus };
+}
+
+/**
+ * Correlate a settled runtime observation with separately acquired Metadata.
+ * @param {unknown} runtimeDetail Independent API65 detail body.
+ * @param {unknown} metadataDefinition Independent Metadata definition.
+ * @returns {CalculatedInsightProjection} Complete admitted semantics and observations.
+ */
+export function projectCalculatedInsight(
+  runtimeDetail: unknown,
+  metadataDefinition: unknown,
+): CalculatedInsightProjection {
+  const { document, observations, status } = observeCalculatedInsight(runtimeDetail);
+  if (status !== 'ACTIVE') throw new CalculatedInsightError('CI_NOT_SETTLED');
   const metadata = record(metadataDefinition, [
     'fullName',
     'creationType',

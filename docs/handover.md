@@ -1,3 +1,80 @@
+# CI operational service boundary — 2026-10-28
+
+Package ownership reconciled with fetch/status: clean HEAD/origin
+`6bc744b37fe77ee73fc427ee13a7316045562dae`. Existing Segment, IR and CI
+records below remain intact. Dedicated read-only plan review
+`2e8719e0-10f4-405f-a326-f4e824146167` returned zero must-fix before edits.
+Written scoped plan selected acquisition/binding -> preflight/execution -> tests;
+one coupled service owner, no public command/file/Git integration. Am I
+overengineering this? No generic adapter, SQL parser or state framework added.
+Coordinator retains once-whole-feature review and final public-doc propagation.
+
+New production-default interfaces (all use explicit ApiVersionSelection65.0,
+Connection API65 and default space):
+
+- `retrieveCalculatedInsight(connection, apiName, selection, dataSpace)` returns
+  `{identity, candidate?, observations?, expectations?: {runtime, metadata}, blockers}`.
+  Exact native GET plus independent guarded SOAP MktCalcInsightObjectDef read;
+  one exact Metadata record, full correlation, no absence/create inference.
+- `bindCalculatedInsightDependencies(value, connection, selection, dataSpace,
+  acquire?)` returns private `{identity, targetId, fields}` for the exact fixed
+  DMO and two mapped Text fields. Independent REST/CustomObject Metadata checks
+  require Standard enabled ENGAGEMENT/default identity and unique fields; no
+  first-match/name fallback or source-ID adoption.
+- `preflightCalculatedInsightDeploy(value, connection, selection, dataSpace,
+  acquire?, bind?)` returns update/unchanged/blocked, present/unknown, absenceProof
+  none, fixed PATCH route and processing effect only for update. Create/shell
+  conversion remain blocked, not absence-safe.
+- `executeCalculatedInsightDeploy(value, connection, selection, dataSpace, options)`
+  requires `allowProcessing`, `verifyInput()` and private async
+  `recordObservation({phase,status,observations})`. Optional acquisition/binding/
+  PATCH/read/clock/delay seams are synthetic test hooks. Fresh independent
+  baseline+final prewrite captures and rebinding precede zero-write equality or
+  forward expression-only mutation. At most one fixed API65 PATCH; no refresh,
+  retry, redirect, publish, Metadata deploy job or rollback route. Twelve runtime
+  polls (additional final runtime/Metadata/binding reads) share120s from before
+  PATCH, with checks after awaited operations; PROCESSING alone never success.
+  Independent ACTIVE pair and fresh unchanged binding required for confirmation.
+- `observeCalculatedInsight(runtime)` validates complete PROCESSING/ACTIVE
+  observations without fabricating Metadata; existing settled projector still
+  requires ACTIVE plus independent Metadata. Baseline/echo/poll/settled derived
+  attribution stays detached and visible privately, never dependency identity or
+  a claim that derived attribution stays constant. Portable semantics compare in
+  full; observed null/DeviceId/SoftwareApplicationId variations are retained.
+
+Synthetic coverage adds42 tests (878 total): exact acquisition/correlation,
+fixed-scope refusal, independent mapped field admission/ambiguity, preflight,
+zero-dispatch unchanged/no-ack, one PATCH then independent settlement, input/
+binding drift, pending/error/malformed/read failures, finite budget/deadline
+including PATCH and final Metadata latency, and transport no-replay payload.
+Initial focused75/75 passed before11 additional scope/deadline/binding tests.
+Final lint:fix, zero-warning full lint, explicit build and full unfiltered
+`npm test --no-workspaces`878/878 passed: Node118.431s; full npm including build
+121.990s; combined shell142.930s. Initial compile caught the installed JSforce
+Metadata type union omitting this supported type; narrowed only the guarded
+SOAP call signature, not payload admission. Hook/commit/push receipts follow in
+the worker result; do not infer them from this precommit handover.
+
+No org requests, mutations, live acceptance, package install, release/tag,
+registry publication, guide or root edits. This is a verified service boundary,
+NOT public/live zero-write or cross-org CI acceptance. No source cleanup was
+required. All shell/test entries used verified absolute TEMP/Node tmpdir and
+nonempty TMP/TMPDIR F:/Temp, process-local only; no scratch or recursive cleanup.
+
+**Minimal next:** one common integrator adds CI paired standard XML/companion
+writer+strict reader/digest/Git selector and public retrieve/preview/deploy routes,
+passing mandatory observation recorder and input verifier. Preserve exact
+expression-only/ACTIVE/typed-dependency subset; do not predeploy Metadata shells.
+Then separately justify bounded retained-source public acceptance (including
+instrumented unchanged), not a new mutation merely to exercise services. Draft
+create, labels/schedule, computation and broader SQL remain separately pending.
+Graph/DLO continuation remains independent and uninvestigated here.
+
+Propagation: sf-plugin-data0.1.0 unchanged, next release unassigned; internal
+handover updated. README/capabilities/artifact/Git public claims stay unchanged
+because no public route enabled; coordinator owns final propagation. No language,
+LSP, hover, wiki, mcdev, site/tool-listing or other workspace consumer needs sync.
+
 # Segment COUNTING continuation and retained public repeat — 2026-10-28
 
 Fetched package HEAD `41e0ea500e2205a8d08161f42351d6bf907174db` equalled

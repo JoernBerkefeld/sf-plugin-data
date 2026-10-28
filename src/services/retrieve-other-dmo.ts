@@ -111,6 +111,36 @@ export async function readDmoMetadata(
   connection: ReadConnection,
   objectApiName: string,
 ): Promise<unknown> {
+  return readIndependentMetadata(connection, objectApiName, 'CustomObject');
+}
+
+/**
+ * Independently read one CI definition using the same guarded core SOAP receiver.
+ * @param {ReadConnection} connection Existing authenticated API65 connection.
+ * @param {string} fullName Exact qualified CI Metadata full name.
+ * @returns {Promise<unknown>} Untrusted parsed definition records.
+ */
+export async function readCalculatedInsightMetadata(
+  connection: ReadConnection,
+  fullName: string,
+): Promise<unknown> {
+  if (!/^[A-Za-z][A-Za-z0-9_]*$/u.test(fullName) || connection.getApiVersion() !== '65.0')
+    throw new DmoRetrieveError('INVALID_SCOPE');
+  return readIndependentMetadata(connection, fullName, 'MktCalcInsightObjectDef');
+}
+
+/**
+ * Share only the concrete guarded SOAP mechanism, not family admission.
+ * @param {ReadConnection} connection Authenticated existing receiver.
+ * @param {string} fullName Exact selected member.
+ * @param {'CustomObject' | 'MktCalcInsightObjectDef'} type Fixed supported type.
+ * @returns {Promise<unknown>} Untrusted parsed Metadata records.
+ */
+async function readIndependentMetadata(
+  connection: ReadConnection,
+  fullName: string,
+  type: 'CustomObject' | 'MktCalcInsightObjectDef',
+): Promise<unknown> {
   try {
     const transport = (connection as unknown as { _transport: MetadataTransport })._transport;
     if (typeof transport?.httpRequest !== 'function')
@@ -128,7 +158,12 @@ export async function readDmoMetadata(
     Object.defineProperty(receiver, '_transport', { value: guardedTransport });
     const metadata = Object.create(connection.metadata) as Connection['metadata'];
     Object.defineProperty(metadata, '_conn', { value: receiver });
-    return await metadata.read('CustomObject', [objectApiName]);
+    // Installed JSforce's generated type union omits this API65-supported Metadata type.
+    const read = metadata.read as unknown as (
+      type: string,
+      fullNames: string[],
+    ) => Promise<unknown>;
+    return await read.call(metadata, type, [fullName]);
   } catch (error: unknown) {
     if (error instanceof DmoRetrieveError) throw error;
     throw new DmoRetrieveError('ACQUISITION_FAILED');
