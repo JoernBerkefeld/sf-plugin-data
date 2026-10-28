@@ -2,7 +2,8 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { readDeployInputs } from './read-deploy-input.js';
-import type { SegmentDeployInput } from './read-deploy-input.js';
+import { identityResolutionName } from './identity-resolution-document.js';
+import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { segmentName } from './segment-document.js';
 
@@ -21,6 +22,7 @@ export class GitSelectionError extends Error {
 export type GitDeploySelection = {
   paths: string[];
   segments?: readonly SegmentDeployInput[];
+  identityResolutions?: readonly IdentityResolutionDeployInput[];
   provenance: {
     repositoryRoot: string;
     requestedRef: string;
@@ -63,8 +65,11 @@ function tokens(output: string): string[] {
 
 const segmentMember = (file: string): boolean =>
   /\.(?:marketSegmentDefinition-meta\.xml|segment\.json)$/iu.test(file);
+const irMember = (file: string): boolean => /\.identityResolution\.json$/iu.test(file);
 const relevant = (file: string): boolean =>
-  (file.startsWith('data360/default/dmo/') && file.endsWith('.json')) || segmentMember(file);
+  (file.startsWith('data360/default/dmo/') && file.endsWith('.json')) ||
+  segmentMember(file) ||
+  irMember(file);
 
 /**
  * Collect current canonical DMO paths while rejecting either endpoint of a lifecycle change.
@@ -160,10 +165,25 @@ export async function selectGitDeployInputs(options: {
     if (untracked.some((file) => relevant(file)) && hasWorktreeDeletion)
       throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
     for (const file of untracked) if (relevant(file)) paths.add(file);
-    const segmentBase = [...paths].some((file) => segmentMember(file))
+    const segmentBase = [...paths].some((file) => segmentMember(file) || irMember(file))
       ? await segmentSourceRoot(repositoryRoot)
       : undefined;
     const metadata = [...paths].map((file) => {
+      if (irMember(file)) {
+        const name = path.posix.basename(file).slice(0, -'.identityResolution.json'.length);
+        const expected = path.join(
+          segmentBase!,
+          'data360',
+          'identityResolution',
+          `${name}.identityResolution.json`,
+        );
+        if (
+          !identityResolutionName.test(name) ||
+          file !== path.relative(repositoryRoot, expected).split(path.sep).join('/')
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        return `identity-resolution:${name}`;
+      }
       if (segmentMember(file)) {
         const xml = file.endsWith('.marketSegmentDefinition-meta.xml');
         const suffix = xml ? '.marketSegmentDefinition-meta.xml' : '.segment.json';
@@ -188,8 +208,17 @@ export async function selectGitDeployInputs(options: {
     // Existing admission checks canonical filename, document identity and no-link regular files.
     const inputs =
       metadata.length > 0 ? await readDeployInputs({ cwd: repositoryRoot, metadata }) : [];
-    const segments = inputs.filter((input): input is SegmentDeployInput => 'inputDigest' in input);
+    const segments = inputs.filter(
+      (input): input is SegmentDeployInput => 'companionPath' in input,
+    );
+    const identityResolutions = inputs.filter(
+      (input): input is IdentityResolutionDeployInput =>
+        input.document.kind === 'identity-resolution',
+    );
     return {
+      ...(identityResolutions.length > 0
+        ? { identityResolutions: Object.freeze(identityResolutions) }
+        : {}),
       paths: inputs.map((input) => input.path),
       ...(segments.length > 0 ? { segments: Object.freeze(segments) } : {}),
       provenance: {

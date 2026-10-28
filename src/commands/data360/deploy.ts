@@ -3,6 +3,7 @@ import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@s
 import { resolveApiVersion } from '../../transport/api-version.js';
 import { dmoApiSelection, DmoRetrieveError } from '../../services/retrieve-other-dmo.js';
 import {
+  isSupportedDeployInput,
   captureDeployInputDigest,
   DeployInputError,
   readDeployInputs,
@@ -265,6 +266,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         return finish('blocked', 'INVALID_SELECTION');
       let sourceDirectories = flags['source-dir'];
       let gitSegments: GitDeploySelection['segments'];
+      let gitIdentityResolutions: GitDeploySelection['identityResolutions'];
       if (changedSince !== undefined) {
         envelope.result.selection.changedSince = changedSince;
         const selected = await this.selectGitInputs({ cwd, ref: changedSince });
@@ -272,12 +274,20 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (selected.paths.length === 0) return finish('success');
         sourceDirectories = selected.paths;
         gitSegments = selected.segments;
+        gitIdentityResolutions = selected.identityResolutions;
       }
-      let inputs = await this.resolveInputs({
+      const admitted = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      // Never let a captured Git IR disappear through an older/injected input resolver.
+      if (
+        gitIdentityResolutions?.length ||
+        admitted.some((input) => !isSupportedDeployInput(input))
+      )
+        return finish('blocked', 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
+      let inputs = admitted.filter(isSupportedDeployInput);
       if (gitSegments) {
         const current = inputs.filter(
           (input): input is SegmentDeployInput => 'inputDigest' in input,

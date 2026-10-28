@@ -1,3 +1,79 @@
+# Chunk D IR safe files/input/Git checkpoint — 2026-10-28
+
+Reconciled fetched baseline `8122f35179102045c9a2971afc3bfe6176ec3b06`,
+clean/pushed and equal to origin/main before this checkpoint (750 prior tests).
+Existing plan/review reused; one coupled filesystem/selection owner, no nested
+workers. Coordinator retains whole-feature review, public docs and final DB
+rebuild/validate/gaps. No live org calls, DB writes, installation or release.
+
+## Exact interfaces and boundary
+
+- `writeIdentityResolutionDocument(value: unknown, projectRoot: string,
+  overwrite: boolean, publish = {link, rename, unlink})` returns
+  `{path, outcome: 'retrieved' | 'unchanged'}`. Uses strict complete portable IR
+  validation and configured/default package root, publishing
+  `<package>/main/default/data360/identityResolution/<logicalName>.identityResolution.json`.
+  The final optional seam exists for synthetic I/O failures, not CLI configuration.
+  Byte-identical output is untouched; differing bytes require overwrite. Ancestor
+  links/aliases, hardlinks, nonregular files, unsafe roots and package escapes
+  fail closed. Bounded handle/path byte checks precede publication; complete
+  flushed staging has an unguessable ownership marker under verified OS temp.
+  Existing output uses atomic rename; new output uses link then exact staging-entry
+  unlink. Final single-link bytes are revalidated; post-publication failures report
+  `PARTIAL_IDENTITY_RESOLUTION_OUTPUT`. No recursive cleanup. Checks narrow races,
+  not a filesystem transaction or protection against hostile concurrent replacement.
+- `DeployInput` now additionally admits `IdentityResolutionDeployInput =
+  {path, document: IdentityResolutionDocument, inputDigest}`. IR paths must have
+  exact suffix/layout and matching logical filename; `identity-resolution:Name`
+  resolves configured/default package selection. Strict duplicate-key UTF-8 JSON,
+  no-link/single-link bounded reads, case-insensitive duplicate identity refusal,
+  recursive document freeze and SHA256 of exact original bytes apply. Repeated
+  exact selection coalesces. `verifyIdentityResolutionInputDigest(input)` and
+  `captureDeployInputDigest(input)` re-admit unchanged bytes/content.
+- `GitDeploySelection.identityResolutions?` adds frozen IR admissions without
+  changing existing DMO/Segment receipt fields. Committed/index/worktree/untracked
+  exact members bind digest; noncanonical IR suffix matches, deletions, inferred
+  renames/copies and duplicate identities cannot silently disappear. Existing
+  ambiguous untracked-addition plus tracked-deletion guard also covers IR.
+- `SupportedDeployInput` / `isSupportedDeployInput` retain the existing executable
+  DMO/Segment union. Public deploy refuses any admitted or Git-captured IR before
+  target/service reads (`IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED`), including when
+  an older resolver drops captured IR. Retrieve explicitly refuses IR selectors
+  before org resolution. No public IR executor, retrieval route or API-auto added.
+
+## Verification and precise next checkpoint
+
+Scoped ESLint autofix, explicit build, full zero-warning lint passed. New synthetic
+file/writer/Git/command suite: 17/17; full npm test: 767/767, zero failures/skips/
+cancellations, runner 115899.4678ms; npm test end-to-end 119.4262563s. Combined
+scoped autofix/build/focused/lint/full verification wall 148.4238844s. Normal
+unchanged commit hooks and push receipts are reported in the worker return.
+Synthetic tests are NOT live qualification. Every shell/test entry uses the
+existing absolute-normalized TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR check
+against F:/Temp. Only new marker-owned OS-temp fixtures/staging were created;
+no recursive cleanup or persistent project changes. One initial synthetic Git
+fixture attempted a redundant commit; fixed with explicit fixture allow-empty.
+
+Next command/API-auto slice must first resolve **logical owner target binding**:
+the strict portable identity carries only `{dataSpace, logicalName}` while current
+runtime acquisition/execution needs exact `targetApiName` (observed generated
+`Individual_<suffix>`). No qualified reversible mapping is encoded. Do NOT derive
+or persist a generated suffix, runtime/source ID or target name from logicalName.
+Freeze an explicit safe identity/binding design before command wiring, then add
+complete-selection routing/effects/per-operation auto versions and fresh target
+binding/readback tests. Private poll-recorder wiring is still separate.
+
+Revised input binder live acceptance remains UNPROVED despite the preceding
+synthetic Lookup fix; original output-helper/cleanup evidence retains its scope.
+IR CREATE absence/conflict, broader match/reconciliation/source precedence,
+actual source/cross-org plugin retrieve/update/readback/zero-mutation acceptance
+remain open. Existing Graph VALUE deletion/cleanup debt and all historical
+blockers below remain unresolved. This is NOT IR-family, Chunk D or roadmap
+completion. No release/version assignment: sf-plugin-data remains 0.1.0.
+Propagation: internal sf-plugin-data only, no workspace consumers; no language,
+LSP/hover, mcdev/wiki, CMS or site changes. Public docs and required aggregate
+propagation/version tables remain coordinator-owned.
+
 # Chunk D narrow IR Lookup attribute-bag fix — 2026-10-28
 
 Fetched clean/pushed baseline `41b3530ab8149203ad090558a19011a82c0b0d87`,

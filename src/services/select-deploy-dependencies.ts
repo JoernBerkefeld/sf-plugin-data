@@ -1,7 +1,8 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
-import type { DeployInput } from '../artifacts/read-deploy-input.js';
+import type { SupportedDeployInput } from '../artifacts/read-deploy-input.js';
 import {
+  isSupportedDeployInput,
   readDeployInputs,
   captureDeployInputDigest,
   verifySegmentInputDigest,
@@ -16,7 +17,7 @@ import {
 import type { DependencyIdentity, SelectionReason } from '../artifacts/dependency-selection.js';
 
 export type DeployDependencySelection = {
-  inputs: DeployInput[];
+  inputs: SupportedDeployInput[];
   reasons: Map<string, SelectionReason>;
   verify: () => Promise<void>;
 };
@@ -24,18 +25,18 @@ export type DeployDependencySelection = {
 /**
  * Expand only admitted local DMO artifacts. Missing local prerequisites remain external bindings.
  * Original inputs (including Git pair digests) are retained, never reconstructed or replaced.
- * @param {DeployInput[]} roots Independently admitted explicit or Git roots.
+ * @param {SupportedDeployInput[]} roots Independently admitted explicit or Git roots.
  * @param {string} cwd Project root for exact conventional local dependencies.
  * @returns {Promise<DeployDependencySelection>} Bounded ordered inputs, reasons and fresh digest guard.
  */
 export async function selectDeployDependencies(
-  roots: DeployInput[],
+  roots: SupportedDeployInput[],
   cwd: string,
 ): Promise<DeployDependencySelection> {
-  const inputs = new Map<string, DeployInput>();
+  const inputs = new Map<string, SupportedDeployInput>();
   const reasons = new Map<string, SelectionReason>();
   const nodes = new Map<string, ReturnType<typeof documentDependencyNode>>();
-  const pending: Array<{ input: DeployInput; chain: DependencyIdentity[] }> = [];
+  const pending: Array<{ input: SupportedDeployInput; chain: DependencyIdentity[] }> = [];
   const external = new Set<string>();
   let acquisitions = 0;
   for (const input of roots) {
@@ -78,7 +79,8 @@ export async function selectDeployDependencies(
         external.add(key);
         continue;
       }
-      const added = await readDeployInputs({ cwd, metadata: [`dmo:${dependency.apiName}`] });
+      const admitted = await readDeployInputs({ cwd, metadata: [`dmo:${dependency.apiName}`] });
+      const added = admitted.filter(isSupportedDeployInput);
       if (
         added.length !== 1 ||
         dependencyKey(documentDependencyNode(added[0].document).identity) !== key

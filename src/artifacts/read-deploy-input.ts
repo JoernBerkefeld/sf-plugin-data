@@ -6,6 +6,11 @@ import type { SegmentDocument } from './segment-document.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { buildDmoCreateRequestFromDocument, validateDmoDocument } from './dmo-document.js';
 import type { DmoDocument } from './dmo-document.js';
+import {
+  identityResolutionName,
+  validateIdentityResolutionDocument,
+} from './identity-resolution-document.js';
+import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 
 /** Payload-free local selection refusal. */
 export class DeployInputError extends Error {
@@ -26,7 +31,84 @@ export type SegmentDeployInput = {
   document: SegmentDocument;
   inputDigest: string;
 };
-export type DeployInput = { path: string; document: DmoDocument } | SegmentDeployInput;
+export type SupportedDeployInput = { path: string; document: DmoDocument } | SegmentDeployInput;
+export type IdentityResolutionDeployInput = {
+  path: string;
+  document: IdentityResolutionDocument;
+  inputDigest: string;
+};
+export type DeployInput = SupportedDeployInput | IdentityResolutionDeployInput;
+
+/**
+ * Narrow executable families; IR admission does not authorize public routing.
+ * @param {DeployInput} input Admitted input.
+ * @returns {boolean} Whether an existing public route supports this family.
+ */
+export function isSupportedDeployInput(input: DeployInput): input is SupportedDeployInput {
+  return input.document.kind !== 'identity-resolution';
+}
+
+/**
+ * Admit one canonical IR file with immutable logical content and exact byte digest.
+ * @param {string} file Exact absolute member.
+ * @returns {Promise<IdentityResolutionDeployInput>} Detached frozen admission.
+ */
+async function readIdentityResolutionInput(file: string): Promise<IdentityResolutionDeployInput> {
+  const suffix = '.identityResolution.json';
+  const name = path.basename(file).slice(0, -suffix.length);
+  const directory = path.dirname(file);
+  const base = path.dirname(path.dirname(directory));
+  if (
+    !file.endsWith(suffix) ||
+    !identityResolutionName.test(name) ||
+    path.basename(directory) !== 'identityResolution' ||
+    path.basename(path.dirname(directory)) !== 'data360' ||
+    path.basename(base) !== 'default' ||
+    path.basename(path.dirname(base)) !== 'main'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: IdentityResolutionDocument;
+  try {
+    document = validateIdentityResolutionDocument(strictJson(decode(bytes)));
+    if (document.identity.logicalName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
+/**
+ * Re-admit an IR snapshot before relying on the original immutable bytes.
+ * @param {IdentityResolutionDeployInput} input Captured admission.
+ * @returns {Promise<void>} Resolves only for unchanged exact bytes.
+ */
+export async function verifyIdentityResolutionInputDigest(
+  input: IdentityResolutionDeployInput,
+): Promise<void> {
+  try {
+    const current = await readIdentityResolutionInput(input.path);
+    if (
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+  } catch {
+    throw new DeployInputError('UNSAFE_SOURCE');
+  }
+}
 export type DeployInputFlags = {
   cwd: string;
   sourceDir?: readonly string[];
@@ -207,7 +289,11 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
-  if ('inputDigest' in input) {
+  if (input.document.kind === 'identity-resolution') {
+    await verifyIdentityResolutionInputDigest(input as IdentityResolutionDeployInput);
+    return (input as IdentityResolutionDeployInput).inputDigest;
+  }
+  if ('companionPath' in input) {
     await verifySegmentInputDigest(input);
     return input.inputDigest;
   }
@@ -239,18 +325,22 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   const selectors = metadata?.map((value) => {
     if (/^dmo:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(value))
       return { kind: 'dmo', name: value.slice(4) };
+    if (value.startsWith('identity-resolution:') && identityResolutionName.test(value.slice(20)))
+      return { kind: 'identity-resolution', name: value.slice(20) };
     if (value.startsWith('segment:') && segmentName.test(value.slice(8)))
       return { kind: 'segment', name: value.slice(8) };
     throw new DeployInputError('INVALID_SELECTION');
   });
-  const base = selectors?.some((item) => item.kind === 'segment')
+  const base = selectors?.some((item) => item.kind !== 'dmo')
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
   const roots = selectors
     ? selectors.map(({ kind, name }) =>
         kind === 'dmo'
           ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
-          : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+          : kind === 'identity-resolution'
+            ? path.join(base!, 'data360', 'identityResolution', `${name}.identityResolution.json`)
+            : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -297,6 +387,24 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     const identities = new Set<string>();
     // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh candidate array within the existing TypeScript library target.
     for (const file of [...candidates.values()].sort()) {
+      if (file.endsWith('.identityResolution.json')) {
+        const input = await readIdentityResolutionInput(file);
+        const key =
+          `identity-resolution:${input.document.identity.dataSpace}:${input.document.identity.logicalName}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) =>
+              item.kind === 'identity-resolution' &&
+              item.name === input.document.identity.logicalName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
       if (file.endsWith('.segment.json') || file.endsWith('.marketSegmentDefinition-meta.xml')) {
         const paired = await readSegmentDeployInput(file);
         const key =

@@ -188,6 +188,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    if (
+      selectors.some(
+        (value) => value === 'identity-resolution' || value.startsWith('identity-resolution:'),
+      )
+    )
+      return finish('blocked', 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
     const dmoSelectors = selectors.filter((value) => !value.startsWith('segment:'));
     try {
