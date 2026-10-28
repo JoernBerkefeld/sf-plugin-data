@@ -1,3 +1,83 @@
+# Segment A2a read-only deploy checkpoint — 2026-10-28
+
+Bounded A2a implementation, not the complete operational Segment milestone. Existing
+Gate1/2 were reused; one owner handled all package inputs and serialized verification.
+Coordinator retains once-whole-feature Gate4 and public documentation propagation.
+Fetch succeeded; baseline HEAD/origin/main was
+`41615b4f469b741b1bae8b2991014a99fd0e7d77`, with no ahead history. Only the owned
+A2a files listed below were changed. Version remains `0.1.0`; no release/tag.
+
+## Implemented interfaces and ownership
+
+- `src/artifacts/read-deploy-input.ts`: `DeployInput` is the existing DMO shape
+  union `SegmentDeployInput = {path:string, companionPath:string,
+  document:SegmentDocument, inputDigest:string}`. `readDeployInputs(flags)` accepts
+  exact `segment:Name` or either canonical pair member, coalesces overlapping pair
+  selections, rejects duplicate logical identities and correlates strict UTF-8
+  duplicate-key-free JSON against XML/name/label/type/exact model SQL. Both members
+  receive bounded handle/path/ancestor/single-link admission. Captured document,
+  nested arrays/objects and input are frozen. SHA256 binds lengths and exact XML/JSON
+  bytes. `verifySegmentInputDigest(input):Promise<void>` re-admits both and refuses
+  any byte drift, including semantically irrelevant whitespace changes.
+- `src/artifacts/write-segment.ts`: exports reused
+  `segmentSourceRoot(root:string):Promise<string>`; writer behavior is unchanged.
+- `src/services/preflight-segment-deploy.ts`:
+  `preflightSegmentDeploy(value,connection,apiVersion,dataSpace,acquire=retrieveSegment)`
+  returns `SegmentDeployPreview` (existing outcome/target/absence vocabulary plus
+  `family:'segment'`, fixed API65 GET route and `requiredEffects:Array<'processing'>`).
+  Only independently admitted exact present ACTIVE targets qualify. Label/description
+  differences report update + processing; equality reports unchanged + no effects;
+  definition differences report blocked-changes. Invalid scope, errors, generic404,
+  permissions, missing candidate/expectations or shell ambiguity never prove absence.
+- `src/commands/data360/deploy.ts`: protected seams `preflightSegment` and
+  `verifySegmentInput`; discriminates by document.kind and rechecks pair digest
+  before and after target preflight. Every selected Segment blocks execution with
+  SEGMENT_EXECUTION_NOT_IMPLEMENTED, even unchanged. Mixed DMO+Segment selection
+  therefore cannot perform DMO writes. Existing DMO API65/latest guards remain.
+- `test/segment-deploy.test.mjs`: ten synthetic tests cover either member, selector,
+  configured package, pair corruption, digest drift, junction/hardlink refusal,
+  semantic/effect comparison, create blocking, invalid scopes and mixed-command
+  whole-selection blocking/read-only preview.
+
+## Fresh verification and limits
+
+Process-local TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR were verified against
+absolute normalized `F:/Temp` before shell workloads. No live calls, org mutations,
+installs or persistent-project edits. Synthetic OS-temp fixtures are retained;
+no recursive cleanup. Verification DB A1 roundtrip and Metadata-only runtime404
+subjects were looked up; historical evidence was not relabelled A2a acceptance.
+No new live qualification row or shared DB index changes were made.
+
+- Scoped autofix, explicit build and full zero-warning lint passed.
+- Focused new regressions: 10/10, 4.0294876s test phase.
+- Full `npm test --no-workspaces`: 490/490, zero failed/skipped; 112.5175007s Node
+  phase, 116.5626928s complete npm test wall-clock including intrinsic build.
+- `npm run smoke --no-workspaces`: 30/30, zero failed/skipped; 103.8177112s Node
+  phase, 104.3193081s wall-clock.
+- First full run exposed two test-harness failures (Object.create bypassed the new
+  class-field seam); the harness now explicitly injects verifySegmentInputDigest.
+  Complete verification above was rerun afterward, not inferred from focused checks.
+- `smoke:package` was not run: existing script installs dependencies and this task
+  prohibits automatic installs; its retained exact package-entry-count assertion is
+  also from the earlier DMO-only package. CLI smoke is not installed-package proof.
+- Checkpoint commit/push and normal-hook receipts are reported by the finishing
+  worker/coordinator; this text does not presume their success.
+
+## Locked blockers and next A2b resume
+
+CREATE MUST REMAIN BLOCKED: permission-aware absence and exact Metadata-only shell
+conflict admission are unresolved. No executor, acknowledgement flag, target dependency
+binding/expansion, Git pair selection, broad SQL/DBT/schedule support or cross-org
+acceptance is claimed. Two-live-fixture proof remains pending. A1 bounded single-model
+DBT/NO_REFRESH/P90D/default-space grammar is unchanged.
+
+A2b starts at `deploy.ts`, `git-deploy-selection.ts` and the new preflight service:
+add qualified dependency binding and digest-aware Git pair handling, then bounded
+executor/effects acknowledgement only under the existing plan's evidence gates.
+Do not use current label-preview advice as execution authorization or generic404 as
+absence. Once-feature code review and README/capability/artifact/Git/guide propagation
+remain coordinator-owned. No language/LSP/hover/wiki/workspace consumers changed.
+
 # Segment A1 live DBT checkpoint — 2026-10-28
 
 This continuation supersedes the older A1 status immediately below. Gate1/Gate2

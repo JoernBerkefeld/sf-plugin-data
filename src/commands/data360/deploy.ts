@@ -4,6 +4,11 @@ import { resolveApiVersion } from '../../transport/api-version.js';
 import { dmoApiSelection, DmoRetrieveError } from '../../services/retrieve-other-dmo.js';
 import { DeployInputError, readDeployInputs } from '../../artifacts/read-deploy-input.js';
 import { preflightDmoDeploy } from '../../services/preflight-dmo-deploy.js';
+import { preflightSegmentDeploy } from '../../services/preflight-segment-deploy.js';
+import type { SegmentDeployPreview } from '../../services/preflight-segment-deploy.js';
+import type { DmoDocument } from '../../artifacts/dmo-document.js';
+import { verifySegmentInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { SegmentDeployInput } from '../../artifacts/read-deploy-input.js';
 import type { DmoDeployPreview } from '../../services/preflight-dmo-deploy.js';
 import { executeDmoDeploy } from '../../services/execute-dmo-deploy.js';
 import type { DmoDeployExecution } from '../../services/execute-dmo-deploy.js';
@@ -77,7 +82,7 @@ export type DeployEnvelope = {
     scope: { dataSpace: string };
     selection: { sourceDir: string[]; metadata: string[]; changedSince?: string };
     items: Array<
-      | (DmoDeployPreview & {
+      | ((DmoDeployPreview | SegmentDeployPreview) & {
           identity: { dataSpace: string; apiName: string };
           operation: 'preview';
           path: string;
@@ -129,7 +134,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Exact dmo:ApiName project member; repeatable.',
+      summary: 'Exact dmo:ApiName or segment:ApiName project member; Segment is preview-only.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
@@ -145,6 +150,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   protected resolveInputs = readDeployInputs;
   protected selectGitInputs = selectGitDeployInputs;
   protected preflight = preflightDmoDeploy;
+  protected preflightSegment = preflightSegmentDeploy;
+  protected verifySegmentInput = verifySegmentInputDigest;
   protected execute = executeDmoDeploy;
 
   /**
@@ -285,13 +292,33 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       let blocked = false;
       for (const input of inputs) {
         try {
-          const preview = await this.preflight(
-            input.document,
-            connection,
-            selection,
-            flags['data-space'],
-            true,
-          );
+          const segment = input.document.kind === 'segment';
+          if (segment) await this.verifySegmentInput(input as SegmentDeployInput);
+          const preview = segment
+            ? await this.preflightSegment(
+                input.document,
+                connection,
+                selection,
+                flags['data-space'],
+              )
+            : await this.preflight(
+                input.document,
+                connection,
+                selection,
+                flags['data-space'],
+                true,
+              );
+          if (segment) {
+            await this.verifySegmentInput(input as SegmentDeployInput);
+            if (!flags.preview) {
+              blocked = true;
+              preview.diagnostics.push({
+                code: 'SEGMENT_EXECUTION_NOT_IMPLEMENTED',
+                message:
+                  'Segment execution remains blocked in this read-only checkpoint; no processing acknowledgement or runtime write is enabled.',
+              });
+            }
+          }
           envelope.result.items.push({
             ...preview,
             identity: { ...input.document.identity },
@@ -343,7 +370,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             item.mutation = 'unknown';
             try {
               const result = await this.execute(
-                input.document,
+                input.document as DmoDocument,
                 connection,
                 selection,
                 flags['data-space'],

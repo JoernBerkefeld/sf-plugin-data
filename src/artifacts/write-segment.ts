@@ -53,7 +53,7 @@ async function existing(file: string): Promise<Buffer | undefined> {
  * @param {string} root Absolute selected project root.
  * @returns {Promise<string>} Configured package source root or standard force-app default.
  */
-async function sourceRoot(root: string): Promise<string> {
+export async function segmentSourceRoot(root: string): Promise<string> {
   const config = await existing(path.join(root, 'sfdx-project.json'));
   let directory = 'force-app';
   if (config) {
@@ -107,7 +107,7 @@ export async function writeSegmentDocument(
   const root = path.resolve(projectRoot);
   let published = 0;
   try {
-    const base = await sourceRoot(root);
+    const base = await segmentSourceRoot(root);
     const files = [
       path.join(
         base,

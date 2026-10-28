@@ -1,5 +1,9 @@
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { segmentName, validateSegmentPair } from './segment-document.js';
+import type { SegmentDocument } from './segment-document.js';
+import { segmentSourceRoot } from './write-segment.js';
 import { buildDmoCreateRequestFromDocument, validateDmoDocument } from './dmo-document.js';
 import type { DmoDocument } from './dmo-document.js';
 
@@ -16,7 +20,13 @@ export class DeployInputError extends Error {
   }
 }
 
-export type DeployInput = { path: string; document: DmoDocument };
+export type SegmentDeployInput = {
+  path: string;
+  companionPath: string;
+  document: SegmentDocument;
+  inputDigest: string;
+};
+export type DeployInput = { path: string; document: DmoDocument } | SegmentDeployInput;
 export type DeployInputFlags = {
   cwd: string;
   sourceDir?: readonly string[];
@@ -25,6 +35,8 @@ export type DeployInputFlags = {
 const refuse = (): never => {
   throw new DeployInputError('UNSAFE_SOURCE');
 };
+const decode = (bytes: Buffer): string =>
+  new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
 const canonical = (value: string): string =>
   process.platform === 'win32' ? value.toLowerCase() : value;
 
@@ -82,7 +94,115 @@ function strictJson(text: string): unknown {
 }
 
 /**
- * Resolve explicit authored files/directories or exact project-relative DMO selectors, read-only.
+ * Read bounded exact bytes while binding the open handle and no-link path before and after.
+ * @param {string} file Absolute member path.
+ * @returns {Promise<Buffer>} Admitted original bytes.
+ */
+async function memberBytes(file: string): Promise<Buffer> {
+  const before = await inspect(file);
+  if (!before.isFile() || before.nlink !== 1 || before.size > 1_048_576) refuse();
+  const handle = await open(file, 'r');
+  try {
+    const opened = await handle.stat();
+    if (opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== 1) refuse();
+    const buffer = Buffer.alloc(1_048_577);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    const after = await handle.stat();
+    const current = await inspect(file);
+    if (
+      length > 1_048_576 ||
+      length !== before.size ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      current.dev !== before.dev ||
+      current.ino !== before.ino ||
+      current.nlink !== 1 ||
+      current.mtimeMs !== before.mtimeMs ||
+      current.ctimeMs !== before.ctimeMs
+    )
+      refuse();
+    return buffer.subarray(0, length);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Resolve either canonical Segment member and bind both exact byte sets in one digest.
+ * @param {string} file Absolute selected member.
+ * @returns {Promise<SegmentDeployInput>} Detached correlated pair with immutable digest value.
+ */
+async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput> {
+  const xmlSuffix = '.marketSegmentDefinition-meta.xml';
+  const jsonSuffix = '.segment.json';
+  const xmlSelected = file.endsWith(xmlSuffix);
+  const name = path.basename(file).slice(0, -(xmlSelected ? xmlSuffix.length : jsonSuffix.length));
+  if (!segmentName.test(name)) throw new DeployInputError('INVALID_SOURCE');
+  const directory = path.dirname(file);
+  const base = xmlSelected ? path.dirname(directory) : path.dirname(path.dirname(directory));
+  if (
+    path.basename(base) !== 'default' ||
+    path.basename(path.dirname(base)) !== 'main' ||
+    (xmlSelected
+      ? path.basename(directory) !== 'marketSegmentDefinitions'
+      : path.basename(directory) !== 'segments' ||
+        path.basename(path.dirname(directory)) !== 'data360')
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const xmlPath = path.join(base, 'marketSegmentDefinitions', `${name}${xmlSuffix}`);
+  const companionPath = path.join(base, 'data360', 'segments', `${name}${jsonSuffix}`);
+  const xmlBytes = await memberBytes(xmlPath);
+  const jsonBytes = await memberBytes(companionPath);
+  let document: SegmentDocument;
+  try {
+    document = validateSegmentPair(strictJson(decode(jsonBytes)), decode(xmlBytes));
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const xmlAfter = await memberBytes(xmlPath);
+  const jsonAfter = await memberBytes(companionPath);
+  if (!xmlAfter.equals(xmlBytes) || !jsonAfter.equals(jsonBytes)) refuse();
+  const inputDigest = createHash('sha256')
+    .update(String(xmlBytes.length))
+    .update(':')
+    .update(xmlBytes)
+    .update(String(jsonBytes.length))
+    .update(':')
+    .update(jsonBytes)
+    .digest('hex');
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({ path: xmlPath, companionPath, document, inputDigest });
+}
+
+/**
+ * Revalidate the complete paired input before a caller relies on its captured admission.
+ * @param {SegmentDeployInput} input Previously admitted pair.
+ * @returns {Promise<void>} Resolves only if both original byte sets remain unchanged.
+ */
+export async function verifySegmentInputDigest(input: SegmentDeployInput): Promise<void> {
+  try {
+    const current = await readSegmentDeployInput(input.path);
+    if (current.companionPath !== input.companionPath || current.inputDigest !== input.inputDigest)
+      refuse();
+  } catch {
+    throw new DeployInputError('UNSAFE_SOURCE');
+  }
+}
+
+/**
+ * Resolve explicit authored files/directories or exact project-relative DMO/Segment selectors, read-only.
  * Limits are 256 files, 1 MiB per file, 1024 visited entries and 16 directory levels.
  * Repeated identical selections coalesce; different files claiming one identity fail closed.
  * @param {DeployInputFlags} flags Explicit mutually exclusive source modes and captured cwd.
@@ -99,12 +219,21 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('INVALID_SELECTION');
   if (!path.isAbsolute(flags.cwd)) throw new DeployInputError('INVALID_SELECTION');
   const selectors = metadata?.map((value) => {
-    if (!/^dmo:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(value))
-      throw new DeployInputError('INVALID_SELECTION');
-    return value.slice(4);
+    if (/^dmo:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(value))
+      return { kind: 'dmo', name: value.slice(4) };
+    if (value.startsWith('segment:') && segmentName.test(value.slice(8)))
+      return { kind: 'segment', name: value.slice(8) };
+    throw new DeployInputError('INVALID_SELECTION');
   });
+  const base = selectors?.some((item) => item.kind === 'segment')
+    ? await segmentSourceRoot(flags.cwd)
+    : undefined;
   const roots = selectors
-    ? selectors.map((name) => path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`))
+    ? selectors.map(({ kind, name }) =>
+        kind === 'dmo'
+          ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
+          : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+      )
     : sourceDir!.map((value) => {
         if (
           value.includes(String.fromCodePoint(0)) ||
@@ -128,7 +257,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     } else {
       if (
         !stat.isFile() ||
-        path.extname(file) !== '.json' ||
+        (path.extname(file) !== '.json' && !file.endsWith('.marketSegmentDefinition-meta.xml')) ||
         stat.nlink !== 1 ||
         stat.size > 1_048_576
       )
@@ -150,6 +279,27 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     const identities = new Set<string>();
     // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh candidate array within the existing TypeScript library target.
     for (const file of [...candidates.values()].sort()) {
+      if (file.endsWith('.segment.json') || file.endsWith('.marketSegmentDefinition-meta.xml')) {
+        const paired = await readSegmentDeployInput(file);
+        const key =
+          `segment:${paired.document.identity.dataSpace}:${paired.document.identity.apiName}`.toLowerCase();
+        const prior = inputs.find(
+          (input) =>
+            input.document.kind === 'segment' && canonical(input.path) === canonical(paired.path),
+        );
+        if (prior) continue;
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) => item.kind === 'segment' && item.name === paired.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(paired);
+        continue;
+      }
       const before = await inspect(file);
       const handle = await open(file, 'r');
       let text: string;
@@ -193,7 +343,10 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       } catch {
         throw new DeployInputError('INVALID_SOURCE');
       }
-      if (selectors && !selectors.includes(document.identity.apiName))
+      if (
+        selectors &&
+        !selectors.some((item) => item.kind === 'dmo' && item.name === document.identity.apiName)
+      )
         throw new DeployInputError('INVALID_SELECTION');
       if (selectors && path.basename(file) !== `${document.identity.apiName}.json`)
         throw new DeployInputError('INVALID_SELECTION');
