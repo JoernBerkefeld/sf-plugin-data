@@ -1,3 +1,125 @@
+# Chunk D coherent public IR retrieve/preview/deploy integration — 2026-10-28
+
+## Recovery reconciliation and actual scope
+
+Interrupted worker `9a9ca300-4abf-448d-8fe7-06df9532deab` was reconciled before
+extension: its commit actually succeeded as `110cad1dec76f3c334f6409284a698edad0b4d0b`
+and was already equal to fetched origin/main, with a clean index/worktree and no
+ahead commits. No completed work, commit or push was repeated. Retained normal
+unchanged hook receipt passed780 tests (Node phase122.108s),30 smoke tests
+(113.993s), lint0; total hook/commit251.021s. Its earlier standalone full test
+receipt was149.452s. These are distinct historical receipts, not new acceptance.
+
+Existing plan/review is closed; one coupled command/dependency/test owner continued
+without spawning workers because shared command inputs and serialized verification
+are the real dependency boundary. Am I overengineering this? No registry, kit,
+public journal, new scratch infrastructure or transport was needed: reuse the
+existing exact IR acquisition, safe writer, binder, preflight and executor. Goal
+is coherent public existing-target integration, not seven-family completion.
+
+## Public command interfaces and invariants
+
+- Retrieve and fixed per-operation `operationApiVersion` interfaces remain those
+  of110cad1 below. Default/numeric65 never upgrades to67. Exact IR retrieve uses
+  auto or numeric67; mixed legacy/IR uses auto. Omitted selection remains DMO only.
+- Deploy now routes admitted `IdentityResolutionDeployInput` by exact kind; no IR
+  filtering or accidental DMO executor. IR numeric65/latest/unsupported numeric,
+  non-default space and mixed numeric67 combinations refuse before target reads.
+  `--include-dependencies` with any IR explicitly returns
+  IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED rather than dropping it.
+- Existing exact authored API including actual suffix remains authoritative; no
+  suffix construction, label fallback, legacy logicalName reinterpretation or
+  CREATE path. Existing-target preflight allows equality or ONLY the qualified
+  first reconciliation LastUpdated->MostFrequent delta; missing/unreadable or
+  unsupported owner stays blocked, unknown target/absenceProof none.
+- New protected command seams: `preflightIdentityResolution`,
+  `executeIdentityResolution`, `verifyIdentityResolutionInput`,
+  `bindIdentityResolution(input,connection,selection):Promise<string>`, and
+  `recordIdentityResolutionPoll(path,evidence):Promise<void>`. Production binding
+  independently checks six existing input DMOs and twelve owner-correlated output
+  definitions before ANY selected mutation; its private fingerprint is refreshed
+  for all pending IR before each dispatch. Changed/missing bindings block earlier
+  DMO/Segment writes, not just the eventual IR write. Existing executor repeats
+  its own fresh target/input/dependency/output checks and single-attempt settlement.
+- `DependencyIdentity.kind` now additionally admits identity-resolution;
+  `documentDependencyNode` validates its full document and extracts six exact
+  reconciliation entities as DMO prerequisites. Existing topological ordering,
+  cycles, isolated nodes and deterministic ready-node tie-break remain. This is
+  ordering explicit selected inputs, not a claim of IR transitive expansion or
+  generated-owner dependent-family support. Unavailable selected prerequisites
+  block complete admission; no speculative provisioning.
+- Immutable IR file/Git byte snapshots are preserved: captured Git owners must
+  match exact admitted path, inputDigest AND full document; missing/replaced IR
+  is INVALID_GIT_SELECTION. Segment Git checks now discriminate by kind rather
+  than treating every inputDigest as a Segment. All mixed bytes are captured and
+  rechecked before target reads and before dispatch; original expanded legacy
+  verification remains unchanged. IR files retain their original recursive freeze.
+- API67 operation-local receiver pins facade scope without mutating the shared
+  legacy API65 receiver. IR native correlation/dependency/output REST/Metadata
+  reads remain fixed65. Requested envelope version remains auto/numeric as given;
+  per-item `routes` describes qualified get/native65/Metadata65/update67 routes,
+  not proof each possible write ran. Existing mutation evidence remains decisive.
+- Preview is read-only and includes required publication/generated-output effects.
+  Execution requires `--allow-processing` for actual IR update and both expected
+  effects in admission, before ANY batch writes. Equality needs no acknowledgement
+  and existing executor performs zero mutations/Metadata deploy jobs.
+- Batch still admits everything first, then executes sequential dependency order,
+  stops on blocked/failure/unknown and retains prior results plus later
+  not-attempted items. No rollback or atomic cross-component claim.
+- Private status-only poll evidence is detached into invocation-owned protected
+  `identityResolutionPolls:Map<path,IdentityResolutionPollEvidence[]>`; recorder is
+  passed to existing executor and runs before its classification. No raw response,
+  status observation or private fingerprint enters public envelope/logs. Evidence
+  is in-memory for command lifetime, not a durable journal or a user file.
+
+## Verification and remaining ownership
+
+Owned implementation/test paths: existing deploy command and dependency-selection
+helper; existing deploy-command and identity-resolution-files regressions; new
+identity-resolution-deploy-command.test.mjs; this existing handover. No installs,
+new live org calls/mutations, DB edits/index/root push, public documentation edits,
+release/tag/version changes or history rewriting. Version remains0.1.0, next
+version unassigned. Normal hooks unchanged; exact final full-suite/commit/push
+receipts are reported in worker return, not guessed here.
+
+Focused54 passed, build and full zero-warning lint passed. Added synthetic command
+coverage for mixed IR/Segment/DMO, fixed/numeric/default routing, preview/effects,
+acknowledgement0writes, late input/binding drift, partial unknown/unattempted items,
+private recorder/no public leak, no-op0mutations/jobs, Git disappearance/digest
+mismatch and unchanged legacy numeric/latest tests. Existing executor/transport/
+file/Git/binder coverage remains essential; no safety regression was removed.
+Full stable-tree `npm test --no-workspaces` passed789 with zero failures/skips/
+cancellations/todo, end-to-end134.215s (Node phase130.105s). This includes build;
+full zero-warning lint passed separately. Normal unchanged-hook commit/push
+receipts follow in worker return.
+Every shell/test entry preflighted absolute normalized TEMP/actual Node os.tmpdir/
+nonempty TMP/TMPDIR F:/Temp. No recursive cleanup or persistent project edits.
+
+NEXT coordinator: once-whole-feature review of integrated command surfaces, then
+public README/capabilities/artifact/Git docs and final stable combined DB
+rebuild/validate/gaps; existing114 unrelated SSJS drift is not this slice's proof.
+Separately qualify source retrieve->authored files->target preview/apply->independent
+readback->zero-mutation repeat with exact source/target org bindings and owned
+fixtures. Synthetic integration is NOT live acceptance or family completion.
+IR CREATE, broader rule/source-precedence variants and live revised-binder
+acceptance remain blocked/unproved. Segment setup/permission/shell CREATE,
+CI expression/no-op, DLO operational/source cleanup, Graph and broader DMO schema
+requirements remain unchanged. Historical Graph VALUE cleanup debt remains below;
+no physical/global/output cleanup claim is newly established.
+
+Carry forward newest user direction: favor coherent end-to-end outcomes and maximum
+safe unattended completion, not arbitrary tiny checkpoints. At the END of the
+unattended plan pass, walk remaining blockers ONE BY ONE interactively with user
+GUI observations. Prefer standard sf CLI; when insufficient investigate Connect
+REST including CLI-authenticated requests explicitly. Missing CLI command does
+not establish API unavailability. Do not begin live acceptance/mutations merely
+because implementation is green.
+
+Propagation: sf-plugin-data implementation/handover changed; no workspace consumers,
+language/LSP/hover, mcdev/wiki, CMS or site update is required by a dependency.
+Public docs/guide are pending coordinator review/propagation by existing ownership,
+not silently completed. Do not release this unfinished roadmap checkpoint.
+
 # Chunk D API-auto and exact IR RETRIEVE integration checkpoint — 2026-10-28
 
 Fetched baseline `31cf00b8100f8385c0c7854f28920515818b1832` was clean and equal

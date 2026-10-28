@@ -1,9 +1,28 @@
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
-import { resolveApiVersion } from '../../transport/api-version.js';
+import { operationApiVersion, resolveApiVersion } from '../../transport/api-version.js';
+import { preflightIdentityResolutionDeploy } from '../../services/preflight-identity-resolution-deploy.js';
+import type { IdentityResolutionDeployPreview } from '../../services/preflight-identity-resolution-deploy.js';
+import { executeIdentityResolutionDeploy } from '../../services/execute-identity-resolution-deploy.js';
+import type {
+  IdentityResolutionDeployExecution,
+  IdentityResolutionPollEvidence,
+} from '../../services/execute-identity-resolution-deploy.js';
+import { createHash } from 'node:crypto';
+import { retrieveIdentityResolution } from '../../services/retrieve-identity-resolution.js';
+import {
+  bindIdentityResolutionDependencies,
+  verifyIdentityResolutionOutputs,
+} from '../../services/bind-identity-resolution-dependencies.js';
+import { validateIdentityResolutionDocument } from '../../artifacts/identity-resolution-document.js';
+import type {
+  DeployInput,
+  IdentityResolutionDeployInput,
+} from '../../artifacts/read-deploy-input.js';
+import { verifyIdentityResolutionInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { ApiVersionSelection } from '../../transport/api-version.js';
 import { dmoApiSelection, DmoRetrieveError } from '../../services/retrieve-other-dmo.js';
 import {
-  isSupportedDeployInput,
   captureDeployInputDigest,
   DeployInputError,
   readDeployInputs,
@@ -64,9 +83,15 @@ const resolveTargetOrg = async (
 };
 
 type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
-  family?: SegmentDeployExecution['family'];
-  route?: SegmentDeployExecution['route'];
-  requiredEffects?: SegmentDeployPreview['requiredEffects'];
+  family?: SegmentDeployExecution['family'] | IdentityResolutionDeployExecution['family'];
+  route?: SegmentDeployExecution['route'] | IdentityResolutionDeployExecution['route'];
+  requiredEffects?:
+    SegmentDeployPreview['requiredEffects'] | IdentityResolutionDeployPreview['requiredEffects'];
+  routes?: Array<{
+    operation: string;
+    apiVersion: string;
+    transport: 'facade' | 'native' | 'metadata';
+  }>;
   outcome: DmoDeployExecution['outcome'] | 'not-attempted';
   identity: { dataSpace: string; apiName: string };
   operation: 'execute';
@@ -103,12 +128,17 @@ export type DeployEnvelope = {
       metadata: string[];
       changedSince?: string;
       dependencies?: Array<{
-        identity: { kind: 'dmo' | 'segment'; dataSpace: string; apiName: string };
+        identity: {
+          kind: 'dmo' | 'segment' | 'identity-resolution';
+          dataSpace: string;
+          apiName: string;
+        };
         reason: SelectionReason;
       }>;
     };
     items: Array<
-      | ((DmoDeployPreview | SegmentDeployPreview) & {
+      | ((DmoDeployPreview | SegmentDeployPreview | IdentityResolutionDeployPreview) & {
+          routes?: ExecutionItem['routes'];
           identity: { dataSpace: string; apiName: string };
           operation: 'preview';
           path: string;
@@ -124,7 +154,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact dmo:ApiName selectors OR --changed-since Git selection. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates require --allow-processing; Segment creation remains blocked. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact dmo:ApiName selectors OR --changed-since Git selection. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
       {
@@ -142,7 +172,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     'api-version': Flags.orgApiVersion({
       default: '65.0',
       summary:
-        'Numeric API pin, fixed qualified auto (DMO/Segment65), or read-only latest; IR deploy is blocked.',
+        'Numeric API pin, fixed qualified auto (DMO/Segment65 and IR67), or DMO-only read-only latest.',
       parse: async (value, context, options) =>
         value === 'latest' || value === 'auto'
           ? value
@@ -163,7 +193,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Exact dmo:ApiName or existing segment:ApiName project member.',
+      summary:
+        'Exact dmo:ApiName, segment:ApiName or identity-resolution:ExactObjectApiName member.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
@@ -178,7 +209,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
     'allow-processing': Flags.boolean({
       default: false,
-      summary: 'Acknowledge automatic processing for qualified existing Segment updates.',
+      summary:
+        'Acknowledge qualified Segment processing and IR publication/generated-output effects.',
     }),
     preview: Flags.boolean({
       default: false,
@@ -194,6 +226,67 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   protected captureInput = captureDeployInputDigest;
   protected execute = executeDmoDeploy;
   protected executeSegment = executeSegmentDeploy;
+  protected preflightIdentityResolution = preflightIdentityResolutionDeploy;
+  protected executeIdentityResolution = executeIdentityResolutionDeploy;
+  protected verifyIdentityResolutionInput = verifyIdentityResolutionInputDigest;
+  /**
+   * Bind complete existing owner dependencies and generated outputs before any batch mutation.
+   * @param {IdentityResolutionDeployInput} input Immutable authored IR input.
+   * @param {Connection} connection Fixed API67 operation receiver.
+   * @param {ApiVersionSelection} selection Fixed per-operation selection.
+   * @returns {Promise<string>} Private stable target fingerprint.
+   */
+  protected async bindIdentityResolution(
+    input: IdentityResolutionDeployInput,
+    connection: Connection,
+    selection: ApiVersionSelection,
+  ): Promise<string> {
+    const dependencies = await bindIdentityResolutionDependencies(
+      input.document,
+      connection,
+      selection,
+      'default',
+    );
+    const acquired = await retrieveIdentityResolution(
+      connection,
+      input.document.identity.apiName,
+      selection,
+      'default',
+    );
+    if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
+      throw new Error('IR target binding unavailable');
+    const outputs = await verifyIdentityResolutionOutputs(
+      {
+        targetApiName: input.document.identity.apiName,
+        targetId: acquired.expectations.facade.id as string,
+        dataSpace: 'default',
+      },
+      acquired.expectations.outputs.map(({ identity, sourceApiName }) => ({
+        identity,
+        targetApiName: sourceApiName,
+      })),
+      connection,
+      selection,
+    );
+    return createHash('sha256').update(JSON.stringify({ dependencies, outputs })).digest('hex');
+  }
+  protected identityResolutionPolls?: Map<string, IdentityResolutionPollEvidence[]>;
+
+  /**
+   * Preserve bounded private status observations before executor classification, never in results.
+   * @param {string} key Exact local selected input path.
+   * @param {IdentityResolutionPollEvidence} evidence Private status-only observation.
+   * @returns {Promise<void>} Resolves after detached preservation.
+   */
+  protected async recordIdentityResolutionPoll(
+    key: string,
+    evidence: IdentityResolutionPollEvidence,
+  ): Promise<void> {
+    this.identityResolutionPolls ??= new Map();
+    const observations = this.identityResolutionPolls.get(key) ?? [];
+    observations.push(structuredClone(evidence));
+    this.identityResolutionPolls.set(key, observations);
+  }
 
   /**
    * Validate all inputs and preflight the whole selection before any sequential execution.
@@ -284,16 +377,53 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
-      // Never let a captured Git IR disappear through an older/injected input resolver.
-      if (
-        gitIdentityResolutions?.length ||
-        admitted.some((input) => !isSupportedDeployInput(input))
-      )
-        return finish('blocked', 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
-      let inputs = admitted.filter(isSupportedDeployInput);
+      // Bind every captured Git owner to the original immutable authored bytes, never drop IR.
+      if (gitIdentityResolutions) {
+        const current = admitted.filter(
+          (input) => input.document.kind === 'identity-resolution',
+        ) as IdentityResolutionDeployInput[];
+        if (
+          current.length !== gitIdentityResolutions.length ||
+          gitIdentityResolutions.some(
+            (captured) =>
+              !current.some(
+                (input) =>
+                  input.path === captured.path &&
+                  input.inputDigest === captured.inputDigest &&
+                  JSON.stringify(input.document) === JSON.stringify(captured.document),
+              ),
+          )
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        for (const captured of gitIdentityResolutions)
+          await this.verifyIdentityResolutionInput(captured);
+      }
+      let inputs = admitted;
+      const hasIdentityResolutions = inputs.some(
+        (input) => input.document.kind === 'identity-resolution',
+      );
+      if (hasIdentityResolutions) {
+        for (const input of inputs) {
+          const family =
+            input.document.kind === 'identity-resolution'
+              ? 'identity-resolution'
+              : input.document.kind === 'segment'
+                ? 'segment'
+                : 'dmo';
+          try {
+            operationApiVersion(flags['api-version'], family);
+          } catch {
+            return finish('blocked', 'INVALID_SCOPE');
+          }
+          if (family === 'identity-resolution') validateIdentityResolutionDocument(input.document);
+        }
+        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (flags['include-dependencies'])
+          return finish('blocked', 'IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      }
       if (gitSegments) {
         const current = inputs.filter(
-          (input): input is SegmentDeployInput => 'inputDigest' in input,
+          (input): input is SegmentDeployInput => input.document.kind === 'segment',
         );
         if (
           current.length !== gitSegments.length ||
@@ -312,7 +442,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }
       if (inputs.length === 0) return finish('blocked', 'INVALID_SELECTION');
       const expanded = flags['include-dependencies']
-        ? await selectDeployDependencies(inputs, cwd)
+        ? await selectDeployDependencies(
+            inputs.filter(
+              (input): input is Exclude<DeployInput, IdentityResolutionDeployInput> =>
+                input.document.kind !== 'identity-resolution',
+            ),
+            cwd,
+          )
         : undefined;
       if (expanded) {
         inputs = expanded.inputs;
@@ -322,16 +458,21 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
       }
       const hasSegments = inputs.some((input) => input.document.kind === 'segment');
-      if (hasSegments) {
+      if (hasSegments || hasIdentityResolutions) {
         const nodes = inputs.map((input) =>
-          input.document.kind === 'segment'
+          input.document.kind === 'segment' || input.document.kind === 'identity-resolution'
             ? documentDependencyNode(input.document)
             : { identity: { kind: 'dmo' as const, ...input.document.identity }, dependencies: [] },
         );
         const byKey = new Map(
           inputs.map((input) => [
             dependencyKey({
-              kind: input.document.kind === 'segment' ? 'segment' : 'dmo',
+              kind:
+                input.document.kind === 'identity-resolution'
+                  ? 'identity-resolution'
+                  : input.document.kind === 'segment'
+                    ? 'segment'
+                    : 'dmo',
               ...input.document.identity,
             }),
             input,
@@ -340,18 +481,21 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         inputs = orderDependencyNodes(nodes).map((key) => byKey.get(key)!);
       }
       // Preserve original Segment pair snapshots and bind mixed-batch DMO bytes before target reads.
-      const captured = hasSegments
-        ? await Promise.all(
-            inputs.map(async (input) => ({
-              input,
-              digest:
-                input.document.kind === 'segment' ? undefined : await this.captureInput(input),
-            })),
-          )
-        : [];
+      const captured =
+        hasSegments || hasIdentityResolutions
+          ? await Promise.all(
+              inputs.map(async (input) => ({
+                input,
+                digest:
+                  input.document.kind === 'segment' ? undefined : await this.captureInput(input),
+              })),
+            )
+          : [];
       const verifyInputs = async (): Promise<void> => {
         await expanded?.verify();
         for (const { input, digest } of captured) {
+          if (input.document.kind === 'identity-resolution')
+            await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
           if (input.document.kind === 'segment')
             await this.verifySegmentInput(input as SegmentDeployInput);
           else if ((await this.captureInput(input)) !== digest)
@@ -359,6 +503,31 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         }
       };
       await verifyInputs();
+      const familySelection = (input: DeployInput): ApiVersionSelection =>
+        input.document.kind === 'identity-resolution'
+          ? Object.freeze({ requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' })
+          : selection;
+      const routes = (input: DeployInput): ExecutionItem['routes'] =>
+        input.document.kind === 'identity-resolution'
+          ? [
+              { operation: 'd360_ir_get', apiVersion: '67.0', transport: 'facade' },
+              { operation: 'identity-resolutions.get', apiVersion: '65.0', transport: 'native' },
+              {
+                operation: 'dependency-and-output.metadata',
+                apiVersion: '65.0',
+                transport: 'metadata',
+              },
+              { operation: 'd360_ir_update', apiVersion: '67.0', transport: 'facade' },
+            ]
+          : flags['api-version'] === 'auto'
+            ? [
+                {
+                  operation: `${input.document.kind ?? 'dmo'}.deploy`,
+                  apiVersion: '65.0',
+                  transport: 'native',
+                },
+              ]
+            : undefined;
       const org = flags['target-org'];
       if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
       envelope.provenance.targetOrgId = org.getOrgId();
@@ -371,7 +540,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
         return finish('blocked');
       }
-      let selection;
+      let selection: ApiVersionSelection;
       try {
         selection = await resolveApiVersion(
           flags['api-version'] === 'auto' ? '65.0' : flags['api-version'],
@@ -398,7 +567,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }
       envelope.metadata.soapApiVersion = selection.soapNumeric;
       try {
-        dmoApiSelection(selection);
+        if (inputs.some((input) => input.document.kind !== 'identity-resolution'))
+          dmoApiSelection(selection);
       } catch (error: unknown) {
         if (!(error instanceof DmoRetrieveError)) throw error;
         envelope.diagnostics.errors.push({
@@ -410,26 +580,75 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         return finish('blocked');
       }
       const connection = org.getConnection(selection.soapNumeric);
+      // Core Org may reuse and mutate one receiver; pin a distinct operation-local view instead.
+      const connectionFor = (input: DeployInput): Connection => {
+        if (input.document.kind !== 'identity-resolution') return connection;
+        const receiver = Object.create(connection) as Connection;
+        Object.defineProperty(receiver, 'version', { value: '67.0' });
+        Object.defineProperty(receiver, 'getApiVersion', { value: () => '67.0' });
+        Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+        return receiver;
+      };
+      const irBindings = new Map<string, string>();
+      const verifyIrBinding = async (input: DeployInput): Promise<void> => {
+        if (input.document.kind !== 'identity-resolution') return;
+        const fingerprint = await this.bindIdentityResolution(
+          input as IdentityResolutionDeployInput,
+          connectionFor(input),
+          familySelection(input),
+        );
+        const prior = irBindings.get(input.path);
+        if (prior !== undefined && prior !== fingerprint) throw new Error('IR binding drift');
+        irBindings.set(input.path, fingerprint);
+      };
       let failed = false;
       let blocked = false;
       for (const input of inputs) {
         try {
           const segment = input.document.kind === 'segment';
           if (segment) await this.verifySegmentInput(input as SegmentDeployInput);
-          const preview = segment
-            ? await this.preflightSegment(
-                input.document,
-                connection,
-                selection,
-                flags['data-space'],
-              )
-            : await this.preflight(
-                input.document,
-                connection,
-                selection,
-                flags['data-space'],
-                true,
-              );
+          const preview =
+            input.document.kind === 'identity-resolution'
+              ? await this.preflightIdentityResolution(
+                  input.document,
+                  connectionFor(input),
+                  familySelection(input),
+                  flags['data-space'],
+                )
+              : segment
+                ? await this.preflightSegment(
+                    input.document,
+                    connection,
+                    selection,
+                    flags['data-space'],
+                  )
+                : await this.preflight(
+                    input.document,
+                    connection,
+                    selection,
+                    flags['data-space'],
+                    true,
+                  );
+          if (input.document.kind === 'identity-resolution') {
+            await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
+            if (preview.outcome === 'update' || preview.outcome === 'unchanged')
+              await verifyIrBinding(input);
+            const effects = (preview as IdentityResolutionDeployPreview).requiredEffects;
+            if (
+              !flags.preview &&
+              preview.outcome === 'update' &&
+              (flags['allow-processing'] !== true ||
+                !effects?.includes('publication') ||
+                !effects.includes('generated-output-provisioning'))
+            ) {
+              blocked = true;
+              preview.diagnostics.push({
+                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+                message:
+                  'IR publication and generated effects require explicit --allow-processing. No batch writes were attempted.',
+              });
+            }
+          }
           if (segment) {
             await this.verifySegmentInput(input as SegmentDeployInput);
             const effects = (preview as SegmentDeployPreview).requiredEffects;
@@ -452,6 +671,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           }
           envelope.result.items.push({
             ...preview,
+            ...(routes(input) ? { routes: routes(input) } : {}),
             identity: { ...input.document.identity },
             operation: 'preview',
             path: input.path,
@@ -489,6 +709,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             outcome: 'not-attempted',
             mutation: 'not-attempted',
             preflight: { outcome, target, absenceProof, diagnostics },
+            ...(routes(input) ? { routes: routes(input) } : {}),
+            ...(input.document.kind === 'identity-resolution'
+              ? {
+                  family: 'identity-resolution' as const,
+                  route: { apiVersion: '67.0' as const, operation: 'd360_ir_update' as const },
+                  requiredEffects: (envelope.result.items[index] as IdentityResolutionDeployPreview)
+                    .requiredEffects,
+                }
+              : {}),
             ...(input.document.kind === 'segment'
               ? {
                   family: 'segment' as const,
@@ -513,6 +742,26 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               await verifyInputs();
               // Re-admit every pending dependent before any next write, including a DMO write.
               for (const pending of inputs.slice(index)) {
+                if (pending.document.kind === 'identity-resolution') {
+                  await verifyIrBinding(pending);
+                  const fresh = await this.preflightIdentityResolution(
+                    pending.document,
+                    connectionFor(pending),
+                    familySelection(pending),
+                    flags['data-space'],
+                  );
+                  if (
+                    !['unchanged', 'update'].includes(fresh.outcome) ||
+                    (fresh.outcome === 'update' &&
+                      (flags['allow-processing'] !== true ||
+                        !fresh.requiredEffects.includes('publication') ||
+                        !fresh.requiredEffects.includes('generated-output-provisioning')))
+                  )
+                    throw new DependencySelectionError(
+                      'IDENTITY_RESOLUTION_FRESH_ADMISSION_BLOCKED',
+                    );
+                  continue;
+                }
                 if (pending.document.kind !== 'segment') continue;
                 const fresh = await this.preflightSegment(
                   pending.document,
@@ -546,23 +795,36 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             item.mutation = 'unknown';
             try {
               const result =
-                input.document.kind === 'segment'
-                  ? await this.executeSegment(
+                input.document.kind === 'identity-resolution'
+                  ? await this.executeIdentityResolution(
                       input.document,
-                      connection,
-                      selection,
+                      connectionFor(input),
+                      familySelection(input),
                       flags['data-space'],
                       {
                         allowProcessing: flags['allow-processing'] === true,
                         verifyInput: verifyInputs,
+                        recordPoll: async (evidence) =>
+                          this.recordIdentityResolutionPoll(input.path, evidence),
                       },
                     )
-                  : await this.execute(
-                      input.document as DmoDocument,
-                      connection,
-                      selection,
-                      flags['data-space'],
-                    );
+                  : input.document.kind === 'segment'
+                    ? await this.executeSegment(
+                        input.document,
+                        connection,
+                        selection,
+                        flags['data-space'],
+                        {
+                          allowProcessing: flags['allow-processing'] === true,
+                          verifyInput: verifyInputs,
+                        },
+                      )
+                    : await this.execute(
+                        input.document as DmoDocument,
+                        connection,
+                        selection,
+                        flags['data-space'],
+                      );
               Object.assign(item, result);
             } catch {
               item.diagnostics = [

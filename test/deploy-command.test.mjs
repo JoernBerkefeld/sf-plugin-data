@@ -80,7 +80,7 @@ const run = async (command) => {
   }
 };
 
-test('auto deploy uses fixed API65 without discovery and keeps IR explicitly blocked', async () => {
+test('auto deploy uses fixed API65 without discovery and refuses malformed IR', async () => {
   const { command, calls } = invocation({ 'api-version': 'auto' });
   command.parse = async () => ({
     flags: {
@@ -116,8 +116,8 @@ test('auto deploy uses fixed API65 without discovery and keeps IR explicitly blo
   ];
   command.preflight = command.execute = () => assert.fail('IR must never dispatch DMO');
   const blocked = await run(command);
-  assert.equal(blocked.result.status, 'blocked');
-  assert.equal(blocked.result.diagnostics.errors[0].code, 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
+  assert.equal(blocked.result.status, 'failed');
+  assert.equal(blocked.result.diagnostics.errors[0].code, 'DEPLOY_PREVIEW_FAILED');
   assert.ok(!calls.includes('execute'));
 });
 

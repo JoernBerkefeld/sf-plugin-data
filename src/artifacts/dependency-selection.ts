@@ -1,9 +1,15 @@
+import { validateIdentityResolutionDocument } from './identity-resolution-document.js';
+import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 import type { DmoDocument } from './dmo-document.js';
 import { validateDmoDocument } from './dmo-document.js';
 import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
-export type DependencyIdentity = { kind: 'dmo' | 'segment'; dataSpace: string; apiName: string };
+export type DependencyIdentity = {
+  kind: 'dmo' | 'segment' | 'identity-resolution';
+  dataSpace: string;
+  apiName: string;
+};
 export type SelectionReason = { explicit: boolean; chains: DependencyIdentity[][] };
 export type DependencyNode = { identity: DependencyIdentity; dependencies: DependencyIdentity[] };
 export const dependencyLimits = Object.freeze({
@@ -28,7 +34,7 @@ export class DependencySelectionError extends Error {
  */
 export function dependencyKey(identity: DependencyIdentity): string {
   if (
-    !['dmo', 'segment'].includes(identity.kind) ||
+    !['dmo', 'segment', 'identity-resolution'].includes(identity.kind) ||
     identity.dataSpace !== 'default' ||
     !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName)
   )
@@ -38,10 +44,19 @@ export function dependencyKey(identity: DependencyIdentity): string {
 
 /**
  * Extract only admitted family structures; unknown closure must not become an empty leaf.
- * @param {DmoDocument | SegmentDocument} value Authored component.
+ * @param {DmoDocument | SegmentDocument | IdentityResolutionDocument} value Authored component.
  * @returns {DependencyNode} Exact component and dependencies.
  */
-export function documentDependencyNode(value: DmoDocument | SegmentDocument): DependencyNode {
+export function documentDependencyNode(
+  value: DmoDocument | SegmentDocument | IdentityResolutionDocument,
+): DependencyNode {
+  if (value.kind === 'identity-resolution') {
+    const document = validateIdentityResolutionDocument(value);
+    return {
+      identity: { kind: 'identity-resolution', ...document.identity },
+      dependencies: document.spec.reconciliationRules.map(({ entity }) => ({ ...entity })),
+    };
+  }
   if (value.kind === 'segment') {
     const document = validateSegmentDocument(value);
     return {

@@ -234,11 +234,15 @@ for (const preview of [true, false]) {
         provenance: {},
       });
       command.resolveInputs = async () => (disappear ? [] : [input]);
+      command.verifyIdentityResolutionInput = async () => {};
       const previous = process.exitCode;
       try {
         const result = await command.run();
         assert.equal(result.status, 'blocked');
-        assert.equal(result.diagnostics.errors[0].code, 'IDENTITY_RESOLUTION_ROUTE_UNSUPPORTED');
+        assert.equal(
+          result.diagnostics.errors[0].code,
+          disappear ? 'INVALID_GIT_SELECTION' : 'INVALID_SCOPE',
+        );
       } finally {
         process.exitCode = previous;
       }
