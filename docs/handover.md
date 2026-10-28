@@ -1,3 +1,89 @@
+# Segment A2c2 deploy dependency selection checkpoint — 2026-10-28
+
+This is a coherent DEPLOY-ONLY subcheckpoint, NOT complete A2c2/A2c. Existing
+Gate1/2 remain closed; a single owner kept the graph/service/command/tests coupled.
+Coordinator retains once-whole-feature Gate4, public docs propagation and shared
+verification-DB rebuild/validate/gaps. Initial and final fetch/status confirmed
+HEAD = origin/main = bc9aa50d06445149c9a24b6dbcb9c12e963543c6 before commit, no
+ahead commits or unrelated package changes. Package remains sf-plugin-data 0.1.0;
+no release/version bump, installs, live calls, evidence rows or shared-index edits.
+
+## Implemented interfaces and owned files
+
+- `src/artifacts/dependency-selection.ts`: exports `DependencyIdentity` =
+  `{kind:'dmo'|'segment',dataSpace:string,apiName:string}`, `SelectionReason` =
+  `{explicit:boolean,chains:DependencyIdentity[][]}`, `DependencyNode`,
+  `dependencyKey`, `documentDependencyNode`, `orderDependencyNodes`,
+  `DependencySelectionError` and frozen `dependencyLimits` (256 nodes, 512 edges,
+  16 depth, 256 local acquisitions). Exact default-space API-name identity only;
+  no name-only fallback, SQL rewriting or generic adapter registry. DMO contract
+  admission rejects unsupported relationships/generated closure. Graph ordering
+  retains isolated roots and sorts family/space/name only among currently ready
+  nodes, recomputing readiness after each emission; cycles/duplicates/limits block.
+- `src/services/select-deploy-dependencies.ts`: exports
+  `selectDeployDependencies(roots:DeployInput[],cwd:string)` returning
+  `Promise<{inputs:DeployInput[],reasons:Map<string,SelectionReason>,
+  verify:()=>Promise<void>}>`. Expands Segment references only to exact conventional
+  local `data360/default/dmo/<ApiName>.json` inputs via existing `readDeployInputs`
+  admission. Dedupes explicit/added identities and records root-to-dependency
+  chains. Explicit roots retain their original objects/pair digests. Missing local
+  artifacts remain EXTERNAL target prerequisites, not claimed selected closure;
+  A2c1 fresh binding still blocks missing/incompatible target profile DMOs even
+  when a local DMO is selected for creation. Malformed/present unsupported local
+  artifacts fail closed. No unsupported profile export/create is fabricated.
+- `src/artifacts/read-deploy-input.ts`: additive
+  `captureDeployInputDigest(input:DeployInput):Promise<string>` captures DMO exact
+  byte SHA256 and verifies/retains Segment immutable original XML/JSON pair digests.
+  Expanded selection captures all input digests and `verify()` checks them before
+  preflight and again before each execution item. Existing admission stays intact.
+- `src/commands/data360/deploy.ts`: opt-in `--include-dependencies` adds ordered
+  inputs and `result.selection.dependencies:[{identity,reason}]`. No flag means
+  unchanged explicit-only selection/output, while A2c1 binding reads remain.
+  Git original pair digest comparison and provenance are retained. All Segment
+  execution/create remains `SEGMENT_EXECUTION_NOT_IMPLEMENTED`, including mixed
+  selections: this checkpoint adds no Segment executor or settlement semantics.
+- `test/dependency-selection.test.mjs`: six regressions cover reverse selector
+  order, ready-only/same-family graph ordering, isolated roots, cycles, duplicate
+  identities, unknown closure/limits, explicit prerequisite dedupe, missing external
+  dependencies, malformed local admission, immutable Git roots, DMO byte tampering,
+  command default versus opt-in selection and no Segment writes. Same-family graph
+  utility tests do not claim new admitted same-family artifact support.
+
+## Verification and environment receipts
+
+Scoped ESLint autofix, explicit build and full lint (zero warnings) passed.
+Full `npm test --no-workspaces`: 538/538, zero failures/skips/cancellations;
+136.5551629s Node phase and 140.7507343s full npm wall including build. Normal
+unchanged enabled pre-commit hook runs lockfile check, full lint/build/tests and
+30 CLI smoke tests; commit/push receipts are reported separately after completion,
+not presumed here. No package smoke/install or live qualification was performed.
+Every shell/test workload checked absolute normalized TEMP/actual Node os.tmpdir/
+nonempty TMP/TMPDIR against F:/Temp, with process-only repair/recheck where needed.
+Scratch uses verified OS-temp mkdtemp; fixtures are retained, no recursive cleanup.
+
+## Exact remainder and next qualification slice
+
+`retrieve --include-dependencies` is NOT implemented: retrieve command/service and
+source acquisition selection still need bounded opt-in expansion, explicit versus
+added reasons, deduped acquisition/request budgeting and default no-extra-output
+regressions. Reuse only supported DMO acquisitions; unsupported profile/generated
+prerequisites must produce concrete blockers rather than manufactured artifacts.
+Reuse the typed graph where suitable, but do not imply the deploy-only graph
+qualifies source acquisition. Public README/artifact/capabilities/Git guide updates
+remain coordinator-owned with the complete feature review.
+
+Then separately qualify guarded Segment executor: absence/shell conflict policy,
+effects acknowledgement, post-prerequisite-settlement fresh binding using A2c1's
+sixth preflight seam, bounded processing/readback and independent acceptance must
+close before any Segment runtime write. Selected-create downstream binding is
+still blocked; no live cross-org acceptance or release is bundled here.
+
+Propagation: sf-plugin-data service/command/tests/handover updated; no workspace
+consumers or language/LSP/hover/wiki/site-listing changes. Coordinator owns the
+whole-feature Propagation Table/public docs. Changed folder sf-plugin-data: yes;
+current version 0.1.0; new version unassigned (internal checkpoint). All other
+tracked components N/A/not needed.
+
 # Segment A2c1 exact target binding checkpoint — 2026-10-28
 
 This is a binding-only subcheckpoint, NOT complete A2c. Existing Gate1/2 remain

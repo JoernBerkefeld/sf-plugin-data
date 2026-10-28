@@ -15,6 +15,9 @@ import type { DmoDeployExecution } from '../../services/execute-dmo-deploy.js';
 import { plugin as packageMetadata } from '../../plugin.js';
 import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
 import type { GitDeploySelection } from '../../artifacts/git-deploy-selection.js';
+import { selectDeployDependencies } from '../../services/select-deploy-dependencies.js';
+import { dependencyKey, DependencySelectionError } from '../../artifacts/dependency-selection.js';
+import type { SelectionReason } from '../../artifacts/dependency-selection.js';
 
 /**
  * Resolve optional target auth with an explicit bootstrap version before core initialization.
@@ -80,7 +83,15 @@ export type DeployEnvelope = {
   };
   result: {
     scope: { dataSpace: string };
-    selection: { sourceDir: string[]; metadata: string[]; changedSince?: string };
+    selection: {
+      sourceDir: string[];
+      metadata: string[];
+      changedSince?: string;
+      dependencies?: Array<{
+        identity: { kind: 'dmo' | 'segment'; dataSpace: string; apiName: string };
+        reason: SelectionReason;
+      }>;
+    };
     items: Array<
       | ((DmoDeployPreview | SegmentDeployPreview) & {
           identity: { dataSpace: string; apiName: string };
@@ -141,6 +152,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       summary:
         'Select canonical DMO and paired Segment Git changes since the merge base with a commit reference.',
       exclusive: ['source-dir', 'metadata'],
+    }),
+    'include-dependencies': Flags.boolean({
+      default: false,
+      summary:
+        'Include supported local dependency artifacts; missing local inputs require compatible existing target prerequisites.',
     }),
     preview: Flags.boolean({
       default: false,
@@ -237,7 +253,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDirectories = selected.paths;
         gitSegments = selected.segments;
       }
-      const inputs = await this.resolveInputs({
+      let inputs = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
@@ -262,6 +278,16 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         for (const captured of gitSegments) await this.verifySegmentInput(captured);
       }
       if (inputs.length === 0) return finish('blocked', 'INVALID_SELECTION');
+      const expanded = flags['include-dependencies']
+        ? await selectDeployDependencies(inputs, cwd)
+        : undefined;
+      if (expanded) {
+        inputs = expanded.inputs;
+        envelope.result.selection.dependencies = inputs.map(({ document }) => {
+          const identity = { kind: document.kind, ...document.identity };
+          return { identity, reason: expanded.reasons.get(dependencyKey(identity))! };
+        });
+      }
       const org = flags['target-org'];
       if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
       envelope.provenance.targetOrgId = org.getOrgId();
@@ -367,6 +393,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           });
         }
       }
+      await expanded?.verify();
       if (!flags.preview) {
         const items: ExecutionItem[] = inputs.map((input, index) => {
           const { outcome, target, absenceProof, diagnostics } = envelope.result.items[
@@ -386,6 +413,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         envelope.result.items = items;
         if (!failed && !blocked) {
           for (const [index, input] of inputs.entries()) {
+            await expanded?.verify();
             const item = items[index];
             // Set conservative evidence before awaiting; an unexpected throw cannot erase it.
             item.outcome = 'failed';
@@ -442,7 +470,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
         return finish('blocked');
       }
-      if (error instanceof DeployInputError) return finish('blocked', error.code);
+      if (error instanceof DeployInputError || error instanceof DependencySelectionError)
+        return finish('blocked', error.code);
       return finish('failed', flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED');
     }
   }

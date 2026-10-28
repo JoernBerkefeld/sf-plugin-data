@@ -202,6 +202,24 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
 }
 
 /**
+ * Capture admitted exact bytes without changing the existing input shape or Segment pair digest.
+ * @param {DeployInput} input Previously admitted local input.
+ * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
+ */
+export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if ('inputDigest' in input) {
+    await verifySegmentInputDigest(input);
+    return input.inputDigest;
+  }
+  const bytes = await memberBytes(input.path);
+  const document = validateDmoDocument(strictJson(decode(bytes)));
+  buildDmoCreateRequestFromDocument(document, 'default');
+  if (JSON.stringify(document) !== JSON.stringify(input.document))
+    throw new DeployInputError('UNSAFE_SOURCE');
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+/**
  * Resolve explicit authored files/directories or exact project-relative DMO/Segment selectors, read-only.
  * Limits are 256 files, 1 MiB per file, 1024 visited entries and 16 directory levels.
  * Repeated identical selections coalesce; different files claiming one identity fail closed.
