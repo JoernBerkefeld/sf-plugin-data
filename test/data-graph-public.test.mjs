@@ -26,6 +26,10 @@ import {
 } from '../lib/artifacts/read-deploy-input.js';
 import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
 import { operationApiVersion } from '../lib/transport/api-version.js';
+import { selectDeployDependencies } from '../lib/services/select-deploy-dependencies.js';
+import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
+import { writeIdentityResolutionDocument } from '../lib/artifacts/write-identity-resolution.js';
+import { irFixture } from './identity-resolution-fixtures.mjs';
 
 const document = (apiName = 'SyntheticGraph') => ({
   schemaVersion: 1,
@@ -53,6 +57,67 @@ const root = async () => {
   await writeFile(path.join(cwd, 'ownership'), randomUUID());
   return cwd;
 };
+test('local owned Graph selection expands exact IR owner, orders reversed roots and guards every byte', async () => {
+  for (const configured of [false, true]) {
+    const cwd = await root();
+    if (configured)
+      await writeFile(
+        path.join(cwd, 'sfdx-project.json'),
+        JSON.stringify({ packageDirectories: [{ path: 'custom', default: true }] }),
+      );
+    const pair = irFixture();
+    const owner = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
+    const graph = document();
+    const identity = owner.expectations.outputs[0].identity;
+    graph.spec.primaryObjectName = structuredClone(identity);
+    graph.spec.sourceObject.name = structuredClone(identity);
+    graph.spec.sourceObject.devName = structuredClone(identity);
+    const graphReceipt = await writeDataGraphDocument(graph, cwd, false);
+    const roots = await readDeployInputs({ cwd, metadata: ['data-graph:SyntheticGraph'] });
+    const absent = await selectDeployDependencies(roots, cwd);
+    assert.deepEqual(absent.inputs, roots);
+    const ownerReceipt = await writeIdentityResolutionDocument(owner.candidate, cwd, false);
+    const expanded = await selectDeployDependencies(roots, cwd);
+    assert.deepEqual(
+      expanded.inputs.map(({ document }) => document.kind),
+      ['identity-resolution', 'data-graph'],
+    );
+    assert.equal(expanded.inputs[1], roots[0]);
+    assert.equal(
+      expanded.reasons.get('identity-resolution:default:Individual_A1b2').explicit,
+      false,
+    );
+    const explicit = await readDeployInputs({
+      cwd,
+      metadata: ['data-graph:SyntheticGraph', 'identity-resolution:Individual_A1b2'],
+    });
+    for (const ordered of [explicit, explicit.toReversed()]) {
+      const selected = await selectDeployDependencies(ordered, cwd);
+      assert.deepEqual(
+        selected.inputs.map(({ document }) => document.kind),
+        ['identity-resolution', 'data-graph'],
+      );
+      assert.equal(
+        selected.reasons.get('identity-resolution:default:Individual_A1b2').explicit,
+        true,
+      );
+      await selected.verify();
+    }
+    for (const receipt of [ownerReceipt, graphReceipt]) {
+      const bytes = await readFile(receipt.path, 'utf8');
+      await writeFile(receipt.path, `${bytes} `);
+      await assert.rejects(expanded.verify());
+      await writeFile(receipt.path, bytes);
+      await expanded.verify();
+    }
+    const unrelated = structuredClone(owner.candidate);
+    unrelated.identity.apiName = 'UnrelatedOwner';
+    await writeFile(ownerReceipt.path, JSON.stringify(unrelated));
+    await assert.rejects(selectDeployDependencies(roots, cwd), { code: 'INVALID_SOURCE' });
+    assert.equal(JSON.stringify(roots[0].document).includes(pair.facade.id), false);
+  }
+});
+
 const rejects = (code) => (error) => error.code === code;
 const git = (cwd, ...arguments_) =>
   execFileSync('git', arguments_, { cwd, encoding: 'utf8', windowsHide: true }).trim();

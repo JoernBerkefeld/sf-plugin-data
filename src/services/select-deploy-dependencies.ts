@@ -1,6 +1,15 @@
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
-import type { SupportedDeployInput } from '../artifacts/read-deploy-input.js';
+import type {
+  SupportedDeployInput,
+  IdentityResolutionDeployInput,
+  DataGraphDeployInput,
+} from '../artifacts/read-deploy-input.js';
+
+import { segmentSourceRoot } from '../artifacts/write-segment.js';
+
+type DependencyDeployInput =
+  SupportedDeployInput | IdentityResolutionDeployInput | DataGraphDeployInput;
 import {
   isSupportedDeployInput,
   readDeployInputs,
@@ -17,26 +26,26 @@ import {
 import type { DependencyIdentity, SelectionReason } from '../artifacts/dependency-selection.js';
 
 export type DeployDependencySelection = {
-  inputs: SupportedDeployInput[];
+  inputs: DependencyDeployInput[];
   reasons: Map<string, SelectionReason>;
   verify: () => Promise<void>;
 };
 
 /**
- * Expand only admitted local DMO artifacts. Missing local prerequisites remain external bindings.
+ * Expand exact admitted local DMO or IR owner artifacts; missing prerequisites remain external bindings.
  * Original inputs (including Git pair digests) are retained, never reconstructed or replaced.
- * @param {SupportedDeployInput[]} roots Independently admitted explicit or Git roots.
+ * @param {DependencyDeployInput[]} roots Independently admitted explicit or Git roots.
  * @param {string} cwd Project root for exact conventional local dependencies.
  * @returns {Promise<DeployDependencySelection>} Bounded ordered inputs, reasons and fresh digest guard.
  */
 export async function selectDeployDependencies(
-  roots: SupportedDeployInput[],
+  roots: DependencyDeployInput[],
   cwd: string,
 ): Promise<DeployDependencySelection> {
-  const inputs = new Map<string, SupportedDeployInput>();
+  const inputs = new Map<string, DependencyDeployInput>();
   const reasons = new Map<string, SelectionReason>();
   const nodes = new Map<string, ReturnType<typeof documentDependencyNode>>();
-  const pending: Array<{ input: SupportedDeployInput; chain: DependencyIdentity[] }> = [];
+  const pending: Array<{ input: DependencyDeployInput; chain: DependencyIdentity[] }> = [];
   const external = new Set<string>();
   let acquisitions = 0;
   for (const input of roots) {
@@ -67,11 +76,19 @@ export async function selectDeployDependencies(
         continue;
       }
       if (external.has(key)) continue;
-      if (dependency.kind !== 'dmo')
+      if (dependency.kind !== 'dmo' && dependency.kind !== 'identity-resolution')
         throw new DependencySelectionError('DEPENDENCY_FAMILY_UNSUPPORTED');
       if (++acquisitions > dependencyLimits.acquisitions)
         throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
-      const file = path.join(cwd, 'data360', 'default', 'dmo', `${dependency.apiName}.json`);
+      const file =
+        dependency.kind === 'identity-resolution'
+          ? path.join(
+              await segmentSourceRoot(cwd),
+              'data360',
+              'identityResolution',
+              `${dependency.apiName}.identityResolution.json`,
+            )
+          : path.join(cwd, 'data360', 'default', 'dmo', `${dependency.apiName}.json`);
       try {
         await lstat(file);
       } catch (error: unknown) {
@@ -79,10 +96,15 @@ export async function selectDeployDependencies(
         external.add(key);
         continue;
       }
-      const admitted = await readDeployInputs({ cwd, metadata: [`dmo:${dependency.apiName}`] });
+      const admitted = await readDeployInputs({
+        cwd,
+        metadata: [`${dependency.kind}:${dependency.apiName}`],
+      });
       const added = admitted.filter(
-        (input): input is SupportedDeployInput =>
-          isSupportedDeployInput(input) && input.document.kind !== 'calculated-insight',
+        (input): input is DependencyDeployInput =>
+          isSupportedDeployInput(input) ||
+          input.document.kind === 'identity-resolution' ||
+          input.document.kind === 'data-graph',
       );
       if (
         added.length !== 1 ||
@@ -100,7 +122,7 @@ export async function selectDeployDependencies(
   );
   const verify = async (): Promise<void> => {
     for (const { input, digest } of digests) {
-      if ('inputDigest' in input) await verifySegmentInputDigest(input);
+      if ('companionPath' in input) await verifySegmentInputDigest(input);
       if ((await captureDeployInputDigest(input)) !== digest)
         throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
     }

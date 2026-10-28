@@ -40,7 +40,11 @@ single-attempt update/settlement now translate that logical root using fresh pri
 target-local bindings while retaining full configuration/drift evidence. This is
 not public support: explicit owned-root deployment is separately blocked before
 whole-selection writes, and retrieve cannot discover/adopt an owner implicitly.
-Explicit/reversed and opt-in expanded owner/Graph selection remain unfinished.
+The private local selector can now expand the exact conventional IR-owner artifact,
+order explicit/reversed owner/Graph inputs, and freshly guard both complete files.
+Missing local owners stay external; malformed or mismatched owners refuse selection.
+This is not wired into public commands: explicit/reversed and opt-in expanded
+owner/Graph retrieval/deployment remain unfinished.
 It does not enable IR/Graph creation or establish cross-org pair acceptance.
 
 ```sh

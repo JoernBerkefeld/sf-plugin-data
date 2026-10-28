@@ -1,3 +1,64 @@
+# IR-owned Graph local selector checkpoint — 2026-10-28
+
+Completed only the private local selection seam, NOT public selector integration.
+`selectDeployDependencies(roots, cwd)` now accepts DMO/Segment/IR/Graph inputs,
+expands the exact Graph logical owner's conventional IR artifact using the configured
+source package, and orders selected IR before Graph regardless of explicit order.
+No suffix/ID/name guessing, generated-output selection, or implicit owner creation.
+Missing owner files remain external; malformed/mismatched exact files refuse.
+The existing captureDeployInputDigest re-admits complete IR and Graph bytes on each
+verify; original immutable objects/digests remain intact. Legacy callers unchanged.
+Tests cover default/custom packages, explicit/reversed/expanded selection, missing
+owner, wrong owner, and whitespace-only mutation of either complete file. The public
+owned-root and expansion guards are intentionally unchanged, as is legacy behavior.
+
+NEXT sole-editor slice: public retrieve must discover/qualify source owner via
+independently acquired exact owner/output evidence, never generated-suffix guessing
+or unrelated-owner adoption. Public deploy must pass binding to retrieveDataGraph
+inside protected bindDataGraph, preserve all-pending fingerprints before any write,
+and refresh/rebase dependent fingerprints only after verified selected-owner
+settlement; blindly comparing pre-owner and post-owner owner projections would
+incorrectly block legitimate updates. Add actual command-level explicit/reversed/
+expansion and missing field/key/drift/zero-write/order/no-source-ID regressions,
+then remove public guards only when coupled safe paths exist. No vital new interface
+is guessed or needed for this isolated local slice. Whole-feature Gate4 later.
+
+Retained F:/Temp/ir-graph-qual-qBXFtd/handoff.txt read only: schema-qualified source
+and target owners, not a paired Graph fixture. Next isolated public acceptance
+requires separately authorized actual Graph/owner pair qualification and current
+source/target local-auth checks, explicit resource/mutation budgets, independently
+fresh complete owner/output/root field/key and Graph/transform evidence. Do not
+mutate retained fixtures or infer paired/cross-org/full-E/CREATE acceptance here.
+README updated with partial status; no org calls, live acceptance, fixture changes,
+root DB/index/guide edits, release/version bump or DMO additive work.
+Propagation: only standalone sf-plugin-data@0.1.0 needs this update (done); no
+workspace consumers or language/LSP/hover/wiki/CMS/MCNext/guide changes needed.
+Release remains unassigned and unauthorized. Verification/commit/CI receipts below
+or in outgoing report, never presumed from earlier checkpoints.
+Frozen-code verification: lint:fix then full lint zero warnings, explicit build,
+18/18 focused tests and full 1035/1035 (zero skips/failures), runner121.194s,
+full npm-test125.722s. Only handover receipt prose changed after verification;
+normal enabled hook re-verifies the staged tree before commit/handoff.
+
+## Applied public-selector continuation plan
+
+Baseline clean fetched 3ed2b70204692c2a5bbcfa78c4edfb050f469c3f.
+Gate1/2: original reviewed plan c9a6bd6d remains applicable; this continuation
+changes neither architecture nor safety model. Am I overengineering this? Extend
+the existing selector and immutable input capture, without generic output machinery.
+Gate3 / Parallelization: sole editor, shared selection and command safety invariants
+require sequential slices. First land exact local IR-owner expansion/order/digest
+support in select-deploy-dependencies.ts with dependency-selection regressions.
+Then integrate public retrieve discovery/qualification and coupled deploy rebinding;
+keep the public guard until both are safe. Full feature Gate4 remains later.
+Success for this first bounded slice: explicit/reversed and expanded owner selection,
+exact owner identity, absent owner kept external (never created), malformed owner
+refused, original Graph/IR input bytes freshly verified; legacy DMO/Segment unchanged.
+Verify full tests, lint:fix/zero-warning lint, explicit build and normal enabled hooks,
+exact staged/HEAD tree, push and hosted exact-SHA CI. Update README/handover precisely.
+No org operations, live acceptance, fixture mutation, root/DB/index/guide edits,
+release/version bump or DMO additive work. Public acceptance remains uncompleted.
+
 # IR-owned Graph coupled runtime checkpoint — 2026-10-28
 
 Continued from clean fetched 2eae7ef2edc6b728bb083c37f658025e0a66790c.
