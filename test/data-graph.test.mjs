@@ -1,6 +1,8 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import Deploy from '../lib/commands/data360/deploy.js';
+import { McpExecuteClient } from '../lib/transport/mcp-execute.js';
 import {
   dataGraphFields,
   projectDataGraph,
@@ -190,6 +192,218 @@ function fixture(changes = {}) {
   return { options, writes, observations, reads: () => reads, time: () => time };
 }
 const desired = projectDataGraph(graph(true), intent.apiName, intent).candidate;
+
+/**
+ * Change only evidenced unordered inventories and JSON property insertion order.
+ * @param {number} turn Response ordinal.
+ * @returns {object} Complete synthetic transform.
+ */
+function shuffledTransform(turn) {
+  const raw = transform();
+  const fields = [
+    { name: 'Id__c', type: 'Text', extra: { keep: true } },
+    { name: 'Value__c', type: 'Text' },
+  ];
+  raw.definitions[0].outputDataObjects = [
+    { name: 'SyntheticValue__dlm', fields: turn % 2 ? fields.toReversed() : fields },
+    { name: 'SyntheticId__dlm', fields: [{ name: 'Key__c', type: 'Text' }] },
+  ];
+  if (turn % 2)
+    raw.definitions[0].outputDataObjects = raw.definitions[0].outputDataObjects.toReversed();
+  return turn % 3 ? Object.fromEntries(Object.entries(raw).toReversed()) : raw;
+}
+
+test('Graph acquisition canonicalizes only unique output inventories, preserving properties and ordered arrays', () => {
+  const projection = projectDataGraph(graph(), intent.apiName, intent);
+  const baseline = verifyDataGraphTransform(projection, shuffledTransform(0));
+  assert.equal(
+    JSON.stringify(baseline),
+    JSON.stringify(verifyDataGraphTransform(projection, shuffledTransform(1))),
+  );
+  for (const mode of [
+    'duplicate-output',
+    'duplicate-field',
+    'missing-name',
+    'real-property',
+    'load-order',
+    'mapping-order',
+  ]) {
+    const raw = shuffledTransform(2);
+    const definition = raw.definitions[0];
+    if (mode === 'duplicate-output')
+      definition.outputDataObjects.push(structuredClone(definition.outputDataObjects[0]));
+    if (mode === 'duplicate-field')
+      definition.outputDataObjects[0].fields.push(
+        structuredClone(definition.outputDataObjects[0].fields[0]),
+      );
+    if (mode === 'missing-name') delete definition.outputDataObjects[0].name;
+    if (mode === 'real-property') definition.outputDataObjects[0].fields[0].extra.keep = false;
+    if (mode === 'load-order') definition.nodes.load.parameters.fields.reverse();
+    if (mode === 'mapping-order') definition.nodes.output.parameters.fieldsMappings.reverse();
+    if (mode === 'real-property')
+      assert.notDeepEqual(verifyDataGraphTransform(projection, raw), baseline);
+    else assert.throws(() => verifyDataGraphTransform(projection, raw));
+  }
+  const reordered = graph();
+  reordered.sourceObject.fields.reverse();
+  assert.throws(() => projectDataGraph(reordered, intent.apiName, intent));
+});
+
+test('Graph executor admits shuffled unchanged responses with zero writes and blocks real freshness drift', async () => {
+  const unchanged = projectDataGraph(graph(), intent.apiName, intent).candidate;
+  for (const drift of [false, true]) {
+    let turn = 0;
+    const f = fixture({
+      readGraph: async () => graph(),
+      readTransform: async () => {
+        const raw = shuffledTransform(turn++);
+        if (drift && turn > 1) raw.definitions[0].outputDataObjects[0].fields[0].type = 'Changed';
+        return raw;
+      },
+    });
+    const result = await executeDataGraphDeploy(
+      unchanged,
+      connection,
+      selection,
+      'default',
+      f.options,
+    );
+    assert.equal(result.outcome, drift ? 'blocked' : 'unchanged');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test('Graph real public binding is stable across shuffled responses and retains meaningful drift', async () => {
+  let turn = 0;
+  let drift = false;
+  let driftAfter = Number.POSITIVE_INFINITY;
+  const name = desired.spec.primaryObjectName;
+  const fields = dataGraphFields(true).map((field) => ({
+    name: field.sourceFieldName,
+    type: 'Text',
+    isPrimaryKey: field.isKeyColumn,
+  }));
+  const detail = { id: 'root-id', name, dataSpaceName: 'default', fields };
+  const metadata = [
+    {
+      fullName: name,
+      mktDataModelAttributes: { dataSpaceName: 'default' },
+      fields: fields.map((field) => ({
+        fullName: field.name,
+        type: field.type,
+        mktDataModelFieldAttributes: { primaryIndexOrder: field.isPrimaryKey ? '1' : '' },
+      })),
+    },
+  ];
+  const conn = {
+    ...connection,
+    _transport: { httpRequest() {} },
+    version: '67.0',
+    getApiVersion() {
+      return this.version;
+    },
+    metadata: { read: async () => metadata },
+    request: async (request) => {
+      if (request.method === 'GET') return detail;
+      const operation = JSON.parse(request.body).toolName;
+      if (operation === 'd360_data_graph_get') return { result: graph() };
+      assert.equal(operation, 'd360_transform_get');
+      const raw = shuffledTransform(turn++);
+      if (drift || turn > driftAfter) raw.id = 'changed-transform';
+      return { result: raw };
+    },
+  };
+  const command = Object.create(Deploy.prototype);
+  const input = { document: desired };
+  const baseline = await command.bindDataGraph(input, conn, selection);
+  assert.equal(await command.bindDataGraph(input, conn, selection), baseline);
+  assert.equal(await command.bindDataGraph(input, conn, selection), baseline);
+  drift = true;
+  assert.notEqual(await command.bindDataGraph(input, conn, selection), baseline);
+  drift = false;
+  input.document = projectDataGraph(graph(), intent.apiName, intent).candidate;
+  input.path = 'synthetic-graph.json';
+  input.inputDigest = 'a'.repeat(64);
+  command.parse = async () => ({
+    flags: {
+      'source-dir': ['synthetic'],
+      'api-version': 'auto',
+      'data-space': 'default',
+      'allow-processing': false,
+      preview: false,
+      'target-org': { getOrgId: () => 'synthetic', getConnection: () => conn },
+    },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveInputs = async () => [input];
+  command.captureInput = async () => input.inputDigest;
+  command.verifyDataGraphInput = async () => {};
+  command.preflightDataGraph = preflightDataGraphDeploy;
+  command.executeDataGraph = executeDataGraphDeploy;
+  const previous = process.exitCode;
+  try {
+    const result = await command.run();
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(JSON.stringify(result).includes('DEPLOY_FRESH_ADMISSION_BLOCKED'), false);
+    // First preflight and initial binding succeed; only fresh binding changes.
+    turn = 0;
+    driftAfter = 2;
+    const blocked = await command.run();
+    assert.equal(blocked.status, 'blocked', JSON.stringify(blocked));
+    assert.equal(JSON.stringify(blocked).includes('DEPLOY_FRESH_ADMISSION_BLOCKED'), true);
+    assert.ok(blocked.result.items.every((item) => item.mutation === 'not-attempted'));
+  } finally {
+    process.exitCode = previous;
+  }
+});
+
+test('Graph executor uses actual facade transport validation with omitted update creationMode', async () => {
+  let updated = false;
+  const requests = [];
+  const conn = {
+    ...connection,
+    _transport: { httpRequest() {} },
+    request: async (request) => {
+      const envelope = JSON.parse(request.body);
+      const parameters = JSON.parse(envelope.paramsJson);
+      requests.push({ operation: envelope.toolName, parameters });
+      assert.equal(envelope.toolName, 'd360_data_graph_update');
+      assert.equal(Object.hasOwn(parameters.input, 'creationMode'), false);
+      updated = true;
+      return {
+        result: {
+          id: intent.ownerId,
+          name: intent.apiName,
+          dataspaceName: 'default',
+          status: 'ready',
+        },
+      };
+    },
+  };
+  const f = fixture({
+    mutate: undefined,
+    readGraph: async () => graph(updated),
+    readTransform: async () => transform(updated),
+  });
+  const result = await executeDataGraphDeploy(desired, conn, selection, 'default', f.options);
+  assert.equal(requests.length, 1, JSON.stringify(result));
+  assert.equal(result.outcome, 'updated', JSON.stringify(requests));
+  const client = new McpExecuteClient(conn, selection);
+  const input = { name: intent.apiName, dataspaceName: 'default', ...desired.spec };
+  for (const mode of [JSON.parse('null'), '', 'OTHER'])
+    await assert.rejects(
+      client.mutate('d360_data_graph_update', {
+        input: { ...input, creationMode: mode },
+        editScheduleOnly: false,
+      }),
+      { code: 'INVALID_REQUEST' },
+    );
+  await assert.rejects(client.mutate('d360_data_graph_create', { input }), {
+    code: 'INVALID_REQUEST',
+  });
+  assert.equal(requests.length, 1);
+});
 
 test('Graph binds independent DMO identity, field types and explicit key without generated provisioning', async () => {
   const name = desired.spec.primaryObjectName;

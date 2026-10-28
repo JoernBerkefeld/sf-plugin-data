@@ -126,7 +126,53 @@ export function verifyDataGraphTransform(
       { sourceField: 'version', targetField: 'version__c' },
     ]),
   );
-  return structuredClone(raw);
+  const detached = structuredClone(raw);
+  for (const entry of detached.definitions as unknown[]) {
+    const item = graphRecord(entry);
+    if (!Object.hasOwn(item, 'outputDataObjects')) continue;
+    item.outputDataObjects = graphInventory(item.outputDataObjects).map((output) => ({
+      ...output,
+      fields: graphInventory(output.fields),
+    }));
+  }
+  return graphCanonicalObject(detached) as Record<string, unknown>;
+}
+
+/**
+ * Sort only evidenced unordered output inventories by exact unique name.
+ * @param {unknown} value Inventory.
+ * @returns {Array<Record<string, unknown>>} Detached ordered inventory.
+ */
+function graphInventory(value: unknown): Array<Record<string, unknown>> {
+  graphRequire(Array.isArray(value) && value.length <= 4096);
+  const entries = value.map((item: unknown) => graphRecord(item));
+  const names = new Set<string>();
+  for (const entry of entries) {
+    graphText(entry.name);
+    graphRequire(!names.has(entry.name as string));
+    names.add(entry.name as string);
+  }
+  // eslint-disable-next-line unicorn/no-array-sort -- ES2022 library target; entries is a new array.
+  return entries.sort((a, b) =>
+    a.name === b.name ? 0 : (a.name as string) < (b.name as string) ? -1 : 1,
+  );
+}
+
+/**
+ * Stabilize JSON object keys without changing any array order.
+ * @param {unknown} value Detached JSON.
+ * @returns {unknown} Stable JSON.
+ */
+export function graphCanonicalObject(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item: unknown) => graphCanonicalObject(item));
+  if (value && typeof value === 'object') {
+    // eslint-disable-next-line unicorn/no-array-sort -- ES2022 library target; keys is a new array.
+    const keys = Object.keys(value).sort();
+    return Object.fromEntries(
+      keys.map((key) => [key, graphCanonicalObject(graphRecord(value)[key])]),
+    );
+  }
+  return value;
 }
 
 /**

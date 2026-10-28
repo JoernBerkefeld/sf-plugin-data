@@ -124,14 +124,17 @@ function json(value: unknown, ancestors = new Set<object>()): void {
 /**
  *
  * @param {unknown} value Candidate JSON value.
+ * @param {boolean} update Allow the qualified update omission of creationMode.
  * @returns {unknown} Validated value or a fail-closed diagnostic.
  */
-function graph(value: unknown): JsonObject {
+function graph(value: unknown, update: boolean): JsonObject {
   const input = object(value, [
     'name',
     'label',
     'description',
-    'creationMode',
+    ...(!update || (value && typeof value === 'object' && Object.hasOwn(value, 'creationMode'))
+      ? ['creationMode']
+      : []),
     'dataspaceName',
     'primaryObjectName',
     'type',
@@ -143,7 +146,7 @@ function graph(value: unknown): JsonObject {
     !name(input.name) ||
     !text(input.label) ||
     typeof input.description !== 'string' ||
-    input.creationMode !== 'DEFAULT' ||
+    ((!update || Object.hasOwn(input, 'creationMode')) && input.creationMode !== 'DEFAULT') ||
     input.dataspaceName !== 'default' ||
     !name(input.primaryObjectName) ||
     !input.primaryObjectName.endsWith('__dlm') ||
@@ -345,7 +348,7 @@ function parameters(operation: Operation, value: unknown): JsonObject {
     case 'd360_data_graph_update': {
       const update = operation === 'd360_data_graph_update';
       const parameters_ = object(value, update ? ['input', 'editScheduleOnly'] : ['input']);
-      graph(parameters_.input);
+      graph(parameters_.input, update);
       if (update && parameters_.editScheduleOnly !== false) invalid();
       return parameters_;
     }

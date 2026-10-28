@@ -5,7 +5,7 @@ import type {
   DataGraphDeployExecution,
   DataGraphObservation,
 } from '../../services/execute-data-graph-deploy.js';
-import { retrieveDataGraph } from '../../services/retrieve-data-graph.js';
+import { graphCanonicalObject, retrieveDataGraph } from '../../services/retrieve-data-graph.js';
 import { bindDataGraphDependencies } from '../../services/bind-data-graph-dependencies.js';
 import { validateDataGraphDocument } from '../../artifacts/data-graph-document.js';
 import { verifyDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
@@ -303,7 +303,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
       throw new Error('Graph binding unavailable');
     return createHash('sha256')
-      .update(JSON.stringify({ dependencies, expectations: acquired.expectations }))
+      .update(
+        JSON.stringify(graphCanonicalObject({ dependencies, expectations: acquired.expectations })),
+      )
       .digest('hex');
   }
 
