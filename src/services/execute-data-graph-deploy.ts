@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
 import {
+  dataGraphUpdateInput,
   graphRecord,
   graphRequire,
   projectDataGraph,
@@ -136,14 +137,36 @@ export async function executeDataGraphDeploy(
       NonNullable<Awaited<ReturnType<typeof retrieveDataGraph>>['expectations']>
     > => {
       scope();
+      graphRequire(
+        isDeepStrictEqual(
+          dependency,
+          await verifyDependencies(
+            structuredClone(desired),
+            connection,
+            { ...selection },
+            dataSpace,
+          ),
+        ),
+      );
       const acquired = await acquire(
         connection,
         desired.identity.apiName,
         { ...selection },
         dataSpace,
-        readOptions,
+        { ...readOptions, dependencyBinding: structuredClone(dependency) },
       );
-      const baseline = admitDataGraphAcquisition(acquired, desired);
+      const baseline = admitDataGraphAcquisition(acquired, desired, dependency);
+      graphRequire(
+        isDeepStrictEqual(
+          dependency,
+          await verifyDependencies(
+            structuredClone(desired),
+            connection,
+            { ...selection },
+            dataSpace,
+          ),
+        ),
+      );
       scope();
       return baseline;
     };
@@ -160,6 +183,7 @@ export async function executeDataGraphDeploy(
       baseline.graph,
       desired.identity.apiName,
       baseline.intent,
+      dependency,
     ).candidate;
     graphRequire(isDeepStrictEqual(current, desired) || dataGraphAppend(current, desired));
     await verifyInput();
@@ -203,11 +227,7 @@ export async function executeDataGraphDeploy(
           { dataGraphName: name, includeCIDetails: true, includeSegmentDetails: true },
           observe,
         ));
-    const input = {
-      name: desired.identity.apiName,
-      dataspaceName: 'default',
-      ...structuredClone(desired.spec),
-    };
+    const input = dataGraphUpdateInput(desired, dependency);
     attempted = true;
     const response = graphRecord(await mutate({ input, editScheduleOnly: false }));
     graphRequire(
@@ -243,7 +263,12 @@ export async function executeDataGraphDeploy(
       const status = raw.status;
       graphRequire(['processing', 'editing_post_sync', 'ready'].includes(status as string));
       const normalized = { ...raw, status: 'ready' };
-      const projected = projectDataGraph(normalized, desired.identity.apiName, baseline.intent);
+      const projected = projectDataGraph(
+        normalized,
+        desired.identity.apiName,
+        baseline.intent,
+        dependency,
+      );
       graphRequire(isDeepStrictEqual(projected.candidate, desired));
       preserved(baseline.graph, normalized, desired);
       if (status !== 'ready') continue;
@@ -251,7 +276,8 @@ export async function executeDataGraphDeploy(
       const settled = await capture();
       graphRequire(
         isDeepStrictEqual(
-          projectDataGraph(settled.graph, desired.identity.apiName, baseline.intent).candidate,
+          projectDataGraph(settled.graph, desired.identity.apiName, baseline.intent, dependency)
+            .candidate,
           desired,
         ),
       );

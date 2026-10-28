@@ -13,12 +13,14 @@ import type {
   DataGraphProjection,
 } from '../artifacts/data-graph-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
+import type { DataGraphDependencyBinding } from './bind-data-graph-dependencies.js';
 import { McpExecuteClient } from '../transport/mcp-execute.js';
 import type { McpReadObserver } from '../transport/mcp-execute.js';
 
 export type DataGraphConnection = Pick<Connection, 'instanceUrl' | 'request' | 'getApiVersion'>;
 export type DataGraphReadOptions = {
   creationIntent?: DataGraphCreationIntent;
+  dependencyBinding?: DataGraphDependencyBinding;
   observe?: McpReadObserver;
   readGraph?: (apiName: string, observe?: McpReadObserver) => Promise<unknown>;
   readTransform?: (name: string, observe?: McpReadObserver) => Promise<unknown>;
@@ -90,7 +92,7 @@ export function verifyDataGraphTransform(
     .filter((item) => item.action === 'load')
     .map((item) => graphRecord(item.parameters));
   const rootLoads = loads.filter(
-    (item) => graphRecord(item.dataset).name === projection.candidate.spec.primaryObjectName,
+    (item) => graphRecord(item.dataset).name === owner.primaryObjectName,
   );
   graphRequire(
     rootLoads.length === 1 &&
@@ -209,7 +211,15 @@ export async function retrieveDataGraph(
       options.readTransform ??
       ((name, observe) =>
         client.read('d360_transform_get', { dataTransformNameOrId: name }, observe));
-    const projection = projectDataGraph(await readGraph(apiName, options.observe), apiName, intent);
+    const binding = options.dependencyBinding
+      ? structuredClone(options.dependencyBinding)
+      : undefined;
+    const projection = projectDataGraph(
+      await readGraph(apiName, options.observe),
+      apiName,
+      intent,
+      binding,
+    );
     const transform = verifyDataGraphTransform(
       projection,
       await readTransform(
@@ -217,7 +227,12 @@ export async function retrieveDataGraph(
         options.observe,
       ),
     );
-    const fresh = projectDataGraph(await readGraph(apiName, options.observe), apiName, intent);
+    const fresh = projectDataGraph(
+      await readGraph(apiName, options.observe),
+      apiName,
+      intent,
+      binding,
+    );
     graphRequire(isDeepStrictEqual(projection, fresh) && isDeepStrictEqual(apiVersion, selection));
     dataGraphScope(connection, selection, dataSpace);
     return {

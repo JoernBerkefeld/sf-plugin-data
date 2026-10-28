@@ -9,6 +9,7 @@ import {
 } from '../lib/artifacts/dependency-selection.js';
 import {
   dataGraphFields,
+  dataGraphUpdateInput,
   projectDataGraph,
   serializeDataGraphDocument,
   validateDataGraphDocument,
@@ -243,7 +244,233 @@ for (const mode of [
     );
   });
 
-test('private qualified binding does not open unsupported owner Graph preview or execution', async () => {
+/**
+ * Replace evidenced raw lineage names, never Graph node IDs.
+ * @param {unknown} value Synthetic response.
+ * @param {string} name Exact owner-returned DMO name.
+ * @returns {unknown} Detached target-local response.
+ */
+function localRoot(value, name) {
+  if (Array.isArray(value)) return value.map((item) => localRoot(item, name));
+  if (value && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, localRoot(item, name)]),
+    );
+  return value === 'UnifiedssotIndividualMkt__dlm' ? name : value;
+}
+
+test('owned runtime projects logical root and translates full target-local wire through settlement', async () => {
+  const f = ownedRootFixture();
+  const binding = await bindDataGraphDependencies(
+    f.document,
+    connection,
+    selection,
+    'default',
+    f.acquire,
+    f.acquireOwner,
+  );
+  const name = binding.root.targetApiName;
+  const raw = localRoot(graph(), name);
+  const projected = projectDataGraph(raw, intent.apiName, undefined, binding);
+  assert.deepEqual(projected.candidate, f.document);
+  assert.deepEqual(projected.expectations.graph, raw);
+  assert.equal(raw.sourceObject.id, 'node-id');
+  verifyDataGraphTransform(projected, localRoot(transform(), name));
+  const text = serializeDataGraphDocument(projected.candidate);
+  assert.equal(text.includes(name), false);
+  assert.equal(text.includes(binding.root.targetId), false);
+  assert.throws(() => projectDataGraph(raw, intent.apiName));
+  assert.throws(() =>
+    projectDataGraph(localRoot(graph(), 'Unrelated__dlm'), intent.apiName, undefined, binding),
+  );
+  const desired = structuredClone(f.document);
+  desired.spec.sourceObject.fields = dataGraphFields(true);
+  const wire = dataGraphUpdateInput(desired, binding);
+  let rejectedWrites = 0;
+  const invalidClient = new McpExecuteClient(
+    {
+      ...connection,
+      _transport: { httpRequest() {} },
+      request: async () => {
+        rejectedWrites++;
+      },
+    },
+    selection,
+  );
+  await assert.rejects(
+    invalidClient.mutate('d360_data_graph_update', {
+      input: { name: desired.identity.apiName, dataspaceName: 'default', ...desired.spec },
+      editScheduleOnly: false,
+    }),
+    { code: 'INVALID_REQUEST' },
+  );
+  assert.equal(rejectedWrites, 0);
+  assert.equal(wire.primaryObjectName, name);
+  assert.equal(wire.sourceObject.name, name);
+  assert.equal(wire.sourceObject.devName, name);
+  assert.equal(JSON.stringify(wire).includes('target-only'), false);
+  let updated = false;
+  let writes = 0;
+  const options = {
+    verifyDependencies: (value, conn, version, space) =>
+      bindDataGraphDependencies(value, conn, version, space, f.acquire, f.acquireOwner),
+    readGraph: async () => localRoot(graph(updated), name),
+    readTransform: async () => localRoot(transform(updated), name),
+    verifyInput: async () => {},
+    recordObservation: async () => {},
+    allowProcessing: true,
+    now: () => Date.parse('2026-01-01T10:30:00.000Z'),
+    mutate: async (parameters) => {
+      writes++;
+      assert.deepEqual(parameters, { input: wire, editScheduleOnly: false });
+      const client = new McpExecuteClient(
+        {
+          ...connection,
+          _transport: { httpRequest() {} },
+          request: async (request) => {
+            const body = JSON.parse(request.body);
+            assert.equal(JSON.parse(body.paramsJson).input.primaryObjectName, name);
+            return {
+              result: {
+                id: intent.ownerId,
+                name: intent.apiName,
+                dataspaceName: 'default',
+                status: 'processing',
+              },
+            };
+          },
+        },
+        selection,
+      );
+      updated = true;
+      return client.mutate('d360_data_graph_update', parameters);
+    },
+  };
+  const unchanged = await preflightDataGraphDeploy(
+    f.document,
+    connection,
+    selection,
+    'default',
+    options,
+  );
+  assert.equal(unchanged.outcome, 'unchanged');
+  const preview = await preflightDataGraphDeploy(
+    desired,
+    connection,
+    selection,
+    'default',
+    options,
+  );
+  assert.equal(preview.outcome, 'update');
+  const result = await executeDataGraphDeploy(desired, connection, selection, 'default', options);
+  assert.equal(result.outcome, 'updated');
+  assert.equal(writes, 1);
+  const repeat = await executeDataGraphDeploy(desired, connection, selection, 'default', options);
+  assert.equal(repeat.outcome, 'unchanged');
+  assert.equal(writes, 1);
+});
+
+for (const mode of ['owner', 'output', 'field', 'key', 'fingerprint'])
+  test(`owned runtime refuses ${mode} drift before any write`, async () => {
+    const f = ownedRootFixture();
+    let writes = 0;
+    let bindings = 0;
+    const options = {
+      verifyDependencies: async (value, conn, version, space) => {
+        const proof = await bindDataGraphDependencies(
+          value,
+          conn,
+          version,
+          space,
+          async (name) => {
+            const resource = await f.acquire(name);
+            if (mode === 'output') resource.detail.id = 'duplicate';
+            if (mode === 'field') resource.detail.fields = [];
+            if (mode === 'key')
+              resource.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder = '';
+            return resource;
+          },
+          async (...arguments_) => {
+            const owner = await f.acquireOwner(...arguments_);
+            if (mode === 'owner') owner.identity.apiName = 'WrongOwner';
+            return owner;
+          },
+        );
+        if (mode === 'fingerprint' && bindings++ > 0) proof.fingerprint = 'changed';
+        return proof;
+      },
+      readGraph: async () => localRoot(graph(), f.projection.expectations.outputs[0].sourceApiName),
+      readTransform: async () =>
+        localRoot(transform(), f.projection.expectations.outputs[0].sourceApiName),
+      allowProcessing: true,
+      verifyInput: async () => {},
+      recordObservation: async () => {},
+      mutate: async () => {
+        writes++;
+      },
+    };
+    const result = await executeDataGraphDeploy(
+      f.document,
+      connection,
+      selection,
+      'default',
+      options,
+    );
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(writes, 0);
+  });
+
+test('private qualification cannot bypass public whole-selection owned-root admission', async () => {
+  const f = ownedRootFixture();
+  await bindDataGraphDependencies(
+    f.document,
+    connection,
+    selection,
+    'default',
+    f.acquire,
+    f.acquireOwner,
+  );
+  for (const reverse of [false, true]) {
+    const command = Object.create(Deploy.prototype);
+    const inputs = [
+      { path: 'legacy.json', document: desired },
+      { path: 'owned.json', document: f.document },
+    ];
+    command.resolveInputs = async () => (reverse ? inputs.toReversed() : inputs);
+    command.parse = async () => ({
+      flags: {
+        'source-dir': ['synthetic'],
+        'api-version': 'auto',
+        'data-space': 'default',
+        'allow-processing': true,
+        preview: false,
+        'target-org': {
+          getOrgId: () => 'synthetic',
+          getConnection: () => {
+            throw new Error('no target access');
+          },
+        },
+      },
+    });
+    command.jsonEnabled = () => true;
+    let writes = 0;
+    command.executeDataGraph = async () => {
+      writes++;
+    };
+    const previous = process.exitCode;
+    try {
+      const result = await command.run();
+      assert.equal(result.status, 'blocked');
+      assert.equal(JSON.stringify(result).includes('DATA_GRAPH_OWNER_SELECTION_UNSUPPORTED'), true);
+      assert.equal(writes, 0);
+    } finally {
+      process.exitCode = previous;
+    }
+  }
+});
+
+test('private qualified binding does not admit unrelated transform lineage', async () => {
   const f = ownedRootFixture();
   let writes = 0;
   const options = {

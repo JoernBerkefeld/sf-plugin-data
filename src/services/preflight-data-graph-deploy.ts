@@ -8,6 +8,7 @@ import {
 import type { DataGraphDocument } from '../artifacts/data-graph-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindDataGraphDependencies } from './bind-data-graph-dependencies.js';
+import type { DataGraphDependencyBinding } from './bind-data-graph-dependencies.js';
 import {
   dataGraphScope,
   retrieveDataGraph,
@@ -37,11 +38,13 @@ export type DataGraphDeployPreview = {
  * Re-admit full raw evidence rather than trusting injected candidates.
  * @param {DataGraphAcquisition} acquired Acquisition.
  * @param {DataGraphDocument} desired Desired.
+ * @param {DataGraphDependencyBinding} [binding] Fresh private dependency evidence.
  * @returns {NonNullable<DataGraphAcquisition['expectations']>} Checked baseline.
  */
 export function admitDataGraphAcquisition(
   acquired: DataGraphAcquisition,
   desired: DataGraphDocument,
+  binding?: DataGraphDependencyBinding,
 ): NonNullable<DataGraphAcquisition['expectations']> {
   graphRequire(
     acquired.candidate &&
@@ -54,6 +57,10 @@ export function admitDataGraphAcquisition(
     acquired.expectations.graph,
     desired.identity.apiName,
     acquired.expectations.intent,
+    binding,
+  );
+  graphRequire(
+    isDeepStrictEqual(projection.candidate.spec.primaryObjectName, desired.spec.primaryObjectName),
   );
   graphRequire(
     isDeepStrictEqual(projection.candidate, validateDataGraphDocument(acquired.candidate)),
@@ -113,7 +120,7 @@ export async function preflightDataGraphDeploy(
   try {
     const desired = validateDataGraphDocument(value);
     dataGraphScope(connection, apiVersion, dataSpace);
-    await (options.verifyDependencies ?? bindDataGraphDependencies)(
+    const dependency = await (options.verifyDependencies ?? bindDataGraphDependencies)(
       structuredClone(desired),
       connection,
       { ...apiVersion },
@@ -124,9 +131,20 @@ export async function preflightDataGraphDeploy(
       desired.identity.apiName,
       { ...apiVersion },
       dataSpace,
-      options,
+      { ...options, dependencyBinding: structuredClone(dependency) },
     );
-    admitDataGraphAcquisition(acquired, desired);
+    admitDataGraphAcquisition(acquired, desired, dependency);
+    graphRequire(
+      isDeepStrictEqual(
+        dependency,
+        await (options.verifyDependencies ?? bindDataGraphDependencies)(
+          structuredClone(desired),
+          connection,
+          { ...apiVersion },
+          dataSpace,
+        ),
+      ),
+    );
     const current = acquired.candidate!;
     if (isDeepStrictEqual(current, desired)) return result('unchanged');
     return dataGraphAppend(current, desired)

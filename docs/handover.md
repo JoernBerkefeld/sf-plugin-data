@@ -1,3 +1,65 @@
+# IR-owned Graph coupled runtime checkpoint — 2026-10-28
+
+Continued from clean fetched 2eae7ef2edc6b728bb083c37f658025e0a66790c.
+Completed the coupled private runtime paths, not just an opened projection guard.
+`projectDataGraph(raw, apiName, intent?, binding?)` translates exact verified
+`binding.root.targetApiName` to `binding.root.identity` in all three portable slots;
+raw Graph/node IDs and complete configuration remain private and unchanged. Node
+IDs are NOT compared to DMO IDs. Transform lineage uses the actual raw root name.
+`DataGraphReadOptions.dependencyBinding?` is private, detached on entry; acquisition
+still verifies Graph/transform/fresh identical Graph. `admitDataGraphAcquisition`
+accepts the fresh binding and reprojects raw evidence plus exact desired root.
+`dataGraphUpdateInput(document,binding)` maps only primary/source name/devName to
+the exact target-local name, retains complete portable configuration, omits IDs
+and creationMode, and feeds the unchanged strict transport validator. Portable
+logical objects sent directly to transport still fail before dispatch.
+
+Preflight binds independently before acquisition and rebinds afterward; execution
+binds before/after each independent capture, compares complete binding/fingerprint
+and complete baseline, repeats local input guards and retains one-write/poll/
+independent settled transform freshness/full preservation/no-replay semantics.
+Public deploy now separately refuses any logical owned root during whole-selection
+admission, before connection access or writes, in either selector/file order.
+No public retrieve owner discovery or expanded selection was enabled. Existing
+legacy public batch binding remains unchanged. Do not remove the new public guard
+until the later coupled selector/command integration is complete.
+
+Remaining selector slice: explicit/reversed owner+Graph retrieval and deployment;
+opt-in expansion with exact owner discovery, independent source qualification,
+byte/digest capture, owner-before-Graph dependency order, all-pending fingerprints,
+and target-local fresh dependent rebinding. No implicit owner creation. Existing
+schema qualification is not live paired Graph/cross-org or product CREATE evidence.
+Whole-feature Gate4 is deferred to coordinator; DMO additive remains deferred.
+README updated; standalone sf-plugin-data@0.1.0, no workspace consumers or language,
+LSP/hover/wiki/CMS/MCNext/guide propagation. Release unassigned and unauthorized.
+No org calls/mutations/live acceptance, fixture edits, scratch/cleanup, root DB/index,
+guide changes, version bump or release. Verification/commit/CI receipts follow in
+outgoing worker report. Current frozen-code verification: lint:fix and full lint
+zero warnings, explicit build and full tests passed 1034/1034, zero skips/failures;
+runner120.482s, combined149.360s. Only this receipt prose changed afterward;
+normal enabled hook re-verifies the exact staged/HEAD tree before handoff.
+
+## Applied continuation plan
+
+Prior Gate1/2 plan and review c9a6bd6d are complete and remain applicable; no
+architecture/safety change or additional review. Gate3: one sequential sole editor
+for coupled projection/transform/preflight/execution/transport invariants; selectors
+are a separate later chunk. Am I overengineering this? Reuse the exact private
+binding and existing wire validator, not a generic output framework.
+
+1. Thread freshly verified root binding through raw Graph projection and transform
+   lineage; retain full raw evidence and translate only the three portable root slots.
+2. Re-admit preflight and every execution/poll/settlement path using that binding;
+   compare full fresh dependency fingerprints, preserve digest/pending-batch guards,
+   single-attempt mutation and unknown/no-replay semantics. Explicit public owned
+   selection remains blocked independently of private runtime qualification.
+3. Add legacy/owned projection, target-local wire, drift/zero-write/public-admission
+   regressions. Run lint:fix, zero-warning lint, explicit build and full tests on
+   frozen inputs; normal enabled commit hooks and exact staged/HEAD-tree audit,
+   then push and verify hosted exact SHA. No release or org operations.
+4. Update README and this handover with exact scope/interfaces/remaining selectors.
+   Whole-feature Gate4 remains with coordinator. No guide/root/DB edits.
+
 # IR-owned Graph exact dependency binding checkpoint — 2026-10-28
 
 Continued sole-editor from clean fetched `28891d9bd1bd8bd5e85ab06705e3c75da2b1d45b`.

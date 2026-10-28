@@ -612,7 +612,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (flags['include-dependencies'])
           return finish('blocked', 'DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
         for (const input of admitted)
-          if (input.document.kind === 'data-graph') validateDataGraphDocument(input.document);
+          if (input.document.kind === 'data-graph') {
+            const document = validateDataGraphDocument(input.document);
+            if (typeof document.spec.primaryObjectName !== 'string')
+              return finish('blocked', 'DATA_GRAPH_OWNER_SELECTION_UNSUPPORTED');
+          }
       }
       if (gitDataGraphs) {
         const current = admitted.filter(

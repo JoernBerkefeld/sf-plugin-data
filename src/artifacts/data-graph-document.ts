@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { IdentityResolutionOutputIdentity } from './identity-resolution-document.js';
+import type { DataGraphDependencyBinding } from '../services/bind-data-graph-dependencies.js';
 
 export type DataGraphRoot = 'UnifiedssotIndividualMkt__dlm' | IdentityResolutionOutputIdentity;
 
@@ -281,12 +282,14 @@ const fieldKeys = [
  * @param {unknown} value Exact GET result.
  * @param {string} apiName Expected owner.
  * @param {DataGraphCreationIntent} intent Private associated creation knowledge.
+ * @param {DataGraphDependencyBinding} [binding] Fresh private exact root qualification.
  * @returns {DataGraphProjection} Portable and full private baseline.
  */
 export function projectDataGraph(
   value: unknown,
   apiName: string,
   intent?: DataGraphCreationIntent,
+  binding?: DataGraphDependencyBinding,
 ): DataGraphProjection {
   json(value);
   const raw = graphRecord(value, [
@@ -366,6 +369,16 @@ export function projectDataGraph(
   graphRequire(
     schedule.frequency === 7 && ['day', 'Day'].includes(schedule.timeGranularity as string),
   );
+  graphText(raw.primaryObjectName);
+  const root = binding?.root;
+  if (root) {
+    graphText(binding.fingerprint);
+    graphText(root.targetId);
+    graphRequire(dataGraphName.test(root.targetApiName) && root.targetApiName.endsWith('__dlm'));
+    validateDataGraphRoot(root.identity);
+    graphRequire(raw.primaryObjectName === root.targetApiName);
+  }
+  const portableRoot = root ? root.identity : raw.primaryObjectName;
   const candidate = validateDataGraphDocument({
     schemaVersion: 1,
     kind: 'data-graph',
@@ -373,13 +386,13 @@ export function projectDataGraph(
     spec: {
       label: raw.label,
       description: raw.description,
-      primaryObjectName: raw.primaryObjectName,
+      primaryObjectName: portableRoot,
       type: 'NONE',
       fullRefreshConfig: { schedule: { frequency: 7, timeGranularity: 'Day' } },
       incrementalRefreshConfig: raw.incrementalRefreshConfig,
       sourceObject: {
-        name: node.name,
-        devName: node.name,
+        name: portableRoot,
+        devName: portableRoot,
         label: node.label,
         path: node.path,
         fields,
@@ -393,6 +406,38 @@ export function projectDataGraph(
       graph: structuredClone(raw),
       ...(intent ? { intent: structuredClone(intent) } : {}),
     },
+  };
+}
+
+/**
+ * Translate only qualified root slots to exact target-local wire names.
+ * @param {DataGraphDocument} value Portable document.
+ * @param {DataGraphDependencyBinding} binding Fresh private qualification.
+ * @returns {Record<string, unknown>} Full target-local update input.
+ */
+export function dataGraphUpdateInput(
+  value: DataGraphDocument,
+  binding: DataGraphDependencyBinding,
+): Record<string, unknown> {
+  const document = validateDataGraphDocument(value);
+  const root = document.spec.primaryObjectName;
+  graphText(binding.fingerprint);
+  let name: string;
+  if (typeof root === 'string') {
+    graphRequire(!binding.root);
+    name = root;
+  } else {
+    graphRequire(binding.root && isDeepStrictEqual(binding.root.identity, root));
+    graphText(binding.root.targetId);
+    name = binding.root.targetApiName;
+    graphRequire(dataGraphName.test(name) && name.endsWith('__dlm'));
+  }
+  return {
+    name: document.identity.apiName,
+    dataspaceName: 'default',
+    ...document.spec,
+    primaryObjectName: name,
+    sourceObject: { ...document.spec.sourceObject, name, devName: name },
   };
 }
 
