@@ -1,3 +1,5 @@
+import { validateCalculatedInsightDocument } from './calculated-insight-document.js';
+import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 import { validateIdentityResolutionDocument } from './identity-resolution-document.js';
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 import type { DmoDocument } from './dmo-document.js';
@@ -6,7 +8,7 @@ import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
 export type DependencyIdentity = {
-  kind: 'dmo' | 'segment' | 'identity-resolution';
+  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight';
   dataSpace: string;
   apiName: string;
 };
@@ -34,7 +36,7 @@ export class DependencySelectionError extends Error {
  */
 export function dependencyKey(identity: DependencyIdentity): string {
   if (
-    !['dmo', 'segment', 'identity-resolution'].includes(identity.kind) ||
+    !['dmo', 'segment', 'identity-resolution', 'calculated-insight'].includes(identity.kind) ||
     identity.dataSpace !== 'default' ||
     !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName)
   )
@@ -48,8 +50,19 @@ export function dependencyKey(identity: DependencyIdentity): string {
  * @returns {DependencyNode} Exact component and dependencies.
  */
 export function documentDependencyNode(
-  value: DmoDocument | SegmentDocument | IdentityResolutionDocument,
+  value: DmoDocument | SegmentDocument | IdentityResolutionDocument | CalculatedInsightDocument,
 ): DependencyNode {
+  if (value.kind === 'calculated-insight') {
+    const document = validateCalculatedInsightDocument(value);
+    return {
+      identity: { kind: 'calculated-insight', ...document.identity },
+      dependencies: document.spec.dependencies.map(({ kind, dataSpace, apiName }) => ({
+        kind,
+        dataSpace,
+        apiName,
+      })),
+    };
+  }
   if (value.kind === 'identity-resolution') {
     const document = validateIdentityResolutionDocument(value);
     return {

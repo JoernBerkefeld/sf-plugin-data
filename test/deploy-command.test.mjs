@@ -80,7 +80,7 @@ const run = async (command) => {
   }
 };
 
-test('internal CI admission blocks public mixed selection before target work', async () => {
+test('CI dependency expansion blocks public mixed selection before target work', async () => {
   const { command, calls } = invocation({ preview: false, 'include-dependencies': true });
   command.resolveInputs = async () => [
     input(),
@@ -93,7 +93,7 @@ test('internal CI admission blocks public mixed selection before target work', a
   ];
   const { result } = await run(command);
   assert.equal(result.status, 'blocked');
-  assert.equal(result.diagnostics.errors[0].code, 'CALCULATED_INSIGHT_ROUTING_UNSUPPORTED');
+  assert.equal(result.diagnostics.errors[0].code, 'CI_DEPENDENCY_EXPANSION_UNSUPPORTED');
   assert.deepEqual(calls, []);
 });
 

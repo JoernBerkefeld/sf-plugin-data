@@ -80,7 +80,10 @@ export async function selectDeployDependencies(
         continue;
       }
       const admitted = await readDeployInputs({ cwd, metadata: [`dmo:${dependency.apiName}`] });
-      const added = admitted.filter(isSupportedDeployInput);
+      const added = admitted.filter(
+        (input): input is SupportedDeployInput =>
+          isSupportedDeployInput(input) && input.document.kind !== 'calculated-insight',
+      );
       if (
         added.length !== 1 ||
         dependencyKey(documentDependencyNode(added[0].document).identity) !== key

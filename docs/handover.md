@@ -1,3 +1,65 @@
+# PUBLIC CI command routing — 2026-10-28
+
+Continuation from fetched clean HEAD/origin a03a95a209b905e3e39dc23ffa99d59b7ae7f050.
+Written command-boundary plan, simplicity/parallelization assessment and dedicated
+read-only senior review d47d5479 completed before edits, zero must-fix. One coupled
+command owner; operation-local API65, all-selection pair barrier and original Git
+snapshots explicitly enforced. Whole-feature Gate4/doc-propagation remains coordinator-owned.
+
+PUBLIC implemented outcome (not only artifacts): exact calculated-insight:Name__cio
+retrieve/preview/deploy and captured --changed-since pairs now route existing CI
+services at numeric65/auto/default. Independent standard source XML retrieval uses
+new retrieveCalculatedInsightSourceMetadata(targetOrg,apiName,runner?) in the existing
+allowlisted project-metadata boundary; member/filename omit__cio. Runtime+SOAP CI
+acquisition, typed DMO binding and validateCalculatedInsightPair all finish for every
+selected CI before any mixed writer. CI acquisition finishes before shared IR receiver
+repins67. Strict pair writer is reused, never synthesizes or predeploys XML.
+
+Deploy protected seams: preflightCalculatedInsight, executeCalculatedInsight,
+verifyCalculatedInsightInput, bindCalculatedInsight and
+recordCalculatedInsightObservation(path,observation). Private detached observations
+live only in calculatedInsightObservations Map; command envelopes/artifacts omit them.
+Original captured Git CI path/companion/document/digest must equal resolver admissions;
+both captured and resolved bytes are reverified. Dependency nodes carry actual DMO
+references for mixed ordering. Whole-selection input/effects/bindings preflight and
+all-pending CI rebinding/preflight run before every mixed dispatch. Existing executor
+receives mandatory verifyInput/private recorder and boolean processing acknowledgement;
+at most one expression-only PATCH, bounded independent settlement, unknown stops/no replay.
+Supported only existing ACTIVE qualified forward same-aggregation false-predicate
+DeviceId IS NOT NULL edit or complete unchanged repeat. Creation/shell conversion,
+reverse/broad SQL, labels/schedules, inventory and CI dependency expansion remain blocked.
+
+Changed production: commands/data360/{retrieve,deploy}.ts,
+transport/{project-metadata,api-version}.ts,
+artifacts/{dependency-selection,read-deploy-input}.ts,
+services/select-deploy-dependencies.ts. New test/calculated-insight-command.test.mjs
+has21 command/transport/mixed regressions; existing input and public guard tests updated.
+README and capabilities/artifact-format/git-workflow docs describe only earned routing.
+No guide/root plan/evidenceDB/index edits, dependency/version churn, release or org calls.
+
+Verification of completed code: lint:fix and full lint0 passed, explicit build passed;
+focused111/111 passed. Full unfiltered npm test919/919, no skipped/cancelled,
+Node119.247s, full npm including build122.910s. Initial new tests exposed only missing
+injected class-field seams in Object.create test harness; real capture/digest functions
+were installed, not bypassed. Normal-hook commit/push and fresh exact-SHA hosted receipts
+are reported in final worker result; do not infer those from this precommit handover.
+
+Resume SOURCE public acceptance separately: no live zero-write or cross-org claim.
+Before any org calls, identify both SOURCE headless MCP and explicit CLI alias mcnext-sdo
+org00Daj000010xkZNEAY, look up verificationDB and fix upfront <=45min request/time budget.
+Use newly owned synthetic owner (retainedOwnedCISameAgg already edited; never blindly
+forward-replay), independently acquire/bind and instrument real public retrieve ->
+preview -> one qualified forward update -> settled readback -> unchanged repeat with
+zero mutation/job calls. Source only, no target. Attribute lastCalc/lastRun/derived
+observations honestly; leftovers permitted, cleanup not prerequisite. Record actual
+sanitized evidence under one distinct subject only after root fetch/strict validation,
+no index rebuild. Coordinator owns aggregate/index and once-whole-feature review.
+Older Graph/DLO implementations remain queued; independent DMO qualification owns no
+plugin edits. All shell/test entries require absolute normalized TEMP, actual Node
+tmpdir and nonempty TMP/TMPDIR F:/Temp preflight; process-only repair/recheck. Scratch
+mkdtemp verified OS temp with random marker, registered strict-descendant/no-link
+cleanup only; never recursive repo/workspace cleanup. This slice did no deletion.
+
 # CI paired artifact checkpoint — 2026-10-28
 
 Sole-editor continuation from fetched HEAD/origin96adcfee4bd63c4b35b5ce92c8b807075853f457.

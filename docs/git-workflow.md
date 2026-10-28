@@ -1,5 +1,23 @@
 # Git workflow status
 
+## Calculated insight pair selection
+
+`--changed-since` includes canonical calculated insight XML/JSON pairs under the
+configured source package. Either member's change coalesces to one CI component;
+both must remain present and correlated. The selector captures immutable CI
+admissions separately from Segment and IR, and the public command checks captured
+path, companion path, complete document and two-file digest against resolved input.
+Every captured/resolved pair is byte-revalidated before preview completion and
+before sequential execution. Missing/divergent/noncanonical pairs and either-member
+rename/deletion block the complete selection. This is invocation-local byte binding,
+not a persisted approved plan or a guarantee of historical rename intent.
+
+CI preview is read-only. Deployment preserves complete-selection preflight, explicit
+processing acknowledgement, all-pending target binding/effects re-admission before
+mixed writes, bounded independent settlement and stop-on-unknown/no-replay behavior.
+CI creation and dependency expansion remain unsupported. Hosted offline tests do not
+perform Salesforce acceptance; fresh live zero-write evidence remains separately scoped.
+
 Current npm identity and local directory are `sf-plugin-data`; the repository is
 [`JoernBerkefeld/sf-plugin-data`](https://github.com/JoernBerkefeld/sf-plugin-data).
 The `origin` remote points to `https://github.com/JoernBerkefeld/sf-plugin-data.git`.

@@ -141,7 +141,7 @@ for (const member of ['path', 'companionPath']) {
     const receipt = await put(cwd);
     const [input] = await readDeployInputs({ cwd, sourceDir: [receipt[member]] });
     assert.equal(input.document.kind, 'calculated-insight');
-    assert.equal(isSupportedDeployInput(input), false);
+    assert.equal(isSupportedDeployInput(input), true);
     assert.ok(Object.isFrozen(input.document.spec.dimensions[0]));
     assert.equal(await captureDeployInputDigest(input), input.inputDigest);
     const both = await readDeployInputs({ cwd, sourceDir: [receipt.path, receipt.companionPath] });

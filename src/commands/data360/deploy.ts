@@ -1,3 +1,14 @@
+import { preflightCalculatedInsightDeploy } from '../../services/preflight-calculated-insight-deploy.js';
+import type { CalculatedInsightPreview } from '../../services/preflight-calculated-insight-deploy.js';
+import { executeCalculatedInsightDeploy } from '../../services/execute-calculated-insight-deploy.js';
+import type {
+  CalculatedInsightExecution,
+  CalculatedInsightObservation,
+} from '../../services/execute-calculated-insight-deploy.js';
+import { bindCalculatedInsightDependencies } from '../../services/bind-calculated-insight-dependencies.js';
+import { validateCalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
+import { verifyCalculatedInsightInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
 import { operationApiVersion, resolveApiVersion } from '../../transport/api-version.js';
@@ -83,8 +94,14 @@ const resolveTargetOrg = async (
 };
 
 type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
-  family?: SegmentDeployExecution['family'] | IdentityResolutionDeployExecution['family'];
-  route?: SegmentDeployExecution['route'] | IdentityResolutionDeployExecution['route'];
+  family?:
+    | SegmentDeployExecution['family']
+    | IdentityResolutionDeployExecution['family']
+    | CalculatedInsightExecution['family'];
+  route?:
+    | SegmentDeployExecution['route']
+    | IdentityResolutionDeployExecution['route']
+    | CalculatedInsightExecution['route'];
   requiredEffects?:
     SegmentDeployPreview['requiredEffects'] | IdentityResolutionDeployPreview['requiredEffects'];
   routes?: Array<{
@@ -129,7 +146,7 @@ export type DeployEnvelope = {
       changedSince?: string;
       dependencies?: Array<{
         identity: {
-          kind: 'dmo' | 'segment' | 'identity-resolution';
+          kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight';
           dataSpace: string;
           apiName: string;
         };
@@ -137,7 +154,12 @@ export type DeployEnvelope = {
       }>;
     };
     items: Array<
-      | ((DmoDeployPreview | SegmentDeployPreview | IdentityResolutionDeployPreview) & {
+      | ((
+          | DmoDeployPreview
+          | SegmentDeployPreview
+          | IdentityResolutionDeployPreview
+          | CalculatedInsightPreview
+        ) & {
           routes?: ExecutionItem['routes'];
           identity: { dataSpace: string; apiName: string };
           operation: 'preview';
@@ -154,7 +176,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact dmo:ApiName selectors OR --changed-since Git selection. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
       {
@@ -194,12 +216,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Exact dmo:ApiName, segment:ApiName or identity-resolution:ExactObjectApiName member.',
+        'Exact dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio or identity-resolution:ExactObjectApiName member.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
       summary:
-        'Select canonical DMO and paired Segment Git changes since the merge base with a commit reference.',
+        'Select canonical DMO, paired Segment/CI and IR Git changes since the merge base with a commit reference.',
       exclusive: ['source-dir', 'metadata'],
     }),
     'include-dependencies': Flags.boolean({
@@ -210,7 +232,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     'allow-processing': Flags.boolean({
       default: false,
       summary:
-        'Acknowledge qualified Segment processing and IR publication/generated-output effects.',
+        'Acknowledge qualified Segment/CI processing and IR publication/generated-output effects.',
     }),
     preview: Flags.boolean({
       default: false,
@@ -218,6 +240,27 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
   };
 
+  protected preflightCalculatedInsight = preflightCalculatedInsightDeploy;
+  protected executeCalculatedInsight = executeCalculatedInsightDeploy;
+  protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
+  protected bindCalculatedInsight = bindCalculatedInsightDependencies;
+  protected calculatedInsightObservations?: Map<string, CalculatedInsightObservation[]>;
+
+  /**
+   * Retain detached bounded attribution evidence privately, never in portable files or results.
+   * @param {string} key Exact local component path.
+   * @param {CalculatedInsightObservation} observation Validated executor observation.
+   * @returns {Promise<void>} Resolves after preserving the observation.
+   */
+  protected async recordCalculatedInsightObservation(
+    key: string,
+    observation: CalculatedInsightObservation,
+  ): Promise<void> {
+    this.calculatedInsightObservations ??= new Map();
+    const entries = this.calculatedInsightObservations.get(key) ?? [];
+    entries.push(structuredClone(observation));
+    this.calculatedInsightObservations.set(key, entries);
+  }
   protected resolveInputs = readDeployInputs;
   protected selectGitInputs = selectGitDeployInputs;
   protected preflight = preflightDmoDeploy;
@@ -361,6 +404,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       )
         return finish('blocked', 'INVALID_SELECTION');
       let sourceDirectories = flags['source-dir'];
+      let gitCalculatedInsights: GitDeploySelection['calculatedInsights'];
       let gitSegments: GitDeploySelection['segments'];
       let gitIdentityResolutions: GitDeploySelection['identityResolutions'];
       if (changedSince !== undefined) {
@@ -369,21 +413,53 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         envelope.provenance.git = selected.provenance;
         if (selected.paths.length === 0) return finish('success');
         sourceDirectories = selected.paths;
+        gitCalculatedInsights = selected.calculatedInsights;
         gitSegments = selected.segments;
         gitIdentityResolutions = selected.identityResolutions;
       }
-      const resolved = await this.resolveInputs({
+      const admitted = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
-      // CI artifacts are admitted internally; public operational routing is a later boundary.
-      if (resolved.some((input) => input.document.kind === 'calculated-insight'))
-        return finish('blocked', 'CALCULATED_INSIGHT_ROUTING_UNSUPPORTED');
-      const admitted = resolved.filter(
-        (input): input is Exclude<DeployInput, { document: { kind: 'calculated-insight' } }> =>
-          input.document.kind !== 'calculated-insight',
+      const hasCalculatedInsights = admitted.some(
+        (input) => input.document.kind === 'calculated-insight',
       );
+      if (hasCalculatedInsights) {
+        try {
+          operationApiVersion(flags['api-version'], 'calculated-insight');
+        } catch {
+          return finish('blocked', 'INVALID_SCOPE');
+        }
+        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (flags['include-dependencies'])
+          return finish('blocked', 'CI_DEPENDENCY_EXPANSION_UNSUPPORTED');
+        for (const input of admitted)
+          if (input.document.kind === 'calculated-insight')
+            validateCalculatedInsightDocument(input.document);
+      }
+      if (gitCalculatedInsights) {
+        const current = admitted.filter(
+          (input): input is CalculatedInsightDeployInput =>
+            input.document.kind === 'calculated-insight',
+        );
+        if (
+          current.length !== gitCalculatedInsights.length ||
+          gitCalculatedInsights.some(
+            (captured) =>
+              !current.some(
+                (input) =>
+                  input.path === captured.path &&
+                  input.companionPath === captured.companionPath &&
+                  input.inputDigest === captured.inputDigest &&
+                  JSON.stringify(input.document) === JSON.stringify(captured.document),
+              ),
+          )
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        for (const captured of gitCalculatedInsights)
+          await this.verifyCalculatedInsightInput(captured);
+      }
       // Bind every captured Git owner to the original immutable authored bytes, never drop IR.
       if (gitIdentityResolutions) {
         const current = admitted.filter(
@@ -416,7 +492,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               ? 'identity-resolution'
               : input.document.kind === 'segment'
                 ? 'segment'
-                : 'dmo';
+                : input.document.kind === 'calculated-insight'
+                  ? 'calculated-insight'
+                  : 'dmo';
           try {
             operationApiVersion(flags['api-version'], family);
           } catch {
@@ -451,8 +529,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const expanded = flags['include-dependencies']
         ? await selectDeployDependencies(
             inputs.filter(
-              (input): input is Exclude<typeof input, IdentityResolutionDeployInput> =>
-                input.document.kind !== 'identity-resolution',
+              (
+                input,
+              ): input is Exclude<
+                typeof input,
+                IdentityResolutionDeployInput | CalculatedInsightDeployInput
+              > =>
+                input.document.kind !== 'identity-resolution' &&
+                input.document.kind !== 'calculated-insight',
             ),
             cwd,
           )
@@ -465,9 +549,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
       }
       const hasSegments = inputs.some((input) => input.document.kind === 'segment');
-      if (hasSegments || hasIdentityResolutions) {
+      if (hasSegments || hasIdentityResolutions || hasCalculatedInsights) {
         const nodes = inputs.map((input) =>
-          input.document.kind === 'segment' || input.document.kind === 'identity-resolution'
+          input.document.kind === 'segment' ||
+          input.document.kind === 'identity-resolution' ||
+          input.document.kind === 'calculated-insight'
             ? documentDependencyNode(input.document)
             : { identity: { kind: 'dmo' as const, ...input.document.identity }, dependencies: [] },
         );
@@ -479,7 +565,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   ? 'identity-resolution'
                   : input.document.kind === 'segment'
                     ? 'segment'
-                    : 'dmo',
+                    : input.document.kind === 'calculated-insight'
+                      ? 'calculated-insight'
+                      : 'dmo',
               ...input.document.identity,
             }),
             input,
@@ -489,7 +577,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }
       // Preserve original Segment pair snapshots and bind mixed-batch DMO bytes before target reads.
       const captured =
-        hasSegments || hasIdentityResolutions
+        hasSegments || hasIdentityResolutions || hasCalculatedInsights
           ? await Promise.all(
               inputs.map(async (input) => ({
                 input,
@@ -500,7 +588,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           : [];
       const verifyInputs = async (): Promise<void> => {
         await expanded?.verify();
+        for (const input of gitCalculatedInsights ?? [])
+          await this.verifyCalculatedInsightInput(input);
         for (const { input, digest } of captured) {
+          if (input.document.kind === 'calculated-insight')
+            await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
           if (input.document.kind === 'identity-resolution')
             await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
           if (input.document.kind === 'segment')
@@ -608,6 +700,20 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (prior !== undefined && prior !== fingerprint) throw new Error('IR binding drift');
         irBindings.set(input.path, fingerprint);
       };
+      const ciBindings = new Map<string, string>();
+      const verifyCiBinding = async (input: DeployInput): Promise<void> => {
+        if (input.document.kind !== 'calculated-insight') return;
+        const bound = await this.bindCalculatedInsight(
+          input.document,
+          connection,
+          selection,
+          flags['data-space'],
+        );
+        const fingerprint = createHash('sha256').update(JSON.stringify(bound)).digest('hex');
+        const prior = ciBindings.get(input.path);
+        if (prior !== undefined && prior !== fingerprint) throw new Error('CI binding drift');
+        ciBindings.set(input.path, fingerprint);
+      };
       let failed = false;
       let blocked = false;
       for (const input of inputs) {
@@ -615,27 +721,34 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           const segment = input.document.kind === 'segment';
           if (segment) await this.verifySegmentInput(input as SegmentDeployInput);
           const preview =
-            input.document.kind === 'identity-resolution'
-              ? await this.preflightIdentityResolution(
+            input.document.kind === 'calculated-insight'
+              ? await this.preflightCalculatedInsight(
                   input.document,
-                  connectionFor(input),
-                  familySelection(input),
+                  connection,
+                  selection,
                   flags['data-space'],
                 )
-              : segment
-                ? await this.preflightSegment(
+              : input.document.kind === 'identity-resolution'
+                ? await this.preflightIdentityResolution(
                     input.document,
-                    connection,
-                    selection,
+                    connectionFor(input),
+                    familySelection(input),
                     flags['data-space'],
                   )
-                : await this.preflight(
-                    input.document,
-                    connection,
-                    selection,
-                    flags['data-space'],
-                    true,
-                  );
+                : segment
+                  ? await this.preflightSegment(
+                      input.document,
+                      connection,
+                      selection,
+                      flags['data-space'],
+                    )
+                  : await this.preflight(
+                      input.document,
+                      connection,
+                      selection,
+                      flags['data-space'],
+                      true,
+                    );
           if (input.document.kind === 'identity-resolution') {
             await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
             if (preview.outcome === 'update' || preview.outcome === 'unchanged')
@@ -653,6 +766,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                 message:
                   'IR publication and generated effects require explicit --allow-processing. No batch writes were attempted.',
+              });
+            }
+          }
+          if (input.document.kind === 'calculated-insight') {
+            await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
+            if (preview.outcome === 'update' || preview.outcome === 'unchanged')
+              await verifyCiBinding(input);
+            if (
+              !flags.preview &&
+              preview.outcome === 'update' &&
+              (flags['allow-processing'] !== true ||
+                !(preview as CalculatedInsightPreview).requiredEffects.includes('processing'))
+            ) {
+              blocked = true;
+              preview.diagnostics.push({
+                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+                message:
+                  'CI processing requires explicit --allow-processing. No batch writes were attempted.',
               });
             }
           }
@@ -725,6 +856,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     .requiredEffects,
                 }
               : {}),
+            ...(input.document.kind === 'calculated-insight'
+              ? {
+                  family: 'calculated-insight' as const,
+                  route: {
+                    apiVersion: '65.0' as const,
+                    method: 'PATCH' as const,
+                    resource: 'calculated-insights' as const,
+                  },
+                  requiredEffects: (envelope.result.items[index] as CalculatedInsightPreview)
+                    .requiredEffects,
+                }
+              : {}),
             ...(input.document.kind === 'segment'
               ? {
                   family: 'segment' as const,
@@ -769,6 +912,23 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     );
                   continue;
                 }
+                if (pending.document.kind === 'calculated-insight') {
+                  await verifyCiBinding(pending);
+                  const fresh = await this.preflightCalculatedInsight(
+                    pending.document,
+                    connection,
+                    selection,
+                    flags['data-space'],
+                  );
+                  if (
+                    !['unchanged', 'update'].includes(fresh.outcome) ||
+                    (fresh.outcome === 'update' &&
+                      (flags['allow-processing'] !== true ||
+                        !fresh.requiredEffects.includes('processing')))
+                  )
+                    throw new DependencySelectionError('CI_FRESH_ADMISSION_BLOCKED');
+                  continue;
+                }
                 if (pending.document.kind !== 'segment') continue;
                 const fresh = await this.preflightSegment(
                   pending.document,
@@ -802,36 +962,49 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             item.mutation = 'unknown';
             try {
               const result =
-                input.document.kind === 'identity-resolution'
-                  ? await this.executeIdentityResolution(
+                input.document.kind === 'calculated-insight'
+                  ? await this.executeCalculatedInsight(
                       input.document,
-                      connectionFor(input),
-                      familySelection(input),
+                      connection,
+                      selection,
                       flags['data-space'],
                       {
                         allowProcessing: flags['allow-processing'] === true,
                         verifyInput: verifyInputs,
-                        recordPoll: async (evidence) =>
-                          this.recordIdentityResolutionPoll(input.path, evidence),
+                        recordObservation: async (observation) =>
+                          this.recordCalculatedInsightObservation(input.path, observation),
                       },
                     )
-                  : input.document.kind === 'segment'
-                    ? await this.executeSegment(
+                  : input.document.kind === 'identity-resolution'
+                    ? await this.executeIdentityResolution(
                         input.document,
-                        connection,
-                        selection,
+                        connectionFor(input),
+                        familySelection(input),
                         flags['data-space'],
                         {
                           allowProcessing: flags['allow-processing'] === true,
                           verifyInput: verifyInputs,
+                          recordPoll: async (evidence) =>
+                            this.recordIdentityResolutionPoll(input.path, evidence),
                         },
                       )
-                    : await this.execute(
-                        input.document as DmoDocument,
-                        connection,
-                        selection,
-                        flags['data-space'],
-                      );
+                    : input.document.kind === 'segment'
+                      ? await this.executeSegment(
+                          input.document,
+                          connection,
+                          selection,
+                          flags['data-space'],
+                          {
+                            allowProcessing: flags['allow-processing'] === true,
+                            verifyInput: verifyInputs,
+                          },
+                        )
+                      : await this.execute(
+                          input.document as DmoDocument,
+                          connection,
+                          selection,
+                          flags['data-space'],
+                        );
               Object.assign(item, result);
             } catch {
               item.diagnostics = [

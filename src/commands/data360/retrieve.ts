@@ -1,4 +1,14 @@
 import path from 'node:path';
+import {
+  calculatedInsightName,
+  CalculatedInsightError,
+  validateCalculatedInsightPair,
+} from '../../artifacts/calculated-insight-document.js';
+import type { CalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
+import { retrieveCalculatedInsight } from '../../services/retrieve-calculated-insight.js';
+import { bindCalculatedInsightDependencies } from '../../services/bind-calculated-insight-dependencies.js';
+import { retrieveCalculatedInsightSourceMetadata } from '../../transport/project-metadata.js';
+import { writeCalculatedInsightDocument } from '../../artifacts/write-calculated-insight.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
 import { operationApiVersion, resolveApiVersion } from '../../transport/api-version.js';
@@ -67,7 +77,7 @@ export type RetrieveEnvelope = {
       outcome: 'retrieved' | 'unchanged';
       path: string;
       companionPath?: string;
-      family?: 'segment' | 'identity-resolution';
+      family?: 'segment' | 'identity-resolution' | 'calculated-insight';
       routes?: Array<{
         operation: string;
         apiVersion: string;
@@ -81,9 +91,9 @@ export type RetrieveEnvelope = {
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary =
-    'Retrieve Data360 DMOs, exact DBT Segments or exact identity resolution configuration.';
+    'Retrieve Data360 DMOs, exact DBT Segments, calculated insights or identity resolution configuration.';
   public static readonly description =
-    'Repeat -m dmo:ApiName, -m segment:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio or -m identity-resolution:ExactObjectApiName for exact selection. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -107,7 +117,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat dmo[:ApiName], segment:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
+        'Repeat dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -126,6 +136,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireCalculatedInsight = retrieveCalculatedInsight;
+  protected bindCalculatedInsight = bindCalculatedInsightDependencies;
+  protected acquireCalculatedInsightXml = retrieveCalculatedInsightSourceMetadata;
+  protected writeCalculatedInsight = writeCalculatedInsightDocument;
   protected acquireIdentityResolution = retrieveIdentityResolution;
   protected writeIdentityResolution = writeIdentityResolutionDocument;
   protected acquireSegment = retrieveSegment;
@@ -208,14 +222,28 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
     const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
     const dmoSelectors = selectors.filter(
-      (value) => !value.startsWith('segment:') && !value.startsWith('identity-resolution:'),
+      (value) =>
+        !value.startsWith('segment:') &&
+        !value.startsWith('identity-resolution:') &&
+        !value.startsWith('calculated-insight:'),
     );
     const hasDmos = dmoSelectors.length > 0 || selectors.length === 0;
     let effectiveVersion: string;
     try {
+      if (selectors.includes('calculated-insight'))
+        throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
+      if (ciSelectors.length > 0) {
+        operationApiVersion(flags['api-version'], 'calculated-insight');
+        if (flags['data-space'] !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
+        if (ciSelectors.some((value) => !calculatedInsightName.test(value.slice(19))))
+          throw new CalculatedInsightError('INVALID_SELECTION');
+        if (flags['include-dependencies'])
+          throw new CalculatedInsightError('CI_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      }
       if (selectors.includes('identity-resolution'))
         throw new IdentityResolutionError('IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED');
       if (irSelectors.some((value) => !identityResolutionName.test(value.slice(20))))
@@ -230,12 +258,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (hasDmos) operationApiVersion(flags['api-version'], 'dmo');
       effectiveVersion = operationApiVersion(
         flags['api-version'],
-        hasDmos ? 'dmo' : segmentSelectors.length > 0 ? 'segment' : 'identity-resolution',
+        hasDmos
+          ? 'dmo'
+          : segmentSelectors.length > 0
+            ? 'segment'
+            : ciSelectors.length > 0
+              ? 'calculated-insight'
+              : 'identity-resolution',
       );
     } catch (error: unknown) {
       return finish(
         'blocked',
-        error instanceof IdentityResolutionError ? error.code : 'INVALID_SCOPE',
+        error instanceof IdentityResolutionError || error instanceof CalculatedInsightError
+          ? error.code
+          : 'INVALID_SCOPE',
       );
     }
     try {
@@ -272,6 +308,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const diagnose = (error: unknown, apiName?: string): void => {
       let code = 'RETRIEVE_FAILED';
       if (
+        error instanceof CalculatedInsightError ||
         error instanceof IdentityResolutionError ||
         error instanceof SegmentError ||
         error instanceof DependencySelectionError ||
@@ -356,6 +393,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       ];
       if (
         segments.length > 0 ||
+        ciSelectors.length > 0 ||
         flags['include-dependencies'] ||
         irSelectors.length > 0 ||
         flags['api-version'] === 'auto'
@@ -384,6 +422,49 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 entries: [] as RetrieveDependencyEntry[],
                 reasons: new Map<string, SelectionReason>(),
               };
+        const calculatedInsights: Array<{
+          document: CalculatedInsightDocument;
+          definitionXml: string;
+        }> = [];
+        // Complete every CI admission before any selected output and before IR repins the receiver.
+        const ciVersion = Object.freeze({
+          requested: '65.0',
+          restSelector: 'v65.0',
+          soapNumeric: '65.0',
+        });
+        // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
+        for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
+          const ciConnection = org.getConnection('65.0');
+          const acquired = await this.acquireCalculatedInsight(
+            ciConnection,
+            apiName,
+            ciVersion,
+            flags['data-space'],
+          );
+          if (!acquired.candidate || acquired.blockers.length > 0)
+            throw new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED');
+          if (
+            acquired.identity.apiName !== apiName ||
+            acquired.identity.dataSpace !== 'default' ||
+            acquired.candidate.identity.apiName !== apiName
+          )
+            throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+          await this.bindCalculatedInsight(
+            acquired.candidate,
+            ciConnection,
+            ciVersion,
+            flags['data-space'],
+          );
+          const target = flags['target-org'] ?? ciConnection.getUsername();
+          if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
+          const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
+          const document = validateCalculatedInsightPair(
+            acquired.candidate,
+            definitionXml,
+            apiName.slice(0, -5),
+          );
+          calculatedInsights.push({ document, definitionXml });
+        }
         const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
         if (irSelectors.length > 0) {
           const irVersion = await resolveApiVersion('67.0', async () => {
@@ -421,7 +502,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               reason,
             };
           });
-        const entries = [...selected.entries, ...identityResolutions];
+        const entries = [...selected.entries, ...calculatedInsights, ...identityResolutions];
         envelope.result.selection = entries.map(
           ({ document }) => `${document.kind}:${document.identity.apiName}`,
         );
@@ -429,30 +510,41 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const { document } = entry;
           try {
             const receipt =
-              document.kind === 'identity-resolution'
-                ? await this.writeIdentityResolution(
+              document.kind === 'calculated-insight'
+                ? await this.writeCalculatedInsight(
                     document,
+                    'definitionXml' in entry ? entry.definitionXml : '',
                     flags['output-dir'] ?? process.cwd(),
                     flags.overwrite,
                   )
-                : 'definitionXml' in entry
-                  ? await this.writeSegment(
+                : document.kind === 'identity-resolution'
+                  ? await this.writeIdentityResolution(
                       document,
-                      entry.definitionXml,
                       flags['output-dir'] ?? process.cwd(),
                       flags.overwrite,
                     )
-                  : await this.writeDocument(
-                      document,
-                      flags['output-dir'] ?? process.cwd(),
-                      flags.overwrite,
-                    );
+                  : 'definitionXml' in entry
+                    ? await this.writeSegment(
+                        document,
+                        entry.definitionXml,
+                        flags['output-dir'] ?? process.cwd(),
+                        flags.overwrite,
+                      )
+                    : await this.writeDocument(
+                        document,
+                        flags['output-dir'] ?? process.cwd(),
+                        flags.overwrite,
+                      );
             envelope.result.items.push({
               identity: { ...document.identity },
-              ...(document.kind === 'segment' || document.kind === 'identity-resolution'
+              ...(document.kind === 'segment' ||
+              document.kind === 'identity-resolution' ||
+              document.kind === 'calculated-insight'
                 ? { family: document.kind }
                 : {}),
-              ...(flags['api-version'] === 'auto' || document.kind === 'identity-resolution'
+              ...(flags['api-version'] === 'auto' ||
+              document.kind === 'identity-resolution' ||
+              document.kind === 'calculated-insight'
                 ? {
                     routes:
                       document.kind === 'identity-resolution'

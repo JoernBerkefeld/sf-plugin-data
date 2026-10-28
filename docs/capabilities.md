@@ -1,5 +1,26 @@
 # Capability contract checklist
 
+## Public CI command boundary
+
+Exact `calculated-insight:ApiName__cio` retrieve, preview and deploy are routed
+through the qualified CI services at API65/default (`auto` selects that fixed route).
+Retrieve requires independent native runtime/SOAP correlation, typed DMO binding,
+and exact standard `MktCalcInsightObjectDef` project XML before whole-selection
+publication through the strict pair writer. Git-selected CI pairs are captured,
+compared to resolved inputs and freshly byte-verified before target execution.
+
+Deployment is limited to existing ACTIVE Custom/CALCULATED_METRIC/IN_USE owners
+with the qualified `APPROX_COUNT_DISTINCT` engagement expression, schema and
+SYSTEM_MANAGED schedule. Only the forward false-predicate plus DeviceId IS NOT NULL
+expression edit is writable; complete equality is unchanged. Creation, shell
+conversion, label/schedule/reverse/arbitrary SQL and dependency expansion block.
+Updates acknowledge processing; every pending CI is rebound and preflighted before
+any next mixed write. Input digest guards and private detached observation recording
+are mandatory executor options. The existing executor attempts at most one PATCH,
+bounds settlement, independently correlates final readback, and never replays unknown
+mutations. Public routing has synthetic regression coverage; fresh live command,
+zero-write/computation and cross-org acceptance remain separate evidence gates.
+
 General seven-family support is **unimplemented**; explicit bounded DMO retrieval
 is available through current service-owned capability checks, not a permanent
 fixture-specific architecture. No endpoint or writable variant is

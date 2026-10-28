@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/pr
 import os from 'node:os';
 import path from 'node:path';
 import { SegmentError, segmentName } from '../artifacts/segment-document.js';
+import { calculatedInsightName } from '../artifacts/calculated-insight-document.js';
 
 const normalize = (value: string): string =>
   process.platform === 'win32' ? value.toLowerCase() : value;
@@ -124,6 +125,45 @@ export async function retrieveSegmentMetadata(
   apiName: string,
   runner: MetadataRunner = runProjectMetadata,
 ): Promise<string> {
+  return retrieveExactMetadata(targetOrg, apiName, 'segment', runner);
+}
+
+/**
+ * Retrieve exact standard CI source XML independently of runtime/SOAP acquisition.
+ * @param {string} targetOrg Explicit authenticated alias or username.
+ * @param {string} apiName Exact runtime identity including __cio.
+ * @param {MetadataRunner} runner Synthetic standard CLI seam.
+ * @returns {Promise<string>} Independently retrieved source XML bytes.
+ */
+export async function retrieveCalculatedInsightSourceMetadata(
+  targetOrg: string,
+  apiName: string,
+  runner: MetadataRunner = runProjectMetadata,
+): Promise<string> {
+  if (!calculatedInsightName.test(apiName)) throw new SegmentError('INVALID_SELECTION');
+  return retrieveExactMetadata(targetOrg, apiName.slice(0, -5), 'calculated-insight', runner);
+}
+
+/**
+ * Execute one allowlisted standard Metadata retrieve and validate its terminal member receipt.
+ * @param {string} targetOrg Explicit authenticated target.
+ * @param {string} apiName Exact standard member name.
+ * @param {'segment' | 'calculated-insight'} family Allowlisted source family.
+ * @param {MetadataRunner} runner Installed CLI or synthetic seam.
+ * @returns {Promise<string>} Exact bounded XML.
+ */
+async function retrieveExactMetadata(
+  targetOrg: string,
+  apiName: string,
+  family: 'segment' | 'calculated-insight',
+  runner: MetadataRunner,
+): Promise<string> {
+  const type = family === 'segment' ? 'MarketSegmentDefinition' : 'MktCalcInsightObjectDef';
+  const directory = family === 'segment' ? 'marketSegmentDefinitions' : 'mktCalcInsightObjectDefs';
+  const suffix =
+    family === 'segment'
+      ? '.marketSegmentDefinition-meta.xml'
+      : '.mktCalcInsightObjectDef-meta.xml';
   if (
     !targetOrg ||
     targetOrg.startsWith('-') ||
@@ -146,7 +186,7 @@ export async function retrieveSegmentMetadata(
       'retrieve',
       'start',
       '--metadata',
-      `MarketSegmentDefinition:${apiName}`,
+      `${type}:${apiName}`,
       '--target-org',
       targetOrg,
       '--api-version',
@@ -178,20 +218,9 @@ export async function retrieveSegmentMetadata(
   if (!Array.isArray(result.files) || result.files.length !== 1)
     throw new SegmentError('UNEXPECTED_METADATA_MEMBERS');
   const member = result.files[0] as Record<string, unknown>;
-  if (
-    member.type !== 'MarketSegmentDefinition' ||
-    member.fullName !== apiName ||
-    member.state !== 'Created'
-  )
+  if (member.type !== type || member.fullName !== apiName || member.state !== 'Created')
     throw new SegmentError('UNEXPECTED_METADATA_MEMBERS');
-  const file = path.join(
-    root,
-    'force-app',
-    'main',
-    'default',
-    'marketSegmentDefinitions',
-    `${apiName}.marketSegmentDefinition-meta.xml`,
-  );
+  const file = path.join(root, 'force-app', 'main', 'default', directory, `${apiName}${suffix}`);
   const stat = await inspectSegmentPath(file);
   if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1_048_576)
     throw new SegmentError('INVALID_STANDARD_RETRIEVE');

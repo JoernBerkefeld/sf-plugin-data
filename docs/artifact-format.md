@@ -1,5 +1,25 @@
 # Internal DMO field contract
 
+## Public calculated insight pairs
+
+For exact `calculated-insight:Name__cio`, retrieve publishes independent standard
+source XML at `force-app/main/default/mktCalcInsightObjectDefs/Name.mktCalcInsightObjectDef-meta.xml`
+and a versioned companion at
+`force-app/main/default/data360/calculatedInsights/Name__cio.calculatedInsight.json`.
+Configured package directories replace `force-app`. The XML member omits `__cio`;
+the JSON identity retains it. `schemaVersion: 1`, `kind: calculated-insight`, exact
+default-space identity and complete qualified `spec` preserve SQL, schema and settings.
+No runtime IDs/status/attribution or request envelopes enter portable content.
+
+Either member or the exact selector resolves both; divergent SQL/label/identity,
+missing/unsafe files, duplicate keys and meaningful unsupported fields block.
+The length-prefixed SHA256 digest binds both original byte sequences; revalidation
+checks byte and frozen-document identity before dispatch. Retrieve admits every
+selected CI pair before publishing any selected output. The existing strict pair
+writer preserves independent XML, overwrite/no-clobber/unchanged behavior and
+partial-publication diagnostics. Standard XML is never predeployed to create or
+convert a runtime owner. See the capability contract for the exact supported update.
+
 ## Internal delete transport boundary
 
 `ConnectClient.deleteDataModelObject(name): Promise<unknown>` sends one DELETE to

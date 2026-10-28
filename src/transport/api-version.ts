@@ -7,7 +7,7 @@ export type ApiVersionSelection = Readonly<{
 
 const numericVersion = /^\d{2,3}\.0$/u;
 
-export type OperationalFamily = 'dmo' | 'segment' | 'identity-resolution';
+export type OperationalFamily = 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight';
 
 /**
  * Select only fixed qualified family routes, never probe, upgrade a pin or fall back.

@@ -56,8 +56,14 @@ export type DeployInput =
  * @param {DeployInput} input Admitted input.
  * @returns {boolean} Whether an existing public route supports this family.
  */
-export function isSupportedDeployInput(input: DeployInput): input is SupportedDeployInput {
-  return input.document.kind === 'dmo' || input.document.kind === 'segment';
+export function isSupportedDeployInput(
+  input: DeployInput,
+): input is SupportedDeployInput | CalculatedInsightDeployInput {
+  return (
+    input.document.kind === 'dmo' ||
+    input.document.kind === 'segment' ||
+    input.document.kind === 'calculated-insight'
+  );
 }
 
 /**

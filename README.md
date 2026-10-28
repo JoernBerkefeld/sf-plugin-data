@@ -1,5 +1,43 @@
 # Data360 Salesforce CLI plugin
 
+## Public calculated insight workflow
+
+Exact `calculated-insight:Name__cio` selection is supported by `sf data360 retrieve`
+and `sf data360 deploy` (including `--preview` and `--changed-since`). Repeat selectors
+for multiple components. Use numeric `--api-version 65.0` (the default) or `auto`,
+and the default data space. Omitted retrieve selectors still mean DMO inventory,
+not inventory of every exact-only family.
+
+Retrieve independently correlates native runtime, SOAP Metadata, target DMO field
+bindings and standard project-retrieved XML before publishing any selected output.
+It writes a correlated XML/JSON pair; either member selects the complete component.
+Repeated identical retrieve is unchanged; differing output needs `--overwrite`.
+
+```sh
+sf data360 retrieve -o source -m calculated-insight:ExampleInsight__cio -d ./project --json
+sf data360 deploy -o source -m calculated-insight:ExampleInsight__cio --preview --json
+sf data360 deploy -o source -m calculated-insight:ExampleInsight__cio --allow-processing --json
+```
+
+Deploy supports an existing settled ACTIVE custom calculated metric only: the
+qualified same-aggregation `APPROX_COUNT_DISTINCT(DeviceId)` expression may change
+from `WHERE 1 = 0` to `WHERE 1 = 0 AND ...ssot__DeviceId__c IS NOT NULL`, preserving
+the exact qualified engagement DMO, group-by, dimension/measure schema and schedule.
+Complete semantic equality is unchanged without a mutation. Creation, Metadata
+shell conversion, reverse/broader SQL, label/schedule changes, inventory and CI
+`--include-dependencies` expansion are blocked. Existing compatible prerequisites
+are always read and bound, even without expansion.
+
+Preview never deploys. Execution admits the whole selection before writes,
+requires `--allow-processing` for an update, verifies both input byte sets and fresh
+bindings before mixed writes, and delegates at most one expression-only API65 PATCH
+per CI to the bounded executor. Settlement requires independent runtime/Metadata
+readback. Unknown outcomes stop the batch without replay or rollback. Attribution
+and status observations stay private, not in artifacts or command results.
+These public routing regressions do not by themselves establish live zero-write,
+cross-org or successful-computation acceptance. The operational examples later in
+this README describe separate API research, not additional plugin capabilities.
+
 `sf-plugin-data` is an independently authored TypeScript/ESM
 plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
 implemented; strictly read-only deployment preview, bounded guarded creation and label updates are available.** Current retrieval capability is
