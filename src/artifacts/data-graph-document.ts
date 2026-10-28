@@ -1,4 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
+import type { IdentityResolutionOutputIdentity } from './identity-resolution-document.js';
+
+export type DataGraphRoot = 'UnifiedssotIndividualMkt__dlm' | IdentityResolutionOutputIdentity;
 
 export const dataGraphName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 
@@ -15,13 +18,13 @@ export type DataGraphDocument = {
   spec: {
     label: string;
     description: string;
-    primaryObjectName: 'UnifiedssotIndividualMkt__dlm';
+    primaryObjectName: DataGraphRoot;
     type: 'NONE';
     fullRefreshConfig: { schedule: { frequency: 7; timeGranularity: 'Day' } };
     incrementalRefreshConfig: { enabled: false };
     sourceObject: {
-      name: string;
-      devName: string;
+      name: DataGraphRoot;
+      devName: DataGraphRoot;
       label: string;
       path: [];
       fields: DataGraphField[];
@@ -136,6 +139,29 @@ export function dataGraphFields(lastName: boolean): DataGraphField[] {
 }
 
 /**
+ * Admit only the legacy root or one exact logical unified Individual owner reference.
+ * @param {unknown} value Portable root.
+ * @returns {DataGraphRoot} Checked root without generated names or IDs.
+ */
+export function validateDataGraphRoot(value: unknown): DataGraphRoot {
+  if (value === 'UnifiedssotIndividualMkt__dlm') return value;
+  const root = graphRecord(value, ['owner', 'entity', 'role']);
+  const owner = graphRecord(root.owner, ['kind', 'dataSpace', 'apiName']);
+  const entity = graphRecord(root.entity, ['kind', 'dataSpace', 'apiName']);
+  graphRequire(
+    root.role === 'unified' &&
+      owner.kind === 'identity-resolution' &&
+      owner.dataSpace === 'default' &&
+      typeof owner.apiName === 'string' &&
+      dataGraphName.test(owner.apiName) &&
+      entity.kind === 'dmo' &&
+      entity.dataSpace === 'default' &&
+      entity.apiName === 'ssot__Individual__dlm',
+  );
+  return structuredClone(value) as IdentityResolutionOutputIdentity;
+}
+
+/**
  * Validate portable root-only content without generated ids or creation provenance.
  * @param {unknown} value Candidate.
  * @returns {DataGraphDocument} Detached document.
@@ -161,11 +187,8 @@ export function validateDataGraphDocument(value: unknown): DataGraphDocument {
     'sourceObject',
   ]);
   graphText(spec.label);
-  graphRequire(
-    typeof spec.description === 'string' &&
-      spec.primaryObjectName === 'UnifiedssotIndividualMkt__dlm' &&
-      spec.type === 'NONE',
-  );
+  validateDataGraphRoot(spec.primaryObjectName);
+  graphRequire(typeof spec.description === 'string' && spec.type === 'NONE');
   graphRequire(
     isDeepStrictEqual(spec.fullRefreshConfig, {
       schedule: { frequency: 7, timeGranularity: 'Day' },
@@ -181,8 +204,8 @@ export function validateDataGraphDocument(value: unknown): DataGraphDocument {
   ]);
   graphText(source.label);
   graphRequire(
-    source.name === spec.primaryObjectName &&
-      source.devName === source.name &&
+    isDeepStrictEqual(source.name, spec.primaryObjectName) &&
+      isDeepStrictEqual(source.devName, source.name) &&
       isDeepStrictEqual(source.path, []) &&
       isDeepStrictEqual(source.relatedObjects, []),
   );

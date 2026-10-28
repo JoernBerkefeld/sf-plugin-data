@@ -30,6 +30,8 @@ export async function bindDataGraphDependencies(
   const document = validateDataGraphDocument(value);
   dataGraphScope(connection, selection, dataSpace);
   const name = document.spec.primaryObjectName;
+  // Owner-qualified roots remain fail-closed until exact output binding is integrated.
+  graphRequire(typeof name === 'string');
   const reader =
     acquire ??
     (async (name: string) => {

@@ -30,7 +30,10 @@ Repeat exact `-m data-graph:ApiName` selectors with `retrieve` or `deploy`, incl
 `--preview` and `--changed-since`. Use `--api-version auto` (fixed Graph67 and
 legacy65 routes) or numeric67 for Graph-only selection. Numeric65/default and
 latest refuse Graph; mixed Graph/legacy selection requires auto. Inventory and
-Graph dependency expansion are unavailable.
+Graph dependency expansion are unavailable. The artifact validator also reserves an
+IR-owner-qualified unified Individual root reference for dependency integration;
+that reference is not yet operationally retrievable or deployable and fails closed.
+It does not enable IR/Graph creation or establish cross-org pair acceptance.
 
 ```sh
 sf data360 retrieve -o source -m data-graph:ExampleGraph --api-version auto -d ./project --json

@@ -85,7 +85,9 @@ export function documentDependencyNode(
     return {
       identity: { kind: 'data-graph', ...document.identity },
       dependencies: [
-        { kind: 'dmo', dataSpace: 'default', apiName: document.spec.primaryObjectName },
+        typeof document.spec.primaryObjectName === 'string'
+          ? { kind: 'dmo', dataSpace: 'default', apiName: document.spec.primaryObjectName }
+          : { ...document.spec.primaryObjectName.owner },
       ],
     };
   }

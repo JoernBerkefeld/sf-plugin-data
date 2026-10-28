@@ -1,3 +1,56 @@
+# IR-owned Graph portable contract checkpoint — 2026-10-28
+
+Baseline fetched clean `967e8677271f3165646484541cbd90a7e1dacb7b`.
+Written plan and dedicated read-only plan review
+`c9a6bd6d-6a38-4356-b9ad-b4f2ea7a18ee` completed before edits, zero must-fix.
+Am I overengineering this? Reuse the existing IR output identity; no generated-output
+framework. Shared Graph/selection inputs require one editor and sequential checkpoints.
+
+This is the first small checkpoint only, NOT completed operational integration.
+`DataGraphRoot = 'UnifiedssotIndividualMkt__dlm' | IdentityResolutionOutputIdentity`;
+`validateDataGraphRoot(value: unknown): DataGraphRoot` admits only default-space
+identity-resolution owner + entity `ssot__Individual__dlm` + role `unified`, with
+exact keys and no generated name/ID. `primaryObjectName`, `sourceObject.name` and
+`sourceObject.devName` contain structurally identical references. Legacy remains
+unchanged. `documentDependencyNode` extracts the IR owner edge instead of a generated
+DMO edge; reversed explicit nodes order owner before Graph.
+
+`bindDataGraphDependencies` explicitly refuses a logical root before acquisition.
+Runtime projection still admits only legacy raw roots. Public expansion stays blocked.
+This deliberate fail-closed boundary prevents helper-only work being mistaken for
+usable public support. The twelve-output verifier and Graph field/key checks remain
+unchanged. Source/target fixture qualification in the private IR Graph handoff is
+setup/schema evidence only, not Graph pairing, product CREATE or full Chunk E.
+
+Verification: scoped changes, lint:fix then zero-warning lint, explicit build,
+51 focused Graph/dependency tests and full `npm test --no-workspaces` 1016/1016,
+zero skips/failures; full runner125.465s, combined check156.524s. Normal hook/CI
+outcomes belong to the outgoing checkpoint report, not presumed here.
+
+Resume in `bind-data-graph-dependencies.ts` and `retrieve-data-graph.ts`: independently
+acquire the exact reference owner, project facade/native owner, call unchanged
+`verifyIdentityResolutionOutputs` for all twelve returned names, locate exact logical
+identity, correlate returned root local ID/name in REST/Metadata and keep the three
+Text/sole explicit Id-key guard. Runtime projection/comparison/payload mapping must
+translate only through this private verified binding; no suffix guessing/source IDs.
+Then extend selectors and actual retrieve/deploy commands (currently explicit Graph/IR
+expansion refusals): explicit/reversed and opt-in expanded selection, dependency order,
+byte/digest/freshbinding whole-batch zero-write refusal. Split at selectors/retrieve/deploy
+seams if needed; full verification per substantive checkpoint. Add wrongowner/schema/key,
+identity drift and no-source-ID regressions. Do not claim completion before these land.
+
+No org calls/mutations/live acceptance or cleanup, guide/root DB/index edits, release
+or version bump. Fixtures retained. Remaining product IR creation and Graph creation,
+selected-missing-prerequisite admission and actual cross-org installed pair acceptance
+remain separate blockers. DMO additive deferred. Whole-feature Gate4 belongs to the
+coordinator after remaining implementation, not this checkpoint.
+
+Propagation: standalone `sf-plugin-data@0.1.0`, no workspace consumers. README and this
+handover updated; capabilities/artifact-format/public command docs unchanged because
+operational support remains legacy-only. Language/LSP/hover/wiki/CMS/MCNext/guide updates
+not needed. Next release unassigned; no release authorized. Every shell/test used verified
+absolute F:/Temp TEMP/Node tmpdir/nonempty TMP/TMPDIR; no scratch/cleanup authored.
+
 # Public Ingestion API DLO integration — 2026-10-28
 
 ## Postprocessing runtime admission repair

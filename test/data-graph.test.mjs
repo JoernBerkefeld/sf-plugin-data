@@ -4,6 +4,10 @@ import test from 'node:test';
 import Deploy from '../lib/commands/data360/deploy.js';
 import { McpExecuteClient } from '../lib/transport/mcp-execute.js';
 import {
+  documentDependencyNode,
+  orderDependencyNodes,
+} from '../lib/artifacts/dependency-selection.js';
+import {
   dataGraphFields,
   projectDataGraph,
   serializeDataGraphDocument,
@@ -21,6 +25,86 @@ import {
 } from '../lib/services/execute-data-graph-deploy.js';
 
 const selection = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
+
+const outputIdentity = {
+  owner: { kind: 'identity-resolution', dataSpace: 'default', apiName: 'Individual_Qualified' },
+  entity: { kind: 'dmo', dataSpace: 'default', apiName: 'ssot__Individual__dlm' },
+  role: 'unified',
+};
+
+test('portable Graph owner reference extracts exact IR edge without generated identity', () => {
+  const document = projectDataGraph(graph(), 'SyntheticGraph').candidate;
+  document.spec.primaryObjectName = structuredClone(outputIdentity);
+  document.spec.sourceObject.name = structuredClone(outputIdentity);
+  document.spec.sourceObject.devName = structuredClone(outputIdentity);
+  const admitted = validateDataGraphDocument(document);
+  const node = documentDependencyNode(admitted);
+  assert.deepEqual(node.dependencies, [outputIdentity.owner]);
+  const owner = { identity: outputIdentity.owner, dependencies: [] };
+  const expected = [
+    'identity-resolution:default:Individual_Qualified',
+    'data-graph:default:SyntheticGraph',
+  ];
+  assert.deepEqual(orderDependencyNodes([node, owner]), expected);
+  assert.deepEqual(orderDependencyNodes([owner, node]), expected);
+  const text = serializeDataGraphDocument(admitted);
+  assert.equal(text.includes('owner-id'), false);
+  assert.equal(text.includes('UnifiedssotIndividualMkt__dlm'), false);
+  document.spec.primaryObjectName.owner.apiName = 'ChangedOwner';
+  assert.equal(admitted.spec.primaryObjectName.owner.apiName, 'Individual_Qualified');
+});
+
+test('portable Graph refuses unsupported owner identity, role, entity and root disagreement', () => {
+  for (const modify of [
+    (root) => {
+      root.role = 'link';
+    },
+    (root) => {
+      root.entity.apiName = 'ssot__ContactPointEmail__dlm';
+    },
+    (root) => {
+      root.owner.kind = 'dmo';
+    },
+    (root) => {
+      root.owner.dataSpace = 'other';
+    },
+    (root) => {
+      root.owner.apiName = '';
+    },
+    (root) => {
+      root.owner.id = 'source-id';
+    },
+    (root) => {
+      root.sourceApiName = 'GeneratedSource__dlm';
+    },
+  ]) {
+    const document = projectDataGraph(graph(), 'SyntheticGraph').candidate;
+    const root = structuredClone(outputIdentity);
+    modify(root);
+    document.spec.primaryObjectName = root;
+    document.spec.sourceObject.name = structuredClone(root);
+    document.spec.sourceObject.devName = structuredClone(root);
+    assert.throws(() => validateDataGraphDocument(document));
+  }
+  const document = projectDataGraph(graph(), 'SyntheticGraph').candidate;
+  document.spec.primaryObjectName = structuredClone(outputIdentity);
+  assert.throws(() => validateDataGraphDocument(document));
+});
+
+test('owner-qualified Graph binding stays closed before runtime integration', async () => {
+  const document = projectDataGraph(graph(), 'SyntheticGraph').candidate;
+  document.spec.primaryObjectName = structuredClone(outputIdentity);
+  document.spec.sourceObject.name = structuredClone(outputIdentity);
+  document.spec.sourceObject.devName = structuredClone(outputIdentity);
+  let reads = 0;
+  await assert.rejects(
+    bindDataGraphDependencies(document, connection, selection, 'default', async () => {
+      reads++;
+      throw new Error('must not read a guessed name');
+    }),
+  );
+  assert.equal(reads, 0);
+});
 const connection = {
   instanceUrl: 'https://synthetic.my.salesforce.com',
   getApiVersion: () => '67.0',
