@@ -1,3 +1,130 @@
+# Chunk D existing-target IR PREFLIGHT-ONLY checkpoint — 2026-10-28
+
+Baseline `f046d1de183f22f04d00cd96ae3517c345c0f1d7` fetched equal to
+origin/main; no preexisting tracked changes or ahead commits. Existing Gate1/2
+remain closed; Gate3 uses the explicitly permitted coherent preflight-only split.
+One owner, no nested workers. Coordinator retains once-whole-feature Gate4,
+public documentation propagation and final DB rebuild/validate/gaps. This is NOT
+executor, IR-family, Chunk D or roadmap completion. No live calls/mutations,
+installs, release/version/tag, shared transport, commands, writer or DB edits.
+
+## Exact new exported interface
+
+`src/services/preflight-identity-resolution-deploy.ts` exports:
+
+- `IdentityResolutionTargetConnection = Pick<Connection,
+  'instanceUrl'|'request'|'getApiVersion'>`.
+- `IdentityResolutionPreflightOptions = {targetApiName:string,
+  verifyDependencies?:(document:IdentityResolutionDocument,
+  connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
+  dataSpace:string)=>Promise<void>, acquire?:typeof retrieveIdentityResolution}`.
+  Although optional in the options type for fail-closed callers, the dependency
+  verifier is REQUIRED at runtime. No verifier means blocked before reads. It must
+  independently verify fresh exact target logical input-DMO/field compatibility;
+  production binder remains unimplemented/unqualified, not supplied as a no-op.
+- `preflightIdentityResolutionDeploy(value:unknown,
+  connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
+  dataSpace:string,options:IdentityResolutionPreflightOptions):
+  Promise<IdentityResolutionDeployPreview>`.
+- Preview is `{family:'identity-resolution',
+  outcome:'update'|'unchanged'|'blocked-changes'|'blocked',
+  target:'present'|'unknown',absenceProof:'none',
+  route:{apiVersion:'67.0',operation:'d360_ir_update'},
+  requiredEffects:Array<'publication'|'generated-output-provisioning'>,
+  diagnostics:Array<{code:string,message:string}>}`. No raw expectations or
+  target IDs/names/payloads escape. Preview is NOT execution authorization.
+
+Validate/detach complete document before reads; explicit numeric API67 selection,
+matching connection and default space only. Exact target `Individual_` plus four
+alphanumeric characters is separately supplied, never inferred from logicalName.
+Snapshot routing/options across awaits. Fresh injected dependency verification
+runs on every call, even equality; then independently acquire full facade/native
+representations through the existing service. Re-project both complete raw reads,
+validate candidate/identity and all 12 ordered owner/entity/role output bindings.
+Only native omission of facade filters:[] is qualified. Unknown/malformed/error,
+non-PUBLISHED, missing candidate/expectations, output divergence or verifier
+failure block with payload-free diagnostics. Missing/unreadable is NEVER absence;
+CREATE has no admitted path.
+
+Complete ordered portable equality yields unchanged with no effects and ZERO
+mutation calls. The sole admitted difference is Individual LastUpdated to
+MostFrequent, preserving label/description, ordered matching/flags/automatic=false,
+all six ordered reconciliation entries and logical generated-output semantics.
+It reports both publication and generated-output-provisioning. Label/description
+EDITS, reverse reconciliation and every other difference remain blocked: evidence
+proves preservation, not their edit qualification. Generated-name correlation is
+not independent output-DMO field/type qualification or completed target rebinding.
+
+## Exact next bounded executor slice — NOT implemented
+
+Start at `src/services/execute-identity-resolution-deploy.ts` and synthetic
+`test/execute-identity-resolution-deploy.test.mjs`; consume the exact contracts
+above and frozen McpExecuteClient, do not broaden shared transport.
+
+1. Required injected immutable `verifyInput:()=>Promise<void>` and explicit
+   `allowProcessing:boolean`; missing acknowledgement before ANY update, equality
+   needs no acknowledgement and performs zero mutations. Revalidate captured
+   input, fresh exact acquisition and independently compatible logical target
+   dependencies immediately before dispatch; never trust preview/cache. Compare
+   stable private target identity/generated baseline across these boundaries.
+2. Map only the qualified complete wire payload: preserved label/description,
+   automatic=false and complete nested ordered matches; reconciliation input has
+   ONE Individual MostFrequent/ignore-empty rule as frozen transport/evidence
+   require. Preserve and verify all SIX generated reconciliation entries in
+   independent output, not by replaying generated names/IDs/suffixes in input.
+3. One allowlisted `d360_ir_update` attempt only, never retry/replay/rollback.
+   Mark uncertain attempts honestly. Explicit finite read-count/interval/deadline
+   PUBLISHING polling; only PUBLISHED can advance, no inferred state aliases.
+   Record private per-poll evidence safely BEFORE classification where needed;
+   nested201/errors/unknown/malformed observations fail closed without raw leaks.
+4. Independent settled facade/native full semantic readback, owner identity and
+   all preserved fields must correlate, not merely echo/status. Rebind 12 target
+   outputs by target owner/default space/reconciliation entity/unified-or-link
+   role from settled owner-returned names, then independently verify required
+   target definitions/fields/types. Do not claim this is qualified until evidence
+   exists; never provision/delete generated DMOs independently.
+5. Regressions: no-op0 mutations, missing ack0 writes, exact full wire payload and
+   six-entry preservation, invalid input/version/nested errors, actual-core
+   401/network no-replay, finite polling/error/unknown/full-readback mismatch,
+   late byte/input/dependency/target drift. Full scoped autofix/build/lint0/tests
+   over stable inputs, then normal-hook checkpoint under existing authorization.
+
+Later separate integration owns safe file writer/read-input/Git selection,
+explicit IR logical-name-to-target binding, existing retrieve/deploy command
+routing/effects and API auto selection. Separate bounded live source and cross-org
+plugin acceptance must prove actual retrieval/update/readback/zero-write repeat;
+synthetic tests and historical API receipts are NOT those passes. CREATE remains
+blocked until separate IR permission-aware absence/conflict/binding evidence;
+never borrow Segment absence semantics. No field qualification is inferred.
+
+## Verification, retained debt and propagation
+
+New synthetic file `test/identity-resolution-preflight.test.mjs`: nine tests cover
+repeated equality/no mutations, sole admitted delta/effects, refused edits,
+input/version/scope guards, missing/unreadable/nested201 redaction, independent
+full-raw/candidate/output mismatches, fresh verifier failures and async caller
+input/options detachment. Scoped autofix, explicit build, focused nine tests,
+full zero-warning lint and full npm test passed: 662 passed, zero failures,
+skips or cancellations. Runner 113932.2902 ms; full npm test wall 117.443 seconds;
+combined verification wall 131.152 seconds. Source/tests stayed unchanged during
+verification; only this handover was then updated. Normal unchanged-hook counts,
+wall-clock, checkpoint commit and push receipts appear in the worker return.
+Every shell entry runs check-temporary.mjs, repairing only process-local env to
+F:/Temp then rechecking when needed. No scratch or recursive deletion authored.
+
+Graph generated VALUE debt is UNCHANGED: owner-generated
+`GraphDd23cf3b3eb6372_1793161702141_VALUE__dlm` remained readable in checkpoint D.
+No new ownership/delete authority, no direct generated-DMO cleanup, eventual or
+physical cleanup unknown. Segment A2 unexpected setup-state/raw-evidence gap and
+create permission/shell blocker, CI meaningful expression/no-op limitation,
+DLO operational and broader DMO/schema gaps remain as recorded below.
+
+Changed folder sf-plugin-data, current package version 0.1.0 unchanged; new version
+unassigned, internal checkpoint only, no release. Propagation: internal service,
+tests and handover updated. Public README/capabilities/artifact/Git docs and guide
+remain coordinator-owned (no public capability enabled); no language data/LSP/
+hover/wiki/site/mcdev/CMS/downstream consumer update is required.
+
 # Chunk D bounded IR document/acquisition checkpoint — 2026-10-28
 
 Baseline `6a622a110251b5e73b64e3c809bff509475864ae` fetched equal to
