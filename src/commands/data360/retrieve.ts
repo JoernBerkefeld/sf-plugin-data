@@ -15,6 +15,12 @@ import { plugin as packageMetadata } from '../../plugin.js';
 import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
 import { writeSegmentDocument } from '../../artifacts/write-segment.js';
 import { retrieveSegment } from '../../services/retrieve-segment.js';
+import {
+  selectRetrieveDependencies,
+  RetrieveDependencyError,
+} from '../../services/select-retrieve-dependencies.js';
+import { DependencySelectionError } from '../../artifacts/dependency-selection.js';
+import type { DependencyIdentity, SelectionReason } from '../../artifacts/dependency-selection.js';
 
 export type RetrieveEnvelope = {
   contract: 'sf-data360-retrieve';
@@ -45,6 +51,7 @@ export type RetrieveEnvelope = {
   result: {
     scope: { dataSpace: string; outputDir: string };
     selection: string[];
+    dependencies?: Array<{ identity: DependencyIdentity; reason: SelectionReason }>;
     items: Array<{
       identity: { dataSpace: string; apiName: string };
       operation: 'retrieve';
@@ -89,6 +96,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       exists: false,
       summary: 'Project root for JSON; defaults to the current directory.',
     }),
+    'include-dependencies': Flags.boolean({
+      default: false,
+      summary:
+        'Include supported source prerequisites; unsupported dependency acquisition blocks publication.',
+    }),
     overwrite: Flags.boolean({
       char: 'x',
       default: false,
@@ -97,6 +109,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   };
 
   protected acquireSegment = retrieveSegment;
+  protected selectDependencies = selectRetrieveDependencies;
   protected writeSegment = writeSegmentDocument;
   protected acquire = retrieveDmo;
   protected selectDocuments = selectDmos;
@@ -211,6 +224,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       let code = 'RETRIEVE_FAILED';
       if (
         error instanceof SegmentError ||
+        error instanceof DependencySelectionError ||
+        error instanceof RetrieveDependencyError ||
         error instanceof DmoWriteError ||
         error instanceof DmoRetrieveError ||
         error instanceof ConnectError
@@ -222,10 +237,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         code === 'OUTPUT_FAILED' ||
         code === 'PARTIAL_SEGMENT_OUTPUT' ||
         code === 'SEGMENT_ACQUISITION_FAILED' ||
+        code === 'DEPENDENCY_ACQUISITION_FAILED' ||
+        code === 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED' ||
         error instanceof ConnectError ||
         code === 'ACQUISITION_FAILED'
       )
         failed = true;
+      if (error instanceof RetrieveDependencyError) {
+        apiName = error.identity.apiName;
+        envelope.result.dependencies = [{ identity: error.identity, reason: error.reason }];
+      }
       envelope.diagnostics.errors.push({
         code,
         message: apiName
@@ -283,40 +304,67 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         ...names.map((name) => `dmo:${name}`),
         ...segments.map((name) => `segment:${name}`),
       ];
-      for (const apiName of segments) {
-        try {
-          const acquisition = await this.acquireSegment(
-            connection,
-            apiName,
-            selection,
-            flags['data-space'],
-          );
-          if (
-            acquisition.blockers.length > 0 ||
-            !acquisition.candidate ||
-            !acquisition.definitionXml
-          )
-            throw new SegmentError(acquisition.blockers[0] ?? 'INCOMPLETE_SEGMENT');
-          if (
-            acquisition.candidate.identity.apiName !== apiName ||
-            acquisition.candidate.identity.dataSpace !== flags['data-space']
-          )
-            throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
-          const receipt = await this.writeSegment(
-            acquisition.candidate,
-            acquisition.definitionXml,
-            flags['output-dir'] ?? process.cwd(),
-            flags.overwrite,
-          );
-          envelope.result.items.push({
-            identity: { ...acquisition.candidate.identity },
-            family: 'segment',
-            operation: 'retrieve',
-            ...receipt,
+      if (segments.length > 0 || flags['include-dependencies']) {
+        // Acquire and resolve the complete bounded selection before publishing any files.
+        const selected = await (this.selectDependencies ?? selectRetrieveDependencies)(
+          [
+            ...names.map((apiName) => ({
+              kind: 'dmo' as const,
+              dataSpace: flags['data-space'],
+              apiName,
+            })),
+            ...segments.map((apiName) => ({
+              kind: 'segment' as const,
+              dataSpace: flags['data-space'],
+              apiName,
+            })),
+          ],
+          connection,
+          selection,
+          flags['include-dependencies'] ?? false,
+        );
+        if (flags['include-dependencies'])
+          envelope.result.dependencies = [...selected.reasons].map(([key, reason]) => {
+            const [kind, dataSpace, apiName] = key.split(':');
+            return {
+              identity: { kind: kind as DependencyIdentity['kind'], dataSpace, apiName },
+              reason,
+            };
           });
-        } catch (error: unknown) {
-          diagnose(error, apiName);
+        envelope.result.selection = selected.entries.map(
+          ({ document }) => `${document.kind}:${document.identity.apiName}`,
+        );
+        for (const entry of selected.entries) {
+          const { document } = entry;
+          try {
+            const receipt =
+              'definitionXml' in entry
+                ? await this.writeSegment(
+                    document,
+                    entry.definitionXml,
+                    flags['output-dir'] ?? process.cwd(),
+                    flags.overwrite,
+                  )
+                : await this.writeDocument(
+                    document,
+                    flags['output-dir'] ?? process.cwd(),
+                    flags.overwrite,
+                  );
+            envelope.result.items.push({
+              identity: { ...document.identity },
+              ...(document.kind === 'segment' ? { family: 'segment' as const } : {}),
+              operation: 'retrieve',
+              ...receipt,
+            });
+          } catch (error: unknown) {
+            diagnose(error, document.identity.apiName);
+            // Do not publish dependents after an ambiguous prerequisite output failure.
+            break;
+          }
         }
+        return finish(
+          envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
+        );
       }
       for (const apiName of names) {
         try {

@@ -1,3 +1,91 @@
+# Segment A2c2 retrieve dependency selection checkpoint — 2026-10-28
+
+This completes the bounded retrieve-side selection checkpoint, NOT Segment A,
+A2 execution, cross-org acceptance or the seven-family roadmap. Existing plan and
+review remain closed; one owner kept service/command/tests coupled. Coordinator
+retains whole-feature Gate4, public documentation propagation and shared database
+rebuild/validate/gaps. Fetch/status reconciled clean pushed baseline
+`cf9735745037fc1dcd3b96b1bac81871978a07c8`; ahead history was empty. No live calls,
+org mutation, installs, evidence rows, shared-index edits, release or version bump.
+
+## Implemented interfaces and owned files
+
+- `src/services/select-retrieve-dependencies.ts` exports
+  `selectRetrieveDependencies(roots:DependencyIdentity[], connection:Connection,
+version:ApiVersionSelection, include:boolean, injected?:RetrieveServices)`:
+  `Promise<{entries:RetrieveDependencyEntry[],reasons:Map<string,SelectionReason>}>`.
+  Entries are `{document:DmoDocument}` or `{document:SegmentDocument,
+definitionXml:string}`. Optional offline seams are `segment`, `dmo`, `bind` and
+  `raw(name):Promise<{detail:unknown,metadata:unknown}>`; defaults reuse existing
+  family acquisition, reference binder and guarded Connect/Metadata reads.
+- Default exact Segment retrieval always runs `bindSegmentDependencies` against
+  raw source DMO detail plus Metadata. Shared raw reads are invocation-cached by
+  typed identity; no target/source IDs enter exported files. Without opt-in,
+  unselected prerequisites are inspected but never acquired as portable DMO
+  artifacts or published. Only existing qualified one-object/one-field SQL is
+  admitted; SQL bytes are unchanged.
+- Opt-in recursively acquires supported DMO prerequisites through `retrieveDmo`,
+  retaining its original blockers and authored contract. PROFILE compatibility is
+  NOT PROFILE portability: real qualified Segment dependencies require PROFILE,
+  and unsupported PROFILE/generated acquisition blocks the COMPLETE selection
+  before any file publication. Successful expansion tests use synthetic admitted
+  family-service seams; they do not qualify production PROFILE export as Other.
+- Reuses `dependencyKey`, `documentDependencyNode`, `orderDependencyNodes` and
+  `dependencyLimits`: 256 nodes/acquisitions, 512 edges, 16 chain depth; unknown
+  closure, wrong identity, duplicates/cycles/limits fail closed. Current admitted
+  Segment-to-DMO/leaf-DMO shapes cannot form real cycles; shared graph regressions
+  cover cycle rejection. Isolated roots remain. Reasons retain explicit versus
+  added selection and root-to-prerequisite chains, including shared references.
+- `retrieveDependencyLimits.requests = 512` bounds admitted transport operation
+  reservations conservatively: 103 per DMO (detail, Metadata, at most 101
+  relationship pages), two per Segment (exact GET, bounded standard Metadata job)
+  and two per unique raw binding. CLI-internal polling is separately bounded by
+  existing `project-metadata.ts`, not counted as individual requests here. Budget
+  reservations happen before binder error sanitization so limit codes survive.
+- `RetrieveDependencyError(code,identity,reason)` carries payload-free refusal
+  context. `src/commands/data360/retrieve.ts` adds `--include-dependencies` and
+  optional `result.dependencies:[{identity,reason}]`; failures retain the affected
+  reason even without opt-in. Mixed/Segment selections admit the complete graph
+  before output; publication is dependency-first and stops at the first output
+  failure, retaining earlier receipts without claiming a batch transaction.
+  Existing DMO-only default path/per-item behavior remains unchanged. Existing
+  DMO writer and Segment pair writer own paths, overwrite and pair integrity.
+- `test/retrieve-dependencies.test.mjs` adds seven regressions for default versus
+  opt-in, shared binding/acquisition, reversed/repeated/explicit/isolated roots,
+  honest PROFILE blockers, actual PROFILE compatibility binder, missing/foreign/
+  unknown/limited acquisition, sanitized failure and output-stop behavior.
+  `test/retrieve-command.test.mjs` updates the selection seam and complete-selection
+  blocker expectation. Existing path/overwrite/pair writer tests remain unchanged.
+
+## Verification and environment
+
+Scoped ESLint autofix, explicit build, full zero-warning lint and focused 24/24
+retrieve tests passed. Full package run passed 545/545, zero failures/skips:
+114.9802881s Node phase, 118.3304045s complete npm wall including build on the
+final source/test tree after the request-budget placement correction. Normal
+enabled unchanged hook repeats full verification before commit. Hook/full-suite/smoke and commit/push receipts are reported after they
+actually complete, never presumed. TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR
+preflight ran at every shell entry; all normalize absolutely to F:/Temp. No
+recursive cleanup. No package install smoke or live qualification in this slice.
+
+## Remaining and exact next resume point
+
+Retrieve and deploy opt-in dependency selection are implemented within their
+existing supported family contracts. This does not enable dependent selected
+PROFILE creation, unsupported PROFILE export or Segment execution. Next bounded
+slice: qualify permission-aware Segment absence/shell conflict policy, then the
+existing executor seam's single-attempt processing acknowledgement, bounded
+settlement, independent semantic readback and fresh post-prerequisite binding.
+Use compatible preexisting PROFILE dependencies; do not broaden DMO portability
+to make expansion pass. Any live evidence requires database lookup first,
+MCP-first identity verification and a newly owned bounded fixture ledger.
+
+Coordinator owns once-whole-feature Gate4 and README/capability/artifact/Git-guide
+and public guide propagation; no workspace consumers, language/hover/wiki/site
+listing changes arise here. Changed folder: sf-plugin-data yes, current 0.1.0,
+new version unassigned (internal checkpoint, no release). All other tracked
+components N/A/not needed.
+
 # Segment A2c2 deploy dependency selection checkpoint — 2026-10-28
 
 This is a coherent DEPLOY-ONLY subcheckpoint, NOT complete A2c2/A2c. Existing

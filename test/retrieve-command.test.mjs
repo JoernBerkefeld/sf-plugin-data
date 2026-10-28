@@ -155,6 +155,14 @@ test('exact Segment repeat selection deduplicates and writes pairs without DMO i
   });
   command.selectDocuments = () => assert.fail('Segment exact must not list DMOs');
   const acquired = [];
+  command.selectDependencies = async (roots, conn, version) => {
+    const entries = [];
+    for (const root of roots) {
+      const acquired = await command.acquireSegment(conn, root.apiName, version, root.dataSpace);
+      entries.push({ document: acquired.candidate, definitionXml: acquired.definitionXml });
+    }
+    return { entries, reasons: new Map() };
+  };
   command.acquireSegment = async (conn, name, version, space) => {
     assert.equal(conn, connection);
     assert.equal(version.requested, '65.0');
@@ -198,14 +206,15 @@ test('Segment bare inventory/latest/invalid identity refuse before auth', async 
     assert.equal(result.status, 'blocked');
   }
 });
-test('blocked Segment never publishes while independent DMO retains existing route', async () => {
+test('blocked Segment dependency selection prevents complete-selection publication', async () => {
   const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
-  command.acquireSegment = async () => ({ blockers: ['UNKNOWN_SEGMENT_CONFIGURATION'] });
+  command.selectDependencies = async () => {
+    throw new DmoRetrieveError('UNKNOWN_SEGMENT_CONFIGURATION');
+  };
   command.writeSegment = () => assert.fail('must not publish');
   const { result } = await run(command);
   assert.equal(result.status, 'blocked');
-  assert.equal(result.result.items.length, 1);
-  assert.equal(result.result.items[0].family, undefined);
+  assert.equal(result.result.items.length, 0);
 });
 
 // Restore process exit state after checking envelope failures, not an actual CLI process.
