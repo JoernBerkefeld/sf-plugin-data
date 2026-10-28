@@ -1,3 +1,101 @@
+# Chunk D IR logical-owner identity checkpoint — BLOCKED — 2026-10-28
+
+Reconciled interrupted worker `e2e43088-9be4-4079-af75-3c1c6b7cc34b`
+and subsequent recovery transcript before extending work. Neither transcript
+contains an implementation edit or history operation. Fresh package fetch/status
+confirmed clean HEAD = origin/main =
+`1ca88d9e00c387e36b1bbb58c56d1d9736e0cd78`, no ahead history or partial
+package changes. Retained baseline verification is 767 tests/30 smoke tests;
+fresh verification and checkpoint receipts are returned separately after execution.
+Existing Gates1/2 remain closed; Gate3 is one small coupled contract/handover owner,
+no nested workers. Coordinator owns whole-feature review/public docs/final DB
+rebuild/validate/gaps. This checkpoint does not resolve IR owner binding.
+
+## Concrete identity blocker, not a resolver implementation
+
+Current `IdentityResolutionDocument` v1 identity is exactly
+`{dataSpace:'default',logicalName:string}`. Both
+`projectIdentityResolution(facade,native,sourceApiName,logicalName)` and
+`retrieveIdentityResolution(connection,sourceApiName,logicalName,selection,dataSpace)`
+accept caller-authored logicalName independently of source API name and label.
+All twelve logical output identities repeat that same arbitrary logicalName.
+Consequently neither logicalName==target label nor logicalName==target API name
+is an established identity relation. Matching either would silently reinterpret
+existing documents, not resolve them.
+
+The local official IR list/get reference exposes `objectApiName`, `id`, `label`,
+`configurationType` and `dataSpaceName`; create labels are display names, not a
+verified unique immutable developer identity. API67 create schema also exposes
+`rulesetId` and `sourceIrDevName`; schema availability alone establishes neither
+cross-org identity semantics nor a reversible stable authored owner key. Existing
+qualified lifecycle evidence has runtime `Individual_<suffix>` and a four-character
+rulesetId. Projection currently correlates those two raw values privately; that
+check is NOT permission to derive or persist the suffix as a portable owner key.
+
+The proposed recovery-summary fallback is explicitly NOT adopted: failure to find
+an API name is not evidence that a usable API name is genuinely unavailable.
+Using spec.label or logicalName as a fallback after that failure violates the
+approved API-first reference contract. A complete bounded inventory could prove
+that one visible label matches today, but cannot establish that an unrelated
+caller-authored logicalName denotes that label. Inventory omission would also
+not establish permission-aware CREATE absence. No first-match, suffix guessing,
+source-ID replay, manual manifest or generic identity registry is introduced.
+
+**Required coordinator/user decision before command wiring:** either confirm that
+exact owner API names are the intended portable identity under the roadmap's
+matching-API-name assumption (and explicitly decide whether owner names containing
+the observed suffix are allowed as authored API references), or authorize a
+separately evidenced name-only owner identity contract for this family despite
+the exposed API name. The first option needs a narrow discriminated/versioned
+artifact correction, fresh retrieval-derived identity and explicit rejection of
+old arbitrary-logicalName documents; never silently migrate by equating them to
+labels or stripping suffixes. The second needs an explicit semantic exception
+and bounded complete inventory/unique compatible match qualification. These are
+alternative decisions, not implemented recommendations to choose silently.
+No evidence currently justifies applying either automatically under the simultaneous
+no-generated-suffix-persistence and API-first constraints.
+
+## Actual operations, verification boundary and next resume
+
+Prior worker transcript records source headless discover/describe/readonly
+Organization verification, API67 list/get exploration and an interrupted native
+CLI request construction. Recovery summary also records source MCP binding.
+This continuation independently queried the explicit CLI alias mcnext-sdo:
+Organization Id matched the expected source. Persistent project's declared
+API65/force-app configuration was inspected and preserved. Its git status belongs
+to the dirty workspace root, not a separate clean validation-project repository;
+no project edits occurred. Operation schemas/local reference and existing IR DB
+lifecycle evidence were inspected. No new resource list/detail probe, fixture,
+mutation, target call or permission/inventory-completeness qualification was
+performed by this continuation. No fresh live evidence subject is manufactured
+from schema metadata or synthetic tests; historical API observations retain scope.
+The earlier schema lookups/alias query do not constitute live resolver acceptance.
+
+Only this handover changes. No production/test behavior changed, therefore no new
+behavior regression is claimed or required for this documentation-only checkpoint.
+Fresh explicit build, zero-warning lint, full tests and normal unchanged hooks
+remain required before checkpoint preservation; exact counts/timings/hash/push
+are reported in the worker return, never presumed here. Every shell/test entry
+checks actual Node os.tmpdir/TEMP/nonempty TMP/TMPDIR against absolute normalized
+F:/Temp with process-only repair/recheck. No new scratch or recursive deletion
+was authored. No install, release, version/tag, root file/index/history change.
+
+Next owner starts at the identity decision above, then narrowly corrects
+`src/artifacts/identity-resolution-document.ts` and retrieval/projection callers
+before implementing a family resolver. Add regressions for explicit old-shape
+refusal, differing target IDs, missing/ambiguous/incompatible owner, malformed or
+incomplete inventory/pagination, exact default space and no source-ID/suffix
+replay. Keep command/API-auto integration separate. CREATE remains blocked.
+Revised input-binder live acceptance, actual plugin source/cross-org IR update/
+readback/zero-mutation acceptance, broader matching/reconciliation/source precedence,
+Segment setup/create blockers, CI expression/no-op, DLO/broader DMO gaps and Graph
+VALUE cleanup debt below are unchanged. This is NOT family/Chunk D/roadmap completion.
+
+Propagation assessment: internal sf-plugin-data handover only; no public capability
+or artifact change, no workspace consumers/language/LSP/hover/wiki/mcdev/CMS/site
+update. Public docs/aggregate propagation table remain coordinator-owned. Changed
+folder sf-plugin-data yes, current package version 0.1.0, next unassigned; no release.
+
 # Chunk D IR safe files/input/Git checkpoint — 2026-10-28
 
 Reconciled fetched baseline `8122f35179102045c9a2971afc3bfe6176ec3b06`,
