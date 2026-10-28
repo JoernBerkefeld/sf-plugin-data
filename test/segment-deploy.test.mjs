@@ -6,7 +6,35 @@ import path from 'node:path';
 import os from 'node:os';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { readDeployInputs, verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
-import { preflightSegmentDeploy } from '../lib/services/preflight-segment-deploy.js';
+import { preflightSegmentDeploy as preflightWithBinding } from '../lib/services/preflight-segment-deploy.js';
+import { bindSegmentDependencies } from '../lib/services/bind-segment-dependencies.js';
+const dependencyMetadata = () => ({
+  detail: {
+    name: 'Person__dlm',
+    id: 'target-local',
+    dataSpaceName: 'default',
+    category: 'PROFILE',
+    isSegmentable: true,
+    fields: [{ name: 'Id__c', type: 'Text', isPrimaryKey: true }],
+  },
+  metadata: [
+    {
+      fullName: 'Person__dlm',
+      mktDataModelAttributes: { dataSpaceName: 'default', isSegmentable: 'true' },
+      fields: [
+        {
+          fullName: 'Id__c',
+          type: 'Text',
+          mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
+        },
+      ],
+    },
+  ],
+});
+const bind = (value, connection, api, space) =>
+  bindSegmentDependencies(value, connection, api, space, async () => dependencyMetadata());
+const preflightSegmentDeploy = (value, connection, api, space, acquire) =>
+  preflightWithBinding(value, connection, api, space, acquire, bind);
 import Deploy from '../lib/commands/data360/deploy.js';
 const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
 const document = () => ({
@@ -37,6 +65,114 @@ const acquire = async () => ({
   candidate: document(),
   blockers: [],
   expectations: { runtime: { segmentStatus: 'ACTIVE' } },
+});
+
+test('binding uses exact target-local identity, preserves SQL and refreshes every call', async () => {
+  const desired = document();
+  const before = structuredClone(desired);
+  let reads = 0;
+  const acquireDependency = async (name) => {
+    assert.equal(name, 'Person__dlm');
+    const acquired = dependencyMetadata();
+    acquired.detail.id = `target-${++reads}`;
+    return acquired;
+  };
+  for (const id of ['target-1', 'target-2']) {
+    const bindings = await bindSegmentDependencies(
+      desired,
+      connection,
+      '65.0',
+      'default',
+      acquireDependency,
+    );
+    assert.equal(bindings[0].targetId, id);
+    assert.deepEqual(bindings[0].identity, desired.spec.segmentOn);
+  }
+  assert.deepEqual(desired, before);
+});
+test('missing, ambiguous, incompatible and failed exact dependencies block without name fallback', async () => {
+  const mutations = [
+    (v) => {
+      v.metadata[0].mktDataModelAttributes.dataSpaceName = 'other';
+    },
+    (v) => {
+      v.metadata[0].mktDataModelAttributes.isSegmentable = 'false';
+    },
+    (v) => {
+      v.detail.fields = Array.from({ length: 4097 }, () => ({ name: 'Id__c' }));
+    },
+    (v) => {
+      v.detail.name = 'Other__dlm';
+    },
+    (v) => {
+      delete v.detail.name;
+      v.detail.label = 'Person__dlm';
+    },
+    (v) => {
+      v.detail.isSegmentable = false;
+    },
+    (v) => {
+      v.detail.dataSpaceName = 'other';
+    },
+    (v) => {
+      v.detail.category = 'OTHER';
+    },
+    (v) => {
+      v.metadata = [];
+    },
+    (v) => {
+      v.metadata.push(structuredClone(v.metadata[0]));
+    },
+    (v) => {
+      v.detail.fields.push(structuredClone(v.detail.fields[0]));
+    },
+    (v) => {
+      v.metadata[0].fields = [];
+    },
+    (v) => {
+      v.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder = '2';
+    },
+    (v) => {
+      v.detail.fields[0].type = 'Number';
+    },
+  ];
+  for (const mutate of mutations) {
+    const acquired = dependencyMetadata();
+    mutate(acquired);
+    let segmentReads = 0;
+    const result = await preflightWithBinding(
+      document(),
+      connection,
+      '65.0',
+      'default',
+      async () => {
+        segmentReads++;
+        return acquire();
+      },
+      (value, conn, api, space) =>
+        bindSegmentDependencies(value, conn, api, space, async () => acquired),
+    );
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(segmentReads, 0);
+    assert.match(result.diagnostics[0].code, /^SEGMENT_DEPENDENCY/u);
+  }
+  await assert.rejects(
+    bindSegmentDependencies(document(), connection, '65.0', 'default', async () => {
+      throw new Error('private');
+    }),
+    { code: 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED' },
+  );
+});
+test('binding rejects unsupported SQL and API before dependency reads', async () => {
+  const invalid = document();
+  invalid.spec.models[0].sql = 'SELECT * FROM Person__dlm';
+  for (const [value, api] of [
+    [invalid, '65.0'],
+    [document(), 'latest'],
+  ])
+    await assert.rejects(
+      bindSegmentDependencies(value, connection, api, 'default', () => assert.fail('No reads')),
+    );
 });
 
 test('either pair member, overlapping directories and exact selector coalesce with immutable byte digest', async () => {

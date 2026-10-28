@@ -2,6 +2,8 @@ import type { Connection } from '@salesforce/core';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { validateSegmentDocument } from '../artifacts/segment-document.js';
 import { retrieveSegment } from './retrieve-segment.js';
+import { SegmentError } from '../artifacts/segment-document.js';
+import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import type { DmoDeployPreview } from './preflight-dmo-deploy.js';
 
 export type SegmentDeployPreview = DmoDeployPreview & {
@@ -18,6 +20,7 @@ export type SegmentDeployPreview = DmoDeployPreview & {
  * @param {string | ApiVersionSelection} apiVersion Explicit API65 selection.
  * @param {string} dataSpace Explicit default target space.
  * @param {Function} acquire Independent acquisition seam for deterministic synthetic tests.
+ * @param {Function} bind Fresh independent target dependency binding; never cached across calls.
  * @returns {Promise<SegmentDeployPreview>} Read-only semantic classification and possible effects.
  */
 export async function preflightSegmentDeploy(
@@ -26,6 +29,7 @@ export async function preflightSegmentDeploy(
   apiVersion: string | ApiVersionSelection,
   dataSpace: string,
   acquire: typeof retrieveSegment = retrieveSegment,
+  bind: typeof bindSegmentDependencies = bindSegmentDependencies,
 ): Promise<SegmentDeployPreview> {
   const result = (
     outcome: SegmentDeployPreview['outcome'],
@@ -63,6 +67,16 @@ export async function preflightSegmentDeploy(
       (apiVersion.soapNumeric !== '65.0' || apiVersion.restSelector !== 'v65.0'))
   )
     return result('blocked', 'unknown', 'INVALID_SCOPE');
+  try {
+    // Compatibility is always required, including unchanged and explicit-only selections.
+    await bind(desired, connection, apiVersion, dataSpace);
+  } catch (error: unknown) {
+    return result(
+      'blocked',
+      'unknown',
+      error instanceof SegmentError ? error.code : 'SEGMENT_DEPENDENCY_UNQUALIFIED',
+    );
+  }
   try {
     const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
     if (!acquired.candidate || acquired.blockers.length > 0 || !acquired.expectations)

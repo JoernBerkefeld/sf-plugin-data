@@ -1,3 +1,84 @@
+# Segment A2c1 exact target binding checkpoint — 2026-10-28
+
+This is a binding-only subcheckpoint, NOT complete A2c. Existing Gate1/2 remain
+closed; one owner kept the service/preflight/tests coupled. Coordinator retains
+whole-feature Gate4 and public documentation propagation. Fetch/status confirmed
+clean HEAD = origin/main = e466f6c713d138cf87efe50fdc4c80b35522bc21; personal Git
+identity verified. Package remains sf-plugin-data 0.1.0, no release/version bump.
+
+## Interfaces and implemented semantics
+
+- New `src/services/bind-segment-dependencies.ts` exports
+  `bindSegmentDependencies(value, connection, apiVersion, dataSpace, acquire?)`:
+  `Promise<SegmentDependencyBinding[]>`. Connection needs instanceUrl/request/
+  getApiVersion. Optional raw-read seam is `(name:string) => Promise<{detail:
+  unknown, metadata:unknown}>`. Production reuses guarded Connect exact detail
+  GET and existing guarded `readDmoMetadata`, not portable DMO retrieval/create.
+  Each private binding contains `{identity:{kind:'dmo',dataSpace:'default',apiName},
+  targetId:string, fields:[{apiName,dataType:'Text',isPrimaryKey:true}]}`. Target ID
+  is independently acquired; never sourced from a portable artifact or exposed
+  in the public preview. SQL is untouched.
+- Admission remains A1's one-object/one-field qualified empty-audience SQL.
+  Require exact DMO/fullName/default scope across Connect and Metadata, explicit
+  Connect PROFILE/segmentable and Metadata segmentable agreement, nonempty
+  target-local ID, unique exact field identities, matching Text type and exactly
+  one Metadata primary field matching the referenced field. Optional Connect
+  primary flag must agree. Each field collection is bounded at 4096 entries;
+  acquisition is one exact Connect and one exact Metadata operation, no inventory.
+  Unqualified variants fail closed, not generic profile portability acceptance.
+- `preflightSegmentDeploy` keeps its first five arguments and adds optional sixth
+  `bind = bindSegmentDependencies`. It invokes fresh binding before exact Segment
+  acquisition, including unchanged previews. No cache or previous binding is
+  trusted. This is the future post-prerequisite-settlement rebinding seam, not
+  implementation of settlement/execution. Missing/incompatible prerequisites block
+  even when selected for creation; no absent prerequisite admission was invented.
+- `test/segment-deploy.test.mjs` adds three cases with many mutations covering
+  differing refreshed target IDs, exact missing/name-label refusal, ambiguous
+  object/field metadata, scope/segmentability/type/primary mismatch, collection
+  bounds, acquisition failure and unsupported SQL/API before reads. Existing
+  mixed execution/digest and all DMO/Git regressions remain green.
+
+## Verification and constraints
+
+Scoped ESLint autofix, explicit build and full lint (zero warnings) passed.
+Final focused tests 13/13 (3.5735119s); final full npm test 532/532, zero failures/
+skips/cancellations, 115.4361064s Node phase, 118.8063813s full npm wall time
+including build. An earlier full 532/532 preceded tightening independent Metadata
+scope/segmentability checks; the final rerun above supersedes it. Normal enabled
+hook commit/push receipts are returned by the worker after completion, not presumed
+by this record. Hook runs full lint/build/tests and 30 CLI smoke tests unchanged.
+No installs or package smoke (its script installs), live org calls, evidence rows,
+shared-index changes or org mutations occurred. No live qualification is claimed.
+Every workload checked TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR against
+absolute normalized F:/Temp; initial malformed inline preflight stopped before Git
+and was corrected. All accepted workloads use the existing check script with
+process-only repair/recheck. Test scratch is retained; no recursive cleanup.
+
+## Exact remaining A2c and guarded-executor resume
+
+`--include-dependencies` is NOT implemented on retrieve or deploy. No selection
+graph, reasons/result additions, cycle/order handling or expansion was introduced.
+Default remains explicit-only; compatibility reads add no artifacts/writes.
+A1 typed references ALWAYS require API names; genuinely-missing-name fallback is
+unrepresentable and intentionally not invented. Failed API lookup never falls
+back to labels. Unique/ambiguous fallback tests must accompany a future separately
+admitted name-only reference shape, not fabricate one in this checkpoint.
+Next owner: implement bounded opt-in selection using available local DMO inputs and
+existing source DMO service admission only. DMO profile export/create limitations
+must remain blockers; do not expand generated/unsupported prerequisites. Retain
+Git roots/digests, typed dedupe, finite traversal, reason chains, isolated roots,
+cycles and same-family/unsupported-edge refusal. Then add guarded Segment executor
+only after absence/shell conflict, effects acknowledgement, fresh post-settlement
+binding, bounded processing/readback and independent acceptance gates close.
+ALL Segment execution/create remain blocked, including unchanged and mixed DMO
+selections. Existing API guards, DMO behavior and Git pair digests are unchanged.
+
+Propagation assessment: this package service/tests/handover changed; public README,
+capabilities/artifact/Git/guide propagation remains coordinator-owned before a
+milestone claim. No language/LSP/hover/wiki/site listing or workspace consumers.
+Changed folder sf-plugin-data: yes; current version 0.1.0; new version unassigned,
+internal checkpoint only. All other tracked components N/A/not needed.
+
 # Segment A2b Git pair selection checkpoint — 2026-10-28
 
 Bounded Git-selection-only checkpoint. Gate1/2 were already closed; the single
