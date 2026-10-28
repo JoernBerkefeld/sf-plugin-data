@@ -1,3 +1,94 @@
+# Chunk D live IR Metadata binding qualification — 2026-10-28
+
+Fetched clean/pushed baseline `6206f26b41047bd6ea91146cbaeaf365aa5f68cd`.
+Existing plan/review reused; one bounded source-only qualification worker, no
+nested workers. Coordinator retains whole-feature review/public docs/final DB
+rebuild/validate/gaps. This checkpoint preserves a precise input-binding blocker;
+NOT IR-family, cross-org, public-command or installed-plugin acceptance.
+
+## Actual helper results and independent schema
+
+Source MCP discover/describe/Organization identity, explicit CLI alias and core
+org binding matched the expected source before writes. Persistent validation
+project configuration/status inspected, no project edits. DB find/show before
+probes. One newly owned Individual/default fixture, automatic=false, published
+asynchronously; two independent publication polls PUBLISHING then PUBLISHED.
+No update/run/explicit publish/target operation or historical fixture adoption.
+
+Actual exported helpers from committed baseline invoked with real guarded API65
+REST plus CustomObject Metadata acquisitions (not fabricated attribute fixtures):
+
+- `bindIdentityResolutionDependencies` failed closed with
+  `IDENTITY_RESOLUTION_BINDING_UNQUALIFIED` on its first Individual pair.
+  `compatible()` scans EVERY Metadata field for primary key and calls
+  `record(field.mktDataModelFieldAttributes)`; independently observed relationship
+  Lookup fields omit that attribute bag. Required Id itself has explicit Text and
+  string `primaryIndexOrder: '1'`; no missing-space/key/type default is needed.
+  All six input pairs were independently inspected despite helper short-circuit.
+- `verifyIdentityResolutionOutputs` PASSED all twelve private target bindings,
+  including independent initial/final facade/native owner acquisitions and full
+  owner projection equality. Names came only from this owner's ordered outputs.
+  Each exact REST name/Metadata fullName/default space and distinct ID checked.
+  Unified REST/Metadata creationType Derived, Text ssot__Id__c in both; link
+  creationType Bridge, Text UnifiedRecordId__c in both. No link key/foreign-key
+  semantics inferred. Generated Metadata has primaryIndexOrder string 1 on
+  unified Id; this is observed, not an extra output-helper requirement.
+
+Six input REST/Metadata creationType Standard and dataSpaceName default; unique
+Metadata primaryIndexOrder string 1 on Text ssot__Id__c, REST isPrimaryKey true.
+Individual FirstName/LastName and Email EmailAddress are Text in both. Input
+REST/Metadata field counts, in fixed six-entity order: 146/163 initially
+(Individual fresh helper read 146/164 after publication), 38/45, 47/58, 55/71,
+39/50, 23/29. Inventories need not be equal: Metadata includes relationships.
+Generated unified counts in the same order: 19/19, 8/9, 8/9, 15/16, 10/11, 6/7;
+link counts: 9/10 then five 8/9. Metadata attribute keys on generated records:
+creationType, dataModelTaxonomy, dataSpaceName, isEnabled, isSegmentable,
+isUsedForMetrics, labelOverride, masterLabel, objectCategory, referenceEntityName.
+Metadata booleans are strings; space/type/creation values need no normalization.
+Input primary order is a string; do not coerce absent/malformed key evidence.
+
+No production code/test change or safety-check weakening applied. Narrow next
+fix: qualify absent attribute bags specifically on observed relationship Lookup
+fields, preserving required Id/match proof, malformed-bag rejection, duplicate
+field/key ambiguity and explicit space/type/creation safeguards. Add synthetic
+mixed scalar/relationship regressions and full verification before using the
+binder. Writer/commands remain blocked on this compatibility fix plus existing
+safe file/input/Git/logical-target/effects/API-auto integration work.
+
+## Budget, cleanup and evidence
+
+Precreate ceiling: 35min, one create, zero updates, one exact qualified delete,
+90 logical nonpoll reads, 200 underlying reservation, 24 polls. Setup/pairs/helper
+owner doublechecks/fresh-repeat reserve/cleanup calculated before create; actual
+live 2026-10-28T06:01:11.269Z to 06:08:50.970Z = 459.701s (7m40s).
+59 counted nonpoll service reads plus two external identity/setup units, five
+polls, 66 observed service wire requests. Auth/discovery internals not claimed
+an exact wire count; additional 40-request reserve retained, below 200.
+Actual one create/zero updates/one delete. Per-call raw receipts persisted before
+classification; every poll records presence/type/value/exact identity/errors.
+No retry/replay after unknown, no separately generated deletes.
+
+Fresh exact id/name/label/automatic=false/PUBLISHED guard before owner deletion.
+One delete success; two DELETING polls then facade explicit notfound. Independent
+native owner plus all twelve captured generated outputs: HTTP404 ITEM_NOT_FOUND
+by 06:08:50.970Z. Transport's public REQUEST_FAILED omitted statusCode, so private
+wire/error receipts independently corroborated all thirteen 404s; not a generic
+error-as-absence assertion. Exact definitions missing-or-inaccessible only, NOT
+physical/profile/storage/global cleanup or credit accounting proof. No known
+readable owned fixture retained; scratch retained without recursive deletion.
+
+Sanitized distinct atomic subject:
+`data360:ir.metadata-binding-qualification.api65-67`, status partial, strict
+subject validator passed. API65 REST/Metadata and API67 facade, actual helper
+revision/invocation, independent readback/effects/cleanup recorded. Root fetched
+before DB edit: ahead5/not behind; unrelated staged files/index/tests preserved.
+No shared index rebuild or root history/push. No install/release/version bump.
+Normal package verification/hook receipts follow in worker return.
+Propagation: package handover and root evidence only, version 0.1.0 unchanged;
+no language/LSP/hover/wiki/mcdev/CMS/workspace consumer updates. Public reference
+and whole-feature review remain coordinator-owned. Earlier checkpoint claims
+below retain historical scope.
+
 # Chunk D production IR dependency/output binding checkpoint — 2026-10-28
 
 Baseline `143a0ec7cd8a1545cc20447ac1537e69c2b2377a` fetched clean and equal to
