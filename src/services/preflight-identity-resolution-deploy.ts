@@ -8,6 +8,7 @@ import {
 import type { IdentityResolutionDocument } from '../artifacts/identity-resolution-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
+import { bindIdentityResolutionDependencies } from './bind-identity-resolution-dependencies.js';
 
 export type IdentityResolutionTargetConnection = Pick<
   Connection,
@@ -35,7 +36,7 @@ export type IdentityResolutionDeployPreview = {
 
 /**
  * Preview an explicitly bound existing PUBLISHED owner; never infer absence or authorize writes.
- * Dependency verification is mandatory and injected until independent IR field compatibility is qualified.
+ * Dependency verification defaults to independent bounded target DMO/Metadata compatibility reads.
  * Label/description edits are not qualified by evidence that only preserved those values.
  * @param {unknown} value Complete authored desired configuration.
  * @param {IdentityResolutionTargetConnection} connection Authenticated numeric API67 target.
@@ -94,7 +95,7 @@ export async function preflightIdentityResolutionDeploy(
     const targetApiName = options.targetApiName;
     const selection = { ...apiVersion };
     const acquire = options.acquire ?? retrieveIdentityResolution;
-    const verify = options.verifyDependencies;
+    const verify = options.verifyDependencies ?? bindIdentityResolutionDependencies;
     if (typeof verify !== 'function')
       return result('blocked', 'unknown', 'IDENTITY_RESOLUTION_DEPENDENCY_VERIFIER_REQUIRED');
     // Verification must independently read existing target dependencies on every invocation, including equality.

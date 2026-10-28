@@ -15,6 +15,10 @@ import { ConnectClient } from '../transport/connect-client.js';
 import { preflightIdentityResolutionDeploy } from './preflight-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
+import {
+  bindIdentityResolutionDependencies,
+  verifyIdentityResolutionOutputs,
+} from './bind-identity-resolution-dependencies.js';
 
 export const identityResolutionPollBudget = Object.freeze({
   reads: 12,
@@ -68,7 +72,7 @@ export type IdentityResolutionDeployExecution = {
 };
 
 /**
- * Execute only the qualified existing-owner reconciliation delta. No production verifier defaults exist.
+ * Execute only the qualified existing-owner reconciliation delta with fresh production binding defaults.
  * Verifiers must independently read target dependencies/output definitions, not attest cached or source data.
  * @param {unknown} value Complete portable desired document.
  * @param {IdentityResolutionTargetConnection} connection Authenticated numeric API67 target.
@@ -113,8 +117,8 @@ export async function executeIdentityResolutionDeploy(
       targetApiName,
       allowProcessing,
       verifyInput,
-      verifyDependencies,
-      verifyOutputs,
+      verifyDependencies = bindIdentityResolutionDependencies,
+      verifyOutputs = verifyIdentityResolutionOutputs,
       recordPoll,
       acquire = retrieveIdentityResolution,
       now = Date.now,

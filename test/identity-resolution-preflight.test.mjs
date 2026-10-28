@@ -136,7 +136,14 @@ test('IR exact target scope and mandatory dependency verifier fail closed', asyn
     'badBinding',
   ]) {
     const h = harness();
-    if (variant === 'missingVerifier') delete h.options.verifyDependencies;
+    if (variant === 'missingVerifier') {
+      delete h.options.verifyDependencies;
+      h.connection.request = async (request) => {
+        assert.equal(request.method, 'GET');
+        assert.match(request.url, /\/services\/data\/v65\.0\/ssot\/data-model-objects\//u);
+        throw new Error('Independent dependency unavailable');
+      };
+    }
     if (variant === 'wrongOwner') h.options.targetApiName = '../private';
     if (variant === 'wrongConnection') h.connection.getApiVersion = () => '65.0';
     if (variant === 'badBinding') h.options.targetApiName = undefined;

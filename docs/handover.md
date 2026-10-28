@@ -1,3 +1,117 @@
+# Chunk D production IR dependency/output binding checkpoint — 2026-10-28
+
+Baseline `143a0ec7cd8a1545cc20447ac1537e69c2b2377a` fetched clean and equal to
+origin/main; no ahead history or unrelated package work. Existing plan/review gates
+remain closed; one coherent family-local worker, no nested workers. Coordinator
+retains whole-feature review, public docs and final DB rebuild/validate/gaps.
+No live org calls/writes, historical fixture adoption, DB edits/index rebuild,
+commands/writer/Git-selection/API-auto integration, installs, releases or root push.
+This is NOT IR-family, Chunk D, cross-org or roadmap completion.
+
+## Exact production interfaces and conservative scope
+
+`src/services/bind-identity-resolution-dependencies.ts` exports:
+
+- `bindIdentityResolutionDependencies(value:unknown,
+  connection:IdentityResolutionTargetConnection,selection:ApiVersionSelection,
+  dataSpace:string,acquire?:(name:string)=>Promise<{detail:unknown;metadata:unknown}>)
+  :Promise<{fingerprint:string}>`. Validate the complete portable document, then
+  freshly read all six exact reconciliation input names, bounded to six REST plus
+  six Metadata reads per invocation. No source IDs, list/first-match/name fallback,
+  cache or dependency creation. Require explicit normalized `default` on caller,
+  detail and Metadata; missing/case-altered/other space blocks, never defaults.
+- Inputs require exact detail.name/Metadata.fullName, nonempty distinct target IDs,
+  unique bounded field inventories (1..4096 each), Text match fields in both reads,
+  and an explicit unique Metadata primaryIndexOrder='1' on Text ssot__Id__c.
+  REST isPrimaryKey, when present, must be true. All six input Id fields must be
+  Text; only Individual FirstName/LastName and ContactPointEmail EmailAddress are
+  match-field requirements. No other input schema/foreign-key semantics invented.
+- Fingerprint is SHA256 of fixed logical-entity order plus target-local IDs,
+  exact required Text fields and explicit key; unrelated field ordering does not
+  change it. Fresh acquisition each callback; executor compares fingerprints
+  across admission/pre-dispatch/settlement. This is required compatibility only,
+  NOT a complete DMO schema/relationship fingerprint or cross-org acceptance.
+- `verifyIdentityResolutionOutputs(owner,outputs,connection,selection,acquire?,
+  acquireOwner?=retrieveIdentityResolution):Promise<IdentityResolutionOutputBinding[]>`
+  exactly matches the executor callback. Owner is explicit target API name/ID/
+  default space. Outputs are the ordered 12 logical owner+space+entity+role and
+  targetApiName mappings. Independently reacquire facade/native PUBLISHED owner,
+  re-project the strict full variant, require exact ID and complete ordered mapping,
+  then read only those owner-returned names. Verify exact DMO names/default space,
+  distinct target IDs, REST AND Metadata Derived(unified)/Bridge(link), and Text
+  ssot__Id__c(unified)/UnifiedRecordId__c(link) in BOTH reads. Return only private
+  target identity/creationType/qualified fields. No guessed suffix/generated names,
+  source-name replay, independently provisioned/deleted outputs or broader schema.
+  Reacquire and deeply compare complete owner again AFTER all twelve DMO reads.
+  Bounds: two owner acquisitions (four HTTP reads), twelve detail and twelve
+  Metadata reads. This bounds requests, not network wall-clock cancellation.
+- Default REST uses guarded ConnectClient API65. Default Metadata uses existing
+  guarded readDmoMetadata with operation-local version='65.0' and disabled refresh;
+  installed JSforce SOAP endpoint reads receiver.version. The command-owned API67
+  connection, Metadata._conn, transport and refresh delegate remain unchanged.
+  Existing transport redirect refusal/maxRetries=0 is preserved.
+
+Executor and preflight now default to these concrete fresh helpers; injectable
+seams remain. Explicit invalid nonfunction executor callbacks still block.
+Preflight passes its supplied callback or the concrete dependency binder. Neither
+omission nor unavailable Metadata can become a permissive no-op. Input byte guard,
+update processing acknowledgement and private poll recorder remain required;
+CREATE still has no admitted absence/conflict route.
+
+## Evidence limitation and exact small read-only checkpoint
+
+DB find/show and the existing IR lifecycle subject were read before implementation.
+Historical qualification proves the twelve REST role-specific required fields and
+creation types, not complete generated schemas or their Metadata representations.
+No new live qualification is claimed and no DB row is manufactured from tests.
+The implementation is the defensible fail-closed intersection: unknown/omitted
+Metadata space/type/creation/key attributes block. It does NOT assert those
+attributes are populated for every real IR output/input. No undocumented link
+keys, foreign keys, extra match fields or generated-field lists are assumed.
+
+Before live acceptance needs this subset, the narrow checkpoint is read-only:
+DB lookup first; verify actual MCP source org binding to plan source project;
+read API65 detail plus CustomObject Metadata for the six exact existing logical
+inputs to confirm Text match/Id and explicit primary key representation. For a
+separately owned and independently PUBLISHED target owner supplied by acceptance,
+read its exact owner mappings and API65 detail plus CustomObject Metadata for
+those twelve outputs; confirm exact names, default space, role creation types and
+only the two role-required Text fields. No write/new fixture is authorized in
+this slice; do not resurrect deleted historical owners or adopt fixture ownership.
+If no independently owned readable owner exists, output live acceptance stays
+blocked pending separately scoped acceptance provisioning, not schema invention.
+
+## Verification and remaining integration
+
+New `test/identity-resolution-bindings.test.mjs` has 33 synthetic regressions:
+source/target identity separation, stable fresh fingerprints, field/key/space/type
+mismatch, duplicate/missing/ambiguous Metadata and fields, field/request bounds,
+owner mapping/order/ID drift, target output creation types, duplicate target IDs,
+no suffix/source replay, no permissive defaults, and installed-core API65 SOAP/
+REST receiver/refresh/redirect invariants. Existing preflight test now asserts
+missing callback invokes an independent GET, not the old callback-gap behavior.
+Scoped autofix, explicit build, focused 82 tests and full zero-warning lint passed.
+Full stable-tree npm test passed 735/735, zero failures/skips/cancellations;
+runner 113316.2737ms, npm test wall 117.15894s, combined verification 133.361s.
+Normal-hook/checkpoint receipts are in worker return.
+Every shell entry checks TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR against
+absolute normalized F:/Temp, process-only repair/recheck. No scratch/deletion authored.
+
+Remaining: safe writer/read-input/Git selection, explicit logical-name-to-target
+owner binding, commands/effects/API-auto, private recorder instrumentation, source
+and cross-org actual plugin retrieval/update/readback/zero-mutation acceptance.
+Existing family blockers remain: IR CREATE absence/conflict qualification, broader
+matching/reconciliation/source precedence; Segment setup-state/raw-evidence and
+create permission/shell blockers; CI expression/no-op, DLO operational/broader DMO.
+Graph VALUE debt unchanged: `GraphDd23cf3b3eb6372_1793161702141_VALUE__dlm` was
+readable at checkpoint D; no direct generated-DMO cleanup authority or eventual/
+physical cleanup claim. All historical blockers/ledgers below remain preserved.
+
+Propagation: sf-plugin-data internal services/tests/handover only, version 0.1.0
+unchanged, next version unassigned, no release. Public docs/guide remain coordinator
+owned; no workspace consumers/language/LSP/hover/wiki/mcdev/CMS updates needed.
+Earlier no-production-verifier statements below describe historical checkpoints.
+
 # Chunk D bounded existing-target IR EXECUTOR checkpoint — 2026-10-28
 
 Baseline `4ee243218c3c23dd5265999a480cdc0a76bbb899` fetched equal to
