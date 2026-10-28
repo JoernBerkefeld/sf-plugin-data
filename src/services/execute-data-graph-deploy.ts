@@ -144,7 +144,6 @@ export async function executeDataGraphDeploy(
         readOptions,
       );
       const baseline = admitDataGraphAcquisition(acquired, desired);
-      graphRequire(isDeepStrictEqual(baseline.intent, readOptions.creationIntent));
       scope();
       return baseline;
     };
@@ -261,7 +260,8 @@ export async function executeDataGraphDeploy(
         settled.transform.id === baseline.transform.id &&
           settled.transform.name === baseline.transform.name &&
           Date.parse(settled.transform.lastRunDate as string) >
-            Date.parse(baseline.transform.lastRunDate as string),
+            Date.parse(baseline.transform.lastRunDate as string) &&
+          Date.parse(settled.transform.lastRunDate as string) >= started,
       );
       graphRequire(
         isDeepStrictEqual(

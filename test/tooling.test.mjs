@@ -111,7 +111,9 @@ test('capability checklist accurately distinguishes bounded DMO retrieval from g
       checklist.includes(
         family === 'dmo'
           ? '## dmo: general support unimplemented; bounded explicit retrieval available'
-          : `## ${family}: unimplemented`,
+          : family === 'data-graph'
+            ? '## data-graph: bounded existing-owner support above; broader scope pending'
+            : `## ${family}: unimplemented`,
       ),
       family,
     );

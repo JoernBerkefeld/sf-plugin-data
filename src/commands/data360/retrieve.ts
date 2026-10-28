@@ -1,3 +1,12 @@
+import {
+  dataGraphName,
+  DataGraphError,
+  validateDataGraphDocument,
+} from '../../artifacts/data-graph-document.js';
+import type { DataGraphDocument } from '../../artifacts/data-graph-document.js';
+import { retrieveDataGraph } from '../../services/retrieve-data-graph.js';
+import { bindDataGraphDependencies } from '../../services/bind-data-graph-dependencies.js';
+import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
 import path from 'node:path';
 import {
   calculatedInsightName,
@@ -77,7 +86,7 @@ export type RetrieveEnvelope = {
       outcome: 'retrieved' | 'unchanged';
       path: string;
       companionPath?: string;
-      family?: 'segment' | 'identity-resolution' | 'calculated-insight';
+      family?: 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph';
       routes?: Array<{
         operation: string;
         apiVersion: string;
@@ -91,9 +100,9 @@ export type RetrieveEnvelope = {
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary =
-    'Retrieve Data360 DMOs, exact DBT Segments, calculated insights or identity resolution configuration.';
+    'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio or -m identity-resolution:ExactObjectApiName for exact selection. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -117,7 +126,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
+        'Repeat dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -136,6 +145,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireDataGraph = retrieveDataGraph;
+  protected bindDataGraph = bindDataGraphDependencies;
+  protected writeDataGraph = writeDataGraphDocument;
   protected acquireCalculatedInsight = retrieveCalculatedInsight;
   protected bindCalculatedInsight = bindCalculatedInsightDependencies;
   protected acquireCalculatedInsightXml = retrieveCalculatedInsightSourceMetadata;
@@ -222,11 +234,13 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    const graphSelectors = selectors.filter((value) => value.startsWith('data-graph:'));
     const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
     const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
     const dmoSelectors = selectors.filter(
       (value) =>
+        !value.startsWith('data-graph:') &&
         !value.startsWith('segment:') &&
         !value.startsWith('identity-resolution:') &&
         !value.startsWith('calculated-insight:'),
@@ -234,6 +248,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const hasDmos = dmoSelectors.length > 0 || selectors.length === 0;
     let effectiveVersion: string;
     try {
+      if (selectors.includes('data-graph'))
+        throw new DataGraphError('DATA_GRAPH_INVENTORY_UNQUALIFIED');
+      if (graphSelectors.length > 0) {
+        operationApiVersion(flags['api-version'], 'data-graph');
+        if (flags['data-space'] !== 'default') throw new DataGraphError('INVALID_SCOPE');
+        if (graphSelectors.some((value) => !dataGraphName.test(value.slice(11))))
+          throw new DataGraphError('INVALID_SELECTION');
+        if (flags['include-dependencies'])
+          throw new DataGraphError('DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      }
       if (selectors.includes('calculated-insight'))
         throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
       if (ciSelectors.length > 0) {
@@ -264,12 +288,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ? 'segment'
             : ciSelectors.length > 0
               ? 'calculated-insight'
-              : 'identity-resolution',
+              : graphSelectors.length > 0
+                ? 'data-graph'
+                : 'identity-resolution',
       );
     } catch (error: unknown) {
       return finish(
         'blocked',
-        error instanceof IdentityResolutionError || error instanceof CalculatedInsightError
+        error instanceof DataGraphError ||
+          error instanceof IdentityResolutionError ||
+          error instanceof CalculatedInsightError
           ? error.code
           : 'INVALID_SCOPE',
       );
@@ -308,6 +336,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const diagnose = (error: unknown, apiName?: string): void => {
       let code = 'RETRIEVE_FAILED';
       if (
+        error instanceof DataGraphError ||
         error instanceof CalculatedInsightError ||
         error instanceof IdentityResolutionError ||
         error instanceof SegmentError ||
@@ -396,6 +425,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         ciSelectors.length > 0 ||
         flags['include-dependencies'] ||
         irSelectors.length > 0 ||
+        graphSelectors.length > 0 ||
         flags['api-version'] === 'auto'
       ) {
         // Acquire and resolve the complete bounded selection before publishing any files.
@@ -465,6 +495,39 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           );
           calculatedInsights.push({ document, definitionXml });
         }
+        const dataGraphs: Array<{ document: DataGraphDocument }> = [];
+        if (graphSelectors.length > 0) {
+          const graphVersion = await resolveApiVersion('67.0', async () => {
+            throw new Error('Fixed route must not discover.');
+          });
+          const graphConnection = Object.create(connection) as Connection;
+          Object.defineProperty(graphConnection, 'version', { value: '67.0' });
+          Object.defineProperty(graphConnection, 'getApiVersion', { value: () => '67.0' });
+          Object.defineProperty(graphConnection, '_refreshDelegate', { value: undefined });
+
+          for (const apiName of [
+            ...new Set(graphSelectors.map((value) => value.slice(11))),
+            // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh array within the existing TypeScript library target.
+          ].sort()) {
+            const acquired = await this.acquireDataGraph(
+              graphConnection,
+              apiName,
+              graphVersion,
+              flags['data-space'],
+            );
+            if (!acquired.candidate || acquired.blockers.length > 0)
+              throw new DataGraphError(acquired.blockers[0] ?? 'DATA_GRAPH_ACQUISITION_FAILED');
+            const document = validateDataGraphDocument(acquired.candidate);
+            if (
+              acquired.identity.apiName !== apiName ||
+              acquired.identity.dataSpace !== 'default' ||
+              document.identity.apiName !== apiName
+            )
+              throw new DataGraphError('DATA_GRAPH_IDENTITY_CHANGED');
+            await this.bindDataGraph(document, graphConnection, graphVersion, flags['data-space']);
+            dataGraphs.push({ document });
+          }
+        }
         const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
         if (irSelectors.length > 0) {
           const irVersion = await resolveApiVersion('67.0', async () => {
@@ -502,7 +565,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               reason,
             };
           });
-        const entries = [...selected.entries, ...calculatedInsights, ...identityResolutions];
+        const entries = [
+          ...selected.entries,
+          ...calculatedInsights,
+          ...identityResolutions,
+          ...dataGraphs,
+        ];
         envelope.result.selection = entries.map(
           ({ document }) => `${document.kind}:${document.identity.apiName}`,
         );
@@ -510,68 +578,94 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const { document } = entry;
           try {
             const receipt =
-              document.kind === 'calculated-insight'
-                ? await this.writeCalculatedInsight(
+              document.kind === 'data-graph'
+                ? await this.writeDataGraph(
                     document,
-                    'definitionXml' in entry ? entry.definitionXml : '',
                     flags['output-dir'] ?? process.cwd(),
                     flags.overwrite,
                   )
-                : document.kind === 'identity-resolution'
-                  ? await this.writeIdentityResolution(
+                : document.kind === 'calculated-insight'
+                  ? await this.writeCalculatedInsight(
                       document,
+                      'definitionXml' in entry ? entry.definitionXml : '',
                       flags['output-dir'] ?? process.cwd(),
                       flags.overwrite,
                     )
-                  : 'definitionXml' in entry
-                    ? await this.writeSegment(
+                  : document.kind === 'identity-resolution'
+                    ? await this.writeIdentityResolution(
                         document,
-                        entry.definitionXml,
                         flags['output-dir'] ?? process.cwd(),
                         flags.overwrite,
                       )
-                    : await this.writeDocument(
-                        document,
-                        flags['output-dir'] ?? process.cwd(),
-                        flags.overwrite,
-                      );
+                    : 'definitionXml' in entry
+                      ? await this.writeSegment(
+                          document,
+                          entry.definitionXml,
+                          flags['output-dir'] ?? process.cwd(),
+                          flags.overwrite,
+                        )
+                      : await this.writeDocument(
+                          document,
+                          flags['output-dir'] ?? process.cwd(),
+                          flags.overwrite,
+                        );
             envelope.result.items.push({
               identity: { ...document.identity },
               ...(document.kind === 'segment' ||
               document.kind === 'identity-resolution' ||
-              document.kind === 'calculated-insight'
+              document.kind === 'calculated-insight' ||
+              document.kind === 'data-graph'
                 ? { family: document.kind }
                 : {}),
               ...(flags['api-version'] === 'auto' ||
               document.kind === 'identity-resolution' ||
-              document.kind === 'calculated-insight'
+              document.kind === 'calculated-insight' ||
+              document.kind === 'data-graph'
                 ? {
                     routes:
-                      document.kind === 'identity-resolution'
+                      document.kind === 'data-graph'
                         ? [
                             {
-                              operation: 'd360_ir_get',
+                              operation: 'd360_data_graph_get',
                               apiVersion: '67.0',
                               transport: 'facade' as const,
                             },
                             {
-                              operation: 'identity-resolutions.get',
-                              apiVersion: '65.0',
-                              transport: 'native' as const,
-                            },
-                          ]
-                        : [
-                            {
-                              operation: `${document.kind}.get`,
-                              apiVersion: '65.0',
-                              transport: 'native' as const,
+                              operation: 'd360_transform_get',
+                              apiVersion: '67.0',
+                              transport: 'facade' as const,
                             },
                             {
-                              operation: `${document.kind}.metadata`,
+                              operation: 'dependency.metadata',
                               apiVersion: '65.0',
                               transport: 'metadata' as const,
                             },
-                          ],
+                          ]
+                        : document.kind === 'identity-resolution'
+                          ? [
+                              {
+                                operation: 'd360_ir_get',
+                                apiVersion: '67.0',
+                                transport: 'facade' as const,
+                              },
+                              {
+                                operation: 'identity-resolutions.get',
+                                apiVersion: '65.0',
+                                transport: 'native' as const,
+                              },
+                            ]
+                          : [
+                              {
+                                operation: `${document.kind}.get`,
+                                apiVersion: '65.0',
+                                transport: 'native' as const,
+                              },
+                              {
+                                operation: `${document.kind}.metadata`,
+                                apiVersion: '65.0',
+                                transport: 'metadata' as const,
+                              },
+                            ],
                   }
                 : {}),
               operation: 'retrieve',

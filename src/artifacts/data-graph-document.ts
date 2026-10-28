@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
+export const dataGraphName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
+
 export type DataGraphField = {
   sourceFieldName: string;
   dataType: 'Text';
@@ -13,7 +15,6 @@ export type DataGraphDocument = {
   spec: {
     label: string;
     description: string;
-    creationMode: 'DEFAULT';
     primaryObjectName: 'UnifiedssotIndividualMkt__dlm';
     type: 'NONE';
     fullRefreshConfig: { schedule: { frequency: 7; timeGranularity: 'Day' } };
@@ -37,7 +38,7 @@ export type DataGraphCreationIntent = {
 };
 export type DataGraphProjection = {
   candidate: DataGraphDocument;
-  expectations: { graph: Record<string, unknown>; intent: DataGraphCreationIntent };
+  expectations: { graph: Record<string, unknown>; intent?: DataGraphCreationIntent };
 };
 
 /** Payload-free failure for unqualified Graph configuration. */
@@ -148,12 +149,11 @@ export function validateDataGraphDocument(value: unknown): DataGraphDocument {
       root.kind === 'data-graph' &&
       identity.dataSpace === 'default' &&
       typeof identity.apiName === 'string' &&
-      /^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName),
+      dataGraphName.test(identity.apiName),
   );
   const spec = graphRecord(root.spec, [
     'label',
     'description',
-    'creationMode',
     'primaryObjectName',
     'type',
     'fullRefreshConfig',
@@ -163,7 +163,6 @@ export function validateDataGraphDocument(value: unknown): DataGraphDocument {
   graphText(spec.label);
   graphRequire(
     typeof spec.description === 'string' &&
-      spec.creationMode === 'DEFAULT' &&
       spec.primaryObjectName === 'UnifiedssotIndividualMkt__dlm' &&
       spec.type === 'NONE',
   );
@@ -255,7 +254,7 @@ const fieldKeys = [
 ];
 
 /**
- * Project strict GET using only known exact-owner intent for omitted creationMode.
+ * Project strict GET without inventing historical request-only creation mode.
  * @param {unknown} value Exact GET result.
  * @param {string} apiName Expected owner.
  * @param {DataGraphCreationIntent} intent Private associated creation knowledge.
@@ -294,14 +293,14 @@ export function projectDataGraph(
     graphText(raw[key]);
   graphRequire(raw.extendedProperties === '' && (raw.type === 'none' || raw.type === 'NONE'));
   if (
-    !intent ||
-    intent.apiName !== apiName ||
-    intent.ownerId !== raw.id ||
-    intent.dataSpace !== 'default' ||
-    intent.creationMode !== 'DEFAULT'
+    intent &&
+    (intent.apiName !== apiName ||
+      intent.ownerId !== raw.id ||
+      intent.dataSpace !== 'default' ||
+      intent.creationMode !== 'DEFAULT')
   )
     throw new DataGraphError('DATA_GRAPH_CREATION_INTENT_REQUIRED');
-  if (Object.hasOwn(raw, 'creationMode')) graphRequire(raw.creationMode === intent.creationMode);
+  if (Object.hasOwn(raw, 'creationMode')) graphRequire(raw.creationMode === 'DEFAULT');
   const node = graphRecord(raw.sourceObject, nodeKeys);
   graphRequire(
     node.name === raw.primaryObjectName &&
@@ -351,7 +350,6 @@ export function projectDataGraph(
     spec: {
       label: raw.label,
       description: raw.description,
-      creationMode: intent.creationMode,
       primaryObjectName: raw.primaryObjectName,
       type: 'NONE',
       fullRefreshConfig: { schedule: { frequency: 7, timeGranularity: 'Day' } },
@@ -368,7 +366,10 @@ export function projectDataGraph(
   });
   return {
     candidate,
-    expectations: { graph: structuredClone(raw), intent: structuredClone(intent) },
+    expectations: {
+      graph: structuredClone(raw),
+      ...(intent ? { intent: structuredClone(intent) } : {}),
+    },
   };
 }
 

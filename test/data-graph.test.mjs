@@ -249,16 +249,25 @@ test('Graph binds independent DMO identity, field types and explicit key without
 
 test('Graph projects complete observed schema with known exact-owner intent, never generated node binding', () => {
   const projected = projectDataGraph(graph(), intent.apiName, intent);
-  assert.equal(projected.candidate.spec.creationMode, 'DEFAULT');
+  assert.equal(Object.hasOwn(projected.candidate.spec, 'creationMode'), false);
   assert.equal(projected.candidate.spec.sourceObject.devName, 'UnifiedssotIndividualMkt__dlm');
   assert.equal(projected.expectations.graph.sourceObject.devName, 'OwnerGeneratedNode');
   const bytes = serializeDataGraphDocument(projected.candidate);
   assert.equal(bytes.includes('owner-id'), false);
   assert.equal(bytes.includes('OwnerGeneratedNode'), false);
   assert.deepEqual(validateDataGraphDocument(JSON.parse(bytes)), projected.candidate);
-  assert.throws(() => projectDataGraph(graph(), intent.apiName), {
-    code: 'DATA_GRAPH_CREATION_INTENT_REQUIRED',
-  });
+  assert.deepEqual(projectDataGraph(graph(), intent.apiName).candidate, projected.candidate);
+  assert.equal(
+    Object.hasOwn(projectDataGraph(graph(), intent.apiName).expectations, 'intent'),
+    false,
+  );
+  // eslint-disable-next-line unicorn/no-null -- Explicit returned JSON null must not mean omitted mode.
+  for (const creationMode of ['DRAFT', 'OTHER', null, false])
+    assert.throws(() => projectDataGraph({ ...graph(), creationMode }, intent.apiName));
+  assert.deepEqual(
+    projectDataGraph({ ...graph(), creationMode: 'DEFAULT' }, intent.apiName).candidate,
+    projected.candidate,
+  );
   assert.throws(() => projectDataGraph(graph(), intent.apiName, { ...intent, ownerId: 'wrong' }));
   assert.throws(() =>
     projectDataGraph({ ...graph(), creationMode: 'OTHER' }, intent.apiName, intent),
@@ -366,8 +375,8 @@ for (const edit of [
   });
 }
 
-test('Graph preview admits only exact forward append or unchanged, requires API67 and intent', async () => {
-  const f = fixture();
+test('Graph preview admits exact forward append or unchanged without historical intent, requires API67', async () => {
+  const f = fixture({ creationIntent: undefined });
   const update = await preflightDataGraphDeploy(
     desired,
     connection,
@@ -407,7 +416,11 @@ test('Graph preview admits only exact forward append or unchanged, requires API6
 });
 
 test('Graph equality makes zero mutations and needs no processing acknowledgement or poll recorder', async () => {
-  const f = fixture({ allowProcessing: false, recordObservation: undefined });
+  const f = fixture({
+    creationIntent: undefined,
+    allowProcessing: false,
+    recordObservation: undefined,
+  });
   const current = projectDataGraph(graph(), intent.apiName, intent).candidate;
   const result = await executeDataGraphDeploy(current, connection, selection, 'default', f.options);
   assert.equal(result.outcome, 'unchanged');
@@ -415,13 +428,14 @@ test('Graph equality makes zero mutations and needs no processing acknowledgemen
   assert.equal(f.writes.length, 0);
 });
 
-test('Graph one full update preserves root/config and waits thirty virtual minutes despite transform SUCCESS', async () => {
-  const f = fixture();
+test('Graph one full mode-omitted update without intent preserves root/config and waits thirty virtual minutes despite transform SUCCESS', async () => {
+  const f = fixture({ creationIntent: undefined });
   const result = await executeDataGraphDeploy(desired, connection, selection, 'default', f.options);
   assert.equal(result.outcome, 'updated');
   assert.equal(result.mutation, 'confirmed-updated');
   assert.equal(f.time(), 1_800_000);
   assert.equal(f.writes.length, 1);
+  assert.equal(Object.hasOwn(f.writes[0].input, 'creationMode'), false);
   assert.deepEqual(f.writes[0], {
     input: { name: intent.apiName, dataspaceName: 'default', ...desired.spec },
     editScheduleOnly: false,
@@ -464,7 +478,7 @@ for (const status of ['unknown', 42, undefined, 'failed']) {
 
 for (const changes of [
   { allowProcessing: false },
-  { creationIntent: undefined },
+  { creationIntent: { ...intent, ownerId: 'wrong' } },
   {
     verifyInput: async () => {
       throw new Error('input drift');

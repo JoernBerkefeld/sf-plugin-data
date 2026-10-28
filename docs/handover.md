@@ -1,3 +1,68 @@
+# Public Graph retrieve/preview/deploy — 2026-10-28
+
+Sole package editor continued from fetched clean
+`6ede70db163441e9407d5acf01209bacc9b550c1`. This supersedes the internal-only
+boundary and historical creation-intent requirement below. The bounded plan
+remediation adopts independently qualified omission updates; prior plan-review
+findings are incorporated, not reopened. No org calls or repeat qualification.
+
+Public exact selection `-m data-graph:ApiName` now routes retrieve, preview and
+guarded deploy through existing Graph services. `--api-version auto` selects
+fixed API67 facade reads/update and independently bound API65 DMO metadata.
+Explicit67 is supported for Graph-only selection; explicit65/latest fail closed.
+Default space only; no Graph inventory, create, delete, dependency expansion,
+nested projections, schedule edits, reverse projection or generated-resource CRUD.
+The only changed deployment is the qualified root-only Id/FirstName to
+Id/FirstName/LastName forward append, with all other admitted settings preserved.
+
+Portable JSON uses configured/default source root
+`force-app/main/default/data360/dataGraphs/<ApiName>.dataGraph.json`.
+Request-only `creationMode` is absent from persisted configuration and update
+wire. Optional GET mode is inspected: DEFAULT is admitted, any unsupported/null
+mode blocks. Missing historical mode is not invented or required for persisted
+equality. Full raw owner/generated expectations remain private; no receipt store
+or new provenance framework. Retrieve requires independent owner-transform
+ACTIVE/SUCCESS lineage and repeated identical Graph acquisition before output.
+
+New writer/input/Git paths reuse strict duplicate-key JSON, canonical identity,
+no-link/single-link bounded bytes, no-clobber publication and immutable SHA256
+admission. Whole-selection preview/acknowledgement and fresh pending-Graph input,
+DMO dependency and owner/binding checks precede any earlier selected write.
+Updates require `--allow-processing`; unchanged needs no acknowledgement and
+issues no mutation. Private detached observations precede classification;
+at most one update, no replay/refresh/activation. Forty-minute injectable
+settlement retains independent ready/full preservation and the same owner
+transform's later completed SUCCESS run, no earlier than update start.
+
+New `test/data-graph-public.test.mjs` and amended `test/data-graph.test.mjs`
+cover public commands, writer/input publication, path/link refusals, file/Git
+digests, unsupported versions, mixed-selection zero writes, fresh checks and
+persisted/wire omission. Focused Graph regressions passed49/49. Full stable-tree
+verification, unchanged-hook commit and exact-SHA hosted Node22/24 outcomes are
+reported by the final handoff; do not infer them from the earlier973-test result.
+
+README, artifact-format, capabilities and Git-workflow docs match this boundary.
+Independent external-tooling plugin, no workspace consumers or language/hover/wiki
+propagation. No guide/root index/evidence edits, version bump or release; package
+remains `sf-plugin-data@0.1.0`. Coordinator owns the once-whole-feature Gate4
+review and final roadmap propagation; this worker does not spawn duplicate reviews.
+
+Remaining isolated acceptance: install the exact committed package in isolated
+CLI state under the unsigned-plugin allowlist rule; use newly owned compatible
+Graph fixtures for public retrieve -> byte-stable repeat -> preview -> unchanged
+zero-write -> qualified LastName append -> independent preservation/transform
+settlement -> zero-write repeat. API-level omission evidence alone is not public
+plugin acceptance, target portability or universal historical-mode preservation.
+No existing retained fixture is adopted by this handover. Cross-org acceptance,
+DLO/DMO queued work and wider Graph variants remain separate.
+
+Safety retained for all continuations: every shell/test first runs
+`node scripts/check-temporary.mjs`; TEMP and actual Node os.tmpdir() plus any
+nonempty TMP/TMPDIR must be normalized absolute `F:\\Temp`, process-only repair
+and recheck on mismatch. Scratch roots use OS mkdtemp with ownership markers;
+recursive cleanup requires registered strict descendants and no-link checks.
+Never recursively clean workspace/repository/persistent validation projects.
+
 # Graph root-only family services — 2026-10-28
 
 Continuation from clean fetched `93d4149b1d18e6d5e7c1212e441dd157d9795321`.

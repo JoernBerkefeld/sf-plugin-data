@@ -1,5 +1,37 @@
 # Data360 Salesforce CLI plugin
 
+## Public Graph workflow
+
+Repeat exact `-m data-graph:ApiName` selectors with `retrieve` or `deploy`, including
+`--preview` and `--changed-since`. Use `--api-version auto` (fixed Graph67 and
+legacy65 routes) or numeric67 for Graph-only selection. Numeric65/default and
+latest refuse Graph; mixed Graph/legacy selection requires auto. Inventory and
+Graph dependency expansion are unavailable.
+
+```sh
+sf data360 retrieve -o source -m data-graph:ExampleGraph --api-version auto -d ./project --json
+sf data360 deploy -o target -m data-graph:ExampleGraph --api-version auto --preview --json
+sf data360 deploy -o target -m data-graph:ExampleGraph --api-version auto --allow-processing --json
+```
+
+Retrieve writes portable JSON at
+`force-app/main/default/data360/dataGraphs/ExampleGraph.dataGraph.json` (or the
+configured source package). Identical bytes are unchanged; different bytes require
+`--overwrite`. No generated IDs, private observations or request-only
+`creationMode` enter the file. An unsupported returned mode blocks projection.
+
+Deploy supports only a ready existing root-only unified Individual graph: NONE,
+ordered Text Id key/FirstName, seven-day refresh and incremental disabled. The one
+supported edit appends non-key projected Text LastName while preserving the full
+existing configuration. Update omits `creationMode`, requires `--allow-processing`
+and may trigger automatic processing. Complete equality is zero mutations and
+needs no acknowledgement. Create/delete, nested graphs, reverse projection,
+label/description/schedule changes and other roots are blocked. Independent root
+binding, completed owner-transform lineage, whole-selection admission and fresh
+all-pending checks precede mixed-batch writes. Settlement is bounded to forty
+minutes with independent ready/full-preservation confirmation; unknown outcomes
+never replay. Installed/live public and cross-org acceptance remain separate gates.
+
 ## Public calculated insight workflow
 
 Exact `calculated-insight:Name__cio` selection is supported by `sf data360 retrieve`

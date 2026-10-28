@@ -1,17 +1,21 @@
 # Capability contract checklist
 
-## Internal Graph root-only family services
+## Public Graph root-only workflow
 
-The internal Graph document/acquisition/preflight/executor now admit only the
-qualified default-space root-only NONE/DEFAULT configuration: unified Individual
+Exact repeatable `data-graph:ApiName` selectors support public retrieve, preview,
+guarded deploy and canonical file/Git selection. Use `--api-version auto` or numeric
+67.0, default space; mixed Graph/API65 families require auto. Numeric65, latest,
+inventory and dependency expansion block before service reads or writes.
+The admitted scope is the qualified root-only NONE configuration: unified Individual
 logical root, ordered Text Id key/FirstName and the single forward non-key LastName
-append, seven-day refresh and incremental disabled. They are not wired into public
-selectors, file/Git input or artifact publication yet; create/delete remain blocked.
+append, seven-day refresh and incremental disabled. Create/delete, nesting,
+reverse projection, label/description and settings changes remain blocked.
 A strict GET inventory rejects unknown meaningful properties rather than dropping
-them. Computed node/field/output identities stay in private expectations, separate
-from the logical portable root. Missing GET `creationMode` requires explicit private
-known DEFAULT creation intent bound to the exact returned owner id/name/default;
-it is never inferred from desired input or presented as portable provenance.
+them. Computed node/field/output identities stay private. Portable JSON excludes
+request-only `creationMode`; absent GET mode requires no historical receipt or
+creation intent. A returned mode must explicitly be DEFAULT; DRAFT/null/unknown
+values block. Update sends mode absent, not null or DEFAULT. This proves only the
+qualified existing-owner omission variant, not arbitrary historical-mode preservation.
 
 Acquisition reads exact Graph, its returned day-zero transform, then a fresh identical
 Graph. Eligibility requires ACTIVE/SUCCESS, a completed dated run and matching
@@ -20,8 +24,9 @@ Preflight independently binds API65 REST/Metadata root identity, required Text f
 and explicit key. Only equality or the complete preserved LastName append is admitted.
 Execution rechecks input, dependencies and owner baseline, acknowledges processing,
 and attempts one full update with `editScheduleOnly: false`. A zero-mutation unchanged
-result does not require processing acknowledgement. Unknown intent limits existing-owner
-admission; it does not claim every Graph is unsupported.
+result does not require processing acknowledgement. Complete local selection admission,
+digests, independent dependency/owner bindings and all-pending fresh checks precede
+any mixed-batch mutation; one blocked Graph prevents every batch write.
 
 Settlement defaults to a finite 40-minute window, at most 41 Graph poll reads spaced
 60 seconds (eligibility/confirmation reads are additional bounded acquisitions).
@@ -48,8 +53,8 @@ private detached raw application-body observation before strict result/status/er
 classification. Unknown Graph status and nested errors are recorded then rejected;
 recorder failure fails closed. It does not expose observations in public results,
 permit mutation recording, retry transport failures or weaken supported status guards.
-The family services above consume this boundary. Public file/Git routing and live
-zero-write acceptance remain unimplemented/unverified respectively.
+The public family workflow above consumes this boundary. Installed/live public
+zero-write acceptance remains separate from synthetic implementation verification.
 
 ## Public CI command boundary
 
@@ -212,7 +217,7 @@ non-cascading behavior or asynchronous status contract is claimed.
 - [ ] Classify generated-schema dependencies and automatic-run side effects.
 - [ ] Prove configuration-only behavior without running resolution.
 
-## data-graph: unimplemented
+## data-graph: bounded existing-owner support above; broader scope pending
 
 - [ ] Record official endpoints, versions, pagination and nested writable contracts.
 - [ ] Preserve nested graph references and external dependencies.

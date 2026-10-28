@@ -1,3 +1,5 @@
+import { validateDataGraphDocument } from './data-graph-document.js';
+import type { DataGraphDocument } from './data-graph-document.js';
 import { validateCalculatedInsightDocument } from './calculated-insight-document.js';
 import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 import { validateIdentityResolutionDocument } from './identity-resolution-document.js';
@@ -8,7 +10,7 @@ import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
 export type DependencyIdentity = {
-  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight';
+  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph';
   dataSpace: string;
   apiName: string;
 };
@@ -36,7 +38,9 @@ export class DependencySelectionError extends Error {
  */
 export function dependencyKey(identity: DependencyIdentity): string {
   if (
-    !['dmo', 'segment', 'identity-resolution', 'calculated-insight'].includes(identity.kind) ||
+    !['dmo', 'segment', 'identity-resolution', 'calculated-insight', 'data-graph'].includes(
+      identity.kind,
+    ) ||
     identity.dataSpace !== 'default' ||
     !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName)
   )
@@ -50,8 +54,22 @@ export function dependencyKey(identity: DependencyIdentity): string {
  * @returns {DependencyNode} Exact component and dependencies.
  */
 export function documentDependencyNode(
-  value: DmoDocument | SegmentDocument | IdentityResolutionDocument | CalculatedInsightDocument,
+  value:
+    | DmoDocument
+    | SegmentDocument
+    | IdentityResolutionDocument
+    | CalculatedInsightDocument
+    | DataGraphDocument,
 ): DependencyNode {
+  if (value.kind === 'data-graph') {
+    const document = validateDataGraphDocument(value);
+    return {
+      identity: { kind: 'data-graph', ...document.identity },
+      dependencies: [
+        { kind: 'dmo', dataSpace: 'default', apiName: document.spec.primaryObjectName },
+      ],
+    };
+  }
   if (value.kind === 'calculated-insight') {
     const document = validateCalculatedInsightDocument(value);
     return {

@@ -1,19 +1,30 @@
 # Internal DMO field contract
 
-## Internal Graph document
+## Public Graph document
 
-The un-routed Graph family uses `schemaVersion: 1`, `kind: data-graph`, an exact
-`identity: {dataSpace: default, apiName}` and complete qualified `spec`: label,
-description, known creation-time DEFAULT intent, logical unified Individual root,
+Exact `data-graph:ApiName` retrieval writes
+`force-app/main/default/data360/dataGraphs/ApiName.dataGraph.json`; the configured
+package directory replaces `force-app`. The single JSON document uses
+`schemaVersion: 1`, `kind: data-graph`, exact default-space `identity.apiName` and
+complete qualified `spec`: label, description, logical unified Individual root,
 NONE type, seven-day full-refresh schedule, incremental disabled, and root source
 with empty path/relatedObjects and ordered Text Id key/FirstName/optional appended
-LastName. `sourceObject.devName` is the logical input root, not the generated GET
-node developer name. GET absence of creationMode is not silently defaulted: private
-exact-owner creation intent is required for acquisition, never serialized as source
-provenance. Full computed GET/transform bodies and owner/node/field/output IDs remain
-private expectations. Unknown root/node/field/config properties block projection.
-No public Graph path, writer, file/Git reader, request envelope or create lifecycle
-is enabled by this internal document contract.
+LastName. `sourceObject.devName` is the logical input root, not a generated GET name.
+
+`creationMode` is request-only and forbidden in portable content. Omitted GET mode
+is not synthesized or recovered from historical receipts. A returned mode is
+inspected explicitly: only DEFAULT is admitted; null, DRAFT and unknown values
+block. This does not establish universal historical-mode preservation. The qualified
+existing-owner update omits mode entirely and allows only the exact LastName append.
+Full computed GET/transform bodies and owner/node/field/output IDs stay private.
+Unknown meaningful root/node/field/config properties block instead of being dropped.
+
+Writer publication uses no-link paths, bounded single-link reads, owned OS-temp
+staging, no-clobber publication and guarded overwrite. Identical bytes are unchanged.
+File and Git admission bind strict unique-key JSON, canonical identity/path and
+frozen document content to a SHA256 digest, rechecked before target reliance and
+writes. No XML pair, request envelope, persistent receipt or generated identifiers
+are exported. Create, reverse projection, nesting and settings changes remain blocked.
 
 ## Public calculated insight pairs
 

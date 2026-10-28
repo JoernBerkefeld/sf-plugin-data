@@ -1,3 +1,5 @@
+import { dataGraphName } from './data-graph-document.js';
+import type { DataGraphDeployInput } from './read-deploy-input.js';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -23,6 +25,7 @@ export class GitSelectionError extends Error {
 
 export type GitDeploySelection = {
   paths: string[];
+  dataGraphs?: readonly DataGraphDeployInput[];
   segments?: readonly SegmentDeployInput[];
   calculatedInsights?: readonly CalculatedInsightDeployInput[];
   identityResolutions?: readonly IdentityResolutionDeployInput[];
@@ -68,6 +71,7 @@ function tokens(output: string): string[] {
 
 const segmentMember = (file: string): boolean =>
   /\.(?:marketSegmentDefinition-meta\.xml|segment\.json)$/iu.test(file);
+const graphMember = (file: string): boolean => /\.dataGraph\.json$/iu.test(file);
 const irMember = (file: string): boolean => /\.identityResolution\.json$/iu.test(file);
 const ciMember = (file: string): boolean =>
   /\.(?:mktCalcInsightObjectDef-meta\.xml|calculatedInsight\.json)$/iu.test(file);
@@ -75,6 +79,7 @@ const relevant = (file: string): boolean =>
   (file.startsWith('data360/default/dmo/') && file.endsWith('.json')) ||
   segmentMember(file) ||
   ciMember(file) ||
+  graphMember(file) ||
   irMember(file);
 
 /**
@@ -172,7 +177,7 @@ export async function selectGitDeployInputs(options: {
       throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
     for (const file of untracked) if (relevant(file)) paths.add(file);
     const segmentBase = [...paths].some(
-      (file) => segmentMember(file) || irMember(file) || ciMember(file),
+      (file) => segmentMember(file) || irMember(file) || ciMember(file) || graphMember(file),
     )
       ? await segmentSourceRoot(repositoryRoot)
       : undefined;
@@ -193,6 +198,16 @@ export async function selectGitDeployInputs(options: {
         )
           throw new GitSelectionError('INVALID_GIT_SELECTION');
         return `calculated-insight:${name}`;
+      }
+      if (graphMember(file)) {
+        const name = path.posix.basename(file).slice(0, -'.dataGraph.json'.length);
+        const expected = path.join(segmentBase!, 'data360', 'dataGraphs', `${name}.dataGraph.json`);
+        if (
+          !dataGraphName.test(name) ||
+          file !== path.relative(repositoryRoot, expected).split(path.sep).join('/')
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        return `data-graph:${name}`;
       }
       if (irMember(file)) {
         const name = path.posix.basename(file).slice(0, -'.identityResolution.json'.length);
@@ -244,7 +259,11 @@ export async function selectGitDeployInputs(options: {
       (input): input is CalculatedInsightDeployInput =>
         input.document.kind === 'calculated-insight',
     );
+    const dataGraphs = inputs.filter(
+      (input): input is DataGraphDeployInput => input.document.kind === 'data-graph',
+    );
     return {
+      ...(dataGraphs.length > 0 ? { dataGraphs: Object.freeze(dataGraphs) } : {}),
       ...(calculatedInsights.length > 0
         ? { calculatedInsights: Object.freeze(calculatedInsights) }
         : {}),

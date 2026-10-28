@@ -1,5 +1,22 @@
 # Git workflow status
 
+## Graph exact file selection
+
+`--changed-since` includes canonical
+`<package>/main/default/data360/dataGraphs/ApiName.dataGraph.json` members, with
+configured/default source package resolution. Git capture retains the original
+immutable Graph document and SHA256 byte digest. Public deploy rebinds path,
+identity, content and digest before target reads and revalidates throughout the
+invocation. Deletions, renames, noncanonical paths and ambiguous inbound moves
+block the whole selection. No historical rename guarantee or saved-plan contract
+is implied. Exact `data-graph:ApiName` and explicit file modes use the same reader.
+
+Graph requires auto or numeric67; mixed legacy selections require auto. Complete
+preview and all-pending fresh dependency/owner/input admission precede every mixed
+write. Update effects require `--allow-processing`; unchanged is zero mutation.
+Raw Graph/transform bodies and poll observations remain private, never Git artifacts
+or public results. Installed/live zero-write acceptance remains separately scoped.
+
 ## Calculated insight pair selection
 
 `--changed-since` includes canonical calculated insight XML/JSON pairs under the

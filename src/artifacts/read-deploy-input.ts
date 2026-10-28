@@ -1,3 +1,4 @@
+import { dataGraphName, validateDataGraphDocument } from './data-graph-document.js';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -48,8 +49,16 @@ export type CalculatedInsightDeployInput = {
   document: CalculatedInsightDocument;
   inputDigest: string;
 };
+export type DataGraphDeployInput = {
+  path: string;
+  document: import('./data-graph-document.js').DataGraphDocument;
+  inputDigest: string;
+};
 export type DeployInput =
-  SupportedDeployInput | IdentityResolutionDeployInput | CalculatedInsightDeployInput;
+  | SupportedDeployInput
+  | IdentityResolutionDeployInput
+  | CalculatedInsightDeployInput
+  | DataGraphDeployInput;
 
 /**
  * Narrow executable families; IR admission does not authorize public routing.
@@ -127,6 +136,66 @@ export async function verifyIdentityResolutionInputDigest(
     throw new DeployInputError('UNSAFE_SOURCE');
   }
 }
+/**
+ * Admit one canonical Graph file and freeze its exact authored content.
+ * @param {string} file Absolute selected file.
+ * @returns {Promise<DataGraphDeployInput>} Immutable input.
+ */
+async function readDataGraphInput(file: string): Promise<DataGraphDeployInput> {
+  const suffix = '.dataGraph.json';
+  const name = path.basename(file).slice(0, -suffix.length);
+  const directory = path.dirname(file);
+  const base = path.dirname(path.dirname(directory));
+  if (
+    !file.endsWith(suffix) ||
+    !dataGraphName.test(name) ||
+    path.basename(directory) !== 'dataGraphs' ||
+    path.basename(path.dirname(directory)) !== 'data360' ||
+    path.basename(base) !== 'default' ||
+    path.basename(path.dirname(base)) !== 'main'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: DataGraphDeployInput['document'];
+  try {
+    document = validateDataGraphDocument(strictJson(decode(bytes)));
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
+/**
+ * Re-admit captured Graph bytes and logical identity before use.
+ * @param {DataGraphDeployInput} input Immutable admission.
+ * @returns {Promise<void>} Resolves only without drift.
+ */
+export async function verifyDataGraphInputDigest(input: DataGraphDeployInput): Promise<void> {
+  try {
+    const current = await readDataGraphInput(input.path);
+    if (
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+  } catch {
+    throw new DeployInputError('UNSAFE_SOURCE');
+  }
+}
+
 export type DeployInputFlags = {
   cwd: string;
   sourceDir?: readonly string[];
@@ -386,6 +455,10 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if (input.document.kind === 'data-graph') {
+    await verifyDataGraphInputDigest(input as DataGraphDeployInput);
+    return (input as DataGraphDeployInput).inputDigest;
+  }
   if (input.document.kind === 'identity-resolution') {
     await verifyIdentityResolutionInputDigest(input as IdentityResolutionDeployInput);
     return (input as IdentityResolutionDeployInput).inputDigest;
@@ -426,6 +499,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   const selectors = metadata?.map((value) => {
     if (/^dmo:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(value))
       return { kind: 'dmo', name: value.slice(4) };
+    if (value.startsWith('data-graph:') && dataGraphName.test(value.slice(11)))
+      return { kind: 'data-graph', name: value.slice(11) };
     if (value.startsWith('identity-resolution:') && identityResolutionName.test(value.slice(20)))
       return { kind: 'identity-resolution', name: value.slice(20) };
     if (value.startsWith('calculated-insight:') && calculatedInsightName.test(value.slice(19)))
@@ -441,11 +516,18 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     ? selectors.map(({ kind, name }) =>
         kind === 'dmo'
           ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
-          : kind === 'calculated-insight'
-            ? path.join(base!, 'data360', 'calculatedInsights', `${name}.calculatedInsight.json`)
-            : kind === 'identity-resolution'
-              ? path.join(base!, 'data360', 'identityResolution', `${name}.identityResolution.json`)
-              : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+          : kind === 'data-graph'
+            ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
+            : kind === 'calculated-insight'
+              ? path.join(base!, 'data360', 'calculatedInsights', `${name}.calculatedInsight.json`)
+              : kind === 'identity-resolution'
+                ? path.join(
+                    base!,
+                    'data360',
+                    'identityResolution',
+                    `${name}.identityResolution.json`,
+                  )
+                : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -515,6 +597,22 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           !selectors.some(
             (item) =>
               item.kind === 'calculated-insight' && item.name === input.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.dataGraph.json')) {
+        const input = await readDataGraphInput(file);
+        const key =
+          `data-graph:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) => item.kind === 'data-graph' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

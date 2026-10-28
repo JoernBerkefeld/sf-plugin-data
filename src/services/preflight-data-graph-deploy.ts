@@ -105,7 +105,7 @@ export async function preflightDataGraphDeploy(
       ? [
           {
             code,
-            message: 'Graph target, creation intent, dependency or configuration is unqualified.',
+            message: 'Graph target, dependency or configuration is unqualified.',
           },
         ]
       : [],
