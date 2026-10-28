@@ -102,13 +102,31 @@ for (const preview of [true, false]) {
   });
 }
 for (const preview of [true, false]) {
-  test(`Git-selected Segment remains in mixed selection preview=${preview} with execution blocked`, async () => {
+  test(`Git-selected Segment remains in mixed selection preview=${preview} with missing acknowledgement blocked`, async () => {
     const { command, calls } = invocation({ preview });
     const segment = {
       path: 'Audience.marketSegmentDefinition-meta.xml',
       companionPath: 'Audience.segment.json',
       inputDigest: 'd'.repeat(64),
-      document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+      document: {
+        schemaVersion: 1,
+        kind: 'segment',
+        identity: { dataSpace: 'default', apiName: 'Audience' },
+        spec: {
+          displayName: 'Audience',
+          description: '',
+          segmentType: 'DBT',
+          segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+          models: [
+            { name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' },
+          ],
+          dependencies: [
+            { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
+          ],
+          publishInterval: 'NO_REFRESH',
+          lookbackPeriod: 'P90D',
+        },
+      },
     };
     const resolve = command.resolveInputs;
     command.selectGitInputs = async () => ({
@@ -121,29 +139,30 @@ for (const preview of [true, false]) {
       assert.equal(input, segment);
       calls.push('digest');
     };
+    command.captureInput = async () => 'synthetic-dmo-digest';
     command.preflightSegment = async () => {
       calls.push('segment');
       return {
         family: 'segment',
-        outcome: 'unchanged',
+        outcome: 'update',
         target: 'present',
         absenceProof: 'none',
         diagnostics: [],
-        requiredEffects: [],
+        requiredEffects: ['processing'],
       };
     };
     const { result } = await run(command);
     assert.equal(result.status, preview ? 'success' : 'blocked');
     assert.equal(result.result.items.length, 2);
     assert.equal(result.result.items[1].identity.apiName, 'Audience');
-    assert.equal(calls.filter((call) => call === 'digest').length, 3);
+    assert.ok(calls.filter((call) => call === 'digest').length >= 3);
     assert.ok(calls.includes('segment'));
     assert.ok(!calls.includes('execute'));
     if (!preview) {
       assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
       assert.equal(
         result.result.items[1].preflight.diagnostics[0].code,
-        'SEGMENT_EXECUTION_NOT_IMPLEMENTED',
+        'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
       );
     }
   });

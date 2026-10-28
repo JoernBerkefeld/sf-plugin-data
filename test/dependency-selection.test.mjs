@@ -155,7 +155,7 @@ test('missing local prerequisites stay external; malformed existing artifact nev
   await writeFile(file, '{"kind":"profile-name-only"}');
   await assert.rejects(selectDeployDependencies(roots, cwd), { code: 'INVALID_SOURCE' });
 });
-test('opt-in command retains Git root provenance; default never expands; Segment blocks every write', async () => {
+test('opt-in command retains Git root provenance; default never expands; missing acknowledgement blocks writes', async () => {
   const { cwd } = await fixture();
   const roots = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
   const previousExit = process.exitCode;
@@ -181,7 +181,8 @@ test('opt-in command retains Git root provenance; default never expands; Segment
       command.resolveInputs = async () => roots;
       command.verifySegmentInput = async () => {};
       command.preflightSegment = async () => ({
-        outcome: 'unchanged',
+        outcome: 'update',
+        requiredEffects: ['processing'],
         target: 'present',
         absenceProof: 'none',
         diagnostics: [],

@@ -2,7 +2,13 @@ import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
 import { resolveApiVersion } from '../../transport/api-version.js';
 import { dmoApiSelection, DmoRetrieveError } from '../../services/retrieve-other-dmo.js';
-import { DeployInputError, readDeployInputs } from '../../artifacts/read-deploy-input.js';
+import {
+  captureDeployInputDigest,
+  DeployInputError,
+  readDeployInputs,
+} from '../../artifacts/read-deploy-input.js';
+import { executeSegmentDeploy } from '../../services/execute-segment-deploy.js';
+import type { SegmentDeployExecution } from '../../services/execute-segment-deploy.js';
 import { preflightDmoDeploy } from '../../services/preflight-dmo-deploy.js';
 import { preflightSegmentDeploy } from '../../services/preflight-segment-deploy.js';
 import type { SegmentDeployPreview } from '../../services/preflight-segment-deploy.js';
@@ -16,7 +22,12 @@ import { plugin as packageMetadata } from '../../plugin.js';
 import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
 import type { GitDeploySelection } from '../../artifacts/git-deploy-selection.js';
 import { selectDeployDependencies } from '../../services/select-deploy-dependencies.js';
-import { dependencyKey, DependencySelectionError } from '../../artifacts/dependency-selection.js';
+import {
+  dependencyKey,
+  DependencySelectionError,
+  documentDependencyNode,
+  orderDependencyNodes,
+} from '../../artifacts/dependency-selection.js';
 import type { SelectionReason } from '../../artifacts/dependency-selection.js';
 
 /**
@@ -52,6 +63,9 @@ const resolveTargetOrg = async (
 };
 
 type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
+  family?: SegmentDeployExecution['family'];
+  route?: SegmentDeployExecution['route'];
+  requiredEffects?: SegmentDeployPreview['requiredEffects'];
   outcome: DmoDeployExecution['outcome'] | 'not-attempted';
   identity: { dataSpace: string; apiName: string };
   operation: 'execute';
@@ -109,7 +123,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact dmo:ApiName selectors OR --changed-since Git selection. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates only object and existing non-primary field labels sequentially with fresh checks and qualified readback. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact dmo:ApiName selectors OR --changed-since Git selection. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates require --allow-processing; Segment creation remains blocked. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
       {
@@ -145,7 +159,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      summary: 'Exact dmo:ApiName or segment:ApiName project member; Segment is preview-only.',
+      summary: 'Exact dmo:ApiName or existing segment:ApiName project member.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
@@ -158,6 +172,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       summary:
         'Include supported local dependency artifacts; missing local inputs require compatible existing target prerequisites.',
     }),
+    'allow-processing': Flags.boolean({
+      default: false,
+      summary: 'Acknowledge automatic processing for qualified existing Segment updates.',
+    }),
     preview: Flags.boolean({
       default: false,
       summary: 'Strictly read-only target comparison; never executes deployment.',
@@ -169,7 +187,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   protected preflight = preflightDmoDeploy;
   protected preflightSegment = preflightSegmentDeploy;
   protected verifySegmentInput = verifySegmentInputDigest;
+  protected captureInput = captureDeployInputDigest;
   protected execute = executeDmoDeploy;
+  protected executeSegment = executeSegmentDeploy;
 
   /**
    * Validate all inputs and preflight the whole selection before any sequential execution.
@@ -288,6 +308,44 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           return { identity, reason: expanded.reasons.get(dependencyKey(identity))! };
         });
       }
+      const hasSegments = inputs.some((input) => input.document.kind === 'segment');
+      if (hasSegments) {
+        const nodes = inputs.map((input) =>
+          input.document.kind === 'segment'
+            ? documentDependencyNode(input.document)
+            : { identity: { kind: 'dmo' as const, ...input.document.identity }, dependencies: [] },
+        );
+        const byKey = new Map(
+          inputs.map((input) => [
+            dependencyKey({
+              kind: input.document.kind === 'segment' ? 'segment' : 'dmo',
+              ...input.document.identity,
+            }),
+            input,
+          ]),
+        );
+        inputs = orderDependencyNodes(nodes).map((key) => byKey.get(key)!);
+      }
+      // Preserve original Segment pair snapshots and bind mixed-batch DMO bytes before target reads.
+      const captured = hasSegments
+        ? await Promise.all(
+            inputs.map(async (input) => ({
+              input,
+              digest:
+                input.document.kind === 'segment' ? undefined : await this.captureInput(input),
+            })),
+          )
+        : [];
+      const verifyInputs = async (): Promise<void> => {
+        await expanded?.verify();
+        for (const { input, digest } of captured) {
+          if (input.document.kind === 'segment')
+            await this.verifySegmentInput(input as SegmentDeployInput);
+          else if ((await this.captureInput(input)) !== digest)
+            throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
+        }
+      };
+      await verifyInputs();
       const org = flags['target-org'];
       if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
       envelope.provenance.targetOrgId = org.getOrgId();
@@ -358,12 +416,21 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               );
           if (segment) {
             await this.verifySegmentInput(input as SegmentDeployInput);
-            if (!flags.preview) {
+            const effects = (preview as SegmentDeployPreview).requiredEffects;
+            if (
+              !flags.preview &&
+              (preview.outcome === 'create' ||
+                (preview.outcome === 'update' &&
+                  (flags['allow-processing'] !== true || !effects?.includes('processing'))))
+            ) {
               blocked = true;
               preview.diagnostics.push({
-                code: 'SEGMENT_EXECUTION_NOT_IMPLEMENTED',
+                code:
+                  preview.outcome === 'create'
+                    ? 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED'
+                    : 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                 message:
-                  'Segment execution remains blocked in this read-only checkpoint; no processing acknowledgement or runtime write is enabled.',
+                  'Segment creation is unavailable; qualified updates require explicit --allow-processing. No batch writes were attempted.',
               });
             }
           }
@@ -393,7 +460,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           });
         }
       }
-      await expanded?.verify();
+      if (flags.preview && !failed) await verifyInputs();
       if (!flags.preview) {
         const items: ExecutionItem[] = inputs.map((input, index) => {
           const { outcome, target, absenceProof, diagnostics } = envelope.result.items[
@@ -406,6 +473,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             outcome: 'not-attempted',
             mutation: 'not-attempted',
             preflight: { outcome, target, absenceProof, diagnostics },
+            ...(input.document.kind === 'segment'
+              ? {
+                  family: 'segment' as const,
+                  route: {
+                    apiVersion: '65.0' as const,
+                    method: 'PATCH' as const,
+                    resource: 'segments' as const,
+                  },
+                  requiredEffects: (envelope.result.items[index] as SegmentDeployPreview)
+                    .requiredEffects,
+                }
+              : {}),
             diagnostics: [],
           };
         });
@@ -413,18 +492,61 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         envelope.result.items = items;
         if (!failed && !blocked) {
           for (const [index, input] of inputs.entries()) {
-            await expanded?.verify();
             const item = items[index];
-            // Set conservative evidence before awaiting; an unexpected throw cannot erase it.
+            try {
+              await verifyInputs();
+              // Re-admit every pending dependent before any next write, including a DMO write.
+              for (const pending of inputs.slice(index)) {
+                if (pending.document.kind !== 'segment') continue;
+                const fresh = await this.preflightSegment(
+                  pending.document,
+                  connection,
+                  selection,
+                  flags['data-space'],
+                );
+                if (
+                  !['unchanged', 'update'].includes(fresh.outcome) ||
+                  (fresh.outcome === 'update' &&
+                    (flags['allow-processing'] !== true ||
+                      !fresh.requiredEffects.includes('processing')))
+                )
+                  throw new DependencySelectionError('SEGMENT_FRESH_ADMISSION_BLOCKED');
+              }
+              await verifyInputs();
+            } catch {
+              item.outcome = 'blocked';
+              item.diagnostics = [
+                {
+                  code: 'DEPLOY_FRESH_ADMISSION_BLOCKED',
+                  message:
+                    'Fresh input or dependency admission failed before this item. No further writes were attempted.',
+                },
+              ];
+              blocked = true;
+              break;
+            }
+            // Set conservative evidence only at dispatch; admission failures cannot imply a write.
             item.outcome = 'failed';
             item.mutation = 'unknown';
             try {
-              const result = await this.execute(
-                input.document as DmoDocument,
-                connection,
-                selection,
-                flags['data-space'],
-              );
+              const result =
+                input.document.kind === 'segment'
+                  ? await this.executeSegment(
+                      input.document,
+                      connection,
+                      selection,
+                      flags['data-space'],
+                      {
+                        allowProcessing: flags['allow-processing'] === true,
+                        verifyInput: verifyInputs,
+                      },
+                    )
+                  : await this.execute(
+                      input.document as DmoDocument,
+                      connection,
+                      selection,
+                      flags['data-space'],
+                    );
               Object.assign(item, result);
             } catch {
               item.diagnostics = [

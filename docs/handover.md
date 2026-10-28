@@ -1,3 +1,72 @@
+# Segment A2 command integration checkpoint — 2026-10-28
+
+Started at 2026-10-28T02:38Z (03:38+01:00), from exact clean pushed baseline
+`200e6a9a9830784391c468f1a6419bd5d4472456`. Fetch/status and ahead-history
+audit found main equal to origin/main with no unrelated package changes. Existing
+plan/Gates1/2 remain closed; Gate3 is one bounded command/test owner, no nested
+workers. Coordinator retains once-feature Gate4, public docs propagation and final
+verification-DB rebuild/validate/gaps. This checkpoint is NOT A2/A or roadmap
+completion. No live calls, mutations, installs, release/version/tag or DB edits.
+
+## Command interfaces and behavior
+
+- `Deploy.flags['allow-processing']` is an exact boolean, default false. Existing
+  aliases/DMO flags, API65 default, latest write refusal and contractVersion 1.0.0
+  remain unchanged. `executeSegment = executeSegmentDeploy` and
+  `captureInput = captureDeployInputDigest` are protected injection seams.
+- Dispatch is by document.kind. Segment service receives
+  `(document, connection, apiSelection, dataSpace, {allowProcessing, verifyInput})`;
+  production verifyInput preserves original Segment pair digests, mixed DMO byte
+  digests and opt-in expansion snapshots. Existing DMO executor signature stays
+  unchanged. Git roots keep their captured pair snapshots/provenance.
+- Whole-selection artifact/target/effects/dependency admission precedes any write,
+  including DMO. Missing explicit acknowledgement for processing updates blocks
+  every item with mutation not-attempted. No-op Segment needs no acknowledgement
+  and invokes no PATCH, poll or Metadata deploy job. Independent Metadata retrieve
+  remains a read operation, not a claim of no read jobs.
+- Mixed selections use existing dependency graph ordering, with deterministic
+  ready-node tie-breaks. Every next item rechecks all captured bytes and all pending
+  Segment prerequisites/target admission before dispatch; the Segment service then
+  performs its own fresh binding and preservation checks immediately before PATCH.
+- Segment execution items add family segment, fixed route
+  `{apiVersion:'65.0',method:'PATCH',resource:'segments'}`, requiredEffects and
+  retained whole-batch preflight. Sequential execution stops on block/fail/unknown;
+  completed items remain intact and the tail stays not-attempted. An unexpected
+  dispatch exception is conservatively failed/unknown. No rollback/transaction or
+  cross-component atomicity is claimed.
+- Creation, missing/unreadable/shell targets, unsupported definition edits and
+  selected unsupported PROFILE prerequisites remain blocked before batch writes.
+
+## Verification and follow-up
+
+Scoped autofix, explicit build, zero-warning full lint and 57 focused tests passed
+(6.9197707s Node phase). Full npm test passed 563/563 with zero failures/skips:
+113.1272436s Node phase, 116.4215219s complete npm wall including build. Separate
+CLI smoke passed 30/30 (105.4493042s). Normal unchanged hook/commit/push receipts
+follow in the worker return; they are not presumed here. All shell/test entries
+verify absolute normalized TEMP,
+actual Node os.tmpdir and nonempty TMP/TMPDIR against F:/Temp; only process-local
+repair/recheck is allowed. Synthetic OS-temp fixtures retained, no recursive cleanup.
+
+Next task: source live acceptance only. First lookup DB and MCP-first verify actual
+source org/CLI binding. Use at most two NEW owned fixture identities with explicit
+ledger, <=2 provision/create attempts, <=2 update attempts, <=2 exact cleanup
+deletes, <=40 nonpoll reads, <=24 polls and <=20 minutes. Provision solely through
+separately qualified native route, never public create admission or existing business
+resource mutation. Actual command retrieve both -> label/description edits ->
+acknowledged batch update -> independent complete preservation readback -> repeated
+deploy with zero mutation calls/jobs. Stop unknown; read-only reconcile, never write
+retry/rollback. Cleanup only exact owned fixtures via qualified routes; report
+retention/generated-resource uncertainty. Service settlement budget remains frozen
+at 12 reads, 1000ms interval and 120000ms timeout per update. No target acceptance
+or cross-org proof in this checkpoint.
+
+Propagation: command help and this handover updated. Public README/capabilities/
+artifact/Git docs and guide are pending coordinator propagation with the accepted
+feature, not declared complete here. No workspace consumers or language/LSP/hover/
+wiki/site-listing dependencies. Changed folder sf-plugin-data yes, current 0.1.0,
+new version unassigned/internal checkpoint; other components N/A/not needed.
+
 # Segment A2 existing-target SERVICE/TRANSPORT checkpoint — 2026-10-28
 
 Started from exact clean pushed baseline `0d443258e4d2bb317c9643df4180c74a6f8a455a`.

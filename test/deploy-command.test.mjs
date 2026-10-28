@@ -80,6 +80,21 @@ const run = async (command) => {
   }
 };
 
+test('processing acknowledgement parses only the exact boolean flag and defaults false', async () => {
+  const { Parser } = await import('@oclif/core');
+  const flags = { 'allow-processing': Deploy.flags['allow-processing'] };
+  const defaults = await Parser.parse([], { flags });
+  const acknowledged = await Parser.parse(['--allow-processing'], { flags });
+  assert.equal(defaults.flags['allow-processing'], false);
+  assert.equal(acknowledged.flags['allow-processing'], true);
+  for (const arguments_ of [
+    ['--allow-processing=false'],
+    ['--allow-processing', 'true'],
+    ['--allowProcessing'],
+    ['--no-allow-processing'],
+  ])
+    await assert.rejects(Parser.parse(arguments_, { flags }));
+});
 test('latest preview resolves once and passes immutable selection unchanged to preflight', async () => {
   let discoveries = 0;
   const pins = [];

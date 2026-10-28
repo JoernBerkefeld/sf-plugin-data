@@ -363,7 +363,7 @@ const run = async (command) => {
     process.exitCode = previous;
   }
 };
-test('mixed DMO plus Segment execution remains whole-selection blocked including unchanged Segment', async () => {
+test('mixed DMO plus Segment update without acknowledgement blocks whole selection', async () => {
   const p = await pair();
   const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
   const command = commandSetup(
@@ -376,13 +376,237 @@ test('mixed DMO plus Segment execution remains whole-selection blocked including
     ],
     false,
   );
+  command.captureInput = async () => 'synthetic-dmo-digest';
+  command.preflightSegment = async () => ({
+    family: 'segment',
+    outcome: 'update',
+    target: 'present',
+    absenceProof: 'none',
+    diagnostics: [],
+    requiredEffects: ['processing'],
+  });
   const result = await run(command);
   assert.equal(result.status, 'blocked');
   assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
   assert.equal(
     result.result.items[1].preflight.diagnostics[0].code,
-    'SEGMENT_EXECUTION_NOT_IMPLEMENTED',
+    'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
   );
+});
+test('existing Segment no-op dispatches real executor without ack or mutations', async () => {
+  const { executeSegmentDeploy } = await import('../lib/services/execute-segment-deploy.js');
+  const p = await pair();
+  const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+  const command = commandSetup(inputs, false);
+  let dispatched = 0;
+  command.executeSegment = async (value, conn, api, space, options) => {
+    dispatched++;
+    assert.equal(options.allowProcessing, false);
+    return executeSegmentDeploy(value, conn, api, space, {
+      ...options,
+      acquire: async () => ({
+        candidate: value,
+        blockers: [],
+        expectations: {
+          runtime: {
+            apiName: value.identity.apiName,
+            dataSpace: 'default',
+            displayName: value.spec.displayName,
+            description: value.spec.description,
+            segmentType: 'DBT',
+            segmentOnApiName: value.spec.segmentOn.apiName,
+            includeDbt: { models: value.spec.models },
+            publishInterval: 'NO_REFRESH',
+            lookbackPeriod: 'P90D',
+            marketSegmentId: 'synthetic-runtime',
+            marketSegmentDefinitionId: 'synthetic-definition',
+            segmentStatus: 'ACTIVE',
+          },
+        },
+      }),
+      bind: async () => [],
+      patch: () => assert.fail('No-op must not mutate'),
+      read: () => assert.fail('No-op must not poll'),
+    });
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(dispatched, 1);
+  assert.equal(result.result.items[0].outcome, 'unchanged');
+  assert.equal(result.result.items[0].mutation, 'not-attempted');
+  assert.deepEqual(result.result.items[0].route, {
+    apiVersion: '65.0',
+    method: 'PATCH',
+    resource: 'segments',
+  });
+});
+test('reverse mixed selection orders prerequisites first and retains partial/unknown/unattempted outcomes', async () => {
+  for (const stop of ['success', 'blocked', 'failed', 'unknown', 'throw']) {
+    const p = await pair();
+    const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+    const dmo = {
+      path: 'synthetic-dmo',
+      document: { kind: 'dmo', identity: { ...segment.document.spec.segmentOn } },
+    };
+    const later = {
+      ...segment,
+      document: { ...segment.document, identity: { dataSpace: 'default', apiName: 'ZZTail' } },
+    };
+    const command = commandSetup([later, segment, dmo], false);
+    const parse = command.parse;
+    command.parse = async () => {
+      const parsed = await parse();
+      parsed.flags['allow-processing'] = true;
+      return parsed;
+    };
+    command.captureInput = async () => 'same';
+    command.verifySegmentInput = async () => {};
+    command.preflightSegment = async () => ({
+      family: 'segment',
+      outcome: 'update',
+      target: 'present',
+      absenceProof: 'none',
+      diagnostics: [],
+      requiredEffects: ['processing'],
+    });
+    const calls = [];
+    command.execute = async () => {
+      calls.push('dmo');
+      return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
+    };
+    command.executeSegment = async (value, conn, api, space, options) => {
+      calls.push(value.identity.apiName);
+      assert.equal(options.allowProcessing, true);
+      await options.verifyInput();
+      if (stop === 'throw') throw new Error('private');
+      return {
+        family: 'segment',
+        route: { apiVersion: '65.0', method: 'PATCH', resource: 'segments' },
+        outcome: stop === 'success' ? 'updated' : stop === 'blocked' ? 'blocked' : 'failed',
+        mutation:
+          stop === 'success'
+            ? 'confirmed-updated'
+            : stop === 'unknown'
+              ? 'unknown'
+              : 'not-attempted',
+        diagnostics: [],
+      };
+    };
+    const result = await run(command);
+    assert.equal(
+      result.status,
+      stop === 'success' ? 'success' : stop === 'blocked' ? 'blocked' : 'failed',
+    );
+    assert.deepEqual(calls, [
+      'dmo',
+      segment.document.identity.apiName,
+      ...(stop === 'success' ? ['ZZTail'] : []),
+    ]);
+    assert.equal(result.result.items[0].mutation, 'confirmed-updated');
+    assert.equal(result.result.items[2].outcome, stop === 'success' ? 'updated' : 'not-attempted');
+    assert.equal(
+      result.result.items[1].mutation,
+      ['throw', 'unknown'].includes(stop)
+        ? 'unknown'
+        : stop === 'success'
+          ? 'confirmed-updated'
+          : 'not-attempted',
+    );
+  }
+});
+test('fresh dependency or late pair admission blocks before DMO dispatch and retains unattempted tail', async () => {
+  for (const drift of ['prerequisite', 'pair', 'git', 'expanded']) {
+    const p = await pair();
+    const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+    const dmo = {
+      path: 'synthetic-dmo',
+      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
+    };
+    const command = commandSetup([dmo, segment], false);
+    command.captureInput = async () => 'same';
+    command.executeSegment = () => assert.fail('No dependent dispatch');
+    let admissions = 0;
+    command.preflightSegment = async () => {
+      const fresh = ++admissions > 1;
+      if (drift !== 'prerequisite' && !fresh)
+        await writeFile(p.companionPath, `${await readFile(p.companionPath, 'utf8')}\n`);
+      return {
+        family: 'segment',
+        outcome: drift === 'prerequisite' && fresh ? 'blocked' : 'unchanged',
+        target: 'present',
+        absenceProof: 'none',
+        diagnostics: [],
+        requiredEffects: [],
+      };
+    };
+    if (drift === 'git') {
+      const parse = command.parse;
+      command.parse = async () => {
+        const parsed = await parse();
+        delete parsed.flags['source-dir'];
+        parsed.flags['changed-since'] = 'main';
+        return parsed;
+      };
+      command.selectGitInputs = async () => ({
+        paths: [segment.path],
+        segments: [segment],
+        provenance: { requestedRef: 'main' },
+      });
+    }
+    if (drift === 'expanded') {
+      command.resolveInputs = async () => [segment];
+      const parse = command.parse;
+      command.parse = async () => {
+        const parsed = await parse();
+        parsed.flags['include-dependencies'] = true;
+        return parsed;
+      };
+    }
+    const result = await run(command);
+    assert.notEqual(result.status, 'success');
+    assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+  }
+});
+test('late pair or prerequisite drift preserves earlier completed DMO and unattempted tail', async () => {
+  for (const drift of ['pair', 'prerequisite']) {
+    const p = await pair();
+    const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+    const dmo = {
+      path: 'synthetic-dmo',
+      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
+    };
+    const tail = {
+      ...segment,
+      document: { ...segment.document, identity: { dataSpace: 'default', apiName: 'ZZTail' } },
+    };
+    const command = commandSetup([tail, segment, dmo], false);
+    command.captureInput = async () => 'same';
+    let completed = false;
+    command.preflightSegment = async () => ({
+      family: 'segment',
+      outcome: completed && drift === 'prerequisite' ? 'blocked' : 'unchanged',
+      target: 'present',
+      absenceProof: 'none',
+      diagnostics: [],
+      requiredEffects: [],
+    });
+    command.execute = async () => {
+      completed = true;
+      if (drift === 'pair')
+        await writeFile(p.companionPath, `${await readFile(p.companionPath, 'utf8')}\n`);
+      return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
+    };
+    command.executeSegment = () => assert.fail('Late drift forbids dependent dispatch');
+    // Tail uses a synthetic logical identity, but the pair verifier must retain its captured bytes.
+    const verify = command.verifySegmentInput;
+    command.verifySegmentInput = (input) => verify(input === tail ? segment : input);
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.result.items[0].mutation, 'confirmed-updated');
+    assert.equal(result.result.items[1].outcome, 'blocked');
+    assert.equal(result.result.items[1].mutation, 'not-attempted');
+    assert.equal(result.result.items[2].outcome, 'not-attempted');
+  }
 });
 test('public Segment preview is read-only; drift during target acquisition prevents success', async () => {
   for (const drift of [false, true]) {
