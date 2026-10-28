@@ -182,7 +182,7 @@ export async function executeSegmentDeploy(
       );
       if (!isDeepStrictEqual(preservation(observed.runtime), baseline))
         return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH');
-      if (observed.runtime.segmentStatus === 'PROCESSING') continue;
+      if (['PROCESSING', 'COUNTING'].includes(String(observed.runtime.segmentStatus))) continue;
       if (observed.runtime.segmentStatus !== 'ACTIVE')
         return result('failed', 'unknown', 'SEGMENT_SETTLEMENT_UNQUALIFIED');
       // A separately acquired runtime + Metadata pair, not the PATCH echo or poll response.

@@ -105,6 +105,59 @@ test('single PATCH requires independently acquired settled pair and preserved bi
   assert.equal(h.counts().writes, 1);
   assert.equal(h.counts().acquisitions, 3);
 });
+test('PROCESSING then COUNTING then ACTIVE requires independent complete verification and one PATCH', async () => {
+  const h = harness();
+  const states = ['PROCESSING', 'COUNTING', 'ACTIVE'];
+  let reads = 0;
+  let bindings = 0;
+  h.options.read = async () => ({ segments: [runtime(changed(), states[reads++])] });
+  h.options.bind = async () => {
+    bindings++;
+    return [{ targetId: 'target-local', identity: document().spec.segmentOn }];
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'updated');
+  assert.equal(result.mutation, 'confirmed-updated');
+  assert.equal(reads, 3);
+  assert.equal(h.counts().writes, 1);
+  assert.equal(h.counts().acquisitions, 3);
+  assert.equal(h.counts().delays, 2);
+  assert.equal(bindings, 4);
+});
+test('persistent COUNTING exhausts the unchanged finite budget without replay or success', async () => {
+  const h = harness();
+  let reads = 0;
+  h.options.read = async () => {
+    reads++;
+    return { segments: [runtime(changed(), 'COUNTING')] };
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(reads, segmentPollBudget.reads);
+  assert.equal(h.counts().delays, segmentPollBudget.reads - 1);
+  assert.equal(h.counts().writes, 1);
+  assert.equal(h.counts().acquisitions, 2);
+});
+test('COUNTING followed by unknown, missing, error or failed reads stays unknown without replay', async () => {
+  for (const state of ['UNQUALIFIED', undefined, 'ERROR', 'read-error']) {
+    const h = harness();
+    let reads = 0;
+    h.options.read = async () => {
+      if (++reads === 1) return { segments: [runtime(changed(), 'COUNTING')] };
+      if (state === 'read-error') throw new Error('private');
+      const value = runtime(changed());
+      value.segmentStatus = state;
+      return { segments: [value] };
+    };
+    const result = await h.run();
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(reads, 2);
+    assert.equal(h.counts().writes, 1);
+    assert.equal(h.counts().acquisitions, 2);
+  }
+});
 test('PATCH payload is complete doubly nested DBT and omits both schedules and lookback', async () => {
   const calls = [];
   const c = {

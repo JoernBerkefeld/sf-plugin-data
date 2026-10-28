@@ -1,3 +1,229 @@
+# Segment COUNTING continuation and retained public repeat — 2026-10-28
+
+Fetched package HEAD `41e0ea500e2205a8d08161f42351d6bf907174db` equalled
+origin/main; sole package editor preserved and reconciled BOTH the existing CI
+contract checkpoint and SOURCE IR acceptance sections below. Those historical
+results retain their original owners/scope. Graph `71399c4a` remains independent
+qualification only, not integrated behavior. No target or guide action occurred.
+
+Written narrow plan and dedicated read-only architect review
+`2f408f12-5831-43b2-9034-1ba85e14e8dc` completed before edits, zero must-fix.
+Am I overengineering this? No new framework, shared state machine, broader state
+allowlist or extended budget is needed. One tiny coupled executor/test slice was
+implemented serially; full verification inputs stayed stable. Coordinator owns
+once-whole-feature Gate4 and final documentation propagation, not this chunk.
+
+Changed `src/services/execute-segment-deploy.ts` polling only: exact COUNTING now
+continues alongside PROCESSING. PATCH response qualification still admits only
+PROCESSING/ACTIVE. Existing 12-read/120-second deadline, preservation comparison,
+independent ACTIVE runtime/Metadata pair and fresh binding checks remain intact.
+COUNTING alone is never success. Added three regressions: PROCESSING -> COUNTING
+-> ACTIVE requires exactly one PATCH, three acquisitions and four binding checks;
+persistent COUNTING exhausts unchanged bounds and stays unknown; COUNTING followed
+by unknown/missing/ERROR/failed read stays unknown with no replay. Focused16/16.
+The first focused attempt caught a test-only binding-count expectation5 vs actual4;
+corrected before all green verification, not concealed as an initial pass.
+
+Qualified prior evidence remains
+`data360:segment.dbt.a2-owned-continuation-counting.api65`: original actual public
+update exit1/unknown is NOT retroactively successful. Later ACTIVE plus complete
+runtime/XML preservation is separate API evidence. COUNTING-to-ACTIVE was sampled
+across9m19.496s; actual transition instant is unknown. This fix does not promise
+live completion within the unchanged budget or authorize replaying that mutation.
+
+Fresh verification: lint:fix, full zero-warning lint and explicit build passed.
+Full `npm test --no-workspaces`836/836 passed, Node117.823s and full npm test
+including build121.356s; focused/lint/build/full-test shell144.467s. Normal-hook
+checkpoint receipts and final commit/push hash are returned by this worker.
+
+Retained SOURCE acceptance: headless discover/describe consulted before org reads;
+its SOQL recipe supplied no executable identity endpoint, so read-only SObject
+Organization query plus independent CLI Organization query/core alias binding
+verified SOURCE. Exact ownership ledger IDs and ACTIVE desired labels checked.
+One actual public `node <repo>/bin/run.js data360 deploy -o <sourceAlias>
+--api-version 65.0 -d <retainedCompanion> --allow-processing --json` returned
+exit0/status success, unchanged/not-attempted, preflight unchanged/present,
+requiredEffects[], diagnostics[]. No pair edit/new update/create/delete/refresh,
+activation, cleanup or target request. Original unknown update was never replayed.
+Run12:12:38.810Z–12:13:55.496Z,76.686s. JSforce/Undici/NodeHTTP+HTTPS observers
+recorded35 local underlying reads total,31 repeat;34 transport observations total,
+31 repeat (duplicate observations, not additional traffic). Four Metadata retrieves,
+nine retrieve-status polls, zero mutations/Metadata deploy jobs. Plus one known MCP
+identity read=36 known underlying reads; other MCP/auth internals not globally
+counted.22 local logical nonpoll reads plus one MCP=23 known logical nonpoll reads.
+Predeclared budget120 underlying/50 logical nonpoll/6 Metadata retrieves/5min,
+zero mutation allowance; pair and code/test hashes unchanged during acceptance.
+This is source-command repeat acceptance, NOT installed-package/cross-org/two-
+selection/create/computation acceptance or a live test of the new transient path.
+
+Private owned receipts retained at `F:/Temp/segment-counting-repeat-5qpIyT`;
+original receipts `F:/Temp/segment-retest-Xwc6tY`. No recursive cleanup. All shell
+entries verified process-local absolute normalized TEMP/actualNodeos.tmpdir and
+nonemptyTMP/TMPDIR as F:/Temp. Any future worker must retain mkdtemp ownership
+markers, registered strict-descendant/no-link cleanup safeguards; never recursive
+repository/workspace cleanup. Source leftovers acceptable; cleanup not prerequisite.
+Sanitized distinct evidence subject `data360:segment.dbt.counting-repeat-acceptance.api65`
+was written after root fetch/status ahead5/not behind; no shared index rebuild.
+Coordinator owns aggregate schema validation/index update and final GUI walkthrough.
+
+**Next CI executor resume:** continue the existing contract checkpoint below:
+API65 independent runtime/Metadata acquisition plus fixed typed dependency binding,
+then family-local preflight/executor with allow-processing, at-most-one PATCH,
+bounded settlement and complete readback including attribution observations;
+add unchanged mutation-spy tests before common selector/file/command integration.
+CI offline833-test checkpoint is not public acceptance. Broader Segment SQL edits,
+DLO gaps, Graph/IR integration and cross-org milestone remain separately pending.
+Package sf-plugin-data0.1.0, next release unassigned. No language-stack/workspace
+consumers need updates; final README/capabilities/guide propagation coordinator-owned.
+
+# Chunk C qualified CI expression comparison contract checkpoint — 2026-10-28
+
+Reconciled fetched package HEAD `ec410fa6f8447cb0f74e0eae5b9ca1d96ecf32c5`
+(equal to origin/main). The existing uncommitted SOURCE IR acceptance section
+below is preserved, not claimed as this worker's output. No guide/index edits,
+live org requests, mutation replay, installation or release were performed.
+
+Written scoped contract-first plan and dedicated read-only architect review
+`e5424a9e-46ec-4a5d-beb8-3d1c4297804b` completed before edits. Its sole must-fix
+is incorporated: independently acquired ACTIVE runtime and matching Metadata
+are required before unchanged or candidate evaluation. One coupled artifact/test
+slice is the sizing boundary; no public-stack/framework expansion. Whole-feature
+Gate4 and public-doc propagation stay with the coordinator.
+
+Implemented `src/artifacts/calculated-insight-document.ts` and synthetic
+`test/calculated-insight-document.test.mjs`:
+
+- `validateCalculatedInsightDocument(value)` and
+  `serializeCalculatedInsightDocument(value)` admit detached schemaVersion 1,
+  kind `calculated-insight`, default-space `__cio` identity and the complete
+  fixed semantic profile. This is an internal offline contract, not yet a public
+  on-disk layout or retrievable/deployable CLI artifact.
+- `projectCalculatedInsight(runtimeDetail, metadataDefinition)` takes exact API65
+  detail body plus a separate `readMetadata` definition, checks ACTIVE and exact
+  identity/label/creationType/expression correlation, then returns
+  `{document, observations: {derivedAttribution: {dimensions: [value], measures: [value]}}}`.
+  Attribution is explicit null or `{sourceApiName, type: STREAMING_DATA_MODEL}`
+  for the two observed fields; unknown attribution structure blocks. It never
+  defines dependencies. SQL/formulas fix both typed DMO field dependencies.
+- Full ordered dimension/measure schema, aliases, roles, aggregability, formulas,
+  creation type, enabled/type/definition status, label/description/subtype and
+  schedule/bounds remain in complete semantic admission. Unknown/missing fields
+  block rather than disappear. Only recorded error-free, never-run runtime
+  profile is admitted; populated last-run fields remain unqualified.
+- `buildCalculatedInsightUpdateDelta(desired, runtimeDetail, metadataDefinition,
+  targetDataSpace)` returns payload-free blocked, unchanged with no patch, or
+  candidate with exactly `{expression}` plus expected document and attribution
+  observations. It has no connection/writer/dispatch seam. Synthetic zero-dispatch
+  unchanged is not live repeated-deploy acceptance or network-provenance proof.
+- SQL is exact-byte bounded to the recorded baseline and forward `DeviceId IS
+  NOT NULL` addition after `WHERE 1 = 0`, preserving `APPROX_COUNT_DISTINCT` and
+  Text/Number NONAGGREGATABLE output. Removal/reversal, formatting-only changes,
+  COUNT, alternate predicates/aliases/schema/settings changes block. No arbitrary
+  SQL parser, dependency resolver or general omitted-field replay is introduced.
+
+The sanitized same-aggregation evidence did not embed nested attribution/full
+key inventories; optional retained qualification receipts resolved that execution
+checkpoint without new org calls. Tests use synthetic identities and authored
+fixtures only; private wrappers/tenant data/receipts were not copied into Git.
+The historical COUNT aggregability rejection remains valid and separately scoped.
+
+Verification: focused 44/44 passed (Node phase 0.132s); lint:fix and explicit build
+passed. Full zero-warning lint passed; complete `npm test --no-workspaces`
+passed 833/833 (44 new; Node test phase 127.162s; full npm test including build
+131.192s; lint plus full test shell 142.541s). Normal unchanged hooks passed lint,
+833 tests (Node phase 135.158s) and 30 CLI smoke tests; hook/commit total
+265.053s, smoke phase 111.111s.
+Source/test checkpoint committed and pushed as
+`41e0ea500e2205a8d08161f42351d6bf907174db`; only those two literal paths were staged.
+Handover remains unstaged to avoid including the preexisting IR acceptance edit
+without its owner's coordination. No release/tag/publication performed. All shell/test entries verified process-local TEMP/TMP/TMPDIR and
+actual Node tmpdir as absolute normalized `F:/Temp`; no recursive cleanup.
+
+**Remaining / exact resume:** CI public routes do not exist yet beyond internal
+API67 draft-create transport. Next owner should add API65 exact independent
+runtime/Metadata acquisition and target dependency compatibility using this fixed
+projection, then family-local preflight/executor with fresh reads, allow-processing,
+at-most-one PATCH, bounded settlement and complete readback (including explicit
+attribution observations). Add unchanged mutation-spy tests at that service seam
+before common selector/file/command integration. Do not infer draft/create/shell
+absence safety, arbitrary SQL/schema support, successful computation, public CLI
+acceptance or cross-org acceptance from this offline checkpoint.
+
+Package stays `sf-plugin-data` 0.1.0, next release unassigned. No language-stack or
+workspace consumers require updates. README/capability/artifact user claims remain
+unchanged because no public behavior was enabled; coordinator owns once-whole-feature
+review and final propagation. No sfmc.guide edit/staging/commit/push.
+
+# SOURCE public IR acceptance completed — 2026-10-28
+
+Accepted against clean fetched source revision
+`ec410fa6f8447cb0f74e0eae5b9ca1d96ecf32c5`, using actual public
+`node <repo>/bin/run.js data360` commands from the validation Salesforce project;
+this is source-command acceptance, not installed-package or registry acceptance.
+MCP headless discover/describe/dispatch and independent CLI Organization query
+matched the expected SOURCE alias before mutation. Target was untouched.
+
+- Exact retrieve: exit 0, portable schemaVersion 1 identity-resolution artifact.
+- Edited only Individual `LastUpdated` -> `MostFrequent` before effect checks.
+- Deploy `-d <portable> --api-version auto --preview --json`: exit 0, `update`,
+  publication/generated-output-provisioning effects, 56 read dispatches, zero writes/jobs.
+- Deploy without `--allow-processing`: exit 1, blocked acknowledgement diagnostic,
+  `not-attempted`, 56 read dispatches, zero writes/jobs.
+- Acknowledged deploy: exit 0, `updated` / `confirmed-updated`; exactly one API67
+  `d360_ir_update`, 244 reads. Three private executor polls were
+  `PUBLISHING`, `PUBLISHING`, `PUBLISHED`, recorded before classification.
+- Independent complete facade comparison against baseline with only Individual
+  ruleType changed passed; native API65 projection agreed. All other fields,
+  ordered matches/reconciliation entries, flags and generated identities preserved.
+- Identical acknowledged repeat: exit 0, `unchanged` / `not-attempted`; transport
+  instrumentation proved 200 reads (16 facade, 100 native GET, 84 Metadata
+  readMetadata), zero mutation/job dispatches, not merely an unchanged label.
+
+Retrieve used `-m identity-resolution:<owned-ir> -d <portable>`; deploy used only
+`-d <portable>` because deploy source-dir and metadata selectors are mutually
+exclusive. Two harness argument mistakes failed locally `INVALID_SELECTION`
+with no requests; not plugin bugs. No production code or tests changed.
+
+One newly owned fixture was provisioned through the committed API67 facade
+helper as TEST SETUP ONLY, automatic=false; product CREATE remains blocked.
+Exact ownership guard preceded one delete; five cleanup polls reached facade
+notfound, independent native owner and all twelve captured generated definitions
+returned HTTP404 `ITEM_NOT_FOUND`. No separate generated-DMO deletes. No fixture
+intentionally retained; physical records, retention, storage and credits remain
+unknown. Source publication/provisioning was observed, no explicit resolution job.
+
+Pre-provision arithmetic retained all repeated six-input/twelve-output guards:
+650 logical nonpoll / 1000 underlying reads, 24 polls, 45 minutes, one create,
+update and delete. Actual scoped live window 11:11:12.816Z–11:34:19.723Z,
+23m06.907s; 589 instrumented dispatches/responses = 586 reads + three mutations;
+11 polls (3 setup, 3 update, 5 cleanup), 575 nonpoll reads. Earlier MCP/CLI org
+identity and auth internals are outside this instrumented total; it is not a
+fabricated exact global count. Private marked OS-temp receipts are retained at
+`F:/Temp/ir-public-PJpOTZ`; no recursive deletion. TEMP and actual Node tmpdir
+were verified per shell entry.
+
+**Standing SOURCE authorization clarification for future milestones:** SOURCE
+is available for goal-directed experimentation and remaining test resources are
+acceptable. Do not block provisioning/testing merely because cleanup feasibility
+is uncertain. Exact-owned cleanup is best effort; report leftovers. Unknown
+mutations still prohibit blind replay. TARGET's bounded permissions and local
+filesystem cleanup safeguards are unchanged. Coordinator should revisit prior
+self-imposed cleanup-blocked tests after the unattended pass, then conduct GUI
+blocker walkthroughs one by one. Guide is under user review: no edits/staging/
+commit/push. Other roadmap blockers and Graph VALUE debt remain unchanged.
+
+Evidence subject: `data360:ir.public-plugin-acceptance.api65-67` (strictly schema
+validated, source CLI plugin-acceptance proof). Coordinator owns final index
+rebuild, aggregate validation/gaps, whole-feature review and public-doc propagation.
+No root push or release. Package version remains 0.1.0, next release unassigned.
+No language-stack/workspace consumers require updates for acceptance evidence.
+Fresh verification after this handover: strict subject schema validation passed;
+zero-warning lint passed; `npm test --no-workspaces` built successfully and passed
+all 789 tests (Node test phase 123.110s; combined validation/lint/test 142.299s).
+No production behavior changed, so no new synthetic regression was required;
+the live workflow adds the missing public acceptance evidence. No commit/push
+performed by this acceptance worker; only this handover is changed in the package.
+
 # Chunk D coherent public IR retrieve/preview/deploy integration — 2026-10-28
 
 ## Recovery reconciliation and actual scope
