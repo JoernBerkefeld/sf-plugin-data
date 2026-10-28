@@ -27,6 +27,7 @@ import {
 import {
   executeIngestionDloDeploy,
   preflightIngestionDloDeploy,
+  canonicalIngestionDloBaseline,
 } from '../lib/services/execute-ingestion-dlo-deploy.js';
 
 const version = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
@@ -249,8 +250,17 @@ const publicDeploy = async (overrides = {}, failure, mixed = false) => {
   const command = Object.create(Deploy.prototype);
   const calls = [];
   let phase = 0;
+  let runtimeCount = 0;
   const options = {
-    acquire: async (_c, _n, _v, _s, options_) => acquisition(baseline(phase), options_.pending),
+    acquire: async (_c, _n, _v, _s, options_) => {
+      const value = baseline(phase);
+      if (phase === 2)
+        Object.assign(value.dlo, {
+          lastRefreshedDate: '2026-10-28T18:23:34.000Z',
+          totalRecords: runtimeCount++,
+        });
+      return acquisition(value, options_.pending);
+    },
     mutate: async (operation) => {
       calls.push(operation);
       if (operation === 'd360_connection_schema_put_ingestion_api') {
@@ -507,6 +517,147 @@ test('full preserved source, field, key, formula and refresh admission rejects l
   reordered.stream.mappings.reverse();
   reordered.stream.sourceFields.reverse();
   assert.deepEqual(projectIngestionDlo(reordered, apiName), current);
+});
+
+test('observed postprocessing DLO runtime values preserve projection and configuration fingerprint', async () => {
+  // Retained SOURCE receipt: absent initially, then this timestamp and numeric zero.
+  const runtime = { lastRefreshedDate: '2026-10-28T18:23:34.000Z', totalRecords: 0 };
+  const original = baseline();
+  const canonical = canonicalIngestionDloBaseline(original);
+  for (const observations of [
+    { lastRefreshedDate: runtime.lastRefreshedDate },
+    { totalRecords: 0 },
+    runtime,
+    { lastRefreshedDate: '2026-10-28T19:00:00.000Z', totalRecords: 17 },
+  ]) {
+    const value = baseline();
+    Object.assign(value.dlo, observations);
+    const snapshot = structuredClone(value);
+    assert.deepEqual(projectIngestionDlo(value, apiName), current);
+    assert.deepEqual(canonicalIngestionDloBaseline(value), canonical);
+    assert.deepEqual(value, snapshot, 'canonicalization must not mutate acquired evidence');
+    const options = {
+      acquire: async () => acquisition(value),
+      verifyInput: async () => {},
+      recordObservation: async () => {},
+      allowProcessing: false,
+      mutate: async () => assert.fail('runtime observation must never trigger a write'),
+    };
+    const preview = await preflightIngestionDloDeploy(
+      current,
+      connection,
+      version,
+      'default',
+      options,
+    );
+    assert.equal(preview.outcome, 'unchanged');
+    const repeat = await executeIngestionDloDeploy(
+      current,
+      connection,
+      version,
+      'default',
+      options,
+    );
+    assert.equal(repeat.outcome, 'unchanged');
+  }
+});
+
+test('runtime fields remain strictly typed and unknown or configuration changes fail closed', async () => {
+  const jsonNull = JSON.parse('null');
+  const edits = [
+    ...['0', jsonNull, -1, 0.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1].map(
+      (count) => (x) => {
+        x.dlo.totalRecords = count;
+      },
+    ),
+    ...[jsonNull, 0, '', 'tomorrow', '2026-02-30T18:23:34.000Z', '2026-10-28T18:23:34+00:00'].map(
+      (timestamp) => (x) => {
+        x.dlo.lastRefreshedDate = timestamp;
+      },
+    ),
+    (x) => {
+      x.dlo.unknownRuntime = 0;
+    },
+    (x) => {
+      x.stream.dataLakeObjectInfo.totalRecords = 0;
+    },
+    (x) => {
+      x.stream.dataLakeObjectInfo.lastRefreshedDate = '2026-10-28T18:23:34.000Z';
+    },
+    (x) => {
+      x.dlo.fields[0].isPrimaryKey = false;
+    },
+    (x) => {
+      x.keyQualifiers.push({ name: 'Custom' });
+    },
+    (x) => {
+      x.stream.refreshConfig.shouldFetchImmediately = true;
+    },
+    (x) => {
+      x.stream.mappings.pop();
+    },
+  ];
+  for (const edit of edits) {
+    const value = baseline();
+    Object.assign(value.dlo, { lastRefreshedDate: '2026-10-28T18:23:34.000Z', totalRecords: 0 });
+    edit(value);
+    assert.throws(() => projectIngestionDlo(value, apiName));
+    const result = await executeIngestionDloDeploy(current, connection, version, 'default', {
+      acquire: async () => acquisition(value),
+      verifyInput: async () => {},
+      recordObservation: async () => {},
+      allowProcessing: true,
+      mutate: async () => assert.fail('malformed observation must not permit mutation'),
+    });
+    assert.equal(result.outcome, 'blocked');
+  }
+});
+
+test('runtime observations can appear and change during guarded additive settlement', async () => {
+  let phase = 0;
+  let reads = 0;
+  const writes = [];
+  const options = {
+    allowProcessing: true,
+    verifyInput: async () => {},
+    recordObservation: async () => {},
+    acquire: async (_c, _n, _v, _s, options_) => {
+      const value = baseline(phase);
+      if (reads++ > 0)
+        Object.assign(value.dlo, {
+          lastRefreshedDate: '2026-10-28T18:23:34.000Z',
+          totalRecords: reads,
+        });
+      return acquisition(value, options_.pending);
+    },
+    mutate: async (operation) => {
+      writes.push(operation);
+      if (phase++ === 0) return { schemas: [baseline(1).schema] };
+      return {
+        dataLakeObjectInfo: baseline(2).stream.dataLakeObjectInfo,
+        id: 'definition',
+        label: 'Probe',
+        name: 'ReturnedHash',
+        recordId: 'stream-runtime-id',
+        status: 'PROCESSING',
+      };
+    },
+  };
+  const result = await executeIngestionDloDeploy(desired, connection, version, 'default', options);
+  assert.equal(result.outcome, 'updated');
+  options.allowProcessing = false;
+  const repeated = await executeIngestionDloDeploy(
+    desired,
+    connection,
+    version,
+    'default',
+    options,
+  );
+  assert.equal(repeated.outcome, 'unchanged');
+  assert.deepEqual(writes, [
+    'd360_connection_schema_put_ingestion_api',
+    'd360_datastream_patch_ingestion_api',
+  ]);
 });
 
 test('source-only partial state refuses reentry instead of replaying schema or sync', async () => {

@@ -74,6 +74,9 @@ export function canonicalIngestionDloBaseline(value: IngestionDloBaseline): Inge
   result.schema.fields = ingestionCollection(result.schema.fields);
   // Availability is source-runtime state, not a writable schema property.
   delete result.schema.availabilityStatus;
+  // Admission validates these optional persisted-DLO runtime observations first.
+  delete result.dlo.lastRefreshedDate;
+  delete result.dlo.totalRecords;
   for (const object of [result.dlo, ingestionRecord(result.stream.dataLakeObjectInfo)]) {
     object.fields = ingestionCollection(object.fields);
     object.dataLakeFieldInfoRepresentation = ingestionCollection(

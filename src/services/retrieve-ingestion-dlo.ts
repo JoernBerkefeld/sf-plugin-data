@@ -202,19 +202,41 @@ export function projectIngestionDlo(
       shouldTreatMissingFilesAsFailures: false,
     }),
   );
-  const dlo = ingestionRecord(value.dlo, [
-    'capabilities',
-    'category',
-    'createdDate',
-    'dataLakeFieldInfoRepresentation',
-    'dataSpaceInfo',
-    'fields',
-    'id',
-    'label',
-    'name',
-    'namespace',
-    'status',
-  ]);
+  const dlo = ingestionRecord(value.dlo);
+  const runtimeKeys = new Set(['lastRefreshedDate', 'totalRecords']);
+  ingestionRecord(
+    Object.fromEntries(Object.entries(dlo).filter(([key]) => !runtimeKeys.has(key))),
+    [
+      'capabilities',
+      'category',
+      'createdDate',
+      'dataLakeFieldInfoRepresentation',
+      'dataSpaceInfo',
+      'fields',
+      'id',
+      'label',
+      'name',
+      'namespace',
+      'status',
+    ],
+  );
+  // These optional persisted-DLO observations appear after automatic processing.
+  // Admit only the observed value shapes; they are not deployment configuration.
+  if (Object.hasOwn(dlo, 'lastRefreshedDate')) {
+    const timestamp = dlo.lastRefreshedDate;
+    ingestionRequire(
+      typeof timestamp === 'string' &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(timestamp) &&
+        Number.isFinite(Date.parse(timestamp)) &&
+        new Date(timestamp).toISOString() === timestamp,
+    );
+  }
+  if (Object.hasOwn(dlo, 'totalRecords'))
+    ingestionRequire(
+      typeof dlo.totalRecords === 'number' &&
+        Number.isSafeInteger(dlo.totalRecords) &&
+        dlo.totalRecords >= 0,
+    );
   ingestionRequire(
     dlo.name === apiName &&
       dlo.status === 'ACTIVE' &&

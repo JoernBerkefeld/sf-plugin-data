@@ -1,5 +1,33 @@
 # Public Ingestion API DLO integration — 2026-10-28
 
+## Postprocessing runtime admission repair
+
+Continued from clean fetched b113326 as sole package editor. Dedicated read-only
+plan review 8c8c5da6 found zero must-fix findings. Narrow repair admits optional
+persisted-DLO `lastRefreshedDate` only as a calendar-valid canonical UTC timestamp
+(`YYYY-MM-DDTHH:mm:ss.sssZ`) and `totalRecords` only as a nonnegative safe integer
+number. Observed SOURCE receipt: `2026-10-28T18:23:34.000Z` and numeric `0`;
+initial response omitted both. Nulls, count strings, other timestamp shapes,
+unsafe/fractional counts and unknown keys remain unsupported. Embedded stream
+DLO keys remain unchanged: the retained receipt adds these fields only to the
+persisted DLO, not its embedded definition. Runtime fields never enter the portable
+artifact or write request. Full configuration canonicalization excludes only
+these two additional validated observation values; PK/KQ, fields, mappings,
+refresh configuration, owner identities and unknown-property guards stay intact.
+
+Regressions cover observed before/after shapes, independent presence, changed
+values, unchanged preview/execute without acknowledgement or mutation, additive
+settlement with observations appearing/changing, and malformed/unknown/config/key
+rejections before writes. No new live calls or mutations occurred in this repair.
+The prior installed acceptance did create/update and preserve the retained owned
+chain, but its final unchanged repeat was BLOCKED by these runtime fields. Do not
+replay that successful PUT/sync. Next: isolated install of this repair revision,
+then only read/retrieve/preview and zero-write unchanged repeat on the retained
+owned chain. DMO additive and whole-feature review remain deferred to coordinator.
+Full package verification and exact committed-tree/hosted-CI receipts belong in
+the worker handoff; no version bump or release in this chunk. No workspace
+consumers require updates; guide/wiki/hover/tool-listing propagation is not needed.
+
 Sole editor continued from fetched main/origin b1195d5, incorporating recovered
 review66423d8c's three must-fixes without another planning loop. Plan and full
 operational roadmap read; one coupled editor owns artifact/command/Git inputs,
