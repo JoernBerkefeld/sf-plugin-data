@@ -138,7 +138,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
-      summary: 'Select canonical DMO Git changes since the merge base with a commit reference.',
+      summary:
+        'Select canonical DMO and paired Segment Git changes since the merge base with a commit reference.',
       exclusive: ['source-dir', 'metadata'],
     }),
     preview: Flags.boolean({
@@ -227,18 +228,39 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       )
         return finish('blocked', 'INVALID_SELECTION');
       let sourceDirectories = flags['source-dir'];
+      let gitSegments: GitDeploySelection['segments'];
       if (changedSince !== undefined) {
         envelope.result.selection.changedSince = changedSince;
         const selected = await this.selectGitInputs({ cwd, ref: changedSince });
         envelope.provenance.git = selected.provenance;
         if (selected.paths.length === 0) return finish('success');
         sourceDirectories = selected.paths;
+        gitSegments = selected.segments;
       }
       const inputs = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      if (gitSegments) {
+        const current = inputs.filter(
+          (input): input is SegmentDeployInput => 'inputDigest' in input,
+        );
+        if (
+          current.length !== gitSegments.length ||
+          gitSegments.some(
+            (captured) =>
+              !current.some(
+                (input) =>
+                  input.path === captured.path &&
+                  input.companionPath === captured.companionPath &&
+                  input.inputDigest === captured.inputDigest,
+              ),
+          )
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        for (const captured of gitSegments) await this.verifySegmentInput(captured);
+      }
       if (inputs.length === 0) return finish('blocked', 'INVALID_SELECTION');
       const org = flags['target-org'];
       if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
@@ -414,8 +436,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           code: error.code,
           message:
             error.code === 'BLOCKED_GIT_LIFECYCLE'
-              ? 'Git selection blocks DMO renames/deletions and a relevant untracked DMO addition combined with any tracked worktree deletion. Stage intended changes to permit Git-inferred rename detection, then resolve unsupported lifecycle changes. Git cannot guarantee historical rename intent.'
-              : 'Git selection failed. Use a valid commit reference in a repository and canonical data360/default/dmo/ApiName.json files whose default-space identity matches the filename.',
+              ? 'Git selection blocks DMO or Segment member renames/deletions and a relevant untracked addition combined with any tracked worktree deletion. Stage intended changes to permit Git-inferred rename detection, then resolve unsupported lifecycle changes. Git cannot guarantee historical rename intent.'
+              : 'Git selection failed. Use a valid commit reference and canonical DMO files or complete Segment XML/JSON pairs under the configured package directory with matching identities and unchanged admitted bytes.',
           retryable: false,
         });
         return finish('blocked');

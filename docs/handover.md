@@ -1,3 +1,69 @@
+# Segment A2b Git pair selection checkpoint — 2026-10-28
+
+Bounded Git-selection-only checkpoint. Gate1/2 were already closed; the single
+owner kept the tightly coupled selector/command contract together. Coordinator
+retains once-whole-feature Gate4, public docs propagation and verification-DB
+rebuild/validate/gaps. No DB claims/index changes, org calls, dependency expansion,
+executor changes, installs, release or version bump. Package remains `0.1.0`.
+Initial fetch/status confirmed clean HEAD = origin/main =
+`3a3f7b5ad510004598132f513f724ad7df8799ee`, no ahead history.
+
+## Exact interfaces and owned files
+
+- `src/artifacts/git-deploy-selection.ts`: `selectGitDeployInputs({cwd,ref})`
+  still returns `{paths,provenance}` for legacy DMO-only/empty selection, with
+  additive `segments?: readonly SegmentDeployInput[]` only when a Segment is
+  selected. Each frozen entry is the existing A2a `{path,companionPath,document,
+  inputDigest}`; digest length-prefixes both original XML/JSON byte sets, not a
+  semantic JSON hash. `paths` contains one canonical XML path per Segment, plus
+  legacy DMO paths. Either/both members coalesce via existing strict admission.
+  Fixed default/configured package paths are checked against exact Git spelling;
+  nested/alternate-package/case-suffix aliases do not silently select a different
+  file. Either-endpoint rename/copy/delete/conflict detection and ambiguous
+  tracked-worktree-deletion plus untracked-addition protection now include pair
+  members. Missing members, bad identities, duplicate keys, links/hardlinks and
+  competing paths fail the whole selection before an otherwise valid DMO deploy.
+- `src/commands/data360/deploy.ts`: consumes optional captured `segments`, checks
+  exact path/companion/digest/count against re-admitted inputs and verifies captured
+  bytes before target access, then retains A2a before/after preflight verification.
+  Help/errors mention paired Segment selection. Public result/provenance shapes
+  are unchanged; no source document/digest is added to the public envelope.
+- `test/git-deploy-selection.test.mjs`: synthetic Git fixtures cover either/both
+  members in committed/index/worktree/untracked states; complete pair binding,
+  missing/delete/rename cases alongside DMO; configured package and path/identity/
+  duplicate-key/link refusal. Existing DMO tests are retained.
+- `test/git-deploy-command.test.mjs`: mixed Git-selected Segment+DMO preview and
+  whole-selection execution blocking, captured/re-admitted byte/path/count drift,
+  plus unchanged legacy DMO/empty-selection/API65 behavior.
+- `docs/handover.md`: this checkpoint record; no other files owned by this slice.
+
+## Verification and checkpoint state
+
+Scoped ESLint autofix passed; full `npm run lint --no-workspaces` passed with
+zero warnings; explicit `npm run build --no-workspaces` passed. Full
+`npm test --no-workspaces`: 529/529 passed, zero failed/skipped/cancelled,
+119.3801981s Node phase and 122.6927267s complete npm wall time including build.
+Normal-hook commit/push receipts follow in the finishing worker's return; this
+record does not presume their success. Scratch fixtures are run-owned
+`mkdtemp` directories under verified `F:/Temp`; they are retained, not recursively
+cleaned. One early PowerShell Node quoting attempt failed before Git/workloads;
+a later shell accidentally referenced a nonpersisted preflight function and
+continued focused tests. That focused run is not acceptance evidence; all accepted
+full verification and commit-hook workloads use explicit successful TEMP/actual
+Node os.tmpdir/nonempty TMP/TMPDIR checks with process-only repair/recheck.
+
+## Remaining A2 checkpoints (not implemented here)
+
+Segment execution/create remain blocked exactly as in A2a, including unchanged
+Segments and mixed DMO+Segment execution. Permission-aware absence and Metadata-only
+shell conflict admission remain unresolved. Next checkpoints: qualified always-on
+target dependency binding and opt-in selection expansion/order; bounded runtime
+executor, effects/processing acknowledgement, settlement and independent readback;
+source fixture acceptance and distinct cross-org acceptance under existing evidence
+and authorization gates. No generalized SQL, schedule, dependency graph or executor
+framework is introduced. Coordinator owns once-whole-feature review and public
+README/capability/artifact/Git/guide propagation before milestone publication.
+
 # Segment A2a read-only deploy checkpoint — 2026-10-28
 
 Bounded A2a implementation, not the complete operational Segment milestone. Existing

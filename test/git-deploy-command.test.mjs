@@ -101,6 +101,90 @@ for (const preview of [true, false]) {
     assert.equal(result.provenance.targetOrgId, null);
   });
 }
+for (const preview of [true, false]) {
+  test(`Git-selected Segment remains in mixed selection preview=${preview} with execution blocked`, async () => {
+    const { command, calls } = invocation({ preview });
+    const segment = {
+      path: 'Audience.marketSegmentDefinition-meta.xml',
+      companionPath: 'Audience.segment.json',
+      inputDigest: 'd'.repeat(64),
+      document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+    };
+    const resolve = command.resolveInputs;
+    command.selectGitInputs = async () => ({
+      paths: ['selected.json'],
+      provenance,
+      segments: [segment],
+    });
+    command.resolveInputs = async (options) => [...(await resolve(options)), segment];
+    command.verifySegmentInput = async (input) => {
+      assert.equal(input, segment);
+      calls.push('digest');
+    };
+    command.preflightSegment = async () => {
+      calls.push('segment');
+      return {
+        family: 'segment',
+        outcome: 'unchanged',
+        target: 'present',
+        absenceProof: 'none',
+        diagnostics: [],
+        requiredEffects: [],
+      };
+    };
+    const { result } = await run(command);
+    assert.equal(result.status, preview ? 'success' : 'blocked');
+    assert.equal(result.result.items.length, 2);
+    assert.equal(result.result.items[1].identity.apiName, 'Audience');
+    assert.equal(calls.filter((call) => call === 'digest').length, 3);
+    assert.ok(calls.includes('segment'));
+    assert.ok(!calls.includes('execute'));
+    if (!preview) {
+      assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+      assert.equal(
+        result.result.items[1].preflight.diagnostics[0].code,
+        'SEGMENT_EXECUTION_NOT_IMPLEMENTED',
+      );
+    }
+  });
+}
+for (const drift of ['digest', 'missing', 'companion', 'verification']) {
+  test(`Git pair ${drift} drift blocks before target access or DMO execution`, async () => {
+    const { command, calls } = invocation({ preview: false });
+    const captured = {
+      path: 'pair.xml',
+      companionPath: 'pair.json',
+      inputDigest: 'a'.repeat(64),
+      document: { kind: 'segment' },
+    };
+    command.selectGitInputs = async () => ({
+      paths: ['selected.json'],
+      provenance,
+      segments: [captured],
+    });
+    const resolve = command.resolveInputs;
+    command.resolveInputs = async (options) => [
+      ...(await resolve(options)),
+      ...(drift === 'missing'
+        ? []
+        : [
+            {
+              ...captured,
+              ...(drift === 'digest' ? { inputDigest: 'b'.repeat(64) } : {}),
+              ...(drift === 'companion' ? { companionPath: 'other.json' } : {}),
+            },
+          ]),
+    ];
+    command.verifySegmentInput = async () => {
+      throw new Error('Changed pair');
+    };
+    const { result } = await run(command);
+    assert.notEqual(result.status, 'success');
+    assert.deepEqual(calls, ['inputs']);
+    assert.equal(result.result.items.length, 0);
+  });
+}
+
 for (const other of [{ metadata: ['dmo:Selected__dlm'] }, { 'source-dir': ['explicit.json'] }]) {
   test(`Git selector runtime exclusivity blocks before Git/services ${JSON.stringify(other)}`, async () => {
     const { command, calls } = invocation(other);

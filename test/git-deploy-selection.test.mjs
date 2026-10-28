@@ -8,6 +8,31 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { GitSelectionError, selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
+import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
+import { verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
+
+const segment = async (cwd) => {
+  const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
+  const value = {
+    schemaVersion: 1,
+    kind: 'segment',
+    identity: { dataSpace: 'default', apiName: 'Audience' },
+    spec: {
+      displayName: 'Audience',
+      description: 'Description',
+      segmentType: 'DBT',
+      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+      models: [{ name: 'Audience', sql }],
+      dependencies: [
+        { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
+      ],
+      publishInterval: 'NO_REFRESH',
+      lookbackPeriod: 'P90D',
+    },
+  };
+  const xml = `<MarketSegmentDefinition xmlns="http://soap.sforce.com/2006/04/metadata"><includeCriteria>&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;${sql}&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;</includeCriteria><masterLabel>Audience</masterLabel><segmentType>DBT</segmentType></MarketSegmentDefinition>`;
+  return writeSegmentDocument(value, xml, cwd, false);
+};
 
 const execute = promisify(execFile);
 const relative = (name) => `data360/default/dmo/${name}__dlm.json`;
@@ -55,6 +80,121 @@ const fixture = async () => {
   return cwd;
 };
 const refusal = (code) => (error) => error instanceof GitSelectionError && error.code === code;
+
+for (const member of ['path', 'companionPath', 'both']) {
+  for (const phase of ['committed', 'index', 'worktree', 'untracked']) {
+    test(`Segment ${member} ${phase} changes select one byte-bound pair with DMO`, async () => {
+      const cwd = await fixture();
+      const p = await segment(cwd);
+      const base = phase === 'untracked' ? await git(cwd, 'rev-parse', 'HEAD') : await commit(cwd);
+      for (const key of member === 'both' ? ['path', 'companionPath'] : [member]) {
+        const { readFile } = await import('node:fs/promises');
+        await writeFile(p[key], (await readFile(p[key], 'utf8')) + '\n');
+      }
+      if (phase === 'index' || phase === 'committed') await git(cwd, 'add', '--all');
+      if (phase === 'committed') await commit(cwd);
+      await put(cwd, relative('Added'), document('Added'));
+      const result = await selectGitDeployInputs({ cwd, ref: base });
+      assert.equal(result.paths.length, 2);
+      assert.ok(result.paths.includes(p.path));
+      assert.equal(result.segments.length, 1);
+      assert.equal(result.segments[0].companionPath, p.companionPath);
+      assert.ok(Object.isFrozen(result.segments));
+      assert.ok(Object.isFrozen(result.segments[0]));
+      await verifySegmentInputDigest(result.segments[0]);
+      const { readFile } = await import('node:fs/promises');
+      for (const key of ['path', 'companionPath']) {
+        const original = await readFile(p[key]);
+        await writeFile(p[key], Buffer.concat([original, Buffer.from('\n')]));
+        await assert.rejects(verifySegmentInputDigest(result.segments[0]));
+        await writeFile(p[key], original);
+      }
+    });
+  }
+}
+
+for (const member of ['path', 'companionPath']) {
+  for (const phase of ['committed', 'index', 'worktree']) {
+    for (const action of ['delete', 'rename']) {
+      test(`Segment ${member} ${phase} ${action} blocks otherwise valid DMO`, async () => {
+        const cwd = await fixture();
+        const p = await segment(cwd);
+        const base = await commit(cwd);
+        await (action === 'delete'
+          ? unlink(p[member])
+          : rename(p[member], path.join(cwd, 'outside.json')));
+        if (phase !== 'worktree') await git(cwd, 'add', '--all');
+        if (phase === 'committed') await commit(cwd);
+        await put(cwd, relative('Added'), document('Added'));
+        await assert.rejects(
+          selectGitDeployInputs({ cwd, ref: base }),
+          refusal('BLOCKED_GIT_LIFECYCLE'),
+        );
+      });
+    }
+  }
+  test(`Segment missing untracked ${member} blocks otherwise valid DMO`, async () => {
+    const cwd = await fixture();
+    const p = await segment(cwd);
+    await unlink(p[member]);
+    await put(cwd, relative('Added'), document('Added'));
+    await assert.rejects(
+      selectGitDeployInputs({ cwd, ref: 'HEAD' }),
+      refusal('INVALID_GIT_SELECTION'),
+    );
+  });
+}
+
+test('Segment Git selection honors configured package and refuses aliased or duplicate pair paths', async () => {
+  const cwd = await fixture();
+  await put(cwd, 'sfdx-project.json', {
+    packageDirectories: [{ path: 'custom space', default: true }],
+  });
+  const p = await segment(cwd);
+  const result = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(result.paths, [p.path]);
+  const { readFile } = await import('node:fs/promises');
+  await put(
+    cwd,
+    'other/main/default/data360/segments/Audience.segment.json',
+    await readFile(p.companionPath, 'utf8'),
+  );
+  await assert.rejects(
+    selectGitDeployInputs({ cwd, ref: 'HEAD' }),
+    refusal('INVALID_GIT_SELECTION'),
+  );
+});
+
+for (const mode of ['identity', 'duplicate-key', 'nested', 'suffix-case', 'junction', 'hardlink']) {
+  test(`Segment Git pair admission rejects ${mode} without dropping it`, async () => {
+    const cwd = await fixture();
+    const p = await segment(cwd);
+    const { readFile, link } = await import('node:fs/promises');
+    const text = await readFile(p.companionPath, 'utf8');
+    if (mode === 'identity')
+      await writeFile(p.companionPath, text.replace('"Audience"', '"Other"'));
+    if (mode === 'duplicate-key')
+      await writeFile(
+        p.companionPath,
+        text.replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1'),
+      );
+    if (mode === 'nested') {
+      await put(cwd, 'force-app/main/default/data360/segments/nested/Audience.segment.json', text);
+    }
+    if (mode === 'suffix-case')
+      await rename(p.companionPath, p.companionPath.replace('.segment.json', '.SEGMENT.JSON'));
+    if (mode === 'junction') {
+      const directory = path.dirname(p.companionPath);
+      await rename(directory, path.join(cwd, 'outside'));
+      await symlink(path.join(cwd, 'outside'), directory, 'junction');
+    }
+    if (mode === 'hardlink') await link(p.companionPath, path.join(cwd, 'alias.json'));
+    await assert.rejects(
+      selectGitDeployInputs({ cwd, ref: 'HEAD' }),
+      refusal('INVALID_GIT_SELECTION'),
+    );
+  });
+}
 
 test('Git selector combines committed, index, worktree and untracked paths from nested cwd', async () => {
   const cwd = await fixture();

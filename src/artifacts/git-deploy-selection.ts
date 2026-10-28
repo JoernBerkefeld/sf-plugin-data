@@ -2,6 +2,9 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { readDeployInputs } from './read-deploy-input.js';
+import type { SegmentDeployInput } from './read-deploy-input.js';
+import { segmentSourceRoot } from './write-segment.js';
+import { segmentName } from './segment-document.js';
 
 const execute = promisify(execFile);
 
@@ -9,7 +12,7 @@ const execute = promisify(execFile);
 export class GitSelectionError extends Error {
   public constructor(public readonly code: 'INVALID_GIT_SELECTION' | 'BLOCKED_GIT_LIFECYCLE') {
     super(
-      'Select a valid Git reference and current canonical DMO files; renames and deletions block deployment.',
+      'Select a valid Git reference and current canonical DMO files or complete Segment pairs; renames and deletions block deployment.',
     );
     this.name = 'GitSelectionError';
   }
@@ -17,6 +20,7 @@ export class GitSelectionError extends Error {
 
 export type GitDeploySelection = {
   paths: string[];
+  segments?: readonly SegmentDeployInput[];
   provenance: {
     repositoryRoot: string;
     requestedRef: string;
@@ -57,8 +61,10 @@ function tokens(output: string): string[] {
   return values;
 }
 
+const segmentMember = (file: string): boolean =>
+  /\.(?:marketSegmentDefinition-meta\.xml|segment\.json)$/iu.test(file);
 const relevant = (file: string): boolean =>
-  file.startsWith('data360/default/dmo/') && file.endsWith('.json');
+  (file.startsWith('data360/default/dmo/') && file.endsWith('.json')) || segmentMember(file);
 
 /**
  * Collect current canonical DMO paths while rejecting either endpoint of a lifecycle change.
@@ -154,7 +160,26 @@ export async function selectGitDeployInputs(options: {
     if (untracked.some((file) => relevant(file)) && hasWorktreeDeletion)
       throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
     for (const file of untracked) if (relevant(file)) paths.add(file);
+    const segmentBase = [...paths].some((file) => segmentMember(file))
+      ? await segmentSourceRoot(repositoryRoot)
+      : undefined;
     const metadata = [...paths].map((file) => {
+      if (segmentMember(file)) {
+        const xml = file.endsWith('.marketSegmentDefinition-meta.xml');
+        const suffix = xml ? '.marketSegmentDefinition-meta.xml' : '.segment.json';
+        const name = path.posix.basename(file).slice(0, -suffix.length);
+        const expected = path.join(
+          segmentBase!,
+          ...(xml ? ['marketSegmentDefinitions'] : ['data360', 'segments']),
+          `${name}${suffix}`,
+        );
+        if (
+          !segmentName.test(name) ||
+          file !== path.relative(repositoryRoot, expected).split(path.sep).join('/')
+        )
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        return `segment:${name}`;
+      }
       const match =
         /^data360\/default\/dmo\/([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm)\.json$/u.exec(file);
       if (!match) throw new GitSelectionError('INVALID_GIT_SELECTION');
@@ -163,8 +188,10 @@ export async function selectGitDeployInputs(options: {
     // Existing admission checks canonical filename, document identity and no-link regular files.
     const inputs =
       metadata.length > 0 ? await readDeployInputs({ cwd: repositoryRoot, metadata }) : [];
+    const segments = inputs.filter((input): input is SegmentDeployInput => 'inputDigest' in input);
     return {
       paths: inputs.map((input) => input.path),
+      ...(segments.length > 0 ? { segments: Object.freeze(segments) } : {}),
       provenance: {
         repositoryRoot,
         requestedRef: options.ref,
