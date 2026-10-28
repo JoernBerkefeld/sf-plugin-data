@@ -30,21 +30,22 @@ Repeat exact `-m data-graph:ApiName` selectors with `retrieve` or `deploy`, incl
 `--preview` and `--changed-since`. Use `--api-version auto` (fixed Graph67 and
 legacy65 routes) or numeric67 for Graph-only selection. Numeric65/default and
 latest refuse Graph; mixed Graph/legacy selection requires auto. Inventory and
-Graph dependency expansion are unavailable. The artifact validator also reserves an
-IR-owner-qualified unified Individual root reference for dependency integration;
-that reference is not yet operationally retrievable or deployable and fails closed.
-Private runtime qualification acquires its exact IR owner, verifies all twelve
-owner-returned outputs and independently qualifies the unified Individual root's
-Text fields and explicit sole Id key. Projection/transform checks, preview and
-single-attempt update/settlement now translate that logical root using fresh private
-target-local bindings while retaining full configuration/drift evidence. This is
-not public support: explicit owned-root deployment is separately blocked before
-whole-selection writes, and retrieve cannot discover/adopt an owner implicitly.
-The private local selector can now expand the exact conventional IR-owner artifact,
-order explicit/reversed owner/Graph inputs, and freshly guard both complete files.
-Missing local owners stay external; malformed or mismatched owners refuse selection.
-This is not wired into public commands: explicit/reversed and opt-in expanded
-owner/Graph retrieval/deployment remain unfinished.
+legacy Graph dependency expansion are unavailable. Existing-owner IR-qualified
+unified Individual roots support explicit/reversed owner/Graph retrieval and deploy,
+and `--include-dependencies` can include the exact owner. Retrieve discovers ownership
+only from exact native IR inventory output names, then independently acquires the
+owner, verifies all twelve returned outputs and qualifies the root's Text fields
+and sole explicit Id key. Ambiguous, absent or mismatched owners fail closed;
+no generated suffixes or source IDs determine ownership.
+Deploy expands only an exact local owner artifact in the configured source package;
+a missing local owner remains an independently bound external prerequisite, never
+an instruction to create one. IR executes before Graph. All pending bytes and
+bindings are freshly admitted before any next write. After confirmed selected-owner
+settlement, dependent bindings are refreshed only while complete Graph/transform
+and root/output preservation evidence stays unchanged. Projection and wire payloads
+translate the three logical root slots through fresh target-local bindings.
+Legacy retrieval/deployment remains unchanged; its expansion is still unavailable.
+This support is offline regression-verified, not installed/live paired acceptance.
 It does not enable IR/Graph creation or establish cross-org pair acceptance.
 
 ```sh

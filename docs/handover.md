@@ -1,3 +1,74 @@
+# Existing-owner public IR/Graph integration — 2026-10-28
+
+Implemented actual retrieve.ts/deploy.ts public command paths from f772de3.
+Original reviewed plan c9a6bd6d retained; no whole-feature review commissioned.
+Source discovery uses bundled authoritative native API65 IR inventory documented
+identityResolutions[].objectApiName/reconciliationRules[].unifiedDmoName only as an
+exact discovery hint; no suffix parsing, node-ID/DMO-ID conflation or unrelated
+owner adoption. One bounded inventory response, <=256 owners/64 rules each, strict
+single-key envelope, duplicates/ambiguous/absent matches fail closed. Independently
+acquire exact facade/native owner, re-project, require matching identity, verify all
+12 outputs unchanged plus independent root fields/key via existing binder. Retrieve
+then acquires Graph/transform/freshGraph through dependencyBinding, rebinds source
+owner and repeats Graph acquisition before any publication. Explicit/reversed owner
+selection and opt-in expanded exact owner publication order IR before Graph; no-opt-in
+Graph-only retrieval verifies but does not publish owner. Legacy paths unchanged.
+
+Deploy wires exact local owner expansion, complete byte/digest and all-pending
+fingerprint/fresh-preview guards, and passes dependencyBinding through protected
+Graph acquisition. Public owned-root guard removed only with these paths integrated.
+After selected IR confirmed-updated settlement, refresh only matching pending Graph
+fingerprint; retain stable full Graph/transform configuration and independent root /
+12-output preservation fingerprint (excludes only legitimate owner configuration).
+Unknown owner outcome never rebases or permits Graph write. Existing-owner only;
+no owner/Graph creation or missing-prerequisite provisioning.
+`DataGraphDependencyBinding.preservationFingerprint?: string` is private owned-root
+proof, legacy fingerprint shape remains unchanged. `discoverDataGraphOwner(raw,
+apiName,connection,selection,dataSpace,injected?)` returns qualified binding only;
+production uses existing independent exact owner acquisition/binder unchanged.
+
+Regressions: actual explicit/reversed/expanded/no-opt-in retrieve, pre-publication
+source drift/wrong-owner refusal, exact discovery absent/duplicate/wrong-owner and
+missing fields/key, actual deploy owner-beforeGraph order and confirmed-settlement
+rebinding, all-pending target/input zero-write, unknown-owner stop, portable ID
+absence. Existing real binder/transport/runtime safety regressions retained.
+No org calls/mutations, live acceptance, fixture edits, guide/rootDB/index changes,
+release/version bump or DMO additive work. Retained schema-only fixtures untouched.
+Next live acceptance requires separately authorized actual Graph/owner pair setup,
+fresh source/target auth and independent complete owner/output/root/Graph/transform
+qualification, explicit budgets and installed public explicit/reversed/expanded
+cross-org pair/update/no-op proof. Full E/CREATE and wholefeatureGate4 remain unmet.
+Frozen final-code verification: lint:fix/full lint zero warnings, explicit build,
+78 focused Graph/command tests and full1038/1038 zero failures/skips. Full runner
+120.932s; npm-test end-to-end124.791s; combined lint/build/focused/full154.170s.
+Only this receipt prose changed afterward; enabled hook verifies staged tree.
+README updated. Propagation: standalone sf-plugin-data@0.1.0 done; no workspace
+consumers, language/LSP/hover/wiki/CMS/MCNext/guide updates needed. No release.
+
+## Applied existing-owner public integration continuation plan
+
+Clean fetched baseline f772de37843e7fea8cfccef78bcd7d86a2542c6e.
+Gate1/2 previous written plan/review c9a6bd6d applies without architecture/safety
+change. Am I overengineering this? Use documented native API65 IR inventory only
+as an exact output-name discovery hint; independently acquire/qualify the exact
+owner using existing projection, twelve-output verifier and root field/key binder.
+No suffix parsing, IDs in portable files, unrelated owner adoption or new creation.
+Gate3 parallelization: sole editor, shared command ordering/fingerprint invariants
+require one sequential coherent slice rather than infrastructure-only checkpoints.
+1. Add bounded exact source discovery against native inventory identityResolutions /
+   reconciliationRules[].unifiedDmoName and independent exact owner acquisition.
+2. Integrate actual explicit/reversed and opt-in expanded retrieval with independent
+   complete source binding/rebinding before publication, and local deploy expansion.
+3. Thread dependencyBinding through protected Graph target acquisition; preserve
+   all-pending byte/fingerprint zero-write admission. Rebase only dependent Graph
+   binding after independently verified selected-owner settlement and unchanged
+   pending Graph configuration; never silently accept unrelated target drift.
+4. Add actual command regressions; lint:fix, zero-warning lint, build, full tests,
+   enabled hooks/exact staged-HEAD tree, scoped commit/push, exact-SHA hosted CI.
+5. README/handover truthful support/remaining live acceptance; no org/fixture/guide/
+   rootDB/index changes, product creation, release or DMO additive/wholefeature review.
+Stop for a concrete interface decision if discovery cannot be authoritative.
+
 # IR-owned Graph local selector checkpoint — 2026-10-28
 
 Completed only the private local selection seam, NOT public selector integration.

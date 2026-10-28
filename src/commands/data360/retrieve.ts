@@ -13,6 +13,9 @@ import {
 } from '../../artifacts/data-graph-document.js';
 import type { DataGraphDocument } from '../../artifacts/data-graph-document.js';
 import { retrieveDataGraph } from '../../services/retrieve-data-graph.js';
+import { discoverDataGraphOwner } from '../../services/discover-data-graph-owner.js';
+import { McpExecuteClient } from '../../transport/mcp-execute.js';
+import { isDeepStrictEqual } from 'node:util';
 import { bindDataGraphDependencies } from '../../services/bind-data-graph-dependencies.js';
 import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
 import path from 'node:path';
@@ -154,6 +157,17 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected discoverDataGraphOwner = discoverDataGraphOwner;
+  protected readRawDataGraph = async (
+    connection: Parameters<typeof retrieveDataGraph>[0],
+    apiName: string,
+    selection: Parameters<typeof retrieveDataGraph>[2],
+  ): Promise<unknown> =>
+    new McpExecuteClient(connection, selection).read('d360_data_graph_get', {
+      dataGraphName: apiName,
+      includeCIDetails: true,
+      includeSegmentDetails: true,
+    });
   protected acquireDataGraph = retrieveDataGraph;
   protected bindDataGraph = bindDataGraphDependencies;
   protected writeDataGraph = writeDataGraphDocument;
@@ -282,8 +296,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         if (flags['data-space'] !== 'default') throw new DataGraphError('INVALID_SCOPE');
         if (graphSelectors.some((value) => !dataGraphName.test(value.slice(11))))
           throw new DataGraphError('INVALID_SELECTION');
-        if (flags['include-dependencies'])
-          throw new DataGraphError('DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
       if (selectors.includes('calculated-insight'))
         throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
@@ -302,7 +314,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (irSelectors.length > 0) {
         operationApiVersion(flags['api-version'], 'identity-resolution');
         if (flags['data-space'] !== 'default') throw new IdentityResolutionError('INVALID_SCOPE');
-        if (flags['include-dependencies'])
+        if (flags['include-dependencies'] && graphSelectors.length === 0)
           throw new IdentityResolutionError('IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
       if (segmentSelectors.length > 0) operationApiVersion(flags['api-version'], 'segment');
@@ -561,6 +573,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ingestionDlos.push({ document });
           }
         }
+        const discoveredOwners = new Set<string>();
+        const sourceGraphGuards: Array<() => Promise<void>> = [];
         const dataGraphs: Array<{ document: DataGraphDocument }> = [];
         if (graphSelectors.length > 0) {
           const graphVersion = await resolveApiVersion('67.0', async () => {
@@ -575,15 +589,72 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ...new Set(graphSelectors.map((value) => value.slice(11))),
             // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh array within the existing TypeScript library target.
           ].sort()) {
-            const acquired = await this.acquireDataGraph(
+            let acquired = await this.acquireDataGraph(
               graphConnection,
               apiName,
               graphVersion,
               flags['data-space'],
             );
+            if (!acquired.candidate || acquired.blockers.length > 0) {
+              let binding;
+              try {
+                const raw = await this.readRawDataGraph(graphConnection, apiName, graphVersion);
+                binding = await this.discoverDataGraphOwner(
+                  raw,
+                  apiName,
+                  graphConnection,
+                  graphVersion,
+                  flags['data-space'],
+                );
+              } catch {
+                throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
+              }
+              if (!binding?.root) throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
+              acquired = await this.acquireDataGraph(
+                graphConnection,
+                apiName,
+                graphVersion,
+                flags['data-space'],
+                { dependencyBinding: binding },
+              );
+              const ownerName = binding.root.identity.owner.apiName;
+              if (
+                irSelectors.length > 0 &&
+                !irSelectors.includes(`identity-resolution:${ownerName}`)
+              )
+                throw new DataGraphError('DATA_GRAPH_SELECTED_OWNER_MISMATCH');
+              if (flags['include-dependencies']) discoveredOwners.add(ownerName);
+              if (acquired.candidate) {
+                const document = acquired.candidate;
+                sourceGraphGuards.push(async () => {
+                  const fresh = await this.bindDataGraph(
+                    document,
+                    graphConnection,
+                    graphVersion,
+                    flags['data-space'],
+                  );
+                  if (!isDeepStrictEqual(fresh, binding))
+                    throw new DataGraphError('DATA_GRAPH_SOURCE_BINDING_CHANGED');
+                  const current = await this.acquireDataGraph(
+                    graphConnection,
+                    apiName,
+                    graphVersion,
+                    flags['data-space'],
+                    { dependencyBinding: fresh },
+                  );
+                  if (!isDeepStrictEqual(current, acquired))
+                    throw new DataGraphError('DATA_GRAPH_SOURCE_CONFIGURATION_CHANGED');
+                });
+              }
+            }
             if (!acquired.candidate || acquired.blockers.length > 0)
               throw new DataGraphError(acquired.blockers[0] ?? 'DATA_GRAPH_ACQUISITION_FAILED');
             const document = validateDataGraphDocument(acquired.candidate);
+            if (
+              flags['include-dependencies'] &&
+              typeof document.spec.primaryObjectName === 'string'
+            )
+              throw new DataGraphError('DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
             if (
               acquired.identity.apiName !== apiName ||
               acquired.identity.dataSpace !== 'default' ||
@@ -595,13 +666,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           }
         }
         const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
-        if (irSelectors.length > 0) {
+        if (irSelectors.length > 0 || discoveredOwners.size > 0) {
           const irVersion = await resolveApiVersion('67.0', async () => {
             throw new Error('Fixed route must not discover.');
           });
           const irConnection = org.getConnection('67.0');
-          // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact-name order.
-          for (const apiName of [...new Set(irSelectors.map((value) => value.slice(20)))].sort()) {
+
+          for (const apiName of [
+            ...new Set([...irSelectors.map((value) => value.slice(20)), ...discoveredOwners]),
+            // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
+          ].sort()) {
             const acquired = await this.acquireIdentityResolution(
               irConnection,
               apiName,
@@ -621,6 +695,37 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             )
               throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
             identityResolutions.push({ document });
+            if (graphSelectors.length > 0)
+              sourceGraphGuards.push(async () => {
+                const fresh = await this.acquireIdentityResolution(
+                  irConnection,
+                  apiName,
+                  irVersion,
+                  flags['data-space'],
+                );
+                if (!isDeepStrictEqual(fresh, acquired))
+                  throw new IdentityResolutionError('IDENTITY_RESOLUTION_SOURCE_CHANGED');
+              });
+          }
+        }
+        if (flags['include-dependencies']) {
+          for (const { document } of dataGraphs) {
+            const identity = { kind: 'data-graph' as const, ...document.identity };
+            selected.reasons.set(`data-graph:default:${identity.apiName}`, {
+              explicit: true,
+              chains: [[identity]],
+            });
+            const root = document.spec.primaryObjectName;
+            if (typeof root === 'string') continue;
+            const key = `identity-resolution:default:${root.owner.apiName}`;
+            const prior = selected.reasons.get(key);
+            const chain = [identity, root.owner];
+            if (prior) prior.chains.push(chain);
+            else
+              selected.reasons.set(key, {
+                explicit: irSelectors.includes(`identity-resolution:${root.owner.apiName}`),
+                chains: [chain],
+              });
           }
         }
         if (flags['include-dependencies'])
@@ -631,6 +736,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               reason,
             };
           });
+        for (const verify of sourceGraphGuards) await verify();
         const entries = [
           ...selected.entries,
           ...calculatedInsights,

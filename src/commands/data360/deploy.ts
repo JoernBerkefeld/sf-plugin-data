@@ -327,6 +327,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       .digest('hex');
   }
 
+  protected graphConfigurations?: Map<string, string>;
   protected preflightDataGraph = preflightDataGraphDeploy;
   protected executeDataGraph = executeDataGraphDeploy;
   protected verifyDataGraphInput = verifyDataGraphInputDigest;
@@ -371,9 +372,20 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       input.document.identity.apiName,
       selection,
       'default',
+      { dependencyBinding: dependencies },
     );
     if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
       throw new Error('Graph binding unavailable');
+    const configuration = JSON.stringify(
+      graphCanonicalObject({
+        graph: acquired.expectations,
+        preservationFingerprint: dependencies.preservationFingerprint,
+      }),
+    );
+    const prior = this.graphConfigurations?.get(input.path);
+    if (prior !== undefined && prior !== configuration)
+      throw new Error('Graph configuration drift');
+    this.graphConfigurations?.set(input.path, configuration);
     return createHash('sha256')
       .update(
         JSON.stringify(graphCanonicalObject({ dependencies, expectations: acquired.expectations })),
@@ -609,13 +621,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           return finish('blocked', 'INVALID_SCOPE');
         }
         if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
-        if (flags['include-dependencies'])
-          return finish('blocked', 'DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
         for (const input of admitted)
           if (input.document.kind === 'data-graph') {
             const document = validateDataGraphDocument(input.document);
-            if (typeof document.spec.primaryObjectName !== 'string')
-              return finish('blocked', 'DATA_GRAPH_OWNER_SELECTION_UNSUPPORTED');
+            if (
+              flags['include-dependencies'] &&
+              typeof document.spec.primaryObjectName === 'string'
+            )
+              return finish('blocked', 'DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
           }
       }
       if (gitDataGraphs) {
@@ -722,7 +735,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           if (family === 'identity-resolution') validateIdentityResolutionDocument(input.document);
         }
         if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
-        if (flags['include-dependencies'])
+        if (flags['include-dependencies'] && !hasDataGraphs)
           return finish('blocked', 'IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
       if (gitSegments) {
@@ -752,14 +765,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 input,
               ): input is Exclude<
                 typeof input,
-                | IdentityResolutionDeployInput
-                | CalculatedInsightDeployInput
-                | DataGraphDeployInput
-                | IngestionDloDeployInput
+                CalculatedInsightDeployInput | IngestionDloDeployInput
               > =>
-                input.document.kind !== 'identity-resolution' &&
                 input.document.kind !== 'calculated-insight' &&
-                input.document.kind !== 'data-graph' &&
                 input.document.kind !== 'ingestion-dlo',
             ),
             cwd,
@@ -810,6 +818,19 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           ]),
         );
         inputs = orderDependencyNodes(nodes).map((key) => byKey.get(key)!);
+      }
+      for (const input of inputs) {
+        if (input.document.kind !== 'data-graph') continue;
+        const root = input.document.spec.primaryObjectName;
+        if (typeof root === 'string') continue;
+        const owners = inputs.filter(
+          (candidate) => candidate.document.kind === 'identity-resolution',
+        );
+        if (
+          owners.length > 0 &&
+          !owners.some((owner) => owner.document.identity.apiName === root.owner.apiName)
+        )
+          throw new DependencySelectionError('DATA_GRAPH_SELECTED_OWNER_MISMATCH');
       }
       // Preserve original Segment pair snapshots and bind mixed-batch DMO bytes before target reads.
       const captured =
@@ -981,6 +1002,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           throw new Error('Ingestion binding drift');
         ingestionBindings.set(input.path, fingerprint);
       };
+      this.graphConfigurations = new Map();
       const graphBindings = new Map<string, string>();
       const verifyGraphBinding = async (input: DeployInput): Promise<void> => {
         if (input.document.kind !== 'data-graph') return;
@@ -1460,6 +1482,36 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             if (item.outcome === 'blocked') {
               blocked = true;
               break;
+            }
+            if (
+              input.document.kind === 'identity-resolution' &&
+              item.outcome === 'updated' &&
+              item.mutation === 'confirmed-updated'
+            ) {
+              // Only a verified selected-owner settlement authorizes a new dependency baseline.
+              // Protected binding still rejects any change to the full pending Graph/transform.
+              try {
+                await verifyInputs();
+                for (const pending of inputs.slice(index + 1)) {
+                  if (pending.document.kind !== 'data-graph') continue;
+                  const root = pending.document.spec.primaryObjectName;
+                  if (
+                    typeof root === 'string' ||
+                    root.owner.apiName !== input.document.identity.apiName
+                  )
+                    continue;
+                  const fingerprint = await this.bindDataGraph(
+                    pending as DataGraphDeployInput,
+                    connectionFor(pending),
+                    familySelection(pending),
+                  );
+                  graphBindings.set(pending.path, fingerprint);
+                }
+                await verifyInputs();
+              } catch {
+                blocked = true;
+                break;
+              }
             }
           }
         }

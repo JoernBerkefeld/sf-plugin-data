@@ -325,7 +325,6 @@ test('Graph public retrieve refuses numeric65/latest/expansion/invalid exact sel
     { 'api-version': '65.0' },
     { 'api-version': 'latest' },
     { 'api-version': '68.0' },
-    { 'include-dependencies': true },
     { metadata: ['data-graph'] },
     { metadata: ['data-graph:../unsafe'] },
     { 'data-space': 'other' },
@@ -360,6 +359,71 @@ test('Graph public retrieve completes mixed admission before output with fixed r
   const blockedResult = await run(blocked.command);
   assert.equal(blockedResult.status, 'blocked');
   assert.ok(!blocked.calls.some((call) => call.startsWith('write:')));
+});
+
+test('public owned Graph retrieve qualifies explicit/reversed/expanded owners before any publication', async () => {
+  const pair = irFixture();
+  const owner = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
+  const identity = owner.expectations.outputs[0].identity;
+  for (const mode of ['explicit', 'reversed', 'expanded', 'no-expansion', 'drift', 'wrong-owner']) {
+    const selectors = ['identity-resolution:Individual_A1b2', 'data-graph:SyntheticGraph'];
+    const { command, calls } = retrieve({
+      metadata: ['expanded', 'no-expansion', 'drift', 'wrong-owner'].includes(mode)
+        ? ['data-graph:SyntheticGraph']
+        : mode === 'reversed'
+          ? selectors.toReversed()
+          : selectors,
+      'include-dependencies': mode === 'expanded',
+    });
+    command.selectDependencies = async () => ({ entries: [], reasons: new Map() });
+    const graph = document();
+    graph.spec.primaryObjectName = structuredClone(identity);
+    graph.spec.sourceObject.name = structuredClone(identity);
+    graph.spec.sourceObject.devName = structuredClone(identity);
+    const binding = {
+      fingerprint: 'qualified',
+      root: { identity, targetApiName: 'ActualReturned__dlm', targetId: 'local-only' },
+    };
+    command.acquireDataGraph = async (_conn, name, _version, _space, options) => {
+      calls.push('graph-read');
+      return options?.dependencyBinding
+        ? { identity: graph.identity, candidate: graph, blockers: [] }
+        : { identity: { dataSpace: 'default', apiName: name }, blockers: ['UNSUPPORTED'] };
+    };
+    command.readRawDataGraph = async () => ({ primaryObjectName: 'ActualReturned__dlm' });
+    command.discoverDataGraphOwner = async () => {
+      if (mode === 'wrong-owner') throw new Error('no exact qualified owner');
+      return binding;
+    };
+    let bindings = 0;
+    command.bindDataGraph = async () => {
+      bindings++;
+      return mode === 'drift' && bindings > 1 ? { ...binding, fingerprint: 'changed' } : binding;
+    };
+    command.acquireIdentityResolution = async () => ({
+      ...owner,
+      identity: owner.candidate.identity,
+      blockers: [],
+    });
+    command.writeIdentityResolution = async (value) => {
+      calls.push(`write:${value.identity.apiName}`);
+      return { path: 'owner', outcome: 'retrieved' };
+    };
+    const result = await run(command);
+    if (['drift', 'wrong-owner'].includes(mode)) {
+      assert.equal(result.status, 'blocked');
+      assert.ok(!calls.some((call) => call.startsWith('write:')));
+    } else {
+      assert.equal(result.status, 'success');
+      assert.deepEqual(
+        calls.filter((call) => call.startsWith('write:')),
+        mode === 'no-expansion'
+          ? ['write:SyntheticGraph']
+          : ['write:Individual_A1b2', 'write:SyntheticGraph'],
+      );
+      assert.equal(JSON.stringify(result).includes('local-only'), false);
+    }
+  }
 });
 
 const preview = (outcome = 'update') => ({
@@ -437,11 +501,112 @@ const deploy = (overrides = {}, mixed = false) => {
   return { command, calls, input, selected };
 };
 
+test('public owned Graph deploy orders selected owner, expands opt-in and rebinds only after confirmed settlement', async () => {
+  const pair = irFixture();
+  const owner = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
+  const identity = owner.expectations.outputs[0].identity;
+  for (const mode of [
+    'explicit',
+    'reversed',
+    'expanded',
+    'drift',
+    'pending-byte',
+    'unknown-owner',
+    'wrong-owner',
+  ]) {
+    const d = deploy();
+    const graph = d.input.document;
+    graph.spec.primaryObjectName = structuredClone(identity);
+    graph.spec.sourceObject.name = structuredClone(identity);
+    graph.spec.sourceObject.devName = structuredClone(identity);
+    const ownerInput = {
+      path: 'owner.json',
+      document: owner.candidate,
+      inputDigest: 'a'.repeat(64),
+    };
+    if (mode === 'wrong-owner') {
+      graph.spec.primaryObjectName.owner.apiName = 'UnrelatedOwner';
+      graph.spec.sourceObject.name.owner.apiName = 'UnrelatedOwner';
+      graph.spec.sourceObject.devName.owner.apiName = 'UnrelatedOwner';
+    }
+    let expandedInputs;
+    if (mode === 'expanded') {
+      const cwd = await root();
+      await writeDataGraphDocument(graph, cwd, false);
+      await writeIdentityResolutionDocument(owner.candidate, cwd, false);
+      expandedInputs = await readDeployInputs({ cwd, metadata: ['data-graph:SyntheticGraph'] });
+      d.command.parse = async () => ({
+        flags: {
+          metadata: ['data-graph:SyntheticGraph'],
+          'include-dependencies': true,
+          'api-version': 'auto',
+          'data-space': 'default',
+          'allow-processing': true,
+          'target-org': {
+            getOrgId: () => 'synthetic',
+            getConnection: () => ({ getApiVersion: () => '65.0' }),
+          },
+        },
+      });
+      const previousCwd = process.cwd();
+      d.restore = () => process.chdir(previousCwd);
+      process.chdir(cwd);
+      d.command.resolveInputs = async () => expandedInputs;
+    } else {
+      d.command.resolveInputs = async () =>
+        mode === 'reversed' ? [d.input, ownerInput] : [ownerInput, d.input];
+    }
+    d.command.verifyIdentityResolutionInput = async () => {};
+    let settled = false;
+    let binds = 0;
+    d.command.bindIdentityResolution = async () => 'owner-stable';
+    d.command.bindDataGraph = async () => {
+      binds++;
+      return mode === 'drift' && binds > 1 ? 'unexpected' : settled ? 'post-owner' : 'pre-owner';
+    };
+    let digests = 0;
+    d.command.captureInput = async () =>
+      mode === 'pending-byte' && ++digests > 6 ? 'changed' : 'a'.repeat(64);
+    d.command.preflightIdentityResolution = async () => ({
+      outcome: 'update',
+      target: 'present',
+      absenceProof: 'none',
+      diagnostics: [],
+      requiredEffects: ['processing', 'publication', 'generated-output-provisioning'],
+    });
+    d.command.executeIdentityResolution = async () => {
+      d.calls.push('owner-write');
+      settled = true;
+      return {
+        outcome: mode === 'unknown-owner' ? 'failed' : 'updated',
+        mutation: mode === 'unknown-owner' ? 'unknown' : 'confirmed-updated',
+        diagnostics: [],
+      };
+    };
+    try {
+      const result = await run(d.command);
+      const writes = d.calls.filter((call) => call.includes('write'));
+      if (['drift', 'pending-byte', 'wrong-owner'].includes(mode)) {
+        assert.equal(result.status, 'blocked');
+        assert.deepEqual(writes, []);
+      } else if (mode === 'unknown-owner') {
+        assert.equal(result.status, 'failed');
+        assert.deepEqual(writes, ['owner-write']);
+      } else {
+        assert.equal(result.status, 'success');
+        assert.deepEqual(writes, ['owner-write', 'graph-write']);
+        assert.ok(binds >= 4);
+      }
+    } finally {
+      d.restore?.();
+    }
+  }
+});
+
 test('Graph public deploy fixed API refusal and complete-selection acknowledgement produce zero writes', async () => {
   for (const overrides of [
     { 'api-version': '65.0' },
     { 'api-version': 'latest' },
-    { 'include-dependencies': true },
     { 'allow-processing': false },
   ]) {
     const { command, calls } = deploy(overrides, true);

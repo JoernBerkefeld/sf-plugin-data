@@ -26,6 +26,7 @@ import {
 } from '../lib/services/execute-data-graph-deploy.js';
 
 import { irFixture } from './identity-resolution-fixtures.mjs';
+import { discoverDataGraphOwner } from '../lib/services/discover-data-graph-owner.js';
 import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 
 const selection = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
@@ -421,7 +422,7 @@ for (const mode of ['owner', 'output', 'field', 'key', 'fingerprint'])
     assert.equal(writes, 0);
   });
 
-test('private qualification cannot bypass public whole-selection owned-root admission', async () => {
+test('private qualification cannot bypass public whole-selection input byte admission', async () => {
   const f = ownedRootFixture();
   await bindDataGraphDependencies(
     f.document,
@@ -462,11 +463,77 @@ test('private qualification cannot bypass public whole-selection owned-root admi
     try {
       const result = await command.run();
       assert.equal(result.status, 'blocked');
-      assert.equal(JSON.stringify(result).includes('DATA_GRAPH_OWNER_SELECTION_UNSUPPORTED'), true);
+      assert.equal(result.result.items.length, 0);
       assert.equal(writes, 0);
     } finally {
       process.exitCode = previous;
     }
+  }
+});
+
+test('source discovery uses exact inventory ownership then unchanged full independent binder', async () => {
+  for (const mode of [
+    'qualified',
+    'absent',
+    'wrong-owner',
+    'duplicate',
+    'missing-field',
+    'missing-key',
+  ]) {
+    const f = ownedRootFixture();
+    const name = f.projection.expectations.outputs[0].sourceApiName;
+    const raw = graph();
+    raw.primaryObjectName = name;
+    raw.sourceObject.name = name;
+    raw.sourceObject.projectedName = name;
+    const owner = {
+      objectApiName: 'Individual_A1b2',
+      dataSpaceName: 'default',
+      reconciliationRules: [{ entityName: 'ssot__Individual__dlm', unifiedDmoName: name }],
+    };
+    const conn = {
+      ...connection,
+      request: async ({ url }) => {
+        if (url.endsWith('/identity-resolutions'))
+          return {
+            identityResolutions:
+              mode === 'absent'
+                ? []
+                : mode === 'duplicate'
+                  ? [owner, owner]
+                  : [
+                      {
+                        ...owner,
+                        objectApiName:
+                          mode === 'wrong-owner' ? 'UnrelatedOwner' : owner.objectApiName,
+                      },
+                    ],
+          };
+        const acquired = await f.acquire(name);
+        return acquired.detail;
+      },
+    };
+    const bind = async (...arguments_) =>
+      bindDataGraphDependencies(
+        ...arguments_.slice(0, 4),
+        async (apiName) => {
+          const result = await f.acquire(apiName);
+          if (apiName === name && mode === 'missing-field') result.detail.fields.pop();
+          if (apiName === name && mode === 'missing-key')
+            result.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder = '';
+          return result;
+        },
+        f.acquireOwner,
+      );
+    const operation = discoverDataGraphOwner(raw, 'SyntheticGraph', conn, selection, 'default', {
+      owner: f.acquireOwner,
+      bind,
+    });
+    if (mode === 'qualified') {
+      const binding = await operation;
+      assert.equal(binding.root.targetApiName, name);
+      assert.deepEqual(binding.root.identity, f.document.spec.primaryObjectName);
+    } else await assert.rejects(operation);
   }
 });
 
@@ -535,6 +602,28 @@ test('Graph owner binding fingerprints root configuration drift without exposing
     f.acquireOwner,
   );
   assert.notEqual(first.fingerprint, next.fingerprint);
+  assert.notEqual(first.preservationFingerprint, next.preservationFingerprint);
+  const changedOwner = async (...arguments_) => {
+    const acquired = await f.acquireOwner(...arguments_);
+    acquired.expectations.facade.reconciliationRules[0].ruleType = 'lastupdated';
+    acquired.expectations.native.reconciliationRules[0].ruleType = 'lastupdated';
+    const projection = projectIdentityResolution(
+      acquired.expectations.facade,
+      acquired.expectations.native,
+      acquired.identity.apiName,
+    );
+    return { ...acquired, ...projection };
+  };
+  const ownerDrift = await bindDataGraphDependencies(
+    f.document,
+    connection,
+    selection,
+    'default',
+    f.acquire,
+    changedOwner,
+  );
+  assert.notEqual(first.fingerprint, ownerDrift.fingerprint);
+  assert.equal(first.preservationFingerprint, ownerDrift.preservationFingerprint);
 });
 
 const connection = {

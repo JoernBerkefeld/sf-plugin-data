@@ -18,6 +18,7 @@ import type { DataGraphConnection } from './retrieve-data-graph.js';
 
 export type DataGraphDependencyBinding = {
   fingerprint: string;
+  preservationFingerprint?: string;
   root?: { identity: IdentityResolutionOutputIdentity; targetApiName: string; targetId: string };
 };
 
@@ -192,7 +193,14 @@ export async function bindDataGraphDependencies(
   }
   scope();
   return {
-    ...(bound ? { root: bound } : {}),
+    ...(bound
+      ? {
+          root: bound,
+          preservationFingerprint: createHash('sha256')
+            .update(JSON.stringify(graphCanonicalObject({ outputs: outputProof, root: acquired })))
+            .digest('hex'),
+        }
+      : {}),
     fingerprint: createHash('sha256')
       .update(
         JSON.stringify({
