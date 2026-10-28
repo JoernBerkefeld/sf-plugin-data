@@ -33,6 +33,10 @@ latest refuse Graph; mixed Graph/legacy selection requires auto. Inventory and
 Graph dependency expansion are unavailable. The artifact validator also reserves an
 IR-owner-qualified unified Individual root reference for dependency integration;
 that reference is not yet operationally retrievable or deployable and fails closed.
+A private dependency binder now acquires its exact IR owner, verifies all twelve
+owner-returned outputs and independently qualifies the exact unified Individual
+root's Text fields and explicit sole Id key. It retains only target-local bindings;
+runtime Graph projection/wire translation and public selection remain unfinished.
 It does not enable IR/Graph creation or establish cross-org pair acceptance.
 
 ```sh

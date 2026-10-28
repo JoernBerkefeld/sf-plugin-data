@@ -1,3 +1,60 @@
+# IR-owned Graph exact dependency binding checkpoint — 2026-10-28
+
+Continued sole-editor from clean fetched `28891d9bd1bd8bd5e85ab06705e3c75da2b1d45b`.
+Prior written plan/review c9a6bd6d confirmed complete, zero must-fix; no new
+architecture/safety model or duplicate review. Am I overengineering this? No generic
+output framework: reuse exact IR projection and unchanged twelve-output verifier.
+Shared runtime inputs require sequential editing. This bounded checkpoint stops
+at dependency binding; runtime projection/wire translation is STILL UNFINISHED.
+Do not equate this with completion of the requested runtime checkpoint.
+
+`bindDataGraphDependencies(value, connection, selection, dataSpace, acquire?,
+acquireOwner = retrieveIdentityResolution): Promise<DataGraphDependencyBinding>`
+now admits a logical root to private dependency qualification only. Return type:
+`{ fingerprint: string; root?: { identity: IdentityResolutionOutputIdentity;
+targetApiName: string; targetId: string } }`. Legacy returns fingerprint only and
+preserves its prior hash shape. No generated name construction/source IDs.
+Exact owner facade/native acquisition is re-projected and correlated to candidate,
+identity and outputs. All twelve owner-returned names pass the unchanged
+`verifyIdentityResolutionOutputs`; exact structural logical identity selects one.
+An additional independent REST/Metadata root read must match selected local ID,
+name/default space/Derived type, all three Text Id/FirstName/LastName fields and
+sole explicit Metadata Id primary key. Final independently re-projected owner
+must equal initial full projection. Four owner acquisitions plus thirteen DMO
+pairs on success (each owner acquisition independently reads facade/native).
+The hash retains full canonical owner projection, twelve output bindings and
+additional root REST/Metadata configuration, not merely selected names/IDs;
+version/origin drift is refused. No caller connection mutation.
+
+IMPORTANT resume order: complete private runtime projection/transform admission,
+preflight re-admission, execution/poll/settlement translation and transport validation
+as one coherent safety slice before changing public selectors. The current
+`projectDataGraph` still rejects generated owned roots; neither preview nor execute
+opens solely because the binder can now qualify one. Translate raw names to logical
+root only through freshly acquired private binding, and map portable roots back to
+exact target-local names for wire payloads; preserve full raw evidence and byte/input,
+config, whole-batch pending binding, owner/root drift guards. Do not use node.id as a
+DMO ID without schema evidence (Graph node IDs are a different identity).
+Then do the next public-selector slice: explicit/reversed and opt-in expanded IR/Graph
+retrieve/deploy with owner-before-Graph order, no implicit creation. Whole-feature
+Gate4 remains later with coordinator. Existing-only/schema qualification is not
+live paired Graph/cross-org acceptance or CREATE.
+
+Regressions cover successful twelve-plus-root qualification, exact returned names,
+target-local IDs, no runtime IDs in portable bytes, wrong owner, duplicate output ID,
+root field/key/ID/type mismatch, final owner drift, version drift and full root-config
+fingerprint drift. A real-binder/private-runtime preview/execution regression proves
+zero writes while runtime projection remains blocked. Legacy tests unchanged.
+Verification: lint:fix then full lint zero warnings, explicit build, full
+`npm test --no-workspaces` 1027/1027, zero skips/failures, runner119.520s,
+combined verification147.498s. Source/test inputs frozen throughout successful run.
+Exact normal-hook commit/hosted CI receipts belong to outgoing handoff.
+No org calls/mutations/live acceptance, scratch/cleanup, guide/root DB/index edits,
+release/version bump or DMO additive work. README scope remains explicitly partial.
+Propagation: standalone sf-plugin-data@0.1.0; README/handover updated, no language,
+LSP, hover, wiki, CMS, MCNext, guide or workspace consumer changes needed. Next
+release unassigned; no release authorized.
+
 # IR-owned Graph portable contract checkpoint — 2026-10-28
 
 Baseline fetched clean `967e8677271f3165646484541cbd90a7e1dacb7b`.

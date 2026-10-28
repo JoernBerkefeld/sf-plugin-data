@@ -24,6 +24,9 @@ import {
   executeDataGraphDeploy,
 } from '../lib/services/execute-data-graph-deploy.js';
 
+import { irFixture } from './identity-resolution-fixtures.mjs';
+import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
+
 const selection = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
 
 const outputIdentity = {
@@ -91,7 +94,7 @@ test('portable Graph refuses unsupported owner identity, role, entity and root d
   assert.throws(() => validateDataGraphDocument(document));
 });
 
-test('owner-qualified Graph binding stays closed before runtime integration', async () => {
+test('owner-qualified Graph binding refuses unavailable exact owner without guessed DMO reads', async () => {
   const document = projectDataGraph(graph(), 'SyntheticGraph').candidate;
   document.spec.primaryObjectName = structuredClone(outputIdentity);
   document.spec.sourceObject.name = structuredClone(outputIdentity);
@@ -105,6 +108,208 @@ test('owner-qualified Graph binding stays closed before runtime integration', as
   );
   assert.equal(reads, 0);
 });
+/**
+ * Build exact owner-returned outputs and independent Graph root representations.
+ * @returns {object} Synthetic target-only binding harness.
+ */
+function ownedRootFixture() {
+  const pair = irFixture();
+  const projection = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
+  const identity = projection.expectations.outputs[0].identity;
+  const document = projectDataGraph(graph(), 'SyntheticGraph').candidate;
+  document.spec.primaryObjectName = structuredClone(identity);
+  document.spec.sourceObject.name = structuredClone(identity);
+  document.spec.sourceObject.devName = structuredClone(identity);
+  const reads = [];
+  let owners = 0;
+  const acquireOwner = async (_connection, name) => {
+    assert.equal(name, 'Individual_A1b2');
+    owners++;
+    return {
+      identity: projection.candidate.identity,
+      ...structuredClone(projection),
+      blockers: [],
+    };
+  };
+  const acquire = async (name) => {
+    reads.push(name);
+    const index = projection.expectations.outputs.findIndex((item) => item.sourceApiName === name);
+    assert.notEqual(index, -1);
+    const role = projection.expectations.outputs[index].identity.role;
+    const names =
+      role === 'unified'
+        ? ['ssot__Id__c', 'ssot__FirstName__c', 'ssot__LastName__c']
+        : ['UnifiedRecordId__c'];
+    const creationType = role === 'unified' ? 'Derived' : 'Bridge';
+    return {
+      detail: {
+        name,
+        id: `target-only-${index}`,
+        dataSpaceName: 'default',
+        creationType,
+        fields: names.map((name) => ({ name, type: 'Text' })),
+      },
+      metadata: [
+        {
+          fullName: name,
+          mktDataModelAttributes: { dataSpaceName: 'default', creationType },
+          fields: names.map((fullName, index) => ({
+            fullName,
+            type: 'Text',
+            mktDataModelFieldAttributes: { primaryIndexOrder: index === 0 ? '1' : '' },
+          })),
+        },
+      ],
+    };
+  };
+  return { document, projection, acquire, acquireOwner, reads, owners: () => owners };
+}
+
+test('Graph owner binding verifies all twelve outputs then independently guards exact logical root', async () => {
+  const f = ownedRootFixture();
+  const proof = await bindDataGraphDependencies(
+    f.document,
+    connection,
+    selection,
+    'default',
+    f.acquire,
+    f.acquireOwner,
+  );
+  assert.equal(f.reads.length, 13);
+  assert.equal(f.owners(), 4);
+  assert.equal(proof.root.targetApiName, f.projection.expectations.outputs[0].sourceApiName);
+  assert.equal(proof.root.targetId, 'target-only-0');
+  assert.deepEqual(proof.root.identity, f.document.spec.primaryObjectName);
+  assert.deepEqual(
+    await bindDataGraphDependencies(
+      f.document,
+      connection,
+      selection,
+      'default',
+      f.acquire,
+      f.acquireOwner,
+    ),
+    proof,
+  );
+  assert.equal(serializeDataGraphDocument(f.document).includes('target-only'), false);
+  assert.throws(() =>
+    projectDataGraph({ ...graph(), primaryObjectName: proof.root.targetApiName }, 'SyntheticGraph'),
+  );
+});
+
+for (const mode of [
+  'owner',
+  'output',
+  'field',
+  'key',
+  'root-id',
+  'creation-type',
+  'owner-drift',
+  'scope-drift',
+])
+  test(`Graph exact owner/output/root qualification refuses ${mode}`, async () => {
+    const f = ownedRootFixture();
+    let owners = 0;
+    const acquireOwner = async (...arguments_) => {
+      const owner = await f.acquireOwner(...arguments_);
+      owners++;
+      if (mode === 'owner') owner.identity.apiName = 'WrongOwner';
+      if (mode === 'owner-drift' && owners === 4) owner.expectations.facade.label = 'Drift';
+      return owner;
+    };
+    const localSelection = { ...selection };
+    const acquire = async (name) => {
+      const resource = await f.acquire(name);
+      if (mode === 'output' && f.reads.length === 12) resource.detail.id = 'target-only-0';
+      if (f.reads.length === 13) {
+        if (mode === 'field') resource.detail.fields[2].type = 'Number';
+        if (mode === 'key')
+          resource.metadata[0].fields[1].mktDataModelFieldAttributes.primaryIndexOrder = '1';
+        if (mode === 'root-id') resource.detail.id = 'changed-root';
+        if (mode === 'creation-type') resource.detail.creationType = 'Standard';
+        if (mode === 'scope-drift') localSelection.soapNumeric = '65.0';
+      }
+      return resource;
+    };
+    await assert.rejects(
+      bindDataGraphDependencies(
+        f.document,
+        connection,
+        localSelection,
+        'default',
+        acquire,
+        acquireOwner,
+      ),
+    );
+  });
+
+test('private qualified binding does not open unsupported owner Graph preview or execution', async () => {
+  const f = ownedRootFixture();
+  let writes = 0;
+  const options = {
+    verifyDependencies: (value, conn, version, space) =>
+      bindDataGraphDependencies(value, conn, version, space, f.acquire, f.acquireOwner),
+    readGraph: async () => {
+      const raw = graph();
+      const name = f.projection.expectations.outputs[0].sourceApiName;
+      raw.primaryObjectName = name;
+      raw.sourceObject.name = name;
+      raw.sourceObject.projectedName = name;
+      return raw;
+    },
+    readTransform: async () => transform(),
+    allowProcessing: true,
+    verifyInput: async () => {},
+    recordObservation: async () => {},
+    mutate: async () => {
+      writes++;
+      throw new Error('must not write');
+    },
+  };
+  const preview = await preflightDataGraphDeploy(
+    f.document,
+    connection,
+    selection,
+    'default',
+    options,
+  );
+  assert.equal(preview.outcome, 'blocked');
+  const execution = await executeDataGraphDeploy(
+    f.document,
+    connection,
+    selection,
+    'default',
+    options,
+  );
+  assert.equal(execution.mutation, 'not-attempted');
+  assert.equal(writes, 0);
+});
+
+test('Graph owner binding fingerprints root configuration drift without exposing IDs in document', async () => {
+  const f = ownedRootFixture();
+  const first = await bindDataGraphDependencies(
+    f.document,
+    connection,
+    selection,
+    'default',
+    f.acquire,
+    f.acquireOwner,
+  );
+  const next = await bindDataGraphDependencies(
+    f.document,
+    connection,
+    selection,
+    'default',
+    async (name) => {
+      const raw = await f.acquire(name);
+      raw.detail.unrelatedConfiguration = 'changed';
+      return raw;
+    },
+    f.acquireOwner,
+  );
+  assert.notEqual(first.fingerprint, next.fingerprint);
+});
+
 const connection = {
   instanceUrl: 'https://synthetic.my.salesforce.com',
   getApiVersion: () => '67.0',
