@@ -1,3 +1,101 @@
+# Segment A2 source acceptance resume — LIVE SETUP SETTLEMENT BLOCKED — 2026-10-28
+
+Requested baseline `dbddaeb9c566753143fbfc91024bf751971634fd` fetched clean and equal
+to origin/main. Existing roadmap/planning/review gates reused; one bounded worker,
+no new architecture or nested workers. Source MCP discover -> describe -> readonly
+Organization query matched expected org, as did core AuthInfo and actual standard
+CLI org display (exit 0). Target untouched. Persistent validation project inspected
+and preserved. The previous budget-blocked section below is historical, not a pass.
+
+## Reservation before provisioning
+
+Revised explicit ceilings: 160 logical nonpoll operations, 500 underlying reads
+including standard CLI polling, 24 runtime settlement polls, two provisions, two
+updates, two qualified exact deletes, 35-minute live phase. No safety caching or
+poll-limit change. Current source lower bounds remain 50/108 workflow logical
+acquisitions for one/two fixtures. One fixture entails 12 standard Segment Metadata
+retrievals; two entail 26 (retrieve 2, preview 2, missing-ack 2, update 11, repeat 9).
+A conservative 16 underlying-read allowance per standard retrieval yields 416 for
+two; the remaining 82 non-Metadata workflow acquisitions plus 24 runtime polls
+already total 522 before identity/setup/cleanup/instrumentation overhead. This is
+reservation arithmetic, not measured traffic or a universal CLI polling bound.
+The explicitly permitted ONE-fixture fallback was therefore selected; two-selection
+acceptance stays pending. One reservation was 90 logical nonpoll and 400 underlying
+reads, with 24 polls; its 12*16 + 38 remaining workflow reads + 24 polls leaves 146
+requests inside that reservation for identity/setup/cleanup and uncertainty.
+The historical 50/108 figures are lower bounds: current retrieve also binds the
+unselected PROFILE prerequisite (two additional logical reads per unique dependency
+per invocation), and the requested extra independent pair readback needs another
+standard retrieval. Those are overhead inside the 90/400 reservation, not omitted
+from the proposed run cap. No standard Metadata polling was reached in this run;
+16 per job was a conservative allocation, not measured maximum or guarantee.
+
+A run-owned external harness observed JSforce request-stream operations and Node
+Undici diagnostic request creation in both local core and standard CLI processes.
+It saved only method/path/SOAP operation in traces, not headers/tokens/bodies.
+Precheck observed four wire requests: CLI display made two API68 root GETs; dependency
+qualification used API65 Connect detail and Metadata readMetadata. No route sweep
+or API68 Segment operation occurred. Dependency compatibility passed before setup.
+The observer is supported runtime instrumentation, not proof of all possible
+network stacks. It does not permit globally exact counts for MCP internals/auth.
+
+## Actual live result and qualified cleanup
+
+Live fixture phase: `2026-10-28T03:23:32.483Z` to
+`2026-10-28T03:23:43.274Z` = **10.791 seconds**. One provision, zero updates,
+one exact qualified delete, four settlement polls; eight logical nonpoll operations
+including MCP identity, CLI identity, dependency detail/Metadata, provision and
+cleanup qualification/delete/absence. Local trace: 12 transport events and 12
+matching underlying Undici requests, zero uncorrelated events: 10 semantic reads
+(including polls) and two writes (POST/DELETE). Add one known MCP org identity read
+outside that trace = 11 known underlying reads; extra MCP/internal network overhead
+is unknown, not fabricated. All measured usage is well below the revised caps.
+
+Native API65 DBT setup used the already qualified wrapped-model, NoRefresh,
+empty-audience syntax and preexisting PROFILE dependency. Parsed create response
+matched the exact newly generated identity, PROCESSING/DBT/default/NO_REFRESH/P90D
+and requested complete model/SQL. HTTP status was not retained. Four exact runtime
+polls followed; the fourth returned a state outside qualified PROCESSING/ACTIVE.
+The harness stopped immediately. **The precise unexpected state and poll bodies
+were not saved**, so root cause is unknown. No second provision or blind retry.
+
+No public retrieve, preview, missing-ack, acknowledged update, independent update
+preservation or repeat command was invoked. All corresponding command exits and
+zero-write acceptance evidence are N/A, not passes. Harness exit was 1. Native
+fixture setup is not plugin create acceptance. Do not broaden states, change SQL,
+activate, reprovision or replay to get green without a new scoped decision.
+
+Cleanup used a fresh exact runtime read, requiring matching returned segment and
+definition IDs, original segment-on, NO_REFRESH and complete original model/SQL.
+One native DELETE completed; independent exact GET rejected ITEM_NOT_FOUND.
+Runtime-owned fixture debt cleared. Metadata inventory and physical/generated-table
+cleanup remain **unknown**, not claimed clean; shared dependencies untouched.
+Private accountability ledger/receipts/trace are retained under the run-owned
+`F:\Temp\segment-a2-XgNty2` root, with ownership marker. No recursive cleanup.
+TEMP/actual Node os.tmpdir/nonempty TMP/TMPDIR verified on every shell entry;
+only process-local repair applied where needed. No global CLI settings/install.
+
+Durable sanitized distinct subject:
+`data360:segment.dbt.a2-source-setup-settlement-blocked.api65` (root DB). It records
+actual native setup/readback/cleanup and NOT-INVOKED plugin workflow, bound in prose
+to the requested baseline without false plugin-acceptance provenance. Historical
+budget-blocked row unchanged. Root fetched before evidence edit; unrelated dirty
+index/worktree preserved, no shared index edit/rebuild or root history push.
+
+Resume point: decide whether/how to capture the actual unqualified settlement
+state in a future separately scoped diagnostic task; do not silently spend the
+remaining provision allowance after this unknown stop. Creation absence/shell
+admission remains blocked and closed to re-investigation. No release. Independent
+B/C work may proceed with separate owners and existing safety/acceptance gates;
+this blocker does not qualify those families. Coordinator retains whole-feature
+review, public docs propagation and final DB rebuild/validate/gaps.
+
+Documentation-only checkpoint; no production/test behavior changed. Package build,
+zero-warning lint and full tests are required for this handover edit and recorded
+with the checkpoint return. Changed folder sf-plugin-data yes, current version
+0.1.0, next version unassigned/no release. No consumer/language/LSP/wiki/hover change;
+public README/capabilities/artifact/Git/guide propagation remains coordinator-owned.
+
 # Segment A2 source live acceptance — PRE-LIVE BUDGET BLOCKED — 2026-10-28
 
 Baseline `75afe7f400e8233bd5c7856ae5a1d380feef0a30` reconciled clean and equal
