@@ -1,3 +1,137 @@
+# Chunk C independent CI qualification — AGGREGABILITY EDIT BLOCKED — 2026-10-28
+
+Baseline `8cd6f55bf245925dcadcea0914f967232d4d4660` fetched clean and equal
+to origin/main. Existing roadmap/Gates 1–2 reused; one bounded qualification and
+handover owner, no implementation expansion or nested workers. Segment A remains
+blocked exactly as recorded below; no Segment evidence subjects changed. Coordinator
+retains whole-feature review, public documentation and shared DB rebuild/validation.
+
+## Fixed scope and measured usage
+
+Before mutation: 35-minute ceiling, one newly owned CI fixture, one create, two
+PATCH attempts, one qualified exact delete, 40 logical nonpoll reads and 24 polls.
+Actual precheck-to-cleanup: **163.671 seconds**, one create, two PATCH attempts
+(publication success then expression rejection), one delete, 11 logical nonpoll
+reads and two polls. Counts include one MCP identity query, actual standard CLI org
+display, inventories, DMO detail, runtime details and Metadata read/list calls.
+CLI/auth/MCP underlying wire traffic was not instrumented: these are logical
+operations, not an exact underlying network count. No silent budget expansion.
+Source MCP discover/describe and readonly Organization query, actual explicit-alias
+CLI display (exit 0) and core AuthInfo independently matched the expected source.
+Target untouched; persistent validation project inspected/preserved. TEMP, actual
+Node os.tmpdir and nonempty TMP/TMPDIR checked against absolute normalized F:/Temp
+at every shell entry. Private ownership marker/ledger/receipts retained under the
+new run-owned OS-temp root; no recursive cleanup, global CLI edits or installs.
+
+## Proven observations and exact blocker
+
+One API67 POST `/ssot/mcp/execute`, `toolName:d360_ci_create`, with `paramsJson`
+serialized once as a JSON string containing `input`, created the owned default-space
+CalculatedMetric draft. Original SQL (preserved exactly, not a product rewrite):
+
+```sql
+SELECT APPROX_COUNT_DISTINCT(ssot__DeviceApplicationEngagement__dlm.ssot__DeviceId__c) AS device_count__c, ssot__DeviceApplicationEngagement__dlm.ssot__SoftwareApplicationId__c AS app_id__c FROM ssot__DeviceApplicationEngagement__dlm WHERE 1 = 0 GROUP BY ssot__DeviceApplicationEngagement__dlm.ssot__SoftwareApplicationId__c
+```
+
+Independent API65 detail GET and Metadata `readMetadata MktCalcInsightObjectDef`
+matched owned identity (Metadata name without `__cio`), SQL, label and Custom type;
+draft had empty dimensions/measures. No Metadata shell was predeployed. Exact
+runtime and Metadata inventories had no owned-name conflict before creation.
+HTTP status was not retained by the core client adapter; parsed result/error,
+request route and independent readbacks were retained. Outer success alone was
+never acceptance. Direct core-authenticated API calls are not plugin commands.
+
+First API65 PATCH: `{displayName:'Owned CI C qualification',draft:false,
+publishScheduleInterval:'SystemManaged'}`; expression/definitionType/schema omitted.
+PROCESSING settled to ACTIVE on one independent poll, preserving exact SQL and
+returning SYSTEM_MANAGED, IN_USE, Custom, CALCULATED_METRIC, default and isEnabled:true.
+Description/subType/schedule bounds/status error were null. Complete bounded schema:
+
+- Dimension: apiName app_id__c, creationType Custom, dataSource null, dataType Text,
+  dateGranularity null, displayName app_id, fieldRole DIMENSION, formula
+  `ssot__DeviceApplicationEngagement__dlm.ssot__SoftwareApplicationId__c`.
+- Measure: apiName device_count__c, creationType Custom, dataSource null, dataType
+  Number, displayName device_count, fieldAggregationType NONAGGREGATABLE, fieldRole
+  MEASURE, formula
+  `APPROX_COUNT_DISTINCT(ssot__DeviceApplicationEngagement__dlm.ssot__DeviceId__c)`.
+
+Second and final API65 PATCH supplied the same displayName, exact SQL changed only
+from `APPROX_COUNT_DISTINCT(...)` to `COUNT(...)`, and
+`publishScheduleInterval:'NotScheduled'`; draft/definitionType/schema omitted.
+It rejected with name/errorCode/data.errorCode **ENTITY_SAVE_ERROR**, message and
+data.message (owned identity sanitized):
+
+> CI <owned-ci> cannot be edited because the aggregability of measure device_count__c has changed. Expecting the measure to be non-aggregatable
+
+No write replay or alternative SQL attempted. Independent API65 detail and Metadata
+reads retained original SQL/label, full original dimension/measure schema and
+SYSTEM_MANAGED (not requested COUNT/NOT_SCHEDULED). This proves the observed rejection
+and retained definition, **not** general omission/atomicity, successful semantic edit
+or complete no-op comparison. Subsequent lastRunStatus was PENDING with
+lastRunDateTime/statusDateTime `2026-10-28T03:39:41.000Z`; no computation success or
+materialized output proved. Pending work cannot be attributed to the rejected PATCH;
+publication/empty-result SQL is not an inertness guarantee.
+
+## Dependencies, comparison and cleanup
+
+Exact prerequisite DMO GET confirmed enabled Standard ENGAGEMENT
+`ssot__DeviceApplicationEngagement__dlm`; referenced DeviceId and SoftwareApplicationId
+fields were mapped Text, with KQ_DeviceId/KQ_SoftwareApplicationId qualifiers. Shared
+prerequisite was never changed. This is a simple single-DMO/no-alias/no-CTE/no-join
+SQL shape, not arbitrary dependency discovery. Future extraction must preserve SQL
+bytes, parse only admitted syntax and independently bind compatible target fields.
+Owned CI dataSource attribution was null. A preexisting read-only CI's unchanged
+SQL/formulas had sourceApiName attribution shift between the two referenced fields
+across collection reads; never use that field alone as dependency identity.
+
+For a future comparison, retain exact expression, identity/space, label, type,
+creationType, enabled/description/subType, schedule/bounds and complete ordered
+schema/roles/types/aggregability/formulas; keep volatile processing/last-run fields
+separate. Do not silently discard unknown meaningful fields or normalize unstable
+attribution without a qualified rule. This checkpoint does NOT establish a complete
+successful-update/no-op contract. No CI plugin implementation or repeat deploy ran.
+
+Cleanup freshly verified exact owned identity, ACTIVE state, original SQL, label,
+Custom/CALCULATED_METRIC/default/SYSTEM_MANAGED before one qualified API65 DELETE.
+Empty/undefined response at `03:40:25Z` was not terminal proof. Independent complete
+runtime collection at `03:40:37Z` (count=total=1, nextPageToken/nextPageUrl null)
+and Metadata inventory excluded owned identity; original shared CI remained with
+stable definition. Exact runtime/Metadata fixture debt cleared. Generated/physical
+storage, pending-work and credit cleanup remain unknown; no global-cleanup claim.
+No intermediate DELETING sample was captured in this run; qualified async contract
+was respected by independent settlement and no repeated DELETE.
+
+Durable sanitized atomic subject:
+`data360:ci.expression-update-qualification.api65-67` in the root verification DB.
+Root fetched before distinct subject edit; unrelated dirty index/worktree preserved,
+no shared-index rebuild/root history publication. Evidence uses live-api/api-behavior,
+never plugin-acceptance. No validator/API_DISABLED retry or route/version sweep.
+
+## Resume and verification boundary
+
+Next fresh C implementation slice: narrow allowlisted API67 `mcp-execute.ts` facade
+boundary, core auth/no refresh/retry/replay, exactly once paramsJson serialization,
+strict supported wrapper/result identity validation and nested-error/unknown tests.
+Do not enable the rejected aggregate-changing update, arbitrary SQL, native65 create
+or zero-write repeat from this evidence. A same-aggregability meaningful edit would
+need a separate bounded qualification decision; this error does not prove all SQL
+edits impossible. Draft/label bounded routes remain historical qualified subsets.
+No service/transport/source/test behavior changed here, so no new regression case;
+full package build, zero-warning lint and full tests still apply to this handover
+edit and are recorded in the checkpoint return. Distinct CI subject strict validator
+returned zero errors; combined DB gaps scanned 482 entries with zero missing
+entry/checklist fields (five existing language isConfirmed warnings). Combined DB
+validate exits 1 due to unrelated SSJS dataWrites/reconciliation drift; no CI schema
+error was reported. No unrelated DB repairs/index rebuild. Standalone verification passed: lint:fix,
+full lint with zero warnings, explicit build, and full npm test: 563 passed, zero
+failed/skipped/cancelled; test-runner duration 113372.957 ms. Changed-file IDE
+lint clean and git diff --check passed. Normal checkpoint hooks run independently;
+their final outcome/commit/push is recorded in the checkpoint return. No release/version/tag/install.
+Changed folder sf-plugin-data yes, current version 0.1.0, next version unassigned.
+No downstream/language/LSP/hover/wiki/site update needed; README/capabilities/artifact/
+Git/guide propagation remains coordinator-owned because no implemented capability
+changed. Whole-feature review deferred to coordinator, not claimed completed here.
+
 # Segment A2 source acceptance resume — LIVE SETUP SETTLEMENT BLOCKED — 2026-10-28
 
 Requested baseline `dbddaeb9c566753143fbfc91024bf751971634fd` fetched clean and equal
