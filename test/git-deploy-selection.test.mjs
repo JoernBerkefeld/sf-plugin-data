@@ -81,6 +81,20 @@ const fixture = async () => {
 };
 const refusal = (code) => (error) => error instanceof GitSelectionError && error.code === code;
 
+test('mapping XML is not admitted from mapping-only or mixed Git changes', async () => {
+  const cwd = await fixture();
+  const base = await git(cwd, 'rev-parse', 'HEAD');
+  const mapping =
+    'force-app/main/default/objectSourceTargetMaps/ExactMap.objectSourceTargetMap-meta.xml';
+  await put(cwd, mapping, '<ObjectSourceTargetMap/>');
+  const alone = await selectGitDeployInputs({ cwd, ref: base });
+  assert.deepEqual(alone.paths, []);
+  await put(cwd, relative('Added'), document('Added'));
+  const mixed = await selectGitDeployInputs({ cwd, ref: base });
+  assert.deepEqual(mixed.paths, [path.join(cwd, relative('Added'))]);
+  assert.ok(!mixed.paths.some((file) => file.endsWith('.objectSourceTargetMap-meta.xml')));
+});
+
 for (const member of ['path', 'companionPath', 'both']) {
   for (const phase of ['committed', 'index', 'worktree', 'untracked']) {
     test(`Segment ${member} ${phase} changes select one byte-bound pair with DMO`, async () => {

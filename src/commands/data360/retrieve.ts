@@ -1,4 +1,17 @@
 import {
+  RelationshipDefinitionError,
+  writeRelationshipDefinition,
+} from '../../artifacts/write-relationship-definition.js';
+import {
+  retrieveRelationshipSourceMetadata,
+  retrieveMappingSourceMetadata,
+} from '../../transport/project-metadata.js';
+import {
+  MappingDefinitionError,
+  writeMappingDefinition,
+} from '../../artifacts/write-mapping-definition.js';
+import { mappingName } from '../../artifacts/mapping-document.js';
+import {
   ingestionName,
   IngestionDloError,
   validateIngestionDloDocument,
@@ -78,6 +91,7 @@ export type RetrieveEnvelope = {
       message: string;
       retryable: false;
       identity?: { dataSpace: string; apiName: string };
+      family?: 'relationship' | 'mapping';
     }>;
   };
   provenance: {
@@ -98,7 +112,16 @@ export type RetrieveEnvelope = {
       path: string;
       companionPath?: string;
       family?:
-        'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'ingestion-dlo';
+        | 'segment'
+        | 'identity-resolution'
+        | 'calculated-insight'
+        | 'data-graph'
+        | 'ingestion-dlo'
+        | 'relationship'
+        | 'mapping';
+      definitionOnly?: true;
+      /** False means unavailable to this plugin's operational deploy, not standard Metadata deploy. */
+      deployable?: false;
       routes?: Array<{
         operation: string;
         apiVersion: string;
@@ -114,7 +137,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m ingestion-dlo:Name__dll supports API67/auto default-space sole-source single-event Ingestion API Text configuration, without inventory or dependency expansion. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m mapping:ApiName exports opaque ObjectSourceTargetMap XML at API65/default only, with no inventory, dependency expansion or operational deploy admission. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Exact -m ingestion-dlo:Name__dll supports API67/auto default-space sole-source single-event Ingestion API Text configuration, without inventory or dependency expansion. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -138,7 +161,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
+        'Repeat mapping:ApiName or relationship:ApiName for definition-only XML, dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -157,6 +180,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireMappingXml = retrieveMappingSourceMetadata;
+  protected writeMapping = writeMappingDefinition;
+  protected acquireRelationshipXml = retrieveRelationshipSourceMetadata;
+  protected writeRelationship = writeRelationshipDefinition;
   protected discoverDataGraphOwner = discoverDataGraphOwner;
   protected readRawDataGraph = async (
     connection: Parameters<typeof retrieveDataGraph>[0],
@@ -253,12 +280,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
         for (const diagnostic of envelope.diagnostics.errors)
           this.log(
-            `${diagnostic.identity ? `dmo:${diagnostic.identity.apiName}: ` : ''}${diagnostic.code}: ${diagnostic.message}`,
+            `${diagnostic.identity ? `${diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: ` : ''}${diagnostic.code}: ${diagnostic.message}`,
           );
       }
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
+    const relationshipSelectors = selectors.filter((value) => value.startsWith('relationship:'));
     const ingestionSelectors = selectors.filter((value) => value.startsWith('ingestion-dlo:'));
     const graphSelectors = selectors.filter((value) => value.startsWith('data-graph:'));
     const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
@@ -266,6 +295,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
     const dmoSelectors = selectors.filter(
       (value) =>
+        !value.startsWith('mapping:') &&
+        !value.startsWith('relationship:') &&
         !value.startsWith('ingestion-dlo:') &&
         !value.startsWith('data-graph:') &&
         !value.startsWith('segment:') &&
@@ -275,6 +306,26 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const hasDmos = dmoSelectors.length > 0 || selectors.length === 0;
     let effectiveVersion: string;
     try {
+      if (selectors.includes('mapping'))
+        throw new MappingDefinitionError('MAPPING_INVENTORY_UNQUALIFIED');
+      if (mappingSelectors.length > 0) {
+        if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+          throw new MappingDefinitionError('INVALID_SCOPE');
+        if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
+          throw new MappingDefinitionError('INVALID_SELECTION');
+        if (flags['include-dependencies'])
+          throw new MappingDefinitionError('MAPPING_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      }
+      if (selectors.includes('relationship'))
+        throw new RelationshipDefinitionError('RELATIONSHIP_INVENTORY_UNQUALIFIED');
+      if (relationshipSelectors.length > 0) {
+        if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+          throw new RelationshipDefinitionError('INVALID_SCOPE');
+        if (relationshipSelectors.some((value) => !segmentName.test(value.slice(13))))
+          throw new RelationshipDefinitionError('INVALID_SELECTION');
+        if (flags['include-dependencies'])
+          throw new RelationshipDefinitionError('RELATIONSHIP_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      }
       if (selectors.includes('ingestion-dlo'))
         throw new IngestionDloError('INGESTION_DLO_INVENTORY_UNQUALIFIED');
       if (ingestionSelectors.length > 0) {
@@ -319,24 +370,30 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       if (segmentSelectors.length > 0) operationApiVersion(flags['api-version'], 'segment');
       if (hasDmos) operationApiVersion(flags['api-version'], 'dmo');
-      effectiveVersion = operationApiVersion(
-        flags['api-version'],
-        hasDmos
-          ? 'dmo'
-          : segmentSelectors.length > 0
-            ? 'segment'
-            : ciSelectors.length > 0
-              ? 'calculated-insight'
-              : graphSelectors.length > 0
-                ? 'data-graph'
-                : irSelectors.length > 0
-                  ? 'identity-resolution'
-                  : 'ingestion-dlo',
-      );
+      effectiveVersion =
+        relationshipSelectors.length + mappingSelectors.length === selectors.length &&
+        selectors.length > 0
+          ? '65.0'
+          : operationApiVersion(
+              flags['api-version'],
+              hasDmos
+                ? 'dmo'
+                : segmentSelectors.length > 0
+                  ? 'segment'
+                  : ciSelectors.length > 0
+                    ? 'calculated-insight'
+                    : graphSelectors.length > 0
+                      ? 'data-graph'
+                      : irSelectors.length > 0
+                        ? 'identity-resolution'
+                        : 'ingestion-dlo',
+            );
     } catch (error: unknown) {
       return finish(
         'blocked',
-        error instanceof IngestionDloError ||
+        error instanceof MappingDefinitionError ||
+          error instanceof RelationshipDefinitionError ||
+          error instanceof IngestionDloError ||
           error instanceof DataGraphError ||
           error instanceof IdentityResolutionError ||
           error instanceof CalculatedInsightError
@@ -452,6 +509,109 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         });
         return finish('blocked');
       }
+      // Definition-only members are independent; retain successes across read/output failures.
+
+      const mappings = [...new Set(mappingSelectors.map((value) => value.slice(8)))];
+      mappings.sort();
+      for (const apiName of mappings) {
+        try {
+          const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
+          if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
+          let definitionXml;
+          try {
+            definitionXml = await this.acquireMappingXml(target, apiName);
+          } catch {
+            throw new MappingDefinitionError('MAPPING_ACQUISITION_FAILED');
+          }
+          const receipt = await this.writeMapping(
+            apiName,
+            definitionXml,
+            flags['output-dir'] ?? process.cwd(),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: { dataSpace: 'default', apiName },
+            operation: 'retrieve',
+            family: 'mapping',
+            definitionOnly: true,
+            deployable: false,
+            routes: [{ operation: 'mapping.metadata', apiVersion: '65.0', transport: 'metadata' }],
+            ...receipt,
+          });
+        } catch (error: unknown) {
+          const code = error instanceof MappingDefinitionError ? error.code : 'OUTPUT_FAILED';
+          if (
+            ![
+              'INVALID_SELECTION',
+              'INVALID_SCOPE',
+              'OVERWRITE_REQUIRED',
+              'UNSAFE_PATH',
+              'TARGET_ORG_REQUIRED',
+            ].includes(code)
+          )
+            failed = true;
+          envelope.diagnostics.errors.push({
+            code,
+            family: 'mapping',
+            identity: { dataSpace: 'default', apiName },
+            message:
+              'This mapping definition was not exported. Check the exact selection, acquisition and output path.',
+            retryable: false,
+          });
+        }
+      }
+      const relationships = [...new Set(relationshipSelectors.map((value) => value.slice(13)))];
+
+      relationships.sort();
+      for (const apiName of relationships) {
+        try {
+          const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
+          if (!target) throw new RelationshipDefinitionError('TARGET_ORG_REQUIRED');
+          let definitionXml;
+          try {
+            definitionXml = await this.acquireRelationshipXml(target, apiName);
+          } catch {
+            throw new RelationshipDefinitionError('RELATIONSHIP_ACQUISITION_FAILED');
+          }
+          const receipt = await this.writeRelationship(
+            apiName,
+            definitionXml,
+            flags['output-dir'] ?? process.cwd(),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: { dataSpace: 'default', apiName },
+            operation: 'retrieve',
+            family: 'relationship',
+            definitionOnly: true,
+            deployable: false,
+            routes: [
+              { operation: 'relationship.metadata', apiVersion: '65.0', transport: 'metadata' },
+            ],
+            ...receipt,
+          });
+        } catch (error: unknown) {
+          const code = error instanceof RelationshipDefinitionError ? error.code : 'OUTPUT_FAILED';
+          if (
+            ![
+              'INVALID_SELECTION',
+              'INVALID_SCOPE',
+              'OVERWRITE_REQUIRED',
+              'UNSAFE_PATH',
+              'TARGET_ORG_REQUIRED',
+            ].includes(code)
+          )
+            failed = true;
+          envelope.diagnostics.errors.push({
+            code,
+            family: 'relationship',
+            identity: { dataSpace: 'default', apiName },
+            message:
+              'This relationship definition was not exported. Check the exact selection, acquisition and output path.',
+            retryable: false,
+          });
+        }
+      }
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
       const names = hasDmos
@@ -460,6 +620,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
       const segments = [...new Set(segmentSelectors.map((value) => value.slice(8)))].sort();
       envelope.result.selection = [
+        ...mappings.map((name) => `mapping:${name}`),
+        ...relationships.map((name) => `relationship:${name}`),
         ...names.map((name) => `dmo:${name}`),
         ...segments.map((name) => `segment:${name}`),
       ];
@@ -744,9 +906,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ...dataGraphs,
           ...ingestionDlos,
         ];
-        envelope.result.selection = entries.map(
-          ({ document }) => `${document.kind}:${document.identity.apiName}`,
-        );
+        envelope.result.selection = [
+          ...mappings.map((name) => `mapping:${name}`),
+          ...relationships.map((name) => `relationship:${name}`),
+          ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
+        ];
         for (const entry of entries) {
           const { document } = entry;
           try {

@@ -99,6 +99,60 @@ test('complete fixed projection is detached and stable with explicit attribution
   ]);
 });
 
+for (const schedule of ['SYSTEM_MANAGED', 'NOT_SCHEDULED']) {
+  test(`exact ${schedule} profile projects, serializes and preserves detached forward delta`, () => {
+    const raw = { ...runtime(), publishScheduleInterval: schedule };
+    const current = projectCalculatedInsight(raw, metadata()).document;
+    const desired = structuredClone(current);
+    desired.spec.expression = edited;
+    const result = delta(desired, raw);
+    assert.equal(result.status, 'candidate');
+    assert.deepEqual(result.patch, { expression: edited });
+    assert.equal(result.expected.spec.publishScheduleInterval, schedule);
+    assert.deepEqual(JSON.parse(serializeCalculatedInsightDocument(current)), current);
+    const detached = validateCalculatedInsightDocument(current);
+    raw.publishScheduleInterval = 'changed';
+    current.spec.publishScheduleInterval = 'changed';
+    desired.spec.publishScheduleInterval = 'changed';
+    assert.equal(detached.spec.publishScheduleInterval, schedule);
+    assert.equal(result.expected.spec.publishScheduleInterval, schedule);
+    assert.equal(
+      delta(detached, { ...runtime(), publishScheduleInterval: schedule }).status,
+      'unchanged',
+    );
+    assert.equal(
+      delta(detached, { ...runtime(edited), publishScheduleInterval: schedule }, metadata(edited))
+        .status,
+      'blocked',
+    );
+  });
+  for (const expression of [original, edited])
+    test(`${schedule} schedule change with ${expression === original ? 'unchanged' : 'forward'} SQL is blocked`, () => {
+      const desired = document(expression);
+      desired.spec.publishScheduleInterval = schedule;
+      const raw = {
+        ...runtime(),
+        publishScheduleInterval: schedule === 'SYSTEM_MANAGED' ? 'NOT_SCHEDULED' : 'SYSTEM_MANAGED',
+      };
+      assert.deepEqual(delta(desired, raw), {
+        status: 'blocked',
+        blockers: ['CI_NON_EXPRESSION_CHANGE'],
+      });
+    });
+}
+for (const schedule of [undefined, wireNull, 'SystemManaged', 'not_scheduled', 'UNKNOWN'])
+  test(`schedule has no fallback: ${String(schedule)}`, () => {
+    const desired = document();
+    desired.spec.publishScheduleInterval = schedule;
+    assert.throws(() => validateCalculatedInsightDocument(desired));
+    assert.equal(
+      delta(document(), { ...runtime(), publishScheduleInterval: schedule }).status,
+      'blocked',
+    );
+    delete desired.spec.publishScheduleInterval;
+    assert.throws(() => validateCalculatedInsightDocument(desired));
+  });
+
 test('identical settled baseline and edited definition produce pure zero-dispatch unchanged', () => {
   for (const expression of [original, edited]) {
     // No connection or writer is accepted by this API: this is synthetic offline proof only.
@@ -175,7 +229,7 @@ for (const [label, mutate] of Object.entries({
     d.spec.dependencies[0].fields.reverse();
   },
   schedule: (d) => {
-    d.spec.publishScheduleInterval = 'NOT_SCHEDULED';
+    d.spec.publishScheduleInterval = 'UNKNOWN';
   },
   enabled: (d) => {
     d.spec.isEnabled = false;

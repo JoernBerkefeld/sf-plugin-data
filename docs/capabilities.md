@@ -1,5 +1,26 @@
 # Capability contract checklist
 
+## Installed Segment source-only acceptance — 2026-10-29
+
+The installed public plugin passed exact retained ACTIVE existing-owner acceptance on
+source only, API65/default: independently correlated runtime/XML and compatible PROFILE
+binding; exact retrieval and byte-stable repeated JSON/XML retrieval; unchanged preview
+with empty requiredEffects; unchanged deploy WITHOUT --allow-processing returning
+unchanged/not-attempted with empty requiredEffects; independent final full preservation.
+This qualifies installed source-only existing-owner behavior, not cross-org, CREATE,
+two-selection, dependency expansion, meaningful DBT-definition updates or computation.
+The original unknown update remains historical; no PATCH was replayed.
+
+Whole run9m58.020s including owned snapshot build/prepack/install/final audit:39/100
+observable logical read events,15/16 conservatively counted org-facing processes
+(including9 standard children; actual Salesforce CLI commands13),9/9 permitted read-only
+Metadata retrieval jobs with status polls. Child/auth HTTP counts remain unknown;
+100 is an observable-event stop threshold, not a global wire cap. Zero configuration
+mutations, processing/deployment/activation jobs or target calls. Read-only Metadata
+retrieval jobs are not configuration deployment jobs. README's14-resource Segment
+qualification was reconciled without changing ratings or icons. Current acceptance is
+bound to132 frozen inputs and118 installed files; exact provenance is in the handover.
+
 ## Public existing-target Ingestion API DLO
 
 Exact `ingestion-dlo:Name__dll` selectors, canonical JSON files and Git-selected
@@ -92,15 +113,34 @@ compared to resolved inputs and freshly byte-verified before target execution.
 
 Deployment is limited to existing ACTIVE Custom/CALCULATED_METRIC/IN_USE owners
 with the qualified `APPROX_COUNT_DISTINCT` engagement expression, schema and
-SYSTEM_MANAGED schedule. Only the forward false-predicate plus DeviceId IS NOT NULL
-expression edit is writable; complete equality is unchanged. Creation, shell
-conversion, label/schedule/reverse/arbitrary SQL and dependency expansion block.
+exact `SYSTEM_MANAGED` or `NOT_SCHEDULED` schedule with null schedule bounds.
+Desired and target schedules must match; no schedule adaptation is performed. Only
+the forward false-predicate plus DeviceId IS NOT NULL expression edit is writable;
+complete equality is unchanged. Creation, shell conversion,
+label/schedule/reverse/arbitrary SQL and dependency expansion block.
+
+The target-bound workflow starts from the target's retrieved correlated XML/JSON
+pair, then edits only the qualified expression in both members. Two-profile
+admission/preservation has synthetic coverage. Installed target-bound `NOT_SCHEDULED`
+acceptance passed on October 29, 2026: one expression-only PATCH returned HTTP 200,
+ACTIVE remained ACTIVE, and the qualified SQL changed from 324 to 397 bytes. Independent
+runtime/Metadata/dependency readback confirmed schedule and nonexpression preservation;
+the actual public repeat returned unchanged/not-attempted with zero mutations/jobs.
+Last-run fields and error codes remained null; no successful computation is claimed.
+This does not complete unchanged-source-artifact cross-org acceptance;
+a `SYSTEM_MANAGED` source artifact still blocks against a `NOT_SCHEDULED` target.
+The existing never-run/error-free runtime restriction is unchanged, so a source
+reporting `SUCCESS` remains inadmissible. ACTIVE admission does not require a
+successful target calculation run. CRUD ratings and operation scope are unchanged.
 Updates acknowledge processing; every pending CI is rebound and preflighted before
 any next mixed write. Input digest guards and private detached observation recording
 are mandatory executor options. The existing executor attempts at most one PATCH,
 bounds settlement, independently correlates final readback, and never replays unknown
-mutations. Public routing has synthetic regression coverage; fresh live command,
-zero-write/computation and cross-org acceptance remain separate evidence gates.
+mutations. The installed target-bound run consumed 8m52.853s including pack/install,
+65/100 logical reads, 5/12 org-facing CLI invocations including the standard child,
+2/12 settlement polls and 1/1 PATCH; explicit jobs/schedule writes/source calls were
+zero. Child/auth HTTP traffic remains unknown, not a global wire-count claim.
+Unchanged-source cross-org and successful-computation acceptance remain separate gates.
 
 General seven-family support is **unimplemented**; explicit bounded DMO retrieval
 is available through current service-owned capability checks, not a permanent
@@ -228,8 +268,42 @@ confirm deletion. Dependency/collateral admission, public interface approval and
 explicit disposable-fixture live-delete approval remain blockers. No live deletion,
 non-cascading behavior or asynchronous status contract is claimed.
 
-## mapping: unimplemented
+## relationship: exact definition-only export
 
+- [x] Public `sf data360 retrieve -m relationship:ExactDeveloperName` supports one/multiple
+      sorted unique exact names in default space, with default/65.0/auto fixed to Metadata API65.
+- [x] Export exact standard XML to the configured package's `fieldSrcTrgtRelationships`
+      directory; support unchanged repeat and explicit differing-file overwrite consent.
+- [x] Report `family: relationship`, `definitionOnly: true`, `deployable: false` and the
+      actual Metadata route. This excludes this plugin's operational deploy, not standard
+      Metadata deployment elsewhere. Retain successful members after independent failures.
+- [x] Reject inventory, dependency expansion and operational file/Git deploy input admission.
+      Synthetic tests cover output safety, version/mixed-family routing and zero-mutation rejection.
+- [x] Isolated installed source-only definition export on mcnext-sdo, October 29, 2026:
+      exact independent standard XML comparison, configured root, unchanged repeat,
+      API65/auto requested/actual routes, duplicate selection and local deploy-input rejection.
+      Multiple distinct members/failure continuation remain synthetic only; no semantic
+      or cross-org portability claim. Binding and finite-call receipts are in docs/handover.md.
+- [ ] Relationship prerequisite compatibility, operational preview/create/update/repeat.
+
+## mapping: unimplemented operational semantics; exact definition-only export available
+
+- [x] Public exact `mapping:ApiName` opaque XML retrieval, sorted unique members,
+      default space, default/65.0/auto fixed Metadata API65 with requested version retained.
+- [x] Configured `objectSourceTargetMaps/<name>.objectSourceTargetMap-meta.xml`, exact
+      bytes, unchanged repeat, explicit differing-file overwrite and path/link safeguards.
+- [x] Definition-only/non-operational-deploy classification; independent per-member
+      failure continuation and payload-free mapping labels. No semantic/KQ inference.
+- [x] Retrieve syntax/version/inventory/dependency refusals before auth. Local deploy
+      XML refusal before target use/mutation, not before authentication. Git XML non-admission:
+      mapping-only selects no inputs, mixed changes select only supported operational inputs.
+- [x] Installed source-only exact mapping export acceptance: independent standard API65
+      XML equality, configured source root, retrieved/unchanged repeat, auto actual65,
+      duplicate deduplication, definition-only classification, local deploy-input refusal
+      before target use (not authentication) and Git non-admission. Seven total org-facing
+      CLI invocations including children, four Metadata operations; zero writes/processing/target calls.
+      Multiple distinct members/failure continuation remain synthetic-only. No semantic
+      PK/KQ compatibility or cross-org operational deploy acceptance. Retrieve remains Partial/API.
 - [ ] Record official endpoints, versions, pagination and inventory scope.
 - [ ] Preserve deterministic source/target identity, fields and qualifier mappings.
 - [ ] Verify replacement/update semantics cannot silently remove existing mappings.

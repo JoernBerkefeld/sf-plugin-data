@@ -49,7 +49,7 @@ export type CalculatedInsightDocument = {
     description: null;
     isEnabled: true;
     subType: null;
-    publishScheduleInterval: 'SYSTEM_MANAGED';
+    publishScheduleInterval: 'SYSTEM_MANAGED' | 'NOT_SCHEDULED';
     publishScheduleStartDateTime: null;
     publishScheduleEndDate: null;
     dimensions: [Dimension];
@@ -133,9 +133,16 @@ function text(value: unknown): string {
  * Construct the complete fixed semantic profile from qualified SQL, never a SQL parser.
  * @param {string} displayName Preserved authored label.
  * @param {string} expression Exact one of the two qualified expressions.
+ * @param {unknown} schedule Exact observed or authored schedule; never defaulted.
  * @returns {object} Complete preservation baseline.
  */
-function specification(displayName: string, expression: string): CalculatedInsightDocument['spec'] {
+function specification(
+  displayName: string,
+  expression: string,
+  schedule: unknown,
+): CalculatedInsightDocument['spec'] {
+  if (schedule !== 'SYSTEM_MANAGED' && schedule !== 'NOT_SCHEDULED')
+    throw new CalculatedInsightError('CI_CONFIGURATION_UNQUALIFIED');
   if (![originalExpression, editedExpression].includes(expression))
     throw new CalculatedInsightError('CI_EXPRESSION_UNQUALIFIED');
   return {
@@ -147,7 +154,7 @@ function specification(displayName: string, expression: string): CalculatedInsig
     description: wireNull,
     isEnabled: true,
     subType: wireNull,
-    publishScheduleInterval: 'SYSTEM_MANAGED',
+    publishScheduleInterval: schedule,
     publishScheduleStartDateTime: wireNull,
     publishScheduleEndDate: wireNull,
     dimensions: [
@@ -202,7 +209,11 @@ export function validateCalculatedInsightDocument(value: unknown): CalculatedIns
   if (!root.spec || typeof root.spec !== 'object' || Array.isArray(root.spec))
     throw new CalculatedInsightError('INVALID_CI_DOCUMENT');
   const spec = root.spec as Record<string, unknown>;
-  const expected = specification(text(spec.displayName), text(spec.expression));
+  const expected = specification(
+    text(spec.displayName),
+    text(spec.expression),
+    spec.publishScheduleInterval,
+  );
   if (!isDeepStrictEqual(spec, expected))
     throw new CalculatedInsightError('CI_CONFIGURATION_UNQUALIFIED');
   return {
@@ -338,9 +349,9 @@ function attribution(value: unknown): Attribution {
 export function observeCalculatedInsight(
   runtimeDetail: unknown,
 ): CalculatedInsightProjection & { status: 'ACTIVE' | 'PROCESSING' } {
-  const semanticKeys = Object.keys(specification('label', originalExpression)).filter(
-    (key) => key !== 'dependencies',
-  );
+  const semanticKeys = Object.keys(
+    specification('label', originalExpression, 'SYSTEM_MANAGED'),
+  ).filter((key) => key !== 'dependencies');
   const transientKeys = [
     'lastCalcInsightStatusDateTime',
     'lastCalcInsightStatusErrorCode',
@@ -374,12 +385,12 @@ export function observeCalculatedInsight(
     const fields = spec[role];
     if (!Array.isArray(fields) || fields.length !== 1)
       throw new CalculatedInsightError('CI_SCHEMA_UNQUALIFIED');
-    const expectedField = specification('label', originalExpression)[role][0];
+    const expectedField = specification('label', originalExpression, 'SYSTEM_MANAGED')[role][0];
     const field = record(fields[0], [...Object.keys(expectedField), 'dataSource']);
     observations.derivedAttribution[role] = [attribution(field.dataSource)];
     spec[role] = [Object.fromEntries(Object.keys(expectedField).map((key) => [key, field[key]]))];
   }
-  spec.dependencies = specification('label', originalExpression).dependencies;
+  spec.dependencies = specification('label', originalExpression, 'SYSTEM_MANAGED').dependencies;
   const document = validateCalculatedInsightDocument({
     schemaVersion: 1,
     kind: 'calculated-insight',

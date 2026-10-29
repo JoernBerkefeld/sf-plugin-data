@@ -18,7 +18,7 @@ const device = `${table}.ssot__DeviceId__c`;
 const application = `${table}.ssot__SoftwareApplicationId__c`;
 const original = `SELECT APPROX_COUNT_DISTINCT(${device}) AS device_count__c, ${application} AS app_id__c FROM ${table} WHERE 1 = 0 GROUP BY ${application}`;
 const edited = original.replace('WHERE 1 = 0', `WHERE 1 = 0 AND ${device} IS NOT NULL`);
-const runtime = (expression = original, status = 'ACTIVE') => ({
+const runtime = (expression = original, status = 'ACTIVE', schedule = 'SYSTEM_MANAGED') => ({
   apiName: 'SyntheticInsight__cio',
   dataSpace: 'default',
   calculatedInsightStatus: status,
@@ -54,7 +54,7 @@ const runtime = (expression = original, status = 'ACTIVE') => ({
     },
   ],
   publishScheduleEndDate: wireNull,
-  publishScheduleInterval: 'SYSTEM_MANAGED',
+  publishScheduleInterval: schedule,
   publishScheduleStartDateTime: wireNull,
   subType: wireNull,
   lastCalcInsightStatusDateTime: '2026-10-28T10:00:00.000Z',
@@ -70,14 +70,20 @@ const metadata = (expression = original) => ({
   expression,
   masterLabel: 'Synthetic insight',
 });
-const document = (expression = original) =>
-  projectCalculatedInsight(runtime(expression), metadata(expression)).document;
+const document = (expression = original, schedule = 'SYSTEM_MANAGED') =>
+  projectCalculatedInsight(runtime(expression, 'ACTIVE', schedule), metadata(expression)).document;
 const version = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
-const acquisition = (expression = original) => ({
+const acquisition = (expression = original, schedule = 'SYSTEM_MANAGED') => ({
   identity: document().identity,
-  candidate: document(expression),
-  observations: projectCalculatedInsight(runtime(expression), metadata(expression)).observations,
-  expectations: { runtime: runtime(expression), metadata: metadata(expression) },
+  candidate: document(expression, schedule),
+  observations: projectCalculatedInsight(
+    runtime(expression, 'ACTIVE', schedule),
+    metadata(expression),
+  ).observations,
+  expectations: {
+    runtime: runtime(expression, 'ACTIVE', schedule),
+    metadata: metadata(expression),
+  },
   blockers: [],
 });
 const connection = (expression = original) => ({
@@ -137,6 +143,7 @@ const compatible = () => ({
  * @returns {object} Calls and executable fixture.
  */
 function harness(overrides = {}, desired = document(edited)) {
+  const schedule = desired.spec.publishScheduleInterval;
   const calls = { writes: 0, reads: 0, captures: 0, bindings: 0, inputs: 0, observations: [] };
   const options = {
     allowProcessing: true,
@@ -152,15 +159,15 @@ function harness(overrides = {}, desired = document(edited)) {
     },
     acquire: async () => {
       calls.captures++;
-      return acquisition(calls.writes > 0 ? edited : original);
+      return acquisition(calls.writes > 0 ? edited : original, schedule);
     },
     patch: async () => {
       calls.writes++;
-      return runtime(edited, 'PROCESSING');
+      return runtime(edited, 'PROCESSING', schedule);
     },
     read: async () => {
       calls.reads++;
-      return runtime(edited);
+      return runtime(edited, 'ACTIVE', schedule);
     },
     delay: async () => {},
     ...overrides,
@@ -170,6 +177,89 @@ function harness(overrides = {}, desired = document(edited)) {
     run: () => executeCalculatedInsightDeploy(desired, connection(), version, 'default', options),
   };
 }
+
+test('NOT_SCHEDULED target-bound forward update settles and actual executor repeat is unchanged', async () => {
+  const target = projectCalculatedInsight(
+    runtime(original, 'ACTIVE', 'NOT_SCHEDULED'),
+    metadata(),
+  ).document;
+  const desired = structuredClone(target);
+  desired.spec.expression = edited;
+  const fixture = harness({}, desired);
+  const updated = await fixture.run();
+  assert.equal(updated.mutation, 'confirmed-updated');
+  assert.equal(fixture.calls.writes, 1);
+  assert.equal(fixture.calls.captures, 3);
+  const repeat = harness(
+    { allowProcessing: false, acquire: async () => acquisition(edited, 'NOT_SCHEDULED') },
+    desired,
+  );
+  const repeated = await repeat.run();
+  assert.equal(repeated.outcome, 'unchanged');
+  assert.equal(repeat.calls.writes, 0);
+  assert.equal(repeat.calls.reads, 0);
+});
+for (const [name, overrides] of [
+  ['acknowledgement', { allowProcessing: false }],
+  [
+    'input drift',
+    {
+      verifyInput: async () => {
+        throw new Error('drift');
+      },
+    },
+  ],
+  [
+    'dependency failure',
+    {
+      bind: async () => {
+        throw new Error('missing');
+      },
+    },
+  ],
+  ['target schedule mismatch', { acquire: async () => acquisition() }],
+])
+  test(`NOT_SCHEDULED prewrite ${name} blocks with zero writes`, async () => {
+    const fixture = harness(overrides, document(edited, 'NOT_SCHEDULED'));
+    const result = await fixture.run();
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(fixture.calls.writes, 0);
+  });
+test('NOT_SCHEDULED schedule drift between baseline and fresh target blocks', async () => {
+  let captures = 0;
+  const fixture = harness(
+    {
+      acquire: async () =>
+        acquisition(original, ++captures === 1 ? 'NOT_SCHEDULED' : 'SYSTEM_MANAGED'),
+    },
+    document(edited, 'NOT_SCHEDULED'),
+  );
+  const result = await fixture.run();
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(fixture.calls.writes, 0);
+});
+test('NOT_SCHEDULED settlement schedule drift is uncertain without replay', async () => {
+  let captures = 0;
+  const fixture = harness(
+    {
+      acquire: async () =>
+        acquisition(
+          ++captures === 3 ? edited : original,
+          captures === 3 ? 'SYSTEM_MANAGED' : 'NOT_SCHEDULED',
+        ),
+    },
+    document(edited, 'NOT_SCHEDULED'),
+  );
+  const result = await fixture.run();
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(fixture.calls.writes, 1);
+});
+test('SYSTEM_MANAGED source artifact is not adapted to NOT_SCHEDULED target', async () => {
+  const fixture = harness({ acquire: async () => acquisition(original, 'NOT_SCHEDULED') });
+  const result = await fixture.run();
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(fixture.calls.writes, 0);
+});
 
 test('CI independent acquisition uses exact API65 runtime and guarded SOAP definition', async () => {
   const result = await retrieveCalculatedInsight(
@@ -513,8 +603,9 @@ test('CI transport sends exactly expression and disables replay/redirect', async
     },
     version,
   );
-  await client.patchCalculatedInsight(document(edited));
-  assert.equal(calls, 1);
+  for (const schedule of ['SYSTEM_MANAGED', 'NOT_SCHEDULED'])
+    await client.patchCalculatedInsight(document(edited, schedule));
+  assert.equal(calls, 2);
   await assert.rejects(
     new ConnectClient(connection(), '67.0').patchCalculatedInsight(document(edited)),
   );

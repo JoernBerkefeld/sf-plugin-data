@@ -1,3 +1,152 @@
+# Installed Segment source-only acceptance / post-run propagation — 2026-10-29
+
+PASS on mcnext-sdo, exact retained OwnedSegRetest_5a0e87b3fee2, API65/default.
+Fresh intended-org and retained owner IDs/ACTIVE runtime matched; independent standard
+XML and compatible PROFILE UnifiedssotIndividualMkt__dlm.ssot__Id__c binding admitted
+the single-model NO_REFRESH/P90D configuration. Installed exact retrieve succeeded;
+repeat returned unchanged with BOTH JSON and XML byte-stable. Public preview returned
+one unchanged item/empty requiredEffects. Actual unchanged deploy WITHOUT
+--allow-processing returned exactly one unchanged/not-attempted item/empty
+requiredEffects. Independent final complete runtime/XML and dependency binding equalled
+baseline. No historical PATCH, setup, replacement fixture, target or expansion calls.
+
+Run2026-10-29T19:40:55.420Z to19:50:53.440Z,9m58.020s including owned OS-temp snapshot,
+compile/prepack/install/final audit. Ledger39/100 observable logical read events;
+15/16 conservative org-facing process invocations INCLUDING9 standard children and
+2 private baseline/final launchers; actual Salesforce CLI commands13. Nine of nine
+permitted exact READ-ONLY Metadata retrieve jobs and their status polls; ZERO org
+configuration mutations, processing/deployment/activation jobs. Child/auth HTTP remains
+UNKNOWN;100 observable events is not a guaranteed global wire cap. Failed local origin
+assertion/parser checks were corrected before org reads, reusing saved results without
+reinstallation or org replay. All processes exited; no termination needed.
+
+Accepted HEAD0540c10bc969fff170d35dd0d74adf8b2037c5ff PLUS132 frozen required tracked/
+untracked inputs digest577869c17629914304ad755a6e1bcc65006040c4844c7df7bc4c9416cd4d99d6;
+tarball SHA2562321b8d617d1f657b5ebf682812d277bad4bc887506892cd6c2b4ba1294b53a6.
+118 installed files byte-verified and independent command-origin resolution matched
+the isolated tarball-installed package. Original inputs/tarball/installed files stable.
+JSON SHA256100f8cfea078a926e30d0f445b6c813fe640ce8d33bcc7c02ca4550235c2daaa;
+XML SHA25670551439f2871027891cae54442959a60063ea48e8ba44e726160ebaa0fed0df.
+Private receipts F:/Temp/segment-installed-1cUl0f include acceptance-summary.json,
+binding.json,audit.json,ledger and command/readback receipts. AUTH-SENSITIVE isolated
+state: do not publish raw receipts/auth. Scratch retained, no cleanup.
+
+Gate1 written19:52plan; dedicated Gate2 reviewer57efdac3's three must-fixes were written
+to the existing root plan before execution. User20:38 standing preauthorization covers
+reviewed bounded acceptance checks without repeated approval questions, not unrelated
+destructive writes/history/releases. One owner froze inputs; snapshot-only prepack made
+no repository changes. Both orgs have unlimited vendor-funded credits, not a waiver of
+finite safety limits. No source edits during run; this later propagation changes only
+README/capabilities/handover/existing root plan. README14-resource ratings/icons and
+other rows preserved. Guide is separately owned; no plugin no-op claim goes into vanilla
+guide content. Package sf-plugin-data0.1.0, next version unassigned/no release. No
+language-stack/wiki/hover/consumer dependency changes. Cross-org, CREATE,two-selection,
+dependency expansion,meaningful DBT-definition update/computation remain unproved;
+IR CREATE/DMO additive/KQ semantics parked; full-feature closure pending,G last.
+
+# Installed mapping export acceptance / post-run propagation — 2026-10-29
+
+Source-only installed acceptance PASSED on mcnext-sdo for retained exact
+McpMappingProbe_20261027_map_McpMappingProbe_20261027_1793094371706.
+Independent standard API65 XML matched installed export bytes; configured custom-source
+root, first retrieved/unchanged repeat, auto original request/actual65 route, duplicate
+deduplication and family:mapping/definitionOnly:true/deployable:false passed.
+Pure LOCAL installed readDeployInputs returned UNSAFE_SOURCE before target use/mutation,
+NOT a pre-auth claim. Installed Git mapping-only selected none; mixed selected only the
+supported DMO in an isolated clone of existing history, no commits or staging.
+Multiple distinct members/failure continuation remain synthetic-only; no semantic
+PK/KQ compatibility, operational deploy or cross-org acceptance is inferred.
+
+Bound HEAD 0540c10bc969fff170d35dd0d74adf8b2037c5ff plus frozen tracked/required-untracked
+input digest 4132cb94553efee3791fcd12a29f0c22a579cc99ec0a7ff9c054cadcd3974f60;
+tarball SHA256 f64d78f321ca707d955c8d159c54168f9c6ac1a76814e295d81883974554e534;
+XML SHA256 a7597c0b2389818bc87661c8b3d514be862f1c79c139ee0bdcfa51268a9d92de.
+118 installed files verified; inputs/HEAD/tarball unchanged through acceptance.
+7/12 TOTAL org-facing CLI invocations including three nested standard retrieves,
+four Metadata read operations, 611.444sec including pack/install/final audit.
+Zero org writes/processing/target calls; HTTP count unknown, not instrumented.
+Remaining five invocations/34m49s were not reused and grant no further campaign.
+Retained private receipts/auth state: F:/Temp/data360-map-accept-xIk2Re.
+Never publish raw auth/state. No cleanup performed; retain the owned OS-temp run.
+
+README 14-resource table reconciled: mapping qualification changed, status stays
+Partial with existing purple API icon; all other rows/icons preserved. Prior standard
+API mapping deployment findings and relationship qualification remain unchanged.
+ALL sfmc.guide FROZEN under user15:40 direction until fresh explicit approval;
+guide reconciliation deferred, no guide editing or parallel guide work authorized.
+Only README/capabilities/handover/root plan updated; no org calls, budget reuse,
+production/test/DB/index/staging/history/release edits in this follow-up.
+Version sf-plugin-data@0.1.0 unchanged, next release unassigned. Prior implementation
+Gate4 4ef4b1b6 zero must-fix remains applicable; optional tests not auto-applied.
+Historical implementation-only checkpoint below records its then-synthetic scope.
+
+# Public mapping definition export / Gate 5 — 2026-10-29
+
+Coordinator Gate4 reviewer 4ef4b1b6 iteration1 PASS, zero must-fix. Public opaque
+mapping export is complete in src/commands/data360/retrieve.ts,
+src/artifacts/write-mapping-definition.ts, test/retrieve-command.test.mjs and
+test/mapping-definition-output.test.mjs, plus minimal test/git-deploy-selection.test.mjs
+exclusion coverage. Scoped autofix, full zero-warning lint, explicit build, 111 focused
+and 1145 full tests passed; full npm test 118.172sec (Node114.074sec). Exact implementation
+blobs are in the coordinator handoff. No installed/live mapping acceptance occurred.
+
+writeMappingDefinition(apiName,definitionXml,projectRoot,overwrite) returns exact path
+and retrieved/unchanged. Public sorted unique mapping selectors use direct
+retrieveMappingSourceMetadata, never semantic retrieveMapping or KQ/schema admission.
+Default space/default65/65.0/auto fixed Metadata65, original request preserved;
+family:mapping, definitionOnly:true, deployable:false means only plugin operational
+deploy. Existing mixed-family pins and independent failure continuation are retained.
+Local deploy XML refusal precedes target use/mutation, NOT necessarily authentication.
+Git mapping-only changes select no inputs; mixed changes select supported operational
+artifacts only. No production deploy/Git code changes. Multiple/failure paths are
+synthetic evidence; separate historical standard API mapping writes are not public
+installed acceptance or universal semantic compatibility.
+
+README table now shows mapping Retrieve Partial with the existing purple API icon;
+Create/Update/Delete stay unavailable. Capabilities reflect definition-only scope.
+Existing vanilla guide checked and unchanged: this synthetic implementation establishes
+no new standard API/live evidence or guide workflow. Relationship installed qualification
+remains unchanged. Optional Git writer-fixture test is reported, not auto-applied.
+No org calls, budget reuse, guide edits, DB/index, staging/history or release in this
+propagation dispatch. Version sf-plugin-data@0.1.0; next version unassigned.
+
+# Installed relationship definition export acceptance — 2026-10-29
+
+Bounded source-only installed acceptance passed on `mcnext-sdo` for retained exact
+`ssot__ReturnOrder_CustomerAccountId_map_Account_Id_N_1`. No target calls, org writes,
+processing, deploy commands or fixture changes. Start 14:24:23.910 UTC+1; final audit
+14:31:07.607; 403.698 seconds including package/install. Seven of twelve authorized
+org-facing CLI invocations: one independent standard retrieve and three public
+retrieves, each including its child standard retrieve. Four Metadata read operations;
+underlying HTTP/poll count is unknown. Run completed; leftover budget is not open-ended.
+
+Exact public XML matched independent standard API65 bytes (SHA256
+`fc1b1e240ffadcff8ec1cabf637974d6f3ba862b7c03a54585076ab43bdc72f3`).
+Configured custom-source output, retrieved then unchanged repeat, preserved requested
+`auto`/actual API65 route, duplicate deduplication and definitionOnly/deployable/family
+classification passed. Installed readDeployInputs locally rejected XML with UNSAFE_SOURCE;
+no org-facing deploy was run. Multiple distinct members and failure-between-successes
+continuation were NOT live exercised; retain their synthetic qualification only.
+
+Package `sf-plugin-data@0.1.0`, source HEAD
+`0540c10bc969fff170d35dd0d74adf8b2037c5ff` plus bound uncommitted inputs, tarball SHA256
+`f1e82057313a92f0b23079031da7aa0417e0787ff9d43b98630c71871605e939`.
+116 installed files matched extracted tarball bytes. Full before/after input hashes,
+six required source/test hashes, command receipts, invocation ledger and final audit
+are retained under `F:/Temp/data360-rel-accept-j3gMs8`. This owned isolated CLI state
+contains copied source authentication: keep it private, do not publish raw contents.
+Minimal exact absolute tarball allowlist only; no global trust edits or recursive cleanup.
+Local npm executable-path and Windows tarball argument-spelling setup corrections
+finished before org calls. HEAD/input/tarball hashes stayed unchanged throughout.
+
+Public relationship Retrieve stays Partial/API-led, not operational deploy or semantic
+compatibility/cross-org proof. Gate4 17223991 was zero must-fix; optional TOCTOU hardening
+and title wording remain unapplied. README/capabilities/root roadmap reconcile this
+acceptance; the guide records only independently verified standard retrieval, preserving
+its vanilla CLI/API structure. User lifted the prior guide freeze at 14:20; historical
+freeze records remain historical. No staging/history/release or DB/index work in this
+propagation dispatch. Current package version 0.1.0; no new version assigned.
+
 # Mapping checkpoint Git-hook repair — 2026-10-29
 
 Sole-editor continuation from predecessor 2ddb26bd; fetched baseline remains
@@ -671,6 +820,105 @@ actual Nodeos.tmpdir and nonemptyTMP/TMPDIR F:/Temp; process-only repair/recheck
 No scratch allocated or recursive cleanup performed; future scratch uses verified
 OSmkdtemp random ownership marker, registered strict-descendant/no-link cleanup,
 never repository/workspace cleanup. Retained source leftovers are not a gate.
+
+# CI installed target-bound acceptance — 2026-10-29, 19:39 (UTC+1)
+
+Supersedes the live-target pending statements in the historical two-profile checkpoint
+below, not its unchanged-source cross-org restriction. Reviewed target-bound plan
+Gate 1/root18:28 and Gate 2 `a21b18ab` passed; Gate 3 used one owner with frozen inputs.
+User19:28 explicitly authorized only `mcnext-thuy`, org `00Dfj00000bRQabEAG`, owned
+`McpPublicCI20261028_mvs8a9br__cio` in default. Fresh runtime/Metadata correlation and
+independent Standard ENGAGEMENT DMO mapped-Text binding passed. Target public retrieve
+produced the correlated XML/JSON pair; only the qualified expression was locally
+edited in both. No source export was normalized or used as an unchanged cross-org pair.
+
+Installed public preview reported update/processing. Exactly one expression-only
+PATCH returned HTTP 200; apply reported updated/confirmed-updated. Independent settled
+runtime, Metadata and dependency reads confirmed ACTIVE -> ACTIVE, NOT_SCHEDULED
+preserved, SQL324 ->397 bytes and complete nonexpression configuration preservation.
+Last-run fields/error codes stayed null; no successful computation claim. Actual
+public unchanged repeat reported unchanged/not-attempted with ZERO mutations/jobs.
+Source SYSTEM_MANAGED versus target NOT_SCHEDULED still blocks, as does source SUCCESS
+under the unchanged never-run/error-free admission policy. No full CI/family/cross-org
+completion or CRUD rating promotion: all 14 README rows checked, existing icons retained.
+
+Measured full run including pack/install/final audit: 8m52.853s; 65/100 logical reads
+(baseline4 +retrieve5 +preview6 +apply26 +independent final4 +repeat20), 5/12 org-facing
+CLI invocations including one standard child, 2/12 executor settlement polls, 1/1
+PATCH. Zero explicit jobs, schedule writes, source calls, creates/deletes/activation.
+Child standard retrieval counts once as a logical job and once as a CLI invocation;
+child/auth HTTP remains UNKNOWN, no global wire-count claim. At PATCH dispatch65
+logical reads remained and full CLI/time reserves passed. One supported initial auth
+refresh succeeded in isolated state; a local module-resolution harness error before
+org reads was corrected without operation replay. Executor120s deadline and original
+production operations were unchanged; observer delegated originals, no stubs/caching.
+
+Accepted HEAD `0540c10bc969fff170d35dd0d74adf8b2037c5ff` PLUS frozen tracked/untracked
+inputs, not HEAD alone: input digest
+`46ddc903d01bd4c28e1b6a4b8cd19415878c2d0b46985d92e53be4fe2d85821f`;
+exact tarball SHA256
+`7c5c1cb11a011eb3139c0c8e3cf6a5069dd31352953a5d402976e7b96b445f52`;
+118 installed files byte-verified; all bindings stable at final audit. Private receipts
+`F:/Temp/ci-ns-accept-RNtzdU/acceptance-summary.json`, `binding.json`, `ledger.json`
+and audit/result/readback files are retained with isolated authentication state:
+AUTH-SENSITIVE, never publish the raw directory or credentials. Desired JSON SHA256
+`2fa4e67d27fa3b7b18b4975f3ebbf2d9d2f4470b254417cf6e8a6f7de31c806a`;
+desired XML SHA256
+`cdaab5ee6aa294ff98f742d9ab74c613ecfa13769333df28e7e2b0d1e21f9bb9`.
+No production/docs/guide/root/history/staging/DB/index edits occurred DURING the run;
+this separately authorized postacceptance pass changes only README, capabilities,
+handover and existing root plan. Version remains0.1.0; release unassigned. No remaining
+budget reuse or new live authority. Both environments have no credit limits; this
+never waives operation/time/fixture safety limits. Coordinator owns separate guide-only
+propagation; no guide changes here. Independent package has no workspace consumers,
+so language/data/LSP/MCP/extensions/wiki/MSO require no update. Postacceptance docs
+verification: lint:fix and full lint passed with zero warnings; explicit build passed;
+full unfiltered npm test1164/1164 passed, zero failures/skips/cancellations. npm test
+including intrinsic build122.8577811s; complete lint/build/test sequence149.1972253s.
+LF/no-BOM/whitespace checks passed. All129 non-documentation accepted inputs retained
+their original hashes, including existing other-actor edits; no production change.
+
+Next useful local-only proposal: reconcile remaining non-parked roadmap acceptance
+criteria against retained family evidence, identifying the smallest missing public
+integration outcome and its blockers before a new reviewed plan. Do not rerun this
+mutation, normalize source schedules/run state or start live API discovery. IR CREATE,
+DMO additive fields and mapping KQ semantics remain parked; G stays last.
+
+# CI two-profile preservation checkpoint — 2026-10-29
+
+Code-only target-bound workflow approved separately from unchanged-source-artifact
+cross-org acceptance. Gate 2 and Gate 4 review `0eabf86f` passed with zero must-fix;
+Gate 5 package documentation records the boundary here without upgrading CRUD ratings.
+
+Only `src/artifacts/calculated-insight-document.ts` and the existing document/deploy
+CI tests changed in the implementation slice. Admission accepts exactly
+`SYSTEM_MANAGED` or `NOT_SCHEDULED`, preserving the explicitly supplied schedule;
+missing, unknown and differently cased values have no fallback. Null schedule bounds,
+complete nonexpression equality, exact expression direction, dependency/input/target
+drift guards, processing acknowledgement and expression-only wire payload remain.
+Executor, transport, binding and never-run/error-free observation policy are unchanged.
+A source with last-run `SUCCESS` therefore remains outside current runtime admission.
+
+Synthetic qualification: 97 focused CI tests passed; full package suite 1164 passed,
+0 failed/skipped; lint had 0 warnings and explicit build passed. Full `npm test`
+wall-clock was 120.17 seconds. These implementation receipts predate the separate
+post-documentation verification; they are not live API update evidence.
+
+A target-bound desired pair originates from target retrieval, with only the qualified
+expression edited locally in both XML and JSON. It preserves `NOT_SCHEDULED`; it is
+not an unchanged source export or public deploy schedule adaptation. Source
+`SYSTEM_MANAGED` versus target `NOT_SCHEDULED` stays blocked. Live `NOT_SCHEDULED`
+expression-update preservation and unchanged-source cross-org acceptance remain
+unproved. Existing target org/API-name/default-space/label identity is adequate;
+GUI record-ID correlation remains separately unverified, not a new acceptance gate.
+No successful target calculation run is required for ACTIVE profile admission.
+
+No live calls, schedule changes, activation, jobs, processing commands, installs,
+auth changes, staging, history or evidence-index updates occurred in this code/docs
+slice. The API guide needs no change for this plugin-only synthetic extension.
+Optional review suggestions for duplicate invalid-bound and NOT_SCHEDULED/SUCCESS
+regressions were reported, not implemented. Next live work needs a fresh reviewed
+finite proposal and explicit authorization; no historical execution budget is reused.
 
 # PUBLIC CI command routing — 2026-10-28
 

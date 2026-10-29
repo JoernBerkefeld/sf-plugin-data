@@ -160,17 +160,32 @@ export async function retrieveMappingSourceMetadata(
 }
 
 /**
+ * Retrieve one exact standard relationship definition without semantic admission or org writes.
+ * @param {string} targetOrg Explicit authenticated alias or username.
+ * @param {string} apiName Exact relationship developer name.
+ * @param {MetadataRunner} runner Installed CLI or synthetic seam.
+ * @returns {Promise<string>} Independently retrieved standard source XML bytes.
+ */
+export async function retrieveRelationshipSourceMetadata(
+  targetOrg: string,
+  apiName: string,
+  runner: MetadataRunner = runProjectMetadata,
+): Promise<string> {
+  return retrieveExactMetadata(targetOrg, apiName, 'relationship', runner);
+}
+
+/**
  * Execute one allowlisted standard Metadata retrieve and validate its terminal member receipt.
  * @param {string} targetOrg Explicit authenticated target.
  * @param {string} apiName Exact standard member name.
- * @param {'segment' | 'calculated-insight' | 'mapping'} family Allowlisted source family.
+ * @param {'segment' | 'calculated-insight' | 'mapping' | 'relationship'} family Allowlisted source family.
  * @param {MetadataRunner} runner Installed CLI or synthetic seam.
  * @returns {Promise<string>} Exact bounded XML.
  */
 async function retrieveExactMetadata(
   targetOrg: string,
   apiName: string,
-  family: 'segment' | 'calculated-insight' | 'mapping',
+  family: 'segment' | 'calculated-insight' | 'mapping' | 'relationship',
   runner: MetadataRunner,
 ): Promise<string> {
   const grammar = {
@@ -181,6 +196,11 @@ async function retrieveExactMetadata(
       'mktCalcInsightObjectDef',
     ],
     mapping: ['ObjectSourceTargetMap', 'objectSourceTargetMaps', 'objectSourceTargetMap'],
+    relationship: [
+      'FieldSrcTrgtRelationship',
+      'fieldSrcTrgtRelationships',
+      'fieldSrcTrgtRelationship',
+    ],
   } as const;
   const [type, directory, extension] = grammar[family];
   const suffix = `.${extension}-meta.xml`;

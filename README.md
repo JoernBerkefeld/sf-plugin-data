@@ -49,12 +49,12 @@ plugin features.
 | --- | --- | --- | --- | --- | --- |
 | Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin writes: qualified Other/default creation and object/existing nonprimary field labels only; additive fields remain deferred. |
 | Data Lake Objects (DLOs), `ingestion-dlo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin supports existing sole-source Ingestion API targets and exactly one Text addition via schema PUT + stream sync, not general DLOs. API cleanup remained asynchronous. |
-| DLO-to-DMO mappings | Unavailable | Unavailable | Unavailable | Unavailable | Compatible existing objects and label-only update; mapping orchestration is not implemented. |
-| DMO field relationships | Unavailable | Unavailable | Unavailable | Unavailable | Owned custom ManyToOne profile; deletion also removes its sole-use lookup. |
+| DLO-to-DMO mappings, `mapping` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default opaque XML export only, default/65.0/auto; installed source-only acceptance passed, no semantic/KQ admission or cross-org operational deploy. |
+| DMO field relationships, `relationship` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved. |
 | Source object definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only, not connectors or credentials. |
 | Stream definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only; public stream orchestration remains queued. Ingestion schema sync above is not general stream support. |
-| Calculated insights, `calculated-insight` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin only correlates XML/runtime and permits one qualified existing-insight predicate edit. |
-| Segments, `segment` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact single-model DBT XML/JSON pair, existing label/description update; no creation. |
+| Calculated insights, `calculated-insight` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Qualified existing-insight predicate edit only; installed target-retrieved NOT_SCHEDULED update and zero-mutation repeat passed. Not unchanged-source cross-org acceptance. |
+| Segments, `segment` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact single-model DBT XML/JSON pair, existing label/description update; installed source-only existing-owner retrieve/byte-stable repeat/unchanged preview and zero-write deploy accepted. No creation, cross-org or meaningful DBT-definition update qualification. |
 | Segment members | Unavailable | Unavailable | Unavailable | Unavailable | Bounded membership reads, not a full population export. Runtime rows are outside plugin configuration scope. |
 | Data Graphs, `data-graph` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: existing ready root-only Graph, forward LastName projection append only; qualified existing IR owner may be bound/expanded. |
 | Identity Resolution, `identity-resolution` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact existing owner and bounded reconciliation update; publishing/processing acknowledgement required. No owner provisioning. |
@@ -183,9 +183,23 @@ Deploy supports an existing settled ACTIVE custom calculated metric only: the
 qualified same-aggregation `APPROX_COUNT_DISTINCT(DeviceId)` expression may change
 from `WHERE 1 = 0` to `WHERE 1 = 0 AND ...ssot__DeviceId__c IS NOT NULL`, preserving
 the exact qualified engagement DMO, group-by, dimension/measure schema and schedule.
-Complete semantic equality is unchanged without a mutation. Creation, Metadata
-shell conversion, reverse/broader SQL, label/schedule changes, inventory and CI
-`--include-dependencies` expansion are blocked. Existing compatible prerequisites
+The admitted schedule is exactly `SYSTEM_MANAGED` or `NOT_SCHEDULED`, with null
+schedule bounds; desired and target must have the same schedule. Complete semantic
+equality is unchanged without a mutation. Creation, Metadata shell conversion,
+reverse/broader SQL, label/schedule changes, inventory and CI
+`--include-dependencies` expansion are blocked. No schedule is normalized or adapted.
+
+For the target-bound workflow, retrieve the target's correlated XML/JSON pair and
+locally edit only the qualified expression in both members, preserving its schedule.
+Installed target-bound acceptance passed on October 29, 2026: one expression-only
+PATCH returned HTTP 200, settled ACTIVE with `NOT_SCHEDULED` preserved, and independent
+runtime/Metadata/dependency readback confirmed preservation. The actual public repeat
+returned unchanged/not-attempted with zero mutations or explicit jobs. Run/error fields
+stayed null; successful computation is not claimed. This workflow does not prove
+unchanged-source-artifact cross-org portability: a `SYSTEM_MANAGED` source artifact
+against a `NOT_SCHEDULED` target remains blocked. Runtime admission still requires
+the existing never-run, error-free profile; a source reporting `SUCCESS` is not
+admitted by that policy. No successful target calculation run is required. Existing compatible prerequisites
 are always read and bound, even without expansion.
 
 Preview never deploys. Execution admits the whole selection before writes,
@@ -194,8 +208,9 @@ bindings before mixed writes, and delegates at most one expression-only API65 PA
 per CI to the bounded executor. Settlement requires independent runtime/Metadata
 readback. Unknown outcomes stop the batch without replay or rollback. Attribution
 and status observations stay private, not in artifacts or command results.
-These public routing regressions do not by themselves establish live zero-write,
-cross-org or successful-computation acceptance. The operational examples later in
+Synthetic public routing regressions are separate from the bounded installed
+acceptance above; unchanged-source cross-org and successful-computation acceptance
+remain unproved. The operational examples later in
 this README describe separate API research, not additional plugin capabilities.
 
 ## Public DMO workflow
@@ -485,6 +500,37 @@ or Connect fallback is qualified here; the original DLO remains retained.
 
 #### Read / Retrieve
 
+The plugin exports opaque standard definitions for exact mapping names:
+
+```sh
+sf data360 retrieve --target-org SOURCE_ALIAS --api-version 65.0 -m mapping:ExactMappingName --json
+```
+
+Repeat `-m mapping:ExactMappingName` for multiple selections. Names are sorted and
+deduplicated; only the `default` data space is supported. Default API `65.0`, explicit
+`65.0` and `auto` use Metadata API65; other numeric pins, `latest`, inventory and
+dependency expansion are refused before authentication. The configured package source
+root receives `objectSourceTargetMaps/<name>.objectSourceTargetMap-meta.xml` with exact
+acquired XML bytes. Identical output is unchanged; differing files require `--overwrite`.
+Independent read/output failures retain successful members and return nonzero status.
+Results identify `family: "mapping"`, `definitionOnly: true`, `deployable: false`
+and actual `mapping.metadata` API65 routing while preserving the requested version.
+Here non-deployable means only this plugin's operational deploy, not standard Metadata
+deployment by other tools. No semantic mapping service, PK/KQ inference or prerequisite
+compatibility is admitted. Explicit local deploy input refuses this XML before target-org
+use/mutation, not necessarily before authentication. Git mapping-only changes select no
+deploy inputs; mixed changes select only supported operational artifacts, never mapping XML.
+Installed source-only acceptance passed for one retained exact mapping: independent
+standard API65 XML matched the installed export, configured-root output, retrieved then
+unchanged repeat, auto/requested-vs-actual routing, deduplication and classification.
+Local installed deploy-input refusal and Git non-admission also passed without org deploy.
+Multiple distinct members and failure continuation remain synthetic-only. This does not
+qualify semantic PK/KQ compatibility or cross-org operational deployment, nor extend the
+separate historical standard-API deployment findings below.
+The purple API icon identifies its API-led mechanism, not an OOTB plugin command.
+
+The following independent standard Salesforce CLI example remains separate:
+
 ```sh
 sf project retrieve start --metadata ObjectSourceTargetMap:McpMappingProbe_20261027_map_McpMappingProbe_20261027_1793094371706 --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
 ```
@@ -556,6 +602,34 @@ delete is provided.
 ### DMO field relationship: `FieldSrcTrgtRelationship`
 
 #### Read / Retrieve
+
+The plugin supports exact definition-only export for one or multiple named relationships:
+
+```sh
+sf data360 retrieve --target-org SOURCE_ALIAS --api-version 65.0 -m relationship:ExactRelationshipName -m relationship:AnotherRelationshipName --json
+```
+
+Use exact developer names in the `default` data space. The default API version,
+explicit `65.0`, and `auto` use the fixed Metadata API65 route; other numeric pins
+and `latest` are rejected. Output uses the configured package source root and
+`fieldSrcTrgtRelationships/<name>.fieldSrcTrgtRelationship-meta.xml`, retaining exact
+XML bytes. Identical files are unchanged; differing files require `--overwrite`.
+Independent member failures retain successful exports and return a nonzero aggregate.
+
+Each successful relationship result includes `family: "relationship"`,
+`definitionOnly: true`, `deployable: false`, and its actual API65 Metadata route.
+Here `deployable: false` means this plugin's operational deploy does not admit the
+export; it does not prohibit standard Metadata deployment by other tools.
+Inventory, dependency expansion, operational file/Git deploy admission and semantic
+compatibility are not supported. Isolated installed source-only acceptance on
+October 29, 2026 verified exact XML against independent standard retrieval,
+configured output, unchanged repeat, API65/auto routing, duplicate selection and
+local deploy-input rejection. Multiple distinct members and failure continuation
+remain synthetic-test evidence only; semantic and cross-org acceptance are unproved. The custom plugin command is not an
+out-of-the-box Salesforce CLI command; the table's API icon describes its API-led
+export mechanism.
+
+For comparison, the following is a separate out-of-the-box Salesforce CLI retrieve:
 
 ```sh
 sf project retrieve start --metadata FieldSrcTrgtRelationship:ssot__ReturnOrder_CustomerAccountId_map_Account_Id_N_1 --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
@@ -665,7 +739,8 @@ sf project deploy start --manifest package.xml --post-destructive-changes relati
 
 These manifests describe the qualified internal mechanism, **not a user
 hand-authoring requirement**; intended orchestration keeps them internal and out of
-Git. No public relationship wrapper is implemented. Do not apply the observed
+Git. No public relationship create/update/delete wrapper is implemented; the exact
+definition-only retrieve above does not authorize this lifecycle. Do not apply the observed
 lookup cascade to a shared or pre-existing field or rerun against the deleted fixture.
 
 Both empty DMO prerequisites were subsequently deleted using the bounded standard
