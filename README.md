@@ -1,5 +1,89 @@
 # Data360 Salesforce CLI plugin
 
+`sf-plugin-data` adds `sf data360 retrieve` and `sf data360 deploy` to Salesforce CLI
+for downloading portable Data360 configuration, previewing local changes and applying
+supported, guarded updates. Support is resource- and operation-specific: this is
+**not a complete backup, restore or migration tool**. Deployment can cause processing;
+preview first and read the limits below.
+
+## How to install
+
+Requires Salesforce CLI, Node.js `^22.22.2 || ^24.15.0` and npm. The package identity
+is `sf-plugin-data`; registry availability and released-package acceptance are not
+established here. For a **developer installation**, run from a checkout of this repository:
+
+```sh
+npm ci --no-workspaces
+npm run build --no-workspaces
+sf plugins link .
+sf data360 --help
+```
+
+Org-backed operations also require an authenticated Data360-enabled org with the
+necessary permissions. Sign in with `sf org login web --alias source` and select it
+explicitly with `--target-org source`. Linking a plugin does not grant org access.
+See [Local development](#local-development) for verification commands.
+
+## Resource and operation support
+
+The four support columns describe **this plugin's public commands**, not everything
+Salesforce can do. **Partial** means an implemented bounded subset, not full-resource
+or released-package qualification. **Unavailable** means no public plugin operation;
+it does not mean Salesforce lacks that capability. No resource has full CRUD support.
+Retrieve uses `sf data360 retrieve`; Create/Update use `sf data360 deploy`.
+There is no public plugin Delete command. Exact selectors and limits follow below.
+
+**Route legend (separate from support):**
+<img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" />
+**CLI (blue)** = an actual out-of-the-box Salesforce CLI operation, such as
+`sf project retrieve start`;
+<img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />
+**API (purple)** = an API-led operation, **including** `sf api request rest` and the
+documented MCP execute facade. Cell icons identify mechanisms used by that supported
+plugin operation; two icons mean it combines both. They do not add support or label
+custom `sf data360 …` commands as OOTB. Unavailable operations have no icons.
+The last column retains resource-specific scope and limitations, not additional
+plugin features.
+
+| Resource | Retrieve | Create | Update | Delete | Scope / limits |
+| --- | --- | --- | --- | --- | --- | --- |
+| Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin writes: qualified Other/default creation and object/existing nonprimary field labels only; additive fields remain deferred. |
+| Data Lake Objects (DLOs), `ingestion-dlo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin supports existing sole-source Ingestion API targets and exactly one Text addition via schema PUT + stream sync, not general DLOs. API cleanup remained asynchronous. |
+| DLO-to-DMO mappings | Unavailable | Unavailable | Unavailable | Unavailable | Compatible existing objects and label-only update; mapping orchestration is not implemented. |
+| DMO field relationships | Unavailable | Unavailable | Unavailable | Unavailable | Owned custom ManyToOne profile; deletion also removes its sole-use lookup. |
+| Source object definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only, not connectors or credentials. |
+| Stream definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only; public stream orchestration remains queued. Ingestion schema sync above is not general stream support. |
+| Calculated insights, `calculated-insight` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin only correlates XML/runtime and permits one qualified existing-insight predicate edit. |
+| Segments, `segment` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact single-model DBT XML/JSON pair, existing label/description update; no creation. |
+| Segment members | Unavailable | Unavailable | Unavailable | Unavailable | Bounded membership reads, not a full population export. Runtime rows are outside plugin configuration scope. |
+| Data Graphs, `data-graph` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: existing ready root-only Graph, forward LastName projection append only; qualified existing IR owner may be bound/expanded. |
+| Identity Resolution, `identity-resolution` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact existing owner and bounded reconciliation update; publishing/processing acknowledgement required. No owner provisioning. |
+| Kit templates | Unavailable | Unavailable | Unavailable | Unavailable | Stored snapshots, not runtime Graph/IR creation. |
+| Kit definitions | Unavailable | Unavailable | Unavailable | Unavailable | Combined owned container/template/member transport, not successful runtime installation. |
+| Kit membership | Unavailable | Unavailable | Unavailable | Unavailable | Creation/deletion qualified only with its container/template, not independently. |
+
+The scope notes summarize the [14-resource Salesforce CLI guide](https://sfmc.guide/next/data-cloud-cli/),
+whose operation-specific evidence and prerequisites apply; it is **not an extra
+plugin feature list**. Metadata-only definitions and API runtime operations are not
+interchangeable. Raw API examples later in this README document separate research.
+
+Current plugin limits:
+
+- Only DMO supports inventory/type-wide retrieval; the other implemented families
+  require exact members. Default data space only. API `auto` chooses fixed qualified
+  family routes (API65 legacy families; API67 IR/Graph/Ingestion), not the latest API.
+- DMO creation/label updates, Segment DBT label/description updates, CI predicate
+  updates, IR reconciliation updates and Graph projection updates are separate
+  bounded profiles. General schema edits, mapping orchestration and new IR/Graph
+  provisioning are not enabled. Use `--preview` before guarded deployment.
+- Installed revision `518a219` has bounded two-org existing-owner IR/Graph retrieval,
+  target Graph LastName update, independent full preservation and actual zero-write
+  repeated pair deployment evidence. The IR owners stayed unchanged: this does
+  **not** qualify portable IR mutation, product CREATE or complete end-to-end migration.
+  Broader family and released-package acceptance remain separate gates.
+- Unknown mutation outcomes stop without automatic retry or rollback. Processing
+  acknowledgements authorize only the selected supported change, not arbitrary runs.
+
 ## Existing Ingestion API DLO workflow
 
 Exact `-m ingestion-dlo:ReturnedName__dll` supports retrieve, deployment preview,
@@ -45,8 +129,11 @@ settlement, dependent bindings are refreshed only while complete Graph/transform
 and root/output preservation evidence stays unchanged. Projection and wire payloads
 translate the three logical root slots through fresh target-local bindings.
 Legacy retrieval/deployment remains unchanged; its expansion is still unavailable.
-This support is offline regression-verified, not installed/live paired acceptance.
-It does not enable IR/Graph creation or establish cross-org pair acceptance.
+Installed revision `518a219` additionally has bounded two-org existing-owner pair
+retrieval, target Graph LastName update, independent full owner/twelve-output/root/
+Graph/transform preservation and actual zero-write repeated pair deployment evidence.
+IR owners were unchanged. This does not enable IR/Graph creation, prove portable
+IR mutation or establish complete migration acceptance.
 
 ```sh
 sf data360 retrieve -o source -m data-graph:ExampleGraph --api-version auto -d ./project --json
@@ -70,7 +157,8 @@ label/description/schedule changes and other roots are blocked. Independent root
 binding, completed owner-transform lineage, whole-selection admission and fresh
 all-pending checks precede mixed-batch writes. Settlement is bounded to forty
 minutes with independent ready/full-preservation confirmation; unknown outcomes
-never replay. Installed/live public and cross-org acceptance remain separate gates.
+never replay. The installed existing-owner paired acceptance above covers the exact
+LastName update and zero-write repeat, not arbitrary Graphs or product creation.
 
 ## Public calculated insight workflow
 
@@ -110,12 +198,13 @@ These public routing regressions do not by themselves establish live zero-write,
 cross-org or successful-computation acceptance. The operational examples later in
 this README describe separate API research, not additional plugin capabilities.
 
-`sf-plugin-data` is an independently authored TypeScript/ESM
-plugin for portable Data360 configuration. **Bounded explicit DMO retrieval is
-implemented; strictly read-only deployment preview, bounded guarded creation and label updates are available.** Current retrieval capability is
-owned by the common service (API 65.0/default, qualified generated recipe and semantics),
-not a permanent DMO architecture. This is not yet a general migration tool or a
-published release.
+## Public DMO workflow
+
+**Bounded explicit DMO retrieval, strictly read-only deployment preview, guarded
+creation and label updates are available.** Current retrieval capability is owned
+by the common service (API 65.0/default, qualified generated recipe and semantics),
+not a permanent DMO architecture. This is not a general migration tool;
+released-package acceptance remains separate.
 
 ```sh
 sf data360 retrieve -o source --api-version 65.0 --data-space default -m dmo:Example__dlm -d ./project --json
