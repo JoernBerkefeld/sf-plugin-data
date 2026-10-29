@@ -51,8 +51,8 @@
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run build && node --test test/*.test.mjs",
-    "smoke": "node --test test/cli.test.mjs",
+    "test": "npm run build && node scripts/run-tests.mjs",
+    "smoke": "node scripts/run-tests.mjs test/cli.test.mjs",
     "smoke:package": "node scripts/package-smoke.mjs",
     "prepare": "husky || true",
     "prepack": "npm run build"

@@ -1,3 +1,98 @@
+# Mapping checkpoint Git-hook repair — 2026-10-29
+
+Sole-editor continuation from predecessor 2ddb26bd; fetched baseline remains
+518a2199c42de28fc6298957c2da02c49a048ac8 before the authorized checkpoint commit.
+The failed partial commit wrote no history. Root cause: Git exports repository-local
+state (notably the temporary GIT_INDEX_FILE used by `commit --only`) into hooks;
+foreign synthetic repositories inherited that index and referenced objects belonging
+to the real repository. Local Git githooks guidance prescribes clearing names from
+`git rev-parse --local-env-vars` when invoking Git in a foreign repository.
+
+The minimal shared boundary is now scripts/run-tests.mjs, used by npm test/smoke.
+Only the spawned Node test process receives a copied environment without Git-local
+names; the actual hook, its parent environment and temporary commit index remain
+untouched. Build ordering, full-suite selection and unchanged normal hook remain.
+No production Git changes or fixture-wrapper refactor. Regression executes this
+actual runner with a single isolated child test under a foreign index/repository,
+asserts its own committed tree, unchanged foreign index bytes and unchanged parent
+environment. Owned marker-bearing OS-temp fixtures are retained, not recursively
+removed. Reproduced red before isolation; focused 27/27 then green with zero-warning
+full lint and explicit build. Dedicated read-only plan and harness reviews completed;
+harness review found zero must-fix. Full suite/hook/push/CI receipts follow in worker
+return; do not infer success until those operations finish.
+
+Preserved user state: README worktree blob bba1ce592823a40800820d30c5f8a692f7c6e06a,
+staged blob 125a4d9b6ea011e547e11fb2bc3a60c1090f588a; assets/icons/api.svg blob
+377547f48bc4b2b68993ac008981595f908c27c3; assets/icons/cli.svg blob
+3c396c4e099737d08875567753e718f0f659d9fa. User README/assets are excluded from
+checkpoint history. Hook blob ee72530e928f161e8cc9388971ce42e44e9ec61d unchanged.
+Foundation and necessary harness inputs only are authorized; no release/version
+bump, org calls, mapping acquisition extension, guide/root-plan/verification DB edits.
+Next interfaces and acquisition resume point remain exactly as documented below.
+Whole-feature Gate4 and README propagation remain coordinator-owned; DMO and
+IR CREATE remain parked. Standalone sf-plugin-data@0.1.0 only; no workspace consumers
+or language/LSP/hover/wiki/other-plugin propagation required.
+
+# Mapping acquisition foundation — 2026-10-29
+
+Reviewed root checkpoint (review 3ddb1ed2, zero remaining must-fix) applied to
+API65/default-space mapping retrieve/read-only preview only. Local mandatory
+checkpoint passed without org calls: installed SDR registry declares
+ObjectSourceTargetMap / objectSourceTargetMaps / objectSourceTargetMap suffix.
+Retained standard source XML plus API65 created/updated/repeated readbacks in
+F:/Temp/data360-standard-retrieve-m0Gi0B establish the exact detail route
+`/services/data/v65.0/ssot/data-model-object-mappings/{developerName}` and shape
+`{developerName,fieldMappings:[{developerName,sourceFieldDeveloperName,
+targetFieldDeveloperName}],sourceEntityDeveloperName,status,targetEntityDeveloperName}`.
+Those historical target receipts are not current target ownership or absence proof.
+
+First clean sequential slice, intentionally not the complete acquisition outcome:
+- `retrieveMappingSourceMetadata(targetOrg,apiName,runner?) -> Promise<string>`
+  extends the existing exact standard transport, unchanged terminal/member/path
+  safeguards and API65 isolated project. No XML generator or org write.
+- `projectMapping(runtime,definitionXml,apiName) -> MappingDocument` strictly
+  projects ACTIVE detail and simple direct Custom/System XML mappings. All runtime
+  pairs remain in `spec.pairs`; `spec.metadataPairs` records the XML subset and
+  `spec.runtimeOnlyPairs` preserves every unmatched runtime pair explicitly.
+  Six XML/seven runtime evidence never establishes generic XML/runtime equality.
+  Extra pairs are preservation requirements, NOT qualified generated-key inference.
+  `spec.definitionDigest` is SHA256 of exact UTF-8 XML bytes. Unknown fields,
+  ambiguous source/target/name inventories, filters/formulas and retarget mismatch
+  reject, never disappear through projection.
+- `MappingDocument` is only a correlated candidate: not a validated deploy input,
+  full schema admission, executable delta or public preview. No command/input
+  pipeline consumes it yet. Private runtime/source owner evidence and full PK/KQ
+  prerequisite schemas still need acquisition/binding. Do not infer those from names.
+
+Resume sequentially with a fresh owner: implement `retrieve-mapping.ts` using exact
+standard XML plus independent Connect detail and existing DLO/DMO SOAP schema
+readers; retain full private expectations; fail closed on unknown PK/KQ/system
+configuration. Then smallest writer/validator and dependency binder/read-only
+preflight; finally sole integration owner handles command/file/Git selectors and
+whole-batch zero-write execution guard. Correlate both artifact bytes, not only JSON.
+No mapping write service, relationship changes, missing objects, IR/Graph CREATE,
+org probes, release or provisioning. Whole-feature Gate4/doc propagation belongs
+to coordinator after final integration, not this foundation slice.
+
+26 focused regressions cover actual retained projection shape (anonymized fixture),
+explicit runtime-only preservation, Id/KQ inclusion, unknown/missing/ambiguous
+pairs, input digest, unsupported XML, exact installed file grammar and terminal
+receipt refusal. Full lint/build/test and normal hook/commit/CI receipts are in the
+worker return, not inferred here. Standalone zero-warning lint/build and complete
+suite passed 1064/1064 (npm test 124.030s; Node phase120.116s). Normal unchanged
+hook under literal-path `git commit --only` then failed 17 pre-existing Git-fixture
+tests (1047/1064 pass): synthetic repositories reported invalid objects from a
+foreign index, consistent with inherited GIT_INDEX_FILE from partial commit.
+No commit/push/hosted CI occurred; HEAD remains518a2199. Do not bypass hooks or
+stage user files. Coordinator must resolve Git-fixture environment isolation or
+choose a correctly isolated approved index strategy before checkpoint commit.
+All four authored files were staged before the failed attempt; this receipt-only
+handover amendment is unstaged afterward. Rebind/reverify before a later commit.
+README/assets are user-owned staged/unstaged inputs and remain untouched; full
+worktree cleanliness must NOT be claimed.
+README propagation remains coordinator-owned by explicit instruction; package has
+no workspace consumers, and language/guide/DB/root-plan files are unchanged.
+
 # Existing-owner public IR/Graph integration — 2026-10-28
 
 Implemented actual retrieve.ts/deploy.ts public command paths from f772de3.

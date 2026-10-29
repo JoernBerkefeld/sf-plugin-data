@@ -145,25 +145,45 @@ export async function retrieveCalculatedInsightSourceMetadata(
 }
 
 /**
+ * Retrieve one exact standard mapping definition without deploying or rewriting XML.
+ * @param {string} targetOrg Explicit authenticated alias or username.
+ * @param {string} apiName Exact returned mapping developer name.
+ * @param {MetadataRunner} runner Installed CLI or synthetic seam.
+ * @returns {Promise<string>} Independently retrieved standard source XML bytes.
+ */
+export async function retrieveMappingSourceMetadata(
+  targetOrg: string,
+  apiName: string,
+  runner: MetadataRunner = runProjectMetadata,
+): Promise<string> {
+  return retrieveExactMetadata(targetOrg, apiName, 'mapping', runner);
+}
+
+/**
  * Execute one allowlisted standard Metadata retrieve and validate its terminal member receipt.
  * @param {string} targetOrg Explicit authenticated target.
  * @param {string} apiName Exact standard member name.
- * @param {'segment' | 'calculated-insight'} family Allowlisted source family.
+ * @param {'segment' | 'calculated-insight' | 'mapping'} family Allowlisted source family.
  * @param {MetadataRunner} runner Installed CLI or synthetic seam.
  * @returns {Promise<string>} Exact bounded XML.
  */
 async function retrieveExactMetadata(
   targetOrg: string,
   apiName: string,
-  family: 'segment' | 'calculated-insight',
+  family: 'segment' | 'calculated-insight' | 'mapping',
   runner: MetadataRunner,
 ): Promise<string> {
-  const type = family === 'segment' ? 'MarketSegmentDefinition' : 'MktCalcInsightObjectDef';
-  const directory = family === 'segment' ? 'marketSegmentDefinitions' : 'mktCalcInsightObjectDefs';
-  const suffix =
-    family === 'segment'
-      ? '.marketSegmentDefinition-meta.xml'
-      : '.mktCalcInsightObjectDef-meta.xml';
+  const grammar = {
+    segment: ['MarketSegmentDefinition', 'marketSegmentDefinitions', 'marketSegmentDefinition'],
+    'calculated-insight': [
+      'MktCalcInsightObjectDef',
+      'mktCalcInsightObjectDefs',
+      'mktCalcInsightObjectDef',
+    ],
+    mapping: ['ObjectSourceTargetMap', 'objectSourceTargetMaps', 'objectSourceTargetMap'],
+  } as const;
+  const [type, directory, extension] = grammar[family];
+  const suffix = `.${extension}-meta.xml`;
   if (
     !targetOrg ||
     targetOrg.startsWith('-') ||
