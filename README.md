@@ -46,7 +46,7 @@ The last column retains resource-specific scope and limitations, not additional
 plugin features.
 
 | Resource | Retrieve | Create | Update | Delete | Scope / limits |
-| --- | --- | --- | --- | --- | --- | --- |
+| --- | --- | --- | --- | --- | --- |
 | Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin writes: qualified Other/default creation and object/existing nonprimary field labels only; additive fields remain deferred. |
 | Data Lake Objects (DLOs), `ingestion-dlo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin supports existing sole-source Ingestion API targets and exactly one Text addition via schema PUT + stream sync, not general DLOs. API cleanup remained asynchronous. |
 | DLO-to-DMO mappings | Unavailable | Unavailable | Unavailable | Unavailable | Compatible existing objects and label-only update; mapping orchestration is not implemented. |
