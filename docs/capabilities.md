@@ -1,5 +1,21 @@
 # Capability contract checklist
 
+## Qualified Segment forward predicate update — 2026-10-30
+
+Existing ACTIVE API65/default single-model DBT owners now admit the isolated forward
+addition `AND <same selected object.field> IS NOT NULL` to the existing `WHERE 1 = 0`
+SQL. Exact object/field, model, labels, settings and bindings must remain unchanged.
+Reverse transitions, other predicates, combined SQL/label edits and arbitrary SQL
+remain blocked. Equality of either admitted form remains zero-write and needs no
+processing acknowledgement; an actual update requires `--allow-processing`.
+
+One source existing-owner PATCH independently settled ACTIVE with exact desired
+runtime/Metadata SQL and preserved IDs, generated references, NO_REFRESH/P90D and
+PROFILE primary-field binding. This is a persisted definition change, not audience
+membership, computation, CREATE or cross-org proof. Fresh public current-worktree
+unchanged-deploy acceptance is recorded in the handover separately from historical
+installed-package acceptance. No new fixture, rollback or cleanup was performed.
+
 ## Installed Segment source-only acceptance — 2026-10-29
 
 The installed public plugin passed exact retained ACTIVE existing-owner acceptance on

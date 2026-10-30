@@ -1,6 +1,9 @@
 import type { Connection } from '@salesforce/core';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { validateSegmentDocument } from '../artifacts/segment-document.js';
+import {
+  isQualifiedSegmentUpdate,
+  validateSegmentDocument,
+} from '../artifacts/segment-document.js';
 import { retrieveSegment } from './retrieve-segment.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -14,7 +17,7 @@ export type SegmentDeployPreview = DmoDeployPreview & {
 
 /**
  * Compare only independently admitted exact existing Segments; never prove absence from errors.
- * This checkpoint advises label/description updates only and exposes no executor.
+ * Admit label/description or the qualified forward empty-audience predicate update only.
  * @param {unknown} value Desired bounded authored document.
  * @param {Connection} connection Command-owned authenticated target connection.
  * @param {string | ApiVersionSelection} apiVersion Explicit API65 selection.
@@ -87,16 +90,10 @@ export async function preflightSegmentDeploy(
     // ACTIVE is the only independently observed settled state for this bounded variant.
     if (acquired.expectations.runtime.segmentStatus !== 'ACTIVE')
       return result('blocked', 'present', 'SEGMENT_TARGET_NOT_SETTLED');
-    const preserved = (spec: typeof desired.spec): unknown => {
-      return { ...spec, displayName: '', description: '' };
-    };
-    if (JSON.stringify(preserved(desired.spec)) !== JSON.stringify(preserved(current.spec)))
+    if (!isQualifiedSegmentUpdate(current, desired))
       return result('blocked-changes', 'present', 'SEGMENT_DEFINITION_UPDATE_UNQUALIFIED');
     return result(
-      desired.spec.displayName === current.spec.displayName &&
-        desired.spec.description === current.spec.description
-        ? 'unchanged'
-        : 'update',
+      JSON.stringify(desired) === JSON.stringify(current) ? 'unchanged' : 'update',
       'present',
     );
   } catch {

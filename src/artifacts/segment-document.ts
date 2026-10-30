@@ -74,11 +74,40 @@ function text(value: unknown, empty = false): string {
  */
 export function segmentSqlDependencies(sql: string): SegmentDocument['spec']['dependencies'] {
   const match =
-    /^SELECT\s+([A-Za-z][A-Za-z0-9_]*__dlm)\.([A-Za-z][A-Za-z0-9_]*__c)\s+FROM\s+([A-Za-z][A-Za-z0-9_]*__dlm)\s+WHERE\s+1\s*=\s*0\s*;?\s*$/iu.exec(
+    /^SELECT\s+([A-Za-z][A-Za-z0-9_]*__dlm)\.([A-Za-z][A-Za-z0-9_]*__c)\s+FROM\s+([A-Za-z][A-Za-z0-9_]*__dlm)\s+WHERE\s+1\s*=\s*0(?:\s+AND\s+([A-Za-z][A-Za-z0-9_]*__dlm)\.([A-Za-z][A-Za-z0-9_]*__c)\s+IS\s+NOT\s+NULL)?\s*;?\s*$/iu.exec(
       sql,
     );
-  if (!match || match[1] !== match[3]) throw new SegmentError('SQL_DEPENDENCIES_UNQUALIFIED');
+  if (
+    !match ||
+    match[1] !== match[3] ||
+    (match[4] !== undefined && (match[4] !== match[1] || match[5] !== match[2]))
+  )
+    throw new SegmentError('SQL_DEPENDENCIES_UNQUALIFIED');
   return [{ kind: 'dmo', dataSpace: 'default', apiName: match[1], fields: [match[2]] }];
+}
+
+/**
+ * Admit label-only edits or the qualified forward empty-audience predicate change.
+ * @param {SegmentDocument} current Independently acquired existing target.
+ * @param {SegmentDocument} desired Complete desired definition.
+ * @returns {boolean} Whether every unedited property is preserved.
+ */
+export function isQualifiedSegmentUpdate(
+  current: SegmentDocument,
+  desired: SegmentDocument,
+): boolean {
+  const before = structuredClone(current);
+  const after = structuredClone(desired);
+  if (before.spec.models[0].sql === after.spec.models[0].sql) {
+    before.spec.displayName = after.spec.displayName;
+    before.spec.description = after.spec.description;
+  } else {
+    const dependency = before.spec.dependencies[0];
+    const suffix = ` AND ${dependency.apiName}.${dependency.fields[0]} IS NOT NULL`;
+    if (after.spec.models[0].sql !== `${before.spec.models[0].sql}${suffix}`) return false;
+    before.spec.models[0].sql = after.spec.models[0].sql;
+  }
+  return JSON.stringify(before) === JSON.stringify(after);
 }
 
 /**

@@ -1,7 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
-import { validateSegmentDocument } from '../artifacts/segment-document.js';
+import {
+  isQualifiedSegmentUpdate,
+  validateSegmentDocument,
+} from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -30,12 +33,14 @@ type TargetConnection = Pick<
 >;
 
 /**
- * Exclude only observed volatile audit/member/state fields from private preservation comparison.
+ * Compare nonedited private fields; independently projected models/criteria must match desired SQL.
  * @param {Record<string, unknown>} runtime Exact admitted runtime snapshot.
  * @returns {Record<string, unknown>} Detached full preservation baseline.
  */
 function preservation(runtime: Record<string, unknown>): Record<string, unknown> {
   const result = structuredClone(runtime);
+  // Criteria content is checked by projectSegment; its presence must not silently disappear.
+  if (Object.hasOwn(result, 'includeCriteria')) result.includeCriteria = true;
   for (const key of [
     'displayName',
     'description',
@@ -43,6 +48,7 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
     'lastModifiedBy',
     'lastModifiedDate',
     'lastSegmentMemberCount',
+    'includeDbt',
   ])
     delete result[key];
   for (const key of ['marketSegmentId', 'marketSegmentDefinitionId']) {
@@ -52,7 +58,7 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
 }
 
 /**
- * Execute only independently present ACTIVE DBT label/description updates or zero-write equality.
+ * Execute independently present ACTIVE DBT qualified updates or zero-write equality.
  * Creation, replay, rollback and Metadata deploy jobs are deliberately unavailable.
  * @param {unknown} value Complete authored desired Segment.
  * @param {TargetConnection} connection Command-owned authenticated target.
@@ -131,12 +137,7 @@ export async function executeSegmentDeploy(
       projected.runtime.segmentStatus !== 'ACTIVE'
     )
       return result('blocked', 'not-attempted', 'SEGMENT_TARGET_DRIFT');
-    const preservedSpec = (spec: typeof desired.spec): unknown => ({
-      ...spec,
-      displayName: '',
-      description: '',
-    });
-    if (!isDeepStrictEqual(preservedSpec(desired.spec), preservedSpec(projected.candidate.spec)))
+    if (!isQualifiedSegmentUpdate(projected.candidate, desired))
       return result('blocked', 'not-attempted', 'SEGMENT_DEFINITION_UPDATE_UNQUALIFIED');
     baseline = preservation(projected.runtime);
     // Pair bytes and target binding must still agree after exact runtime/Metadata acquisition.
@@ -180,7 +181,10 @@ export async function executeSegmentDeploy(
         await read(desired.identity.apiName),
         desired.identity.apiName,
       );
-      if (!isDeepStrictEqual(preservation(observed.runtime), baseline))
+      if (
+        !isDeepStrictEqual(preservation(observed.runtime), baseline) ||
+        !isDeepStrictEqual(observed.candidate, desired)
+      )
         return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH');
       if (['PROCESSING', 'COUNTING'].includes(String(observed.runtime.segmentStatus))) continue;
       if (observed.runtime.segmentStatus !== 'ACTIVE')

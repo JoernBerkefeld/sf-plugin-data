@@ -17,6 +17,7 @@ import {
   validateSegmentDocument,
   validateSegmentPair,
   serializeSegmentDocument,
+  isQualifiedSegmentUpdate,
 } from '../lib/artifacts/segment-document.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { retrieveSegment, projectSegment } from '../lib/services/retrieve-segment.js';
@@ -91,6 +92,32 @@ test('observed DBT audit/generated fields stay private and redundant criteria mu
     const changed = structuredClone(response);
     changed.segments[0][key] = value;
     assert.throws(() => projectSegment(changed, 'Audience'), key);
+  }
+});
+
+test('qualified predicate preserves dependency and only permits forward isolated SQL change', () => {
+  const before = candidate();
+  const after = candidate();
+  after.spec.models[0].sql += ' AND Person__dlm.Id__c IS NOT NULL';
+  assert.deepEqual(validateSegmentDocument(after), after);
+  assert.deepEqual(validateSegmentPair(after, xml().replace(sql, after.spec.models[0].sql)), after);
+  assert.equal(isQualifiedSegmentUpdate(before, after), true);
+  assert.equal(isQualifiedSegmentUpdate(after, before), false);
+  assert.equal(isQualifiedSegmentUpdate(after, after), true);
+  const combined = structuredClone(after);
+  combined.spec.description = 'Unqualified combined edit';
+  assert.equal(isQualifiedSegmentUpdate(before, combined), false);
+  combined.spec.models[0].name = 'Other';
+  assert.equal(isQualifiedSegmentUpdate(before, combined), false);
+  for (const suffix of [
+    ' AND Person__dlm.Other__c IS NOT NULL',
+    ' AND Other__dlm.Id__c IS NOT NULL',
+    ' OR Person__dlm.Id__c IS NOT NULL',
+    ' AND Person__dlm.Id__c IS NULL',
+  ]) {
+    const invalid = candidate();
+    invalid.spec.models[0].sql += suffix;
+    assert.throws(() => validateSegmentDocument(invalid));
   }
 });
 

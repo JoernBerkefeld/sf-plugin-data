@@ -8,8 +8,12 @@ import {
   ingestionRequire,
   IngestionDloError,
   validateIngestionDloDocument,
+  validateIngestionDloCreateIntent,
 } from '../artifacts/ingestion-dlo-document.js';
-import type { IngestionDloDocument } from '../artifacts/ingestion-dlo-document.js';
+import type {
+  IngestionDloDocument,
+  IngestionDloObservedCreateIntent,
+} from '../artifacts/ingestion-dlo-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { McpExecuteClient } from '../transport/mcp-execute.js';
 import type { IngestionReadOperation, McpReadObserver } from '../transport/mcp-execute.js';
@@ -325,6 +329,44 @@ export function projectIngestionDlo(
     identity: { dataSpace: 'default', apiName },
     spec: { connectionName: connection.name, event },
   });
+}
+
+/**
+ * Project observed runtime names as desired intent, never original requests or CREATE authority.
+ * @param {IngestionDloBaseline} value Independently acquired complete existing-owner evidence.
+ * @param {string} apiName Exact observed source DLO.
+ * @returns {IngestionDloObservedCreateIntent} Detached internal intent with explicit provenance.
+ */
+export function projectObservedIngestionDloCreateIntent(
+  value: IngestionDloBaseline,
+  apiName: string,
+): IngestionDloObservedCreateIntent {
+  const document = projectIngestionDlo(value, apiName, false);
+  const primaryKey = ingestionDloFields(value.dlo).find((field) => field.isPrimaryKey);
+  ingestionRequire(primaryKey);
+  const sourceKey = document.spec.event.fields.find(
+    (field) => `${field.name}__c` === primaryKey.name,
+  );
+  ingestionRequire(
+    sourceKey && sourceKey.label === primaryKey.label && sourceKey.dataType === primaryKey.dataType,
+  );
+  return {
+    namingProvenance: 'observed-runtime',
+    intent: validateIngestionDloCreateIntent({
+      connectionName: document.spec.connectionName,
+      event: document.spec.event,
+      creation: {
+        category: value.dlo.category,
+        dataSpace: (value.dlo.dataSpaceInfo as Array<{ name: string }>)[0].name,
+        dloName: value.dlo.name,
+        dloLabel: value.dlo.label,
+        streamName: value.stream.name,
+        streamLabel: value.stream.label,
+        primaryKey: sourceKey,
+        refreshMode: (value.stream.refreshConfig as Record<string, unknown>).refreshMode,
+      },
+    }),
+  };
 }
 
 /**

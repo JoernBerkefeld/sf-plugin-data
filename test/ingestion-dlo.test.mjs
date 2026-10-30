@@ -18,10 +18,12 @@ import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js'
 import { operationApiVersion } from '../lib/transport/api-version.js';
 import {
   ingestionAddition,
+  validateIngestionDloCreateIntent,
   validateIngestionDloDocument,
 } from '../lib/artifacts/ingestion-dlo-document.js';
 import {
   projectIngestionDlo,
+  projectObservedIngestionDloCreateIntent,
   retrieveIngestionDlo,
 } from '../lib/services/retrieve-ingestion-dlo.js';
 import {
@@ -455,6 +457,177 @@ test('public retrieve routes exact ingestion selector and blocks all output for 
     assert.equal(result.status, blocked ? 'blocked' : 'success');
     assert.equal(writes.length, blocked ? 0 : 1);
   }
+});
+
+/**
+ * Supplied internal intent, deliberately with a non-first, non-Id primary key.
+ * @returns {object} Independent explicit synthetic intent, not platform evidence.
+ */
+function createIntent() {
+  return {
+    connectionName: 'DedicatedConnection',
+    event: {
+      name: 'ProbeRecord',
+      label: 'ProbeRecord',
+      fields: [
+        { name: 'AValue', label: 'Value', dataType: 'Text' },
+        { name: 'ZKey', label: 'RecordKey', dataType: 'Text' },
+      ],
+    },
+    creation: {
+      category: 'Other',
+      dataSpace: 'default',
+      dloName: 'Requested__dll',
+      dloLabel: 'Requested DLO',
+      streamName: 'RequestedStream',
+      streamLabel: 'Requested stream',
+      primaryKey: { name: 'ZKey', label: 'RecordKey', dataType: 'Text' },
+      refreshMode: 'UPSERT',
+    },
+  };
+}
+
+test('internal intent retains explicit non-first PK and requested names without aliasing input', () => {
+  const supplied = createIntent();
+  supplied.event.fields.reverse();
+  const validated = validateIngestionDloCreateIntent(supplied);
+  assert.deepEqual(validated, createIntent());
+  assert.notStrictEqual(validated.event, supplied.event);
+  assert.notStrictEqual(validated.creation.primaryKey, validated.event.fields[1]);
+  supplied.event.fields[0].label = 'Changed';
+  supplied.creation.primaryKey.label = 'Changed';
+  assert.equal(validated.creation.primaryKey.label, 'RecordKey');
+  validated.event.fields[1].label = 'Detached';
+  assert.equal(validated.creation.primaryKey.label, 'RecordKey');
+  assert.throws(() => validateIngestionDloDocument(createIntent()));
+});
+
+test('internal intent requires every supplied setting and rejects extra authority', () => {
+  const intent = createIntent();
+  for (const section of [[], ['creation'], ['creation', 'primaryKey'], ['event']]) {
+    let original = intent;
+    for (const key of section) original = original[key];
+    for (const key of Object.keys(original)) {
+      const missing = structuredClone(intent);
+      let record = missing;
+      for (const name of section) record = record[name];
+      delete record[key];
+      assert.throws(() => validateIngestionDloCreateIntent(missing), `${section}.${key}`);
+    }
+    const extra = structuredClone(intent);
+    let record = extra;
+    for (const key of section) record = record[key];
+    record.existingDloName = 'Existing__dll';
+    assert.throws(() => validateIngestionDloCreateIntent(extra));
+  }
+});
+
+test('internal intent rejects mismatched PK, unsupported settings and ambiguous identities', () => {
+  const changes = [
+    (x) => (x.creation.primaryKey.name = 'AValue'),
+    (x) => (x.creation.primaryKey.name = 'Missing'),
+    (x) => (x.creation.primaryKey.name = 'zkey'),
+    (x) => (x.creation.primaryKey.label = 'Wrong'),
+    (x) => (x.creation.primaryKey.dataType = 'Number'),
+    (x) => (x.event.fields[1].dataType = 'Number'),
+    (x) => (x.event.fields[1].name = 'KQ_Key'),
+    (x) => x.event.fields.push({ name: 'zkey', label: 'OtherKey', dataType: 'Text' }),
+    (x) => (x.creation.category = 'Profile'),
+    (x) => (x.creation.dataSpace = 'other'),
+    (x) => (x.creation.refreshMode = 'FULL_REFRESH'),
+    (x) => (x.creation.dloName = 'MissingSuffix'),
+    (x) => (x.creation.streamName = 'not an identifier'),
+    (x) => (x.connectionName = ''),
+    (x) => (x.creation.dloLabel = '   '),
+    (x) => (x.creation.streamLabel = 'x'.repeat(201)),
+    (x) => (x.event.fields = []),
+    (x) => (x.creation.primaryKey = undefined),
+    (x) =>
+      Object.defineProperty(x.creation, 'dloLabel', { get: () => assert.fail('getter invoked') }),
+  ];
+  for (const change of changes) {
+    const invalid = createIntent();
+    change(invalid);
+    assert.throws(() => validateIngestionDloCreateIntent(invalid));
+  }
+});
+
+test('observed projection preserves explicit non-first PK, names and provenance without v1 changes', () => {
+  const supplied = baseline();
+  // Make the alphabetically later source field the explicit PK in both independent schemas.
+  for (const fields of [
+    supplied.dlo.fields,
+    supplied.dlo.dataLakeFieldInfoRepresentation,
+    supplied.stream.dataLakeObjectInfo.fields,
+  ]) {
+    for (const field of fields) {
+      field.isPrimaryKey = field.name === 'ProbeValue__c' || field.name === 'ProbeValue';
+      if (field.name === 'KQ_ProbeId__c') field.name = 'KQ_ProbeValue__c';
+      if (field.name === 'KQ_ProbeId') field.name = 'KQ_ProbeValue';
+      if (field.label === 'KQ_ProbeId') field.label = 'KQ_ProbeValue';
+    }
+  }
+  supplied.stream.dataLakeObjectInfo.dataLakeFieldInfoRepresentation = structuredClone(
+    supplied.stream.dataLakeObjectInfo.fields,
+  );
+  const before = structuredClone(supplied);
+  const v1 = projectIngestionDlo(supplied, apiName);
+  const observed = projectObservedIngestionDloCreateIntent(supplied, apiName);
+  assert.equal(observed.namingProvenance, 'observed-runtime');
+  assert.deepEqual(observed.intent, {
+    connectionName: 'ReturnedConnection',
+    event: v1.spec.event,
+    creation: {
+      category: 'Other',
+      dataSpace: 'default',
+      dloName: apiName,
+      dloLabel: 'Probe',
+      streamName: 'ReturnedHash',
+      streamLabel: 'Probe',
+      primaryKey: { name: 'ProbeValue', label: 'ProbeValue', dataType: 'Text' },
+      refreshMode: 'UPSERT',
+    },
+  });
+  assert.deepEqual(supplied, before);
+  assert.deepEqual(projectIngestionDlo(supplied, apiName), v1);
+  assert.throws(() => validateIngestionDloDocument(observed));
+  assert.equal(v1.schemaVersion, 1);
+  assert.equal(Object.hasOwn(v1.spec, 'creation'), false);
+  supplied.schema.fields[1].label = 'Changed';
+  observed.intent.event.fields[1].label = 'Detached';
+  assert.equal(observed.intent.creation.primaryKey.label, 'ProbeValue');
+  assert.equal(before.schema.fields[1].label, 'ProbeValue');
+});
+
+test('observed projection refuses missing or mismatched evidence instead of inventing defaults', () => {
+  const changes = [
+    (x) => delete x.dlo.label,
+    (x) => delete x.stream.label,
+    (x) => (x.stream.label = ''),
+    (x) => (x.stream.status = 'PROCESSING'),
+    (x) => (x.dlo.category = 'Profile'),
+    (x) => delete x.stream.refreshConfig.refreshMode,
+    (x) => (x.stream.dataSource = 'OtherOwner'),
+    (x) => {
+      for (const object of [x.dlo, x.stream.dataLakeObjectInfo]) {
+        for (const fields of [object.fields, object.dataLakeFieldInfoRepresentation]) {
+          for (const field of fields) if (field.isPrimaryKey) field.label = 'Mismatched';
+        }
+      }
+    },
+    (x) => {
+      for (const field of x.dlo.fields) field.isPrimaryKey = false;
+    },
+    (x) => {
+      for (const field of x.dlo.fields) field.isPrimaryKey = true;
+    },
+  ];
+  for (const change of changes) {
+    const invalid = baseline();
+    change(invalid);
+    assert.throws(() => projectObservedIngestionDloCreateIntent(invalid, apiName));
+  }
+  assert.throws(() => projectObservedIngestionDloCreateIntent(baseline(1), apiName));
 });
 
 test('document retains returned identities, strict labels and unsuffixed source fields', () => {

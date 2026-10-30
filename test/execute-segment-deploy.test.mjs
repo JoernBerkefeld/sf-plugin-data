@@ -37,6 +37,8 @@ const runtime = (d = document(), status = 'ACTIVE') => ({
   marketSegmentDefinitionId: 'definition-id',
   segmentStatus: status,
 });
+const criteria = (d) =>
+  `&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;${d.spec.models[0].sql}&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;`;
 const connection = {
   instanceUrl: 'https://synthetic.my.salesforce.com',
   getApiVersion: () => '65.0',
@@ -105,6 +107,67 @@ test('single PATCH requires independently acquired settled pair and preserved bi
   assert.equal(h.counts().writes, 1);
   assert.equal(h.counts().acquisitions, 3);
 });
+test('forward predicate update settles independently and redundant criteria cannot diverge', async () => {
+  const desired = document();
+  desired.spec.models[0].sql += ' AND Person__dlm.Id__c IS NOT NULL';
+  const h = harness(desired);
+  const updated = await h.run();
+  assert.equal(updated.mutation, 'confirmed-updated');
+  assert.equal(h.counts().writes, 1);
+  const unchanged = harness(desired, {
+    allowProcessing: false,
+    acquire: async () => ({
+      candidate: desired,
+      blockers: [],
+      expectations: { runtime: runtime(desired) },
+    }),
+  });
+  const repeated = await unchanged.run();
+  assert.equal(repeated.outcome, 'unchanged');
+  assert.equal(unchanged.counts().writes, 0);
+  for (const corrupt of ['sql', 'criteria', 'schedule']) {
+    const mismatch = harness(desired);
+    mismatch.options.read = async () => {
+      const r = runtime(desired);
+      if (corrupt === 'sql') r.includeDbt = runtime().includeDbt;
+      if (corrupt === 'criteria')
+        r.includeCriteria =
+          '&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;wrong&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;';
+      if (corrupt === 'schedule') r.lookbackPeriod = 'P2Y';
+      return { segments: [r] };
+    };
+    const rejected = await mismatch.run();
+    assert.equal(rejected.mutation, 'unknown');
+    assert.equal(mismatch.counts().writes, 1);
+  }
+  const criteriaPresent = harness(desired);
+  let acquisitions = 0;
+  criteriaPresent.options.acquire = async () => {
+    const d = ++acquisitions <= 2 ? document() : desired;
+    return {
+      candidate: d,
+      blockers: [],
+      expectations: { runtime: { ...runtime(d), includeCriteria: criteria(d) } },
+    };
+  };
+  criteriaPresent.options.patch = async () => ({
+    ...runtime(desired, 'PROCESSING'),
+    includeCriteria: criteria(desired),
+  });
+  const missingCriteria = await criteriaPresent.run();
+  assert.equal(missingCriteria.mutation, 'unknown');
+  const reverse = harness(document(), {
+    acquire: async () => ({
+      candidate: desired,
+      blockers: [],
+      expectations: { runtime: runtime(desired) },
+    }),
+  });
+  const reversed = await reverse.run();
+  assert.equal(reversed.outcome, 'blocked');
+  assert.equal(reverse.counts().writes, 0);
+});
+
 test('PROCESSING then COUNTING then ACTIVE requires independent complete verification and one PATCH', async () => {
   const h = harness();
   const states = ['PROCESSING', 'COUNTING', 'ACTIVE'];

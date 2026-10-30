@@ -1,3 +1,179 @@
+# Segment existing-owner forward predicate outcome — 2026-10-30
+
+Selected the original Segment meaningful DBT-definition update follow-on instead of
+reopening exhausted DLO CREATE safety research. Dedicated Gate2 reviewer
+11f4690a-e362-4e5f-a839-caeb1d10e2b0 returned one must-fix: existing public unchanged
+deploy consumes four Metadata jobs. Applied bounded remediation before org access:
+two independent baseline/settled Metadata acquisitions plus one public unchanged
+deploy, maximum six Metadata jobs, sixty observable logical reads, twelve polls,
+one PATCH and thirty minutes. Auth/child wire counts remain unknown. One coupled
+code/test owner; parent retains Gate4. No new fixture, target, rollback or cleanup.
+
+Retained source OwnedSegRetest_5a0e87b3fee2 ownership came from the original receipt,
+not name matching. Fresh API65/default runtime equalled the complete historical ACTIVE
+baseline; independently retrieved XML and PROFILE primary-field binding also matched.
+One no-refresh/no-retry/no-redirect PATCH appended
+`AND UnifiedssotIndividualMkt__dlm.ssot__Id__c IS NOT NULL` to the original `WHERE 1 = 0`.
+Independent exact reads settled ACTIVE; independently retrieved Metadata SQL matched;
+IDs, generated references, labels, NO_REFRESH/P90D and dependency binding preserved.
+Private AUTH-SENSITIVE receipts are retained locally outside the repository.
+This proves a persisted empty-audience definition edit, NOT membership/computation.
+
+Existing Segment validator now admits both exact bounded forms with the same dependency;
+shared isQualifiedSegmentUpdate permits only forward isolated predicate addition or
+existing label/description deltas/equality. Reverse, different-field, model/settings
+and combined SQL/label changes block. Executor compares projected desired models and
+redundant criteria independently while retaining all other private preservation fields.
+New tests cover pair correlation, forward/no-op/refusals and corrupt SQL/criteria/settings
+readback. CREATE/absence and broad SQL remain blocked. Existing uncommitted DLO P1a/P1b
+files are preserved; no history/staging/version changes. Package remains0.1.0.
+
+Focused tests/build/scoped autofix passed. Public current-worktree deploy of the changed
+pair PASSED unchanged/not-attempted without processing acknowledgement or mutation.
+Total qualification/public accounting:27 observable logical reads,6 Metadata retrieve
+jobs,1 qualification PATCH; auth/child wire unknown. Public route used repository compiled
+commands, NOT a freshly installed tarball. Final-tree full verification is reported in
+the coordinator return. A final preservation/test refinement occurred during the first
+full run; that run is superseded by a serialized stable-tree rerun, not reused.
+Historical installed acceptance is not relabelled current installed meaningful-update
+acceptance. README14-resource Segment scope updated, Partial rating/icons unchanged;
+capabilities updated. No language-stack/consumer/wiki/hover changes. Guide and atomic
+verification DB reconciliation remain parent-owned follow-up for this earned variant;
+no guide/DB/index edits by this owner. Parent must preserve actual CRUD frontmatter and
+methods/timestamps when reconciling the vanilla guide. No full A–G completion claimed.
+
+# Observed-runtime DLO create-intent projection — 2026-10-30
+
+User resolved naming policy: observed generated source stream/DLO names MAY become
+explicit desired target naming intent; this is NOT original-request recovery,
+name stability/acceptance, target ownership or CREATE safety. Earlier P0b question
+is resolved; do not ask it again. Historical stop deviation below remains recorded.
+
+P1b Gate1 is in existing root plan; dedicated senior Gate2
+3c7adf6f-a716-4862-b25d-54d228dddc06 completed with zero must-fix and no optional
+additions. Gate3 one coherent artifact/projector/test owner; parent owns Gate4.
+No org calls, discovery, provisioning, target adoption, cleanup or history changes.
+Root/package fetch passed not behind; preserved unrelated staged docs/index.
+
+New internal IngestionDloObservedCreateIntent envelope is
+{namingProvenance:'observed-runtime',intent:IngestionDloCreateIntent}.
+projectObservedIngestionDloCreateIntent(baseline,apiName) first re-admits the entire
+ACTIVE Other/default/UPSERT baseline using projectIngestionDlo(...,false), then
+projects observed names/labels and explicitly designated PK via the existing
+supplied-intent validator. PK source-field name/label/Text type must match exactly;
+no ordering/Id-spelling inference, defaults or KQ semantic extension. Complete
+baseline admission already checks independent persisted/embedded PK agreement.
+No IDs/endpoints/runtime statuses enter the result. Event and PK are detached.
+
+Only artifact type, retrieval module pure export, existing ingestion tests and
+this handover changed for P1b. Acquisition return, public v1 document/parser/writer,
+CLI/transport/preflight/execution and whole-selection guards are untouched. No
+public schemaVersion2 or automatic v1 upgrade; CREATE remains disabled. Existing
+v1 update/no-op and P1a validator semantics remain unchanged; optional prior getter
+test was not added. Missing labels/keys, mismatched PK labels, zero/multiple PK,
+pending/processing states, wrong owners and unsupported configuration refuse.
+
+Focused29/29 tests, scoped ESLint autofix and explicit build passed. Full final-tree
+lint/build/tests are reported in the root checkpoint and worker return after this
+final handover edit; no package inputs change during that run. README14-resource
+ratings checked unchanged; no public capability earned. Version0.1.0 unchanged,
+next version unassigned. No guide/DB/index/wiki/hover/language/consumer propagation
+needed (standalone internal API, no workspace consumers). Next: parent Gate4 on
+P1b diff, then qualify nonoverwrite/absence, target logical binding and settlement
+before any public v2/CREATE wiring. Retained old chain is not ACTIVE; no empty
+control replay or replacement mutation justified by this internal implementation.
+
+# Bounded DLO connection/event relationship proof — 2026-10-30
+
+Reconciled package HEAD d3d86bd and exact uncommitted P1a diff: only existing
+validator/test/handover changes; root HEAD a8293f3, unrelated staged mirrors/index
+preserved. Both fetches succeeded, package ahead2/root ahead4 and neither behind.
+P1a remains unchanged, including the unapproved optional getter-test suggestion.
+
+Gate1 P0b was written in the existing root plan. Dedicated Gate2 reviewer
+f6d8bb0a-c2a7-4384-b5ce-b66f5170f79e returned one must-fix: allow complete empty
+negative controls. Applied before org reads; both optional suggestions reported,
+not adopted. Gate3 used one bounded read-only owner. No code review or new code.
+
+Actual source-org identity independently matched the expected org through core auth
+and exact Organization GET. Fixed org-local API67 facade then read exact retained
+connection, complete connection schema and three single-page stream contrasts:
+owner-only, owner+ProbeRecord, owner+deliberately nonexistent event. All returned
+empty dataStreams/totalSize0/no nextPageUrl. Connection remains CONNECTED; the
+single ProbeRecord event is Available with the three previously recorded Text
+fields. Therefore no positive event-to-stream binding was established. Empty
+controls do NOT establish shell/permission-aware absence or nonoverwrite safety.
+Sequencing deviation: the two further predeclared read-only controls ran after the
+empty baseline, despite the plan's positive-control stop. No further org work;
+report this deviation, and evaluate each response before any future dispatch.
+
+Important reconciliation: historical resource-ledger.json already records ONE
+stream/DLO delete (receipt024), subsequent DELETING and no connection delete.
+This historical chain is not an eligible ACTIVE positive-control fixture. No new
+fixture, exact-delete replay, replacement campaign, unfiltered inventory or extra
+identity query was launched. The facade supplied currentPageUrl containing v68;
+it was NOT followed and does not establish native API68 or alter the API67 pin.
+Connection-dependency discovery explicitly supports CRM Home Org only, so no
+IngestApi dependency call was made. Earlier one-attempt CREATE/readback evidence
+remains historical, not a current reusable ACTIVE chain.
+
+Run: 2026-10-30T10:28:32.462Z–10:28:35.084Z for org phase; six logical org reads
+(one identity GET plus five read-only facade operations), zero mutations/jobs,
+no target calls. Underlying auth/wire count unknown. Private raw ledger and summary
+are retained locally in a private fresh mkdtemp root with ownership
+marker and registered files; no secrets/raw headers published, no cleanup. The
+initial preflight quoting/syntax errors failed closed before workload; corrected
+TEMP/Node os.tmpdir/TMP all verified F:/Temp. No evidence DB/index or guide edits.
+
+Result: UNKNOWN relationship proof, not unsupported API or CREATE completion.
+Do not provision merely to regain this positive control: duplicate/shell-safe
+nonoverwrite remains independently unqualified. The concrete product contract
+question remains whether a retrieved CREATE artifact must preserve ORIGINAL
+requested stream/DLO names, or may instead declare observed generated names as
+desired names without claiming original-request recovery. That decision needs
+explicit user direction; neither option independently solves binding/safety.
+Parent should ask this ONE contract question rather than repeat credit/permission
+questions or implement another offline abstraction. Parent owns Gate4 and final
+propagation. README14-resource table checked unchanged; no public support earned,
+version0.1.0 unchanged, no version assignment/history/release. All language/consumer/
+wiki/hover surfaces are unrelated; guide unchanged. Fresh package verification is
+recorded in the root checkpoint/worker return after this final handover edit.
+
+# Internal supplied Ingestion DLO create-intent checkpoint — 2026-10-29
+
+P1a implements only `IngestionDloCreateIntent` and the pure
+`validateIngestionDloCreateIntent(value)` in the existing artifact module. It accepts
+explicit connection/event plus creation settings: Other/default/UPSERT, requested
+DLO/stream names and labels, and a Text primary key matching an event field exactly
+by name, label and type. Event fields are canonicalized and detached; case-folded
+field collisions are rejected only for the new intent. Missing settings, unknown
+keys, unsupported types/settings and accessor-bearing inputs fail closed.
+
+This is internal preparation, NOT a new portable document, CLI input, request mapper
+or CREATE authority. No caller is connected to retrieval, preflight, execution or
+transport. Existing strict schemaVersion1 ingestion-dlo artifacts remain unchanged;
+there is no public v2 or automatic upgrade. Requested intent names are not generated
+runtime identities and successful validation does not prove platform acceptance,
+connection ownership, absence, nonoverwrite, settlement or restart reconciliation.
+CREATE stays disabled. Existing receipt010–013 permits one-attempt correlation only;
+readbacks do not retain original requested names/event as a stable portable selector.
+
+Dedicated senior Gate2 review62b96950-b27b-4aa1-a5a1-b561a6fa2495 returned zero
+must-fix findings; coordinator owns final whole-feature Gate4 after verified handover.
+README's14-resource support table checked and deliberately unchanged: no public
+capability or rating earned. No dependency, guide, wiki, hover, language-stack or
+consumer updates required; independent plugin, no workspace consumers. No org
+operations, adoption/provisioning, new allowlist entries, API version changes,
+commits/pushes/releases, evidence DB/index changes or cleanup. Version0.1.0 unchanged,
+next version unassigned until separate release approval. Verification PASS: scoped
+ESLint autofix; full lint with zero warnings; explicit TypeScript build; focused
+27/27 tests; full unfiltered1167/1167 tests (zero failures/skips/cancellations).
+Full npm test wall122.6432613seconds, Node118319.4273ms; combined lint/build/test
+138.655seconds. Scoped diff --check passed. Initial shell inline-import quoting
+failed before workload; corrected via stdin. Initial lint found reduce/null style
+violations in new tests; fixed before successful checks. No pending verification
+process or implementation worker.
+
 # Installed Segment source-only acceptance / post-run propagation — 2026-10-29
 
 PASS on mcnext-sdo, exact retained OwnedSegRetest_5a0e87b3fee2, API65/default.

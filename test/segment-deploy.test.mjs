@@ -67,6 +67,26 @@ const acquire = async () => ({
   expectations: { runtime: { segmentStatus: 'ACTIVE' } },
 });
 
+test('forward predicate is update with processing effects; reverse remains blocked', async () => {
+  const desired = document();
+  desired.spec.models[0].sql += ' AND Person__dlm.Id__c IS NOT NULL';
+  const preview = await preflightSegmentDeploy(desired, connection, '65.0', 'default', acquire);
+  assert.equal(preview.outcome, 'update');
+  assert.deepEqual(preview.requiredEffects, ['processing']);
+  const reverse = await preflightSegmentDeploy(
+    document(),
+    connection,
+    '65.0',
+    'default',
+    async () => ({
+      candidate: desired,
+      blockers: [],
+      expectations: { runtime: { segmentStatus: 'ACTIVE' } },
+    }),
+  );
+  assert.equal(reverse.outcome, 'blocked-changes');
+});
+
 test('binding uses exact target-local identity, preserves SQL and refreshes every call', async () => {
   const desired = document();
   const before = structuredClone(desired);

@@ -11,6 +11,28 @@ export type IngestionDloDocument = {
   };
 };
 
+/** Internal supplied intent only: not a portable document, wire payload or create authority. */
+export type IngestionDloCreateIntent = {
+  connectionName: string;
+  event: IngestionDloDocument['spec']['event'];
+  creation: {
+    category: 'Other';
+    dataSpace: 'default';
+    dloName: string;
+    dloLabel: string;
+    streamName: string;
+    streamLabel: string;
+    primaryKey: IngestionField;
+    refreshMode: 'UPSERT';
+  };
+};
+
+/** Observed names are desired intent, never recovered requests or target ownership evidence. */
+export type IngestionDloObservedCreateIntent = {
+  namingProvenance: 'observed-runtime';
+  intent: IngestionDloCreateIntent;
+};
+
 /** Payload-free refusal of unsupported source authority or configuration. */
 export class IngestionDloError extends Error {
   public constructor(public readonly code = 'UNSUPPORTED_INGESTION_DLO') {
@@ -153,6 +175,61 @@ export function validateIngestionDloDocument(value: unknown): IngestionDloDocume
     kind: 'ingestion-dlo',
     identity: { dataSpace: 'default', apiName: identity.apiName },
     spec: { connectionName: spec.connectionName, event: ingestionEvent(spec.event) },
+  };
+}
+
+/**
+ * Validate explicit internal intent without inferring runtime identity or authorizing CREATE.
+ * @param {unknown} value Supplied intent, never a retrieved v1 document.
+ * @returns {IngestionDloCreateIntent} Detached intent with canonical event fields.
+ */
+export function validateIngestionDloCreateIntent(value: unknown): IngestionDloCreateIntent {
+  const root = ingestionRecord(value, ['connectionName', 'event', 'creation']);
+  ingestionRequire(ingestionName(root.connectionName));
+  const event = ingestionEvent(root.event);
+  ingestionRequire(
+    new Set(event.fields.map((field) => field.name.toLowerCase())).size === event.fields.length,
+  );
+  const creation = ingestionRecord(root.creation, [
+    'category',
+    'dataSpace',
+    'dloName',
+    'dloLabel',
+    'streamName',
+    'streamLabel',
+    'primaryKey',
+    'refreshMode',
+  ]);
+  ingestionRequire(
+    creation.category === 'Other' &&
+      creation.dataSpace === 'default' &&
+      creation.refreshMode === 'UPSERT',
+  );
+  ingestionRequire(
+    ingestionName(creation.dloName) &&
+      creation.dloName.endsWith('__dll') &&
+      ingestionName(creation.streamName),
+  );
+  for (const label of [creation.dloLabel, creation.streamLabel])
+    ingestionRequire(typeof label === 'string' && label.trim().length > 0 && label.length <= 200);
+  const primaryKey = ingestionRecord(creation.primaryKey, ['name', 'label', 'dataType']);
+  const field = event.fields.find((candidate) => candidate.name === primaryKey.name);
+  ingestionRequire(
+    field && field.label === primaryKey.label && field.dataType === primaryKey.dataType,
+  );
+  return {
+    connectionName: root.connectionName,
+    event,
+    creation: {
+      category: 'Other',
+      dataSpace: 'default',
+      dloName: creation.dloName,
+      dloLabel: creation.dloLabel as string,
+      streamName: creation.streamName,
+      streamLabel: creation.streamLabel as string,
+      primaryKey: { ...field },
+      refreshMode: 'UPSERT',
+    },
   };
 }
 
