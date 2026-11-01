@@ -1,3 +1,75 @@
+# Segment LOCAL acceptance controls — DATA CHILD 5, 2026-10-31
+
+Acceptance-only modules under `scripts/segment-acceptance-*` and synthetic
+regressions under `test/segment-acceptance-*.test.mjs` do not change public
+commands or establish installed/current-forward acceptance. No org acquisition,
+authentication, Salesforce installation, fixture creation/adoption, SQL reversal,
+mutation or cleanup is authorized by these modules or this receipt.
+
+The fixed ledger interface is `createSegmentAcceptance(profile, {now})` with
+`beginPhase`, `dispatchProcess`, `dispatchRead`, `registerMetadataJob`,
+`observeResult`, `stop` and `audit`. Exact executable, full argv, origin, org,
+API65 and semantic read descriptors are admitted before dispatch; failed attempts
+retain their charges. Qualified read-only SOAP POST is not classified as a write.
+Every logical status/result invocation must pass the authoritative ledger; auth
+and underlying wire counts explicitly remain UNKNOWN. Descriptor validation alone
+is not observation or proof that a public command cannot bypass the controls.
+
+Limits remain 16 org-facing processes including children, 9 Metadata retrieve
+jobs, 100 logical reads including polls and 30 minutes all-in. Local subprocesses
+have at most 10 minutes within that deadline. Nonfinal phases hold the greater
+of minimum 4 reads / 1 process / 1 job / 5 minutes and complete final-audit costs.
+Historical final launcher plus child requires two processes; actual unchanged
+deploy requires four jobs and five processes. Setup consumes the same clock.
+
+`runOwnedProcess` uses a Windows kernel Job Object: create suspended, assign,
+then resume. Cancellation/timeout and normal parent exit require kernel zero-active
+and root-exit evidence; unproved surviving descendants are UNKNOWN, never success.
+The PowerShell/Add-Type bootstrap is outside the workload job and consumes time;
+its boundary must be considered during actual run admission. Caller-side exact
+admission and complete child accounting are still required.
+
+`admitOriginalOwner` and `compareFinal` independently admit full raw forward
+runtime/XML/dependency data without importing public acquisition/projection or
+comparison services. `bindArtifact` and `assertArtifactUnchanged` bind supplied
+immutable manifest, tarball, inventory and resolved command origins. These are
+local admission/comparison seams, not fresh live acquisition or a trusted
+filesystem inventory by declaration. Synthetic evidence cannot prove original
+ownership is still eligible or the actual installed artifact is unchanged.
+
+Fresh snapshot/install, verified actual observer/child wiring, independent fresh
+current-forward original-owner baseline/final acquisition, exact artifact/origin
+binding, dedicated actual run review and current Astra authority/exclusivity
+remain separate gates. Retained historical controls/evidence are read-only and
+are not repaired or relabelled current acceptance.
+
+README's 14-resource Segment row was checked and left unchanged. No public CRUD,
+whole A/E/F, installed meaningful-write or cross-org capability was earned. The
+mixed-owned guide was inspected read-only: existing predicate body/API reason and
+overview already reflect the earned native proof. YAML remains retrieve Yes
+`[cli, api]`, create/update Partial `[cli, api]`, delete Partial `[api]`;
+illustrative CLI delete tabs do not qualify a summary-method promotion. Predicate
+reconciliation is not fully staged there, and its untracked
+`tests/ingestion-contract-evidence.test.cjs` must be accounted for if later used.
+Guide edits/commits and shared generated evidence-index updates remain excluded.
+No language/hover/wiki/consumer propagation is needed; this independent package
+has no workspace consumers. Version 0.1.0 is unchanged, next release unassigned.
+**Offline-qualified controls, not live-run admission:** the parent-authoritative
+broker, registered scratch admission, child preload, bounded stdout/stderr bridge,
+raw SOAP poll accounting and owned Windows Job containment have synthetic coverage.
+Kernel process totals must match admitted processes; bypasses and uncertain results
+fail closed. The fixed coordinator binds the artifact and independent baseline,
+checks two retrieve results and byte-stable pairs, validates unchanged preview and
+deploy results, and requires a final independent comparison and artifact audit.
+
+Stable-input verification passed focused tests, zero-warning full lint, build and
+the full suite (1,350 passed, one skipped). Whole-outcome review iteration 3 found
+no must-fix for offline qualification. Actual independent acquisition and decoder,
+original-owner eligibility, installed artifact provenance, and a safe no-link public
+pair reader correlated with retained native output remain unqualified live gates.
+The receipt explicitly retains `liveAcquisitionProven: false`; no live execution,
+installed acceptance or public support promotion follows from this evidence.
+
 # Segment existing-owner forward predicate outcome — 2026-10-30
 
 Selected the original Segment meaningful DBT-definition update follow-on instead of
