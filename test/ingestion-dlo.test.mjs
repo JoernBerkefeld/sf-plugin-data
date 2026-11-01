@@ -219,7 +219,7 @@ test('public Git ingestion selection binds immutable bytes and refuses rename or
   git(cwd, 'config', '--local', 'user.name', 'Jörn Berkefeld');
   git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
   git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
-  git(cwd, 'add', '--all');
+  git(cwd, 'add', '--', receipt.path);
   git(cwd, 'commit', '-m', 'Synthetic baseline');
   await writeIngestionDloDocument(desired, cwd, true);
   const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });

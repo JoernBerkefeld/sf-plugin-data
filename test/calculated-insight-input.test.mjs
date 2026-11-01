@@ -221,7 +221,7 @@ const gitRoot = async () => {
   await git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
   await git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
   await git(cwd, 'config', '--local', 'core.autocrlf', 'false');
-  await git(cwd, 'add', '--all');
+  await git(cwd, 'add', '--', '.run-owner');
   await git(cwd, 'commit', '-m', 'Synthetic fixture');
   return cwd;
 };
@@ -229,7 +229,7 @@ for (const member of ['path', 'companionPath']) {
   test(`Git captures CI ${member} changes as one pair, never Segment`, async () => {
     const cwd = await gitRoot();
     const receipt = await put(cwd);
-    await git(cwd, 'add', '--all');
+    await git(cwd, 'add', '--', receipt.path, receipt.companionPath);
     await git(cwd, 'commit', '-m', 'Synthetic pair');
     await writeFile(receipt[member], `${await readFile(receipt[member], 'utf8')}\n`);
     const result = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
@@ -248,14 +248,20 @@ test('Git refuses noncanonical CI location and rename lifecycle', async () => {
   const receipt = await put(cwd);
   const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
   assert.equal(selected.calculatedInsights.length, 1);
-  await git(cwd, 'add', '--all');
+  await git(cwd, 'add', '--', receipt.path, receipt.companionPath);
   await git(cwd, 'commit', '-m', 'Synthetic pair');
   await mkdir(path.join(cwd, 'outside'));
   await rename(
     receipt.companionPath,
     path.join(cwd, 'outside/SyntheticInsight__cio.calculatedInsight.json'),
   );
-  await git(cwd, 'add', '--all');
+  await git(
+    cwd,
+    'add',
+    '--',
+    receipt.companionPath,
+    path.join(cwd, 'outside/SyntheticInsight__cio.calculatedInsight.json'),
+  );
   await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }), {
     code: 'BLOCKED_GIT_LIFECYCLE',
   });

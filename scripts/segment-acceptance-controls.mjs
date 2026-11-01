@@ -299,14 +299,19 @@ export function parseSegmentReadSoap(profile, xml, activeJobs = new Set()) {
  * This ledger does not observe traffic itself; auth and physical wire counts remain UNKNOWN.
  * @param {object} input Fixed profile, never budget overrides.
  * @param {object} options Deterministic monotonic clock seam.
- * @param {Function} options.now Nondecreasing safe integer milliseconds.
+ * @param {Function} [options.now] Nondecreasing safe integer milliseconds from the shared clock.
+ * @param {number} [options.startedAt] Start captured from that same clock before setup.
  * @returns {object} Immutable methods with detached audit snapshots.
  */
-export function createSegmentAcceptance(input, { now = Date.now } = {}) {
-  const startedAt = now();
+export function createSegmentAcceptance(input, { now, startedAt } = {}) {
+  if (startedAt !== undefined && typeof now !== 'function') fail('invalid clock');
+  now ??= () => Math.floor(performance.now());
+  if (typeof now !== 'function') fail('invalid clock');
+  const initialTime = now();
+  const start = startedAt === undefined ? initialTime : startedAt;
+  if (!integer(start) || !integer(initialTime) || initialTime < start) fail('invalid clock');
   const profile = validateSegmentAcceptanceProfile(input);
-  if (!integer(startedAt)) fail('invalid clock');
-  let previousTime = startedAt;
+  let previousTime = initialTime;
   let stopped;
   let phase;
   let finalCost;
@@ -329,7 +334,7 @@ export function createSegmentAcceptance(input, { now = Date.now } = {}) {
     if (
       !integer(time) ||
       time < previousTime ||
-      time - startedAt >= SEGMENT_ACCEPTANCE_LIMITS.milliseconds
+      time - start >= SEGMENT_ACCEPTANCE_LIMITS.milliseconds
     )
       refuse('deadline or clock violation');
     previousTime = time;
@@ -354,7 +359,7 @@ export function createSegmentAcceptance(input, { now = Date.now } = {}) {
   };
   const snapshot = () =>
     Object.freeze({
-      startedAt,
+      startedAt: start,
       stopped,
       phase: phase?.name,
       used: Object.freeze({ ...used }),
@@ -377,7 +382,7 @@ export function createSegmentAcceptance(input, { now = Date.now } = {}) {
     if (!phase || ids.has(id)) refuse('missing phase or replay');
     if (time - phase.startedAt >= phase.cost.milliseconds) refuse('phase deadline');
     const held = reserve();
-    if (time - startedAt + held.milliseconds >= SEGMENT_ACCEPTANCE_LIMITS.milliseconds)
+    if (time - start + held.milliseconds >= SEGMENT_ACCEPTANCE_LIMITS.milliseconds)
       refuse('final time reserve exhausted');
     for (const key of ['orgProcesses', 'metadataJobs', 'logicalReads']) {
       const next = used[key] + (increment[key] ?? 0);
@@ -420,7 +425,7 @@ export function createSegmentAcceptance(input, { now = Date.now } = {}) {
         finalStarted = isFinal;
         const held = reserve();
         for (const key of dimensions) {
-          const spent = key === 'milliseconds' ? previousTime - startedAt : used[key];
+          const spent = key === 'milliseconds' ? previousTime - start : used[key];
           if (spent + requested[key] + held[key] > SEGMENT_ACCEPTANCE_LIMITS[key])
             refuse(`phase cannot preserve ${key}`);
         }
@@ -450,9 +455,7 @@ export function createSegmentAcceptance(input, { now = Date.now } = {}) {
         )
           refuse('incomplete deploy cost');
         const remaining = Math.min(
-          SEGMENT_ACCEPTANCE_LIMITS.milliseconds -
-            (previousTime - startedAt) -
-            reserve().milliseconds,
+          SEGMENT_ACCEPTANCE_LIMITS.milliseconds - (previousTime - start) - reserve().milliseconds,
           phase ? phase.cost.milliseconds - (previousTime - phase.startedAt) : 0,
         );
         if (admitted.timeoutMs > remaining) refuse('subprocess exceeds remaining time');

@@ -587,6 +587,7 @@ function artifactContent(input) {
     'tarballBytes',
     'packageIdentity',
     'inventory',
+    'installedFiles',
     'commandOrigins',
   ]);
   check(Buffer.isBuffer(input.manifestBytes) && input.manifestBytes.length <= 4_194_304);
@@ -631,14 +632,27 @@ function artifactContent(input) {
     packaged.manifest.name === input.packageIdentity.name &&
       packaged.manifest.version === input.packageIdentity.version,
   );
-  for (const entry of entries) {
-    const member = packaged.files.get(`package/${entry.path}`);
-    check(member && member.length === entry.size && digest(member) === entry.sha256);
+  check(packaged.files.size <= 4096);
+  const tarballFiles = [...packaged.files]
+    .map(([name, bytes]) => ({
+      path: name.slice('package/'.length),
+      sha256: digest(bytes),
+      size: bytes.length,
+    }))
+    .toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  check(new Set(tarballFiles.map((item) => item.path.toLowerCase())).size === tarballFiles.length);
+  for (const member of tarballFiles) {
+    const entry = entries.find((item) => item.path === member.path);
+    check(entry && member.sha256 === entry.sha256 && member.size === entry.size);
   }
-  // package.json alone is packaging-only; its exact bytes are independently bound below.
-  const manifestedMembers = new Set(entries.map((entry) => `package/${entry.path}`));
-  for (const member of packaged.files.keys())
-    check(member === 'package/package.json' || manifestedMembers.has(member));
+  check(Array.isArray(input.installedFiles) && input.installedFiles.length === tarballFiles.length);
+  const installedFiles = input.installedFiles.map((item) => {
+    record(item, ['path', 'bytes']);
+    relative(item.path);
+    check(Buffer.isBuffer(item.bytes) && item.bytes.length <= 33_554_432);
+    return { path: item.path, sha256: digest(item.bytes), size: item.bytes.length };
+  });
+  check(isDeepStrictEqual(installedFiles, tarballFiles));
   json(input.inventory);
   check(Array.isArray(input.inventory) && input.inventory.length > 0);
   const inventory = input.inventory.map((item) => {
@@ -664,7 +678,7 @@ function artifactContent(input) {
         /^[a-f\d]{64}$/u.test(origin.sha256),
     );
     check(
-      entries.some(
+      installedFiles.some(
         (entry) =>
           entry.path === `lib/commands/data360/${command}.js` && entry.sha256 === origin.sha256,
       ),
@@ -675,6 +689,8 @@ function artifactContent(input) {
     manifestSha256: digest(input.manifestBytes),
     entries,
     tarballSha256: digest(input.tarballBytes),
+    tarballFiles,
+    installedFiles,
     packageIdentity: { ...input.packageIdentity },
     inventory,
     commandOrigins: origins,
@@ -683,7 +699,7 @@ function artifactContent(input) {
 
 /**
  * Bind already supplied bytes/inventory; performs no installation, acquisition or filesystem reads.
- * @param {object} input Manifest JSON bytes {schemaVersion:1,files:[{path,sha256,size}]}, sorted entries [{path,bytes}], gzip ustar tarballBytes, packageIdentity {name,version}, exact inventory [{name,version,root,packageSha256}], commandOrigins {retrieve,deploy:{packageRoot,resolvedPath,sha256}}.
+ * @param {object} input Snapshot manifestBytes and sorted entries [{path,bytes}] including exact packed package.json; gzip ustar tarballBytes; packageIdentity; exact installed package inventory; installedFiles [{path,bytes}] sorted by path, including package.json; commandOrigins {retrieve,deploy:{packageRoot,resolvedPath,sha256}}. The caller must independently observe complete inventories and actual command resolution; supplied evidence does not prove observation.
  * @returns {object} Opaque immutable artifact binding; inventory includes every installed package, not a filtered subset.
  */
 export function bindArtifact(input) {

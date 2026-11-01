@@ -434,6 +434,7 @@ function artifact() {
   const entries = [
     { path: 'lib/commands/data360/deploy.js', bytes: Buffer.from('synthetic deploy') },
     { path: 'lib/commands/data360/retrieve.js', bytes: Buffer.from('synthetic retrieve') },
+    { path: 'package.json', bytes: Buffer.from(JSON.stringify(packageIdentity)) },
   ];
   return {
     manifestBytes: Buffer.from(
@@ -443,7 +444,11 @@ function artifact() {
       }),
     ),
     entries,
-    tarballBytes: tarball(packageIdentity, entries),
+    tarballBytes: tarball(
+      packageIdentity,
+      entries.filter((entry) => entry.path !== 'package.json'),
+    ),
+    installedFiles: entries.map(({ path, bytes }) => ({ path, bytes: Buffer.from(bytes) })),
     packageIdentity,
     inventory: [
       {
@@ -488,6 +493,15 @@ test('artifact immutable binding includes bytes, tar identity, exact inventory a
       v.tarballBytes = tarball({ name: 'wrong-package', version: '0.1.0' });
     },
     (v) => {
+      v.installedFiles[0].bytes[0] = 0;
+    },
+    (v) => {
+      v.installedFiles.pop();
+    },
+    (v) => {
+      v.installedFiles.push({ path: 'unexpected', bytes: Buffer.from('extra') });
+    },
+    (v) => {
       v.inventory.push({
         name: 'extra',
         version: '1.0.0',
@@ -517,24 +531,28 @@ test('artifact immutable binding includes bytes, tar identity, exact inventory a
   assert.equal(assertArtifactUnchanged(bound, artifact()), true);
 });
 
-test('artifact admission binds every manifest entry to actual tar member bytes before initial admission', () => {
+test('artifact admission compares installed bytes with every tar member', () => {
   for (const command of ['retrieve', 'deploy']) {
     const input = artifact();
     const entryPath = `lib/commands/data360/${command}.js`;
-    const missing = input.entries.filter((entry) => entry.path !== entryPath);
+    const missing = input.entries.filter(
+      (entry) => entry.path !== entryPath && entry.path !== 'package.json',
+    );
     input.tarballBytes = tarball(input.packageIdentity, missing);
     assert.throws(() => bindArtifact(input), `${command} tar member missing`);
     const divergent = artifact();
-    const members = divergent.entries.map((entry) => ({
-      ...entry,
-      bytes: entry.path === entryPath ? Buffer.alloc(entry.bytes.length, 120) : entry.bytes,
-    }));
+    const members = divergent.entries
+      .filter((entry) => entry.path !== 'package.json')
+      .map((entry) => ({
+        ...entry,
+        bytes: entry.path === entryPath ? Buffer.alloc(entry.bytes.length, 120) : entry.bytes,
+      }));
     divergent.tarballBytes = tarball(divergent.packageIdentity, members);
     assert.throws(() => bindArtifact(divergent), `${command} tar bytes mismatch`);
   }
   const additional = artifact();
   additional.entries.push({
-    path: 'lib/independent.js',
+    path: 'src/independent.js',
     bytes: Buffer.from('manifest-only source'),
   });
   additional.manifestBytes = Buffer.from(
@@ -547,16 +565,19 @@ test('artifact admission binds every manifest entry to actual tar member bytes b
       })),
     }),
   );
-  assert.throws(() => bindArtifact(additional), 'non-command manifest member missing');
-  additional.tarballBytes = tarball(additional.packageIdentity, additional.entries);
-  assert.doesNotThrow(() => bindArtifact(additional));
+  assert.doesNotThrow(() => bindArtifact(additional), 'snapshot-only source need not be packed');
+  additional.tarballBytes = tarball(
+    additional.packageIdentity,
+    additional.entries.filter((entry) => entry.path !== 'package.json'),
+  );
+  assert.throws(() => bindArtifact(additional), 'extra packed file must be installed');
 });
 
-test('initial artifact admission refuses every unmanifested member except independently bound package.json', () => {
+test('initial artifact admission refuses tar members absent from installed inventory', () => {
   for (const extraPath of ['lib/services/extra.js', 'bin/extra', 'README.md', 'package.json.js']) {
     const input = artifact();
     input.tarballBytes = tarball(input.packageIdentity, [
-      ...input.entries,
+      ...input.entries.filter((entry) => entry.path !== 'package.json'),
       { path: extraPath, bytes: Buffer.from('unmanifested executable bytes') },
     ]);
     assert.throws(() => bindArtifact(input), extraPath);
@@ -564,9 +585,36 @@ test('initial artifact admission refuses every unmanifested member except indepe
   const input = artifact();
   input.tarballBytes = tarball(
     { ...input.packageIdentity, scripts: { preinstall: 'extra' } },
-    input.entries,
+    input.entries.filter((entry) => entry.path !== 'package.json'),
   );
-  assert.throws(() => bindArtifact(input), 'packaging-only exception must match inventory hash');
+  assert.throws(() => bindArtifact(input), 'packaged manifest must match snapshot bytes');
+});
+
+test('changed packaged manifest is refused even when installed identity agrees', () => {
+  const input = artifact();
+  const modified = { ...input.packageIdentity, scripts: { preinstall: 'extra' } };
+  const bytes = Buffer.from(JSON.stringify(modified));
+  input.tarballBytes = tarball(
+    modified,
+    input.entries.filter((entry) => entry.path !== 'package.json'),
+  );
+  input.installedFiles.find((entry) => entry.path === 'package.json').bytes = bytes;
+  input.inventory[0].packageSha256 = sha(bytes);
+  assert.throws(() => bindArtifact(input));
+});
+
+test('packed and installed extras absent from snapshot are refused', () => {
+  for (const extraPath of ['lib/services/extra.js', 'bin/extra', 'README.md']) {
+    const input = artifact();
+    const extra = { path: extraPath, bytes: Buffer.from('unverified bytes') };
+    input.tarballBytes = tarball(input.packageIdentity, [
+      ...input.entries.filter((entry) => entry.path !== 'package.json'),
+      extra,
+    ]);
+    input.installedFiles.push(extra);
+    input.installedFiles.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    assert.throws(() => bindArtifact(input), extraPath);
+  }
 });
 
 test('complete manifest inventory admits runtime and packaging files without changing binding shape', () => {
@@ -574,7 +622,6 @@ test('complete manifest inventory admits runtime and packaging files without cha
   input.entries.push(
     { path: 'lib/services/extra.js', bytes: Buffer.from('manifested executable bytes') },
     { path: 'README.md', bytes: Buffer.from('manifested package documentation') },
-    { path: 'package.json', bytes: Buffer.from(JSON.stringify(input.packageIdentity)) },
   );
   input.entries.sort((left, right) => (left.path < right.path ? -1 : 1));
   input.manifestBytes = Buffer.from(
@@ -591,6 +638,10 @@ test('complete manifest inventory admits runtime and packaging files without cha
     input.packageIdentity,
     input.entries.filter((entry) => entry.path !== 'package.json'),
   );
+  input.installedFiles = input.entries.map(({ path, bytes }) => ({
+    path,
+    bytes: Buffer.from(bytes),
+  }));
   const binding = bindArtifact(input);
   assert.equal(binding.entries.length, 5);
   assert.deepEqual(

@@ -255,6 +255,20 @@ function publicPair(pair, baseline) {
  * @returns {Promise<object>} Outcome receipt only after every final audit succeeds.
  */
 export async function coordinateSegmentAcceptance(input, seams = {}) {
+  try {
+    return await coordinatePrivate(input, seams);
+  } catch {
+    throw new Error('SEGMENT_ACCEPTANCE_COORDINATOR: acceptance refused');
+  }
+}
+
+/**
+ * Keep raw runner receipts and adapter failures inside the coordinator boundary.
+ * @param {object} input Acceptance inputs.
+ * @param {object} seams Synthetic runner/clock seams.
+ * @returns {Promise<object>} Redacted outcome.
+ */
+async function coordinatePrivate(input, seams) {
   const allowed = [
     'profile',
     'originalOwner',
@@ -281,14 +295,25 @@ export async function coordinateSegmentAcceptance(input, seams = {}) {
     input.expectedForward?.fieldApiName !== input.profile?.field
   )
     fail('baseline selection differs from pinned runner');
-  const now = seams.now ?? (() => performance.now());
+  const worstCase = SEGMENT_ACCEPTANCE_SCHEDULE.reduce(
+    (total, step) => total + step.cost.milliseconds,
+    0,
+  );
+  if (worstCase > 1_800_000) fail('declared schedule cannot fit all-in deadline');
+  const now = seams.now ?? (() => Math.floor(performance.now()));
   const wallNow = seams.wallNow ?? Date.now;
   const startedAt = now(); // Includes runner/broker setup, artifact binding and evidence audits.
+  if (!Number.isSafeInteger(startedAt) || startedAt < 0) fail('invalid monotonic start');
   const deadline = wallNow() + 1_800_000;
   let previous = startedAt;
   const checkTime = () => {
     const current = now();
-    if (!Number.isFinite(current) || current < previous || current - startedAt >= 1_800_000)
+    if (
+      !Number.isSafeInteger(current) ||
+      current < 0 ||
+      current < previous ||
+      current - startedAt >= 1_800_000
+    )
       fail('all-in deadline or clock violation');
     previous = current;
     return 1_800_000 - (current - startedAt);
@@ -304,7 +329,10 @@ export async function coordinateSegmentAcceptance(input, seams = {}) {
   const receipts = [];
   try {
     checkTime();
-    runner = await (seams.createRunner ?? createSegmentAcceptanceRunner)(input.profile);
+    runner = await (seams.createRunner ?? createSegmentAcceptanceRunner)(input.profile, {
+      now,
+      startedAt,
+    });
     checkTime();
     const artifact = bindArtifact(await input.artifactEvidence());
     checkTime();
@@ -398,12 +426,25 @@ export async function coordinateSegmentAcceptance(input, seams = {}) {
       success: true,
       liveAcquisitionProven: false,
       artifactDigest: artifact.digest,
-      comparison,
-      receipts: Object.freeze(receipts),
-      audit,
+      comparison: Object.freeze({
+        equal: comparison.equal,
+        baselineDigest: comparison.baselineDigest,
+        finalDigest: comparison.finalDigest,
+        liveAcquisitionProven: false,
+      }),
+      receipts: Object.freeze(receipts.map(() => Object.freeze({ completed: true }))),
+      audit: Object.freeze({
+        used: Object.freeze({
+          orgProcesses: audit.used.orgProcesses,
+          metadataJobs: audit.used.metadataJobs,
+          logicalReads: audit.used.logicalReads,
+        }),
+        authRequests: 'UNKNOWN',
+        wireRequests: 'UNKNOWN',
+      }),
     });
   } catch (error) {
-    runner?.stop(error.message);
+    runner?.stop('coordinator refused');
     throw error;
   } finally {
     if (!runnerClosed) await runner?.close();

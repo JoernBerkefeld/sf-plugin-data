@@ -102,8 +102,11 @@ export async function createSegmentAcceptanceBroker({ ledger, profile, onStop = 
   const watchers = new Set();
   const wirePending = new Map();
   const bindings = transportBindings(profile);
+  let capture;
   let cancelled = false;
+  let closed = false;
   const fail = () => {
+    capture = undefined;
     ledger.stop('observer protocol refused');
     if (!cancelled) {
       cancelled = true;
@@ -203,13 +206,25 @@ export async function createSegmentAcceptanceBroker({ ledger, profile, onStop = 
                 apiVersion: '65.0',
                 redirect: 'error',
               });
-              wirePending.set(payload.id, body);
+              // Retain credentials only for the explicitly synthetic offline profile. The shared
+              // broker credential identifies no particular child process; attribution is unproved.
+              const synthetic =
+                profile.targetOrg === 'synthetic' && profile.origin === 'https://source.example';
+              wirePending.set(payload.id, {
+                body,
+                method: payload.method,
+                url: payload.url,
+                ...(capture && synthetic && payload.method === 'POST'
+                  ? { requestWire: payload.body }
+                  : {}),
+              });
               break;
             }
             case 'wire-result': {
               exactWire(payload, ['id', 'statusCode', 'body']);
               if (!wirePending.has(payload.id)) reject();
-              const body = wirePending.get(payload.id);
+              const request = wirePending.get(payload.id);
+              const { body } = request;
               if (
                 !Number.isInteger(payload.statusCode) ||
                 payload.statusCode < 200 ||
@@ -232,6 +247,25 @@ export async function createSegmentAcceptanceBroker({ ledger, profile, onStop = 
                   completion,
                 });
               } else response = ledger.observeResult({ id: payload.id, outcome: 'success' });
+              if (capture) {
+                const record = {
+                  id: payload.id,
+                  method: request.method,
+                  url: request.url,
+                  request: body,
+                  ...(request.requestWire === undefined
+                    ? {}
+                    : { requestWire: request.requestWire }),
+                  statusCode: payload.statusCode,
+                  body: payload.body,
+                };
+                // Include JSON array brackets, separators and escaping, not just raw response bytes.
+                const bytes = Buffer.byteLength(JSON.stringify(record), 'utf8');
+                const size = capture.bytes + bytes + (capture.records.length > 0 ? 1 : 0);
+                if (capture.records.length >= 100 || size > 16_777_216) reject();
+                capture.bytes = size;
+                capture.records.push(record);
+              }
               wirePending.delete(payload.id);
               break;
             }
@@ -292,7 +326,23 @@ export async function createSegmentAcceptanceBroker({ ledger, profile, onStop = 
     token,
     audit: () => ledger.audit(),
     registeredScratch: () => Object.freeze([...scratch.keys()]),
+    beginCapture: () => {
+      if (closed || ledger.audit().stopped || capture || wirePending.size > 0) reject();
+      capture = { records: [], bytes: 2 };
+    },
+    endCapture: () => {
+      if (closed || ledger.audit().stopped) {
+        capture = undefined;
+        reject();
+      }
+      if (!capture || wirePending.size > 0) reject();
+      const records = structuredClone(capture.records);
+      capture = undefined;
+      return Object.freeze(records.map((record) => Object.freeze(record)));
+    },
     close: async () => {
+      closed = true;
+      capture = undefined;
       clearInterval(deadlineWatch);
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve, rejectClose) =>

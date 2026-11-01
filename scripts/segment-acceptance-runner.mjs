@@ -28,11 +28,12 @@ export function assertSegmentProcessCount(evidence, admissions) {
 /**
  * Start one parent ledger and broker; every serial root owns its entire inherited Job tree.
  * @param {object} input Exact pinned profile (no caller argv or preload override).
+ * @param {object} [clock] Shared monotonic ledger clock options.
  * @returns {Promise<object>} Phase, root, audit, stop and close interfaces.
  */
-export async function createSegmentAcceptanceRunner(input) {
+export async function createSegmentAcceptanceRunner(input, clock = {}) {
   const profile = validateSegmentAcceptanceProfile(input);
-  const ledger = createSegmentAcceptance(profile);
+  const ledger = createSegmentAcceptance(profile, clock);
   const controller = new AbortController();
   let active;
   let closed = false;
@@ -67,6 +68,7 @@ export async function createSegmentAcceptanceRunner(input) {
       }
       const id = randomUUID();
       let charged = false;
+      let capturing = false;
       let receipt;
       const processesBeforeRoot = ledger.audit().used.orgProcesses;
       const work = (async () => {
@@ -81,6 +83,8 @@ export async function createSegmentAcceptanceRunner(input) {
           environment.SF_AUTOUPDATE_DISABLE = 'true';
           environment.SF_DISABLE_TELEMETRY = 'true';
           environment.SF_DISABLE_SOURCE_MEMBER_POLLING = 'true';
+          broker.beginCapture();
+          capturing = true;
           const evidence = await runOwnedProcess({
             executable: profile.executable,
             args: argv,
@@ -122,9 +126,19 @@ export async function createSegmentAcceptanceRunner(input) {
             throw Object.assign(new Error('SEGMENT_ACCEPTANCE: incomplete root/tree proof'), {
               evidence,
             });
+          // Captured response bodies are not safe to expose in a receipt or logs.
+          broker.endCapture();
+          capturing = false;
           const audit = ledger.observeResult({ id, outcome: 'success' });
           return Object.freeze({ id, evidence, audit });
         } catch (error) {
+          if (capturing) {
+            try {
+              broker.endCapture();
+            } catch {
+              // Preserve the original failure; closing the broker also clears its capture.
+            }
+          }
           if (charged && !ledger.audit().stopped) {
             try {
               ledger.observeResult({ id, outcome: 'uncertain' });

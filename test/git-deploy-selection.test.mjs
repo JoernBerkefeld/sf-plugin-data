@@ -62,8 +62,8 @@ const put = async (cwd, file, value) => {
   await mkdir(path.dirname(path.join(cwd, file)), { recursive: true });
   await writeFile(path.join(cwd, file), typeof value === 'string' ? value : JSON.stringify(value));
 };
-const commit = async (cwd) => {
-  await git(cwd, 'add', '--all');
+const commit = async (cwd, ...files) => {
+  if (files.length > 0) await git(cwd, 'add', '--', ...files);
   await git(cwd, 'commit', '-m', 'Synthetic selection fixture');
   return git(cwd, 'rev-parse', 'HEAD');
 };
@@ -76,7 +76,7 @@ const fixture = async () => {
   await git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
   await git(cwd, 'config', '--local', 'core.autocrlf', 'false');
   await git(cwd, 'config', '--local', 'diff.renames', 'false');
-  await commit(cwd);
+  await commit(cwd, '.run-owner');
   return cwd;
 };
 const refusal = (code) => (error) => error instanceof GitSelectionError && error.code === code;
@@ -100,12 +100,16 @@ for (const member of ['path', 'companionPath', 'both']) {
     test(`Segment ${member} ${phase} changes select one byte-bound pair with DMO`, async () => {
       const cwd = await fixture();
       const p = await segment(cwd);
-      const base = phase === 'untracked' ? await git(cwd, 'rev-parse', 'HEAD') : await commit(cwd);
+      const base =
+        phase === 'untracked'
+          ? await git(cwd, 'rev-parse', 'HEAD')
+          : await commit(cwd, p.path, p.companionPath);
       for (const key of member === 'both' ? ['path', 'companionPath'] : [member]) {
         const { readFile } = await import('node:fs/promises');
         await writeFile(p[key], (await readFile(p[key], 'utf8')) + '\n');
       }
-      if (phase === 'index' || phase === 'committed') await git(cwd, 'add', '--all');
+      if (phase === 'index' || phase === 'committed')
+        await git(cwd, 'add', '--', p.path, p.companionPath);
       if (phase === 'committed') await commit(cwd);
       await put(cwd, relative('Added'), document('Added'));
       const result = await selectGitDeployInputs({ cwd, ref: base });
@@ -133,11 +137,18 @@ for (const member of ['path', 'companionPath']) {
       test(`Segment ${member} ${phase} ${action} blocks otherwise valid DMO`, async () => {
         const cwd = await fixture();
         const p = await segment(cwd);
-        const base = await commit(cwd);
+        const base = await commit(cwd, p.path, p.companionPath);
         await (action === 'delete'
           ? unlink(p[member])
           : rename(p[member], path.join(cwd, 'outside.json')));
-        if (phase !== 'worktree') await git(cwd, 'add', '--all');
+        if (phase !== 'worktree')
+          await git(
+            cwd,
+            'add',
+            '--',
+            p[member],
+            ...(action === 'rename' ? [path.join(cwd, 'outside.json')] : []),
+          );
         if (phase === 'committed') await commit(cwd);
         await put(cwd, relative('Added'), document('Added'));
         await assert.rejects(
@@ -214,7 +225,7 @@ test('Git selector combines committed, index, worktree and untracked paths from 
   const cwd = await fixture();
   const base = await git(cwd, 'rev-parse', 'HEAD');
   await put(cwd, relative('Committed'), document('Committed'));
-  await commit(cwd);
+  await commit(cwd, relative('Committed'));
   await put(cwd, relative('Staged'), document('Staged'));
   await git(cwd, 'add', '--', relative('Staged'));
   await put(cwd, relative('Committed'), {
@@ -241,10 +252,10 @@ test('Git selector uses a unique merge base rather than the requested branch tip
   const base = await git(cwd, 'rev-parse', 'HEAD');
   await git(cwd, 'checkout', '-b', 'other');
   await put(cwd, relative('Other'), document('Other'));
-  const other = await commit(cwd);
+  const other = await commit(cwd, relative('Other'));
   await git(cwd, 'checkout', 'main');
   await put(cwd, relative('Main'), document('Main'));
-  await commit(cwd);
+  await commit(cwd, relative('Main'));
   const result = await selectGitDeployInputs({ cwd, ref: 'other' });
   assert.equal(result.provenance.referenceCommit, other);
   assert.equal(result.provenance.mergeBase, base);
@@ -261,7 +272,7 @@ test('empty valid Git selection succeeds and unrelated Unicode changes are ignor
 test('modified unrelated tracked pathname D is not a deletion status', async () => {
   const cwd = await fixture();
   await put(cwd, 'D', 'before');
-  await commit(cwd);
+  await commit(cwd, 'D');
   await put(cwd, 'D', 'modified');
   await put(cwd, relative('Added'), document('Added'));
   const result = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
@@ -271,7 +282,7 @@ test('modified unrelated tracked pathname D is not a deletion status', async () 
 test('genuine unrelated tracked deletion still blocks an untracked DMO addition', async () => {
   const cwd = await fixture();
   await put(cwd, 'unrelated.txt', 'before');
-  await commit(cwd);
+  await commit(cwd, 'unrelated.txt');
   await unlink(path.join(cwd, 'unrelated.txt'));
   await put(cwd, relative('Added'), document('Added'));
   await assert.rejects(
@@ -287,10 +298,10 @@ for (const phase of ['committed', 'index', 'worktree']) {
       const source = direction === 'inbound' ? 'outside space ü.json' : relative('Before');
       const target = direction === 'outbound' ? 'outside space ü.json' : relative('After');
       await put(cwd, source, document(direction === 'inbound' ? 'After' : 'Before'));
-      const base = await commit(cwd);
+      const base = await commit(cwd, source);
       await mkdir(path.dirname(path.join(cwd, target)), { recursive: true });
       await rename(path.join(cwd, source), path.join(cwd, target));
-      if (phase !== 'worktree') await git(cwd, 'add', '--all');
+      if (phase !== 'worktree') await git(cwd, 'add', '--', source, target);
       if (phase === 'committed') await commit(cwd);
       await assert.rejects(
         selectGitDeployInputs({ cwd, ref: base }),
@@ -304,10 +315,10 @@ for (const phase of ['committed', 'index', 'worktree']) {
   test(`Git selector blocks ${phase} relevant deletion despite another valid addition`, async () => {
     const cwd = await fixture();
     await put(cwd, relative('Removed'), document('Removed'));
-    const base = await commit(cwd);
+    const base = await commit(cwd, relative('Removed'));
     await unlink(path.join(cwd, relative('Removed')));
     await put(cwd, relative('Added'), document('Added'));
-    if (phase !== 'worktree') await git(cwd, 'add', '--all');
+    if (phase !== 'worktree') await git(cwd, 'add', '--', relative('Removed'), relative('Added'));
     if (phase === 'committed') await commit(cwd);
     await assert.rejects(
       selectGitDeployInputs({ cwd, ref: base }),
@@ -336,7 +347,7 @@ for (const [file, value] of [
 test('Git selector refuses tracked directory link replacement before deployment', async () => {
   const cwd = await fixture();
   await put(cwd, relative('Linked'), document('Linked'));
-  await commit(cwd);
+  await commit(cwd, relative('Linked'));
   await rename(path.join(cwd, 'data360', 'default', 'dmo'), path.join(cwd, 'linked'));
   await symlink(path.join(cwd, 'linked'), path.join(cwd, 'data360', 'default', 'dmo'), 'junction');
   await put(cwd, 'linked/Linked__dlm.json', {

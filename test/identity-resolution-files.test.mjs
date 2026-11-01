@@ -111,7 +111,7 @@ test('IR legacy identity is refused by writer and file/Git admission without rei
   git(cwd, 'config', '--local', 'user.name', 'Jörn Berkefeld');
   git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
   git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
-  git(cwd, 'add', '--all');
+  git(cwd, 'add', '--', receipt.path);
   git(cwd, 'commit', '-m', 'Synthetic legacy baseline');
   await writeFile(receipt.path, JSON.stringify(legacy) + '\n');
   await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }));
@@ -184,22 +184,22 @@ for (const phase of ['untracked', 'index', 'committed', 'worktree']) {
     git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
     git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
     git(cwd, 'config', '--local', 'core.autocrlf', 'false');
-    git(cwd, 'add', '--all');
+    git(cwd, 'add', '--', 'ownership', 'sfdx-project.json');
     git(cwd, 'commit', '-m', 'Synthetic baseline');
     const receipt = await writeIdentityResolutionDocument(document(), cwd, false);
     if (phase === 'worktree') {
-      git(cwd, 'add', '--all');
+      git(cwd, 'add', '--', receipt.path);
       git(cwd, 'commit', '-m', 'Synthetic file');
     }
     const base = git(cwd, 'rev-parse', 'HEAD');
     await writeFile(receipt.path, (await readFile(receipt.path, 'utf8')) + '\n');
-    if (phase === 'index' || phase === 'committed') git(cwd, 'add', '--all');
+    if (phase === 'index' || phase === 'committed') git(cwd, 'add', '--', receipt.path);
     if (phase === 'committed') git(cwd, 'commit', '-m', 'Synthetic edit');
     const selected = await selectGitDeployInputs({ cwd, ref: base });
     assert.deepEqual(selected.paths, [receipt.path]);
     assert.equal(selected.identityResolutions.length, 1);
     await verifyIdentityResolutionInputDigest(selected.identityResolutions[0]);
-    git(cwd, 'add', '--all');
+    git(cwd, 'add', '--', receipt.path);
     git(cwd, 'commit', '--allow-empty', '-m', 'Synthetic tracked');
     await unlink(receipt.path);
     await assert.rejects(
@@ -281,21 +281,27 @@ test('IR Git renamed and noncanonical members cannot vanish', async () => {
   git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
   git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
   const receipt = await writeIdentityResolutionDocument(document(), cwd, false);
-  git(cwd, 'add', '--all');
+  git(cwd, 'add', '--', receipt.path);
   git(cwd, 'commit', '-m', 'Synthetic baseline');
   const base = git(cwd, 'rev-parse', 'HEAD');
   await rename(
     receipt.path,
     path.join(path.dirname(receipt.path), 'Renamed.identityResolution.json'),
   );
-  git(cwd, 'add', '--all');
+  git(
+    cwd,
+    'add',
+    '--',
+    receipt.path,
+    path.join(path.dirname(receipt.path), 'Renamed.identityResolution.json'),
+  );
   await assert.rejects(selectGitDeployInputs({ cwd, ref: base }), rejects('BLOCKED_GIT_LIFECYCLE'));
   const other = await fixture();
   git(other, 'init', '--initial-branch=main');
   git(other, 'config', '--local', 'user.name', 'Jörn Berkefeld');
   git(other, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
   git(other, 'config', '--local', 'commit.gpgsign', 'false');
-  git(other, 'add', '--all');
+  git(other, 'add', '--', 'ownership');
   git(other, 'commit', '-m', 'Synthetic baseline');
   await writeFile(
     path.join(other, 'Unexpected.identityResolution.json'),

@@ -1,6 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { gzipSync } from 'node:zlib';
 import test from 'node:test';
 import {
@@ -105,14 +106,14 @@ function raw() {
 function artifact() {
   const packageIdentity = { name: 'sf-plugin-data', version: '0.1.0' };
   const root = 'F:/Temp/synthetic-coordinator/plugin';
-  const entries = ['deploy', 'retrieve'].map((command) => ({
-    path: `lib/commands/data360/${command}.js`,
-    bytes: Buffer.from(`synthetic ${command}`),
-  }));
-  const members = [
+  const entries = [
+    ...['deploy', 'retrieve'].map((command) => ({
+      path: `lib/commands/data360/${command}.js`,
+      bytes: Buffer.from(`synthetic ${command}`),
+    })),
     { path: 'package.json', bytes: Buffer.from(JSON.stringify(packageIdentity)) },
-    ...entries,
   ];
+  const members = entries;
   const blocks = members.map(({ path, bytes }) => {
     const header = Buffer.alloc(512);
     header.write(`package/${path}`);
@@ -144,6 +145,7 @@ function artifact() {
       }),
     ),
     tarballBytes: gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)])),
+    installedFiles: entries.map(({ path, bytes }) => ({ path, bytes: Buffer.from(bytes) })),
     inventory: [{ ...packageIdentity, root, packageSha256: sha(JSON.stringify(packageIdentity)) }],
     commandOrigins: Object.fromEntries(
       ['retrieve', 'deploy'].map((command) => [
@@ -435,13 +437,88 @@ function scenario(fault) {
         return value;
       },
     },
-    seams: { createRunner: async () => runner, now: () => time, wallNow: () => 10_000 },
+    seams: {
+      createRunner: async (_profile, clock) => {
+        assert.equal(clock.startedAt, 0);
+        assert.equal(clock.now(), time);
+        return runner;
+      },
+      now: () => time,
+      wallNow: () => 10_000,
+    },
   };
 }
 
+test('declared worst-case schedule is refused before setup', async () => {
+  const s = scenario();
+  await assert.rejects(coordinateSegmentAcceptance(s.input, s.seams), /acceptance refused/);
+  assert.deepEqual(s.events, []);
+  assert.equal(s.closed(), false);
+  assert.equal(s.stopped(), undefined);
+  assert.equal(
+    SEGMENT_ACCEPTANCE_SCHEDULE.reduce((total, step) => total + step.cost.milliseconds, 0),
+    2_450_000,
+  );
+  assert.deepEqual(
+    SEGMENT_ACCEPTANCE_SCHEDULE.map(({ name }) => name),
+    ['baseline', 'retrieve', 'repeat', 'preview', 'deploy', 'final'],
+  );
+  const total = { orgProcesses: 0, metadataJobs: 0, logicalReads: 0 };
+  for (const { cost } of SEGMENT_ACCEPTANCE_SCHEDULE)
+    for (const key of Object.keys(total)) total[key] += cost[key];
+  assert.deepEqual(total, { orgProcesses: 15, metadataJobs: 9, logicalReads: 90 });
+  assert.ok(Object.isFrozen(SEGMENT_ACCEPTANCE_SCHEDULE.at(-1).cost));
+});
+
+test('coordinator does not expose sensitive input errors', async () => {
+  const s = scenario();
+  Object.defineProperty(s.input, 'profile', {
+    get() {
+      throw Object.assign(new Error('secret response body'), { stdout: 'secret stdout' });
+    },
+  });
+  await assert.rejects(coordinateSegmentAcceptance(s.input, s.seams), (error) => {
+    assert.equal(error.message, 'SEGMENT_ACCEPTANCE_COORDINATOR: acceptance refused');
+    assert.equal(error.stdout, undefined);
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+});
+
+// Replace only the default runner in this synthetic copy; injected seams and callbacks are not sandboxed.
+const coordinatorUrl = new URL('../scripts/segment-acceptance-coordinator.mjs', import.meta.url);
+const coordinatorSource = await readFile(coordinatorUrl, 'utf8');
+const runnerImport = "'./segment-acceptance-runner.mjs'";
+assert.equal(coordinatorSource.split(runnerImport).length, 2);
+const stubUrl = `data:text/javascript,${encodeURIComponent('export let calls = 0; export function createSegmentAcceptanceRunner() { calls++; throw new Error("stub invoked"); }')}`;
+const runnerStub = await import(stubUrl);
+const syntheticSource = coordinatorSource
+  .replace("import './check-temporary.mjs';", '')
+  .replace(runnerImport, JSON.stringify(stubUrl))
+  .replace(
+    "'./segment-acceptance-baseline.mjs'",
+    JSON.stringify(new URL('../scripts/segment-acceptance-baseline.mjs', import.meta.url).href),
+  )
+  .replace('if (worstCase > 1_800_000)', 'if (worstCase > 2_450_000)');
+const synthetic = await import(
+  `data:text/javascript;base64,${Buffer.from(syntheticSource).toString('base64')}`
+);
+assert.equal(coordinatorSource.split('if (worstCase > 1_800_000)').length, 2);
+assert.notEqual(syntheticSource, coordinatorSource);
+test('synthetic coordinator invokes the substituted default runner stub', async () => {
+  const s = scenario();
+  const before = runnerStub.calls;
+  await assert.rejects(synthetic.coordinateSegmentAcceptance(s.input, {}), /acceptance refused/);
+  assert.equal(runnerStub.calls, before + 1);
+  assert.deepEqual(s.events, []);
+});
+assert.equal(
+  synthetic.SEGMENT_ACCEPTANCE_SCHEDULE.reduce((sum, step) => sum + step.cost.milliseconds, 0),
+  2_450_000,
+);
 test('fixed ordered outcome binds before baseline, admits baseline before public phases, audits final', async () => {
   const s = scenario();
-  const result = await coordinateSegmentAcceptance(s.input, s.seams);
+  const result = await synthetic.coordinateSegmentAcceptance(s.input, s.seams);
   assert.equal(result.success, true);
   assert.equal(result.liveAcquisitionProven, false);
   assert.equal(result.comparison.equal, true);
@@ -480,7 +557,7 @@ for (const fault of [
 ]) {
   test(`coordinator refuses ${fault} without an outcome receipt`, async () => {
     const s = scenario(fault);
-    await assert.rejects(coordinateSegmentAcceptance(s.input, s.seams));
+    await assert.rejects(synthetic.coordinateSegmentAcceptance(s.input, s.seams));
     assert.ok(s.stopped());
     assert.ok(s.closed());
     if (
@@ -519,7 +596,7 @@ for (const phase of ['retrieve', 'repeat', 'preview', 'deploy']) {
   ]) {
     test(`public ${phase} refuses ${change} before later phases or outcome success`, async () => {
       const s = scenario(`${phase}:${change}`);
-      await assert.rejects(coordinateSegmentAcceptance(s.input, s.seams));
+      await assert.rejects(synthetic.coordinateSegmentAcceptance(s.input, s.seams));
       assert.ok(s.stopped());
       assert.ok(s.closed());
       const next = { retrieve: 'repeat', repeat: 'preview', preview: 'deploy', deploy: 'final' }[
@@ -531,7 +608,7 @@ for (const phase of ['retrieve', 'repeat', 'preview', 'deploy']) {
 }
 test('missing second public retrieve receipt refuses before preview without outcome success', async () => {
   const s = scenario('skippedrepeat');
-  await assert.rejects(coordinateSegmentAcceptance(s.input, s.seams));
+  await assert.rejects(synthetic.coordinateSegmentAcceptance(s.input, s.seams));
   assert.ok(!s.events.includes('phase:preview'));
 });
 test('caller cannot reverse phases, skip final or underdeclare its fixed cost', async () => {

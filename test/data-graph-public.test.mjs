@@ -251,7 +251,7 @@ test('Graph Git selection captures exact immutable input and refuses deletion an
   git(cwd, 'config', '--local', 'user.name', 'Jörn Berkefeld');
   git(cwd, 'config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
   git(cwd, 'config', '--local', 'commit.gpgsign', 'false');
-  git(cwd, 'add', '--all');
+  git(cwd, 'add', '--', receipt.path);
   git(cwd, 'commit', '-m', 'Synthetic baseline');
   await writeFile(receipt.path, (await readFile(receipt.path, 'utf8')) + '\n');
   const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });

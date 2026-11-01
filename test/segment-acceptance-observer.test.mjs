@@ -194,6 +194,108 @@ for (const failure of ['wrong-job', 'contradiction', 'http', 'replay', 'semantic
   });
 }
 
+test('capture retains only settled wire responses and separates successive roots', async () => {
+  const broker = await create();
+  try {
+    broker.beginCapture();
+    const url = `${profile.origin}/services/data/v65.0/ssot/segments/${profile.segment}`;
+    await segmentBrokerCall(broker, 'wire-read', { id: 'one', method: 'GET', url, body: false });
+    assert.throws(() => broker.endCapture());
+    await segmentBrokerCall(broker, 'wire-result', {
+      id: 'one',
+      statusCode: 200,
+      body: '{"segments":[]}',
+    });
+    const records = broker.endCapture();
+    assert.deepEqual(records, [
+      {
+        id: 'one',
+        method: 'GET',
+        url,
+        request: undefined,
+        statusCode: 200,
+        body: '{"segments":[]}',
+      },
+    ]);
+    broker.beginCapture();
+    assert.deepEqual(broker.endCapture(), []);
+    assert.equal(broker.audit().used.logicalReads, 1);
+  } finally {
+    await broker.close();
+  }
+});
+
+test('invalid SOAP never exposes request contents in broker errors', async () => {
+  const broker = await create();
+  try {
+    broker.beginCapture();
+    const secret = 'SYNTHETIC_PRIVATE_MARKER';
+    await assert.rejects(
+      segmentBrokerCall(broker, 'wire-read', {
+        id: 'invalid',
+        method: 'POST',
+        url: `${profile.origin}/services/Soap/m/65.0/${profile.orgId}`,
+        body: secret,
+      }),
+      (error) => !String(error).includes(secret),
+    );
+    assert.throws(() => broker.endCapture());
+    assert.ok(broker.audit().stopped);
+  } finally {
+    await broker.close();
+  }
+});
+
+test('capture bounds complete serialized records, including escaped response bytes', async () => {
+  const broker = await create();
+  try {
+    broker.beginCapture();
+    const url = `${profile.origin}/services/data/v65.0/ssot/segments/${profile.segment}`;
+    const body = '\\'.repeat(4_195_000);
+    for (const id of ['first', 'second']) {
+      await segmentBrokerCall(broker, 'wire-read', { id, method: 'GET', url, body: false });
+      const result = segmentBrokerCall(broker, 'wire-result', { id, statusCode: 200, body });
+      await (id === 'first' ? result : assert.rejects(result));
+    }
+    assert.ok(broker.audit().stopped);
+    assert.throws(() => broker.endCapture());
+    assert.throws(() => broker.beginCapture());
+  } finally {
+    await broker.close();
+  }
+});
+
+test('broker failure and close discard captured records', async () => {
+  for (const action of ['failure', 'close']) {
+    const broker = await create();
+    let closed = false;
+    try {
+      broker.beginCapture();
+      const url = `${profile.origin}/services/data/v65.0/ssot/segments/${profile.segment}`;
+      await segmentBrokerCall(broker, 'wire-read', {
+        id: 'retained',
+        method: 'GET',
+        url,
+        body: false,
+      });
+      await segmentBrokerCall(broker, 'wire-result', {
+        id: 'retained',
+        statusCode: 200,
+        body: '{}',
+      });
+      if (action === 'failure') await segmentBrokerCall(broker, 'stop', false);
+      else {
+        await broker.close();
+        closed = true;
+      }
+      assert.throws(() => broker.endCapture(), action);
+      assert.throws(() => broker.beginCapture(), action);
+    } finally {
+      if (!closed) await broker.close();
+    }
+  }
+});
+
 test('parent creates retained registered scratch instead of accepting caller paths', async () => {
   const broker = await create();
   try {
@@ -330,6 +432,7 @@ test('real execFile returns ChildProcess immediately and child inherits the priv
 test('SYNTHETIC captured transport retains StreamPromise and settles raw omitted-ZIP polls', async () => {
   const broker = await create();
   try {
+    broker.beginCapture();
     const code = `
       const assert=(await import('node:assert/strict')).default;
       const {createRequire}=await import('node:module');
@@ -347,6 +450,7 @@ test('SYNTHETIC captured transport retains StreamPromise and settles raw omitted
         wrap('checkRetrieveStatus','<id>'+job+'</id><done>true</done><status>Succeeded</status><success>true</success><zipFile>UEs=</zipFile>')];
       await installSegmentAcceptancePreload(config,{syntheticTransport:async(input,admission)=>{
         assert.equal(input.method,'POST');
+        console.log('WIRE:'+Buffer.from(input.body,'utf8').toString('base64'));
         // Parent receipt proves debit and prior completion state before captured dispatch.
         assert.equal(admission.used.logicalReads,dispatched+1);
         assert.deepEqual(admission.activeJobs,dispatched===0?[]:[job]);
@@ -383,6 +487,18 @@ test('SYNTHETIC captured transport retains StreamPromise and settles raw omitted
     });
     assert.equal(result.exitCode, 0, result.stderr);
     assert.match(result.stdout, /SETTLED:4/u);
+    const dispatched = [...result.stdout.matchAll(/^WIRE:(.+)$/gmu)].map((match) =>
+      Buffer.from(match[1], 'base64').toString('utf8'),
+    );
+    const captured = broker.endCapture();
+    assert.equal(dispatched.length, 4);
+    assert.deepEqual(
+      captured.map((record) => record.requestWire),
+      dispatched,
+    );
+    assert.ok(
+      captured.every((record) => record.requestWire.includes('SYNTHETIC_NOT_AUTH!session')),
+    );
     assert.deepEqual(broker.audit().used, { orgProcesses: 0, metadataJobs: 1, logicalReads: 4 });
     assert.deepEqual(broker.audit().activeJobs, []);
     assert.deepEqual(broker.audit().seenJobs, ['09S000000000001AAA']);

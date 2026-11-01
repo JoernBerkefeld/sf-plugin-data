@@ -175,6 +175,36 @@ test('fixed immutable maxima and constructor starts all-in clock before setup', 
   assert.equal(ledger.audit().authRequests, 'UNKNOWN');
 });
 
+test('shared monotonic start includes setup and rejects clock regression and exact deadline', () => {
+  let time = 1000;
+  const now = () => time;
+  const startedAt = now();
+  time += 1;
+  const ledger = createSegmentAcceptance(profile, { startedAt, now });
+  assert.equal(ledger.audit().startedAt, startedAt);
+  assert.throws(
+    () => ledger.beginPhase('baseline', phaseCost, finalCost),
+    /preserve milliseconds/u,
+  );
+
+  time = 2000;
+  const regressing = createSegmentAcceptance(profile, { startedAt, now });
+  time = 1999;
+  assert.throws(() => regressing.beginPhase('baseline', finalCost, finalCost), /clock/u);
+  assert.throws(
+    () => createSegmentAcceptance(profile, { startedAt: 2000, now: () => 1999 }),
+    /clock/u,
+  );
+  for (const invalid of [-1, 0.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])
+    assert.throws(() => createSegmentAcceptance(profile, { startedAt: invalid, now }), /clock/u);
+
+  time = startedAt + SEGMENT_ACCEPTANCE_LIMITS.milliseconds - 1;
+  const deadline = createSegmentAcceptance(profile, { startedAt, now });
+  assert.equal(deadline.audit().stopped, undefined);
+  time++;
+  assert.throws(() => deadline.beginPhase('final', finalCost, finalCost), /deadline/u);
+});
+
 test('precharges all 14 nonfinal processes, preserves final launcher+child, refuses 17th', () => {
   const { ledger } = setup();
   for (let index = 0; index < 14; index++) {
