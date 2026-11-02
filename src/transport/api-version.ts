@@ -7,6 +7,18 @@ export type ApiVersionSelection = Readonly<{
 
 const numericVersion = /^\d{2,3}\.0$/u;
 
+/**
+ * Admit native DLO, DMO and mapping routes without discovery or upgrading numeric pins.
+ * Admission is not a claim of live qualification at every admitted version.
+ * @param {string} requested Explicit numeric version or default/auto.
+ * @returns {string} Numeric route version.
+ */
+export function nativeApiVersion(requested = 'auto'): string {
+  if (requested === 'auto') return '68.0';
+  if (numericVersion.test(requested) && Number(requested) >= 61) return requested;
+  throw new Error('INVALID_SCOPE');
+}
+
 export type OperationalFamily =
   'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
 

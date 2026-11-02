@@ -2004,9 +2004,14 @@ test('common service through command and writer publishes varied authored types 
       getOrgId: () => 'synthetic-org',
       getConnection: () => connection,
     });
-    command.selectDocuments = async () => ['Audit_Ledger__dlm'];
-    command.acquire = retrieveDmo;
-    command.writeDocument = writeDmoDocument;
+    command.listNativeNames = async () => ['Audit_Ledger__dlm'];
+    // Keep the common projection integration tested independently of native normalization.
+    command.createDmoClient = () => ({});
+    command.acquireNativeDmo = async (name) => {
+      const acquired = await retrieveDmo(connection, name, '65.0', 'default');
+      return acquired.candidate;
+    };
+    command.writeNativeDmo = writeDmoDocument;
     const result = await command.run();
     assert.equal(result.status, 'success', JSON.stringify(result));
     const file = result.result.items[0].path;

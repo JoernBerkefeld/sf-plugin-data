@@ -333,7 +333,8 @@ test('REST parses receipt-proven raw status/body shapes and corrected empty DELE
   await client.update(targetId, { label: 'Changed' });
   await client.delete(targetId);
   assert.equal(requests.length, 3);
-  assert.throws(() => createDloClient('target', '67.0'), /SELECTION/);
+  assert.doesNotThrow(() => createDloClient('target', '67.0'));
+  assert.throws(() => createDloClient('target', '60.0'), /INVALID_SCOPE/);
   await assert.rejects(client.delete('../unsafe'), /TARGET_ID/);
 });
 

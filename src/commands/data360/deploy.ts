@@ -1,10 +1,15 @@
+import { preflightMapping, executeMapping } from '../../services/command-native-mapping.js';
+import { createMappingClient } from '../../transport/mapping-rest.js';
+import { NativeMappingError } from '../../artifacts/native-mapping-document.js';
 import { preflightDmo, executeDmo } from '../../services/command-native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { isNativeDmoInput } from '../../artifacts/read-deploy-input.js';
 import { NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { preflightDloDeploy, executeDloDeploy } from '../../services/command-dlo.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
-import { validateDloDocument } from '../../artifacts/dlo-document.js';
+import { normalizeDlo, unwrapDlo, validateDloDocument } from '../../artifacts/dlo-document.js';
+import { normalizeNativeDmo, unwrapNativeDmo } from '../../artifacts/native-dmo-document.js';
+import { isDeepStrictEqual } from 'node:util';
 import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import { preflightDataGraphDeploy } from '../../services/preflight-data-graph-deploy.js';
@@ -32,7 +37,11 @@ import { verifyCalculatedInsightInputDigest } from '../../artifacts/read-deploy-
 import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
-import { operationApiVersion, resolveApiVersion } from '../../transport/api-version.js';
+import {
+  nativeApiVersion,
+  operationApiVersion,
+  resolveApiVersion,
+} from '../../transport/api-version.js';
 import { preflightIdentityResolutionDeploy } from '../../services/preflight-identity-resolution-deploy.js';
 import type { IdentityResolutionDeployPreview } from '../../services/preflight-identity-resolution-deploy.js';
 import { executeIdentityResolutionDeploy } from '../../services/execute-identity-resolution-deploy.js';
@@ -120,7 +129,9 @@ type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
     | IdentityResolutionDeployExecution['family']
     | CalculatedInsightExecution['family']
     | DataGraphDeployExecution['family']
-    | 'dlo';
+    | 'dlo'
+    | 'dmo'
+    | 'mapping';
   route?:
     | SegmentDeployExecution['route']
     | IdentityResolutionDeployExecution['route']
@@ -186,6 +197,14 @@ export type DeployEnvelope = {
           | CalculatedInsightPreview
           | DataGraphDeployPreview
           | Awaited<ReturnType<typeof preflightDmo>>
+          | Awaited<ReturnType<typeof preflightMapping>>
+          | {
+              family: 'mapping';
+              outcome: 'planned-dependencies';
+              target: string;
+              absenceProof: string;
+              diagnostics: Array<{ code: string; message: string }>;
+            }
           | import('../../services/command-dlo.js').DloPreview
         ) & {
           routes?: ExecutionItem['routes'];
@@ -204,16 +223,16 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DMO JSON uses API65/default, target-name lookup selecting confirmed-404 POST or existing-name PATCH, label/additive Text updates and independent GET confirmation. Native DMO Git, mixed-family deployment and dependency expansion are blocked. Native DLOs use dlo:Name__dll at auto or numeric68/default from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create, one-pair additive update and unchanged repeats are supported, not removal or retargeting. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
       summary: 'Authenticated org alias or username; resolved only after local admission.',
     }),
     'api-version': Flags.orgApiVersion({
-      default: '65.0',
+      default: 'auto',
       summary:
-        'Numeric API pin, fixed qualified auto (DMO/Segment/CI65 and Graph/IR67), or DMO-only read-only latest.',
+        'Native DLO/DMO/mapping default or auto68, numeric >=61 retained; legacy routes keep their qualified versions.',
       parse: async (value, context, options) =>
         value === 'latest' || value === 'auto'
           ? value
@@ -235,7 +254,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Exact dlo:Name__dll, dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName member.',
+        'Exact mapping:ApiName, dlo:Name__dll, dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName member.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
@@ -259,6 +278,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
   };
 
+  protected createMappingClient = createMappingClient;
+  protected preflightMapping = preflightMapping;
+  protected executeMapping = executeMapping;
   protected resolveTargetOrg = resolveTargetOrg;
   protected createDmoClient = createDmoClient;
   protected preflightNativeDmo = preflightDmo;
@@ -426,7 +448,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   }
 
   /**
-   * Validate all inputs and preflight the whole selection before any sequential execution.
+   * Validate inputs, then admit native items in dependency order or preflight the legacy selection
+   * before sequential execution.
    * @returns {Promise<DeployEnvelope>} Versioned preview or execution outcomes with mutation evidence.
    */
   public async run(): Promise<DeployEnvelope> {
@@ -520,15 +543,40 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
-      const nativeInputs = resolvedInputs.filter(isNativeDmoInput);
-      if (nativeInputs.length > 0) {
+      if (resolvedInputs.length === 0 && changedSince === undefined)
+        return finish('blocked', 'INVALID_SELECTION');
+      const nativeInputs = resolvedInputs.filter(
+        (input) =>
+          isNativeDmoInput(input) ||
+          input.document.kind === 'mapping' ||
+          input.document.kind === 'dlo',
+      );
+      if (
+        nativeInputs.some(
+          (input) => isNativeDmoInput(input) || input.document.kind === 'mapping',
+        ) ||
+        (nativeInputs.length === resolvedInputs.length && changedSince === undefined)
+      ) {
         if (nativeInputs.length !== resolvedInputs.length || changedSince !== undefined)
-          return finish('blocked', 'NATIVE_DMO_MIXED_SELECTION_UNSUPPORTED');
-        if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+          return finish('blocked', 'NATIVE_MIXED_SELECTION_UNSUPPORTED');
+        let version: string;
+        try {
+          version = nativeApiVersion(flags['api-version']);
+        } catch {
           return finish('blocked', 'INVALID_SCOPE');
+        }
+        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'DMO_DEPENDENCY_EXPANSION_UNSUPPORTED');
-        for (const input of nativeInputs) await captureDeployInputDigest(input);
+        const rank = (input: DeployInput): number =>
+          input.document.kind === 'dlo' ? 0 : input.document.kind === 'dmo' ? 1 : 2;
+        // Sort the freshly admitted selection, never preflight dependent mappings before parents settle.
+
+        nativeInputs.sort((a, b) => rank(a) - rank(b) || a.path.localeCompare(b.path));
+        const verify = async (): Promise<void> => {
+          for (const input of nativeInputs) await captureDeployInputDigest(input);
+        };
+        await verify();
         const injected = flags['target-org'] as unknown;
         const org =
           injected && typeof injected === 'object'
@@ -536,42 +584,139 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : flags['target-org'] === undefined && !this.resolveTargetOrg
               ? undefined
               : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
-        if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
-        const target = org.getUsername();
-        if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        if (!org || !org.getUsername()) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        const target = org.getUsername()!;
         envelope.provenance.targetOrgId = org.getOrgId();
-        envelope.metadata.soapApiVersion = '65.0';
-        const client = (this.createDmoClient ?? createDmoClient)(target, '65.0');
-        const verify = async (): Promise<void> => {
-          for (const input of nativeInputs) await captureDeployInputDigest(input);
-        };
-        const previews = [];
+        envelope.metadata.apiVersion = flags['api-version'] ?? 'auto';
+        envelope.metadata.soapApiVersion = version;
+        const source = (this.createDloClient ?? createDloClient)(target, version);
+        const dmo = (this.createDmoClient ?? createDmoClient)(target, version);
+        const mapping = (): ReturnType<typeof createMappingClient> =>
+          (this.createMappingClient ?? createMappingClient)(target, version);
+        const hasMappings = nativeInputs.some((input) => input.document.kind === 'mapping');
+        const plannedParents = new Set<string>();
         for (const input of nativeInputs) {
           await verify();
-          const preview = await (this.preflightNativeDmo ?? preflightDmo)(input.document, client);
-          previews.push({
-            ...preview,
-            identity: input.document.identity,
-            operation: 'preview' as const,
-            path: input.path,
-          });
-        }
-        if (flags.preview) {
-          envelope.result.items.push(...previews);
-          return finish('success');
-        }
-        for (const input of nativeInputs) {
-          await verify();
-          const result = await (this.executeNativeDmo ?? executeDmo)(input.document, client);
+          const kind = input.document.kind;
+          const identity = input.document.identity;
+          if (flags.preview) {
+            const spec =
+              kind === 'mapping'
+                ? (input.document
+                    .spec as import('../../artifacts/native-mapping-document.js').NativeMappingDocument['spec'])
+                : undefined;
+            const planned =
+              spec &&
+              (plannedParents.has(`dlo:${spec.sourceEntityDeveloperName}`) ||
+                plannedParents.has(`dmo:${spec.targetEntityDeveloperName}`));
+            const preview = planned
+              ? {
+                  family: 'mapping' as const,
+                  outcome: 'planned-dependencies' as const,
+                  target: 'unknown',
+                  absenceProof: 'none',
+                  diagnostics: [
+                    {
+                      code: 'MAPPING_DEPENDENCIES_PLANNED',
+                      message:
+                        'Selected parent creation must settle before mapping comparison; no mapping existence or write outcome is asserted.',
+                    },
+                  ],
+                }
+              : kind === 'mapping'
+                ? await (this.preflightMapping ?? preflightMapping)(input.document, mapping(), {
+                    source,
+                    target: dmo,
+                  })
+                : kind === 'dlo'
+                  ? await (this.preflightDlo ?? preflightDloDeploy)(input.document, source)
+                  : await (this.preflightNativeDmo ?? preflightDmo)(input.document, dmo);
+            await verify();
+            envelope.result.items.push({
+              ...preview,
+              identity,
+              operation: 'preview',
+              path: input.path,
+            });
+            if (preview.outcome === 'blocked') return finish('blocked');
+            if (preview.outcome === 'create') plannedParents.add(`${kind}:${identity.apiName}`);
+            continue;
+          }
+          // Each executor independently admits and settles this item before the next dependency read.
+          const result =
+            kind === 'mapping'
+              ? await (this.executeMapping ?? executeMapping)(input.document, mapping(), {
+                  source,
+                  target: dmo,
+                })
+              : kind === 'dlo'
+                ? await (this.executeDlo ?? executeDloDeploy)(input.document, source)
+                : await (this.executeNativeDmo ?? executeDmo)(input.document, dmo);
           envelope.result.items.push({
             ...result,
-            identity: input.document.identity,
+            family: kind as 'mapping' | 'dlo' | 'dmo',
+            identity,
             operation: 'execute',
             path: input.path,
           });
           if (result.outcome === 'blocked' || result.outcome === 'failed')
             return finish(result.outcome);
+          if (hasMappings && kind !== 'mapping') {
+            // Independently verify definitions; only DLO reads expose an ACTIVE settlement status.
+            let settled = false;
+            try {
+              for (let attempt = 0; attempt < 3; attempt++) {
+                const raw =
+                  kind === 'dlo'
+                    ? unwrapDlo(await source.get(identity.apiName))
+                    : unwrapNativeDmo(await dmo.get(identity.apiName));
+                const actual = kind === 'dlo' ? normalizeDlo(raw) : normalizeNativeDmo(raw);
+                if (actual.identity.apiName !== identity.apiName) break;
+                const desired = input.document
+                  .spec as import('../../artifacts/dlo-document.js').DloDocument['spec'];
+                const fields = new Map(actual.spec.fields.map((field) => [field.name, field]));
+                if (
+                  (kind !== 'dlo' || raw.status === 'ACTIVE') &&
+                  actual.spec.label === desired.label &&
+                  actual.spec.category === desired.category &&
+                  desired.fields.every((field) => {
+                    const found = fields.get(field.name);
+                    return (
+                      found &&
+                      Object.entries(field).every(
+                        ([key, value]) =>
+                          (key === 'isDynamicLookup' &&
+                            value === false &&
+                            found[key] === undefined) ||
+                          isDeepStrictEqual(found[key], value),
+                      )
+                    );
+                  })
+                ) {
+                  settled = true;
+                  break;
+                }
+              }
+            } catch {
+              /* An unconfirmed independent parent read stops dependent writes. */
+            }
+            if (!settled) {
+              Object.assign(envelope.result.items.at(-1)!, {
+                outcome: 'failed',
+                mutation: 'unknown',
+                diagnostics: [
+                  {
+                    code: 'NATIVE_PARENT_SETTLEMENT_UNCONFIRMED',
+                    message:
+                      'Selected parent did not independently confirm its requested definition and family-specific readiness; dependent deployment stopped.',
+                  },
+                ],
+              });
+              return finish('failed');
+            }
+          }
         }
+        await verify();
         return finish('success');
       }
       const admitted = resolvedInputs.filter(
@@ -579,8 +724,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input,
         ): input is Exclude<
           DeployInput,
-          import('../../artifacts/read-deploy-input.js').NativeDmoDeployInput
-        > => !isNativeDmoInput(input),
+          | import('../../artifacts/read-deploy-input.js').NativeDmoDeployInput
+          | import('../../artifacts/read-deploy-input.js').MappingDeployInput
+        > => !isNativeDmoInput(input) && input.document.kind !== 'mapping',
       );
       const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
       if (hasDlos) {
@@ -1471,7 +1617,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
         return finish('blocked');
       }
-      if (error instanceof NativeDmoError) return finish('blocked', error.code);
+      if (error instanceof NativeDmoError || error instanceof NativeMappingError)
+        return finish('blocked', error.code);
       if (error instanceof DeployInputError || error instanceof DependencySelectionError)
         return finish('blocked', error.code);
       return finish('failed', flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED');

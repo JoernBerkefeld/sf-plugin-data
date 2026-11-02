@@ -1,3 +1,9 @@
+import { nativeApiVersion } from '../../transport/api-version.js';
+import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
+import { retrieveNativeMapping } from '../../services/native-mapping.js';
+import { createMappingClient } from '../../transport/mapping-rest.js';
+import { writeNativeMappingDocument } from '../../artifacts/write-native-mapping.js';
+import { NativeMappingError, nativeMappingName } from '../../artifacts/native-mapping-document.js';
 import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { retrieveNativeDmo } from '../../services/native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
@@ -10,14 +16,8 @@ import {
   RelationshipDefinitionError,
   writeRelationshipDefinition,
 } from '../../artifacts/write-relationship-definition.js';
-import {
-  retrieveRelationshipSourceMetadata,
-  retrieveMappingSourceMetadata,
-} from '../../transport/project-metadata.js';
-import {
-  MappingDefinitionError,
-  writeMappingDefinition,
-} from '../../artifacts/write-mapping-definition.js';
+import { retrieveRelationshipSourceMetadata } from '../../transport/project-metadata.js';
+import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
 import {
   dataGraphName,
@@ -138,16 +138,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m dmo:Name__dlm without dependencies retrieves native API65/default canonical data360/dmo/Name__dlm.dmo-meta.json, retaining generated field definitions without source IDs. Inventory and dependency selections retain the separate legacy adapter. Exact -m dlo:Name__dll retrieves native API68/default portable JSON to data360/dlo/Name__dll.dlo-meta.json without a source record ID. DLO requires --api-version 68.0 or auto; inventory and dependencies are unavailable. Exact -m mapping:ApiName exports opaque ObjectSourceTargetMap XML at API65/default only, with no inventory, dependency expansion or operational deploy admission. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
       summary: 'Authenticated org alias or username; defaults to the configured target org.',
     }),
     'api-version': Flags.orgApiVersion({
-      default: '65.0',
+      default: 'auto',
       summary:
-        'Explicit numeric pin, fixed qualified per-operation auto, or experimental DMO-only latest.',
+        'Native default/auto 68.0, explicit numeric pin (native minimum 61.0), or experimental DMO-only latest.',
       parse: async (value, context, options) =>
         value === 'latest' || value === 'auto'
           ? value
@@ -162,7 +162,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat dlo:Name__dll for native API68 JSON, mapping:ApiName or relationship:ApiName for definition-only XML, dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
+        'Native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. Legacy relationship:ApiName XML, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName remain exact-only.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -187,8 +187,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected acquireDlo = retrieveNativeDlo;
   protected createDloClient = createDloClient;
   protected writeDlo = writeDloDocument;
-  protected acquireMappingXml = retrieveMappingSourceMetadata;
-  protected writeMapping = writeMappingDefinition;
+  protected acquireNativeMapping = retrieveNativeMapping;
+  protected createMappingClient = createMappingClient;
+  protected writeNativeMapping = writeNativeMappingDocument;
+  protected listNativeNames = listNativeNames;
+  protected listNativeMappingNames = listNativeMappingNames;
   protected acquireRelationshipXml = retrieveRelationshipSourceMetadata;
   protected writeRelationship = writeRelationshipDefinition;
   protected discoverDataGraphOwner = discoverDataGraphOwner;
@@ -290,6 +293,149 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
+    if (
+      !flags['include-dependencies'] &&
+      flags['api-version'] !== 'latest' &&
+      selectors.every((value) =>
+        nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
+      )
+    ) {
+      let version: string;
+      try {
+        version = nativeApiVersion(flags['api-version']);
+        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (flags['include-dependencies'])
+          return finish('blocked', 'NATIVE_DEPENDENCY_EXPANSION_UNSUPPORTED');
+        for (const selector of selectors) {
+          const [family, name, extra] = selector.split(':');
+          if (
+            extra !== undefined ||
+            (name !== undefined &&
+              !(
+                family === 'dlo' ? dloName : family === 'dmo' ? nativeDmoName : nativeMappingName
+              ).test(name))
+          )
+            return finish('blocked', 'INVALID_SELECTION');
+        }
+      } catch {
+        return finish('blocked', 'INVALID_SCOPE');
+      }
+      let org;
+      try {
+        org = await this.resolveOrg(flags['target-org']);
+      } catch {
+        return finish('blocked', 'TARGET_ORG_REQUIRED');
+      }
+      const connection = org.getConnection(version);
+      const target = flags['target-org'] ?? connection.getUsername();
+      if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
+      envelope.provenance.sourceOrgId = org.getOrgId();
+      envelope.metadata.soapApiVersion = version;
+      const selected = new Map<string, string[]>();
+      try {
+        let dmoInventory: string[] | undefined;
+        // Finish every inventory before publishing any file.
+        for (const family of nativeFamilies) {
+          const all = selectors.length === 0 || selectors.includes(family);
+          let names = selectors
+            .filter((value) => value.startsWith(`${family}:`))
+            .map((value) => value.slice(family.length + 1));
+          if (all) {
+            if (family === 'mapping') {
+              dmoInventory ??= await this.listNativeNames(connection, version, 'dmo');
+              names.push(
+                ...(await this.listNativeMappingNames(
+                  dmoInventory,
+                  this.createMappingClient(target, version),
+                )),
+              );
+            } else {
+              const inventory =
+                family === 'dmo'
+                  ? (dmoInventory ??= await this.listNativeNames(connection, version, family))
+                  : await this.listNativeNames(connection, version, family);
+              names.push(...inventory);
+            }
+          }
+          names = [...new Set(names)];
+          names.sort();
+          selected.set(family, names);
+        }
+      } catch (error) {
+        return finish(
+          'blocked',
+          error instanceof NativeMappingError || error instanceof DmoRetrieveError
+            ? error.code
+            : 'NATIVE_INVENTORY_FAILED',
+        );
+      }
+      envelope.result.selection = [...selected].flatMap(([family, names]) =>
+        names.map((name) => `${family}:${name}`),
+      );
+      let failed = false;
+      for (const family of nativeFamilies) {
+        for (const apiName of selected.get(family) ?? []) {
+          try {
+            const document =
+              family === 'mapping'
+                ? await this.acquireNativeMapping(
+                    apiName,
+                    this.createMappingClient(target, version),
+                  )
+                : family === 'dlo'
+                  ? await this.acquireDlo(apiName, this.createDloClient(target, version))
+                  : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
+                      apiName,
+                      this.createDmoClient(target, version),
+                    );
+            const root = flags['output-dir'] ?? process.cwd();
+            const receipt =
+              document.kind === 'mapping'
+                ? await this.writeNativeMapping(document, root, flags.overwrite)
+                : document.kind === 'dlo'
+                  ? await this.writeDlo(document, root, flags.overwrite)
+                  : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
+                      document,
+                      root,
+                      flags.overwrite,
+                    );
+            envelope.result.items.push({
+              identity: document.identity,
+              operation: 'retrieve',
+              ...(family === 'dmo' ? {} : { family }),
+              routes: [{ operation: `${family}.get`, apiVersion: version, transport: 'native' }],
+              ...receipt,
+            });
+          } catch (error) {
+            const code =
+              error instanceof NativeMappingError ||
+              error instanceof NativeDmoError ||
+              error instanceof DmoRetrieveError ||
+              error instanceof DmoWriteError ||
+              error instanceof MappingDefinitionError ||
+              error instanceof DloError
+                ? error.code
+                : 'NATIVE_RETRIEVE_FAILED';
+            if (
+              !(error instanceof DmoRetrieveError) &&
+              !['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code)
+            )
+              failed = true;
+            envelope.diagnostics.errors.push({
+              code,
+              message: 'Native component retrieval did not complete.',
+              retryable: false,
+              identity: { dataSpace: 'default', apiName },
+              ...(family === 'mapping' ? { family } : {}),
+            });
+          }
+        }
+      }
+      return finish(
+        envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
+      );
+    }
     const nativeSelectors = selectors.filter((value) => value.startsWith('dmo:'));
     if (
       nativeSelectors.length === selectors.length &&
@@ -375,8 +521,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (selectors.includes('mapping'))
         throw new MappingDefinitionError('MAPPING_INVENTORY_UNQUALIFIED');
       if (mappingSelectors.length > 0) {
-        if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
-          throw new MappingDefinitionError('INVALID_SCOPE');
+        nativeApiVersion(flags['api-version']);
+        if (flags['data-space'] !== 'default') throw new MappingDefinitionError('INVALID_SCOPE');
         if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
           throw new MappingDefinitionError('INVALID_SELECTION');
         if (flags['include-dependencies'])
@@ -605,15 +751,13 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
           if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
-          let definitionXml;
-          try {
-            definitionXml = await this.acquireMappingXml(target, apiName);
-          } catch {
-            throw new MappingDefinitionError('MAPPING_ACQUISITION_FAILED');
-          }
-          const receipt = await this.writeMapping(
+          const version = nativeApiVersion(flags['api-version']);
+          const document = await this.acquireNativeMapping(
             apiName,
-            definitionXml,
+            this.createMappingClient(target, version),
+          );
+          const receipt = await this.writeNativeMapping(
+            document,
             flags['output-dir'] ?? process.cwd(),
             flags.overwrite,
           );
@@ -621,9 +765,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             identity: { dataSpace: 'default', apiName },
             operation: 'retrieve',
             family: 'mapping',
-            definitionOnly: true,
-            deployable: false,
-            routes: [{ operation: 'mapping.metadata', apiVersion: '65.0', transport: 'metadata' }],
+            routes: [{ operation: 'mapping.get', apiVersion: version, transport: 'native' }],
             ...receipt,
           });
         } catch (error: unknown) {

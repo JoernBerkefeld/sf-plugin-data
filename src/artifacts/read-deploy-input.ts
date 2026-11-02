@@ -1,3 +1,5 @@
+import { nativeMappingName, validateNativeMappingDocument } from './native-mapping-document.js';
+import type { NativeMappingDocument } from './native-mapping-document.js';
 import { nativeDmoName, validateNativeDmoDocument } from './native-dmo-document.js';
 import type { NativeDmoDocument } from './native-dmo-document.js';
 import { dloName, validateDloDocument } from './dlo-document.js';
@@ -116,7 +118,51 @@ async function readNativeDmoInput(file: string): Promise<NativeDmoDeployInput> {
   });
 }
 
+export type MappingDeployInput = {
+  path: string;
+  document: NativeMappingDocument;
+  inputDigest: string;
+};
+
+/**
+ * Admit canonical mapping JSON without a Metadata XML fallback.
+ * @param {string} file Exact local mapping member.
+ * @returns {Promise<MappingDeployInput>} Immutable content and byte binding.
+ */
+async function readMappingInput(file: string): Promise<MappingDeployInput> {
+  const name = path.basename(file).slice(0, -'.mapping-meta.json'.length);
+  const directory = path.dirname(file);
+  if (
+    !nativeMappingName.test(name) ||
+    path.basename(directory) !== 'mapping' ||
+    path.basename(path.dirname(directory)) !== 'data360'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: NativeMappingDocument;
+  try {
+    document = validateNativeMappingDocument(strictJson(decode(bytes)));
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
 export type DeployInput =
+  | MappingDeployInput
   | NativeDmoDeployInput
   | SupportedDeployInput
   | IdentityResolutionDeployInput
@@ -576,6 +622,15 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if (input.document.kind === 'mapping') {
+    const current = await readMappingInput(input.path);
+    if (
+      current.inputDigest !== (input as MappingDeployInput).inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+    return current.inputDigest;
+  }
   if (isNativeDmoInput(input)) {
     const current = await readNativeDmoInput(input.path);
     if (
@@ -631,6 +686,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('INVALID_SELECTION');
   if (!path.isAbsolute(flags.cwd)) throw new DeployInputError('INVALID_SELECTION');
   const selectors = metadata?.map((value) => {
+    if (value.startsWith('mapping:') && nativeMappingName.test(value.slice(8)))
+      return { kind: 'mapping', name: value.slice(8) };
     if (value.startsWith('dmo:') && nativeDmoName.test(value.slice(4)))
       return { kind: 'dmo', name: value.slice(4) };
     if (value.startsWith('dlo:') && dloName.test(value.slice(4)) && value.endsWith('__dll'))
@@ -645,7 +702,9 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       return { kind: 'segment', name: value.slice(8) };
     throw new DeployInputError('INVALID_SELECTION');
   });
-  const base = selectors?.some((item) => item.kind !== 'dmo' && item.kind !== 'dlo')
+  const base = selectors?.some(
+    (item) => item.kind !== 'dmo' && item.kind !== 'dlo' && item.kind !== 'mapping',
+  )
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
   // Explicit legacy adapter for inventories/dependency consumers and existing saved projects.
@@ -665,25 +724,27 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           ? legacyDmos.has(name)
             ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
             : path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
-          : kind === 'dlo'
-            ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
-            : kind === 'data-graph'
-              ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
-              : kind === 'calculated-insight'
-                ? path.join(
-                    base!,
-                    'data360',
-                    'calculatedInsights',
-                    `${name}.calculatedInsight.json`,
-                  )
-                : kind === 'identity-resolution'
+          : kind === 'mapping'
+            ? path.join(flags.cwd, 'data360', 'mapping', `${name}.mapping-meta.json`)
+            : kind === 'dlo'
+              ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
+              : kind === 'data-graph'
+                ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
+                : kind === 'calculated-insight'
                   ? path.join(
                       base!,
                       'data360',
-                      'identityResolution',
-                      `${name}.identityResolution.json`,
+                      'calculatedInsights',
+                      `${name}.calculatedInsight.json`,
                     )
-                  : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+                  : kind === 'identity-resolution'
+                    ? path.join(
+                        base!,
+                        'data360',
+                        'identityResolution',
+                        `${name}.identityResolution.json`,
+                      )
+                    : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -753,6 +814,22 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           !selectors.some(
             (item) =>
               item.kind === 'calculated-insight' && item.name === input.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.mapping-meta.json')) {
+        const input = await readMappingInput(file);
+        const key =
+          `mapping:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) => item.kind === 'mapping' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

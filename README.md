@@ -1,7 +1,7 @@
 # Data360 Salesforce CLI plugin
 
 `sf-plugin-data` adds `sf data360 retrieve`, `sf data360 deploy` and exact native
-DMO/DLO `sf data360 delete` to Salesforce CLI
+DMO/DLO/mapping `sf data360 delete` to Salesforce CLI
 for downloading portable Data360 configuration, previewing local changes and applying
 supported, guarded updates. Support is resource- and operation-specific: this is
 **not a complete backup, restore or migration tool**. Deployment can cause processing;
@@ -32,7 +32,8 @@ Salesforce can do. **Partial** means an implemented bounded subset, not full-res
 or released-package qualification. **Unavailable** means no public plugin operation;
 it does not mean Salesforce lacks that capability. No resource has full CRUD support.
 Retrieve uses `sf data360 retrieve`; Create/Update use `sf data360 deploy`.
-There is no public plugin Delete command. Exact selectors and limits follow below.
+Delete uses `sf data360 delete` for exact native DLO, DMO and conditionally non-last
+mapping selections only. Exact selectors and limits follow below.
 
 **Route legend (separate from support):**
 <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" />
@@ -46,22 +47,22 @@ custom `sf data360 …` commands as OOTB. Unavailable operations have no icons.
 The last column retains resource-specific scope and limitations, not additional
 plugin features.
 
-| Resource | Retrieve | Create | Update | Delete | Scope / limits |
-| --- | --- | --- | --- | --- | --- |
-| Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Exact native API65/default CRUD: canonical JSON, target-name POST/PATCH selection, label/additive Text updates and exact-name delete. Independent GET confirms writes; native Git and mixed-family deployment remain blocked. Legacy inventory/dependency adapters remain separate. |
-| Data Lake Objects (DLOs), `dlo` | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" /> | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup. |
-| DLO-to-DMO mappings, `mapping` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default opaque XML export only, default/65.0/auto; installed source-only acceptance passed, no semantic/KQ admission or cross-org operational deploy. |
-| DMO field relationships, `relationship` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved. |
-| Source object definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only, not connectors or credentials. |
-| Stream definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only; public stream orchestration remains queued. Ingestion schema sync above is not general stream support. |
-| Calculated insights, `calculated-insight` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Qualified existing-insight predicate edit only; installed target-retrieved NOT_SCHEDULED update and zero-mutation repeat passed. Not unchanged-source cross-org acceptance. |
-| Segments, `segment` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact single-model DBT XML/JSON pair, existing label/description update and qualified forward empty-audience selected-ID `IS NOT NULL` predicate addition. Source existing-owner definition change independently settled ACTIVE with runtime/Metadata correlation; installed unchanged acceptance remains separately recorded. No creation, cross-org, arbitrary SQL or computation claim. |
-| Segment members | Unavailable | Unavailable | Unavailable | Unavailable | Bounded membership reads, not a full population export. Runtime rows are outside plugin configuration scope. |
-| Data Graphs, `data-graph` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: existing ready root-only Graph, forward LastName projection append only; qualified existing IR owner may be bound/expanded. |
-| Identity Resolution, `identity-resolution` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin: exact existing owner and bounded reconciliation update; publishing/processing acknowledgement required. No owner provisioning. |
-| Kit templates | Unavailable | Unavailable | Unavailable | Unavailable | Stored snapshots, not runtime Graph/IR creation. |
-| Kit definitions | Unavailable | Unavailable | Unavailable | Unavailable | Combined owned container/template/member transport, not successful runtime installation. |
-| Kit membership | Unavailable | Unavailable | Unavailable | Unavailable | Creation/deletion qualified only with its container/template, not independently. |
+| Resource                                   | Retrieve                                                                                                                                                                                                            | Create                                                                                                                            | Update                                                                                                                         | Delete                                                                                                                    | Scope / limits                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />      | Native default/auto API68: canonical JSON, all/type/exact retrieval, target-name POST/PATCH, label/additive Text updates and exact-name delete. Explicit numeric pins are preserved. Independent GET confirms writes; explicit native batches order DLO, DMO, mapping. Native Git and dependency expansion remain blocked; legacy adapters are separate.                                                                    |
+| Data Lake Objects (DLOs), `dlo`            | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" />                                                                                             | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" />    | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup. |
+| DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="One additive nonconflicting pair" />           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Conditional non-last mapping deletion" /> | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, one additive pair, zero-write repeats and non-last DELETE204 with preserved parents/survivor. Last mapping, field-pair removal and retargeting are blocked; not cross-org or populated-object qualification.                                            |
+| DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved.                                                                                                                                                                                              |
+| Source object definitions                  | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Definition XML only, not connectors or credentials.                                                                                                                                                                                                                                                                                                                                                                         |
+| Stream definitions                         | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Definition XML only; public stream orchestration remains queued. Ingestion schema sync above is not general stream support.                                                                                                                                                                                                                                                                                                 |
+| Calculated insights, `calculated-insight`  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable                                                                                                                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Unavailable                                                                                                               | Qualified existing-insight predicate edit only; installed target-retrieved NOT_SCHEDULED update and zero-mutation repeat passed. Not unchanged-source cross-org acceptance.                                                                                                                                                                                                                                                 |
+| Segments, `segment`                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable                                                                                                                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Unavailable                                                                                                               | Plugin: exact single-model DBT XML/JSON pair, existing label/description update and qualified forward empty-audience selected-ID `IS NOT NULL` predicate addition. Source existing-owner definition change independently settled ACTIVE with runtime/Metadata correlation; installed unchanged acceptance remains separately recorded. No creation, cross-org, arbitrary SQL or computation claim.                          |
+| Segment members                            | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Bounded membership reads, not a full population export. Runtime rows are outside plugin configuration scope.                                                                                                                                                                                                                                                                                                                |
+| Data Graphs, `data-graph`                  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Unavailable                                                                                                               | Plugin: existing ready root-only Graph, forward LastName projection append only; qualified existing IR owner may be bound/expanded.                                                                                                                                                                                                                                                                                         |
+| Identity Resolution, `identity-resolution` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Unavailable                                                                                                               | Plugin: exact existing owner and bounded reconciliation update; publishing/processing acknowledgement required. No owner provisioning.                                                                                                                                                                                                                                                                                      |
+| Kit templates                              | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Stored snapshots, not runtime Graph/IR creation.                                                                                                                                                                                                                                                                                                                                                                            |
+| Kit definitions                            | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Combined owned container/template/member transport, not successful runtime installation.                                                                                                                                                                                                                                                                                                                                    |
+| Kit membership                             | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Creation/deletion qualified only with its container/template, not independently.                                                                                                                                                                                                                                                                                                                                            |
 
 The scope notes summarize the [14-resource Salesforce CLI guide](https://sfmc.guide/next/data-cloud-cli/),
 whose operation-specific evidence and prerequisites apply; it is **not an extra
@@ -70,13 +71,19 @@ interchangeable. Raw API examples later in this README document separate researc
 
 Current plugin limits:
 
-- Only DMO supports inventory/type-wide retrieval; the other implemented families
-  require exact members. Default data space only. API `auto` chooses fixed qualified
-  family routes (API65 legacy families; API67 IR/Graph/Ingestion), not the latest API.
-- DMO creation/label updates, Segment DBT label/description or qualified forward empty-audience predicate updates, CI predicate
-  updates, IR reconciliation updates and Graph projection updates are separate
-  bounded profiles. General schema edits, mapping orchestration and new IR/Graph
-  provisioning are not enabled. Use `--preview` before guarded deployment.
+- Native DLO, DMO and mapping retrieval supports omitted selectors (all implemented
+  native families), bare types and exact members. Other families require exact
+  members. Default data space only. Default/`auto` uses API68 for native routes;
+  explicit numeric pins are preserved, not silently upgraded. Numeric admission
+  (61.0 and above for native retrieval/deploy) is not live qualification at every
+  version; native mapping deletion requires 68.0. Legacy routes remain family-specific
+  (API65 legacy families; API67 IR/Graph/Ingestion), not the latest API.
+- Native DLO/DMO creation and bounded updates, mapping creation and one nonconflicting
+  additive field pair, Segment DBT label/description or qualified forward empty-audience
+  predicate updates, CI predicate updates, IR reconciliation updates and Graph projection
+  updates are separate bounded profiles. Explicit native batches settle DLOs, then
+  DMOs, then mappings. General schema edits, field-pair removal, mapping retargeting
+  and new IR/Graph provisioning are not enabled. Use `--preview` before deployment.
 - Installed revision `518a219` has bounded two-org existing-owner IR/Graph retrieval,
   target Graph LastName update, independent full preservation and actual zero-write
   repeated pair deployment evidence. The IR owners stayed unchanged: this does
@@ -112,7 +119,7 @@ acceptance results are documented in the DLO chapter below.
 
 Repeat exact `-m data-graph:ApiName` selectors with `retrieve` or `deploy`, including
 `--preview` and `--changed-since`. Use `--api-version auto` (fixed Graph67 and
-legacy65 routes) or numeric67 for Graph-only selection. Numeric65/default and
+legacy65 routes) or numeric67 for Graph-only selection. Numeric65 and
 latest refuse Graph; mixed Graph/legacy selection requires auto. Inventory and
 legacy Graph dependency expansion are unavailable. Existing-owner IR-qualified
 unified Individual roots support explicit/reversed owner/Graph retrieval and deploy,
@@ -164,9 +171,9 @@ LastName update and zero-write repeat, not arbitrary Graphs or product creation.
 
 Exact `calculated-insight:Name__cio` selection is supported by `sf data360 retrieve`
 and `sf data360 deploy` (including `--preview` and `--changed-since`). Repeat selectors
-for multiple components. Use numeric `--api-version 65.0` (the default) or `auto`,
-and the default data space. Omitted retrieve selectors still mean DMO inventory,
-not inventory of every exact-only family.
+for multiple components. Use numeric `--api-version 65.0` or the default `auto`
+(legacy API65 for this family), and the default data space. Omitted retrieve selectors
+retrieve native DLO/DMO/mapping inventory, not inventory of every exact-only family.
 
 Retrieve independently correlates native runtime, SOAP Metadata, target DMO field
 bindings and standard project-retrieved XML before publishing any selected output.
@@ -215,11 +222,14 @@ this README describe separate API research, not additional plugin capabilities.
 
 ## Public DMO workflow
 
-**Bounded explicit DMO retrieval, strictly read-only deployment preview, guarded
-creation and label updates are available.** Current retrieval capability is owned
-by the common service (API 65.0/default, qualified generated recipe and semantics),
-not a permanent DMO architecture. This is not a general migration tool;
-released-package acceptance remains separate.
+**Native DMO retrieval, strictly read-only deployment preview, guarded creation,
+label/additive Text updates and exact deletion are available.** Native default/auto
+uses API68 and preserves explicit numeric pins; see the
+[native plugin workflow](#native-plugin-workflow). This is not a general migration
+tool; released-package and cross-org acceptance remain separate.
+
+The older saved-project common-service adapter below is a separate API65 profile,
+not the native default or the mapping workflow:
 
 ```sh
 sf data360 retrieve -o source --api-version 65.0 --data-space default -m dmo:Example__dlm -d ./project --json
@@ -228,8 +238,8 @@ sf data360 retrieve -o source -m dmo:Example__dlm -d ./project -x
 
 `-m/--metadata` is repeatable/non-greedy: exact `dmo:ApiName` selectors coalesce
 and sort without an inventory request. `-m dmo` retrieves all DMOs in the selected
-space using complete inventory; omitting selectors retrieves all implemented
-families (currently DMO only). There is no `--all` flag. Mixed type/exact selections
+space using complete inventory; omitting selectors now retrieves all implemented
+native families (DLO, DMO and mapping). There is no `--all` flag. Mixed type/exact selections
 coalesce. Empty inventory succeeds with no files. Unsupported objects are not
 silently skipped: diagnostics identify each object and precise capability/error
 code, successful file receipts are retained, and the aggregate exits nonzero. `-o/--target-org` overrides the configured default org. `-d/--output-dir`
@@ -238,8 +248,9 @@ is a project root, default cwd; output is `data360/default/dmo/<api-name>.json`.
 Selectors and numeric API 65.0/default scope are validated before core org resolution or
 resource reads; the common service remains the per-object capability boundary.
 
-`--api-version latest` is an explicit experimental read-only option for retrieval
-and deployment `--preview`; the default stays `65.0`. Each invocation performs one
+For the legacy adapter, `--api-version latest` is an explicit experimental read-only
+option for retrieval and deployment `--preview`; its qualified SOAP route stays
+`65.0`. Native default/auto uses `68.0` and does not use this legacy discovery path. Each invocation performs one
 fresh authenticated `GET /services/data`, without cache, fallback, retry or redirect,
 to discover numeric SOAP evidence. REST retains literal `/services/data/latest/ssot/`;
 SOAP alone is pinned numerically. Authentication initializes a command-owned core
@@ -383,8 +394,9 @@ Exact native retrieval saves `data360/dmo/Customer__dlm.dmo-meta.json` with
 `schemaVersion`, `kind`, logical `identity` and `spec`. It preserves field
 definitions and key-qualifier references except the confirmed system-generated
 `KQ_Id__c` definition; source record IDs and runtime observations are excluded. Differing files require `--overwrite`;
-identical bytes are unchanged. This route supports API65/default (`auto` selects
-65.0); it is separate from legacy inventory and dependency retrieval.
+identical bytes are unchanged. Native default/`auto` selects `68.0`; explicit numeric
+pins (including the API65 examples above) are preserved, not upgraded. All/type/exact
+native retrieval is separate from legacy saved-project/dependency adapters.
 
 Deployment resolves the full target API name. Only confirmed HTTP404 permits
 creation; other lookup failures stop. Creation sends qualified authored Text
@@ -392,8 +404,9 @@ fields and the intended primary key, not generated fields. Existing targets use
 name-based PATCH for object labels and ordinary nonprimary Text additions; field
 removal, existing-field changes and key changes are blocked. An independent bounded
 GET must confirm persistence: a PATCH response can still contain the old fields.
-Canonical native DMO Git deployment, mixed-family deployment and dependency
-expansion are explicitly blocked; legacy saved-project adapters remain separate.
+Explicit native batches support DLO, DMO and mapping in that dependency order, with
+independent parent settlement. Canonical native Git deployment and dependency
+expansion remain blocked; legacy saved-project adapters remain separate.
 
 Delete executes by default without prompting and addresses only the freshly
 resolved full DMO name. `--preview` is strictly read-only. Already absent is
@@ -517,8 +530,9 @@ seven raw → six saved fields after CREATE and eight raw → seven saved after 
 DMO six raw → five saved and seven raw → six saved respectively. DLO Metadata uses
 `definitionCreationType=System` / `usageTag=KEY_QUALIFIER`; DMO API uses
 `creationType=System` / `usageTag=KeyQualifier`, not the same enum spelling.
-These experiments are not new live plugin acceptance and do not broaden the
-DMO API65/default or DLO API68/default guards. Save policies are not create payload policies.
+These historical experiments do not broaden operation-specific qualification.
+Native default/auto now selects API68 with explicit numeric pins preserved.
+Save policies are not create payload policies.
 Identical bytes are unchanged; replacing differing output requires `--overwrite`.
 
 #### Create / Update
@@ -565,113 +579,102 @@ created, retrieved with seven raw readback fields, updated with preserved primar
 raw readback fields (historical counts, not current saved-file counts), previewed without deletion, then deleted by default with absence readback
 and the local file retained. Separately, native API61–68 standalone CRUD succeeded;
 API60 returned 404 for all four operations. API61 is the lowest successful version
-in that tested matrix, not a code guard change: the plugin still admits API68 only.
+in that tested matrix, not a universal qualification claim: native default/auto is
+API68, while explicit numeric native pins from API61 are preserved.
 Neither observation qualifies populated, stream-owned or cross-org ingestion behavior. Standard Metadata retrieval worked
 at requested APIs 65–68; schema-specific redeploy and historical Metadata delete
 failures are separate evidence, not blanket declarations of unsupported APIs.
 
-### DLO-to-DMO mapping: `ObjectSourceTargetMap`
+### DLO-to-DMO mapping: native definition CRUD
 
 #### Read / Retrieve
 
-The plugin exports opaque standard definitions for exact mapping names:
+The plugin retrieves canonical native mapping JSON, not opaque Metadata XML:
 
 ```sh
-sf data360 retrieve --target-org SOURCE_ALIAS --api-version 65.0 -m mapping:ExactMappingName --json
+sf data360 retrieve --target-org SOURCE_ALIAS --json
+sf data360 retrieve --target-org SOURCE_ALIAS -m mapping --json
+sf data360 retrieve --target-org SOURCE_ALIAS -m mapping:ExactMappingName --api-version 68.0 --json
 ```
 
-Repeat `-m mapping:ExactMappingName` for multiple selections. Names are sorted and
-deduplicated; only the `default` data space is supported. Default API `65.0`, explicit
-`65.0` and `auto` use Metadata API65; other numeric pins, `latest`, inventory and
-dependency expansion are refused before authentication. The configured package source
-root receives `objectSourceTargetMaps/<name>.objectSourceTargetMap-meta.xml` with exact
-acquired XML bytes. Identical output is unchanged; differing files require `--overwrite`.
-Independent read/output failures retain successful members and return nonzero status.
-Results identify `family: "mapping"`, `definitionOnly: true`, `deployable: false`
-and actual `mapping.metadata` API65 routing while preserving the requested version.
-Here non-deployable means only this plugin's operational deploy, not standard Metadata
-deployment by other tools. No semantic mapping service, PK/KQ inference or prerequisite
-compatibility is admitted. Explicit local deploy input refuses this XML before target-org
-use/mutation, not necessarily before authentication. Git mapping-only changes select no
-deploy inputs; mixed changes select only supported operational artifacts, never mapping XML.
-Installed source-only acceptance passed for one retained exact mapping: independent
-standard API65 XML matched the installed export, configured-root output, retrieved then
-unchanged repeat, auto/requested-vs-actual routing, deduplication and classification.
-Local installed deploy-input refusal and Git non-admission also passed without org deploy.
-Multiple distinct members and failure continuation remain synthetic-only. This does not
-qualify semantic PK/KQ compatibility or cross-org operational deployment, nor extend the
-separate historical standard-API deployment findings below.
-The purple API icon identifies its API-led mechanism, not an OOTB plugin command.
+Omitted selectors retrieve all implemented native families (DLO, DMO and mapping);
+a bare type retrieves its inventory, and exact members are sorted and deduplicated.
+Only the `default` data space is supported. Default/`auto` selects native API `68.0`;
+explicit numeric pins are preserved. Native retrieval/deploy admits numeric versions
+from `61.0`, but installed mapping lifecycle acceptance is API68 only. `latest` is
+not a native mapping route and dependency expansion remains unsupported.
+Output is `data360/mapping/<name>.mapping-meta.json` beneath `--output-dir` (default cwd).
+The document contains `schemaVersion: 1`, `kind: "mapping"`, logical `identity` and
+`spec` with DLO/DMO developer-name bindings and field pairs. Retrieved field selectors
+are retained; source record IDs and runtime observations are not replayed. Identical
+bytes are unchanged; differing files require `--overwrite`. Independent failures
+retain successful member receipts and return nonzero status.
 
-The following independent standard Salesforce CLI example remains separate:
+#### Create / bounded additive update
+
+Choose exactly one explicit input mode: exact project member selectors, or local
+canonical files/directories. Bare types, wildcards and omitted deploy selections
+are refused; native mapping Git deployment and legacy XML deployment are not admitted.
 
 ```sh
-sf project retrieve start --metadata ObjectSourceTargetMap:McpMappingProbe_20261027_map_McpMappingProbe_20261027_1793094371706 --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
+sf data360 deploy -m mapping:CustomerMapping -m dmo:Customer__dlm -m dlo:CustomerSource__dll -o TARGET_ALIAS --preview --json
+sf data360 deploy -m mapping:CustomerMapping -m dmo:Customer__dlm -m dlo:CustomerSource__dll -o TARGET_ALIAS --json
+sf data360 deploy --source-dir ./data360/mapping/ExactMappingName.mapping-meta.json -o TARGET_ALIAS --preview --json
+sf data360 deploy --source-dir ./data360/mapping/ExactMappingName.mapping-meta.json -o TARGET_ALIAS --json
 ```
 
-The output is under `force-app/main/default/objectSourceTargetMaps/`. This mapping
-references the custom DLO and DMO above and their exact fields. Its Metadata XML
-contains six pairs. In the later bounded target creation, the system key-qualifier
-pair was regenerated: independent API 65 readbacks matched all seven source runtime
-pairs, including `KQ_Id__c`, and retained the exact DLO/DMO identities. Subsequent
-Metadata retrieval still contained six pairs. This qualifies this exact fixture,
-not arbitrary filters, formulas or universal mapping fidelity. Use the returned/listed
-mapping name, not a guessed timestamp or selector.
+Native execution orders DLO, then DMO, then mapping, regardless of selector order.
+Each parent is independently read back and settled before dependent writes: DLO
+readiness requires `ACTIVE` and the desired definition; DMO GET has no status field,
+so its identity, schema, key and other required definition properties are checked,
+not an invented DMO `ACTIVE` status. If preview depends on parents only planned in
+the same selection, it reports `planned-dependencies`, target unknown and no absence
+proof (`MAPPING_DEPENDENCIES_PLANNED`), not confirmed create readiness.
 
-#### Create
+Creation resolves the exact DLO/DMO pair in the target and uses the target-generated
+mapping name, not the source artifact name. An existing logically identical mapping
+is a zero-write repeat. Update permits exactly one nonconflicting additive field
+pair per invocation, with a names-only, selector-free PATCH; existing pairs and their
+selectors must survive independent readback. It is not pair replacement. Field-pair
+removal, multiple new pairs, existing-pair retargeting and changing either parent
+binding are blocked before writes. No implicit parent creation or PK/KQ inference
+is performed outside explicitly selected, supported parent definitions.
 
-Standard API 65 mapping-only dry-run **and actual creation succeeded** after the
-exact test-owned DLO and DMO had been separately created through MCP and independently
-verified. All 15 target object field XML files matched the retained source fields,
-including primary-key and system qualifier attributes. This is **not** standard
-Metadata API object-creation proof; the earlier combined object/map dry-run remains
-failed and does not independently reject this mapping shape.
+Installed public API68 acceptance on owned empty custom definitions covers ordered
+parent/mapping creation, canonical retrieval, an unchanged zero-write redeploy, one
+additive pair and a second zero-write repeat. DLO raw state and DMO schema/key/field
+definitions were preserved across PATCH, but DMO's derived field `isMapped` can
+change when a pair is added. Full raw DMO preservation is therefore not claimed
+across PATCH. This is not populated-object, cross-org or all-version qualification.
 
-**Conditional low-level diagnostic, not a turnkey setup or implemented wrapper:**
-the following is the successful mapping-only deployment command. It mutates the
-target. It requires the retained mapping XML in the current source project and
-already-created, test-owned `McpMappingProbe_20261027__dll` and
-`McpMappingProbe_20261027__dlm` in the target, with independently verified matching
-fields/PK/KQ and no existing mapping of that identity. Replace `TARGET_ALIAS` with
-the authenticated, deliberately selected target alias. Do not run it against a
-business org or repeat it as a create retry. This creation receipt is historical:
-the target DMO and mapping were later deleted by the bounded parent-DMO operation
-above; only the DLO remains. No prerequisite creation command or general safe-cleanup
-route is qualified here.
+#### Conditional delete and limitations
 
 ```sh
-sf project deploy start --metadata ObjectSourceTargetMap:McpMappingProbe_20261027_map_McpMappingProbe_20261027_1793094371706 --target-org TARGET_ALIAS --api-version 65.0 --test-level NoTestRun --wait 5 --json
+sf data360 delete -m mapping:ExactTargetMappingName -o TARGET_ALIAS --api-version 68.0 --preview --json
+sf data360 delete -m mapping:ExactTargetMappingName -o TARGET_ALIAS --api-version 68.0 --json
 ```
 
-The DMO's `isEnabled` changed from `false` to `true` after mapping. The flag's
-semantics are undefined in the retained contract; readiness is plausible, but the
-observation is **not proof of activation, computation or a no-computation boundary
-breach**. No explicit run, ingest or publish action was issued. Neither that fact
-nor this flag establishes inertness or absence of internal processing.
+Delete accepts exact mapping selectors only, executes without prompting unless
+`--preview` is set, and requires native API `68.0` (also selected by default/`auto`).
+A complete fresh DMO-only mapping inventory must establish another `ACTIVE` mapping
+from a distinct DLO to the same DMO. The last mapping is blocked in both preview and
+execution with `MAPPING_LAST_MAPPING_DELETE_BLOCKED` and zero writes. An already-absent
+mapping is conservatively blocked without writes; unchanged-on-404 handling applies
+only to native DLO/DMO deletion. There is no parent-delete fallback, artificial
+survivor creation, automatic retry, rollback or local artifact deletion.
 
-#### Update
+Installed public acceptance confirmed non-last native DELETE HTTP `204` with an empty
+body, independent exact-name `404` absence, and full raw preservation of the surviving
+`ACTIVE` mapping, both DLOs and the DMO. This is conditional whole-mapping deletion,
+not field-pair removal or unrestricted mapping deletion.
 
-A standard API 65 deployment of the exact retrieved mapping file with **only its
-`masterLabel` changed** succeeded. Independent Metadata retrieval confirmed the
-new label; API 65 runtime readback preserved all seven mappings and the same object
-identities. Repeating the identical file deployment succeeded with `changed=false`
-and unchanged independent runtime readback. This is observed configuration
-no-change, **not** proof of zero internal writes/work or general mapping update
-support. Arbitrary retargeting, filter/formula changes and field removal remain
-unqualified.
-
-#### Delete
-
-Standard mapping deletion was attempted and **failed with a server internal error**;
-independent readback retained the active seven-pair map. Exact MCP cleanup was also
-refused because the DMO had only one mapped DLO; GUI **Remove mappings** was disabled.
-A later exact owned **parent-DMO deletion succeeded and cascaded this mapping**,
-with independent Metadata and Connect absence checks, as documented in the DMO
-Delete subsection. That does not turn the standalone mapping delete failure into
-a success or qualify arbitrary parent cascades. Current target state retains only
-the DLO; the test DMO and map are gone. No standalone mapping-delete example,
-guessed field-delete path, extra dependency workaround or potentially collection-wide
-delete is provided.
+Supporting API68 route tests rejected retargeting only the DLO, only the DMO, or both
+with HTTP `404` input-binding mismatch for both last and secondary mappings; original
+bindings, pairs, selectors and parents remained unchanged. Separate owned-empty-object
+observations explain the guard: DMO deletion cascaded its mapping but left the DLO;
+a second DMO using the same DLO did not unlock deletion of the original mapping
+(HTTP `500`), whereas a second distinct DLO mapped to the same DMO enabled non-last
+DELETE204. These are limitations, not alternate plugin workflows or cleanup advice.
 
 ### DMO field relationship: `FieldSrcTrgtRelationship`
 
@@ -1747,12 +1750,12 @@ identity. This repository/folder rename does not change command topics, version
 or published artifacts; release finalization and npm trusted-publisher setup
 remain separate work.
 
-Canonical commands remain `sf data360 retrieve` and `sf data360 deploy`.
-`datacloud`, `d360` and `dc` are equivalent topic aliases for both operations,
-including their flags and help. There are only two command implementations and
-no `sf data` registrations. Aliases retain canonical `sf-data360-*` envelopes,
-provenance command strings, `data360/...` layout and DMO schema/kind; only plugin
-identity metadata changes. API 65.0/default limitations remain unchanged.
+Canonical commands are `sf data360 retrieve`, `sf data360 deploy` and exact native
+`sf data360 delete`. `datacloud`, `d360` and `dc` are equivalent topic aliases,
+including their flags and help; there are no `sf data` registrations. Aliases retain
+canonical `sf-data360-*` envelopes, provenance command strings and `data360/...`
+layout. The rename itself changed only plugin identity metadata; current native
+API68/default behavior and operation-specific limits are described above.
 
 Historical evidence: the old unscoped `sf-plugin-data360` lookup returned `E404`
 on 2026-10-26, but its later manual publication was rejected with npm `E403`
@@ -1784,8 +1787,9 @@ The `bin/run.js` executable is a development/help runner, not a replacement `sf`
 binary. The package's oclif metadata exposes `data360` and the `datacloud`, `d360`,
 `dc` alias topics to Salesforce CLI. Each supports bare topic help and command help.
 Do not install into a shared CLI profile for acceptance: other installed plugins
-may own the same topic. Packaged CLI installation acceptance will use a dedicated
-profile and exact unsigned-package allowlist in a later slice.
+may own the same topic. Installed public native mapping API68 acceptance used a
+fresh local tarball, dedicated CLI profile and exact unsigned-package allowlist;
+this is not registry-release or general cross-org acceptance.
 
 ### Read-only deploy preview
 
@@ -1800,28 +1804,37 @@ files or directories; `-m/--metadata` selects exact project members from cwd.
 No bare type, omitted selection or implicit deploy-all is allowed. All sources
 resolve and validate before runtime target inspection; core optional-org flag authentication
 still happens during parsing, before input resolution. Core `-o/--target-org` supports the
-configured default org and explicit override; `--api-version` defaults to 65.0 and
-`--data-space` to default, with capability checks delegated to preflight.
+configured default org and explicit override; `--api-version` defaults to `auto`
+(native API68, with explicit numeric pins preserved) and `--data-space` to default,
+with family-specific capability checks. Native delete also requires exact selectors;
+no omitted, bare-type or wildcard write selection is admitted.
 
 The normal core JSON wrapper contains `sf-data360-deploy` contract version 1.0.0,
 status/metadata/diagnostics/provenance/result and one advisory `preview` item per
-input. `create` means complete-inventory absence, not an executed create;
-`update` means an admitted object/existing non-primary field label delta, not an executed update;
+input. Legacy `create` means complete-inventory absence; native `create` uses a
+confirmed exact-target/pair absence lookup, neither an executed create.
+`update` means an admitted family-specific delta, not an executed update;
 `unchanged` means qualified no-op. `blocked-changes` and `blocked` make aggregate
 status blocked/exit 1; unexpected failures make status failed/exit 1. Mixed results
 remain visible. Preview writes no local artifact/report and performs no mutations.
-Without `--preview`, the same explicit selection performs guarded creation or bounded label updates. The whole
-selection is preflighted before any executor call; a known blocker or preflight failure
-prevents all writes. Each executor independently repeats fresh preflight; unchanged
-items do not write. Execution is sequential and stops on the first blocked, failed or
-unknown-mutation item. This is not atomic and provides no concurrency guarantee.
+Without `--preview`, the same explicit selection performs supported guarded creation
+or bounded updates. Legacy saved-project batches preflight the whole selection before
+any executor call, so a known legacy blocker prevents all writes. Native batches instead
+order DLO, DMO, mapping and admit/settle each item independently before dependent writes;
+a later blocker can follow an earlier successful mutation. Native preview with only
+planned parents reports `planned-dependencies`, target unknown and no absence proof,
+not executable readiness. Each executor repeats fresh checks; unchanged items do not
+write. Execution stops on the first blocked, failed or unknown-mutation item.
+Neither route is atomic or provides a concurrency guarantee.
 Execution items use `operation: execute`, `outcome: created|updated|unchanged|blocked|failed|not-attempted`,
 `mutation: confirmed-created|confirmed-updated|not-attempted|unknown`, optional preflight and diagnostics.
 Prior completed receipts remain visible; remaining items are explicitly not-attempted.
 Only all-created/updated/unchanged results yield aggregate success/exit 0; blocked/failed
 execution exits 1 even after prior mutations. Unknown mutation means creation or update may have
-occurred: inspect target before another attempt. No retry or rollback. Additions, descriptions,
-primary-key labels and other unproven changes (including mixed edits) block before writes.
+occurred: inspect target before another attempt. No retry or rollback. Legacy additions,
+descriptions, primary-key labels and other unproven changes block before writes;
+native DLO/DMO additive fields and one nonconflicting mapping pair use their separate
+bounded profiles. Mapping field-pair removal/retargeting remains blocked.
 Parser/auth flag errors retain core formatting. No public plan or saved-plan infrastructure.
 
 ## Scope and safety

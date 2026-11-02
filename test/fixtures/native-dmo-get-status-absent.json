@@ -1,0 +1,72 @@
+{
+  "category": "OTHER",
+  "creationType": "Custom",
+  "dataSpaceName": "default",
+  "fields": [
+    {
+      "creationType": "Custom",
+      "isDistinct": false,
+      "label": "Note__c",
+      "name": "Note__c",
+      "type": "Text",
+      "usageTag": "None"
+    },
+    {
+      "creationType": "Custom",
+      "isDistinct": false,
+      "label": "Beta",
+      "name": "Beta__c",
+      "type": "Text",
+      "usageTag": "None"
+    },
+    {
+      "creationType": "System",
+      "isDistinct": false,
+      "label": "Data Source",
+      "name": "DataSource__c",
+      "type": "Text",
+      "usageTag": "None"
+    },
+    {
+      "creationType": "System",
+      "isDistinct": false,
+      "label": "Data Source Object",
+      "name": "DataSourceObject__c",
+      "type": "Text",
+      "usageTag": "None"
+    },
+    {
+      "creationType": "Custom",
+      "isDistinct": false,
+      "isPrimaryKey": true,
+      "keyQualifierName": "KQ_Id",
+      "label": "Id__c",
+      "name": "Id__c",
+      "type": "Text",
+      "usageTag": "None"
+    },
+    {
+      "creationType": "System",
+      "isDistinct": false,
+      "label": "Internal Organization",
+      "name": "InternalOrganization__c",
+      "type": "Text",
+      "usageTag": "None"
+    },
+    {
+      "creationType": "System",
+      "isDistinct": false,
+      "label": "Key Qualifier Id",
+      "name": "KQ_Id__c",
+      "type": "Text",
+      "usageTag": "KeyQualifier"
+    }
+  ],
+  "hasExternalDataLakeObjectMappings": false,
+  "id": "sanitized-target-id",
+  "isEditable": true,
+  "isEnabled": false,
+  "isSegmentable": false,
+  "label": "Example",
+  "name": "Example__dlm"
+}

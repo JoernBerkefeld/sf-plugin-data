@@ -525,7 +525,7 @@ test('native DMO create independently confirms GET, exact retrieve/delete ignore
 
 test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained FTemp bodies and no IDs', async () => {
   const requests = [];
-  const client = createDmoClient('target', undefined, async (arguments_, cwd) => {
+  const client = createDmoClient('target', '65.0', async (arguments_, cwd) => {
     assert.ok(arguments_.includes('--include'));
     assert.ok(!arguments_.includes('--json'));
     assert.equal(arguments_[arguments_.indexOf('--target-org') + 1], 'target');
@@ -566,8 +566,9 @@ test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained 
     await assert.rejects(client.get(name), /NAME/);
   }
   assert.equal(requests.length, 4);
-  for (const version of ['60.0', '61.0', '68.0'])
-    assert.throws(() => createDmoClient('target', version), /SELECTION/);
+  assert.throws(() => createDmoClient('target', '60.0'), /INVALID_SCOPE/);
+  for (const version of ['61.0', '68.0'])
+    assert.doesNotThrow(() => createDmoClient('target', version));
   assert.throws(() => createDmoClient('-target'), /SELECTION/);
 });
 

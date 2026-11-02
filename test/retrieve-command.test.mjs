@@ -17,13 +17,12 @@ for (const version of ['65.0', 'auto']) {
     });
     command.selectDocuments = () => assert.fail('no DMO inventory');
     const reads = [];
-    command.acquireMappingXml = async (org, name) => {
-      assert.equal(org, 'synthetic');
+    command.acquireNativeMapping = async (name) => {
       reads.push(name);
-      return `<${name} unknown="opaque"/>`;
+      return { kind: 'mapping', identity: { dataSpace: 'default', apiName: name } };
     };
     command.writeMapping = async (name, xml) => {
-      assert.equal(xml, `<${name} unknown="opaque"/>`);
+      assert.equal(xml, '<opaque/>');
       return { path: `${name}.xml`, outcome: 'retrieved' };
     };
     const { result } = await run(command);
@@ -33,21 +32,25 @@ for (const version of ['65.0', 'auto']) {
     assert.deepEqual(result.result.selection, ['mapping:Alpha', 'mapping:Zulu']);
     for (const item of result.result.items) {
       assert.equal(item.family, 'mapping');
-      assert.equal(item.definitionOnly, true);
-      assert.equal(item.deployable, false);
+      assert.equal(item.definitionOnly, undefined);
+      assert.equal(item.deployable, undefined);
       assert.deepEqual(item.routes, [
-        { operation: 'mapping.metadata', apiVersion: '65.0', transport: 'metadata' },
+        {
+          operation: 'mapping.get',
+          apiVersion: version === 'auto' ? '68.0' : version,
+          transport: 'native',
+        },
       ]);
     }
   });
 }
 for (const override of [
-  { 'api-version': '67.0' },
+  { 'api-version': '60.0' },
   { 'api-version': 'latest' },
-  { 'api-version': '66.0' },
+  { 'api-version': '59.0' },
   { 'data-space': 'other' },
   { metadata: ['mapping:../escape'] },
-  { metadata: ['mapping'] },
+  { metadata: ['mapping:'] },
   { 'include-dependencies': true },
   { metadata: ['mapping:Alpha', 'data-graph:Graph'], 'api-version': '65.0' },
 ])
@@ -63,9 +66,9 @@ for (const mode of ['read', 'output', 'overwrite'])
     const lines = [];
     command.jsonEnabled = () => false;
     command.log = (line) => lines.push(line);
-    command.acquireMappingXml = async (org, name) => {
+    command.acquireNativeMapping = async (name) => {
       if (mode === 'read' && name === 'Middle') throw new Error('private-token');
-      return '<opaque/>';
+      return { kind: 'mapping', identity: { dataSpace: 'default', apiName: name } };
     };
     command.writeMapping = async (name) => {
       if (mode !== 'read' && name === 'Middle')
@@ -132,7 +135,7 @@ test('mixed mapping Graph auto retains Graph67 and mapping65 pins', async () => 
   const { result } = await run(command);
   assert.equal(result.metadata.soapApiVersion, '67.0');
   assert.ok(pins.includes('67.0'));
-  assert.equal(result.result.items[0].routes[0].apiVersion, '65.0');
+  assert.equal(result.result.items[0].routes[0].apiVersion, '68.0');
 });
 
 const candidate = {
@@ -157,6 +160,39 @@ const invocation = (overrides = {}) => {
     return { getOrgId: () => 'synthetic-org', getConnection: () => connection };
   };
   command.selectDocuments = async () => ['Sample__dlm'];
+  command.listNativeNames = async (_connection, version, family) =>
+    family === 'dmo'
+      ? command.selectDocuments(
+          _connection,
+          flags.metadata ?? [],
+          { requested: version, restSelector: `v${version}`, soapNumeric: version },
+          flags['data-space'],
+        )
+      : [];
+  command.listNativeMappingNames = async () => [];
+  command.createMappingClient = command.createDmoClient = () => ({});
+  command.acquireNativeMapping = async (name) => ({
+    kind: 'mapping',
+    identity: { dataSpace: 'default', apiName: name },
+  });
+  command.writeNativeMapping = async (document, ...arguments_) =>
+    command.writeMapping(document.identity.apiName, '<opaque/>', ...arguments_);
+  command.acquireNativeDmo = async (name) => {
+    const projection = await command.acquire(
+      connection,
+      name,
+      { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
+      flags['data-space'],
+    );
+    if (
+      projection.status !== 'projected' ||
+      projection.blockers.length > 0 ||
+      !projection.candidate
+    )
+      throw new DmoRetrieveError(projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
+    return projection.candidate;
+  };
+  command.writeNativeDmo = (...arguments_) => command.writeDocument(...arguments_);
   command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
@@ -499,15 +535,22 @@ test('type, omitted and repeated selectors reach selection and retain per-object
     const { result, exitCode } = await run(command);
     assert.equal(exitCode, 1);
     assert.equal(result.status, 'failed');
-    assert.deepEqual(acquired, ['Alpha__dlm', 'Broken__dlm', 'Unsupported__dlm', 'Zeta__dlm']);
+    const exactAdded = metadata?.includes('dmo:Sample__dlm');
+    assert.deepEqual(acquired, [
+      'Alpha__dlm',
+      'Broken__dlm',
+      ...(exactAdded ? ['Sample__dlm'] : []),
+      'Unsupported__dlm',
+      'Zeta__dlm',
+    ]);
     assert.deepEqual(
       result.result.items.map((item) => item.identity.apiName),
-      ['Alpha__dlm', 'Zeta__dlm'],
+      ['Alpha__dlm', ...(exactAdded ? ['Sample__dlm'] : []), 'Zeta__dlm'],
     );
     assert.deepEqual(
       result.diagnostics.errors.map((error) => [error.identity.apiName, error.code]),
       [
-        ['Broken__dlm', 'RETRIEVE_FAILED'],
+        ['Broken__dlm', 'NATIVE_RETRIEVE_FAILED'],
         ['Unsupported__dlm', 'ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE'],
       ],
     );
@@ -534,7 +577,7 @@ test('empty inventory succeeds with no files; incomplete inventory blocks before
 });
 
 test('unsupported scope validates before authentication', async () => {
-  for (const overrides of [{ 'api-version': '66.0' }, { 'data-space': 'other' }]) {
+  for (const overrides of [{ 'api-version': '60.0' }, { 'data-space': 'other' }]) {
     const command = invocation(overrides);
     command.resolveOrg = () => assert.fail('must not authenticate');
     const { result } = await run(command);
@@ -618,9 +661,9 @@ for (const version of ['65.0', 'auto']) {
 }
 
 for (const override of [
-  { 'api-version': '67.0' },
+  { 'api-version': '60.0' },
   { 'api-version': 'latest' },
-  { 'api-version': '66.0' },
+  { 'api-version': '59.0' },
   { 'data-space': 'other' },
   { metadata: ['relationship:../escape'] },
   { metadata: ['relationship'] },

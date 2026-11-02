@@ -7,6 +7,13 @@ import { DloError, dloName } from '../../artifacts/dlo-document.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { deleteNativeDlo, retrieveNativeDlo } from '../../services/native-dlo.js';
 import { plugin } from '../../plugin.js';
+import { nativeMappingName, NativeMappingError } from '../../artifacts/native-mapping-document.js';
+import { createMappingClient } from '../../transport/mapping-rest.js';
+import {
+  deleteNativeMapping,
+  preflightDeleteNativeMapping,
+} from '../../services/native-mapping.js';
+import { nativeApiVersion } from '../../transport/api-version.js';
 
 export type DeleteEnvelope = {
   contract: 'sf-data360-delete';
@@ -31,9 +38,9 @@ export type DeleteEnvelope = {
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
   public static readonly summary =
-    'Delete exact Data360 DMO/DLO definitions; --preview is read-only.';
+    'Delete exact Data360 DLO, DMO or non-last mapping definitions; --preview is read-only.';
   public static readonly description =
-    'Executes by default without confirmation. Exact DMO names use API65/default and name-based deletion; DLOs use API68/default and resolved target IDs. Mixed DMO/DLO deletion requires auto. No cascade, local deletion, retries or rollback. Already absent is unchanged. Use --preview for lookup/report only with zero mutations.';
+    'Executes explicit type:ApiName selections without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion is API68-only and requires another distinct ACTIVE DLO mapping to the same DMO, with independent survivor and parent verification. Last mapping deletion is blocked. No cascade, local deletion, retries or rollback. Use --preview for the same read-only guards with zero mutations.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -44,14 +51,17 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       required: true,
-      summary: 'Exact dlo:Name__dll selectors only.',
+      summary: 'Exact dlo:Name__dll, dmo:Name__dlm or mapping:ApiName selections only.',
     }),
     'api-version': Flags.string({
-      summary: 'DMO65 or DLO68; omitted derives the selected family, auto permits both.',
+      summary: 'Native numeric route >=61, default/auto68; mapping deletion requires68.',
     }),
     'data-space': Flags.string({ default: 'default' }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
   };
+  protected createMappingClient = createMappingClient;
+  protected preflightDeleteMapping = preflightDeleteNativeMapping;
+  protected deleteMapping = deleteNativeMapping;
   protected createDmoClient = createDmoClient;
   protected retrieveDmo = retrieveNativeDmo;
   protected deleteDmo = deleteNativeDmo;
@@ -85,21 +95,20 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       metadata: {
         operation: 'delete',
         preview: flags.preview,
-        apiVersion:
-          flags['api-version'] ??
-          (flags.metadata?.every((value) => value.startsWith('dmo:')) ? '65.0' : '68.0'),
+        apiVersion: flags['api-version'] ?? 'auto',
         plugin,
       },
       provenance: { command: 'sf data360 delete', generatedAt: new Date().toISOString() },
       diagnostics: { warnings: [], errors: [] },
       result: { items: [] },
     };
+    const selectorsByItem = new Map<DeleteEnvelope['result']['items'][number], string>();
     const finish = (): DeleteEnvelope => {
       if (envelope.status !== 'success') process.exitCode = 1;
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
         for (const item of envelope.result.items)
-          this.log(`dlo:${item.identity.apiName}: ${item.outcome}; mutation: ${item.mutation}.`);
+          this.log(`${selectorsByItem.get(item)}: ${item.outcome}; mutation: ${item.mutation}.`);
       }
       return envelope;
     };
@@ -109,26 +118,32 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         flags.metadata.some(
           (value) =>
             !(value.startsWith('dlo:') && dloName.test(value.slice(4))) &&
-            !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))),
+            !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))) &&
+            !(value.startsWith('mapping:') && nativeMappingName.test(value.slice(8))),
         )
       )
         throw new DloError('INVALID_SELECTION');
-      const families = new Set(flags.metadata.map((value) => value.slice(0, 3)));
-      const version =
-        flags['api-version'] ?? (families.has('dmo') && families.size === 1 ? '65.0' : '68.0');
-      if (
-        flags['data-space'] !== 'default' ||
-        (version !== 'auto' &&
-          (families.size > 1 || version !== (families.has('dmo') ? '65.0' : '68.0')))
-      )
+      if (flags['data-space'] !== 'default') throw new DloError('INVALID_SCOPE');
+      let version: string;
+      try {
+        version = nativeApiVersion(flags['api-version']);
+      } catch {
         throw new DloError('INVALID_SCOPE');
+      }
+      const selectors = [...new Set(flags.metadata)];
+      // Mapping DELETE is qualified at API68 only; never upgrade another explicit pin.
+      if (selectors.some((selector) => selector.startsWith('mapping:')) && version !== '68.0')
+        throw new NativeMappingError('MAPPING_DELETE_VERSION_UNQUALIFIED');
       const target = await this.resolveTarget(flags['target-org']);
-      for (const selector of new Set(flags.metadata)) {
+      for (const selector of selectors) {
         const native = selector.startsWith('dmo:');
-        const apiName = selector.slice(4);
-        const baseClient = native
-          ? (this.createDmoClient ?? createDmoClient)(target, '65.0')
-          : this.createDloClient(target, '68.0');
+        const mapping = selector.startsWith('mapping:');
+        const apiName = selector.slice(selector.indexOf(':') + 1);
+        const baseClient = mapping
+          ? (this.createMappingClient ?? createMappingClient)(target, version)
+          : native
+            ? (this.createDmoClient ?? createDmoClient)(target, version)
+            : this.createDloClient(target, version);
         let dispatched = false;
         const client = {
           ...baseClient,
@@ -143,24 +158,42 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           outcome: 'blocked',
           mutation: 'not-attempted',
         };
+        selectorsByItem.set(item, selector);
         envelope.result.items.push(item);
         try {
-          if (flags.preview) {
-            await (native
-              ? (this.retrieveDmo ?? retrieveNativeDmo)(apiName, client)
-              : this.retrieveDlo(apiName, client));
-            item.outcome = 'delete';
+          if (mapping) {
+            const mappingClient = client as ReturnType<typeof createMappingClient>;
+            const dependencies = {
+              source: (this.createDloClient ?? createDloClient)(target, version),
+              target: (this.createDmoClient ?? createDmoClient)(target, version),
+            };
+            await (flags.preview
+              ? (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
+                  apiName,
+                  mappingClient,
+                  dependencies,
+                )
+              : (this.deleteMapping ?? deleteNativeMapping)(apiName, mappingClient, dependencies));
           } else {
-            await (native
-              ? (this.deleteDmo ?? deleteNativeDmo)(apiName, client)
-              : this.deleteDlo(apiName, client));
-            item.outcome = 'deleted';
-            item.mutation = 'confirmed-deleted';
+            const definitionClient = client as ReturnType<typeof createDloClient>;
+            if (flags.preview)
+              await (native
+                ? (this.retrieveDmo ?? retrieveNativeDmo)(apiName, definitionClient)
+                : this.retrieveDlo(apiName, definitionClient));
+            else
+              await (native
+                ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient)
+                : this.deleteDlo(apiName, definitionClient));
           }
+          item.outcome = flags.preview ? 'delete' : 'deleted';
+          if (!flags.preview) item.mutation = 'confirmed-deleted';
         } catch (error) {
           if (
             !dispatched &&
-            (error instanceof DloError || error instanceof NativeDmoError) &&
+            (error instanceof DloError ||
+              error instanceof NativeDmoError ||
+              error instanceof NativeMappingError) &&
+            !mapping &&
             ['DLO_HTTP_ERROR', 'DMO_HTTP_ERROR'].includes(error.code) &&
             error.status === 404
           ) {
@@ -177,7 +210,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     } catch (error) {
       envelope.diagnostics.errors.push({
         code:
-          error instanceof DloError || error instanceof NativeDmoError
+          error instanceof DloError ||
+          error instanceof NativeDmoError ||
+          error instanceof NativeMappingError
             ? error.code
             : 'DELETE_FAILED',
         message:

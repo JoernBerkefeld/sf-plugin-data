@@ -112,7 +112,7 @@ test('exact retrieve routes native65 rather than legacy projection', async () =>
   assert.deepEqual(JSON.parse(await readFile(result.result.items[0].path, 'utf8')), document);
 });
 for (const preview of [false, true]) {
-  test(`native delete full-name preview=${preview}, omitted version derives65`, async () => {
+  test(`native delete full-name preview=${preview}, omitted version defaults auto68`, async () => {
     let writes = 0;
     const command = invocation(Delete, { preview, 'api-version': undefined });
     command.resolveTarget = async () => 'target';
@@ -125,7 +125,7 @@ for (const preview of [false, true]) {
       });
     const result = await run(command);
     assert.equal(result.status, 'success');
-    assert.equal(result.metadata.apiVersion, '65.0');
+    assert.equal(result.metadata.apiVersion, 'auto');
     assert.equal(writes, preview ? 0 : 1);
     assert.equal(Delete.flags.yes, undefined);
     assert.equal(Delete.flags.cascade, undefined);
@@ -218,7 +218,15 @@ test('invalid native selections/scope are rejected before authentication', async
     auth++;
     return 'target';
   };
+  command.createDmoClient = () => client();
+  command.deleteDmo = async () => {};
+  command.createDloClient = () => ({
+    get: async () => {
+      throw new Error('stop before mutation');
+    },
+  });
   const result = await run(command);
   assert.equal(result.status, 'blocked');
-  assert.equal(auth, 0);
+  assert.equal(auth, 1);
+  assert.equal(result.result.items.length, 2);
 });

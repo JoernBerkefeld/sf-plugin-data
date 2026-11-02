@@ -1,0 +1,157 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  NativeMappingError,
+  mappingDloName,
+  mappingDmoName,
+  nativeMappingName,
+  validateNativeMappingDocument,
+} from '../artifacts/native-mapping-document.js';
+import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
+import type { MetadataRunner } from './project-metadata.js';
+import { nativeApiVersion } from './api-version.js';
+
+export type MappingWriteBody = {
+  sourceEntityDeveloperName: string;
+  targetEntityDeveloperName: string;
+  fieldMapping: { sourceFieldDeveloperName: string; targetFieldDeveloperName: string }[];
+};
+export type MappingClient = {
+  list: (dmoDeveloperName: string, dloDeveloperName?: string) => Promise<unknown>;
+  get: (mappingDeveloperName: string) => Promise<unknown>;
+  create: (body: MappingWriteBody) => Promise<unknown>;
+  update: (mappingDeveloperName: string, body: MappingWriteBody) => Promise<unknown>;
+  delete: (mappingDeveloperName: string) => Promise<void>;
+};
+
+/**
+ * Require explicit operation input, never convert saved read evidence into a send policy.
+ * @param {MappingWriteBody} body Explicit caller-selected pairs.
+ */
+function validateBody(body: MappingWriteBody): void {
+  if (!body || Object.keys(body).length !== 3 || !Array.isArray(body.fieldMapping))
+    throw new NativeMappingError('INVALID_MAPPING_BODY');
+  validateNativeMappingDocument({
+    schemaVersion: 1,
+    kind: 'mapping',
+    identity: { apiName: 'Input', dataSpace: 'default' },
+    spec: {
+      sourceEntityDeveloperName: body.sourceEntityDeveloperName,
+      targetEntityDeveloperName: body.targetEntityDeveloperName,
+      fieldMappings: body.fieldMapping,
+    },
+  });
+  if (body.fieldMapping.some((field) => Object.keys(field).length !== 2))
+    throw new NativeMappingError('INVALID_MAPPING_BODY');
+}
+
+/**
+ * Build a single-attempt native client. Numeric admission is not live-version qualification.
+ * The caller owns target pair resolution; additions send names only, without a field selector.
+ * @param {string} targetOrg Explicit authenticated alias or username.
+ * @param {string} apiVersion Validated numeric version, or default/auto 68.0.
+ * @param {MetadataRunner} runner Injectable installed CLI runner.
+ * @returns {MappingClient} Raw operations; all scratch is retained.
+ */
+export function createMappingClient(
+  targetOrg: string,
+  apiVersion = '68.0',
+  runner: MetadataRunner = runProjectMetadata,
+): MappingClient {
+  const version = nativeApiVersion(apiVersion);
+  if (
+    !targetOrg ||
+    targetOrg.startsWith('-') ||
+    [...targetOrg].some((character) => character.codePointAt(0)! < 32)
+  )
+    throw new NativeMappingError('UNSUPPORTED_MAPPING_SELECTION');
+  const endpoint = `/services/data/v${version}/ssot/data-model-object-mappings`;
+
+  /**
+   * Validate exact mapping names, never source IDs or guessed suffixes.
+   * @param {string} name Native mapping developer name.
+   * @returns {string} Exact item suffix.
+   */
+  function nameSuffix(name: string): string {
+    if (!nativeMappingName.test(name)) throw new NativeMappingError('INVALID_MAPPING_NAME');
+    return `/${name}`;
+  }
+
+  /**
+   * Execute once with receipt-proven HTTP status, without inferring settlement.
+   * @param {string} method HTTP verb.
+   * @param {string} suffix Validated route and query.
+   * @param {MappingWriteBody} body Explicit optional operation input.
+   * @returns {Promise<unknown>} Raw response, not persistence evidence.
+   */
+  async function request(
+    method: string,
+    suffix: string,
+    body?: MappingWriteBody,
+  ): Promise<unknown> {
+    if (body) validateBody(body);
+    verifyTemporaryDirectory();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'data360-native-mapping-'));
+    const arguments_ = ['api', 'request', 'rest'];
+    if (method === 'DELETE') {
+      const file = path.join(root, 'request.json');
+      await writeFile(
+        file,
+        JSON.stringify({ url: endpoint + suffix, method, body: { mode: 'raw', raw: '' } }),
+        { flag: 'wx' },
+      );
+      arguments_.push('--file', file);
+    } else {
+      arguments_.push(endpoint + suffix, '--method', method);
+      if (body) {
+        const file = path.join(root, 'body.json');
+        await writeFile(file, JSON.stringify(body), { flag: 'wx' });
+        arguments_.push('--body', `@${file}`, '--header', 'Content-Type:application/json');
+      }
+    }
+    arguments_.push('--target-org', targetOrg, '--include');
+    const receipt = await runner(arguments_, root);
+    const match = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n/u.exec(receipt.stdout);
+    if (!match) throw new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED');
+    const status = Number(match[1]);
+    const payload = receipt.stdout
+      .slice(match[0].length)
+      .replace(/^(?:[^\r\n]+:[^\r\n]*\r?\n|\r?\n)*/u, '')
+      .trim();
+    if (status < 200 || status >= 300) throw new NativeMappingError('MAPPING_HTTP_ERROR', status);
+    if (
+      receipt.exitCode !== 0 ||
+      (status !== 200 &&
+        !(method === 'POST' && status === 201) &&
+        !(method === 'DELETE' && status === 204))
+    )
+      throw new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED', status);
+    if (method === 'DELETE') return;
+    try {
+      return JSON.parse(payload) as unknown;
+    } catch {
+      throw new NativeMappingError('INVALID_MAPPING_RESPONSE', status);
+    }
+  }
+
+  return {
+    list: async (dmoDeveloperName, dloDeveloperName) => {
+      if (
+        !mappingDmoName.test(dmoDeveloperName) ||
+        (dloDeveloperName !== undefined && !mappingDloName.test(dloDeveloperName))
+      )
+        throw new NativeMappingError('INVALID_MAPPING_BINDING');
+      const query = new URLSearchParams({ dataspace: 'default', dmoDeveloperName });
+      if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
+      return request('GET', `?${query}`);
+    },
+    get: async (name) => request('GET', `${nameSuffix(name)}?dataspace=default`),
+    create: async (body) => request('POST', '?dataspace=default', body),
+    update: async (name, body) =>
+      request('PATCH', `${nameSuffix(name)}/field-mappings?dataspace=default`, body),
+    delete: async (name) => {
+      await request('DELETE', `${nameSuffix(name)}?dataspace=default`);
+    },
+  };
+}

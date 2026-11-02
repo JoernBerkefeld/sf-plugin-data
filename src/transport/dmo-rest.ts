@@ -12,22 +12,23 @@ export type DmoClient = {
   delete: (targetApiName: string) => Promise<void>;
 };
 
-const endpoint = '/services/data/v65.0/ssot/data-model-objects';
+import { nativeApiVersion } from './api-version.js';
 
 /**
- * Build an API65 single-attempt client with receipt-proven HTTP status.
+ * Build a single-attempt native client with receipt-proven HTTP status.
  * @param {string} targetOrg Explicit authenticated alias or username.
- * @param {string} apiVersion Only 65.0 is admitted in this slice.
+ * @param {string} apiVersion Numeric >=61 or default/auto 68; admission is not live qualification.
  * @param {MetadataRunner} runner Injectable installed CLI runner.
  * @returns {DmoClient} Name-bound operations; all scratch is retained.
  */
 export function createDmoClient(
   targetOrg: string,
-  apiVersion = '65.0',
+  apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
 ): DmoClient {
+  const version = nativeApiVersion(apiVersion);
+  const endpoint = `/services/data/v${version}/ssot/data-model-objects`;
   if (
-    apiVersion !== '65.0' ||
     !targetOrg ||
     targetOrg.startsWith('-') ||
     [...targetOrg].some((character) => character.codePointAt(0)! < 32)

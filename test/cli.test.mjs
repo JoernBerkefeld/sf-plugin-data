@@ -65,12 +65,46 @@ test('package metadata points to the renamed repository without changing npm ide
   });
 });
 
+test('README documents the native mapping lifecycle without obsolete XML-only or batch claims', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const mapping = readme
+    .split('### DLO-to-DMO mapping: native definition CRUD')[1]
+    ?.split('### DMO field relationship:')[0]
+    .replaceAll(/\s+/gu, ' ');
+  assert.ok(mapping, 'native mapping workflow must be documented');
+  for (const required of [
+    'data360/mapping/<name>.mapping-meta.json',
+    'explicit numeric pins are preserved',
+    'planned-dependencies',
+    'exactly one nonconflicting additive field',
+    'zero-write repeat',
+    'DMO GET has no status field',
+    'derived field `isMapped`',
+    'MAPPING_LAST_MAPPING_DELETE_BLOCKED',
+    'An already-absent mapping is conservatively blocked without writes',
+    'unchanged-on-404 handling applies only to native DLO/DMO deletion',
+    'non-last native DELETE HTTP `204`',
+    'full raw preservation',
+    'Field-pair removal',
+  ])
+    assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
+  for (const obsolete of [
+    'There is no public plugin Delete command',
+    'Exact API65/default opaque XML export only',
+    'pending public plugin integration acceptance',
+    'mixed-family deployment remain blocked',
+    'The whole\nselection is preflighted before any executor call',
+  ])
+    assert.ok(!readme.includes(obsolete), `obsolete README contract: ${obsolete}`);
+  assert.match(readme, /Native batches instead\s+order DLO, DMO, mapping/u);
+});
+
 test('API flags opt into exact latest while preserving core numeric validation and defaults', async () => {
   const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   for (const command of [Retrieve, Deploy]) {
     const flag = command.flags['api-version'];
-    assert.equal(flag.default, '65.0');
+    assert.equal(flag.default, 'auto');
     assert.equal(await flag.parse('latest', {}, {}), 'latest');
     assert.equal(await flag.parse('auto', {}, {}), 'auto');
     assert.equal(await flag.parse('65.0', {}, {}), '65.0');
@@ -143,6 +177,8 @@ test('actual core initialization never discovers or saves cached versions before
               assert.equal(connection.getApiVersion(), '65.0');
               return [];
             };
+            command.listNativeNames = async () => [];
+            command.listNativeMappingNames = async () => [];
             command.resolveInputs = async () => [{ path: 'synthetic.json', document: {} }];
             command.preflight = async () => ({ outcome: 'unchanged', diagnostics: [] });
             const envelope = await command.run();
@@ -259,10 +295,7 @@ test('retrieve parser accepts repeatable exact, type and omitted selectors witho
       env: environment,
     },
   );
-  assert.equal(
-    JSON.parse(invalid.stdout).result.diagnostics.errors[0].code,
-    'DLO_INVENTORY_UNSUPPORTED',
-  );
+  assert.equal(JSON.parse(invalid.stdout).result.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
 });
 
 test('deploy parser admits repeated non-greedy explicit flags but blocks invalid selections before org work', () => {
@@ -281,7 +314,7 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
     assert.equal(result.status, 1, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.result.contract, 'sf-data360-deploy');
-    assert.equal(output.result.metadata.apiVersion, '65.0');
+    assert.equal(output.result.metadata.apiVersion, 'auto');
     assert.equal(output.result.result.scope.dataSpace, 'default');
     assert.equal(output.result.status, 'blocked');
     assert.ok(

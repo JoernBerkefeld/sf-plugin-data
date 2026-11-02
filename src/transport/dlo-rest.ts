@@ -13,13 +13,13 @@ export type DloClient = {
 };
 
 const recordId = /^[A-Za-z0-9]{18}$/u;
-const endpoint = '/services/data/v68.0/ssot/data-lake-objects';
+import { nativeApiVersion } from './api-version.js';
 
 /**
  * Build a minimal authenticated API68 client using real --include HTTP receipts.
  * No JSON CLI envelope is assumed, and only an actual HTTP 404 indicates absence.
  * @param {string} targetOrg Explicit authenticated org alias or username.
- * @param {string} apiVersion Only 68.0 is qualified.
+ * @param {string} apiVersion Numeric >=61 or default/auto 68; admission is not live qualification.
  * @param {MetadataRunner} runner Injectable installed CLI runner.
  * @returns {DloClient} Four single-attempt operations; scratch request bodies are retained.
  */
@@ -28,8 +28,9 @@ export function createDloClient(
   apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
 ): DloClient {
+  const version = nativeApiVersion(apiVersion);
+  const endpoint = `/services/data/v${version}/ssot/data-lake-objects`;
   if (
-    apiVersion !== '68.0' ||
     !targetOrg ||
     targetOrg.startsWith('-') ||
     [...targetOrg].some((character) => character.codePointAt(0)! < 32)
