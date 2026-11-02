@@ -145,7 +145,7 @@ const connection = {};
 const invocation = (overrides = {}) => {
   const command = Object.create(Retrieve.prototype);
   const flags = {
-    metadata: ['dmo:Sample__dlm'],
+    metadata: ['dmo'],
     'api-version': '65.0',
     'data-space': 'default',
     overwrite: false,
@@ -244,7 +244,7 @@ test('latest malformed, failed and newer discovery blocks before every DMO or fi
     new Error('private-token'),
     [{ version: '68.0' }],
   ]) {
-    const command = invocation({ 'api-version': 'latest' });
+    const command = invocation({ 'api-version': 'latest', metadata: ['dmo'] });
     let discoveries = 0;
     command.resolveOrg = async () => ({
       getOrgId: () => 'synthetic-org',
@@ -413,7 +413,7 @@ test('real selector expansion writes each exact/type/all member once in sorted o
   for (const metadata of [
     undefined,
     ['dmo'],
-    ['dmo:Zeta__dlm', 'dmo:Alpha__dlm', 'dmo:Zeta__dlm'],
+    ['dmo', 'dmo:Zeta__dlm', 'dmo:Alpha__dlm', 'dmo:Zeta__dlm'],
     ['dmo', 'dmo:Alpha__dlm'],
   ]) {
     const command = invocation({ metadata, 'output-dir': 'project', overwrite: true });
@@ -471,7 +471,7 @@ test('human output includes per-object diagnostic identity and code', async () =
 });
 
 test('type, omitted and repeated selectors reach selection and retain per-object partial outcomes', async () => {
-  for (const metadata of [undefined, [], ['dmo'], ['dmo:Sample__dlm', 'dmo:Sample__dlm']]) {
+  for (const metadata of [undefined, [], ['dmo'], ['dmo', 'dmo:Sample__dlm', 'dmo:Sample__dlm']]) {
     const command = invocation({ metadata });
     command.selectDocuments = async (actualConnection, selectors, version, space) => {
       assert.equal(actualConnection, connection);

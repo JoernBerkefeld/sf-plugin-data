@@ -1,3 +1,6 @@
+import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
+import { createDmoClient } from '../../transport/dmo-rest.js';
+import { deleteNativeDmo, retrieveNativeDmo } from '../../services/native-dmo.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesforce/core';
 import { DloError, dloName } from '../../artifacts/dlo-document.js';
@@ -27,9 +30,10 @@ export type DeleteEnvelope = {
 /** Delete exact native DLO definitions, or preview without mutation. */
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
-  public static readonly summary = 'Delete exact Data360 DLO definitions; --preview is read-only.';
+  public static readonly summary =
+    'Delete exact Data360 DMO/DLO definitions; --preview is read-only.';
   public static readonly description =
-    'Executes by default without confirmation. Resolves the exact target name before deleting its target ID at API68/default. No cascade, local deletion, retries or rollback. Already absent is unchanged. Use --preview for lookup/report only with zero mutations.';
+    'Executes by default without confirmation. Exact DMO names use API65/default and name-based deletion; DLOs use API68/default and resolved target IDs. Mixed DMO/DLO deletion requires auto. No cascade, local deletion, retries or rollback. Already absent is unchanged. Use --preview for lookup/report only with zero mutations.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -42,10 +46,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       required: true,
       summary: 'Exact dlo:Name__dll selectors only.',
     }),
-    'api-version': Flags.orgApiVersion({ default: '68.0' }),
+    'api-version': Flags.string({
+      summary: 'DMO65 or DLO68; omitted derives the selected family, auto permits both.',
+    }),
     'data-space': Flags.string({ default: 'default' }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
   };
+  protected createDmoClient = createDmoClient;
+  protected retrieveDmo = retrieveNativeDmo;
+  protected deleteDmo = deleteNativeDmo;
   protected createDloClient = createDloClient;
   protected retrieveDlo = retrieveNativeDlo;
   protected deleteDlo = deleteNativeDlo;
@@ -76,7 +85,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       metadata: {
         operation: 'delete',
         preview: flags.preview,
-        apiVersion: flags['api-version'],
+        apiVersion:
+          flags['api-version'] ??
+          (flags.metadata?.every((value) => value.startsWith('dmo:')) ? '65.0' : '68.0'),
         plugin,
       },
       provenance: { command: 'sf data360 delete', generatedAt: new Date().toISOString() },
@@ -95,14 +106,29 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     try {
       if (
         !flags.metadata?.length ||
-        flags.metadata.some((value) => !value.startsWith('dlo:') || !dloName.test(value.slice(4)))
+        flags.metadata.some(
+          (value) =>
+            !(value.startsWith('dlo:') && dloName.test(value.slice(4))) &&
+            !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))),
+        )
       )
         throw new DloError('INVALID_SELECTION');
-      if (flags['api-version'] !== '68.0' || flags['data-space'] !== 'default')
+      const families = new Set(flags.metadata.map((value) => value.slice(0, 3)));
+      const version =
+        flags['api-version'] ?? (families.has('dmo') && families.size === 1 ? '65.0' : '68.0');
+      if (
+        flags['data-space'] !== 'default' ||
+        (version !== 'auto' &&
+          (families.size > 1 || version !== (families.has('dmo') ? '65.0' : '68.0')))
+      )
         throw new DloError('INVALID_SCOPE');
       const target = await this.resolveTarget(flags['target-org']);
-      const baseClient = this.createDloClient(target, '68.0');
-      for (const apiName of new Set(flags.metadata.map((value) => value.slice(4)))) {
+      for (const selector of new Set(flags.metadata)) {
+        const native = selector.startsWith('dmo:');
+        const apiName = selector.slice(4);
+        const baseClient = native
+          ? (this.createDmoClient ?? createDmoClient)(target, '65.0')
+          : this.createDloClient(target, '68.0');
         let dispatched = false;
         const client = {
           ...baseClient,
@@ -120,18 +146,22 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         envelope.result.items.push(item);
         try {
           if (flags.preview) {
-            await this.retrieveDlo(apiName, client);
+            await (native
+              ? (this.retrieveDmo ?? retrieveNativeDmo)(apiName, client)
+              : this.retrieveDlo(apiName, client));
             item.outcome = 'delete';
           } else {
-            await this.deleteDlo(apiName, client);
+            await (native
+              ? (this.deleteDmo ?? deleteNativeDmo)(apiName, client)
+              : this.deleteDlo(apiName, client));
             item.outcome = 'deleted';
             item.mutation = 'confirmed-deleted';
           }
         } catch (error) {
           if (
             !dispatched &&
-            error instanceof DloError &&
-            error.code === 'DLO_HTTP_ERROR' &&
+            (error instanceof DloError || error instanceof NativeDmoError) &&
+            ['DLO_HTTP_ERROR', 'DMO_HTTP_ERROR'].includes(error.code) &&
             error.status === 404
           ) {
             item.outcome = 'unchanged';
@@ -146,7 +176,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       envelope.status = 'success';
     } catch (error) {
       envelope.diagnostics.errors.push({
-        code: error instanceof DloError ? error.code : 'DLO_DELETE_FAILED',
+        code:
+          error instanceof DloError || error instanceof NativeDmoError
+            ? error.code
+            : 'DELETE_FAILED',
         message:
           'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry, cascade or rollback.',
         retryable: false,

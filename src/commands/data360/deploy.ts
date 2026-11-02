@@ -1,3 +1,7 @@
+import { preflightDmo, executeDmo } from '../../services/command-native-dmo.js';
+import { createDmoClient } from '../../transport/dmo-rest.js';
+import { isNativeDmoInput } from '../../artifacts/read-deploy-input.js';
+import { NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { preflightDloDeploy, executeDloDeploy } from '../../services/command-dlo.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { validateDloDocument } from '../../artifacts/dlo-document.js';
@@ -181,6 +185,7 @@ export type DeployEnvelope = {
           | IdentityResolutionDeployPreview
           | CalculatedInsightPreview
           | DataGraphDeployPreview
+          | Awaited<ReturnType<typeof preflightDmo>>
           | import('../../services/command-dlo.js').DloPreview
         ) & {
           routes?: ExecutionItem['routes'];
@@ -199,21 +204,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Native DLOs use dlo:Name__dll at auto or numeric68/default from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DMO JSON uses API65/default, target-name lookup selecting confirmed-404 POST or existing-name PATCH, label/additive Text updates and independent GET confirmation. Native DMO Git, mixed-family deployment and dependency expansion are blocked. Native DLOs use dlo:Name__dll at auto or numeric68/default from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
-    'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
-      {
-        char: 'o',
-        noCacheDefault: true,
-        summary: 'Authenticated org alias or username; defaults to the configured target org.',
-        parse: async (input) => resolveTargetOrg(input),
-        default: async () => resolveTargetOrg(),
-        defaultHelp: async () => {
-          const org = await resolveTargetOrg();
-          return org?.getUsername();
-        },
-      },
-    )(),
+    'target-org': Flags.string({
+      char: 'o',
+      summary: 'Authenticated org alias or username; resolved only after local admission.',
+    }),
     'api-version': Flags.orgApiVersion({
       default: '65.0',
       summary:
@@ -263,6 +259,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
   };
 
+  protected resolveTargetOrg = resolveTargetOrg;
+  protected createDmoClient = createDmoClient;
+  protected preflightNativeDmo = preflightDmo;
+  protected executeNativeDmo = executeDmo;
   protected preflightDlo = preflightDloDeploy;
   protected executeDlo = executeDloDeploy;
   protected verifyDloInput = verifyDloInputDigest;
@@ -515,11 +515,73 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         gitSegments = selected.segments;
         gitIdentityResolutions = selected.identityResolutions;
       }
-      const admitted = await this.resolveInputs({
+      const resolvedInputs = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      const nativeInputs = resolvedInputs.filter(isNativeDmoInput);
+      if (nativeInputs.length > 0) {
+        if (nativeInputs.length !== resolvedInputs.length || changedSince !== undefined)
+          return finish('blocked', 'NATIVE_DMO_MIXED_SELECTION_UNSUPPORTED');
+        if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+          return finish('blocked', 'INVALID_SCOPE');
+        if (flags['include-dependencies'])
+          return finish('blocked', 'DMO_DEPENDENCY_EXPANSION_UNSUPPORTED');
+        for (const input of nativeInputs) await captureDeployInputDigest(input);
+        const injected = flags['target-org'] as unknown;
+        const org =
+          injected && typeof injected === 'object'
+            ? (injected as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
+            : flags['target-org'] === undefined && !this.resolveTargetOrg
+              ? undefined
+              : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
+        if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        const target = org.getUsername();
+        if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        envelope.provenance.targetOrgId = org.getOrgId();
+        envelope.metadata.soapApiVersion = '65.0';
+        const client = (this.createDmoClient ?? createDmoClient)(target, '65.0');
+        const verify = async (): Promise<void> => {
+          for (const input of nativeInputs) await captureDeployInputDigest(input);
+        };
+        const previews = [];
+        for (const input of nativeInputs) {
+          await verify();
+          const preview = await (this.preflightNativeDmo ?? preflightDmo)(input.document, client);
+          previews.push({
+            ...preview,
+            identity: input.document.identity,
+            operation: 'preview' as const,
+            path: input.path,
+          });
+        }
+        if (flags.preview) {
+          envelope.result.items.push(...previews);
+          return finish('success');
+        }
+        for (const input of nativeInputs) {
+          await verify();
+          const result = await (this.executeNativeDmo ?? executeDmo)(input.document, client);
+          envelope.result.items.push({
+            ...result,
+            identity: input.document.identity,
+            operation: 'execute',
+            path: input.path,
+          });
+          if (result.outcome === 'blocked' || result.outcome === 'failed')
+            return finish(result.outcome);
+        }
+        return finish('success');
+      }
+      const admitted = resolvedInputs.filter(
+        (
+          input,
+        ): input is Exclude<
+          DeployInput,
+          import('../../artifacts/read-deploy-input.js').NativeDmoDeployInput
+        > => !isNativeDmoInput(input),
+      );
       const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
       if (hasDlos) {
         try {
@@ -844,7 +906,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     },
                   ]
                 : undefined;
-      const org = flags['target-org'];
+      const injectedOrg = flags['target-org'] as unknown;
+      const org =
+        injectedOrg && typeof injectedOrg === 'object'
+          ? (injectedOrg as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
+          : flags['target-org'] === undefined && !this.resolveTargetOrg
+            ? undefined
+            : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
       if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
       envelope.provenance.targetOrgId = org.getOrgId();
       if (flags['api-version'] === 'latest' && !flags.preview) {
@@ -1403,6 +1471,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
         return finish('blocked');
       }
+      if (error instanceof NativeDmoError) return finish('blocked', error.code);
       if (error instanceof DeployInputError || error instanceof DependencySelectionError)
         return finish('blocked', error.code);
       return finish('failed', flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED');

@@ -128,14 +128,15 @@ test('actual core initialization never discovers or saves cached versions before
             let org;
             if (kind === 'deploy') {
               const flag = Deploy.flags['target-org'];
-              org = cached ? await flag.parse('offline-unconfigured-synthetic', {}, {}) : await flag.default();
+              assert.equal(await flag.parse('offline-unconfigured-synthetic', {}, {}), 'offline-unconfigured-synthetic');
+              assert.equal(requests.length, before, 'inert target flag must not authenticate');
+              org = await command.resolveTargetOrg('offline-unconfigured-synthetic');
               assert.equal(org.getConnection().getApiVersion(), '65.0');
-              assert.equal(requests.length, before, 'parse-time auth must not discover');
-              assert.equal(await flag.defaultHelp(), 'offline-unconfigured-synthetic');
+              assert.equal(requests.length, before, 'explicit auth must not discover');
             }
             command.parse = async () => ({ flags: {
               'api-version': requested, 'data-space': 'default',
-              'target-org': org, metadata: ['dmo:Sample__dlm'], preview: true,
+              'target-org': org, metadata: ['dmo'], preview: true,
             } });
             command.jsonEnabled = () => true;
             command.selectDocuments = async (connection) => {
@@ -146,7 +147,7 @@ test('actual core initialization never discovers or saves cached versions before
             command.preflight = async () => ({ outcome: 'unchanged', diagnostics: [] });
             const envelope = await command.run();
             assert.equal(requests.length - before, requested === 'latest' ? 1 : 0);
-            assert.equal(envelope.status, requested === 'latest' && failDiscovery ? 'blocked' : 'success');
+            assert.equal(envelope.status, requested === 'latest' && failDiscovery ? 'blocked' : 'success', JSON.stringify(envelope));
             assert.ok(!JSON.stringify(envelope).includes('private-discovery-token'));
             if (requested === 'latest' && failDiscovery)
               assert.equal(envelope.diagnostics.errors[0].code, 'API_VERSION_DISCOVERY_FAILED');

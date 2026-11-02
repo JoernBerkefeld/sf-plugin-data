@@ -1,3 +1,5 @@
+import { nativeDmoName, validateNativeDmoDocument } from './native-dmo-document.js';
+import type { NativeDmoDocument } from './native-dmo-document.js';
 import { dloName, validateDloDocument } from './dlo-document.js';
 import type { DloDocument } from './dlo-document.js';
 import { dataGraphName, validateDataGraphDocument } from './data-graph-document.js';
@@ -61,7 +63,61 @@ export type DloDeployInput = {
   document: DloDocument;
   inputDigest: string;
 };
+export type NativeDmoDeployInput = {
+  path: string;
+  document: NativeDmoDocument;
+  inputDigest: string;
+};
+
+/**
+ * Identify the canonical native path rather than interpreting legacy DMO fields.
+ * @param {object} input Captured input.
+ * @param {string} input.path Selected path.
+ * @returns {boolean} Native canonical path.
+ */
+export function isNativeDmoInput(input: { path: string }): input is NativeDmoDeployInput {
+  return input.path.endsWith('.dmo-meta.json');
+}
+
+/**
+ * Admit canonical native DMO content with immutable byte binding.
+ * @param {string} file Absolute selected member.
+ * @returns {Promise<NativeDmoDeployInput>} Frozen source input.
+ */
+async function readNativeDmoInput(file: string): Promise<NativeDmoDeployInput> {
+  const name = path.basename(file).slice(0, -'.dmo-meta.json'.length);
+  const directory = path.dirname(file);
+  if (
+    !nativeDmoName.test(name) ||
+    path.basename(directory) !== 'dmo' ||
+    path.basename(path.dirname(directory)) !== 'data360'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: NativeDmoDocument;
+  try {
+    document = validateNativeDmoDocument(strictJson(decode(bytes)));
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
 export type DeployInput =
+  | NativeDmoDeployInput
   | SupportedDeployInput
   | IdentityResolutionDeployInput
   | CalculatedInsightDeployInput
@@ -520,6 +576,15 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if (isNativeDmoInput(input)) {
+    const current = await readNativeDmoInput(input.path);
+    if (
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+    return current.inputDigest;
+  }
   if (input.document.kind === 'dlo') {
     await verifyDloInputDigest(input as DloDeployInput);
     return (input as DloDeployInput).inputDigest;
@@ -566,7 +631,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('INVALID_SELECTION');
   if (!path.isAbsolute(flags.cwd)) throw new DeployInputError('INVALID_SELECTION');
   const selectors = metadata?.map((value) => {
-    if (/^dmo:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(value))
+    if (value.startsWith('dmo:') && nativeDmoName.test(value.slice(4)))
       return { kind: 'dmo', name: value.slice(4) };
     if (value.startsWith('dlo:') && dloName.test(value.slice(4)) && value.endsWith('__dll'))
       return { kind: 'dlo', name: value.slice(4) };
@@ -583,10 +648,23 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   const base = selectors?.some((item) => item.kind !== 'dmo' && item.kind !== 'dlo')
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
+  // Explicit legacy adapter for inventories/dependency consumers and existing saved projects.
+  const legacyDmos = new Set<string>();
+  for (const selector of selectors ?? []) {
+    if (selector.kind !== 'dmo') continue;
+    try {
+      await lstat(path.join(flags.cwd, 'data360', 'dmo', `${selector.name}.dmo-meta.json`));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      legacyDmos.add(selector.name);
+    }
+  }
   const roots = selectors
     ? selectors.map(({ kind, name }) =>
         kind === 'dmo'
-          ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
+          ? legacyDmos.has(name)
+            ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
+            : path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
           : kind === 'dlo'
             ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
             : kind === 'data-graph'
@@ -675,6 +753,22 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           !selectors.some(
             (item) =>
               item.kind === 'calculated-insight' && item.name === input.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.dmo-meta.json')) {
+        const input = await readNativeDmoInput(file);
+        const key =
+          `dmo:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) => item.kind === 'dmo' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

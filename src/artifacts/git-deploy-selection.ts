@@ -80,6 +80,8 @@ const irMember = (file: string): boolean => /\.identityResolution\.json$/iu.test
 const ciMember = (file: string): boolean =>
   /\.(?:mktCalcInsightObjectDef-meta\.xml|calculatedInsight\.json)$/iu.test(file);
 const relevant = (file: string): boolean =>
+  (file.startsWith('data360/dmo/') && file.endsWith('.dmo-meta.json')) ||
+  (file.startsWith('data360/dmo/') && file.endsWith('.dmo-meta.json')) ||
   (file.startsWith('data360/default/dmo/') && file.endsWith('.json')) ||
   segmentMember(file) ||
   ciMember(file) ||
@@ -256,6 +258,9 @@ export async function selectGitDeployInputs(options: {
           throw new GitSelectionError('INVALID_GIT_SELECTION');
         return `segment:${name}`;
       }
+      if (file.startsWith('data360/dmo/')) throw new GitSelectionError('INVALID_GIT_SELECTION');
+      if (/^data360\/dmo\/.+\.dmo-meta\.json$/u.test(file))
+        throw new GitSelectionError('INVALID_GIT_SELECTION');
       const match =
         /^data360\/default\/dmo\/([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm)\.json$/u.exec(file);
       if (!match) throw new GitSelectionError('INVALID_GIT_SELECTION');

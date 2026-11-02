@@ -1991,7 +1991,7 @@ test('common service through command and writer publishes varied authored types 
     command.config = { pjson: { version: '0.1.0' } };
     command.parse = async () => ({
       flags: {
-        metadata: ['dmo:Audit_Ledger__dlm'],
+        metadata: ['dmo'],
         'api-version': '65.0',
         'data-space': 'default',
         'output-dir': directory,
@@ -2008,7 +2008,7 @@ test('common service through command and writer publishes varied authored types 
     command.acquire = retrieveDmo;
     command.writeDocument = writeDmoDocument;
     const result = await command.run();
-    assert.equal(result.status, 'success');
+    assert.equal(result.status, 'success', JSON.stringify(result));
     const file = result.result.items[0].path;
     assert.equal(file, path.join(directory, 'data360', 'default', 'dmo', 'Audit_Ledger__dlm.json'));
     const document = JSON.parse(await readFile(file, 'utf8'));

@@ -1,0 +1,217 @@
+import { isDeepStrictEqual } from 'node:util';
+import {
+  NativeDmoError,
+  nativeDmoName,
+  normalizeNativeDmo,
+  validateNativeDmoDocument,
+} from '../artifacts/native-dmo-document.js';
+import type { NativeDmoDocument, NativeDmoField } from '../artifacts/native-dmo-document.js';
+import type { DmoClient } from '../transport/dmo-rest.js';
+
+export type NativeDmoDeployPlan = {
+  operation: 'create' | 'update';
+  apiName: string;
+  targetApiName?: string;
+  body: Record<string, unknown>;
+};
+
+const systemFields = new Set(['DataSource__c', 'DataSourceObject__c', 'InternalOrganization__c']);
+
+/**
+ * Identify generated fields without borrowing DLO SourceVersion assumptions.
+ * @param {NativeDmoField} field Portable field.
+ * @returns {boolean} Whether create must omit the field.
+ */
+function generated(field: NativeDmoField): boolean {
+  return (
+    systemFields.has(field.name) || field.name.startsWith('KQ_') || field.creationType === 'System'
+  );
+}
+
+/**
+ * Project only the qualified authored Text input, rejecting unqualified custom behavior.
+ * @param {NativeDmoField} field Saved field.
+ * @returns {Record<string, unknown>} Native input with bare field name.
+ */
+function fieldInput(field: NativeDmoField): Record<string, unknown> {
+  const keys = new Set([
+    'name',
+    'label',
+    'dataType',
+    'isPrimaryKey',
+    'isDynamicLookup',
+    'creationType',
+    'isDistinct',
+    'usageTag',
+    'keyQualifierName',
+  ]);
+  if (
+    field.dataType !== 'Text' ||
+    field.isDynamicLookup === true ||
+    (field.isDynamicLookup !== undefined && field.isDynamicLookup !== false) ||
+    (field.isDistinct !== undefined && field.isDistinct !== false) ||
+    (field.usageTag !== undefined && field.usageTag !== 'None') ||
+    (field.creationType !== undefined && field.creationType !== 'Custom') ||
+    (field.keyQualifierName !== undefined &&
+      (!field.isPrimaryKey || field.keyQualifierName !== `KQ_${field.name.slice(0, -3)}`)) ||
+    Object.keys(field).some((key) => !keys.has(key))
+  )
+    throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_INPUT');
+  return {
+    name: field.name.slice(0, -3),
+    label: field.label,
+    dataType: 'Text',
+    isPrimaryKey: field.isPrimaryKey,
+    isDynamicLookup: false,
+  };
+}
+
+/**
+ * Resolve and verify the exact full name and default data space, never inspecting its ID.
+ * @param {string} apiName Requested full name.
+ * @param {DmoClient} client Target client.
+ * @returns {Promise<NativeDmoDocument>} Verified target definition.
+ */
+async function resolveTarget(apiName: string, client: DmoClient): Promise<NativeDmoDocument> {
+  if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
+  const document = normalizeNativeDmo(await client.get(apiName));
+  if (document.identity.apiName !== apiName)
+    throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+  return document;
+}
+
+/**
+ * Retrieve an exact portable definition including all generated fields.
+ * @param {string} apiName Full name ending in __dlm.
+ * @param {DmoClient} client Authenticated client.
+ * @returns {Promise<NativeDmoDocument>} Portable definition, without runtime observations.
+ */
+export async function retrieveNativeDmo(
+  apiName: string,
+  client: DmoClient,
+): Promise<NativeDmoDocument> {
+  return resolveTarget(apiName, client);
+}
+
+/**
+ * Preflight a bounded API65 create or label/additive Text update without mutation.
+ * @param {unknown} value Portable document.
+ * @param {DmoClient} client Target client.
+ * @returns {Promise<NativeDmoDeployPlan>} Fresh name-bound write plan.
+ */
+export async function preflightNativeDmo(
+  value: unknown,
+  client: DmoClient,
+): Promise<NativeDmoDeployPlan> {
+  const desired = validateNativeDmoDocument(value);
+  const apiName = desired.identity.apiName;
+  let target: NativeDmoDocument;
+  try {
+    target = await resolveTarget(apiName, client);
+  } catch (error) {
+    if (
+      !(error instanceof NativeDmoError) ||
+      error.code !== 'DMO_HTTP_ERROR' ||
+      error.status !== 404
+    )
+      throw error;
+    const fields = desired.spec.fields.filter((field) => !generated(field));
+    if (fields.filter((field) => field.isPrimaryKey).length !== 1)
+      throw new NativeDmoError('INVALID_DMO_PRIMARY_KEY');
+    return {
+      operation: 'create',
+      apiName,
+      body: {
+        name: apiName.slice(0, -5),
+        label: desired.spec.label,
+        category: 'Other',
+        dataSpaceName: 'default',
+        fields: fields.map((field) => fieldInput(field)),
+      },
+    };
+  }
+  const existing = new Map(target.spec.fields.map((field) => [field.name, field]));
+  const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
+  for (const [name, field] of existing) {
+    if (!isDeepStrictEqual(field, incoming.get(name)))
+      throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE');
+  }
+  const added = desired.spec.fields.filter((field) => !existing.has(field.name));
+  if (added.some((field) => generated(field) || field.isPrimaryKey))
+    throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_ADDITION');
+  return {
+    operation: 'update',
+    apiName,
+    targetApiName: target.identity.apiName,
+    body: {
+      label: desired.spec.label,
+      ...(added.length > 0 ? { fields: added.map((field) => fieldInput(field)) } : {}),
+    },
+  };
+}
+
+/**
+ * Confirm desired definitions while allowing the server to add definition defaults.
+ * @param {NativeDmoDocument} desired Requested portable state.
+ * @param {NativeDmoDocument} actual Independent GET state.
+ * @returns {boolean} Whether every requested field property and key survived.
+ */
+function confirmed(desired: NativeDmoDocument, actual: NativeDmoDocument): boolean {
+  if (actual.spec.label !== desired.spec.label || actual.spec.category !== desired.spec.category)
+    return false;
+  const fields = new Map(actual.spec.fields.map((field) => [field.name, field]));
+  return desired.spec.fields.every((field) => {
+    const found = fields.get(field.name);
+    return (
+      found &&
+      Object.entries(field).every(
+        ([key, value]) =>
+          (key === 'isDynamicLookup' && value === false && found[key] === undefined) ||
+          isDeepStrictEqual(value, found[key]),
+      )
+    );
+  });
+}
+
+/**
+ * Perform exactly one write, then require independent bounded GET confirmation.
+ * Stale PATCH bodies never establish persistence; failed readback never triggers another write.
+ * @param {unknown} value Portable requested definition.
+ * @param {DmoClient} client Target client.
+ * @returns {Promise<{operation: 'create' | 'update', document: NativeDmoDocument}>} Confirmed definition, not activation proof.
+ */
+export async function deployNativeDmo(
+  value: unknown,
+  client: DmoClient,
+): Promise<{ operation: 'create' | 'update'; document: NativeDmoDocument }> {
+  const desired = validateNativeDmoDocument(value);
+  const plan = await preflightNativeDmo(desired, client);
+  const response =
+    plan.operation === 'create'
+      ? await client.create(plan.body)
+      : await client.update(plan.targetApiName!, plan.body);
+  const accepted = normalizeNativeDmo(response);
+  if (accepted.identity.apiName !== plan.apiName)
+    throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const document = await resolveTarget(plan.apiName, client);
+    if (confirmed(desired, document)) return { operation: plan.operation, document };
+  }
+  throw new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED');
+}
+
+/**
+ * Delete only the freshly resolved exact full name, without cascade or local deletion.
+ * @param {string} apiName Requested full name.
+ * @param {DmoClient} client Target client.
+ * @returns {Promise<{apiName: string, targetApiName: string}>} Exact deleted target name.
+ */
+export async function deleteNativeDmo(
+  apiName: string,
+  client: DmoClient,
+): Promise<{ apiName: string; targetApiName: string }> {
+  const target = await resolveTarget(apiName, client);
+  const targetApiName = target.identity.apiName;
+  await client.delete(targetApiName);
+  return { apiName, targetApiName };
+}

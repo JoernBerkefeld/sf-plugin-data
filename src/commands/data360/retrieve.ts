@@ -1,3 +1,7 @@
+import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
+import { retrieveNativeDmo } from '../../services/native-dmo.js';
+import { createDmoClient } from '../../transport/dmo-rest.js';
+import { writeNativeDmoDocument } from '../../artifacts/write-native-dmo.js';
 import { dloName, DloError } from '../../artifacts/dlo-document.js';
 import { retrieveNativeDlo } from '../../services/native-dlo.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
@@ -134,7 +138,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m dlo:Name__dll retrieves native API68/default portable JSON to data360/dlo/Name__dll.dlo-meta.json without a source record ID. DLO requires --api-version 68.0 or auto; inventory and dependencies are unavailable. Exact -m mapping:ApiName exports opaque ObjectSourceTargetMap XML at API65/default only, with no inventory, dependency expansion or operational deploy admission. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m dmo:Name__dlm without dependencies retrieves native API65/default canonical data360/dmo/Name__dlm.dmo-meta.json, retaining generated field definitions without source IDs. Inventory and dependency selections retain the separate legacy adapter. Exact -m dlo:Name__dll retrieves native API68/default portable JSON to data360/dlo/Name__dll.dlo-meta.json without a source record ID. DLO requires --api-version 68.0 or auto; inventory and dependencies are unavailable. Exact -m mapping:ApiName exports opaque ObjectSourceTargetMap XML at API65/default only, with no inventory, dependency expansion or operational deploy admission. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -177,6 +181,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireNativeDmo = retrieveNativeDmo;
+  protected createDmoClient = createDmoClient;
+  protected writeNativeDmo = writeNativeDmoDocument;
   protected acquireDlo = retrieveNativeDlo;
   protected createDloClient = createDloClient;
   protected writeDlo = writeDloDocument;
@@ -283,6 +290,59 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    const nativeSelectors = selectors.filter((value) => value.startsWith('dmo:'));
+    if (
+      nativeSelectors.length === selectors.length &&
+      nativeSelectors.length > 0 &&
+      !flags['include-dependencies']
+    ) {
+      if (
+        nativeSelectors.length !== selectors.length ||
+        nativeSelectors.some((value) => !nativeDmoName.test(value.slice(4)))
+      )
+        return finish('blocked', 'INVALID_SELECTION');
+      if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+        return finish('blocked', 'INVALID_SCOPE');
+      try {
+        let org;
+        try {
+          org = await this.resolveOrg(flags['target-org']);
+        } catch {
+          return finish('blocked', 'TARGET_ORG_REQUIRED');
+        }
+        const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
+        if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        envelope.provenance.sourceOrgId = org.getOrgId();
+        envelope.metadata.soapApiVersion = '65.0';
+        const names = [...new Set(nativeSelectors.map((value) => value.slice(4)))];
+        names.sort();
+        envelope.result.selection = names.map((name) => `dmo:${name}`);
+        for (const apiName of names) {
+          const document = await (this.acquireNativeDmo ?? retrieveNativeDmo)(
+            apiName,
+            (this.createDmoClient ?? createDmoClient)(target, '65.0'),
+          );
+          const receipt = await (this.writeNativeDmo ?? writeNativeDmoDocument)(
+            document,
+            flags['output-dir'] ?? process.cwd(),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: document.identity,
+            operation: 'retrieve',
+            routes: [{ operation: 'dmo.get', apiVersion: '65.0', transport: 'native' }],
+            ...receipt,
+          });
+        }
+        return finish('success');
+      } catch (error) {
+        return finish(
+          'blocked',
+          error instanceof NativeDmoError ? error.code : 'DMO_RETRIEVE_FAILED',
+        );
+      }
+    }
+    // Inventory and dependency expansion intentionally retain the legacy metadata adapter.
     const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
     const relationshipSelectors = selectors.filter((value) => value.startsWith('relationship:'));

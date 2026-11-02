@@ -1,6 +1,7 @@
 # Data360 Salesforce CLI plugin
 
-`sf-plugin-data` adds `sf data360 retrieve` and `sf data360 deploy` to Salesforce CLI
+`sf-plugin-data` adds `sf data360 retrieve`, `sf data360 deploy` and exact native
+DMO/DLO `sf data360 delete` to Salesforce CLI
 for downloading portable Data360 configuration, previewing local changes and applying
 supported, guarded updates. Support is resource- and operation-specific: this is
 **not a complete backup, restore or migration tool**. Deployment can cause processing;
@@ -47,7 +48,7 @@ plugin features.
 
 | Resource | Retrieve | Create | Update | Delete | Scope / limits |
 | --- | --- | --- | --- | --- | --- |
-| Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin writes: qualified Other/default creation and object/existing nonprimary field labels only; additive fields remain deferred. |
+| Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Exact native API65/default CRUD: canonical JSON, target-name POST/PATCH selection, label/additive Text updates and exact-name delete. Independent GET confirms writes; native Git and mixed-family deployment remain blocked. Legacy inventory/dependency adapters remain separate. |
 | Data Lake Objects (DLOs), `dlo` | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" /> | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup. |
 | DLO-to-DMO mappings, `mapping` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default opaque XML export only, default/65.0/auto; installed source-only acceptance passed, no semantic/KQ admission or cross-org operational deploy. |
 | DMO field relationships, `relationship` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved. |
@@ -367,6 +368,37 @@ Example `sfdx-project.json`:
 ```
 
 ### Data Model Object (DMO): `CustomObject` with `__dlm`
+
+#### Native plugin workflow
+
+```sh
+sf data360 retrieve -m dmo:Customer__dlm -o SOURCE_ALIAS --api-version 65.0 --output-dir ./project --json
+sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --preview --json
+sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --json
+sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --preview --json
+sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --json
+```
+
+Exact native retrieval saves `data360/dmo/Customer__dlm.dmo-meta.json` with
+`schemaVersion`, `kind`, logical `identity` and `spec`. It preserves complete field
+definitions, including generated fields and key-qualifier references, but excludes
+source record IDs and runtime observations. Differing files require `--overwrite`;
+identical bytes are unchanged. This route supports API65/default (`auto` selects
+65.0); it is separate from legacy inventory and dependency retrieval.
+
+Deployment resolves the full target API name. Only confirmed HTTP404 permits
+creation; other lookup failures stop. Creation sends qualified authored Text
+fields and the intended primary key, not generated fields. Existing targets use
+name-based PATCH for object labels and ordinary nonprimary Text additions; field
+removal, existing-field changes and key changes are blocked. An independent bounded
+GET must confirm persistence: a PATCH response can still contain the old fields.
+Canonical native DMO Git deployment, mixed-family deployment and dependency
+expansion are explicitly blocked; legacy saved-project adapters remain separate.
+
+Delete executes by default without prompting and addresses only the freshly
+resolved full DMO name. `--preview` is strictly read-only. Already absent is
+unchanged; no cascade, local deletion, write retry or rollback is performed.
+This bounded definition workflow does not qualify ingestion or cross-org migration.
 
 `__dlm` identifies a Data Model Object. Standard retrieval writes the object and
 its decomposed field XML under `force-app/main/default/objects/`.
