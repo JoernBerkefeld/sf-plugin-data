@@ -5,6 +5,9 @@ import path from 'node:path';
 import { NativeDmoError, validateNativeDmoDocument } from './native-dmo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
 
+// Save-only omissions; create and update policies remain independent.
+const omittedSavedFields = new Set(['KQ_Id__c']);
+
 /**
  * Validate real ancestors before publication.
  * @param {string} directory Destination directory.
@@ -85,6 +88,10 @@ export async function writeNativeDmoDocument(
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const document = validateNativeDmoDocument(value);
+  document.spec.fields = document.spec.fields.filter(
+    (field) =>
+      field.isPrimaryKey || field.creationType !== 'System' || !omittedSavedFields.has(field.name),
+  );
   const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
   if (
     !path.isAbsolute(projectRoot) ||

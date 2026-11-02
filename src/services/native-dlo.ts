@@ -112,6 +112,14 @@ export async function preflightNativeDlo(
   const existing = new Map(target.document.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
   for (const [name, field] of existing) {
+    // Native additive PATCH retains only this omitted generated qualifier.
+    if (
+      name === 'KQ_Id__c' &&
+      !field.isPrimaryKey &&
+      field.creationType !== 'Custom' &&
+      !incoming.has(name)
+    )
+      continue;
     if (!isDeepStrictEqual(field, incoming.get(name)))
       throw new DloError('UNSUPPORTED_DLO_FIELD_CHANGE');
   }

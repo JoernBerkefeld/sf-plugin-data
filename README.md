@@ -380,9 +380,9 @@ sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --json
 ```
 
 Exact native retrieval saves `data360/dmo/Customer__dlm.dmo-meta.json` with
-`schemaVersion`, `kind`, logical `identity` and `spec`. It preserves complete field
-definitions, including generated fields and key-qualifier references, but excludes
-source record IDs and runtime observations. Differing files require `--overwrite`;
+`schemaVersion`, `kind`, logical `identity` and `spec`. It preserves field
+definitions and key-qualifier references except the confirmed system-generated
+`KQ_Id__c` definition; source record IDs and runtime observations are excluded. Differing files require `--overwrite`;
 identical bytes are unchanged. This route supports API65/default (`auto` selects
 65.0); it is separate from legacy inventory and dependency retrieval.
 
@@ -506,8 +506,19 @@ sf data360 retrieve --metadata dlo:CustomerSource__dll --target-org SOURCE_ALIAS
 Canonical output is `./project/data360/dlo/CustomerSource__dll.dlo-meta.json`.
 The full API name, including `__dll`, is retained in the filename and identity.
 The saved definition excludes the source DLO record ID and runtime/audit response
-wrappers. It preserves the complete returned field definitions, including generated
-qualifier and system fields. Save policies are not create payload policies.
+wrappers. It preserves returned field definitions except the confirmed
+system-generated `KQ_Id__c` definition; other system fields remain saved.
+For DLO and DMO, a key qualifier combines an ID with source context to avoid
+collisions. Native CREATE generates this qualifier and additive PATCH preserves
+it: omitting its saved definition is not field deletion or mapping auto-pair proof.
+`Id__c`, other fields, custom qualifiers and `keyQualifierName` references remain
+unchanged; raw API responses remain complete. Separate API68 evidence showed DLO
+seven raw → six saved fields after CREATE and eight raw → seven saved after PATCH;
+DMO six raw → five saved and seven raw → six saved respectively. DLO Metadata uses
+`definitionCreationType=System` / `usageTag=KEY_QUALIFIER`; DMO API uses
+`creationType=System` / `usageTag=KeyQualifier`, not the same enum spelling.
+These experiments are not new live plugin acceptance and do not broaden the
+DMO API65/default or DLO API68/default guards. Save policies are not create payload policies.
 Identical bytes are unchanged; replacing differing output requires `--overwrite`.
 
 #### Create / Update
@@ -550,8 +561,8 @@ independently confirm exact-target absence with bounded read-only checks before
 calling deletion terminally complete.
 
 Public plugin lifecycle acceptance is API68/default: a fresh owned fixture was
-created, retrieved with seven fields, updated with preserved primary key and eight
-fields, previewed without deletion, then deleted by default with absence readback
+created, retrieved with seven raw readback fields, updated with preserved primary key and eight
+raw readback fields (historical counts, not current saved-file counts), previewed without deletion, then deleted by default with absence readback
 and the local file retained. Separately, native API61–68 standalone CRUD succeeded;
 API60 returned 404 for all four operations. API61 is the lowest successful version
 in that tested matrix, not a code guard change: the plugin still admits API68 only.

@@ -12,6 +12,7 @@ export type NativeDmoDeployPlan = {
   operation: 'create' | 'update';
   apiName: string;
   targetApiName?: string;
+  omittedTargetFields?: NativeDmoField[];
   body: Record<string, unknown>;
 };
 
@@ -132,7 +133,17 @@ export async function preflightNativeDmo(
   }
   const existing = new Map(target.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
+  const omittedTargetFields: NativeDmoField[] = [];
   for (const [name, field] of existing) {
+    if (
+      name === 'KQ_Id__c' &&
+      !field.isPrimaryKey &&
+      field.creationType === 'System' &&
+      !incoming.has(name)
+    ) {
+      omittedTargetFields.push(field);
+      continue;
+    }
     if (!isDeepStrictEqual(field, incoming.get(name)))
       throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE');
   }
@@ -143,6 +154,7 @@ export async function preflightNativeDmo(
     operation: 'update',
     apiName,
     targetApiName: target.identity.apiName,
+    ...(omittedTargetFields.length > 0 ? { omittedTargetFields } : {}),
     body: {
       label: desired.spec.label,
       ...(added.length > 0 ? { fields: added.map((field) => fieldInput(field)) } : {}),
@@ -186,6 +198,8 @@ export async function deployNativeDmo(
 ): Promise<{ operation: 'create' | 'update'; document: NativeDmoDocument }> {
   const desired = validateNativeDmoDocument(value);
   const plan = await preflightNativeDmo(desired, client);
+  // Bind readback expectations to the same target snapshot that authorized PATCH.
+  desired.spec.fields.push(...(plan.omittedTargetFields ?? []));
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)

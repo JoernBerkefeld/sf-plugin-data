@@ -1,5 +1,10 @@
+import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
+import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import test from 'node:test';
 import {
   NativeDmoError,
@@ -94,6 +99,127 @@ test('native DMO saves all six fields and their definitions, maps type/category 
   assert.ok(nativeDmoName.test(apiName));
   assert.ok(!nativeDmoName.test('../Example__dlm'));
   assert.deepEqual(normalizeNativeDmo({ ...native(), category: 'Other' }), document());
+});
+
+test('DMO save/load omits only System nonprimary KQ_Id with six/seven raw fields', async () => {
+  for (const added of [false, true]) {
+    const raw = native();
+    if (added) raw.fields.push(field('UpdateNote__c'));
+    const before = structuredClone(raw);
+    const normalized = normalizeNativeDmo(raw);
+    const snapshot = structuredClone(normalized);
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'dmo-save-policy-'));
+    const receipt = await writeNativeDmoDocument(normalized, cwd, false);
+    const [input] = await readDeployInputs({ cwd, metadata: [`dmo:${apiName}`] });
+    const saved = input.document;
+    assert.equal(raw.fields.length, added ? 7 : 6);
+    assert.equal(normalized.spec.fields.length, added ? 7 : 6);
+    assert.equal(saved.spec.fields.length, added ? 6 : 5);
+    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), saved);
+    assert.deepEqual(
+      saved.spec.fields,
+      snapshot.spec.fields.filter((f) => f.name !== 'KQ_Id__c'),
+    );
+    assert.equal(saved.spec.fields[0].keyQualifierName, 'KQ_Id');
+    assert.deepEqual(raw, before);
+    assert.deepEqual(normalized, snapshot);
+    const create = await preflightNativeDmo(saved, { get: absent });
+    assert.deepEqual(
+      create.body.fields.map((f) => f.name),
+      added ? ['Id', 'Note', 'UpdateNote'] : ['Id', 'Note'],
+    );
+    let reads = 0;
+    let writes = 0;
+    const result = await deployNativeDmo(saved, {
+      get: async () => (++reads === 1 ? native() : raw),
+      update: async (_name, body) => {
+        writes++;
+        assert.equal(body.fields?.length ?? 0, added ? 1 : 0);
+        return native();
+      },
+    });
+    assert.equal(reads, 2);
+    assert.equal(writes, 1);
+    assert.equal(result.document.spec.fields.length, added ? 7 : 6);
+    assert.deepEqual(input.document, saved);
+    let createReads = 0;
+    const created = await deployNativeDmo(saved, {
+      get: async () => (++createReads === 1 ? absent() : raw),
+      create: async () => raw,
+    });
+    assert.equal(created.operation, 'create');
+    assert.equal(created.document.spec.fields.length, added ? 7 : 6);
+  }
+});
+
+test('DMO save preserves other, Custom, unknown-creation and primary qualifiers', async () => {
+  for (const qualifier of [
+    { ...authored('KQ_Other__c'), creationType: 'System', usageTag: 'KeyQualifier' },
+    { ...authored('KQ_Id__c'), creationType: 'Custom' },
+    authored('KQ_Id__c'),
+    { ...authored('KQ_Id__c'), creationType: 'System', isPrimaryKey: true },
+  ]) {
+    const value = document();
+    value.spec.fields = value.spec.fields.filter((f) => f.name !== 'KQ_Id__c');
+    if (qualifier.isPrimaryKey) value.spec.fields[0].isPrimaryKey = false;
+    value.spec.fields.push(qualifier);
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'dmo-preserve-qualifier-'));
+    const receipt = await writeNativeDmoDocument(value, cwd, false);
+    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), value);
+    const target = native();
+    target.fields = value.spec.fields.map(({ dataType, ...f }) => ({ ...f, type: dataType }));
+    const missing = structuredClone(value);
+    missing.spec.fields = missing.spec.fields.filter((f) => f.name !== qualifier.name);
+    if (!qualifier.isPrimaryKey)
+      await assert.rejects(
+        preflightNativeDmo(missing, { get: async () => target }),
+        /FIELD_CHANGE/,
+      );
+  }
+});
+
+test('DMO omitted qualifier must survive independent GET unchanged from preflight', async () => {
+  const saved = document();
+  saved.spec.fields = saved.spec.fields.filter((f) => f.name !== 'KQ_Id__c');
+  for (const mode of ['missing', 'changed']) {
+    let reads = 0;
+    let writes = 0;
+    await assert.rejects(
+      deployNativeDmo(saved, {
+        get: async () => {
+          if (++reads === 1) return native();
+          const actual = native();
+          if (mode === 'missing')
+            actual.fields = actual.fields.filter((f) => f.name !== 'KQ_Id__c');
+          else actual.fields.find((f) => f.name === 'KQ_Id__c').label = 'Changed';
+          return actual;
+        },
+        update: async () => {
+          writes++;
+          return native();
+        },
+      }),
+      /PERSISTENCE_UNCONFIRMED/,
+    );
+    assert.equal(reads, 4);
+    assert.equal(writes, 1);
+    assert.equal(saved.spec.fields.length, 5);
+  }
+  for (const name of ['Note__c', 'DataSource__c', 'KQ_Id__c']) {
+    const changed = document();
+    changed.spec.fields.find((f) => f.name === name).label = 'Changed';
+    await assert.rejects(
+      preflightNativeDmo(changed, { get: async () => native() }),
+      /FIELD_CHANGE/,
+    );
+    if (name !== 'KQ_Id__c') {
+      changed.spec.fields = document().spec.fields.filter((f) => f.name !== name);
+      await assert.rejects(
+        preflightNativeDmo(changed, { get: async () => native() }),
+        /FIELD_CHANGE/,
+      );
+    }
+  }
 });
 
 test('native DMO validation fails closed on identity, runtime fields, primary keys and malformed output', () => {

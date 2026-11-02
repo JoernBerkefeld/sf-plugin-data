@@ -1,5 +1,10 @@
+import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { writeDloDocument } from '../lib/artifacts/write-dlo.js';
+import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import test from 'node:test';
 import {
   DloError,
@@ -68,6 +73,94 @@ test('normalizes GET and write shapes, preserving all fields but not runtime/wra
   assert.throws(() => normalizeDlo({ ...raw, dataSpaceInfo: [{ name: 'other' }] }), /DATASPACE/);
   assert.ok(dloName.test(apiName));
   assert.ok(!dloName.test('../Example__dll'));
+});
+
+test('DLO save/load omits only generated KQ_Id and roundtrips seven/eight raw fields', async () => {
+  for (const added of [false, true]) {
+    const raw = native();
+    raw.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
+    if (added) raw.dataLakeFieldInfoRepresentation.push(field('UpdateNote__c'));
+    const before = structuredClone(raw);
+    const normalized = normalizeDlo(raw);
+    const snapshot = structuredClone(normalized);
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'dlo-save-policy-'));
+    const receipt = await writeDloDocument(normalized, cwd, false);
+    const [input] = await readDeployInputs({ cwd, metadata: [`dlo:${apiName}`] });
+    const saved = input.document;
+    assert.equal(raw.dataLakeFieldInfoRepresentation.length, added ? 8 : 7);
+    assert.equal(normalized.spec.fields.length, added ? 8 : 7);
+    assert.equal(saved.spec.fields.length, added ? 7 : 6);
+    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), saved);
+    assert.deepEqual(
+      saved.spec.fields,
+      snapshot.spec.fields.filter((f) => f.name !== 'KQ_Id__c'),
+    );
+    assert.equal(saved.spec.fields[0].keyQualifierName, 'KQ_Id');
+    assert.deepEqual(raw, before);
+    assert.deepEqual(normalized, snapshot);
+    const create = await preflightNativeDlo(saved, { get: absent });
+    assert.deepEqual(
+      create.body.dataLakeFieldInputRepresentations.map((f) => f.name),
+      added ? ['Id', 'Note', 'UpdateNote'] : ['Id', 'Note'],
+    );
+    let writes = 0;
+    const target = native();
+    target.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
+    const result = await deployNativeDlo(saved, {
+      get: async () => target,
+      update: async (_id, body) => {
+        writes++;
+        assert.equal(body.dataLakeFieldInputRepresentations?.length ?? 0, added ? 1 : 0);
+        return raw;
+      },
+    });
+    assert.equal(writes, 1);
+    assert.equal(result.document.spec.fields.length, added ? 8 : 7);
+    const created = await deployNativeDlo(saved, { get: absent, create: async () => raw });
+    assert.equal(created.operation, 'create');
+    assert.equal(created.document.spec.fields.length, added ? 8 : 7);
+    assert.deepEqual(input.document, saved);
+  }
+});
+
+test('DLO save preserves other/custom/primary qualifiers and update refuses their removal or changes', async () => {
+  for (const qualifier of [
+    field('KQ_Other__c'),
+    { ...field('KQ_Id__c'), creationType: 'Custom' },
+    { ...field('KQ_Id__c'), isPrimaryKey: true },
+  ]) {
+    const value = document();
+    value.spec.fields = value.spec.fields.filter((f) => f.name !== 'KQ_Id__c');
+    if (qualifier.isPrimaryKey) value.spec.fields[0].isPrimaryKey = false;
+    value.spec.fields.push(qualifier);
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'dlo-preserve-qualifier-'));
+    const receipt = await writeDloDocument(value, cwd, false);
+    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), value);
+    const target = native();
+    target.dataLakeFieldInfoRepresentation = value.spec.fields;
+    const missing = structuredClone(value);
+    missing.spec.fields = missing.spec.fields.filter((f) => f.name !== qualifier.name);
+    if (!qualifier.isPrimaryKey)
+      await assert.rejects(
+        preflightNativeDlo(missing, { get: async () => target }),
+        /FIELD_CHANGE/,
+      );
+  }
+  for (const name of ['Note__c', 'DataSource__c', 'KQ_Id__c']) {
+    const changed = document();
+    changed.spec.fields.find((f) => f.name === name).label = 'Changed';
+    await assert.rejects(
+      preflightNativeDlo(changed, { get: async () => native() }),
+      /FIELD_CHANGE/,
+    );
+    if (name !== 'KQ_Id__c') {
+      changed.spec.fields = document().spec.fields.filter((f) => f.name !== name);
+      await assert.rejects(
+        preflightNativeDlo(changed, { get: async () => native() }),
+        /FIELD_CHANGE/,
+      );
+    }
+  }
 });
 
 test('document validation refuses invalid identity, fields, labels and primary-key inventory', () => {
