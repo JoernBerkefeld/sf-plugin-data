@@ -1,5 +1,5 @@
-import { validateIngestionDloDocument } from './ingestion-dlo-document.js';
-import type { IngestionDloDocument } from './ingestion-dlo-document.js';
+import { validateDloDocument } from './dlo-document.js';
+import type { DloDocument } from './dlo-document.js';
 import { validateDataGraphDocument } from './data-graph-document.js';
 import type { DataGraphDocument } from './data-graph-document.js';
 import { validateCalculatedInsightDocument } from './calculated-insight-document.js';
@@ -12,13 +12,7 @@ import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
 export type DependencyIdentity = {
-  kind:
-    | 'dmo'
-    | 'segment'
-    | 'identity-resolution'
-    | 'calculated-insight'
-    | 'data-graph'
-    | 'ingestion-dlo';
+  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
   dataSpace: string;
   apiName: string;
 };
@@ -46,14 +40,9 @@ export class DependencySelectionError extends Error {
  */
 export function dependencyKey(identity: DependencyIdentity): string {
   if (
-    ![
-      'dmo',
-      'segment',
-      'identity-resolution',
-      'calculated-insight',
-      'data-graph',
-      'ingestion-dlo',
-    ].includes(identity.kind) ||
+    !['dmo', 'segment', 'identity-resolution', 'calculated-insight', 'data-graph', 'dlo'].includes(
+      identity.kind,
+    ) ||
     identity.dataSpace !== 'default' ||
     !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName)
   )
@@ -73,12 +62,12 @@ export function documentDependencyNode(
     | IdentityResolutionDocument
     | CalculatedInsightDocument
     | DataGraphDocument
-    | IngestionDloDocument,
+    | DloDocument,
 ): DependencyNode {
-  if (value.kind === 'ingestion-dlo') {
-    const document = validateIngestionDloDocument(value);
+  if (value.kind === 'dlo') {
+    const document = validateDloDocument(value);
     // Source ownership is freshly admitted by its family service, never expanded/provisioned.
-    return { identity: { kind: 'ingestion-dlo', ...document.identity }, dependencies: [] };
+    return { identity: { kind: 'dlo', ...document.identity }, dependencies: [] };
   }
   if (value.kind === 'data-graph') {
     const document = validateDataGraphDocument(value);

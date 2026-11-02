@@ -1,20 +1,8 @@
-import {
-  preflightIngestionDloDeploy,
-  executeIngestionDloDeploy,
-  canonicalIngestionDloBaseline,
-} from '../../services/execute-ingestion-dlo-deploy.js';
-import type { IngestionDloExecution } from '../../services/execute-ingestion-dlo-deploy.js';
-import {
-  publicIngestionDloPreview,
-  publicIngestionDloExecution,
-} from '../../services/public-ingestion-dlo.js';
-import {
-  retrieveIngestionDlo,
-  projectIngestionDlo,
-} from '../../services/retrieve-ingestion-dlo.js';
-import { validateIngestionDloDocument } from '../../artifacts/ingestion-dlo-document.js';
-import { verifyIngestionDloInputDigest } from '../../artifacts/read-deploy-input.js';
-import type { IngestionDloDeployInput } from '../../artifacts/read-deploy-input.js';
+import { preflightDloDeploy, executeDloDeploy } from '../../services/command-dlo.js';
+import { createDloClient } from '../../transport/dlo-rest.js';
+import { validateDloDocument } from '../../artifacts/dlo-document.js';
+import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import { preflightDataGraphDeploy } from '../../services/preflight-data-graph-deploy.js';
 import type { DataGraphDeployPreview } from '../../services/preflight-data-graph-deploy.js';
 import { executeDataGraphDeploy } from '../../services/execute-data-graph-deploy.js';
@@ -128,8 +116,7 @@ type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
     | IdentityResolutionDeployExecution['family']
     | CalculatedInsightExecution['family']
     | DataGraphDeployExecution['family']
-    | 'ingestion-dlo';
-  stage?: IngestionDloExecution['stage'];
+    | 'dlo';
   route?:
     | SegmentDeployExecution['route']
     | IdentityResolutionDeployExecution['route']
@@ -180,12 +167,7 @@ export type DeployEnvelope = {
       dependencies?: Array<{
         identity: {
           kind:
-            | 'dmo'
-            | 'segment'
-            | 'identity-resolution'
-            | 'calculated-insight'
-            | 'data-graph'
-            | 'ingestion-dlo';
+            'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
           dataSpace: string;
           apiName: string;
         };
@@ -199,7 +181,7 @@ export type DeployEnvelope = {
           | IdentityResolutionDeployPreview
           | CalculatedInsightPreview
           | DataGraphDeployPreview
-          | ReturnType<typeof publicIngestionDloPreview>
+          | import('../../services/command-dlo.js').DloPreview
         ) & {
           routes?: ExecutionItem['routes'];
           identity: { dataSpace: string; apiName: string };
@@ -217,7 +199,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Ingestion API DLOs use ingestion-dlo:Name__dll at auto or numeric67/default: existing sole-source/single-event Text configuration only, unchanged or exactly one Text addition with --allow-processing, one source schema PUT then one stream sync; no create/delete/inventory/dependency expansion. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Native DLOs use dlo:Name__dll at auto or numeric68/default from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Execution preflights the whole selection, then creates or updates qualified DMO labels or existing Segment labels/descriptions sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.custom<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined>(
       {
@@ -257,7 +239,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Exact dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName member.',
+        'Exact dlo:Name__dll, dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName member.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
@@ -281,51 +263,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
   };
 
-  protected preflightIngestionDlo = preflightIngestionDloDeploy;
-  protected executeIngestionDlo = executeIngestionDloDeploy;
-  protected verifyIngestionDloInput = verifyIngestionDloInputDigest;
-  protected ingestionDloObservations?: Map<string, unknown[]>;
-
-  /**
-   * Retain detached private observations, never publish raw source responses.
-   * @param {string} key Input path.
-   * @param {unknown} observation Private observation.
-   * @returns {Promise<void>} Resolves after capture.
-   */
-  protected async recordIngestionDloObservation(key: string, observation: unknown): Promise<void> {
-    this.ingestionDloObservations ??= new Map();
-    const entries = this.ingestionDloObservations.get(key) ?? [];
-    entries.push(structuredClone(observation));
-    this.ingestionDloObservations.set(key, entries);
-  }
-
-  /**
-   * Bind complete independently admitted target preservation state before batch dispatch only.
-   * @param {IngestionDloDeployInput} input Immutable input.
-   * @param {Connection} connection API67 receiver.
-   * @param {ApiVersionSelection} selection Fixed route.
-   * @returns {Promise<string>} Full canonical target fingerprint.
-   */
-  protected async bindIngestionDlo(
-    input: IngestionDloDeployInput,
-    connection: Connection,
-    selection: ApiVersionSelection,
-  ): Promise<string> {
-    const acquired = await retrieveIngestionDlo(
-      connection,
-      input.document.identity.apiName,
-      selection,
-      'default',
-    );
-    if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
-      throw new Error('Ingestion binding unavailable');
-    projectIngestionDlo(acquired.expectations, input.document.identity.apiName);
-    return createHash('sha256')
-      .update(
-        JSON.stringify(graphCanonicalObject(canonicalIngestionDloBaseline(acquired.expectations))),
-      )
-      .digest('hex');
-  }
+  protected preflightDlo = preflightDloDeploy;
+  protected executeDlo = executeDloDeploy;
+  protected verifyDloInput = verifyDloInputDigest;
+  protected createDloClient = createDloClient;
 
   protected graphConfigurations?: Map<string, string>;
   protected preflightDataGraph = preflightDataGraphDeploy;
@@ -557,7 +498,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       )
         return finish('blocked', 'INVALID_SELECTION');
       let sourceDirectories = flags['source-dir'];
-      let gitIngestionDlos: GitDeploySelection['ingestionDlos'];
+      let gitDlos: GitDeploySelection['dlos'];
       let gitDataGraphs: GitDeploySelection['dataGraphs'];
       let gitCalculatedInsights: GitDeploySelection['calculatedInsights'];
       let gitSegments: GitDeploySelection['segments'];
@@ -568,7 +509,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         envelope.provenance.git = selected.provenance;
         if (selected.paths.length === 0) return finish('success');
         sourceDirectories = selected.paths;
-        gitIngestionDlos = selected.ingestionDlos;
+        gitDlos = selected.dlos;
         gitDataGraphs = selected.dataGraphs;
         gitCalculatedInsights = selected.calculatedInsights;
         gitSegments = selected.segments;
@@ -579,8 +520,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
-      const hasIngestionDlos = admitted.some((input) => input.document.kind === 'ingestion-dlo');
-      if (hasIngestionDlos) {
+      const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
+      if (hasDlos) {
         try {
           for (const input of admitted)
             operationApiVersion(flags['api-version'], input.document.kind);
@@ -589,17 +530,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         }
         if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
-          return finish('blocked', 'INGESTION_DLO_DEPENDENCY_EXPANSION_UNSUPPORTED');
+          return finish('blocked', 'DLO_DEPENDENCY_EXPANSION_UNSUPPORTED');
         for (const input of admitted)
-          if (input.document.kind === 'ingestion-dlo') validateIngestionDloDocument(input.document);
+          if (input.document.kind === 'dlo') validateDloDocument(input.document);
       }
-      if (gitIngestionDlos) {
+      if (gitDlos) {
         const current = admitted.filter(
-          (input): input is IngestionDloDeployInput => input.document.kind === 'ingestion-dlo',
+          (input): input is DloDeployInput => input.document.kind === 'dlo',
         );
         if (
-          current.length !== gitIngestionDlos.length ||
-          gitIngestionDlos.some(
+          current.length !== gitDlos.length ||
+          gitDlos.some(
             (captured) =>
               !current.some(
                 (input) =>
@@ -610,7 +551,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           )
         )
           throw new GitSelectionError('INVALID_GIT_SELECTION');
-        for (const input of gitIngestionDlos) await this.verifyIngestionDloInput(input);
+        for (const input of gitDlos) await this.verifyDloInput(input);
       }
       const hasDataGraphs = admitted.some((input) => input.document.kind === 'data-graph');
       if (hasDataGraphs) {
@@ -724,8 +665,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   ? 'calculated-insight'
                   : input.document.kind === 'data-graph'
                     ? 'data-graph'
-                    : input.document.kind === 'ingestion-dlo'
-                      ? 'ingestion-dlo'
+                    : input.document.kind === 'dlo'
+                      ? 'dlo'
                       : 'dmo';
           try {
             operationApiVersion(flags['api-version'], family);
@@ -763,12 +704,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             inputs.filter(
               (
                 input,
-              ): input is Exclude<
-                typeof input,
-                CalculatedInsightDeployInput | IngestionDloDeployInput
-              > =>
-                input.document.kind !== 'calculated-insight' &&
-                input.document.kind !== 'ingestion-dlo',
+              ): input is Exclude<typeof input, CalculatedInsightDeployInput | DloDeployInput> =>
+                input.document.kind !== 'calculated-insight' && input.document.kind !== 'dlo',
             ),
             cwd,
           )
@@ -786,14 +723,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         hasIdentityResolutions ||
         hasCalculatedInsights ||
         hasDataGraphs ||
-        hasIngestionDlos
+        hasDlos
       ) {
         const nodes = inputs.map((input) =>
           input.document.kind === 'segment' ||
           input.document.kind === 'identity-resolution' ||
           input.document.kind === 'calculated-insight' ||
           input.document.kind === 'data-graph' ||
-          input.document.kind === 'ingestion-dlo'
+          input.document.kind === 'dlo'
             ? documentDependencyNode(input.document)
             : { identity: { kind: 'dmo' as const, ...input.document.identity }, dependencies: [] },
         );
@@ -809,8 +746,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       ? 'calculated-insight'
                       : input.document.kind === 'data-graph'
                         ? 'data-graph'
-                        : input.document.kind === 'ingestion-dlo'
-                          ? 'ingestion-dlo'
+                        : input.document.kind === 'dlo'
+                          ? 'dlo'
                           : 'dmo',
               ...input.document.identity,
             }),
@@ -834,11 +771,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }
       // Preserve original Segment pair snapshots and bind mixed-batch DMO bytes before target reads.
       const captured =
-        hasSegments ||
-        hasIdentityResolutions ||
-        hasCalculatedInsights ||
-        hasDataGraphs ||
-        hasIngestionDlos
+        hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDataGraphs || hasDlos
           ? await Promise.all(
               inputs.map(async (input) => ({
                 input,
@@ -849,7 +782,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           : [];
       const verifyInputs = async (): Promise<void> => {
         await expanded?.verify();
-        for (const input of gitIngestionDlos ?? []) await this.verifyIngestionDloInput(input);
+        for (const input of gitDlos ?? []) await this.verifyDloInput(input);
         for (const input of gitDataGraphs ?? []) await this.verifyDataGraphInput(input);
         for (const input of gitCalculatedInsights ?? [])
           await this.verifyCalculatedInsightInput(input);
@@ -866,23 +799,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       };
       await verifyInputs();
       const familySelection = (input: DeployInput): ApiVersionSelection =>
-        input.document.kind === 'identity-resolution' ||
-        input.document.kind === 'data-graph' ||
-        input.document.kind === 'ingestion-dlo'
-          ? Object.freeze({ requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' })
-          : selection;
+        input.document.kind === 'dlo'
+          ? Object.freeze({ requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' })
+          : input.document.kind === 'identity-resolution' || input.document.kind === 'data-graph'
+            ? Object.freeze({ requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' })
+            : selection;
       const routes = (input: DeployInput): ExecutionItem['routes'] =>
-        input.document.kind === 'ingestion-dlo'
+        input.document.kind === 'dlo'
           ? [
               {
-                operation: 'd360_connection_schema_put_ingestion_api',
-                apiVersion: '67.0',
-                transport: 'facade',
-              },
-              {
-                operation: 'd360_datastream_patch_ingestion_api',
-                apiVersion: '67.0',
-                transport: 'facade',
+                operation: 'dlo.deploy',
+                apiVersion: '68.0',
+                transport: 'native',
               },
             ]
           : input.document.kind === 'data-graph'
@@ -960,7 +888,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             (input) =>
               input.document.kind !== 'identity-resolution' &&
               input.document.kind !== 'data-graph' &&
-              input.document.kind !== 'ingestion-dlo',
+              input.document.kind !== 'dlo',
           )
         )
           dmoApiSelection(selection);
@@ -980,7 +908,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (
           input.document.kind !== 'identity-resolution' &&
           input.document.kind !== 'data-graph' &&
-          input.document.kind !== 'ingestion-dlo'
+          input.document.kind !== 'dlo'
         )
           return connection;
         const receiver = Object.create(connection) as Connection;
@@ -989,18 +917,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
         return receiver;
       };
-      const ingestionBindings = new Map<string, string>();
-      const verifyIngestionBinding = async (input: DeployInput): Promise<void> => {
-        if (input.document.kind !== 'ingestion-dlo') return;
-        const fingerprint = await this.bindIngestionDlo(
-          input as IngestionDloDeployInput,
-          connectionFor(input),
-          familySelection(input),
-        );
-        const prior = ingestionBindings.get(input.path);
-        if (prior !== undefined && prior !== fingerprint)
-          throw new Error('Ingestion binding drift');
-        ingestionBindings.set(input.path, fingerprint);
+      const dloClient = (): ReturnType<typeof createDloClient> => {
+        const username = org.getUsername();
+        if (!username) throw new Error('TARGET_ORG_REQUIRED');
+        return this.createDloClient(username, '68.0');
       };
       this.graphConfigurations = new Map();
       const graphBindings = new Map<string, string>();
@@ -1048,15 +968,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           const segment = input.document.kind === 'segment';
           if (segment) await this.verifySegmentInput(input as SegmentDeployInput);
           const preview =
-            input.document.kind === 'ingestion-dlo'
-              ? publicIngestionDloPreview(
-                  await this.preflightIngestionDlo(
-                    input.document,
-                    connectionFor(input),
-                    familySelection(input),
-                    flags['data-space'],
-                  ),
-                )
+            input.document.kind === 'dlo'
+              ? await this.preflightDlo(input.document, dloClient())
               : input.document.kind === 'data-graph'
                 ? await this.preflightDataGraph(
                     input.document,
@@ -1092,23 +1005,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                           flags['data-space'],
                           true,
                         );
-          if (input.document.kind === 'ingestion-dlo') {
-            await this.verifyIngestionDloInput(input as IngestionDloDeployInput);
-            if (preview.outcome === 'update' || preview.outcome === 'unchanged')
-              await verifyIngestionBinding(input);
-            if (
-              !flags.preview &&
-              preview.outcome === 'update' &&
-              flags['allow-processing'] !== true
-            ) {
-              blocked = true;
-              preview.diagnostics.push({
-                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
-                message:
-                  'Source schema publication and stream synchronization require --allow-processing. No batch writes were attempted.',
-              });
-            }
-          }
+          if (input.document.kind === 'dlo') await this.verifyDloInput(input as DloDeployInput);
           if (input.document.kind === 'data-graph') {
             await this.verifyDataGraphInput(input as DataGraphDeployInput);
             if (preview.outcome === 'update' || preview.outcome === 'unchanged')
@@ -1226,15 +1123,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             mutation: 'not-attempted',
             preflight: { outcome, target, absenceProof, diagnostics },
             ...(routes(input) ? { routes: routes(input) } : {}),
-            ...(input.document.kind === 'ingestion-dlo'
-              ? {
-                  family: 'ingestion-dlo' as const,
-                  stage: 'none' as const,
-                  requiredEffects: (
-                    envelope.result.items[index] as ReturnType<typeof publicIngestionDloPreview>
-                  ).requiredEffects,
-                }
-              : {}),
+            ...(input.document.kind === 'dlo' ? { family: 'dlo' as const } : {}),
             ...(input.document.kind === 'data-graph'
               ? {
                   family: 'data-graph' as const,
@@ -1290,21 +1179,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               await verifyInputs();
               // Re-admit every pending dependent before any next write, including a DMO write.
               for (const pending of inputs.slice(index)) {
-                if (pending.document.kind === 'ingestion-dlo') {
-                  await verifyIngestionBinding(pending);
-                  const fresh = await this.preflightIngestionDlo(
-                    pending.document,
-                    connectionFor(pending),
-                    familySelection(pending),
-                    flags['data-space'],
-                  );
-                  if (
-                    !['unchanged', 'update'].includes(fresh.outcome) ||
-                    (fresh.outcome === 'update' &&
-                      (flags['allow-processing'] !== true ||
-                        !fresh.requiredEffects.includes('processing')))
-                  )
-                    throw new DependencySelectionError('INGESTION_DLO_FRESH_ADMISSION_BLOCKED');
+                if (pending.document.kind === 'dlo') {
+                  await this.preflightDlo(pending.document, dloClient());
                   continue;
                 }
                 if (pending.document.kind === 'data-graph') {
@@ -1394,21 +1270,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             item.mutation = 'unknown';
             try {
               const result =
-                input.document.kind === 'ingestion-dlo'
-                  ? publicIngestionDloExecution(
-                      await this.executeIngestionDlo(
-                        input.document,
-                        connectionFor(input),
-                        familySelection(input),
-                        flags['data-space'],
-                        {
-                          allowProcessing: flags['allow-processing'] === true,
-                          verifyInput: verifyInputs,
-                          recordObservation: async (observation) =>
-                            this.recordIngestionDloObservation(input.path, observation),
-                        },
-                      ),
-                    )
+                input.document.kind === 'dlo'
+                  ? await this.executeDlo(input.document, dloClient())
                   : input.document.kind === 'data-graph'
                     ? await this.executeDataGraph(
                         input.document,

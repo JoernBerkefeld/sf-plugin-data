@@ -483,7 +483,7 @@ test('read observer is awaited, detached and fail-closed, never a mutation autho
   assert.equal(calls.length, 2);
 });
 
-test('ingestion narrow allowlist rejects unknown writes, malformed fields and records nested201 before classification', async () => {
+test('superseded ingestion writes are rejected before any facade dispatch', async () => {
   const parameters = {
     connectionId: '1WM000000000001AAA',
     objects: [
@@ -496,18 +496,10 @@ test('ingestion narrow allowlist rejects unknown writes, malformed fields and re
   };
   const body = { result: { error: { message: 'private nested error' } } };
   const { client, calls } = fixture(body);
-  let recorded = false;
-  await assert.rejects(
-    client.mutate('d360_connection_schema_put_ingestion_api', parameters, async (observation) => {
-      await Promise.resolve();
-      assert.deepEqual(observation, body);
-      observation.result = { schemas: [] };
-      recorded = true;
-    }),
-    { code: 'REQUEST_FAILED' },
-  );
-  assert.equal(recorded, true);
-  assert.equal(calls.length, 1);
+  await assert.rejects(client.mutate('d360_connection_schema_put_ingestion_api', parameters), {
+    code: 'INVALID_REQUEST',
+  });
+  assert.equal(calls.length, 0);
   for (const invalid of [
     { ...parameters, extra: true },
     { ...parameters, objects: [parameters.objects[0], parameters.objects[0]] },
@@ -540,7 +532,7 @@ test('ingestion narrow allowlist rejects unknown writes, malformed fields and re
     }),
     { code: 'INVALID_REQUEST' },
   );
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 0);
 });
 
 test('core transport redirect callback never follows any origin', async () => {

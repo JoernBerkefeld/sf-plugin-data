@@ -1,5 +1,7 @@
-import { dloName, writeDloDefinition } from '../../artifacts/write-dlo-definition.js';
-import { retrieveDloSourceMetadata } from '../../transport/project-metadata.js';
+import { dloName, DloError } from '../../artifacts/dlo-document.js';
+import { retrieveNativeDlo } from '../../services/native-dlo.js';
+import { createDloClient } from '../../transport/dlo-rest.js';
+import { writeDloDocument } from '../../artifacts/write-dlo.js';
 import {
   RelationshipDefinitionError,
   writeRelationshipDefinition,
@@ -13,14 +15,6 @@ import {
   writeMappingDefinition,
 } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
-import {
-  ingestionName,
-  IngestionDloError,
-  validateIngestionDloDocument,
-} from '../../artifacts/ingestion-dlo-document.js';
-import type { IngestionDloDocument } from '../../artifacts/ingestion-dlo-document.js';
-import { retrieveIngestionDlo } from '../../services/retrieve-ingestion-dlo.js';
-import { writeIngestionDloDocument } from '../../artifacts/write-ingestion-dlo.js';
 import {
   dataGraphName,
   DataGraphError,
@@ -119,7 +113,6 @@ export type RetrieveEnvelope = {
         | 'identity-resolution'
         | 'calculated-insight'
         | 'data-graph'
-        | 'ingestion-dlo'
         | 'dlo'
         | 'relationship'
         | 'mapping';
@@ -141,7 +134,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m dlo:Name__dll exports standard decomposed CustomObject and field XML at the requested numeric API65–68, without inventory, dependencies or plugin deploy admission. Exact -m mapping:ApiName exports opaque ObjectSourceTargetMap XML at API65/default only, with no inventory, dependency expansion or operational deploy admission. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Exact -m ingestion-dlo:Name__dll supports API67/auto default-space sole-source single-event Ingestion API Text configuration, without inventory or dependency expansion. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m dlo:Name__dll retrieves native API68/default portable JSON to data360/dlo/Name__dll.dlo-meta.json without a source record ID. DLO requires --api-version 68.0 or auto; inventory and dependencies are unavailable. Exact -m mapping:ApiName exports opaque ObjectSourceTargetMap XML at API65/default only, with no inventory, dependency expansion or operational deploy admission. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -165,7 +158,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat dlo:Name__dll, mapping:ApiName or relationship:ApiName for definition-only XML, dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
+        'Repeat dlo:Name__dll for native API68 JSON, mapping:ApiName or relationship:ApiName for definition-only XML, dmo[:ApiName], segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName; omitted retains DMO inventory.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -184,8 +177,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
-  protected acquireDloXml = retrieveDloSourceMetadata;
-  protected writeDlo = writeDloDefinition;
+  protected acquireDlo = retrieveNativeDlo;
+  protected createDloClient = createDloClient;
+  protected writeDlo = writeDloDocument;
   protected acquireMappingXml = retrieveMappingSourceMetadata;
   protected writeMapping = writeMappingDefinition;
   protected acquireRelationshipXml = retrieveRelationshipSourceMetadata;
@@ -236,9 +230,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
   };
   protected writeDocument = writeDmoDocument;
-  protected acquireIngestionDlo = retrieveIngestionDlo;
-  protected writeIngestionDlo = writeIngestionDloDocument;
-
   /**
    * Acquire the complete runtime projection, then publish only its authored candidate.
    * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
@@ -295,7 +286,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
     const relationshipSelectors = selectors.filter((value) => value.startsWith('relationship:'));
-    const ingestionSelectors = selectors.filter((value) => value.startsWith('ingestion-dlo:'));
     const graphSelectors = selectors.filter((value) => value.startsWith('data-graph:'));
     const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
     const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
@@ -305,7 +295,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         !value.startsWith('dlo:') &&
         !value.startsWith('mapping:') &&
         !value.startsWith('relationship:') &&
-        !value.startsWith('ingestion-dlo:') &&
         !value.startsWith('data-graph:') &&
         !value.startsWith('segment:') &&
         !value.startsWith('identity-resolution:') &&
@@ -318,7 +307,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (dloSelectors.length > 0) {
         if (dloSelectors.some((value) => !dloName.test(value.slice(4))))
           return finish('blocked', 'INVALID_SELECTION');
-        if (!/^6[5-8]\.0$/u.test(flags['api-version']) || flags['data-space'] !== 'default')
+        if (!['68.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
           return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'DLO_DEPENDENCY_EXPANSION_UNSUPPORTED');
@@ -342,20 +331,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           throw new RelationshipDefinitionError('INVALID_SELECTION');
         if (flags['include-dependencies'])
           throw new RelationshipDefinitionError('RELATIONSHIP_DEPENDENCY_EXPANSION_UNSUPPORTED');
-      }
-      if (selectors.includes('ingestion-dlo'))
-        throw new IngestionDloError('INGESTION_DLO_INVENTORY_UNQUALIFIED');
-      if (ingestionSelectors.length > 0) {
-        operationApiVersion(flags['api-version'], 'ingestion-dlo');
-        if (flags['data-space'] !== 'default') throw new IngestionDloError('INVALID_SCOPE');
-        if (
-          ingestionSelectors.some(
-            (value) => !ingestionName(value.slice(14)) || !value.endsWith('__dll'),
-          )
-        )
-          throw new IngestionDloError('INVALID_SELECTION');
-        if (flags['include-dependencies'])
-          throw new IngestionDloError('INGESTION_DLO_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
       if (selectors.includes('data-graph'))
         throw new DataGraphError('DATA_GRAPH_INVENTORY_UNQUALIFIED');
@@ -389,7 +364,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (hasDmos) operationApiVersion(flags['api-version'], 'dmo');
       effectiveVersion =
         dloSelectors.length === selectors.length && dloSelectors.length > 0
-          ? flags['api-version']
+          ? '68.0'
           : relationshipSelectors.length + mappingSelectors.length === selectors.length &&
               selectors.length > 0
             ? '65.0'
@@ -405,14 +380,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         ? 'data-graph'
                         : irSelectors.length > 0
                           ? 'identity-resolution'
-                          : 'ingestion-dlo',
+                          : 'dlo',
               );
     } catch (error: unknown) {
       return finish(
         'blocked',
         error instanceof MappingDefinitionError ||
           error instanceof RelationshipDefinitionError ||
-          error instanceof IngestionDloError ||
+          error instanceof DloError ||
           error instanceof DataGraphError ||
           error instanceof IdentityResolutionError ||
           error instanceof CalculatedInsightError
@@ -454,7 +429,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const diagnose = (error: unknown, apiName?: string): void => {
       let code = 'RETRIEVE_FAILED';
       if (
-        error instanceof IngestionDloError ||
+        error instanceof DloError ||
         error instanceof DataGraphError ||
         error instanceof CalculatedInsightError ||
         error instanceof IdentityResolutionError ||
@@ -537,10 +512,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const target =
             flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
           if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
-          const files = await this.acquireDloXml(target, apiName, flags['api-version']);
+          const document = await this.acquireDlo(apiName, this.createDloClient(target, '68.0'));
           const receipt = await this.writeDlo(
-            apiName,
-            files,
+            document,
             flags['output-dir'] ?? process.cwd(),
             flags.overwrite,
           );
@@ -548,15 +522,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             identity: { dataSpace: 'default', apiName },
             operation: 'retrieve',
             family: 'dlo',
-            definitionOnly: true,
-            deployable: false,
-            routes: [
-              {
-                operation: 'dlo.metadata',
-                apiVersion: flags['api-version'],
-                transport: 'metadata',
-              },
-            ],
+            routes: [{ operation: 'dlo.get', apiVersion: '68.0', transport: 'native' }],
             ...receipt,
           });
         } catch (error: unknown) {
@@ -694,7 +660,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         flags['include-dependencies'] ||
         irSelectors.length > 0 ||
         graphSelectors.length > 0 ||
-        ingestionSelectors.length > 0 ||
         flags['api-version'] === 'auto'
       ) {
         // Acquire and resolve the complete bounded selection before publishing any files.
@@ -763,40 +728,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             apiName.slice(0, -5),
           );
           calculatedInsights.push({ document, definitionXml });
-        }
-        const ingestionDlos: Array<{ document: IngestionDloDocument }> = [];
-        if (ingestionSelectors.length > 0) {
-          const version = await resolveApiVersion('67.0', async () => {
-            throw new Error('Fixed route');
-          });
-          const receiver = Object.create(connection) as Connection;
-          Object.defineProperty(receiver, 'version', { value: '67.0' });
-          Object.defineProperty(receiver, 'getApiVersion', { value: () => '67.0' });
-          Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
-
-          for (const apiName of [
-            ...new Set(ingestionSelectors.map((value) => value.slice(14))),
-            // eslint-disable-next-line unicorn/no-array-sort -- Sort detached exact selectors within the ES2022 library target.
-          ].sort()) {
-            const acquired = await this.acquireIngestionDlo(
-              receiver,
-              apiName,
-              version,
-              flags['data-space'],
-            );
-            if (!acquired.candidate || acquired.blockers.length > 0)
-              throw new IngestionDloError(
-                acquired.blockers[0] ?? 'INGESTION_DLO_ACQUISITION_FAILED',
-              );
-            const document = validateIngestionDloDocument(acquired.candidate);
-            if (
-              acquired.identity.apiName !== apiName ||
-              acquired.identity.dataSpace !== 'default' ||
-              document.identity.apiName !== apiName
-            )
-              throw new IngestionDloError('INGESTION_DLO_IDENTITY_CHANGED');
-            ingestionDlos.push({ document });
-          }
         }
         const discoveredOwners = new Set<string>();
         const sourceGraphGuards: Array<() => Promise<void>> = [];
@@ -967,7 +898,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ...calculatedInsights,
           ...identityResolutions,
           ...dataGraphs,
-          ...ingestionDlos,
         ];
         envelope.result.selection = [
           ...dlos.map((name) => `dlo:${name}`),
@@ -979,110 +909,94 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const { document } = entry;
           try {
             const receipt =
-              document.kind === 'ingestion-dlo'
-                ? await this.writeIngestionDlo(
+              document.kind === 'data-graph'
+                ? await this.writeDataGraph(
                     document,
                     flags['output-dir'] ?? process.cwd(),
                     flags.overwrite,
                   )
-                : document.kind === 'data-graph'
-                  ? await this.writeDataGraph(
+                : document.kind === 'calculated-insight'
+                  ? await this.writeCalculatedInsight(
                       document,
+                      'definitionXml' in entry ? entry.definitionXml : '',
                       flags['output-dir'] ?? process.cwd(),
                       flags.overwrite,
                     )
-                  : document.kind === 'calculated-insight'
-                    ? await this.writeCalculatedInsight(
+                  : document.kind === 'identity-resolution'
+                    ? await this.writeIdentityResolution(
                         document,
-                        'definitionXml' in entry ? entry.definitionXml : '',
                         flags['output-dir'] ?? process.cwd(),
                         flags.overwrite,
                       )
-                    : document.kind === 'identity-resolution'
-                      ? await this.writeIdentityResolution(
+                    : 'definitionXml' in entry
+                      ? await this.writeSegment(
                           document,
+                          entry.definitionXml,
                           flags['output-dir'] ?? process.cwd(),
                           flags.overwrite,
                         )
-                      : 'definitionXml' in entry
-                        ? await this.writeSegment(
-                            document,
-                            entry.definitionXml,
-                            flags['output-dir'] ?? process.cwd(),
-                            flags.overwrite,
-                          )
-                        : await this.writeDocument(
-                            document,
-                            flags['output-dir'] ?? process.cwd(),
-                            flags.overwrite,
-                          );
+                      : await this.writeDocument(
+                          document,
+                          flags['output-dir'] ?? process.cwd(),
+                          flags.overwrite,
+                        );
             envelope.result.items.push({
               identity: { ...document.identity },
               ...(document.kind === 'segment' ||
               document.kind === 'identity-resolution' ||
               document.kind === 'calculated-insight' ||
-              document.kind === 'data-graph' ||
-              document.kind === 'ingestion-dlo'
+              document.kind === 'data-graph'
                 ? { family: document.kind }
                 : {}),
               ...(flags['api-version'] === 'auto' ||
               document.kind === 'identity-resolution' ||
               document.kind === 'calculated-insight' ||
-              document.kind === 'data-graph' ||
-              document.kind === 'ingestion-dlo'
+              document.kind === 'data-graph'
                 ? {
                     routes:
-                      document.kind === 'ingestion-dlo'
+                      document.kind === 'data-graph'
                         ? [
                             {
-                              operation: 'ingestion-dlo.source-binding.read',
+                              operation: 'd360_data_graph_get',
                               apiVersion: '67.0',
                               transport: 'facade' as const,
                             },
+                            {
+                              operation: 'd360_transform_get',
+                              apiVersion: '67.0',
+                              transport: 'facade' as const,
+                            },
+                            {
+                              operation: 'dependency.metadata',
+                              apiVersion: '65.0',
+                              transport: 'metadata' as const,
+                            },
                           ]
-                        : document.kind === 'data-graph'
+                        : document.kind === 'identity-resolution'
                           ? [
                               {
-                                operation: 'd360_data_graph_get',
+                                operation: 'd360_ir_get',
                                 apiVersion: '67.0',
                                 transport: 'facade' as const,
                               },
                               {
-                                operation: 'd360_transform_get',
-                                apiVersion: '67.0',
-                                transport: 'facade' as const,
+                                operation: 'identity-resolutions.get',
+                                apiVersion: '65.0',
+                                transport: 'native' as const,
+                              },
+                            ]
+                          : [
+                              {
+                                operation: `${document.kind}.get`,
+                                apiVersion: '65.0',
+                                transport: 'native' as const,
                               },
                               {
-                                operation: 'dependency.metadata',
+                                operation: `${document.kind}.metadata`,
                                 apiVersion: '65.0',
                                 transport: 'metadata' as const,
                               },
-                            ]
-                          : document.kind === 'identity-resolution'
-                            ? [
-                                {
-                                  operation: 'd360_ir_get',
-                                  apiVersion: '67.0',
-                                  transport: 'facade' as const,
-                                },
-                                {
-                                  operation: 'identity-resolutions.get',
-                                  apiVersion: '65.0',
-                                  transport: 'native' as const,
-                                },
-                              ]
-                            : [
-                                {
-                                  operation: `${document.kind}.get`,
-                                  apiVersion: '65.0',
-                                  transport: 'native' as const,
-                                },
-                                {
-                                  operation: `${document.kind}.metadata`,
-                                  apiVersion: '65.0',
-                                  transport: 'metadata' as const,
-                                },
-                              ],
+                            ],
                   }
                 : {}),
               operation: 'retrieve',

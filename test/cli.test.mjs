@@ -166,7 +166,12 @@ test('actual core initialization never discovers or saves cached versions before
 });
 
 const topics = ['data360', 'datacloud', 'd360', 'dc'];
-for (const command of topics.flatMap((topic) => [topic, `${topic} retrieve`, `${topic} deploy`])) {
+for (const command of topics.flatMap((topic) => [
+  topic,
+  `${topic} retrieve`,
+  `${topic} deploy`,
+  `${topic} delete`,
+])) {
   test(`${command} help loads without org authentication`, () => {
     const result = spawnSync(process.execPath, ['bin/run.js', ...command.split(' '), '--help'], {
       encoding: 'utf8',
@@ -292,14 +297,16 @@ test('Git selector flag declares parser exclusivity against both existing modes'
   assert.ok(Deploy.flags.metadata.exclusive.includes('changed-since'));
 });
 
-test('oclif discovers eight IDs backed by exactly two canonical implementations', async () => {
+test('oclif discovers twelve IDs backed by exactly three canonical implementations', async () => {
   const config = await Config.load({ root: process.cwd() });
   assert.deepEqual(
     config.commandIDs.toSorted(),
-    topics.flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`]).toSorted(),
+    topics
+      .flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`, `${topic}:delete`])
+      .toSorted(),
   );
   const implementations = new Set();
-  for (const operation of ['retrieve', 'deploy']) {
+  for (const operation of ['retrieve', 'deploy', 'delete']) {
     const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
     assert.deepEqual(
       canonical.aliases,
@@ -337,11 +344,11 @@ test('oclif discovers eight IDs backed by exactly two canonical implementations'
       implementations.add(implementation);
     }
   }
-  assert.equal(implementations.size, 2);
+  assert.equal(implementations.size, 3);
 });
 
 for (const topic of topics) {
-  for (const operation of ['retrieve', 'deploy']) {
+  for (const operation of ['retrieve', 'deploy', 'delete']) {
     test(`${topic} ${operation} preserves canonical validation and JSON identity`, async () => {
       const result = spawnSync(
         process.execPath,

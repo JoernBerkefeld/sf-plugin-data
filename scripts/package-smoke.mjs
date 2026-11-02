@@ -87,6 +87,7 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
   [topic],
   [topic, 'retrieve'],
   [topic, 'deploy'],
+  [topic, 'delete'],
 ])) {
   const result = spawnSync(process.execPath, [runner, ...command, '--help'], {
     cwd: root,
@@ -107,7 +108,9 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
       '--data-space',
       ...(command[1] === 'retrieve'
         ? ['--output-dir', '--overwrite']
-        : ['--source-dir', '--preview']),
+        : command[1] === 'deploy'
+          ? ['--source-dir', '--preview']
+          : ['--preview']),
     ])
       assert.ok(result.stdout.includes(flag), flag);
   }
@@ -127,11 +130,11 @@ const config = await Config.load({ root: packageRoot });
 assert.deepEqual(
   config.commandIDs.toSorted(),
   ['data360', 'datacloud', 'd360', 'dc']
-    .flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`])
+    .flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`, `${topic}:delete`])
     .toSorted(),
 );
 const implementations = new Set();
-for (const operation of ['retrieve', 'deploy']) {
+for (const operation of ['retrieve', 'deploy', 'delete']) {
   const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
   for (const topic of ['data360', 'datacloud', 'd360', 'dc']) {
     const implementation = await config.findCommand(`${topic}:${operation}`, { must: true }).load();
@@ -156,7 +159,7 @@ for (const operation of ['retrieve', 'deploy']) {
     assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
   }
 }
-assert.equal(implementations.size, 2);
+assert.equal(implementations.size, 3);
 for (const operation of ['retrieve', 'deploy']) {
   const { default: Command } = await import(
     pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', `${operation}.js`)).href
@@ -271,5 +274,5 @@ for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unkn
   }
 }
 process.stdout.write(
-  `${JSON.stringify({ root, artifact, sha256, helpChecks, aliasValidationChecks: 8, implementations: implementations.size, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
+  `${JSON.stringify({ root, artifact, sha256, helpChecks, aliasValidationChecks: 12, implementations: implementations.size, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
 );

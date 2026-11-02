@@ -1,5 +1,5 @@
-import { ingestionName, validateIngestionDloDocument } from './ingestion-dlo-document.js';
-import type { IngestionDloDocument } from './ingestion-dlo-document.js';
+import { dloName, validateDloDocument } from './dlo-document.js';
+import type { DloDocument } from './dlo-document.js';
 import { dataGraphName, validateDataGraphDocument } from './data-graph-document.js';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -56,9 +56,9 @@ export type DataGraphDeployInput = {
   document: import('./data-graph-document.js').DataGraphDocument;
   inputDigest: string;
 };
-export type IngestionDloDeployInput = {
+export type DloDeployInput = {
   path: string;
-  document: IngestionDloDocument;
+  document: DloDocument;
   inputDigest: string;
 };
 export type DeployInput =
@@ -66,32 +66,28 @@ export type DeployInput =
   | IdentityResolutionDeployInput
   | CalculatedInsightDeployInput
   | DataGraphDeployInput
-  | IngestionDloDeployInput;
+  | DloDeployInput;
 
 /**
  * Admit strict single-file source-backed DLO content and freeze its exact bytes.
  * @param {string} file Absolute selected member.
- * @returns {Promise<IngestionDloDeployInput>} Immutable local input.
+ * @returns {Promise<DloDeployInput>} Immutable local input.
  */
-async function readIngestionDloInput(file: string): Promise<IngestionDloDeployInput> {
-  const suffix = '.ingestionDlo.json';
+async function readDloInput(file: string): Promise<DloDeployInput> {
+  const suffix = '.dlo-meta.json';
   const name = path.basename(file).slice(0, -suffix.length);
   const directory = path.dirname(file);
-  const base = path.dirname(path.dirname(directory));
   if (
     !file.endsWith(suffix) ||
-    !ingestionName(name) ||
-    !name.endsWith('__dll') ||
-    path.basename(directory) !== 'ingestionDlos' ||
-    path.basename(path.dirname(directory)) !== 'data360' ||
-    path.basename(base) !== 'default' ||
-    path.basename(path.dirname(base)) !== 'main'
+    !dloName.test(name) ||
+    path.basename(directory) !== 'dlo' ||
+    path.basename(path.dirname(directory)) !== 'data360'
   )
     throw new DeployInputError('INVALID_SELECTION');
   const bytes = await memberBytes(file);
-  let document: IngestionDloDocument;
+  let document: DloDocument;
   try {
-    document = validateIngestionDloDocument(strictJson(decode(bytes)));
+    document = validateDloDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
   } catch {
     throw new DeployInputError('INVALID_SOURCE');
@@ -113,12 +109,12 @@ async function readIngestionDloInput(file: string): Promise<IngestionDloDeployIn
 
 /**
  * Verify only immutable local bytes and identity, independent of legitimate remote stage changes.
- * @param {IngestionDloDeployInput} input Original input.
+ * @param {DloDeployInput} input Original input.
  * @returns {Promise<void>} Resolves only without local drift.
  */
-export async function verifyIngestionDloInputDigest(input: IngestionDloDeployInput): Promise<void> {
+export async function verifyDloInputDigest(input: DloDeployInput): Promise<void> {
   try {
-    const current = await readIngestionDloInput(input.path);
+    const current = await readDloInput(input.path);
     if (
       current.inputDigest !== input.inputDigest ||
       JSON.stringify(current.document) !== JSON.stringify(input.document)
@@ -524,9 +520,9 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
-  if (input.document.kind === 'ingestion-dlo') {
-    await verifyIngestionDloInputDigest(input as IngestionDloDeployInput);
-    return (input as IngestionDloDeployInput).inputDigest;
+  if (input.document.kind === 'dlo') {
+    await verifyDloInputDigest(input as DloDeployInput);
+    return (input as DloDeployInput).inputDigest;
   }
   if (input.document.kind === 'data-graph') {
     await verifyDataGraphInputDigest(input as DataGraphDeployInput);
@@ -572,12 +568,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   const selectors = metadata?.map((value) => {
     if (/^dmo:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm$/u.test(value))
       return { kind: 'dmo', name: value.slice(4) };
-    if (
-      value.startsWith('ingestion-dlo:') &&
-      ingestionName(value.slice(14)) &&
-      value.endsWith('__dll')
-    )
-      return { kind: 'ingestion-dlo', name: value.slice(14) };
+    if (value.startsWith('dlo:') && dloName.test(value.slice(4)) && value.endsWith('__dll'))
+      return { kind: 'dlo', name: value.slice(4) };
     if (value.startsWith('data-graph:') && dataGraphName.test(value.slice(11)))
       return { kind: 'data-graph', name: value.slice(11) };
     if (value.startsWith('identity-resolution:') && identityResolutionName.test(value.slice(20)))
@@ -588,15 +580,15 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       return { kind: 'segment', name: value.slice(8) };
     throw new DeployInputError('INVALID_SELECTION');
   });
-  const base = selectors?.some((item) => item.kind !== 'dmo')
+  const base = selectors?.some((item) => item.kind !== 'dmo' && item.kind !== 'dlo')
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
   const roots = selectors
     ? selectors.map(({ kind, name }) =>
         kind === 'dmo'
           ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
-          : kind === 'ingestion-dlo'
-            ? path.join(base!, 'data360', 'ingestionDlos', `${name}.ingestionDlo.json`)
+          : kind === 'dlo'
+            ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
             : kind === 'data-graph'
               ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
               : kind === 'calculated-insight'
@@ -690,16 +682,15 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         inputs.push(input);
         continue;
       }
-      if (file.endsWith('.ingestionDlo.json')) {
-        const input = await readIngestionDloInput(file);
+      if (file.endsWith('.dlo-meta.json')) {
+        const input = await readDloInput(file);
         const key =
-          `ingestion-dlo:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+          `dlo:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
           !selectors.some(
-            (item) =>
-              item.kind === 'ingestion-dlo' && item.name === input.document.identity.apiName,
+            (item) => item.kind === 'dlo' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

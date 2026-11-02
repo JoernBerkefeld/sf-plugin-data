@@ -1,0 +1,272 @@
+import '../scripts/check-temporary.mjs';
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { mkdtemp, readFile, writeFile, symlink } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import Retrieve from '../lib/commands/data360/retrieve.js';
+import Deploy from '../lib/commands/data360/deploy.js';
+import Delete from '../lib/commands/data360/delete.js';
+import { DloError } from '../lib/artifacts/dlo-document.js';
+import { retrieveNativeDlo, deleteNativeDlo } from '../lib/services/native-dlo.js';
+import { preflightDloDeploy, executeDloDeploy } from '../lib/services/command-dlo.js';
+import { captureDeployInputDigest } from '../lib/artifacts/read-deploy-input.js';
+import { writeDloDocument } from '../lib/artifacts/write-dlo.js';
+import { readDeployInputs, verifyDloInputDigest } from '../lib/artifacts/read-deploy-input.js';
+import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
+const name = 'Example__dll';
+const id = '0a0000000000000AAA';
+const wire = {
+  id,
+  name,
+  label: 'Example',
+  category: 'Other',
+  dataSpaceInfo: [{ name: 'default' }],
+  fields: [{ name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true }],
+};
+const document = {
+  schemaVersion: 1,
+  kind: 'dlo',
+  identity: { dataSpace: 'default', apiName: name },
+  spec: { label: 'Example', category: 'Other', fields: wire.fields },
+};
+const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-native-command-'));
+const client = (changes = {}) => ({
+  get: async () => structuredClone(wire),
+  create: async () => structuredClone(wire),
+  update: async () => structuredClone(wire),
+  delete: async () => {},
+  ...changes,
+});
+const run = async (command) => {
+  const before = process.exitCode;
+  try {
+    return await command.run();
+  } finally {
+    process.exitCode = before;
+  }
+};
+const invocation = (Type, flags) => {
+  const command = Object.create(Type.prototype);
+  command.parse = async () => ({
+    flags: {
+      'api-version': '68.0',
+      'data-space': 'default',
+      metadata: [`dlo:${name}`],
+      preview: false,
+      ...flags,
+    },
+  });
+  command.jsonEnabled = () => true;
+  if (Type === Retrieve) {
+    command.acquireDlo = retrieveNativeDlo;
+    command.writeDlo = writeDloDocument;
+  }
+  if (Type === Delete) {
+    command.retrieveDlo = retrieveNativeDlo;
+    command.deleteDlo = deleteNativeDlo;
+  }
+  if (Type === Deploy) {
+    command.preflightDlo = preflightDloDeploy;
+    command.executeDlo = executeDloDeploy;
+    command.verifyDloInput = verifyDloInputDigest;
+    command.captureInput = captureDeployInputDigest;
+  }
+  return command;
+};
+test('native DLO writer and strict admission roundtrip canonical JSON without source ID', async () => {
+  const cwd = await scratch();
+  const receipt = await writeDloDocument(document, cwd, false);
+  assert.equal(receipt.path, path.join(cwd, 'data360/dlo', `${name}.dlo-meta.json`));
+  const repeated = await writeDloDocument(document, cwd, false);
+  assert.equal(repeated.outcome, 'unchanged');
+  const saved = await readFile(receipt.path, 'utf8');
+  assert.ok(!saved.includes(id));
+  const inputs = await readDeployInputs({ cwd, metadata: [`dlo:${name}`, `dlo:${name}`] });
+  assert.equal(inputs.length, 1);
+  assert.ok(Object.isFrozen(inputs[0].document.spec.fields));
+  await assert.rejects(
+    writeDloDocument({ ...document, spec: { ...document.spec, label: 'Changed' } }, cwd, false),
+    { code: 'OVERWRITE_REQUIRED' },
+  );
+  await writeFile(receipt.path, saved.replace('Example', 'Changed'));
+  await assert.rejects(verifyDloInputDigest(inputs[0]), { code: 'UNSAFE_SOURCE' });
+  const linked = await scratch();
+  await symlink(
+    cwd,
+    path.join(linked, 'data360'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  await assert.rejects(writeDloDocument(document, linked, false));
+  await assert.rejects(readDeployInputs({ cwd, metadata: [`ingestion-dlo:${name}`] }), {
+    code: 'INVALID_SELECTION',
+  });
+});
+test('native DLO Git selection uses root JSON and blocks deletion', async () => {
+  const cwd = await scratch();
+  const receipt = await writeDloDocument(document, cwd, false);
+  const git = (...arguments_) =>
+    execFileSync('git', arguments_, { cwd, encoding: 'utf8', windowsHide: true });
+  git('init', '--initial-branch=main');
+  git('config', '--local', 'user.name', 'Jörn Berkefeld');
+  git('config', '--local', 'user.email', 'joern.berkefeld@gmail.com');
+  git('add', '.');
+  git('-c', 'core.hooksPath=NUL', 'commit', '-m', 'fixture');
+  await writeDloDocument({ ...document, spec: { ...document.spec, label: 'Changed' } }, cwd, true);
+  const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(selected.paths, [receipt.path]);
+  assert.equal(selected.dlos.length, 1);
+  git('rm', '-f', path.relative(cwd, receipt.path));
+  await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }), {
+    code: 'BLOCKED_GIT_LIFECYCLE',
+  });
+});
+test('retrieve saves native DLO file through public command and reports native68 route', async () => {
+  const cwd = await scratch();
+  const command = invocation(Retrieve, { 'target-org': 'source', 'output-dir': cwd });
+  command.resolveOrg = async () => ({
+    getOrgId: () => 'source-id',
+    getConnection: () => ({ getUsername: () => 'source' }),
+  });
+  command.createDloClient = () => client();
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].family, 'dlo');
+  assert.equal(result.result.items[0].routes[0].apiVersion, '68.0');
+  assert.deepEqual(JSON.parse(await readFile(result.result.items[0].path, 'utf8')), document);
+});
+for (const preview of [false, true])
+  test(`delete default execution / preview=${preview} has exact mutation count`, async () => {
+    let deletes = 0;
+    const command = invocation(Delete, { preview });
+    command.resolveTarget = async () => 'target';
+    command.createDloClient = () =>
+      client({
+        delete: async (targetId) => {
+          assert.equal(targetId, id);
+          deletes++;
+        },
+      });
+    const result = await run(command);
+    assert.equal(result.status, 'success');
+    assert.equal(deletes, preview ? 0 : 1);
+    assert.equal(result.result.items[0].outcome, preview ? 'delete' : 'deleted');
+    assert.equal(Delete.flags.yes, undefined);
+    assert.equal(Delete.flags.execute, undefined);
+  });
+for (const preview of [false, true])
+  test(`delete absent unchanged and permission errors stop preview=${preview}`, async () => {
+    for (const status of [404, 401, 403, 500]) {
+      let deletes = 0;
+      const command = invocation(Delete, { preview });
+      command.resolveTarget = async () => 'target';
+      command.createDloClient = () =>
+        client({
+          get: async () => {
+            throw new DloError('DLO_HTTP_ERROR', status);
+          },
+          delete: async () => {
+            deletes++;
+          },
+        });
+      const result = await run(command);
+      assert.equal(result.status, status === 404 ? 'success' : 'blocked');
+      assert.equal(deletes, 0);
+      assert.equal(result.result.items[0].outcome, status === 404 ? 'unchanged' : 'blocked');
+    }
+  });
+test('delete ambiguous write is unknown and stops batch without retry', async () => {
+  let deletes = 0;
+  const command = invocation(Delete, { metadata: [`dlo:${name}`, 'dlo:Second__dll'] });
+  command.resolveTarget = async () => 'target';
+  command.createDloClient = () =>
+    client({
+      delete: async () => {
+        deletes++;
+        throw new Error('ambiguous');
+      },
+    });
+  const result = await run(command);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].mutation, 'unknown');
+  assert.equal(deletes, 1);
+  assert.equal(result.result.items.length, 1);
+});
+for (const preview of [true, false])
+  for (const existing of [true, false])
+    test(`deploy auto target ${existing ? 'PATCH' : 'POST'} preview=${preview}`, async () => {
+      const cwd = await scratch();
+      const receipt = await writeDloDocument(document, cwd, false);
+      const inputs = await readDeployInputs({ cwd, sourceDir: [receipt.path] });
+      const writes = [];
+      const command = invocation(Deploy, {
+        preview,
+        'source-dir': [receipt.path],
+        metadata: undefined,
+        'target-org': {
+          getOrgId: () => 'target-id',
+          getUsername: () => 'target',
+          getConnection: () => ({}),
+        },
+      });
+      command.resolveInputs = async () => inputs;
+      command.createDloClient = () =>
+        client({
+          get: async () => {
+            if (!existing) throw new DloError('DLO_HTTP_ERROR', 404);
+            return wire;
+          },
+          create: async (body) => {
+            writes.push(['POST', body]);
+            return wire;
+          },
+          update: async (targetId, body) => {
+            writes.push(['PATCH', targetId, body]);
+            return wire;
+          },
+        });
+      const result = await run(command);
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      assert.equal(writes.length, preview ? 0 : 1);
+      assert.equal(
+        result.result.items[0].outcome,
+        preview ? (existing ? 'update' : 'create') : existing ? 'updated' : 'created',
+      );
+      if (!preview) assert.equal(writes[0][0], existing ? 'PATCH' : 'POST');
+    });
+test('mixed auto DLO and DMO preserve distinct native68 and legacy65 routes', async () => {
+  const cwd = await scratch();
+  const receipt = await writeDloDocument(document, cwd, false);
+  const inputs = await readDeployInputs({ cwd, sourceDir: [receipt.path] });
+  inputs.push({
+    path: 'synthetic.json',
+    document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Legacy__dlm' } },
+  });
+  const command = invocation(Deploy, {
+    'api-version': 'auto',
+    preview: true,
+    'target-org': {
+      getOrgId: () => 'target',
+      getUsername: () => 'target',
+      getConnection: (version) => {
+        assert.equal(version, '65.0');
+        return {};
+      },
+    },
+  });
+  command.resolveInputs = async () => inputs;
+  command.captureInput = async () => 'digest';
+  command.verifyDloInput = async () => {};
+  command.createDloClient = () => client();
+  command.preflight = async (_document, _connection, version) => {
+    assert.equal(version.soapNumeric, '65.0');
+    return { outcome: 'unchanged', target: 'existing', absenceProof: 'none', diagnostics: [] };
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(result.result.items.map((item) => item.routes[0].apiVersion).toSorted(), [
+    '65.0',
+    '68.0',
+  ]);
+});

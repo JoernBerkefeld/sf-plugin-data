@@ -2,7 +2,19 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inspect } from 'node:util';
-import { resolveApiVersion } from '../lib/transport/api-version.js';
+import { operationApiVersion, resolveApiVersion } from '../lib/transport/api-version.js';
+
+test('native DLO auto pins API68 without changing unrelated qualified family routes', () => {
+  assert.equal(operationApiVersion('auto', 'dlo'), '68.0');
+  assert.equal(operationApiVersion('68.0', 'dlo'), '68.0');
+  for (const pin of ['65.0', '66.0', '67.0', 'latest'])
+    assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
+  for (const family of ['dmo', 'segment', 'calculated-insight'])
+    assert.equal(operationApiVersion('auto', family), '65.0');
+  for (const family of ['identity-resolution', 'data-graph'])
+    assert.equal(operationApiVersion('auto', family), '67.0');
+  assert.throws(() => operationApiVersion('67.0', 'ingestion-dlo'), /INVALID_SCOPE/u);
+});
 
 for (const requested of ['65.0', '68.0', '99.0', '100.0']) {
   test(`numeric ${requested} is preserved without discovery`, async () => {

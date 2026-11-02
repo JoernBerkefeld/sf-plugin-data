@@ -48,7 +48,7 @@ plugin features.
 | Resource | Retrieve | Create | Update | Delete | Scope / limits |
 | --- | --- | --- | --- | --- | --- |
 | Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin writes: qualified Other/default creation and object/existing nonprimary field labels only; additive fields remain deferred. |
-| Data Lake Objects (DLOs), `dlo` / `ingestion-dlo` | Partial <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard CLI-led retrieval" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Exact `dlo:Name__dll` retrieves standard decomposed CustomObject/field XML at numeric API65–68; no inventory, dependency expansion or plugin deploy admission. Separate `ingestion-dlo` supports existing sole-source Ingestion API targets and exactly one Text addition via schema PUT + stream sync. API cleanup remained asynchronous. |
+| Data Lake Objects (DLOs), `dlo` | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" /> | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup. |
 | DLO-to-DMO mappings, `mapping` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default opaque XML export only, default/65.0/auto; installed source-only acceptance passed, no semantic/KQ admission or cross-org operational deploy. |
 | DMO field relationships, `relationship` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved. |
 | Source object definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only, not connectors or credentials. |
@@ -84,29 +84,28 @@ Current plugin limits:
 - Unknown mutation outcomes stop without automatic retry or rollback. Processing
   acknowledgements authorize only the selected supported change, not arbitrary runs.
 
-## Existing Ingestion API DLO workflow
+## Native DLO definition workflow
 
-Exact `-m ingestion-dlo:ReturnedName__dll` supports retrieve, deployment preview,
-explicit file selection and `--changed-since`. Use `--api-version auto`, or numeric
-67.0 for ingestion-only selections, with the default data space. Mixed legacy
-API65 selections require auto. Inventory and dependency expansion are unavailable.
+The DLO workflow uses native Data Cloud API 68 through authenticated
+`sf api request rest`. This retains standard Salesforce CLI authentication; it does
+not replace CLI auth with another credential store.
 
-Retrieve writes `<package>/main/default/data360/ingestionDlos/ReturnedName__dll.ingestionDlo.json`
-(default package `force-app`). It preserves the logical connection name and complete
-single-event Text schema, not runtime IDs. Identical output is unchanged; differing
-bytes require `--overwrite`. Complete connection/owning-stream inventory must prove
-sole ownership; shared sources, multiple events and unsupported configuration block.
+**Why not simply wrap `sf project retrieve/deploy`?** Standard Metadata retrieval
+worked at requested APIs 65–68 and saved identical object/field XML. However,
+redeploying the complete retrieved definition hit demonstrated primary-key and
+key-qualifier failures. Separate native API 68 experiments completed standalone
+create/read/update/delete, preserving the primary key and generating qualifier and
+system fields. These observations do not mean Metadata APIs or standard CLI
+retrieval are universally unsupported, nor do they qualify ingestion.
 
-Deploy supports existing compatible Ingestion API targets only. Complete equality
-issues zero mutations and needs no acknowledgement. The only supported change adds
-one Text source field: one complete source-schema PUT, then one owning-stream schema
-sync. Use `--allow-processing` for that change. Independent readback must confirm
-ACTIVE, full old fields/mappings/PK/KQ/system/refresh preservation and the addition.
-There is no direct DLO patch, create/delete, connector provisioning, schema removal,
-type change or generalized connector support. A partial/unknown result retains its
-mutation stage and never retries or rolls back; inspect the target before resuming.
-Whole-selection admission and fresh pending bindings precede mixed-batch writes.
-Installed/live public and cross-org acceptance remain separate from synthetic tests.
+The plugin's concrete benefit over handcrafted API requests is one manifest-free
+workflow: canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, portable source-ID-free
+JSON, distinct save/create/update field policies, and target-name lookup selecting
+POST only on confirmed absence or PATCH for an existing target. Retrieved generated
+fields remain in the saved definition; they are not blindly replayed on creation.
+The replacement removes the former XML `dlo:` export and separate `ingestion-dlo:`
+mechanism, not unrelated component types. Exact command contracts and bounded
+acceptance results are documented in the DLO chapter below.
 
 ## Public Graph workflow
 
@@ -459,59 +458,74 @@ No DLO was selected for deletion.
 `sf project delete source` was **not live-qualified** here and also deletes local
 source files; it is not offered as an interchangeable tested example.
 
-### Data Lake Object (DLO): `CustomObject` with `__dll`
+### Data Lake Object (DLO): native definition CRUD
 
-`__dll` identifies a Data Lake Object, distinct from a DMO. The source sample is
-an unmanaged custom object, not a complete source connector or ingestion pipeline.
+`__dll` identifies a Data Lake Object, distinct from a DMO. This workflow manages
+its definition, not a connector, stream, source credentials or row ingestion.
+The [native workflow rationale](#native-dlo-definition-workflow) explains why this
+replaces the former Metadata XML export and Ingestion API source-schema workflow.
 
 #### Read / Retrieve
 
 ```sh
-sf project retrieve start --metadata CustomObject:McpMappingProbe_20261027__dll --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
+sf data360 retrieve --metadata dlo:CustomerSource__dll --target-org SOURCE_ALIAS --api-version 68.0 --output-dir ./project --json
 ```
 
-The same exact definition can be retrieved through this plugin without a manifest:
+Canonical output is `./project/data360/dlo/CustomerSource__dll.dlo-meta.json`.
+The full API name, including `__dll`, is retained in the filename and identity.
+The saved definition excludes the source DLO record ID and runtime/audit response
+wrappers. It preserves the complete returned field definitions, including generated
+qualifier and system fields. Save policies are not create payload policies.
+Identical bytes are unchanged; replacing differing output requires `--overwrite`.
+
+#### Create / Update
 
 ```sh
-sf data360 retrieve --metadata dlo:McpMappingProbe_20261027__dll --target-org SOURCE_ALIAS --api-version 68.0 --output-dir ./project --json
+sf data360 deploy --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS --api-version 68.0 --preview --json
+sf data360 deploy --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS --api-version 68.0 --json
 ```
 
-The `dlo:` selector delegates to standard `sf project retrieve start --metadata
-CustomObject:<name>`. Numeric API versions `65.0`–`68.0` pass through unchanged
-(default `65.0`); `auto`, `latest`, inventory, non-default data spaces and
-`--include-dependencies` are not supported for this selector. Output preserves
-standard `objects/<name>/<name>.object-meta.xml` and `objects/<name>/fields/*.field-meta.xml`
-under the project's configured default package (or `force-app`). All selected
-files are checked before replacement: identical files are unchanged; differing
-files require `--overwrite`. JSON items expose the object `path` and all `paths`.
-This is definition-only retrieval, not ingestion-chain export or plugin operational
-deploy admission. Existing `ingestion-dlo:` behavior is separate and unchanged.
+Deploy is manifest-free and automatic: resolve the exact API name in the **target**.
+An existing target selects PATCH using the resolved target ID. Only an authoritative
+not-found response permits POST. Authentication, permission, malformed-response and
+other lookup failures stop; a failed PATCH never falls back to POST. `--preview`
+performs the target comparison without any mutation and is never the default.
 
-The retrieved XML includes fields and observed primary/key-qualifier attributes.
-Preserve them; retrieval does not justify stripping system fields to make a
-deployment pass.
-
-#### Create
-
-Standard Metadata API creation is **not yet verified**; the combined target
-dry-run failed, including the DLO primary-key field.
-
-#### Update
-
-DLO updates are **not yet verified**.
+Creation submits authored fields with the intended primary key, not generated
+qualifier/system fields from retrieval. Salesforce generated those fields in the
+verified standalone API 68 experiment. Update supports a label change and new
+nonprimary Text fields while preserving existing fields and primary-key configuration;
+field removal, existing-field changes and primary-key mutation are not qualified.
+The source record ID is never replayed into the target. Request acceptance is not
+terminal completion: POST/PATCH can return `PROCESSING` before independent GET
+shows `ACTIVE`. Use bounded read-only checks for the intended full field/key state;
+never retry an ambiguous write automatically.
 
 #### Delete
 
-Standard API 65 deletion of the exact owned DLO definition was **attempted and
-refused**, not successfully qualified. The server reported that the definition was
-referenced elsewhere and identified its own retained Data Lake Object instance.
-The dependency list was empty and a complete inspected stream listing contained
-no reference to this fixture; neither observation bypassed that instance reference.
-Independent exact Metadata, Connect and instance-record comparisons confirmed the
-same DLO ID, `ACTIVE` state and eight fields unchanged, with zero reported dependencies.
-This is not proof that all standard DLO deletion is unsupported or that an unknown
-business dependency exists. No successful delete sample, instance-delete workaround
-or Connect fallback is qualified here; the original DLO remains retained.
+```sh
+sf data360 delete --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS --api-version 68.0 --preview --json
+sf data360 delete --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS --api-version 68.0 --json
+```
+
+**Delete executes by default without an additional confirmation prompt.** Use
+`--preview` for a read-only exact-target lookup/report. Execution resolves the
+selected target and deletes that target ID only; no cascade, stream/source/DMO
+cleanup or local-file deletion is performed. Already absent is unchanged. Failed
+or ambiguous mutation outcomes stop without retry or rollback; inspect the target
+before another attempt. HTTP204 acceptance can precede a brief `DELETING` state;
+independently confirm exact-target absence with bounded read-only checks before
+calling deletion terminally complete.
+
+Public plugin lifecycle acceptance is API68/default: a fresh owned fixture was
+created, retrieved with seven fields, updated with preserved primary key and eight
+fields, previewed without deletion, then deleted by default with absence readback
+and the local file retained. Separately, native API61–68 standalone CRUD succeeded;
+API60 returned 404 for all four operations. API61 is the lowest successful version
+in that tested matrix, not a code guard change: the plugin still admits API68 only.
+Neither observation qualifies populated, stream-owned or cross-org ingestion behavior. Standard Metadata retrieval worked
+at requested APIs 65–68; schema-specific redeploy and historical Metadata delete
+failures are separate evidence, not blanket declarations of unsupported APIs.
 
 ### DLO-to-DMO mapping: `ObjectSourceTargetMap`
 
