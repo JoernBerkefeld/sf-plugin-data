@@ -48,7 +48,7 @@ plugin features.
 | Resource | Retrieve | Create | Update | Delete | Scope / limits |
 | --- | --- | --- | --- | --- | --- |
 | Data Model Objects (DMOs), `dmo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin writes: qualified Other/default creation and object/existing nonprimary field labels only; additive fields remain deferred. |
-| Data Lake Objects (DLOs), `ingestion-dlo` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Plugin supports existing sole-source Ingestion API targets and exactly one Text addition via schema PUT + stream sync, not general DLOs. API cleanup remained asynchronous. |
+| Data Lake Objects (DLOs), `dlo` / `ingestion-dlo` | Partial <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard CLI-led retrieval" /> | Unavailable | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Exact `dlo:Name__dll` retrieves standard decomposed CustomObject/field XML at numeric API65–68; no inventory, dependency expansion or plugin deploy admission. Separate `ingestion-dlo` supports existing sole-source Ingestion API targets and exactly one Text addition via schema PUT + stream sync. API cleanup remained asynchronous. |
 | DLO-to-DMO mappings, `mapping` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default opaque XML export only, default/65.0/auto; installed source-only acceptance passed, no semantic/KQ admission or cross-org operational deploy. |
 | DMO field relationships, `relationship` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> | Unavailable | Unavailable | Unavailable | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved. |
 | Source object definitions | Unavailable | Unavailable | Unavailable | Unavailable | Definition XML only, not connectors or credentials. |
@@ -469,6 +469,23 @@ an unmanaged custom object, not a complete source connector or ingestion pipelin
 ```sh
 sf project retrieve start --metadata CustomObject:McpMappingProbe_20261027__dll --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
 ```
+
+The same exact definition can be retrieved through this plugin without a manifest:
+
+```sh
+sf data360 retrieve --metadata dlo:McpMappingProbe_20261027__dll --target-org SOURCE_ALIAS --api-version 68.0 --output-dir ./project --json
+```
+
+The `dlo:` selector delegates to standard `sf project retrieve start --metadata
+CustomObject:<name>`. Numeric API versions `65.0`–`68.0` pass through unchanged
+(default `65.0`); `auto`, `latest`, inventory, non-default data spaces and
+`--include-dependencies` are not supported for this selector. Output preserves
+standard `objects/<name>/<name>.object-meta.xml` and `objects/<name>/fields/*.field-meta.xml`
+under the project's configured default package (or `force-app`). All selected
+files are checked before replacement: identical files are unchanged; differing
+files require `--overwrite`. JSON items expose the object `path` and all `paths`.
+This is definition-only retrieval, not ingestion-chain export or plugin operational
+deploy admission. Existing `ingestion-dlo:` behavior is separate and unchanged.
 
 The retrieved XML includes fields and observed primary/key-qualifier attributes.
 Preserve them; retrieval does not justify stripping system fields to make a

@@ -253,7 +253,10 @@ test('retrieve parser accepts repeatable exact, type and omitted selectors witho
       env: environment,
     },
   );
-  assert.equal(JSON.parse(invalid.stdout).result.diagnostics.errors[0].code, 'INVALID_SELECTION');
+  assert.equal(
+    JSON.parse(invalid.stdout).result.diagnostics.errors[0].code,
+    'DLO_INVENTORY_UNSUPPORTED',
+  );
 });
 
 test('deploy parser admits repeated non-greedy explicit flags but blocks invalid selections before org work', () => {
