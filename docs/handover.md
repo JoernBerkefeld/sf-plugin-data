@@ -1,3 +1,21 @@
+# Data Child 10 — limited local receipt
+
+Runner close shares the same in-flight or settled promise and propagates rejection;
+this does not guarantee settlement. Reported full verification: 1,363 tests passed,
+with 2 Windows platform skips; smoke: 30 passed; lint and build passed. Whole-outcome
+review returned zero must-fix; an active-root close test is optional, not proof of
+arbitrary callback settlement.
+
+Shared observer/broker credentials do not prove child attribution, and the raw
+fixture set is incomplete. The production schedule of 2,450,000 ms exceeds the
+1,800,000 ms all-in limit. Arbitrary callback settlement is unproven; Windows safe
+handles and dynamic origin/completeness are unsupported. `liveAcquisitionProven`
+remains false. These findings limit rather than supersede historical Child 5
+synthetic evidence. Live admission remains blocked: no live action or promotion.
+
+For every subsequent worker or handover brief, return changed paths, before/after
+hashes, and precise verification and Git status in a copyable code block.
+
 # Segment LOCAL acceptance controls — DATA CHILD 5, 2026-10-31
 
 Acceptance-only modules under `scripts/segment-acceptance-*` and synthetic

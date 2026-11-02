@@ -7,14 +7,16 @@ import test from 'node:test';
 const runnerUrl = new URL('../scripts/segment-acceptance-runner.mjs', import.meta.url);
 const source = await readFile(runnerUrl, 'utf8');
 const stubUrl = (sourceText) => `data:text/javascript,${encodeURIComponent(sourceText)}`;
+let fixtureNumber = 0;
 
 /**
  * Create an isolated runner with offline dependencies.
  * @param {boolean} failProcess Whether the process fails.
  * @param {boolean} failEnd Whether capture disposal fails.
+ * @param {boolean} holdClose Whether broker shutdown waits on a test gate.
  * @returns {Promise<object>} Runner and observer stub.
  */
-async function runnerFixture(failProcess = false, failEnd = false) {
+async function runnerFixture(failProcess = false, failEnd = false, holdClose = false) {
   const controls = stubUrl(`
     export const validateSegmentAcceptanceProfile = (input) => input;
     export const buildSegmentAcceptanceArgv = () => [];
@@ -25,11 +27,17 @@ async function runnerFixture(failProcess = false, failEnd = false) {
     });
   `);
   const observer = stubUrl(`
+    // Unique module state per fixture.
+    // fixture ${fixtureNumber++}
     export let ended = 0;
+    export let closeCalls = 0;
+    export let releaseClose;
+    export let rejectClose;
+    export const closeGate = new Promise((resolve, reject) => { releaseClose = resolve; rejectClose = reject; });
     export async function createSegmentAcceptanceBroker() {
       return { endpoint: 'offline', token: 'test', beginCapture() {},
         endCapture() { ended++; ${failEnd ? "throw new Error('capture failure');" : "return [{ body: 'PRIVATE_RECORD_SENTINEL' }];"} },
-        async close() {} };
+        async close() { closeCalls++; ${holdClose ? 'await closeGate;' : ''} } };
     }
   `);
   const processStub = stubUrl(`
@@ -79,6 +87,39 @@ test('runner discards captured bodies from serializable and logged receipts', as
   } finally {
     await runner.close();
   }
+});
+
+test('concurrent and later close calls share broker settlement', async () => {
+  const { runner, observer } = await runnerFixture(false, false, true);
+  const first = runner.close();
+  const second = runner.close();
+  assert.equal(first, second);
+  let settled = false;
+  void second.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(observer.closeCalls, 1);
+  observer.releaseClose();
+  await first;
+  assert.equal(runner.close(), first);
+  assert.equal(observer.closeCalls, 1);
+});
+
+test('close failure remains visible to concurrent and later callers', async () => {
+  const { runner, observer } = await runnerFixture(false, false, true);
+  const first = runner.close();
+  const second = runner.close();
+  const failure = new Error('broker shutdown failed');
+  const results = Promise.allSettled([first, second]);
+  observer.rejectClose(failure);
+  assert.deepEqual(await results, [
+    { status: 'rejected', reason: failure },
+    { status: 'rejected', reason: failure },
+  ]);
+  await assert.rejects(runner.close(), (error) => error === failure);
+  assert.equal(observer.closeCalls, 1);
 });
 
 test('runner attempts capture disposal on failure without masking the error', async () => {

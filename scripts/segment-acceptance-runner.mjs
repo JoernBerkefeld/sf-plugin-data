@@ -37,6 +37,7 @@ export async function createSegmentAcceptanceRunner(input, clock = {}) {
   const controller = new AbortController();
   let active;
   let closed = false;
+  let closing;
   const stop = (reason = 'runner cancelled') => {
     ledger.stop(reason);
     controller.abort();
@@ -159,14 +160,18 @@ export async function createSegmentAcceptanceRunner(input, clock = {}) {
         active = undefined;
       }
     },
-    async close() {
-      if (closed) return;
-      closed = true;
-      if (active) {
-        stop('runner closed during root');
-        await active.catch(() => {});
+    close() {
+      if (!closing) {
+        closed = true;
+        closing = (async () => {
+          if (active) {
+            stop('runner closed during root');
+            await active.catch(() => {});
+          }
+          await broker.close();
+        })();
       }
-      await broker.close();
+      return closing;
     },
   });
 }
