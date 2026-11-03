@@ -75,6 +75,94 @@ const invocation = (Type, flags) => {
   }
   return command;
 };
+for (const scope of [undefined, 'Team'])
+  test(`public DLO commands bind optional scope to actual memberships ${scope}`, async () => {
+    const actual = { ...wire, dataSpaceInfo: [{ name: scope ?? 'default' }] };
+    const cwd = await scratch();
+    const retrieve = invocation(Retrieve, { dataspace: scope, 'output-dir': cwd });
+    retrieve.resolveOrg = async () => ({
+      getOrgId: () => 'org',
+      getConnection: () => ({ getUsername: () => 'target' }),
+    });
+    retrieve.createDloClient = () => client({ get: async () => actual });
+    const acquired = await run(retrieve);
+    assert.equal(acquired.status, 'success');
+    assert.equal(acquired.result.items[0].identity.dataSpace, scope ?? 'default');
+    const inputs = await readDeployInputs({ cwd, metadata: [`dlo:${name}`] });
+    let writes = 0;
+    const deploy = invocation(Deploy, {
+      dataspace: scope,
+      'target-org': { getOrgId: () => 'org', getUsername: () => 'target' },
+    });
+    deploy.resolveInputs = async () => inputs;
+    deploy.createDloClient = () =>
+      client({
+        get: async () => actual,
+        update: async () => {
+          writes++;
+          return actual;
+        },
+      });
+    const deployed = await run(deploy);
+    assert.equal(deployed.status, 'success');
+    assert.equal(writes, 1);
+    let deletes = 0;
+    const remove = invocation(Delete, { dataspace: scope });
+    remove.resolveTarget = async () => 'target';
+    remove.createDloClient = () =>
+      client({
+        get: async () => actual,
+        delete: async (target) => {
+          assert.equal(target, id);
+          deletes++;
+        },
+      });
+    const removed = await run(remove);
+    assert.equal(removed.status, 'success');
+    assert.equal(deletes, 1);
+    const mismatch = invocation(Delete, { dataspace: 'Other' });
+    mismatch.resolveTarget = remove.resolveTarget;
+    mismatch.createDloClient = remove.createDloClient;
+    const refused = await run(mismatch);
+    assert.equal(refused.status, 'blocked');
+    assert.equal(deletes, 1);
+  });
+
+for (const preview of [true, false])
+  for (const dataspace of [undefined, 'Other'])
+    test(`public DLO delete reports observed Team scope, requested=${dataspace} preview=${preview}`, async () => {
+      const reads = [];
+      const writes = [];
+      const command = invocation(Delete, { dataspace, preview });
+      command.resolveTarget = async () => 'target';
+      command.createDloClient = (...arguments_) => {
+        assert.deepEqual(arguments_, ['target', '68.0']);
+        return client({
+          get: async (...arguments_) => {
+            reads.push(arguments_);
+            return { ...wire, dataSpaceInfo: [{ name: 'Team' }] };
+          },
+          delete: async (...arguments_) => {
+            writes.push(arguments_);
+          },
+        });
+      };
+      const result = await run(command);
+      assert.deepEqual(reads, [[name]]);
+      assert.deepEqual(writes, preview || dataspace ? [] : [[id]]);
+      assert.equal(result.status, dataspace ? 'blocked' : 'success');
+      assert.deepEqual(result.result.items[0], {
+        identity: { dataSpace: dataspace ?? 'Team', apiName: name },
+        operation: preview ? 'preview' : 'delete',
+        outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',
+        mutation: !dataspace && !preview ? 'confirmed-deleted' : 'not-attempted',
+      });
+      assert.deepEqual(
+        result.diagnostics.errors.map(({ code }) => code),
+        dataspace ? ['UNSUPPORTED_DLO_DATASPACE'] : [],
+      );
+    });
+
 test('native DLO writer and strict admission roundtrip canonical JSON without source ID', async () => {
   const cwd = await scratch();
   const receipt = await writeDloDocument(document, cwd, false);
@@ -103,6 +191,27 @@ test('native DLO writer and strict admission roundtrip canonical JSON without so
     code: 'INVALID_SELECTION',
   });
 });
+test('DLO wrappers preserve optional explicit scope and block mismatch before dispatch', async () => {
+  const saved = structuredClone(document);
+  saved.identity.dataSpace = 'other';
+  const scoped = { ...wire, dataSpaceInfo: [{ name: 'other' }] };
+  const preview = await preflightDloDeploy(saved, client({ get: async () => scoped }), 'other');
+  assert.equal(preview.outcome, 'update');
+  let writes = 0;
+  const target = client({
+    get: async () => scoped,
+    update: async () => {
+      writes++;
+      return scoped;
+    },
+  });
+  const result = await executeDloDeploy(saved, target, 'other');
+  assert.equal(result.outcome, 'updated');
+  const blocked = await executeDloDeploy(saved, target, 'default');
+  assert.equal(blocked.mutation, 'not-attempted');
+  assert.equal(writes, 1);
+});
+
 test('native DLO Git selection uses root JSON and blocks deletion', async () => {
   const cwd = await scratch();
   const receipt = await writeDloDocument(document, cwd, false);

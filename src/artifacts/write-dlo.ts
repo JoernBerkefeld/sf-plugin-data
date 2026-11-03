@@ -114,7 +114,12 @@ export async function writeDloDocument(
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
-    if (previous && !overwrite) throw new DloError('OVERWRITE_REQUIRED');
+    if (previous) {
+      const saved = validateDloDocument(JSON.parse(previous.toString('utf8')));
+      if (saved.identity.dataSpace !== document.identity.dataSpace)
+        throw new DloError('DLO_DATASPACE_COLLISION');
+      if (!overwrite) throw new DloError('OVERWRITE_REQUIRED');
+    }
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-dlo-output-'));
     const marker = await open(path.join(staging, 'ownership'), 'wx');

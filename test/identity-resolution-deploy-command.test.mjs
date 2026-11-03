@@ -38,7 +38,7 @@ const setup = (overrides = {}, selected = [ir()]) => {
   const flags = {
     preview: false,
     'api-version': 'auto',
-    'data-space': 'default',
+    dataspace: 'default',
     'allow-processing': true,
     'source-dir': ['synthetic'],
     ...overrides,
@@ -185,7 +185,7 @@ test('IR numeric65/latest/unsupported mixed numeric67 and dependency expansion b
     [{ 'api-version': '65.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': 'latest' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '67.0' }, [ir(), dmo], 'INVALID_SCOPE'],
-    [{ 'data-space': 'other' }, [ir()], 'INVALID_SCOPE'],
+    [{ dataspace: 'other' }, [ir()], 'INVALID_SCOPE'],
     [
       { 'include-dependencies': true },
       [ir()],

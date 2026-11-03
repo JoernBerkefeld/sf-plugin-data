@@ -9,7 +9,7 @@ export type DloField = {
 export type DloDocument = {
   schemaVersion: 1;
   kind: 'dlo';
-  identity: { apiName: string; dataSpace: 'default' };
+  identity: { apiName: string; dataSpace: string };
   spec: { label: string; category: string; fields: DloField[] };
 };
 
@@ -59,7 +59,12 @@ export function validateDloDocument(value: unknown): DloDocument {
     document.kind !== 'dlo' ||
     typeof identity.apiName !== 'string' ||
     !dloName.test(identity.apiName) ||
-    identity.dataSpace !== 'default' ||
+    typeof identity.dataSpace !== 'string' ||
+    !identity.dataSpace.trim() ||
+    identity.dataSpace !== identity.dataSpace.trim() ||
+    [...identity.dataSpace].some(
+      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127,
+    ) ||
     typeof spec.label !== 'string' ||
     !spec.label.trim() ||
     spec.label.length > 40 ||
@@ -107,22 +112,26 @@ export function unwrapDlo(value: unknown): Record<string, unknown> {
 /**
  * Save definition fields, including generated fields, without runtime/wrapper duplication.
  * @param {unknown} value Native API GET or write response.
- * @returns {DloDocument} Portable API68/default document.
+ * @param {string} [dataSpace] Explicit membership to bind, if supplied.
+ * @returns {DloDocument} Portable document with observed membership.
  */
-export function normalizeDlo(value: unknown): DloDocument {
+export function normalizeDlo(value: unknown, dataSpace?: string): DloDocument {
   const object = unwrapDlo(value);
+  if (!Array.isArray(object.dataSpaceInfo) || object.dataSpaceInfo.length === 0)
+    throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  const memberships = object.dataSpaceInfo.map((entry) => record(entry).name);
   if (
-    !Array.isArray(object.dataSpaceInfo) ||
-    object.dataSpaceInfo.length !== 1 ||
-    record(object.dataSpaceInfo[0]).name !== 'default'
+    memberships.some((name) => typeof name !== 'string' || !name.trim()) ||
+    (dataSpace === undefined ? memberships.length !== 1 : !memberships.includes(dataSpace))
   )
     throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  const scope = dataSpace ?? memberships[0];
   const fields = object.dataLakeFieldInfoRepresentation ?? object.fields;
   if (!Array.isArray(fields)) throw new DloError('INVALID_DLO_RESPONSE');
   return validateDloDocument({
     schemaVersion: 1,
     kind: 'dlo',
-    identity: { apiName: object.name, dataSpace: 'default' },
+    identity: { apiName: object.name, dataSpace: scope },
     spec: {
       label: object.label,
       category: object.category,

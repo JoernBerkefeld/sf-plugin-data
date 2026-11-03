@@ -114,7 +114,12 @@ export async function writeNativeDmoDocument(
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
-    if (previous && !overwrite) throw new NativeDmoError('OVERWRITE_REQUIRED');
+    if (previous) {
+      const saved = validateNativeDmoDocument(JSON.parse(previous.toString('utf8')));
+      if (saved.identity.dataSpace !== document.identity.dataSpace)
+        throw new NativeDmoError('DMO_DATASPACE_COLLISION');
+      if (!overwrite) throw new NativeDmoError('OVERWRITE_REQUIRED');
+    }
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-dmo-output-'));
     const marker = await open(path.join(staging, 'ownership'), 'wx');

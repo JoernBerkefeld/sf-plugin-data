@@ -19,10 +19,15 @@ export type DloExecution = {
  * Compare a portable definition without mutation.
  * @param {unknown} value Portable definition.
  * @param {DloClient} client Target API client.
+ * @param {string} [requestScope] Optional explicit data space.
  * @returns {Promise<DloPreview>} Payload-free comparison.
  */
-export async function preflightDloDeploy(value: unknown, client: DloClient): Promise<DloPreview> {
-  const plan = await preflightNativeDlo(value, client);
+export async function preflightDloDeploy(
+  value: unknown,
+  client: DloClient,
+  requestScope?: string,
+): Promise<DloPreview> {
+  const plan = await preflightNativeDlo(value, client, requestScope);
   return {
     family: 'dlo',
     outcome: plan.operation,
@@ -35,9 +40,14 @@ export async function preflightDloDeploy(value: unknown, client: DloClient): Pro
  * Deploy through freshly resolved target identity.
  * @param {unknown} value Portable definition.
  * @param {DloClient} client Target client.
+ * @param {string} [requestScope] Optional explicit data space.
  * @returns {Promise<DloExecution>} Accepted write or conservative unknown outcome.
  */
-export async function executeDloDeploy(value: unknown, client: DloClient): Promise<DloExecution> {
+export async function executeDloDeploy(
+  value: unknown,
+  client: DloClient,
+  requestScope?: string,
+): Promise<DloExecution> {
   let dispatched = false;
   const guarded: DloClient = {
     ...client,
@@ -51,7 +61,7 @@ export async function executeDloDeploy(value: unknown, client: DloClient): Promi
     },
   };
   try {
-    const result = await deployNativeDlo(value, guarded);
+    const result = await deployNativeDlo(value, guarded, requestScope);
     return {
       family: 'dlo',
       outcome: result.operation === 'create' ? 'created' : 'updated',

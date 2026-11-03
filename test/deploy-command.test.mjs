@@ -21,7 +21,7 @@ const invocation = (overrides = {}) => {
     preview: true,
     'source-dir': ['authored.json'],
     'api-version': '65.0',
-    'data-space': 'default',
+    dataspace: 'default',
     'target-org': {
       getOrgId: () => {
         calls.push('org');
@@ -53,7 +53,7 @@ const invocation = (overrides = {}) => {
       input().document,
       connection,
       { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
-      flags['data-space'],
+      flags.dataspace,
       true,
     ]);
     return {
@@ -103,7 +103,7 @@ test('auto deploy uses fixed API65 without discovery and refuses malformed IR', 
     flags: {
       preview: true,
       'api-version': 'auto',
-      'data-space': 'default',
+      dataspace: 'default',
       'source-dir': ['authored.json'],
       'target-org': {
         getOrgId: () => 'synthetic',
@@ -510,7 +510,7 @@ test('repeated source and metadata flags plus API/scope override pass unchanged 
     { 'source-dir': ['one.json', 'directory'] },
     { 'source-dir': undefined, metadata: ['dmo:A__dlm', 'dmo:B__dlm'] },
   ]) {
-    const { command } = invocation({ ...overrides, 'api-version': '66.0', 'data-space': 'other' });
+    const { command } = invocation({ ...overrides, 'api-version': '66.0', dataspace: 'other' });
     const { result } = await run(command);
     assert.equal(result.metadata.apiVersion, '66.0');
     assert.equal(result.result.scope.dataSpace, 'other');

@@ -220,7 +220,6 @@ for (const override of [
   { 'api-version': '60.0' },
   { 'api-version': 'latest' },
   { 'api-version': '59.0' },
-  { 'data-space': 'other' },
   { metadata: ['mapping:../escape'] },
   { metadata: ['mapping:'] },
   { 'include-dependencies': true },
@@ -322,7 +321,7 @@ const invocation = (overrides = {}) => {
   const flags = {
     metadata: ['dmo'],
     'api-version': '65.0',
-    'data-space': 'default',
+    dataspace: 'default',
     overwrite: false,
     'target-org': 'synthetic',
     ...overrides,
@@ -338,7 +337,7 @@ const invocation = (overrides = {}) => {
           _connection,
           flags.metadata ?? [],
           { requested: version, restSelector: `v${version}`, soapNumeric: version },
-          flags['data-space'],
+          flags.dataspace,
         )
       : [];
   command.listNativeMappingNames = async () => [];
@@ -354,7 +353,7 @@ const invocation = (overrides = {}) => {
       connection,
       name,
       { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
-      flags['data-space'],
+      flags.dataspace,
     );
     if (
       projection.status !== 'projected' ||
@@ -373,7 +372,7 @@ const invocation = (overrides = {}) => {
       connection,
       'Sample__dlm',
       { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
-      flags['data-space'],
+      flags.dataspace,
     ]);
     return {
       status: 'projected',
@@ -749,7 +748,7 @@ test('empty inventory succeeds with no files; incomplete inventory blocks before
 });
 
 test('unsupported scope validates before authentication', async () => {
-  for (const overrides of [{ 'api-version': '60.0' }, { 'data-space': 'other' }]) {
+  for (const overrides of [{ 'api-version': '60.0' }]) {
     const command = invocation(overrides);
     command.resolveOrg = () => assert.fail('must not authenticate');
     const { result } = await run(command);
@@ -836,7 +835,7 @@ for (const override of [
   { 'api-version': '60.0' },
   { 'api-version': 'latest' },
   { 'api-version': '59.0' },
-  { 'data-space': 'other' },
+  { dataspace: 'other' },
   { metadata: ['relationship:../escape'] },
   { metadata: ['relationship'] },
   { 'include-dependencies': true },

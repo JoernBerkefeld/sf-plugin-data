@@ -27,7 +27,7 @@ export type DeleteEnvelope = {
   };
   result: {
     items: Array<{
-      identity: { dataSpace: 'default'; apiName: string };
+      identity: { dataSpace: string; apiName: string };
       operation: 'preview' | 'delete';
       outcome: 'delete' | 'deleted' | 'unchanged' | 'blocked' | 'failed';
       mutation: 'not-attempted' | 'confirmed-deleted' | 'unknown';
@@ -63,7 +63,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
     }),
-    'data-space': Flags.string({ default: 'default' }),
+    dataspace: Flags.string({
+      aliases: ['data-space'],
+      summary: 'Optional native data space; --data-space is a compatibility alias.',
+    }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
   };
   protected createMappingClient = createMappingClient;
@@ -95,6 +98,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    */
   public async run(): Promise<DeleteEnvelope> {
     const { flags } = await this.parse(Delete);
+    const requestScope = flags.dataspace;
+    const effectiveScope = requestScope ?? 'default';
     const envelope: DeleteEnvelope = {
       contract: 'sf-data360-delete',
       contractVersion: '1.0.0',
@@ -148,7 +153,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         )
       )
         throw new DloError('INVALID_SELECTION');
-      if (flags['data-space'] !== 'default') throw new DloError('INVALID_SCOPE');
       let version: string;
       try {
         version = nativeApiVersion(flags['api-version']);
@@ -168,7 +172,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         const mapping = selector.startsWith('mapping:');
         const apiName = selector.slice(selector.indexOf(':') + 1);
         const baseClient = mapping
-          ? (this.createMappingClient ?? createMappingClient)(target, version)
+          ? (this.createMappingClient ?? createMappingClient)(
+              target,
+              version,
+              undefined,
+              requestScope,
+            )
           : native
             ? (this.createDmoClient ?? createDmoClient)(target, version)
             : this.createDloClient(target, version);
@@ -181,7 +190,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           },
         };
         const item: DeleteEnvelope['result']['items'][number] = {
-          identity: { dataSpace: 'default', apiName },
+          identity: { dataSpace: effectiveScope, apiName },
           operation: flags.preview ? 'preview' : 'delete',
           outcome: 'blocked',
           mutation: 'not-attempted',
@@ -207,6 +216,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 apiName,
                 mappingClient,
                 dependencies,
+                requestScope,
               );
               item.plan = [
                 ...plan.removals.map((pair) => ({ operation: 'unmap' as const, apiName, ...pair })),
@@ -217,17 +227,21 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 apiName,
                 mappingClient,
                 dependencies,
+                requestScope,
               );
           } else {
             const definitionClient = client as ReturnType<typeof createDloClient>;
-            if (flags.preview)
-              await (native
-                ? (this.retrieveDmo ?? retrieveNativeDmo)(apiName, definitionClient)
-                : this.retrieveDlo(apiName, definitionClient));
-            else
-              await (native
-                ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient)
-                : this.deleteDlo(apiName, definitionClient));
+            if (flags.preview) {
+              const document = await (native
+                ? (this.retrieveDmo ?? retrieveNativeDmo)(apiName, definitionClient, requestScope)
+                : this.retrieveDlo(apiName, definitionClient, requestScope));
+              item.identity = document.identity;
+            } else {
+              const receipt = await (native
+                ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, requestScope)
+                : this.deleteDlo(apiName, definitionClient, requestScope));
+              item.identity.dataSpace = receipt.dataSpace;
+            }
           }
           item.outcome = flags.preview ? 'delete' : 'deleted';
           if (!flags.preview) item.mutation = 'confirmed-deleted';

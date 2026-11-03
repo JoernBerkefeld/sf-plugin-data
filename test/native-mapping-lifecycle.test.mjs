@@ -205,6 +205,74 @@ test('mapping adds a never-observed pair without selectors and preserves all exi
   assert.equal(calls.filter(([kind]) => kind === 'update').length, 1);
 });
 
+test('mapping explicit context threads through create, no-op, additive readback and command callbacks', async () => {
+  const scope = 'Team / +&?=ü';
+  for (const operation of ['create', 'noop', 'update']) {
+    const f = fixture(
+      operation === 'update' ? raw(names.filter((name) => name !== 'Name__c')) : raw(),
+    );
+    const input = desired();
+    input.identity.dataSpace = scope;
+    const deps = scopedDependencies(f.deps, scope);
+    if (operation === 'create') f.client.list = async () => ({ objectSourceTargetMaps: [] });
+    const before = structuredClone(input);
+    await assert.rejects(preflightNativeMapping(input, f.client, deps), /DATASPACE/);
+    assert.deepEqual(f.calls, []);
+    const preview = await preflightMapping(input, f.client, deps, scope);
+    assert.equal(preview.outcome, operation);
+    const updates = [];
+    const result = await deployNativeMapping(
+      input,
+      f.client,
+      deps,
+      (change) => updates.push(change),
+      scope,
+    );
+    assert.equal(result.operation, operation);
+    assert.equal(result.document.identity.dataSpace, scope);
+    assert.equal(updates.length, operation === 'update' ? 1 : 0);
+    assert.deepEqual(input, before);
+    const receipt = await executeMapping(input, f.client, deps, undefined, scope);
+    assert.equal(receipt.outcome, operation === 'create' ? 'created' : 'unchanged');
+    const retrieved = await retrieveNativeMapping('TargetGenerated_123', f.client, scope);
+    assert.equal(retrieved.identity.dataSpace, scope);
+  }
+});
+
+/**
+ * Supply fresh scoped parent representations without changing transport signatures.
+ * @param {object} deps Existing parent readers.
+ * @param {string} scope Observed scope.
+ * @returns {object} Scoped readers.
+ */
+function scopedDependencies(deps, scope) {
+  return {
+    source: {
+      get: async (name) => ({ ...(await deps.source.get(name)), dataSpaceInfo: [{ name: scope }] }),
+    },
+    target: { get: async (name) => ({ ...(await deps.target.get(name)), dataSpaceName: scope }) },
+  };
+}
+
+test('mapping scope mismatch rejects explicit mapping responses and fresh parents before dispatch', async () => {
+  const scope = 'Team';
+  for (const mode of ['source', 'target', 'inventory', 'detail', 'desired']) {
+    const f = fixture();
+    const input = desired();
+    input.identity.dataSpace = mode === 'desired' ? 'Wrong' : scope;
+    const deps = scopedDependencies(f.deps, scope);
+    if (mode === 'source') deps.source = f.deps.source;
+    if (mode === 'target') deps.target = f.deps.target;
+    if (mode === 'inventory')
+      f.client.list = async () => ({
+        objectSourceTargetMaps: [{ ...raw(), dataSpaceName: 'Wrong' }],
+      });
+    if (mode === 'detail') f.client.get = async () => ({ ...raw(), dataSpaceName: 'Wrong' });
+    await assert.rejects(deployNativeMapping(input, f.client, deps, undefined, scope), /DATASPACE/);
+    assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  }
+});
+
 test('mapping creation accepts confirmed filtered 404 but not authentication or generic failures', async () => {
   const { client } = fixture();
   client.list = async () => {
@@ -259,6 +327,7 @@ test('mapping source/target field, identity, dataspace and type validation fail 
     (d) => (d.source.get = async () => ({ ...source(), name: 'Other__dll' })),
     (d) => (d.target.get = async () => ({ ...target(), name: 'Other__dlm' })),
     (d) => (d.target.get = async () => ({ ...target(), dataSpaceName: 'other' })),
+    (d) => (d.source.get = async () => ({ ...source(), dataSpaceInfo: [{ name: 'other' }] })),
     (d) =>
       (d.source.get = async () => ({
         ...source(),
@@ -422,6 +491,53 @@ const deleteFixture = () => {
   };
   return { client, deps, calls, selected, survivor, schema };
 };
+
+test('mapping scoped deletion retains non-last survivor and full-parent guards across admitted versions', async () => {
+  const scope = 'Team / +&?=ü';
+  for (const apiVersion of ['61.0', '68.0']) {
+    const f = deleteFixture();
+    f.client.apiVersion = apiVersion;
+    const deps = scopedDependencies(f.deps, scope);
+    const plan = await preflightDeleteNativeMapping('TargetGenerated_123', f.client, deps, scope);
+    assert.equal(plan.selected.identity.dataSpace, scope);
+    assert.equal(plan.removals.length, 2);
+    assert.deepEqual(await deleteNativeMapping('TargetGenerated_123', f.client, deps, scope), {
+      apiName: 'TargetGenerated_123',
+    });
+    assert.deepEqual(
+      f.calls.filter(([kind]) => ['unmap', 'delete'].includes(kind)),
+      [
+        ['unmap', 'TargetGenerated_123', 'target_Name__c'],
+        ['unmap', 'TargetGenerated_123', 'target_Note__c'],
+        ['delete', 'TargetGenerated_123'],
+      ],
+    );
+  }
+});
+
+test('mapping deletion checks every survivor DLO scope before unmap or delete', async () => {
+  const f = deleteFixture();
+  const read = f.deps.source.get;
+  f.deps.source.get = async (name) => ({
+    ...(await read(name)),
+    dataSpaceInfo: [{ name: name === 'Other__dll' ? 'Wrong' : 'default' }],
+  });
+  await assert.rejects(deleteNativeMapping('TargetGenerated_123', f.client, f.deps), /DATASPACE/);
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+});
+
+test('mapping scoped desired-state removal threads context through unmap settlement', async () => {
+  const f = fixture();
+  const scope = 'Team';
+  const deps = scopedDependencies(f.deps, scope);
+  const input = desired(names.filter((name) => name !== 'Note__c'));
+  input.identity.dataSpace = scope;
+  const result = await deployNativeMapping(input, f.client, deps, undefined, scope);
+  assert.equal(result.operation, 'update');
+  assert.equal(result.document.identity.dataSpace, scope);
+  assert.equal(result.document.spec.fieldMappings.length, 6);
+  assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
+});
 
 // API62..67 cases are synthetic compatibility checks, not live qualification.
 for (const version of ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0', '68.0']) {

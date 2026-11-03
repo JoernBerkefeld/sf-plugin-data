@@ -382,6 +382,32 @@ Example `sfdx-project.json`:
 
 #### Native plugin workflow
 
+Native `retrieve`, `deploy` and `delete` accept optional `--dataspace NAME`
+(`--data-space` is a compatibility alias). Neither spelling has a CLI default;
+specify only one spelling per invocation. An explicit scope must match the saved
+artifact and freshly observed target/parent identities before mutation.
+
+Mapping list, detail, create, additive update and delete requests include the
+`dataspace` query only when explicitly supplied. Omission uses the documented
+mapping default locally for identity checks, without injecting `dataspace=default`
+into HTTP requests. DMO create/update includes optional `dataSpaceName` only with
+an explicit flag; creating a nondefault DMO with an omitted flag is refused.
+DLO create is different: its required `dataspaceInfo` membership comes from the
+validated artifact identity even when the flag is omitted. DLO update gains no
+scope body, and DLO/DMO detail, delete and collection URLs gain no invented filters.
+DLO identities use actual memberships (explicit scope must be present); DMO
+identities use the response's actual `dataSpaceName`.
+
+Native inventory still paginates the complete bounded collection and filters
+response memberships locally: omitted scope retains default-space discovery,
+not an all-space export. Explicit scope selects the matching response space;
+ambiguous same-name inventory remains blocked. Legacy families and dependency
+adapters remain default-only. Artifact schema/version and canonical paths are
+unchanged; overwriting a different dataspace's file is refused even with
+`--overwrite`. This is documented parameter plumbing, not live nondefault-space
+lifecycle qualification; the Partial support ratings and existing API/version,
+processing, parent, survivor and destructive-operation limits remain unchanged.
+
 ```sh
 sf data360 retrieve -m dmo:Customer__dlm -o SOURCE_ALIAS --api-version 65.0 --output-dir ./project --json
 sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --preview --json
@@ -1880,8 +1906,8 @@ No bare type, omitted selection or implicit deploy-all is allowed. All sources
 resolve and validate before runtime target inspection; core optional-org flag authentication
 still happens during parsing, before input resolution. Core `-o/--target-org` supports the
 configured default org and explicit override; `--api-version` defaults to `auto`
-(native API68, with explicit numeric pins preserved) and `--data-space` to default,
-with family-specific capability checks. Native delete also requires exact selectors;
+(native API68, with explicit numeric pins preserved). Optional `--dataspace`
+(`--data-space` alias) has no CLI default, with family-specific capability checks. Native delete also requires exact selectors;
 no omitted, bare-type or wildcard write selection is admitted.
 
 The normal core JSON wrapper contains `sf-data360-deploy` contract version 1.0.0,

@@ -47,6 +47,7 @@ function pairKey(field: NativeMappingField): string {
  */
 function checkBinding(expected: NativeMappingDocument, actual: NativeMappingDocument): void {
   if (
+    expected.identity.dataSpace !== actual.identity.dataSpace ||
     expected.spec.sourceEntityDeveloperName !== actual.spec.sourceEntityDeveloperName ||
     expected.spec.targetEntityDeveloperName !== actual.spec.targetEntityDeveloperName
   )
@@ -81,14 +82,14 @@ async function resolveTarget(
   // The retained contract has exactly this wrapper and no pagination mechanism.
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const entries = unwrapNativeMappingCollection(response).map((entry) =>
-    normalizeNativeMapping(entry),
+  const entries = unwrapNativeMappingCollection(response, desired.identity.dataSpace).map((entry) =>
+    normalizeNativeMapping(entry, desired.identity.dataSpace),
   );
   for (const entry of entries) checkBinding(desired, entry);
   if (entries.length > 1) throw new NativeMappingError('AMBIGUOUS_MAPPING_TARGET');
   if (entries.length === 0) return;
   const raw = await client.get(entries[0].identity.apiName);
-  const document = normalizeNativeMapping(raw);
+  const document = normalizeNativeMapping(raw, desired.identity.dataSpace);
   if ((raw as Record<string, unknown>).status !== 'ACTIVE')
     throw new NativeMappingError('MAPPING_TARGET_NOT_SETTLED');
   checkBinding(desired, document);
@@ -110,11 +111,15 @@ async function validateDependencies(
 ) {
   const source = normalizeDlo(
     await dependencies.source.get(desired.spec.sourceEntityDeveloperName),
+    desired.identity.dataSpace,
   );
   const target = normalizeNativeDmo(
     await dependencies.target.get(desired.spec.targetEntityDeveloperName),
+    desired.identity.dataSpace,
   );
   if (
+    source.identity.dataSpace !== desired.identity.dataSpace ||
+    target.identity.dataSpace !== desired.identity.dataSpace ||
     source.identity.apiName !== desired.spec.sourceEntityDeveloperName ||
     target.identity.apiName !== desired.spec.targetEntityDeveloperName
   )
@@ -171,14 +176,16 @@ function bodyFor(desired: NativeMappingDocument, fields: NativeMappingField[]): 
  * Retrieve one exact mapping with all runtime KQ/system pairs retained in portable JSON.
  * @param {string} apiName Observed target mapping name.
  * @param {MappingClient} client Target mapping transport.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<NativeMappingDocument>} Complete portable definition.
  */
 export async function retrieveNativeMapping(
   apiName: string,
   client: MappingClient,
+  requestScope?: string,
 ): Promise<NativeMappingDocument> {
   if (!nativeMappingName.test(apiName)) throw new NativeMappingError('INVALID_MAPPING_NAME');
-  const document = normalizeNativeMapping(await client.get(apiName));
+  const document = normalizeNativeMapping(await client.get(apiName), requestScope);
   if (document.identity.apiName !== apiName)
     throw new NativeMappingError('MAPPING_TARGET_IDENTITY_MISMATCH');
   return document;
@@ -189,14 +196,18 @@ export async function retrieveNativeMapping(
  * @param {unknown} value Portable desired mapping.
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target definition readers.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<NativeMappingDeployPlan>} Bounded operation plan.
  */
 export async function preflightNativeMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
+  requestScope?: string,
 ): Promise<NativeMappingDeployPlan> {
   const desired = validateNativeMappingDocument(value);
+  if (desired.identity.dataSpace !== (requestScope ?? 'default'))
+    throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
   const { generated, sources, targets } = await validateDependencies(desired, dependencies);
   const target = await resolveTarget(desired, client);
   if (!target) {
@@ -248,7 +259,13 @@ export async function preflightNativeMapping(
     };
   if (client.apiVersion !== '68.0')
     throw new NativeMappingError('MAPPING_UNMAP_VERSION_UNQUALIFIED');
-  const evidence = await preflightUnmapNativeMapping(target, client, dependencies, removals);
+  const evidence = await preflightUnmapNativeMapping(
+    target,
+    client,
+    dependencies,
+    removals,
+    requestScope,
+  );
   if (evidence.protectedPairs.some((pair) => !incoming.has(pairKey(pair))))
     throw new NativeMappingError('MAPPING_PROTECTED_PAIR_REQUIRED');
   // Bind addition policy to the same immutable parent snapshot used for every unmap check.
@@ -283,7 +300,7 @@ export async function preflightNativeMapping(
       evidence.inventory.some(
         (entry) =>
           entry.developerName !== target.identity.apiName &&
-          normalizeNativeMapping(entry).spec.fieldMappings.some(
+          normalizeNativeMapping(entry, desired.identity.dataSpace).spec.fieldMappings.some(
             (field) => field.targetFieldDeveloperName === pair.targetFieldDeveloperName,
           ),
       ) ||
@@ -313,6 +330,7 @@ export async function preflightNativeMapping(
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Source/target readers.
  * @param {Function} [onUpdated] Receive confirmed pair changes for human output only.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<{operation: 'create' | 'update' | 'noop', document: NativeMappingDocument}>} Confirmed definition.
  */
 export async function deployNativeMapping(
@@ -320,8 +338,9 @@ export async function deployNativeMapping(
   client: MappingClient,
   dependencies: MappingDependencies,
   onUpdated?: (changes: { deleted: NativeMappingField[]; added: NativeMappingField[] }) => void,
+  requestScope?: string,
 ): Promise<{ operation: 'create' | 'update' | 'noop'; document: NativeMappingDocument }> {
-  const plan = await preflightNativeMapping(value, client, dependencies);
+  const plan = await preflightNativeMapping(value, client, dependencies, requestScope);
   const reportUpdate = (): void => {
     if (plan.operation === 'update')
       onUpdated?.({
@@ -331,13 +350,20 @@ export async function deployNativeMapping(
   };
   if (plan.operation === 'noop') return { operation: 'noop', document: plan.target! };
   if (plan.operation === 'update' && plan.evidence) {
-    const snapshot = await unmapNativeMappingFields(plan.evidence!, client, dependencies, () => {});
+    const snapshot = await unmapNativeMappingFields(
+      plan.evidence!,
+      client,
+      dependencies,
+      () => {},
+      requestScope,
+    );
     if (plan.writes.length > 0) {
       if (!(await checkUnmapSnapshot(snapshot, client, dependencies)))
         throw new NativeMappingError('MAPPING_TARGET_NOT_SETTLED');
       const body = plan.writes[0].body;
       const accepted = normalizeNativeMapping(
         await client.update(plan.target!.identity.apiName, body),
+        requestScope,
       );
       checkBinding(plan.desired, accepted);
       if (accepted.identity.apiName !== plan.target!.identity.apiName)
@@ -352,7 +378,7 @@ export async function deployNativeMapping(
     let settledPairs: NativeMappingField[] | undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
       const raw = (await client.get(plan.target!.identity.apiName)) as Record<string, unknown>;
-      const document = normalizeNativeMapping(raw);
+      const document = normalizeNativeMapping(raw, requestScope);
       checkBinding(plan.desired, document);
       const expected = new Set(plan.desired.spec.fieldMappings.map((pair) => pairKey(pair)));
       if (
@@ -390,6 +416,7 @@ export async function deployNativeMapping(
     plan.operation === 'create'
       ? await client.create(write.body)
       : await client.update(plan.target!.identity.apiName, write.body),
+    requestScope,
   );
   checkBinding(plan.desired, accepted);
   const name = plan.target?.identity.apiName ?? accepted.identity.apiName;
@@ -399,7 +426,7 @@ export async function deployNativeMapping(
     let document: NativeMappingDocument;
     try {
       const raw = await client.get(name);
-      document = normalizeNativeMapping(raw);
+      document = normalizeNativeMapping(raw, requestScope);
       if (document.identity.apiName !== name)
         throw new NativeMappingError('MAPPING_TARGET_IDENTITY_MISMATCH');
       if ((raw as Record<string, unknown>).status !== 'ACTIVE') continue;
@@ -450,6 +477,7 @@ export type NativeMappingUnmapPlan = {
  * @param {MappingClient} client Version-bearing mapping reader.
  * @param {MappingDependencies} dependencies Fresh parent readers.
  * @param {NativeMappingField[]} [requestedRemovals] Desired-state omissions, or all authored pairs.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<NativeMappingUnmapPlan>} Complete removal evidence, without mutation.
  */
 export async function preflightUnmapNativeMapping(
@@ -457,14 +485,17 @@ export async function preflightUnmapNativeMapping(
   client: MappingClient,
   dependencies: MappingDependencies,
   requestedRemovals?: NativeMappingField[],
+  requestScope?: string,
 ): Promise<NativeMappingUnmapPlan> {
   if (!isNativeMappingDeletionVersion(client.apiVersion))
     throw new NativeMappingError('MAPPING_UNMAP_VERSION_UNQUALIFIED');
+  if (selected.identity.dataSpace !== (requestScope ?? 'default'))
+    throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
   const response = await client.list(selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const inventory = unwrapNativeMappingCollection(response);
-  const documents = inventory.map((entry) => normalizeNativeMapping(entry));
+  const inventory = unwrapNativeMappingCollection(response, requestScope);
+  const documents = inventory.map((entry) => normalizeNativeMapping(entry, requestScope));
   if (
     new Set(documents.map((entry) => entry.identity.apiName.toLowerCase())).size !==
       documents.length ||
@@ -485,7 +516,7 @@ export async function preflightUnmapNativeMapping(
   >;
   const parentByName = new Map(sourceNames.map((name, index) => [name, parents[index]]));
   for (const name of sourceNames) {
-    if (normalizeDlo(parentByName.get(name)).identity.apiName !== name)
+    if (normalizeDlo(parentByName.get(name), selected.identity.dataSpace).identity.apiName !== name)
       throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
   }
   const { generated, sources, targets } = await validateDependencies(selected, {
@@ -572,7 +603,7 @@ async function checkUnmapSnapshot(
   const response = await client.list(plan.selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const entries = unwrapNativeMappingCollection(response);
+  const entries = unwrapNativeMappingCollection(response, plan.selected.identity.dataSpace);
   if (entries.length !== plan.inventory.length)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   let active = true;
@@ -599,6 +630,7 @@ async function checkUnmapSnapshot(
  * @param {MappingClient} client Mapping transport.
  * @param {MappingDependencies} dependencies Parent readers.
  * @param {Function} onDispatch Called before awaiting each mutation, including lost responses.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<NativeMappingUnmapPlan>} Settled retained-pair snapshot for the next operation.
  */
 export async function unmapNativeMappingFields(
@@ -606,6 +638,7 @@ export async function unmapNativeMappingFields(
   client: MappingClient,
   dependencies: MappingDependencies,
   onDispatch: () => void,
+  requestScope?: string,
 ): Promise<NativeMappingUnmapPlan> {
   if (!isNativeMappingDeletionVersion(client.apiVersion))
     throw new NativeMappingError('MAPPING_UNMAP_VERSION_UNQUALIFIED');
@@ -614,6 +647,7 @@ export async function unmapNativeMappingFields(
     client,
     dependencies,
     evidence.removals,
+    requestScope,
   );
   if (!isDeepStrictEqual(fresh, evidence))
     throw new NativeMappingError('MAPPING_UNMAP_PLAN_CHANGED');
@@ -654,29 +688,31 @@ export async function unmapNativeMappingFields(
  * @param {string} apiName Exact target-native mapping name.
  * @param {MappingClient} client Target mapping reader.
  * @param {MappingDependencies} dependencies Fresh parent readers.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<object>} Immutable-before-write evidence for independent verification.
  */
 export async function preflightDeleteNativeMapping(
   apiName: string,
   client: MappingClient,
   dependencies: MappingDependencies,
+  requestScope?: string,
 ) {
   if (!isNativeMappingDeletionVersion(client.apiVersion))
     throw new NativeMappingError('MAPPING_DELETE_VERSION_UNQUALIFIED');
-  const selected = await retrieveNativeMapping(apiName, client);
+  const selected = await retrieveNativeMapping(apiName, client, requestScope);
   const raw = await client.get(apiName);
   if ((raw as Record<string, unknown>).status !== 'ACTIVE')
     throw new NativeMappingError('MAPPING_TARGET_NOT_SETTLED');
-  if (!isDeepStrictEqual(selected, normalizeNativeMapping(raw)))
+  if (!isDeepStrictEqual(selected, normalizeNativeMapping(raw, requestScope)))
     throw new NativeMappingError('MAPPING_TARGET_IDENTITY_MISMATCH');
   const response = await client.list(selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const entries = unwrapNativeMappingCollection(response);
+  const entries = unwrapNativeMappingCollection(response, requestScope);
   const names = new Set<string>();
   const sources = new Set<string>();
   for (const entry of entries) {
-    const document = normalizeNativeMapping(entry);
+    const document = normalizeNativeMapping(entry, requestScope);
     const name = document.identity.apiName.toLowerCase();
     const source = document.spec.sourceEntityDeveloperName.toLowerCase();
     if (
@@ -690,14 +726,20 @@ export async function preflightDeleteNativeMapping(
     sources.add(source);
   }
   const current = entries.find((entry) => entry.developerName === apiName);
-  if (!current || !isDeepStrictEqual(normalizeNativeMapping(current), selected))
+  if (!current || !isDeepStrictEqual(normalizeNativeMapping(current, requestScope), selected))
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   const survivorEntry = entries.find(
     (entry) => entry.sourceEntityDeveloperName !== selected.spec.sourceEntityDeveloperName,
   );
   if (!survivorEntry) throw new NativeMappingError('MAPPING_LAST_MAPPING_DELETE_BLOCKED');
   // The last-for-DMO check above precedes even the authored removal plan.
-  const plan = await preflightUnmapNativeMapping(selected, client, dependencies);
+  const plan = await preflightUnmapNativeMapping(
+    selected,
+    client,
+    dependencies,
+    undefined,
+    requestScope,
+  );
   if (!isDeepStrictEqual(plan.inventory, entries))
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   const protectedKeys = new Set(plan.protectedPairs.map((pair) => pairKey(pair)));
@@ -705,7 +747,7 @@ export async function preflightDeleteNativeMapping(
   for (const entry of entries.filter(
     (value) => value.sourceEntityDeveloperName !== selected.spec.sourceEntityDeveloperName,
   )) {
-    const document = normalizeNativeMapping(entry);
+    const document = normalizeNativeMapping(entry, requestScope);
     const {
       generated,
       sources: from,
@@ -749,17 +791,25 @@ export async function preflightDeleteNativeMapping(
  * @param {string} apiName Exact native name, never a source artifact alias.
  * @param {MappingClient} client Mapping transport.
  * @param {MappingDependencies} dependencies Fresh parent readers.
+ * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<{apiName: string}>} Independently verified absence.
  */
 export async function deleteNativeMapping(
   apiName: string,
   client: MappingClient,
   dependencies: MappingDependencies,
+  requestScope?: string,
 ): Promise<{ apiName: string }> {
-  const before = await preflightDeleteNativeMapping(apiName, client, dependencies);
-  const remainder = await unmapNativeMappingFields(before, client, dependencies, () => {});
+  const before = await preflightDeleteNativeMapping(apiName, client, dependencies, requestScope);
+  const remainder = await unmapNativeMappingFields(
+    before,
+    client,
+    dependencies,
+    () => {},
+    requestScope,
+  );
   // Requalify the protected-only remainder and all survivor metadata immediately before DELETE.
-  const final = await preflightDeleteNativeMapping(apiName, client, dependencies);
+  const final = await preflightDeleteNativeMapping(apiName, client, dependencies, requestScope);
   if (final.removals.length > 0 || !isDeepStrictEqual(final, remainder))
     throw new NativeMappingError('MAPPING_UNMAP_PLAN_CHANGED');
   if (!(await checkUnmapSnapshot(final, client, dependencies)))
@@ -769,7 +819,7 @@ export async function deleteNativeMapping(
   for (let attempt = 0; attempt < 3; attempt++) {
     let absent = false;
     try {
-      await retrieveNativeMapping(apiName, client);
+      await retrieveNativeMapping(apiName, client, requestScope);
     } catch (error) {
       if (
         error instanceof NativeMappingError &&

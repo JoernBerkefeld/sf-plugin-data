@@ -153,9 +153,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ? value
           : Flags.orgApiVersion().parse(value, context, options),
     }),
-    'data-space': Flags.string({
-      default: 'default',
-      summary: 'Logical data space (current service supports default).',
+    dataspace: Flags.string({
+      aliases: ['data-space'],
+      summary:
+        'Optional native data space; --data-space is a compatibility alias. Legacy families require default.',
     }),
     metadata: Flags.string({
       char: 'm',
@@ -246,6 +247,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    */
   public async run(): Promise<RetrieveEnvelope> {
     const { flags } = await this.parse(Retrieve);
+    const requestScope = flags.dataspace;
+    const effectiveScope = requestScope ?? 'default';
     const plugin = {
       name: packageMetadata.name,
       version: packageMetadata.version,
@@ -266,7 +269,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       },
       result: {
         scope: {
-          dataSpace: flags['data-space'],
+          dataSpace: effectiveScope,
           outputDir: path.resolve(flags['output-dir'] ?? process.cwd()),
         },
         selection: flags.metadata ?? [],
@@ -331,7 +334,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       let version: string;
       try {
         version = nativeApiVersion(flags['api-version']);
-        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'NATIVE_DEPENDENCY_EXPANSION_UNSUPPORTED');
         for (const selector of selectors) {
@@ -370,18 +372,24 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             .map((value) => value.slice(family.length + 1));
           if (all) {
             if (family === 'mapping') {
-              dmoInventory ??= await this.listNativeNames(connection, version, 'dmo');
+              dmoInventory ??= await this.listNativeNames(connection, version, 'dmo', requestScope);
               names.push(
                 ...(await this.listNativeMappingNames(
                   dmoInventory,
-                  this.createMappingClient(target, version),
+                  this.createMappingClient(target, version, undefined, requestScope),
+                  requestScope,
                 )),
               );
             } else {
               const inventory =
                 family === 'dmo'
-                  ? (dmoInventory ??= await this.listNativeNames(connection, version, family))
-                  : await this.listNativeNames(connection, version, family);
+                  ? (dmoInventory ??= await this.listNativeNames(
+                      connection,
+                      version,
+                      family,
+                      requestScope,
+                    ))
+                  : await this.listNativeNames(connection, version, family, requestScope);
               names.push(...inventory);
             }
           }
@@ -413,13 +421,19 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               family === 'mapping'
                 ? await this.acquireNativeMapping(
                     apiName,
-                    this.createMappingClient(target, version),
+                    this.createMappingClient(target, version, undefined, requestScope),
+                    requestScope,
                   )
                 : family === 'dlo'
-                  ? await this.acquireDlo(apiName, this.createDloClient(target, version))
+                  ? await this.acquireDlo(
+                      apiName,
+                      this.createDloClient(target, version),
+                      requestScope,
+                    )
                   : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
                       apiName,
                       this.createDmoClient(target, version),
+                      requestScope,
                     );
             const root = flags['output-dir'] ?? process.cwd();
             const receipt =
@@ -458,7 +472,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               code,
               message: 'Native component retrieval did not complete.',
               retryable: false,
-              identity: { dataSpace: 'default', apiName },
+              identity: { dataSpace: effectiveScope, apiName },
               ...(family === 'mapping' ? { family } : {}),
             });
             errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
@@ -469,6 +483,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
       );
     }
+    if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
     const nativeSelectors = selectors.filter((value) => value.startsWith('dmo:'));
     if (
       nativeSelectors.length === selectors.length &&
@@ -480,7 +495,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         nativeSelectors.some((value) => !nativeDmoName.test(value.slice(4)))
       )
         return finish('blocked', 'INVALID_SELECTION');
-      if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+      if (!['65.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
         return finish('blocked', 'INVALID_SCOPE');
       try {
         let org;
@@ -546,7 +561,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (dloSelectors.length > 0) {
         if (dloSelectors.some((value) => !dloName.test(value.slice(4))))
           return finish('blocked', 'INVALID_SELECTION');
-        if (!['68.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+        if (!['68.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
           return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'DLO_DEPENDENCY_EXPANSION_UNSUPPORTED');
@@ -555,7 +570,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new MappingDefinitionError('MAPPING_INVENTORY_UNQUALIFIED');
       if (mappingSelectors.length > 0) {
         nativeApiVersion(flags['api-version']);
-        if (flags['data-space'] !== 'default') throw new MappingDefinitionError('INVALID_SCOPE');
+        if (effectiveScope !== 'default') throw new MappingDefinitionError('INVALID_SCOPE');
         if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
           throw new MappingDefinitionError('INVALID_SELECTION');
         if (flags['include-dependencies'])
@@ -564,7 +579,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (selectors.includes('relationship'))
         throw new RelationshipDefinitionError('RELATIONSHIP_INVENTORY_UNQUALIFIED');
       if (relationshipSelectors.length > 0) {
-        if (!['65.0', 'auto'].includes(flags['api-version']) || flags['data-space'] !== 'default')
+        if (!['65.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
           throw new RelationshipDefinitionError('INVALID_SCOPE');
         if (relationshipSelectors.some((value) => !segmentName.test(value.slice(13))))
           throw new RelationshipDefinitionError('INVALID_SELECTION');
@@ -575,7 +590,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new DataGraphError('DATA_GRAPH_INVENTORY_UNQUALIFIED');
       if (graphSelectors.length > 0) {
         operationApiVersion(flags['api-version'], 'data-graph');
-        if (flags['data-space'] !== 'default') throw new DataGraphError('INVALID_SCOPE');
+        if (effectiveScope !== 'default') throw new DataGraphError('INVALID_SCOPE');
         if (graphSelectors.some((value) => !dataGraphName.test(value.slice(11))))
           throw new DataGraphError('INVALID_SELECTION');
       }
@@ -583,7 +598,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
       if (ciSelectors.length > 0) {
         operationApiVersion(flags['api-version'], 'calculated-insight');
-        if (flags['data-space'] !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
+        if (effectiveScope !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
         if (ciSelectors.some((value) => !calculatedInsightName.test(value.slice(19))))
           throw new CalculatedInsightError('INVALID_SELECTION');
         if (flags['include-dependencies'])
@@ -595,7 +610,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new IdentityResolutionError('INVALID_SELECTION');
       if (irSelectors.length > 0) {
         operationApiVersion(flags['api-version'], 'identity-resolution');
-        if (flags['data-space'] !== 'default') throw new IdentityResolutionError('INVALID_SCOPE');
+        if (effectiveScope !== 'default') throw new IdentityResolutionError('INVALID_SCOPE');
         if (flags['include-dependencies'] && graphSelectors.length === 0)
           throw new IdentityResolutionError('IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
@@ -640,7 +655,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new SegmentError('INVALID_SELECTION');
       if (
         segmentSelectors.length > 0 &&
-        (effectiveVersion !== '65.0' || flags['data-space'] !== 'default')
+        (effectiveVersion !== '65.0' || effectiveScope !== 'default')
       )
         throw new SegmentError('INVALID_SCOPE');
       // Validate syntax/scope before auth; latest capability evidence arrives after discovery.
@@ -648,7 +663,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         validateDmoSelection(
           dmoSelectors,
           effectiveVersion === 'latest' ? '65.0' : effectiveVersion,
-          flags['data-space'],
+          effectiveScope,
         );
     } catch (error: unknown) {
       return finish(
@@ -704,7 +719,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ? 'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.'
           : 'DMO inventory could not be resolved completely; no files were written.',
         retryable: false,
-        ...(apiName ? { identity: { dataSpace: flags['data-space'], apiName } } : {}),
+        ...(apiName ? { identity: { dataSpace: effectiveScope, apiName } } : {}),
       });
       errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
     };
@@ -734,7 +749,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       envelope.metadata.soapApiVersion = selection.soapNumeric;
       try {
-        if (hasDmos) validateDmoSelection(dmoSelectors, selection, flags['data-space']);
+        if (hasDmos) validateDmoSelection(dmoSelectors, selection, effectiveScope);
       } catch {
         envelope.diagnostics.errors.push({
           code: 'INVALID_SCOPE',
@@ -789,7 +804,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const version = nativeApiVersion(flags['api-version']);
           const document = await this.acquireNativeMapping(
             apiName,
-            this.createMappingClient(target, version),
+            this.createMappingClient(target, version, undefined, requestScope),
+            requestScope,
           );
           const receipt = await this.writeNativeMapping(
             document,
@@ -880,7 +896,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
       const names = hasDmos
-        ? await this.selectDocuments(connection, dmoSelectors, selection, flags['data-space'])
+        ? await this.selectDocuments(connection, dmoSelectors, selection, effectiveScope)
         : [];
       if (hasDmos) outputTypes.add('dmo');
       for (const selector of selectors) outputTypes.add(selector.split(':')[0]);
@@ -908,12 +924,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 [
                   ...names.map((apiName) => ({
                     kind: 'dmo' as const,
-                    dataSpace: flags['data-space'],
+                    dataSpace: effectiveScope,
                     apiName,
                   })),
                   ...segments.map((apiName) => ({
                     kind: 'segment' as const,
-                    dataSpace: flags['data-space'],
+                    dataSpace: effectiveScope,
                     apiName,
                   })),
                 ],
@@ -942,7 +958,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ciConnection,
             apiName,
             ciVersion,
-            flags['data-space'],
+            effectiveScope,
           );
           if (!acquired.candidate || acquired.blockers.length > 0)
             throw new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED');
@@ -956,7 +972,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             acquired.candidate,
             ciConnection,
             ciVersion,
-            flags['data-space'],
+            effectiveScope,
           );
           const target = flags['target-org'] ?? ciConnection.getUsername();
           if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
@@ -988,7 +1004,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               graphConnection,
               apiName,
               graphVersion,
-              flags['data-space'],
+              effectiveScope,
             );
             if (!acquired.candidate || acquired.blockers.length > 0) {
               let binding;
@@ -999,7 +1015,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   apiName,
                   graphConnection,
                   graphVersion,
-                  flags['data-space'],
+                  effectiveScope,
                 );
               } catch {
                 throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
@@ -1009,7 +1025,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 graphConnection,
                 apiName,
                 graphVersion,
-                flags['data-space'],
+                effectiveScope,
                 { dependencyBinding: binding },
               );
               const ownerName = binding.root.identity.owner.apiName;
@@ -1026,7 +1042,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     document,
                     graphConnection,
                     graphVersion,
-                    flags['data-space'],
+                    effectiveScope,
                   );
                   if (!isDeepStrictEqual(fresh, binding))
                     throw new DataGraphError('DATA_GRAPH_SOURCE_BINDING_CHANGED');
@@ -1034,7 +1050,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     graphConnection,
                     apiName,
                     graphVersion,
-                    flags['data-space'],
+                    effectiveScope,
                     { dependencyBinding: fresh },
                   );
                   if (!isDeepStrictEqual(current, acquired))
@@ -1056,7 +1072,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               document.identity.apiName !== apiName
             )
               throw new DataGraphError('DATA_GRAPH_IDENTITY_CHANGED');
-            await this.bindDataGraph(document, graphConnection, graphVersion, flags['data-space']);
+            await this.bindDataGraph(document, graphConnection, graphVersion, effectiveScope);
             dataGraphs.push({ document });
           }
         }
@@ -1075,7 +1091,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               irConnection,
               apiName,
               irVersion,
-              flags['data-space'],
+              effectiveScope,
             );
             if (acquired.blockers.length > 0 || !acquired.candidate)
               throw new IdentityResolutionError(
@@ -1084,9 +1100,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             const document = validateIdentityResolutionDocument(acquired.candidate);
             if (
               acquired.identity.apiName !== apiName ||
-              acquired.identity.dataSpace !== flags['data-space'] ||
+              acquired.identity.dataSpace !== effectiveScope ||
               document.identity.apiName !== apiName ||
-              document.identity.dataSpace !== flags['data-space']
+              document.identity.dataSpace !== effectiveScope
             )
               throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
             identityResolutions.push({ document });
@@ -1096,7 +1112,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   irConnection,
                   apiName,
                   irVersion,
-                  flags['data-space'],
+                  effectiveScope,
                 );
                 if (!isDeepStrictEqual(fresh, acquired))
                   throw new IdentityResolutionError('IDENTITY_RESOLUTION_SOURCE_CHANGED');
@@ -1253,12 +1269,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       for (const apiName of names) {
         try {
-          const projection = await this.acquire(
-            connection,
-            apiName,
-            selection,
-            flags['data-space'],
-          );
+          const projection = await this.acquire(connection, apiName, selection, effectiveScope);
           if (
             projection.status !== 'projected' ||
             projection.blockers.length > 0 ||
@@ -1267,7 +1278,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             throw new DmoRetrieveError(projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
           if (
             projection.candidate.identity.apiName !== apiName ||
-            projection.candidate.identity.dataSpace !== flags['data-space']
+            projection.candidate.identity.dataSpace !== effectiveScope
           )
             throw new DmoRetrieveError('INVALID_METADATA');
           const receipt = await this.writeDocument(

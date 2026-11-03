@@ -44,14 +44,16 @@ function fieldInput(field: DloField): Record<string, unknown> {
  * Resolve exactly the requested API name in the target, retaining only its current target ID.
  * @param {string} apiName Requested full API name.
  * @param {DloClient} client Target client.
+ * @param {string} [requestScope] Optional expected data space, never a URL query.
  * @returns {Promise<{document: DloDocument, targetId: string}>} Definition and target identity.
  */
 async function resolveTarget(
   apiName: string,
   client: DloClient,
+  requestScope?: string,
 ): Promise<{ document: DloDocument; targetId: string }> {
   const raw = unwrapDlo(await client.get(apiName));
-  const document = normalizeDlo(raw);
+  const document = normalizeDlo(raw, requestScope);
   if (
     document.identity.apiName !== apiName ||
     typeof raw.id !== 'string' ||
@@ -65,29 +67,40 @@ async function resolveTarget(
  * Retrieve a portable definition by its full API name, never saving the source ID.
  * @param {string} apiName Exact name ending in __dll.
  * @param {DloClient} client Authenticated target client.
+ * @param {string} [requestScope] Optional expected data space, never a URL query.
  * @returns {Promise<DloDocument>} Portable definition.
  */
-export async function retrieveNativeDlo(apiName: string, client: DloClient): Promise<DloDocument> {
-  const target = await resolveTarget(apiName, client);
+export async function retrieveNativeDlo(
+  apiName: string,
+  client: DloClient,
+  requestScope?: string,
+): Promise<DloDocument> {
+  const target = await resolveTarget(apiName, client, requestScope);
   return target.document;
 }
 
 /**
- * Preflight one API68/default deploy: only authoritative absence selects create.
+ * Preflight one native deploy: only authoritative absence selects create.
  * Updates permit label and ordinary field additions, refusing any removed/changed field or key.
  * @param {unknown} value Saved document.
  * @param {DloClient} client Authenticated target client.
+ * @param {string} [requestScope] Optional expected data space, never a URL query.
  * @returns {Promise<DloDeployPlan>} Target-bound write plan with no source IDs.
  */
 export async function preflightNativeDlo(
   value: unknown,
   client: DloClient,
+  requestScope?: string,
 ): Promise<DloDeployPlan> {
   const desired = validateDloDocument(value);
   const apiName = desired.identity.apiName;
+  if (requestScope !== undefined && requestScope !== desired.identity.dataSpace)
+    throw new DloError('DLO_DATASPACE_MISMATCH');
   let target: Awaited<ReturnType<typeof resolveTarget>>;
   try {
-    target = await resolveTarget(apiName, client);
+    target = await resolveTarget(apiName, client, requestScope);
+    if (target.document.identity.dataSpace !== desired.identity.dataSpace)
+      throw new DloError('DLO_DATASPACE_MISMATCH');
   } catch (error) {
     if (!(error instanceof DloError) || error.code !== 'DLO_HTTP_ERROR' || error.status !== 404)
       throw error;
@@ -102,7 +115,7 @@ export async function preflightNativeDlo(
         name: apiName.slice(0, -5),
         label: desired.spec.label,
         category: 'Other',
-        dataspaceInfo: [{ name: 'default' }],
+        dataspaceInfo: [{ name: desired.identity.dataSpace }],
         dataLakeFieldInputRepresentations: fields.map((field) => fieldInput(field)),
       },
     };
@@ -143,18 +156,23 @@ export async function preflightNativeDlo(
  * Resolve and preflight immediately before one write; no retries or cached-plan replay.
  * @param {unknown} value Portable document.
  * @param {DloClient} client Target client.
+ * @param {string} [requestScope] Optional expected data space, never a URL query.
  * @returns {Promise<{operation: 'create' | 'update', document: DloDocument}>} Accepted definition, not terminal activation proof.
  */
 export async function deployNativeDlo(
   value: unknown,
   client: DloClient,
+  requestScope?: string,
 ): Promise<{ operation: 'create' | 'update'; document: DloDocument }> {
-  const plan = await preflightNativeDlo(value, client);
+  const desired = validateDloDocument(value);
+  const plan = await preflightNativeDlo(desired, client, requestScope);
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)
       : await client.update(plan.targetId!, plan.body);
-  const document = normalizeDlo(response);
+  const document = normalizeDlo(response, requestScope);
+  if (document.identity.dataSpace !== desired.identity.dataSpace)
+    throw new DloError('DLO_DATASPACE_MISMATCH');
   if (document.identity.apiName !== plan.apiName)
     throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
   return { operation: plan.operation, document };
@@ -165,13 +183,15 @@ export async function deployNativeDlo(
  * The command executes by default; its preview path never invokes this operation.
  * @param {string} apiName Confirmed full API name.
  * @param {DloClient} client Authenticated target client.
- * @returns {Promise<{apiName: string, targetId: string}>} Exact deleted target identity.
+ * @param {string} [requestScope] Optional expected data space, never a URL query.
+ * @returns {Promise<{apiName: string, targetId: string, dataSpace: string}>} Exact deleted target identity.
  */
 export async function deleteNativeDlo(
   apiName: string,
   client: DloClient,
-): Promise<{ apiName: string; targetId: string }> {
-  const { targetId } = await resolveTarget(apiName, client);
+  requestScope?: string,
+): Promise<{ apiName: string; targetId: string; dataSpace: string }> {
+  const { targetId, document } = await resolveTarget(apiName, client, requestScope);
   await client.delete(targetId);
-  return { apiName, targetId };
+  return { apiName, targetId, dataSpace: document.identity.dataSpace };
 }

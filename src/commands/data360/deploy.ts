@@ -238,9 +238,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           ? value
           : Flags.orgApiVersion().parse(value, context, options),
     }),
-    'data-space': Flags.string({
-      default: 'default',
-      summary: 'Target logical data space (currently default).',
+    dataspace: Flags.string({
+      aliases: ['data-space'],
+      summary:
+        'Optional native data space; --data-space is a compatibility alias. Legacy families require default.',
     }),
     'source-dir': Flags.string({
       char: 'd',
@@ -454,6 +455,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
    */
   public async run(): Promise<DeployEnvelope> {
     const { flags } = await this.parse(Deploy);
+    const requestScope = flags.dataspace;
+    const effectiveScope = requestScope ?? 'default';
     const cwd = process.cwd();
     const plugin = {
       name: packageMetadata.name,
@@ -479,7 +482,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         generatedAt: new Date().toISOString(),
       },
       result: {
-        scope: { dataSpace: flags['data-space'] },
+        scope: { dataSpace: effectiveScope },
         selection: { sourceDir: flags['source-dir'] ?? [], metadata: flags.metadata ?? [] },
         items: [],
       },
@@ -612,7 +615,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
-        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'DMO_DEPENDENCY_EXPANSION_UNSUPPORTED');
         const rank = (input: DeployInput): number =>
@@ -639,7 +641,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         const source = (this.createDloClient ?? createDloClient)(target, version);
         const dmo = (this.createDmoClient ?? createDmoClient)(target, version);
         const mapping = (): ReturnType<typeof createMappingClient> =>
-          (this.createMappingClient ?? createMappingClient)(target, version);
+          (this.createMappingClient ?? createMappingClient)(
+            target,
+            version,
+            undefined,
+            requestScope,
+          );
         const hasMappings = nativeInputs.some((input) => input.document.kind === 'mapping');
         const plannedParents = new Set<string>();
         for (const input of nativeInputs) {
@@ -671,13 +678,26 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   ],
                 }
               : kind === 'mapping'
-                ? await (this.preflightMapping ?? preflightMapping)(input.document, mapping(), {
-                    source,
-                    target: dmo,
-                  })
+                ? await (this.preflightMapping ?? preflightMapping)(
+                    input.document,
+                    mapping(),
+                    {
+                      source,
+                      target: dmo,
+                    },
+                    requestScope,
+                  )
                 : kind === 'dlo'
-                  ? await (this.preflightDlo ?? preflightDloDeploy)(input.document, source)
-                  : await (this.preflightNativeDmo ?? preflightDmo)(input.document, dmo);
+                  ? await (this.preflightDlo ?? preflightDloDeploy)(
+                      input.document,
+                      source,
+                      requestScope,
+                    )
+                  : await (this.preflightNativeDmo ?? preflightDmo)(
+                      input.document,
+                      dmo,
+                      requestScope,
+                    );
             await verify();
             envelope.result.items.push({
               ...preview,
@@ -700,10 +720,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     target: dmo,
                   },
                   (changes) => mappingChanges.set(input.path, changes),
+                  requestScope,
                 )
               : kind === 'dlo'
-                ? await (this.executeDlo ?? executeDloDeploy)(input.document, source)
-                : await (this.executeNativeDmo ?? executeDmo)(input.document, dmo);
+                ? await (this.executeDlo ?? executeDloDeploy)(input.document, source, requestScope)
+                : await (this.executeNativeDmo ?? executeDmo)(input.document, dmo, requestScope);
           envelope.result.items.push({
             ...result,
             family: kind as 'mapping' | 'dlo' | 'dmo',
@@ -722,8 +743,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   kind === 'dlo'
                     ? unwrapDlo(await source.get(identity.apiName))
                     : unwrapNativeDmo(await dmo.get(identity.apiName));
-                const actual = kind === 'dlo' ? normalizeDlo(raw) : normalizeNativeDmo(raw);
-                if (actual.identity.apiName !== identity.apiName) break;
+                const actual =
+                  kind === 'dlo'
+                    ? normalizeDlo(raw, requestScope)
+                    : normalizeNativeDmo(raw, requestScope);
+                if (
+                  actual.identity.apiName !== identity.apiName ||
+                  actual.identity.dataSpace !== identity.dataSpace
+                )
+                  break;
                 const desired = input.document
                   .spec as import('../../artifacts/dlo-document.js').DloDocument['spec'];
                 const fields = new Map(actual.spec.fields.map((field) => [field.name, field]));
@@ -771,6 +799,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         await verify();
         return finish('success');
       }
+      if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
       const admitted = resolvedInputs.filter(
         (
           input,
@@ -788,7 +817,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
-        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'DLO_DEPENDENCY_EXPANSION_UNSUPPORTED');
         for (const input of admitted)
@@ -821,7 +850,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
-        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
         for (const input of admitted)
           if (input.document.kind === 'data-graph') {
             const document = validateDataGraphDocument(input.document);
@@ -860,7 +889,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
-        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'])
           return finish('blocked', 'CI_DEPENDENCY_EXPANSION_UNSUPPORTED');
         for (const input of admitted)
@@ -935,7 +964,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           }
           if (family === 'identity-resolution') validateIdentityResolutionDocument(input.document);
         }
-        if (flags['data-space'] !== 'default') return finish('blocked', 'INVALID_SCOPE');
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'] && !hasDataGraphs)
           return finish('blocked', 'IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
@@ -1220,7 +1249,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input.document,
           connection,
           selection,
-          flags['data-space'],
+          effectiveScope,
         );
         const fingerprint = createHash('sha256').update(JSON.stringify(bound)).digest('hex');
         const prior = ciBindings.get(input.path);
@@ -1241,34 +1270,34 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     input.document,
                     connectionFor(input),
                     familySelection(input),
-                    flags['data-space'],
+                    effectiveScope,
                   )
                 : input.document.kind === 'calculated-insight'
                   ? await this.preflightCalculatedInsight(
                       input.document,
                       connection,
                       selection,
-                      flags['data-space'],
+                      effectiveScope,
                     )
                   : input.document.kind === 'identity-resolution'
                     ? await this.preflightIdentityResolution(
                         input.document,
                         connectionFor(input),
                         familySelection(input),
-                        flags['data-space'],
+                        effectiveScope,
                       )
                     : segment
                       ? await this.preflightSegment(
                           input.document,
                           connection,
                           selection,
-                          flags['data-space'],
+                          effectiveScope,
                         )
                       : await this.preflight(
                           input.document,
                           connection,
                           selection,
-                          flags['data-space'],
+                          effectiveScope,
                           true,
                         );
           if (input.document.kind === 'dlo') await this.verifyDloInput(input as DloDeployInput);
@@ -1455,7 +1484,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     pending.document,
                     connectionFor(pending),
                     familySelection(pending),
-                    flags['data-space'],
+                    effectiveScope,
                   );
                   if (
                     !['unchanged', 'update'].includes(fresh.outcome) ||
@@ -1472,7 +1501,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     pending.document,
                     connectionFor(pending),
                     familySelection(pending),
-                    flags['data-space'],
+                    effectiveScope,
                   );
                   if (
                     !['unchanged', 'update'].includes(fresh.outcome) ||
@@ -1492,7 +1521,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     pending.document,
                     connection,
                     selection,
-                    flags['data-space'],
+                    effectiveScope,
                   );
                   if (
                     !['unchanged', 'update'].includes(fresh.outcome) ||
@@ -1508,7 +1537,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   pending.document,
                   connection,
                   selection,
-                  flags['data-space'],
+                  effectiveScope,
                 );
                 if (
                   !['unchanged', 'update'].includes(fresh.outcome) ||
@@ -1543,7 +1572,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                         input.document,
                         connectionFor(input),
                         familySelection(input),
-                        flags['data-space'],
+                        effectiveScope,
                         {
                           allowProcessing: flags['allow-processing'] === true,
                           verifyInput: verifyInputs,
@@ -1556,7 +1585,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                           input.document,
                           connection,
                           selection,
-                          flags['data-space'],
+                          effectiveScope,
                           {
                             allowProcessing: flags['allow-processing'] === true,
                             verifyInput: verifyInputs,
@@ -1569,7 +1598,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                             input.document,
                             connectionFor(input),
                             familySelection(input),
-                            flags['data-space'],
+                            effectiveScope,
                             {
                               allowProcessing: flags['allow-processing'] === true,
                               verifyInput: verifyInputs,
@@ -1582,7 +1611,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                               input.document,
                               connection,
                               selection,
-                              flags['data-space'],
+                              effectiveScope,
                               {
                                 allowProcessing: flags['allow-processing'] === true,
                                 verifyInput: verifyInputs,
@@ -1592,7 +1621,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                               input.document as DmoDocument,
                               connection,
                               selection,
-                              flags['data-space'],
+                              effectiveScope,
                             );
               Object.assign(item, result);
             } catch {

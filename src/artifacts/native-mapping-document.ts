@@ -7,7 +7,7 @@ export type NativeMappingField = {
 export type NativeMappingDocument = {
   schemaVersion: 1;
   kind: 'mapping';
-  identity: { apiName: string; dataSpace: 'default' };
+  identity: { apiName: string; dataSpace: string };
   spec: {
     sourceEntityDeveloperName: string;
     targetEntityDeveloperName: string;
@@ -62,7 +62,12 @@ export function validateNativeMappingDocument(value: unknown): NativeMappingDocu
     document.kind !== 'mapping' ||
     typeof identity.apiName !== 'string' ||
     !nativeMappingName.test(identity.apiName) ||
-    identity.dataSpace !== 'default' ||
+    typeof identity.dataSpace !== 'string' ||
+    !identity.dataSpace.trim() ||
+    identity.dataSpace !== identity.dataSpace.trim() ||
+    [...identity.dataSpace].some(
+      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127,
+    ) ||
     typeof spec.sourceEntityDeveloperName !== 'string' ||
     !mappingDloName.test(spec.sourceEntityDeveloperName) ||
     typeof spec.targetEntityDeveloperName !== 'string' ||
@@ -114,7 +119,7 @@ export function unwrapNativeMapping(value: unknown): Record<string, unknown> {
 /**
  * Save logical bindings and every returned pair, without runtime mapping status or IDs.
  * @param {unknown} value Direct native response.
- * @param {string} dataSpace Explicit request context, absent from native responses.
+ * @param {string} [dataSpace] Local effective context; omitted native scope means default, not HTTP injection.
  * @returns {NativeMappingDocument} Portable definition, not a write payload.
  */
 export function normalizeNativeMapping(
@@ -122,10 +127,7 @@ export function normalizeNativeMapping(
   dataSpace = 'default',
 ): NativeMappingDocument {
   const object = unwrapNativeMapping(value);
-  if (
-    dataSpace !== 'default' ||
-    (object.dataSpaceName !== undefined && object.dataSpaceName !== dataSpace)
-  )
+  if (object.dataSpaceName !== undefined && object.dataSpaceName !== dataSpace)
     throw new NativeMappingError('UNSUPPORTED_MAPPING_DATASPACE');
   return validateNativeMappingDocument({
     schemaVersion: 1,
@@ -142,15 +144,19 @@ export function normalizeNativeMapping(
 /**
  * Unwrap only the documented collection wrapper; do not infer pagination completeness.
  * @param {unknown} value Native collection response.
+ * @param {string} [dataSpace] Local effective scope for every entry.
  * @returns {Record<string, unknown>[]} Checked detail representations.
  */
-export function unwrapNativeMappingCollection(value: unknown): Record<string, unknown>[] {
+export function unwrapNativeMappingCollection(
+  value: unknown,
+  dataSpace = 'default',
+): Record<string, unknown>[] {
   const object = record(value);
   if (!Array.isArray(object.objectSourceTargetMaps))
     throw new NativeMappingError('INVALID_MAPPING_RESPONSE');
   return object.objectSourceTargetMaps.map((entry) => {
     const detail = unwrapNativeMapping(entry);
-    normalizeNativeMapping(detail);
+    normalizeNativeMapping(detail, dataSpace);
     return detail;
   });
 }

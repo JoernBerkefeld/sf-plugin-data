@@ -231,7 +231,7 @@ test('native DMO validation fails closed on identity, runtime fields, primary ke
       d.identity.apiName = resourceId;
     },
     (d) => {
-      d.identity.dataSpace = 'other';
+      d.identity.dataSpace = ' ';
     },
     (d) => {
       d.spec.label = 'x'.repeat(41);
@@ -257,7 +257,7 @@ test('native DMO validation fails closed on identity, runtime fields, primary ke
     assert.throws(() => validateNativeDmoDocument(saved), NativeDmoError);
   }
   for (const raw of [
-    { ...native(), dataSpaceName: 'other' },
+    { ...native(), dataSpaceName: '' },
     { ...native(), fields: [{ ...field('Id__c', true), type: undefined }] },
     { ...native(), fields: [{ ...field('Id__c', true), dataType: 'Number' }] },
     { ...native(), fields: [{ ...field('Id__c', true), isPrimaryKey: 'true' }] },
@@ -274,7 +274,6 @@ test('native DMO create uses bare names, Other, default and only authored Text i
       name: 'Example',
       label: 'Example',
       category: 'Other',
-      dataSpaceName: 'default',
       fields: [
         { name: 'Id', label: 'Id', dataType: 'Text', isPrimaryKey: true, isDynamicLookup: false },
         {
@@ -492,7 +491,7 @@ test('native DMO create independently confirms GET, exact retrieve/delete ignore
         calls.push(['delete', name]);
       },
     }),
-    { apiName, targetApiName: apiName },
+    { apiName, targetApiName: apiName, dataSpace: 'default' },
   );
   assert.deepEqual(calls, [
     ['get', apiName],
@@ -501,7 +500,7 @@ test('native DMO create independently confirms GET, exact retrieve/delete ignore
   let writes = 0;
   for (const raw of [
     { ...native(), name: 'Other__dlm' },
-    { ...native(), dataSpaceName: 'other' },
+    { ...native(), dataSpaceName: '' },
   ]) {
     await assert.rejects(
       deleteNativeDmo(apiName, {
@@ -521,6 +520,71 @@ test('native DMO create independently confirms GET, exact retrieve/delete ignore
     }),
     /NAME/,
   );
+});
+
+test('DMO authoritative scope, conditional body projection and collision refusal', async () => {
+  const raw = { ...native(), dataSpaceName: 'other' };
+  const saved = normalizeNativeDmo(raw);
+  assert.equal(saved.identity.dataSpace, 'other');
+  assert.throws(() => normalizeNativeDmo(raw, 'default'), /DATASPACE/);
+  assert.equal(normalizeNativeDmo(raw, 'other').identity.dataSpace, 'other');
+  const omittedCreate = await preflightNativeDmo(document(), { get: absent });
+  const defaultCreate = await preflightNativeDmo(document(), { get: absent }, 'default');
+  const scopedCreate = await preflightNativeDmo(saved, { get: absent }, 'other');
+  const omittedPatch = await preflightNativeDmo(saved, { get: async () => raw });
+  const scopedPatch = await preflightNativeDmo(saved, { get: async () => raw }, 'other');
+  assert.ok(!Object.hasOwn(omittedCreate.body, 'dataSpaceName'));
+  assert.equal(defaultCreate.body.dataSpaceName, 'default');
+  assert.equal(scopedCreate.body.dataSpaceName, 'other');
+  assert.ok(!Object.hasOwn(omittedPatch.body, 'dataSpaceName'));
+  assert.equal(scopedPatch.body.dataSpaceName, 'other');
+  let writes = 0;
+  const client = {
+    get: absent,
+    create: async () => {
+      writes++;
+      return raw;
+    },
+  };
+  await assert.rejects(deployNativeDmo(saved, client), /DATASPACE/);
+  await assert.rejects(deployNativeDmo(saved, client, 'default'), /DATASPACE/);
+  const target = {
+    get: async () => native(),
+    update: async () => {
+      writes++;
+      return raw;
+    },
+    delete: async () => {
+      writes++;
+    },
+  };
+  await assert.rejects(deployNativeDmo(saved, target), /DATASPACE/);
+  await assert.rejects(deleteNativeDmo(apiName, target, 'other'), /DATASPACE/);
+  await assert.rejects(retrieveNativeDmo(apiName, target, 'other'), /DATASPACE/);
+  assert.equal(writes, 0);
+  let reads = 0;
+  const created = await deployNativeDmo(
+    saved,
+    {
+      get: async () => (++reads === 1 ? absent() : raw),
+      create: async (body) => {
+        assert.equal(body.dataSpaceName, 'other');
+        return raw;
+      },
+    },
+    'other',
+  );
+  assert.equal(created.document.identity.dataSpace, 'other');
+  await assert.rejects(
+    deployNativeDmo(saved, { get: async () => raw, update: async () => native() }, 'other'),
+    /DATASPACE/,
+  );
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'dmo-space-collision-'));
+  const receipt = await writeNativeDmoDocument(document(), cwd, false);
+  const bytes = await readFile(receipt.path);
+  for (const overwrite of [false, true])
+    await assert.rejects(writeNativeDmoDocument(saved, cwd, overwrite), /DATASPACE_COLLISION/);
+  assert.deepEqual(await readFile(receipt.path), bytes);
 });
 
 test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained FTemp bodies and no IDs', async () => {

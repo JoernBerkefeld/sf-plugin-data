@@ -75,7 +75,22 @@ test('mapping save retains generated KQ/system pairs and observed selectors, not
   assert.throws(() => unwrapNativeMappingCollection([raw]), /DOCUMENT/);
   assert.throws(() => unwrapNativeMappingCollection({ fieldMappings: [] }), /RESPONSE/);
   assert.throws(() => unwrapNativeMappingCollection({ objectSourceTargetMaps: [{}] }), /RESPONSE/);
-  assert.throws(() => normalizeNativeMapping(raw, 'other'), /DATASPACE/);
+  assert.equal(normalizeNativeMapping(raw, 'other').identity.dataSpace, 'other');
+  assert.equal(
+    normalizeNativeMapping({ ...raw, dataSpaceName: 'other' }, 'other').identity.dataSpace,
+    'other',
+  );
+  assert.throws(
+    () => normalizeNativeMapping({ ...raw, dataSpaceName: 'wrong' }, 'other'),
+    /DATASPACE/,
+  );
+  assert.deepEqual(
+    unwrapNativeMappingCollection(
+      { objectSourceTargetMaps: [{ ...raw, dataSpaceName: 'other' }] },
+      'other',
+    ),
+    [{ ...raw, dataSpaceName: 'other' }],
+  );
   assert.throws(() => normalizeNativeMapping({ ...raw, dataSpaceName: 'other' }), /DATASPACE/);
 });
 
@@ -83,7 +98,9 @@ test('mapping validation rejects malformed identities, duplicate pairs/selectors
   for (const change of [
     (d) => (d.identity.apiName = '../escape'),
     (d) => (d.identity.apiName = 'source-id/route'),
-    (d) => (d.identity.dataSpace = 'other'),
+    ...['', ' ', ' other', 'other ', 'bad\u0000scope', undefined, 42].map(
+      (scope) => (d) => (d.identity.dataSpace = scope),
+    ),
     (d) => (d.spec.sourceEntityDeveloperName = 'Example__dlm'),
     (d) => (d.spec.targetEntityDeveloperName = 'Example__dll'),
     (d) => (d.spec.fieldMappings = []),
@@ -128,6 +145,18 @@ test('mapping publication round trips all seven pairs, refuses overwrite, emits 
   const overwritten = await writeNativeMappingDocument(changed, root, true);
   assert.equal(overwritten.outcome, 'retrieved');
   assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), changed);
+  const otherSpace = structuredClone(changed);
+  otherSpace.identity.dataSpace = 'Team / +&?=ü';
+  for (const overwrite of [false, true]) {
+    await assert.rejects(
+      writeNativeMappingDocument(otherSpace, root, overwrite),
+      /DATASPACE_COLLISION/,
+    );
+    assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), changed);
+  }
+  const otherRoot = await mkdtemp(path.join(os.tmpdir(), 'mapping-scoped-save-'));
+  const scoped = await writeNativeMappingDocument(otherSpace, otherRoot, false);
+  assert.deepEqual(JSON.parse(await readFile(scoped.path, 'utf8')), otherSpace);
   for (const unsafe of ['relative', path.parse(root).root, `${root}/../escape`, `${root}/*`])
     await assert.rejects(writeNativeMappingDocument(value, unsafe, false), /UNSAFE_PATH/);
 });
@@ -176,19 +205,65 @@ test('mapping transport uses filtered collection, detail, singular input and sel
   assert.equal(created.status, 'CREATING');
   await client.update(mappingName, body());
   const prefix = '/services/data/v65.0/ssot/data-model-object-mappings';
-  assert.equal(calls[0][3], `${prefix}?dataspace=default&dmoDeveloperName=Example__dlm`);
+  assert.equal(calls[0][3], `${prefix}?dmoDeveloperName=Example__dlm`);
   assert.equal(
     calls[1][3],
-    `${prefix}?dataspace=default&dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`,
+    `${prefix}?dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`,
   );
-  assert.equal(calls[2][3], `${prefix}/${mappingName}?dataspace=default`);
-  assert.equal(calls[3][3], `${prefix}?dataspace=default`);
+  assert.equal(calls[2][3], `${prefix}/${mappingName}`);
+  assert.equal(calls[3][3], `${prefix}`);
   assert.ok(calls[3].includes('POST'));
-  assert.equal(calls[4][3], `${prefix}/${mappingName}/field-mappings?dataspace=default`);
+  assert.equal(calls[4][3], `${prefix}/${mappingName}/field-mappings`);
   assert.ok(calls[4].includes('PATCH'));
   assert.ok(
     calls.every((arguments_) => arguments_.includes('--include') && arguments_.includes('target')),
   );
+});
+
+test('mapping transport encodes explicit dataspace on every operation without changing routes or bodies', async () => {
+  const calls = [];
+  const dataSpace = 'Team / +&?=ü';
+  const query = '?dataspace=Team+%2F+%2B%26%3F%3D%C3%BC';
+  const prefix = '/services/data/v68.0/ssot/data-model-object-mappings';
+  const client = createMappingClient(
+    'target',
+    '68.0',
+    async (arguments_) => {
+      if (arguments_.includes('--file')) {
+        const request = JSON.parse(
+          await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),
+        );
+        assert.deepEqual(request.body, { mode: 'raw', raw: '' });
+        calls.push([request.method, request.url]);
+        return http(204);
+      }
+      if (arguments_.includes('--body'))
+        assert.deepEqual(
+          JSON.parse(await readFile(arguments_[arguments_.indexOf('--body') + 1].slice(1), 'utf8')),
+          body(),
+        );
+      const method = arguments_[arguments_.indexOf('--method') + 1];
+      calls.push([method, arguments_[3]]);
+      return http(method === 'POST' ? 201 : 200, native());
+    },
+    dataSpace,
+  );
+  await client.list('Example__dlm');
+  await client.list('Example__dlm', 'Example__dll');
+  await client.get(mappingName);
+  await client.create(body());
+  await client.update(mappingName, body());
+  await client.delete(mappingName);
+  await client.deleteField(mappingName, 'observed_selector_123');
+  assert.deepEqual(calls, [
+    ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm`],
+    ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`],
+    ['GET', `${prefix}/${mappingName}${query}`],
+    ['POST', `${prefix}${query}`],
+    ['PATCH', `${prefix}/${mappingName}/field-mappings${query}`],
+    ['DELETE', `${prefix}/${mappingName}${query}`],
+    ['DELETE', `${prefix}/${mappingName}/field-mappings/observed_selector_123${query}`],
+  ]);
 });
 
 test('mapping DELETE accepts documented200 and observed204 empty without field delete or cascade', async () => {
@@ -199,7 +274,7 @@ test('mapping DELETE accepts documented200 and observed204 empty without field d
       await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),
     );
     assert.deepEqual(request, {
-      url: `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}?dataspace=default`,
+      url: `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}`,
       method: 'DELETE',
       body: { mode: 'raw', raw: '' },
     });
@@ -228,7 +303,7 @@ test('mapping field DELETE uses exact observed selector once and rejects unsafe 
   assert.equal(calls.length, 1);
   assert.equal(
     calls[0].url,
-    `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123?dataspace=default`,
+    `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
   );
   assert.deepEqual(calls[0].body, { mode: 'raw', raw: '' });
   for (const selector of ['', '../escape', 'a/b', 'a?dataspace=other', undefined])
@@ -274,7 +349,7 @@ test('mapping field DELETE preserves every admitted compatibility pin and normal
     await client.deleteField(mappingName, 'observed_selector_123');
     assert.deepEqual(calls, [
       {
-        url: `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123?dataspace=default`,
+        url: `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
         method: 'DELETE',
         body: { mode: 'raw', raw: '' },
       },

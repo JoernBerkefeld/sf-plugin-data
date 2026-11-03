@@ -70,7 +70,10 @@ test('normalizes GET and write shapes, preserving all fields but not runtime/wra
   assert.equal(saved.spec.status, undefined);
   assert.deepEqual(saved, normalizeDlo(raw));
   assert.throws(() => normalizeDlo({ dataLakeObjects: [raw, raw] }), /AMBIGUOUS/);
-  assert.throws(() => normalizeDlo({ ...raw, dataSpaceInfo: [{ name: 'other' }] }), /DATASPACE/);
+  assert.equal(
+    normalizeDlo({ ...raw, dataSpaceInfo: [{ name: 'other' }] }).identity.dataSpace,
+    'other',
+  );
   assert.ok(dloName.test(apiName));
   assert.ok(!dloName.test('../Example__dll'));
 });
@@ -166,7 +169,7 @@ test('DLO save preserves other/custom/primary qualifiers and update refuses thei
 test('document validation refuses invalid identity, fields, labels and primary-key inventory', () => {
   for (const mutate of [
     (d) => {
-      d.identity.dataSpace = 'other';
+      d.identity.dataSpace = ' ';
     },
     (d) => {
       d.identity.apiName = 'Example';
@@ -275,7 +278,11 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
   assert.deepEqual(await retrieveNativeDlo(apiName, client), document());
   const deployed = await deployNativeDlo(document(), client);
   assert.equal(deployed.operation, 'update');
-  assert.deepEqual(await deleteNativeDlo(apiName, client), { apiName, targetId });
+  assert.deepEqual(await deleteNativeDlo(apiName, client), {
+    apiName,
+    targetId,
+    dataSpace: 'default',
+  });
   assert.deepEqual(
     calls.map((c) => c[0]),
     ['get', 'get', 'update', 'get', 'delete'],
@@ -299,6 +306,56 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
   assert.equal(writes, 1);
   const result = await deployNativeDlo(document(), { get: absent, create: async () => native() });
   assert.equal(result.operation, 'create');
+});
+
+test('DLO concrete membership binding, required create scope and collision refusal', async () => {
+  const raw = { ...native(), dataSpaceInfo: [{ name: 'other' }] };
+  const saved = normalizeDlo(raw);
+  assert.equal(saved.identity.dataSpace, 'other');
+  const multiple = { ...raw, dataSpaceInfo: [{ name: 'default' }, { name: 'other' }] };
+  assert.throws(() => normalizeDlo(multiple), /DATASPACE/);
+  assert.equal(normalizeDlo(multiple, 'other').identity.dataSpace, 'other');
+  assert.throws(() => normalizeDlo(multiple, 'missing'), /DATASPACE/);
+  assert.throws(() => normalizeDlo({ ...raw, dataSpaceInfo: [] }), /DATASPACE/);
+  for (const scope of [undefined, 'other']) {
+    const plan = await preflightNativeDlo(saved, { get: absent }, scope);
+    assert.deepEqual(plan.body.dataspaceInfo, [{ name: 'other' }]);
+    assert.ok(!Object.hasOwn(plan.body, 'dataSpaceName'));
+    const result = await deployNativeDlo(saved, { get: absent, create: async () => raw }, scope);
+    assert.equal(result.document.identity.dataSpace, 'other');
+  }
+  let writes = 0;
+  const client = {
+    get: async () => native(),
+    update: async () => {
+      writes++;
+      return raw;
+    },
+    delete: async () => {
+      writes++;
+    },
+    create: async () => {
+      writes++;
+      return raw;
+    },
+  };
+  await assert.rejects(deployNativeDlo(saved, client), /DATASPACE/);
+  await assert.rejects(deployNativeDlo(saved, client, 'default'), /DATASPACE/);
+  await assert.rejects(deleteNativeDlo(apiName, client, 'other'), /DATASPACE/);
+  await assert.rejects(retrieveNativeDlo(apiName, client, 'other'), /DATASPACE/);
+  assert.equal(writes, 0);
+  const multiplePlan = await preflightNativeDlo(saved, { get: async () => multiple }, 'other');
+  assert.equal(multiplePlan.operation, 'update');
+  await assert.rejects(
+    deployNativeDlo(saved, { get: absent, create: async () => native() }, 'other'),
+    /DATASPACE/,
+  );
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'dlo-space-collision-'));
+  const receipt = await writeDloDocument(document(), cwd, false);
+  const bytes = await readFile(receipt.path);
+  for (const overwrite of [false, true])
+    await assert.rejects(writeDloDocument(saved, cwd, overwrite), /DATASPACE_COLLISION/);
+  assert.deepEqual(await readFile(receipt.path), bytes);
 });
 
 test('REST parses receipt-proven raw status/body shapes and corrected empty DELETE request', async () => {

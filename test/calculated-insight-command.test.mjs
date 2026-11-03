@@ -95,7 +95,7 @@ const retrieve = (overrides = {}) => {
   const flags = {
     metadata: ['calculated-insight:SyntheticInsight__cio'],
     'api-version': '65.0',
-    'data-space': 'default',
+    dataspace: 'default',
     'target-org': 'synthetic',
     overwrite: false,
     ...overrides,
@@ -148,7 +148,7 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
     preview: true,
     'source-dir': receipts.map(({ path: member }) => member),
     'api-version': '65.0',
-    'data-space': 'default',
+    dataspace: 'default',
     ...overrides,
   };
   const connection = { getApiVersion: () => '65.0' };
@@ -250,7 +250,7 @@ test('later CI pair mismatch prevents ALL mixed selected outputs', async () => {
 for (const overrides of [
   { 'api-version': '67.0' },
   { 'api-version': 'latest' },
-  { 'data-space': 'other' },
+  { dataspace: 'other' },
   { 'include-dependencies': true },
   { metadata: ['calculated-insight'] },
   { metadata: ['calculated-insight:Invalid'] },

@@ -144,7 +144,7 @@ const invocation = (overrides = {}) => {
   const flags = {
     'api-version': 'auto',
     'target-org': 'synthetic',
-    'data-space': 'default',
+    dataspace: 'default',
     ...overrides,
   };
   command.parse = async () => ({ flags });
@@ -209,6 +209,82 @@ for (const metadata of [
       ),
     );
   });
+
+for (const scope of [undefined, 'Team'])
+  test(`native retrieval threads optional request scope unchanged ${scope}`, async () => {
+    const command = invocation({ dataspace: scope });
+    command.listNativeNames = async (_connection, _version, family, actual) => {
+      assert.equal(actual, scope);
+      return family === 'dlo' ? ['Source__dll'] : ['ssot__Target__dlm'];
+    };
+    command.listNativeMappingNames = async (parents, _reader, actual) => {
+      assert.deepEqual(parents, ['ssot__Target__dlm']);
+      assert.equal(actual, scope);
+      return ['Map'];
+    };
+    command.createMappingClient = (_target, _version, runner, actual) => {
+      assert.equal(runner, undefined);
+      assert.equal(actual, scope);
+      return {};
+    };
+    for (const [method, kind] of [
+      ['acquireDlo', 'dlo'],
+      ['acquireNativeDmo', 'dmo'],
+      ['acquireNativeMapping', 'mapping'],
+    ])
+      command[method] = async (apiName, _client, actual) => {
+        assert.equal(actual, scope);
+        return { kind, identity: { dataSpace: scope ?? 'default', apiName } };
+      };
+    const result = await run(command);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result.items.length, 3);
+    assert.ok(
+      result.result.items.every((item) => item.identity.dataSpace === (scope ?? 'default')),
+    );
+  });
+
+for (const family of ['dlo', 'dmo'])
+  test(`explicit ${family} inventory filters actual memberships without a query filter`, async () => {
+    const names = await listNativeNames(
+      connection(async ({ url }) => {
+        assert.deepEqual([...new URL(url).searchParams.keys()], ['limit', 'offset', 'orderBy']);
+        return family === 'dlo'
+          ? {
+              dataLakeObjects: [
+                { name: 'Source__dll', dataSpaceInfo: [{ name: 'default' }, { name: 'Team' }] },
+              ],
+            }
+          : { dataModelObject: [{ name: 'ssot__Target__dlm', dataSpaceName: 'Team' }] };
+      }),
+      '68.0',
+      family,
+      'Team',
+    );
+    assert.deepEqual(names, [family === 'dlo' ? 'Source__dll' : 'ssot__Target__dlm']);
+  });
+
+test('scoped mapping inventory normalizes omitted response scope in request context', async () => {
+  assert.deepEqual(
+    await listNativeMappingNames(
+      ['Target__dlm'],
+      {
+        list: async () => ({ objectSourceTargetMaps: [mapping()] }),
+      },
+      'Team',
+    ),
+    ['Map'],
+  );
+  await assert.rejects(
+    listNativeMappingNames(
+      ['Target__dlm'],
+      {
+        list: async () => ({ objectSourceTargetMaps: [{ ...mapping(), dataSpaceName: 'Other' }] }),
+      },
+      'Team',
+    ),
+  );
+});
 
 test('inventory failure prevents all publication; low version refuses before auth', async () => {
   const command = invocation();

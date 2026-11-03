@@ -277,7 +277,7 @@ const retrieve = (overrides = {}) => {
   const flags = {
     metadata: ['data-graph:SyntheticGraph'],
     'api-version': 'auto',
-    'data-space': 'default',
+    dataspace: 'default',
     'output-dir': 'synthetic',
     overwrite: false,
     ...overrides,
@@ -327,7 +327,7 @@ test('Graph public retrieve refuses numeric65/latest/expansion/invalid exact sel
     { 'api-version': '68.0' },
     { metadata: ['data-graph'] },
     { metadata: ['data-graph:../unsafe'] },
-    { 'data-space': 'other' },
+    { dataspace: 'other' },
     { 'api-version': '67.0', metadata: ['data-graph:SyntheticGraph', 'dmo:Example__dlm'] },
   ]) {
     const { command, calls } = retrieve(overrides);
@@ -454,7 +454,7 @@ const deploy = (overrides = {}, mixed = false) => {
   const flags = {
     'source-dir': ['synthetic'],
     'api-version': 'auto',
-    'data-space': 'default',
+    dataspace: 'default',
     'allow-processing': true,
     preview: false,
     ...overrides,
@@ -540,7 +540,7 @@ test('public owned Graph deploy orders selected owner, expands opt-in and rebind
           metadata: ['data-graph:SyntheticGraph'],
           'include-dependencies': true,
           'api-version': 'auto',
-          'data-space': 'default',
+          dataspace: 'default',
           'allow-processing': true,
           'target-org': {
             getOrgId: () => 'synthetic',

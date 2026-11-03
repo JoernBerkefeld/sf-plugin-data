@@ -68,14 +68,19 @@ function fieldInput(field: NativeDmoField): Record<string, unknown> {
 }
 
 /**
- * Resolve and verify the exact full name and default data space, never inspecting its ID.
+ * Resolve and verify the exact full name and observed data space, never inspecting its ID.
  * @param {string} apiName Requested full name.
  * @param {DmoClient} client Target client.
+ * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @returns {Promise<NativeDmoDocument>} Verified target definition.
  */
-async function resolveTarget(apiName: string, client: DmoClient): Promise<NativeDmoDocument> {
+async function resolveTarget(
+  apiName: string,
+  client: DmoClient,
+  requestScope?: string,
+): Promise<NativeDmoDocument> {
   if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
-  const document = normalizeNativeDmo(await client.get(apiName));
+  const document = normalizeNativeDmo(await client.get(apiName), requestScope);
   if (document.identity.apiName !== apiName)
     throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
   return document;
@@ -85,30 +90,38 @@ async function resolveTarget(apiName: string, client: DmoClient): Promise<Native
  * Retrieve an exact portable definition including all generated fields.
  * @param {string} apiName Full name ending in __dlm.
  * @param {DmoClient} client Authenticated client.
+ * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @returns {Promise<NativeDmoDocument>} Portable definition, without runtime observations.
  */
 export async function retrieveNativeDmo(
   apiName: string,
   client: DmoClient,
+  requestScope?: string,
 ): Promise<NativeDmoDocument> {
-  return resolveTarget(apiName, client);
+  return resolveTarget(apiName, client, requestScope);
 }
 
 /**
  * Preflight a bounded API65 create or label/additive Text update without mutation.
  * @param {unknown} value Portable document.
  * @param {DmoClient} client Target client.
+ * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @returns {Promise<NativeDmoDeployPlan>} Fresh name-bound write plan.
  */
 export async function preflightNativeDmo(
   value: unknown,
   client: DmoClient,
+  requestScope?: string,
 ): Promise<NativeDmoDeployPlan> {
   const desired = validateNativeDmoDocument(value);
   const apiName = desired.identity.apiName;
+  if (requestScope !== undefined && requestScope !== desired.identity.dataSpace)
+    throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
   let target: NativeDmoDocument;
   try {
-    target = await resolveTarget(apiName, client);
+    target = await resolveTarget(apiName, client, requestScope);
+    if (target.identity.dataSpace !== desired.identity.dataSpace)
+      throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
   } catch (error) {
     if (
       !(error instanceof NativeDmoError) ||
@@ -116,6 +129,8 @@ export async function preflightNativeDmo(
       error.status !== 404
     )
       throw error;
+    if (requestScope === undefined && desired.identity.dataSpace !== 'default')
+      throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
     const fields = desired.spec.fields.filter((field) => !generated(field));
     if (fields.filter((field) => field.isPrimaryKey).length !== 1)
       throw new NativeDmoError('INVALID_DMO_PRIMARY_KEY');
@@ -126,7 +141,7 @@ export async function preflightNativeDmo(
         name: apiName.slice(0, -5),
         label: desired.spec.label,
         category: 'Other',
-        dataSpaceName: 'default',
+        ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
         fields: fields.map((field) => fieldInput(field)),
       },
     };
@@ -157,6 +172,7 @@ export async function preflightNativeDmo(
     ...(omittedTargetFields.length > 0 ? { omittedTargetFields } : {}),
     body: {
       label: desired.spec.label,
+      ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
       ...(added.length > 0 ? { fields: added.map((field) => fieldInput(field)) } : {}),
     },
   };
@@ -190,25 +206,27 @@ function confirmed(desired: NativeDmoDocument, actual: NativeDmoDocument): boole
  * Stale PATCH bodies never establish persistence; failed readback never triggers another write.
  * @param {unknown} value Portable requested definition.
  * @param {DmoClient} client Target client.
+ * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @returns {Promise<{operation: 'create' | 'update', document: NativeDmoDocument}>} Confirmed definition, not activation proof.
  */
 export async function deployNativeDmo(
   value: unknown,
   client: DmoClient,
+  requestScope?: string,
 ): Promise<{ operation: 'create' | 'update'; document: NativeDmoDocument }> {
   const desired = validateNativeDmoDocument(value);
-  const plan = await preflightNativeDmo(desired, client);
+  const plan = await preflightNativeDmo(desired, client, requestScope);
   // Bind readback expectations to the same target snapshot that authorized PATCH.
   desired.spec.fields.push(...(plan.omittedTargetFields ?? []));
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)
       : await client.update(plan.targetApiName!, plan.body);
-  const accepted = normalizeNativeDmo(response);
+  const accepted = normalizeNativeDmo(response, desired.identity.dataSpace);
   if (accepted.identity.apiName !== plan.apiName)
     throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
   for (let attempt = 0; attempt < 3; attempt++) {
-    const document = await resolveTarget(plan.apiName, client);
+    const document = await resolveTarget(plan.apiName, client, desired.identity.dataSpace);
     if (confirmed(desired, document)) return { operation: plan.operation, document };
   }
   throw new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED');
@@ -218,14 +236,16 @@ export async function deployNativeDmo(
  * Delete only the freshly resolved exact full name, without cascade or local deletion.
  * @param {string} apiName Requested full name.
  * @param {DmoClient} client Target client.
- * @returns {Promise<{apiName: string, targetApiName: string}>} Exact deleted target name.
+ * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @returns {Promise<{apiName: string, targetApiName: string, dataSpace: string}>} Exact deleted target identity.
  */
 export async function deleteNativeDmo(
   apiName: string,
   client: DmoClient,
-): Promise<{ apiName: string; targetApiName: string }> {
-  const target = await resolveTarget(apiName, client);
+  requestScope?: string,
+): Promise<{ apiName: string; targetApiName: string; dataSpace: string }> {
+  const target = await resolveTarget(apiName, client, requestScope);
   const targetApiName = target.identity.apiName;
   await client.delete(targetApiName);
-  return { apiName, targetApiName };
+  return { apiName, targetApiName, dataSpace: target.identity.dataSpace };
 }

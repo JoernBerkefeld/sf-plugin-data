@@ -28,6 +28,37 @@ const run = async (command) => {
   }
 };
 
+for (const scope of [undefined, 'Team'])
+  for (const preview of [false, true])
+    test(`public mapping delete passes scope without moving injection positions ${scope}/${preview}`, async () => {
+      const command = invocation({ dataspace: scope, preview });
+      const client = { delete: async () => {} };
+      command.createMappingClient = (_target, _version, runner, actual) => {
+        assert.equal(runner, undefined);
+        assert.equal(actual, scope);
+        return client;
+      };
+      let calls = 0;
+      command.preflightDeleteMapping = command.deleteMapping = async (
+        name,
+        actualClient,
+        dependencies,
+        actual,
+      ) => {
+        calls++;
+        assert.equal(name, 'Generated_123');
+        assert.equal(typeof actualClient.delete, 'function');
+        assert.ok(dependencies.source);
+        assert.ok(dependencies.target);
+        assert.equal(actual, scope);
+        return { removals: [] };
+      };
+      const result = await run(command);
+      assert.equal(result.status, 'success');
+      assert.equal(calls, 1);
+      assert.equal(result.result.items[0].identity.dataSpace, scope ?? 'default');
+    });
+
 const mappingFixture = (command) => {
   const names = [
     'Id__c',
@@ -161,10 +192,14 @@ test('human deletion prints one identified action for each item and stops at fai
     command.jsonEnabled = () => false;
     command.log = (line) => lines.push(line);
     command.createDloClient = command.createDmoClient = () => ({ delete: async () => {} });
-    command.deleteDlo = async (name, client) => client.delete(name);
+    command.deleteDlo = async (name, client) => {
+      await client.delete(name);
+      return { dataSpace: 'default' };
+    };
     command.deleteDmo = async (name, client) => {
       await client.delete(name);
       if (failure) throw new Error('readback failed');
+      return { dataSpace: 'default' };
     };
     const result = await run(command);
     assert.equal(result.status, failure ? 'failed' : 'success');
@@ -296,8 +331,13 @@ for (const selector of ['dlo:Source__dll', 'dmo:Target__dlm']) {
           writes++;
         },
       });
-      command.retrieveDlo = command.retrieveDmo = async () => ({});
-      command.deleteDlo = command.deleteDmo = async (name, client) => client.delete(name);
+      command.retrieveDlo = command.retrieveDmo = async (name) => ({
+        identity: { dataSpace: 'default', apiName: name },
+      });
+      command.deleteDlo = command.deleteDmo = async (name, client) => {
+        await client.delete(name);
+        return { dataSpace: 'default' };
+      };
       const result = await run(command);
       assert.equal(result.status, 'success', JSON.stringify(result));
       assert.equal(writes, preview ? 0 : 1);

@@ -20,7 +20,7 @@ const invocation = (overrides = {}) => {
   const flags = {
     metadata: ['identity-resolution:Individual_A1b2'],
     'api-version': 'auto',
-    'data-space': 'default',
+    dataspace: 'default',
     'output-dir': 'synthetic-project',
     overwrite: true,
     ...overrides,
@@ -118,7 +118,7 @@ test('IR explicit65/latest, unsupported numeric mixed routes and expansion block
     { 'api-version': '68.0' },
     { metadata: ['identity-resolution'] },
     { metadata: ['identity-resolution:../unsafe'] },
-    { 'data-space': 'other' },
+    { dataspace: 'other' },
     { 'include-dependencies': true },
     { 'api-version': '67.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
     {

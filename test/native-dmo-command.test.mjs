@@ -10,6 +10,7 @@ import Delete from '../lib/commands/data360/delete.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { readDeployInputs, captureDeployInputDigest } from '../lib/artifacts/read-deploy-input.js';
+import { preflightDmo, executeDmo } from '../lib/services/command-native-dmo.js';
 const name = 'Example__dlm';
 const fields = [{ name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true }];
 const wire = {
@@ -39,7 +40,7 @@ const invocation = (Type, overrides = {}) => {
   command.parse = async () => ({
     flags: {
       'api-version': '65.0',
-      'data-space': 'default',
+      dataspace: 'default',
       metadata: [`dmo:${name}`],
       preview: false,
       ...overrides,
@@ -87,6 +88,28 @@ test('native writer retains fields and binds canonical source bytes', async () =
   await writeFile(receipt.path, JSON.stringify(document));
   await assert.rejects(captureDeployInputDigest(input), { code: 'UNSAFE_SOURCE' });
 });
+test('DMO wrappers forward explicit scope while retaining conservative dispatch evidence', async () => {
+  const saved = structuredClone(document);
+  saved.identity.dataSpace = 'other';
+  const scoped = { ...wire, dataSpaceName: 'other' };
+  const preview = await preflightDmo(saved, client({ get: async () => scoped }), 'other');
+  assert.equal(preview.outcome, 'update');
+  let writes = 0;
+  const target = client({
+    get: async () => scoped,
+    update: async (_name, body) => {
+      writes++;
+      assert.equal(body.dataSpaceName, 'other');
+      return scoped;
+    },
+  });
+  const result = await executeDmo(saved, target, 'other');
+  assert.equal(result.outcome, 'updated');
+  const blocked = await executeDmo(saved, target, 'default');
+  assert.equal(blocked.mutation, 'not-attempted');
+  assert.equal(writes, 1);
+});
+
 test('canonical exact selection accepts native DMO names with consecutive underscores', async () => {
   const cwd = await scratch();
   const apiName = 'Example__Part__dlm';
@@ -198,6 +221,88 @@ test('native deploy permission failure and dependency expansion never write', as
     assert.equal(auth, dependency ? 0 : 1);
   }
 });
+for (const scope of [undefined, 'Team'])
+  for (const preview of [true, false])
+    test(`public native DMO deploy/delete optional scope ${scope} preview=${preview}`, async () => {
+      const cwd = await scratch();
+      const desired = structuredClone(document);
+      desired.identity.dataSpace = scope ?? 'default';
+      await writeNativeDmoDocument(desired, cwd, false);
+      const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
+      const actual = { ...wire, dataSpaceName: desired.identity.dataSpace };
+      let updates = 0;
+      const deploy = invocation(Deploy, { dataspace: scope, preview, 'target-org': org });
+      deploy.resolveInputs = async () => inputs;
+      deploy.createDmoClient = () =>
+        client({
+          get: async () => actual,
+          update: async (_name, body) => {
+            updates++;
+            assert.equal(Object.hasOwn(body, 'dataSpaceName'), scope !== undefined);
+            if (scope !== undefined) assert.equal(body.dataSpaceName, scope);
+            return actual;
+          },
+        });
+      const deployed = await run(deploy);
+      assert.equal(deployed.status, 'success');
+      assert.equal(updates, preview ? 0 : 1);
+      let deletes = 0;
+      const remove = invocation(Delete, { dataspace: scope, preview });
+      remove.resolveTarget = async () => 'target';
+      remove.createDmoClient = () =>
+        client({
+          get: async () => actual,
+          delete: async () => {
+            deletes++;
+          },
+        });
+      const result = await run(remove);
+      assert.equal(result.status, 'success');
+      assert.equal(result.result.items[0].identity.dataSpace, scope ?? 'default');
+      assert.equal(deletes, preview ? 0 : 1);
+      const mismatch = invocation(Delete, { dataspace: 'Other', preview: false });
+      mismatch.resolveTarget = async () => 'target';
+      mismatch.createDmoClient = remove.createDmoClient;
+      const refused = await run(mismatch);
+      assert.equal(refused.status, 'blocked');
+      assert.equal(deletes, preview ? 0 : 1);
+    });
+
+for (const preview of [true, false])
+  for (const dataspace of [undefined, 'Other'])
+    test(`public DMO delete reports observed Team scope, requested=${dataspace} preview=${preview}`, async () => {
+      const reads = [];
+      const writes = [];
+      const command = invocation(Delete, { dataspace, preview });
+      command.resolveTarget = async () => 'target';
+      command.createDmoClient = (...arguments_) => {
+        assert.deepEqual(arguments_, ['target', '65.0']);
+        return client({
+          get: async (...arguments_) => {
+            reads.push(arguments_);
+            return { ...wire, dataSpaceName: 'Team' };
+          },
+          delete: async (...arguments_) => {
+            writes.push(arguments_);
+          },
+        });
+      };
+      const result = await run(command);
+      assert.deepEqual(reads, [[name]]);
+      assert.deepEqual(writes, preview || dataspace ? [] : [[name]]);
+      assert.equal(result.status, dataspace ? 'blocked' : 'success');
+      assert.deepEqual(result.result.items[0], {
+        identity: { dataSpace: dataspace ?? 'Team', apiName: name },
+        operation: preview ? 'preview' : 'delete',
+        outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',
+        mutation: !dataspace && !preview ? 'confirmed-deleted' : 'not-attempted',
+      });
+      assert.deepEqual(
+        result.diagnostics.errors.map(({ code }) => code),
+        dataspace ? ['UNSUPPORTED_DMO_DATASPACE'] : [],
+      );
+    });
+
 test('invalid native selections/scope are rejected before authentication', async () => {
   for (const Type of [Retrieve, Delete]) {
     for (const metadata of [['dmo'], ['dmo:Bad'], ['dmo:../Bad__dlm']]) {
@@ -219,7 +324,7 @@ test('invalid native selections/scope are rejected before authentication', async
     return 'target';
   };
   command.createDmoClient = () => client();
-  command.deleteDmo = async () => {};
+  command.deleteDmo = async () => ({ dataSpace: 'default' });
   command.createDloClient = () => ({
     get: async () => {
       throw new Error('stop before mutation');

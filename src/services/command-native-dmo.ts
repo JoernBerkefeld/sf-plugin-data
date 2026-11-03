@@ -6,10 +6,11 @@ import type { DmoClient } from '../transport/dmo-rest.js';
  * Compare an exact native DMO without mutation.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
+ * @param {string} [requestScope] Optional explicit data space.
  * @returns {Promise<object>} Payload-free comparison.
  */
-export async function preflightDmo(value: unknown, client: DmoClient) {
-  const plan = await preflightNativeDmo(value, client);
+export async function preflightDmo(value: unknown, client: DmoClient, requestScope?: string) {
+  const plan = await preflightNativeDmo(value, client, requestScope);
   return {
     family: 'dmo' as const,
     outcome: plan.operation,
@@ -22,9 +23,10 @@ export async function preflightDmo(value: unknown, client: DmoClient) {
  * Execute one write with conservative dispatch evidence and independent readback.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
+ * @param {string} [requestScope] Optional explicit data space.
  * @returns {Promise<object>} Payload-free outcome.
  */
-export async function executeDmo(value: unknown, client: DmoClient) {
+export async function executeDmo(value: unknown, client: DmoClient, requestScope?: string) {
   let dispatched = false;
   const guarded: DmoClient = {
     ...client,
@@ -38,7 +40,7 @@ export async function executeDmo(value: unknown, client: DmoClient) {
     },
   };
   try {
-    const result = await deployNativeDmo(value, guarded);
+    const result = await deployNativeDmo(value, guarded, requestScope);
     return {
       outcome: result.operation === 'create' ? ('created' as const) : ('updated' as const),
       mutation:

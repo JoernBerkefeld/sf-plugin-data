@@ -8,14 +8,16 @@ import type { MappingClient } from '../transport/mapping-rest.js';
  * @param {unknown} value Portable mapping.
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target readers.
+ * @param {string} [requestScope] Optional request scope forwarded without synthesizing a flag.
  * @returns {Promise<object>} Payload-free preview.
  */
 export async function preflightMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
+  requestScope?: string,
 ) {
-  const plan = await preflightNativeMapping(value, client, dependencies);
+  const plan = await preflightNativeMapping(value, client, dependencies, requestScope);
   return {
     family: 'mapping' as const,
     outcome: plan.operation,
@@ -45,6 +47,7 @@ export async function preflightMapping(
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target readers.
  * @param {Function} [onUpdated] Receive independently confirmed changes without changing JSON.
+ * @param {string} [requestScope] Optional request scope forwarded without synthesizing a flag.
  * @returns {Promise<object>} Payload-free execution outcome.
  */
 export async function executeMapping(
@@ -52,6 +55,7 @@ export async function executeMapping(
   client: MappingClient,
   dependencies: MappingDependencies,
   onUpdated?: Parameters<typeof deployNativeMapping>[3],
+  requestScope?: string,
 ) {
   let dispatched = false;
   const guarded: MappingClient = {
@@ -70,7 +74,7 @@ export async function executeMapping(
     },
   };
   try {
-    const result = await deployNativeMapping(value, guarded, dependencies, onUpdated);
+    const result = await deployNativeMapping(value, guarded, dependencies, onUpdated, requestScope);
     return {
       outcome:
         result.operation === 'noop'

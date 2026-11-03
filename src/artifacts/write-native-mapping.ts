@@ -109,7 +109,12 @@ export async function writeNativeMappingDocument(
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
-    if (previous && !overwrite) throw new NativeMappingError('OVERWRITE_REQUIRED');
+    if (previous) {
+      const saved = validateNativeMappingDocument(JSON.parse(previous.toString('utf8')));
+      if (saved.identity.dataSpace !== document.identity.dataSpace)
+        throw new NativeMappingError('MAPPING_DATASPACE_COLLISION');
+      if (!overwrite) throw new NativeMappingError('OVERWRITE_REQUIRED');
+    }
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-mapping-output-'));
     const marker = await open(path.join(staging, 'ownership'), 'wx');

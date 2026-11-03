@@ -15,12 +15,14 @@ import {
  * @param {Connection} connection Authenticated command-owned connection.
  * @param {string} version Admitted numeric native version.
  * @param {'dlo' | 'dmo'} family Inventory family.
- * @returns {Promise<string[]>} Sorted default-space names.
+ * @param {string} [requestScope] Local response-space filter; omission retains bounded default inventory.
+ * @returns {Promise<string[]>} Sorted names in the selected space.
  */
 export async function listNativeNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   version: string,
   family: 'dlo' | 'dmo',
+  requestScope?: string,
 ): Promise<string[]> {
   const client = new ConnectClient(connection, version);
   const key = family === 'dmo' ? 'dataModelObject' : 'dataLakeObjects';
@@ -73,7 +75,7 @@ export async function listNativeNames(
       const identity = item.name.toLowerCase();
       if (seen.has(identity)) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
       seen.add(identity);
-      if (spaces.includes('default')) names.push(item.name);
+      if (spaces.includes(requestScope ?? 'default')) names.push(item.name);
     }
     if (entries.length < limit) {
       names.sort();
@@ -84,15 +86,17 @@ export async function listNativeNames(
 }
 
 /**
- * Resolve mappings through every confirmed default-space DMO, never a global guess.
+ * Resolve mappings through every confirmed selected-space DMO, never a global guess.
  * A filtered no-map 404 is meaningful only after the DMO inventory proved existence.
- * @param {string[]} dmos Complete validated default-space DMO inventory.
- * @param {MappingClient} client Filtered mapping reader.
+ * @param {string[]} dmos Complete validated selected-space DMO inventory.
+ * @param {Pick<MappingClient, 'list'>} client Filtered mapping reader.
+ * @param {string} [requestScope] Explicit request context; omission uses documented mapping default locally.
  * @returns {Promise<string[]>} Unique sorted mapping names.
  */
 export async function listNativeMappingNames(
   dmos: string[],
-  client: MappingClient,
+  client: Pick<MappingClient, 'list'>,
+  requestScope?: string,
 ): Promise<string[]> {
   const mappings = new Map<string, string>();
   for (const dmo of dmos) {
@@ -115,8 +119,8 @@ export async function listNativeMappingNames(
       Object.keys(response).length !== 1
     )
       throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-    for (const raw of unwrapNativeMappingCollection(response)) {
-      const document = normalizeNativeMapping(raw);
+    for (const raw of unwrapNativeMappingCollection(response, requestScope)) {
+      const document = normalizeNativeMapping(raw, requestScope);
       if (document.spec.targetEntityDeveloperName !== dmo)
         throw new NativeMappingError('MAPPING_INVENTORY_BINDING_MISMATCH');
       const key = document.identity.apiName.toLowerCase();

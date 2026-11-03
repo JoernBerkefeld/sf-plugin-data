@@ -54,12 +54,14 @@ function validateBody(body: MappingWriteBody): void {
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiVersion Validated numeric version, or default/auto 68.0.
  * @param {MetadataRunner} runner Injectable installed CLI runner.
+ * @param {string} dataSpace Optional explicit request scope.
  * @returns {MappingClient} Raw operations; all scratch is retained.
  */
 export function createMappingClient(
   targetOrg: string,
   apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
+  dataSpace?: string,
 ): MappingClient {
   const version = nativeApiVersion(apiVersion);
   if (
@@ -69,7 +71,8 @@ export function createMappingClient(
   )
     throw new NativeMappingError('UNSUPPORTED_MAPPING_SELECTION');
   const endpoint = `/services/data/v${version}/ssot/data-model-object-mappings`;
-  const scopeQuery = '?dataspace=default';
+  const scopeQuery =
+    dataSpace === undefined ? '' : `?${new URLSearchParams({ dataspace: dataSpace })}`;
 
   /**
    * Validate exact mapping names, never source IDs or guessed suffixes.
@@ -172,7 +175,8 @@ export function createMappingClient(
         (dloDeveloperName !== undefined && !mappingDloName.test(dloDeveloperName))
       )
         throw new NativeMappingError('INVALID_MAPPING_BINDING');
-      const query = new URLSearchParams({ dataspace: 'default' });
+      const query = new URLSearchParams();
+      if (dataSpace !== undefined) query.set('dataspace', dataSpace);
       query.set('dmoDeveloperName', dmoDeveloperName);
       if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
       return request('GET', `?${query}`);

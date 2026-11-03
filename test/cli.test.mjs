@@ -127,6 +127,31 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
   assert.match(readme, /Native batches instead\s+order DLO, DMO, mapping/u);
 });
 
+test('README describes optional scope without promoting nondefault qualification or changing CRUD ratings', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  for (const text of [
+    'optional `--dataspace NAME`',
+    '`--data-space` is a compatibility alias',
+    'Neither spelling has a CLI default',
+    'required `dataspaceInfo` membership comes from the',
+    'without injecting `dataspace=default`',
+    'not live nondefault-space',
+    'Legacy families and dependency',
+    'ambiguous same-name inventory remains blocked',
+  ])
+    assert.ok(readme.includes(text), text);
+  const table = readme.split('| Resource ')[1].split('The scope notes summarize')[0];
+  assert.equal(
+    table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
+    14,
+  );
+  for (const resource of ['Data Model Objects', 'DLO-to-DMO mappings'])
+    assert.match(
+      table.split('\n').find((line) => line.includes(resource)),
+      /Partial/u,
+    );
+});
+
 test('delete help discloses guarded unmap-first deletion and bounded qualification', async () => {
   const { default: Delete } = await import('../lib/commands/data360/delete.js');
   assert.match(Delete.summary, /qualified non-last mapping/u);
@@ -154,6 +179,30 @@ test('API flags opt into exact latest while preserving core numeric validation a
     assert.equal(await flag.parse('65.0', {}, {}), '65.0');
     for (const invalid of ['Latest', 'v65.0', '65', 'latest ', '20.0'])
       await assert.rejects(flag.parse(invalid, {}, {}));
+  }
+});
+
+test('dataspace parser has no default, accepts the compatibility alias and refuses dual spellings', async () => {
+  const { Parser } = await import('@oclif/core');
+  for (const operation of ['retrieve', 'deploy', 'delete']) {
+    const { default: Command } = await import(`../lib/commands/data360/${operation}.js`);
+    assert.equal(Command.flags.dataspace.default, undefined);
+    assert.deepEqual(Command.flags.dataspace.aliases, ['data-space']);
+    const flags = { dataspace: Command.flags.dataspace };
+    const omitted = await Parser.parse([], { flags });
+    assert.equal(omitted.flags.dataspace, undefined);
+    for (const spelling of ['--dataspace', '--data-space']) {
+      const parsed = await Parser.parse([spelling, 'Team'], { flags });
+      assert.equal(parsed.flags.dataspace, 'Team');
+    }
+    for (const pair of [
+      ['Team', 'Other'],
+      ['Team', 'Team'],
+    ])
+      await assert.rejects(
+        Parser.parse(['--dataspace', pair[0], '--data-space', pair[1]], { flags }),
+        /can only be specified once/u,
+      );
   }
 });
 
@@ -213,7 +262,7 @@ test('actual core initialization never discovers or saves cached versions before
               assert.equal(requests.length, before, 'explicit auth must not discover');
             }
             command.parse = async () => ({ flags: {
-              'api-version': requested, 'data-space': 'default',
+              'api-version': requested, dataspace: 'default',
               'target-org': org, metadata: ['dmo'], preview: true,
             } });
             command.jsonEnabled = () => true;
@@ -275,7 +324,7 @@ for (const command of topics.flatMap((topic) => [
         '--preview',
         '--target-org',
         '--api-version',
-        '--data-space',
+        '--dataspace',
       ])
         assert.ok(result.stdout.includes(flag), flag);
     }
@@ -286,7 +335,7 @@ for (const command of topics.flatMap((topic) => [
         '--overwrite',
         '--target-org',
         '--api-version',
-        '--data-space',
+        '--dataspace',
       ])
         assert.ok(result.stdout.includes(flag), flag);
     }
@@ -399,7 +448,7 @@ test('oclif discovers twelve IDs backed by exactly three canonical implementatio
       const command = Object.create(implementation.prototype);
       command.config = { pjson: { version: '2.151.7' } };
       command.parse = async () => ({
-        flags: { metadata: ['invalid'], 'api-version': '65.0', 'data-space': 'default' },
+        flags: { metadata: ['invalid'], 'api-version': '65.0', dataspace: 'default' },
       });
       command.jsonEnabled = () => true;
       command.resolveInputs = async () => [];

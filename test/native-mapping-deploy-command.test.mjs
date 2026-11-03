@@ -186,6 +186,39 @@ async function fixture(options = {}) {
   });
   return { command, calls, cwd, inputs, receipt };
 }
+for (const scope of [undefined, 'Team'])
+  for (const preview of [false, true])
+    test(`public mapping deploy passes final scope preserving callbacks ${scope}/${preview}`, async () => {
+      const { command, inputs } = await fixture({ preview });
+      command.parse = async () => ({
+        flags: { dataspace: scope, preview, 'target-org': 'target' },
+      });
+      command.resolveInputs = async () =>
+        inputs.filter((input) => input.document.kind === 'mapping');
+      command.createMappingClient = (_target, _version, runner, actual) => {
+        assert.equal(runner, undefined);
+        assert.equal(actual, scope);
+        return {};
+      };
+      let calls = 0;
+      command.preflightMapping = async (_value, _client, dependencies, actual) => {
+        calls++;
+        assert.ok(dependencies.source);
+        assert.equal(actual, scope);
+        return { outcome: 'unchanged', diagnostics: [] };
+      };
+      command.executeMapping = async (_value, _client, dependencies, callback, actual) => {
+        calls++;
+        assert.ok(dependencies.target);
+        assert.equal(typeof callback, 'function');
+        assert.equal(actual, scope);
+        return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
+      };
+      const result = await run(command);
+      assert.equal(result.status, 'success');
+      assert.equal(calls, 1);
+    });
+
 test('human deployment identifies each created component and keeps JSON unchanged', async () => {
   for (const json of [false, true]) {
     const { command } = await fixture();

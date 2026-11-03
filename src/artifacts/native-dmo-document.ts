@@ -9,7 +9,7 @@ export type NativeDmoField = {
 export type NativeDmoDocument = {
   schemaVersion: 1;
   kind: 'dmo';
-  identity: { apiName: string; dataSpace: 'default' };
+  identity: { apiName: string; dataSpace: string };
   spec: { label: string; category: 'Other'; fields: NativeDmoField[] };
 };
 
@@ -50,7 +50,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Validate the canonical default-space document, retaining field definitions.
+ * Validate the canonical concrete-scope document, retaining field definitions.
  * @param {unknown} value Portable input.
  * @returns {NativeDmoDocument} Checked independent copy.
  */
@@ -67,7 +67,12 @@ export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
     document.kind !== 'dmo' ||
     typeof identity.apiName !== 'string' ||
     !nativeDmoName.test(identity.apiName) ||
-    identity.dataSpace !== 'default' ||
+    typeof identity.dataSpace !== 'string' ||
+    !identity.dataSpace.trim() ||
+    identity.dataSpace !== identity.dataSpace.trim() ||
+    [...identity.dataSpace].some(
+      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127,
+    ) ||
     typeof spec.label !== 'string' ||
     !spec.label.trim() ||
     spec.label.length > 40 ||
@@ -113,15 +118,17 @@ export function unwrapNativeDmo(value: unknown): Record<string, unknown> {
 /**
  * Normalize API65 output type names and retain generated field definitions, not runtime IDs.
  * @param {unknown} value Direct native response.
- * @returns {NativeDmoDocument} Portable default-space definition.
+ * @param {string} [dataSpace] Optional expected observed scope.
+ * @returns {NativeDmoDocument} Portable definition with authoritative observed scope.
  */
-export function normalizeNativeDmo(value: unknown): NativeDmoDocument {
+export function normalizeNativeDmo(value: unknown, dataSpace?: string): NativeDmoDocument {
   const object = unwrapNativeDmo(value);
-  if (object.dataSpaceName !== 'default') throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
+  if (dataSpace !== undefined && object.dataSpaceName !== dataSpace)
+    throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
   return validateNativeDmoDocument({
     schemaVersion: 1,
     kind: 'dmo',
-    identity: { apiName: object.name, dataSpace: 'default' },
+    identity: { apiName: object.name, dataSpace: object.dataSpaceName },
     spec: {
       label: object.label,
       category: object.category === 'OTHER' ? 'Other' : object.category,
