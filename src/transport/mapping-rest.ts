@@ -1,3 +1,5 @@
+import type { Connection } from '@salesforce/core';
+import { ConnectClient, ConnectError } from './connect-client.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +28,49 @@ export type MappingClient = {
   update: (mappingDeveloperName: string, body: MappingWriteBody) => Promise<unknown>;
   delete: (mappingDeveloperName: string) => Promise<void>;
 };
+
+/**
+ * Read filtered mapping inventories on the existing command-owned connection.
+ * Only an explicit transport 404 is the typed no-map condition; other failures propagate.
+ * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated command connection.
+ * @param {string} apiVersion Admitted numeric native version.
+ * @param {string} dataSpace Optional explicit request scope.
+ * @returns {Pick<MappingClient, 'list'>} List-only reader without CLI startup or scratch files.
+ */
+export function createMappingInventoryReader(
+  connection: Pick<Connection, 'instanceUrl' | 'request'>,
+  apiVersion: string,
+  dataSpace?: string,
+): Pick<MappingClient, 'list'> {
+  const version = nativeApiVersion(apiVersion);
+  const client = new ConnectClient(connection, version);
+  return {
+    list: async (dmoDeveloperName, dloDeveloperName) => {
+      if (
+        !mappingDmoName.test(dmoDeveloperName) ||
+        (dloDeveloperName !== undefined && !mappingDloName.test(dloDeveloperName))
+      )
+        throw new NativeMappingError('INVALID_MAPPING_BINDING');
+      const query = new URLSearchParams();
+      if (dataSpace !== undefined) query.set('dataspace', dataSpace);
+      query.set('dmoDeveloperName', dmoDeveloperName);
+      if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
+      try {
+        return await client.get(
+          `/services/data/v${version}/ssot/data-model-object-mappings?${query}`,
+        );
+      } catch (error) {
+        if (
+          error instanceof ConnectError &&
+          error.code === 'REQUEST_FAILED' &&
+          error.statusCode === 404
+        )
+          throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        throw error;
+      }
+    },
+  };
+}
 
 /**
  * Require explicit operation input, never convert saved read evidence into a send policy.

@@ -39,6 +39,12 @@ export type DloInventoryAcquisition = {
 };
 
 type AuthenticatedConnection = Pick<Connection, 'instanceUrl' | 'request'>;
+type ObservableTransport = {
+  httpRequest: (
+    request: unknown,
+    options: unknown,
+  ) => Promise<{ statusCode?: unknown }> & { stream: () => unknown };
+};
 
 /** Bounded SSOT transport; Salesforce core owns credentials. */
 export class ConnectClient {
@@ -258,11 +264,38 @@ export class ConnectClient {
     receiver: AuthenticatedConnection,
     noContentResponse?: unknown,
   ): Promise<T> {
+    let responseStatus: number | undefined;
+    const transport =
+      typeof request === 'object' && request.method === 'GET' && '_transport' in receiver
+        ? (receiver._transport as ObservableTransport | undefined)
+        : undefined;
+    // Observe only this GET before JSforce discards the numeric wire error status.
+    const observer =
+      transport && typeof transport.httpRequest === 'function'
+        ? {
+            httpRequest: (input: unknown, options: unknown) => {
+              const pending = transport.httpRequest.call(transport, input, options);
+              const observed = pending.then((response) => {
+                const status = response?.statusCode;
+                if (
+                  typeof status === 'number' &&
+                  Number.isInteger(status) &&
+                  status >= 400 &&
+                  status <= 599
+                )
+                  responseStatus = status;
+                return response;
+              });
+              return Object.assign(observed, { stream: () => pending.stream() });
+            },
+          }
+        : undefined;
     try {
       return await receiver.request<T>(
         request,
-        // Core narrows options to JSON, but its JSforce transport supports a redirect guard.
+        // Core narrows options to JSON, but JSforce supports request-local transport/redirect guards.
         {
+          ...(observer ? { transport: observer } : {}),
           noContentResponse,
           retry: { maxRetries: 0 },
           followRedirect: () => {
@@ -277,7 +310,7 @@ export class ConnectClient {
       const statusCode =
         typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
           ? status
-          : undefined;
+          : responseStatus;
       const expired =
         error &&
         typeof error === 'object' &&

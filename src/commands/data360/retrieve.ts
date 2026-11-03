@@ -1,7 +1,7 @@
 import { nativeApiVersion } from '../../transport/api-version.js';
 import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
 import { retrieveNativeMapping } from '../../services/native-mapping.js';
-import { createMappingClient } from '../../transport/mapping-rest.js';
+import { createMappingClient, createMappingInventoryReader } from '../../transport/mapping-rest.js';
 import { writeNativeMappingDocument } from '../../artifacts/write-native-mapping.js';
 import { NativeMappingError, nativeMappingName } from '../../artifacts/native-mapping-document.js';
 import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
@@ -190,6 +190,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected writeDlo = writeDloDocument;
   protected acquireNativeMapping = retrieveNativeMapping;
   protected createMappingClient = createMappingClient;
+  protected createMappingInventoryReader = createMappingInventoryReader;
   protected writeNativeMapping = writeNativeMappingDocument;
   protected listNativeNames = listNativeNames;
   protected listNativeMappingNames = listNativeMappingNames;
@@ -376,7 +377,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               names.push(
                 ...(await this.listNativeMappingNames(
                   dmoInventory,
-                  this.createMappingClient(target, version, undefined, requestScope),
+                  this.createMappingInventoryReader(connection, version, requestScope),
                   requestScope,
                 )),
               );

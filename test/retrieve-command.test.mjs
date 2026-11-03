@@ -341,7 +341,10 @@ const invocation = (overrides = {}) => {
         )
       : [];
   command.listNativeMappingNames = async () => [];
-  command.createMappingClient = command.createDmoClient = () => ({});
+  command.createMappingInventoryReader =
+    command.createMappingClient =
+    command.createDmoClient =
+      () => ({});
   command.acquireNativeMapping = async (name) => ({
     kind: 'mapping',
     identity: { dataSpace: 'default', apiName: name },

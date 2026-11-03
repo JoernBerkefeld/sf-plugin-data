@@ -30,17 +30,48 @@ export async function listNativeNames(
   const limit = family === 'dmo' ? 50 : 20;
   const seen = new Set<string>();
   const names: string[] = [];
+  let totalSize: number | undefined;
+  let pagedWrapper: boolean | undefined;
+  const pageUrl = (offset: number): string =>
+    `/services/data/v${version}/ssot/${resource}?limit=${limit}&offset=${offset}&orderBy=ASC`;
   for (let offset = 0; offset <= 2000; offset += limit) {
-    const page = await client.get<unknown>(
-      `/services/data/v${version}/ssot/${resource}?limit=${limit}&offset=${offset}&orderBy=ASC`,
-    );
+    const page = await client.get<unknown>(pageUrl(offset));
     if (!page || typeof page !== 'object' || Array.isArray(page))
       throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
     const wrapper = page as Record<string, unknown>;
-    if (Object.keys(wrapper).length !== 1 || !Array.isArray(wrapper[key]))
-      throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    if (!Array.isArray(wrapper[key])) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
     const entries = wrapper[key];
     if (entries.length > limit) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    const paged = family === 'dlo' && Object.keys(wrapper).length !== 1;
+    if (pagedWrapper !== undefined && pagedWrapper !== paged)
+      throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    pagedWrapper = paged;
+    if (paged) {
+      if (
+        Object.keys(wrapper).some(
+          (name) => !['currentPageUrl', key, 'nextPageUrl', 'totalSize'].includes(name),
+        ) ||
+        !['currentPageUrl', key, 'totalSize'].every((name) => Object.hasOwn(wrapper, name)) ||
+        wrapper.currentPageUrl !== pageUrl(offset) ||
+        typeof wrapper.totalSize !== 'number' ||
+        !Number.isSafeInteger(wrapper.totalSize) ||
+        wrapper.totalSize < offset + entries.length ||
+        (totalSize !== undefined && totalSize !== wrapper.totalSize)
+      )
+        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+      totalSize = wrapper.totalSize;
+      const more = offset + entries.length < totalSize;
+      if (
+        (more && (entries.length === 0 || wrapper.nextPageUrl !== pageUrl(offset + limit))) ||
+        (!more &&
+          Object.hasOwn(wrapper, 'nextPageUrl') &&
+          wrapper.nextPageUrl !== null &&
+          wrapper.nextPageUrl !== '')
+      )
+        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    } else if (Object.keys(wrapper).length !== 1) {
+      throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    }
     for (const value of entries) {
       if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
@@ -77,7 +108,10 @@ export async function listNativeNames(
       seen.add(identity);
       if (spaces.includes(requestScope ?? 'default')) names.push(item.name);
     }
-    if (entries.length < limit) {
+    if (paged ? offset + entries.length === totalSize : entries.length < limit) {
+      // Offset arithmetic does not prove that earlier short pages returned every entry.
+      if (paged && seen.size !== totalSize)
+        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
       names.sort();
       return names;
     }

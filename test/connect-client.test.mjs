@@ -157,6 +157,12 @@ test('API, authentication and network errors discard all sensitive payloads and 
     [{ name: 'INVALID_SESSION_ID' }, 'AUTHENTICATION_FAILED', undefined],
     [{ statusCode: 403 }, 'REQUEST_FAILED', 403],
     [{ statusCode: 500 }, 'REQUEST_FAILED', 500],
+    ...['404', 404.5, 399, 600, Number.NaN].map((statusCode) => [
+      { statusCode },
+      'REQUEST_FAILED',
+      undefined,
+    ]),
+    [{ name: 'NOT_FOUND', message: 'HTTP 404' }, 'REQUEST_FAILED', undefined],
     [{ statusCode: 'secret' }, 'REQUEST_FAILED', undefined],
     [new Error('secret'), 'REQUEST_FAILED', undefined],
   ]) {
@@ -232,7 +238,7 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
   ...[
     `${path}/Synthetic__dlm`,
     '/services/data/v65.0/ssot/data-lake-objects/Synthetic__dll',
-  ].flatMap((route) => [401, 503, 200].map((status) => ['GET', status, route])),
+  ].flatMap((route) => [401, 403, 404, 500, 503, 200, 204].map((status) => ['GET', status, route])),
 ])
   test(`actual core request stack never refreshes/replays/retries guarded ${method} ${route} on ${statusCode}`, async () => {
     let requests = 0;
@@ -266,13 +272,16 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
                 ? { name: 'Synthetic' }
                 : [
                     {
-                      errorCode: statusCode === 401 ? 'INVALID_SESSION_ID' : 'SERVER_ERROR',
+                      errorCode: statusCode === 401 ? 'INVALID_SESSION_ID' : 'NOT_FOUND',
                       message: 'secret',
                     },
                   ],
             ),
           });
-          response.stream = () => new PassThrough();
+          response.stream = function () {
+            assert.equal(this, response);
+            return new PassThrough();
+          };
           return response;
         },
       },
@@ -306,12 +315,13 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
     } else {
       await assert.rejects(operation, (error) => {
         assert.equal(error.code, statusCode === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED');
+        if (method === 'GET') assert.equal(error.statusCode, statusCode);
         assert.equal(inspect(error).includes('secret'), false);
         return true;
       });
       assert.equal(
         observed?.name,
-        statusCode === 401 ? 'INVALID_SESSION_ID' : 'SERVER_ERROR',
+        statusCode === 401 ? 'INVALID_SESSION_ID' : 'NOT_FOUND',
         String(observed),
       );
     }
@@ -320,6 +330,66 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
     assert.equal(Object.getPrototypeOf(connection), Connection.prototype);
     assert.equal(connection._refreshDelegate, refresh);
   });
+
+test('actual core GET status is request-local across concurrent, network and later success responses', async () => {
+  let release;
+  let calls = 0;
+  const waiting = new Promise((resolve) => {
+    release = resolve;
+  });
+  const transport = {
+    httpRequest(request) {
+      assert.equal(this, transport);
+      calls++;
+      const name = new URL(request.url).pathname.split('/').at(-1);
+      const pending = (async () => {
+        if (name === 'Delayed') await waiting;
+        if (name === 'Network')
+          throw Object.assign(new Error('secret NOT_FOUND HTTP404'), { name: 'NOT_FOUND' });
+        return {
+          statusCode: name === 'Delayed' ? 404 : name === 'Denied' ? 403 : 200,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(
+            name === 'Success'
+              ? { ok: true }
+              : [{ errorCode: 'NOT_FOUND', message: 'secret HTTP404' }],
+          ),
+        };
+      })();
+      pending.stream = () => new PassThrough();
+      return pending;
+    },
+  };
+  const owner = Object.assign(Object.create(Connection.prototype), {
+    instanceUrl: origin,
+    version: '65.0',
+    accessToken: 'secret',
+    logger: { getRawLogger: () => ({ debug() {} }) },
+    _refreshDelegate: { refresh: () => assert.fail('no refresh') },
+    _propagators: [],
+    _transport: transport,
+  });
+  const descriptors = Object.getOwnPropertyDescriptors(owner);
+  const client = new ConnectClient(owner, '65.0');
+  const delayed = assert.rejects(client.get(`${path}/Delayed`), {
+    code: 'REQUEST_FAILED',
+    statusCode: 404,
+  });
+  await assert.rejects(client.get(`${path}/Denied`), { code: 'REQUEST_FAILED', statusCode: 403 });
+  await assert.rejects(client.get(`${path}/Network`), {
+    code: 'REQUEST_FAILED',
+    statusCode: undefined,
+  });
+  release();
+  await delayed;
+  await assert.rejects(client.get(`${path}/Network`), {
+    code: 'REQUEST_FAILED',
+    statusCode: undefined,
+  });
+  assert.deepEqual(await client.get(`${path}/Success`), { ok: true });
+  assert.equal(calls, 5);
+  assert.deepEqual(Object.getOwnPropertyDescriptors(owner), descriptors);
+});
 
 for (const method of ['GET', 'DELETE'])
   test(`actual core ${method} refuses same-origin and cross-origin redirects without a second request`, async () => {
@@ -523,6 +593,12 @@ test('guarded PATCH errors discard request payload, credentials, response and ca
     [{ name: 'INVALID_SESSION_ID' }, 'AUTHENTICATION_FAILED', undefined],
     [{ statusCode: 403 }, 'REQUEST_FAILED', 403],
     [{ statusCode: 503 }, 'REQUEST_FAILED', 503],
+    ...['404', 404.5, 399, 600, Number.NaN].map((statusCode) => [
+      { statusCode },
+      'REQUEST_FAILED',
+      undefined,
+    ]),
+    [{ name: 'NOT_FOUND', message: 'HTTP 404' }, 'REQUEST_FAILED', undefined],
     [{ statusCode: 'secret' }, 'REQUEST_FAILED', undefined],
     [new Error('secret'), 'REQUEST_FAILED', undefined],
   ]) {
