@@ -186,6 +186,132 @@ async function fixture(options = {}) {
   });
   return { command, calls, cwd, inputs, receipt };
 }
+test('human deployment identifies each created component and keeps JSON unchanged', async () => {
+  for (const json of [false, true]) {
+    const { command } = await fixture();
+    const lines = [];
+    command.jsonEnabled = () => json;
+    command.log = (line) => lines.push(line);
+    const result = await run(command);
+    assert.equal(result.status, 'success');
+    assert.deepEqual(
+      lines.filter((line) => line.startsWith('Created:')),
+      json
+        ? []
+        : [
+            'Created: dlo:Example__dll; mutation: confirmed-created.',
+            'Created: dmo:Example__dlm; mutation: confirmed-created.',
+            'Created: mapping:SourceGenerated; mutation: confirmed-created.',
+          ],
+    );
+    assert.ok(!JSON.stringify(result).includes('deleted'));
+    if (!json) assert.equal(lines.at(-1), 'Deployed: 3 (3 created / 0 updated / 0 failed)');
+  }
+});
+
+test('deployment totals mix created, updated, unchanged and failed components without double counting', async () => {
+  const { command, inputs, cwd } = await fixture();
+  const lines = [];
+  command.jsonEnabled = () => false;
+  command.log = (line) => lines.push(line);
+  const extras = [];
+  for (const name of ['Unchanged', 'ZFailed']) {
+    await writeNativeMappingDocument(
+      { ...mapping, identity: { ...mapping.identity, apiName: name } },
+      cwd,
+      false,
+    );
+    extras.push(...(await readDeployInputs({ cwd, metadata: [`mapping:${name}`] })));
+  }
+  command.resolveInputs = async () => [...inputs, ...extras];
+  let index = 0;
+  command.executeMapping = async () => {
+    const outcome = ['updated', 'unchanged', 'failed'][index++];
+    return {
+      outcome,
+      mutation:
+        outcome === 'updated'
+          ? 'confirmed-updated'
+          : outcome === 'unchanged'
+            ? 'not-attempted'
+            : 'unknown',
+      diagnostics: [],
+    };
+  };
+  await run(command);
+  assert.equal(lines.at(-1), 'Deployed: 3 (2 created / 1 updated / 1 failed)');
+});
+
+test('human mapping update lists confirmed removed and added pairs only', async () => {
+  for (const outcome of ['updated', 'unchanged', 'failed']) {
+    for (const json of [false, true]) {
+      const { command } = await fixture({ parentsExisting: true, order: ['mapping'] });
+      const lines = [];
+      command.jsonEnabled = () => json;
+      command.log = (line) => lines.push(line);
+      command.executeMapping = async (_document, _client, _dependencies, report) => {
+        report({
+          deleted: [{ sourceFieldDeveloperName: 'Old__c', targetFieldDeveloperName: 'Value__c' }],
+          added: [
+            { sourceFieldDeveloperName: 'New__c', targetFieldDeveloperName: 'Value__c' },
+            { sourceFieldDeveloperName: 'Extra__c', targetFieldDeveloperName: 'Extra__c' },
+          ],
+        });
+        return {
+          outcome,
+          mutation:
+            outcome === 'updated'
+              ? 'confirmed-updated'
+              : outcome === 'failed'
+                ? 'unknown'
+                : 'not-attempted',
+          diagnostics: [],
+        };
+      };
+      const result = await run(command);
+      const changes = lines.filter((line) => line.includes('field mappings:'));
+      assert.deepEqual(
+        changes,
+        !json && outcome === 'updated'
+          ? [
+              'Deleted field mappings: Old__c -> Value__c.',
+              'Added field mappings: New__c -> Value__c, Extra__c -> Extra__c.',
+            ]
+          : [],
+      );
+      assert.ok(!JSON.stringify(result).includes('Old__c'));
+      if (!json)
+        assert.equal(
+          lines.at(-1),
+          `Deployed: ${outcome === 'updated' ? 1 : 0} (0 created / ${outcome === 'updated' ? 1 : 0} updated / ${outcome === 'failed' ? 1 : 0} failed)`,
+        );
+      if (!json && outcome !== 'updated')
+        assert.ok(!lines.some((line) => line.startsWith('Updated:')));
+    }
+  }
+});
+
+test('human additive update omits empty deletion list and preview uses planned labels', async () => {
+  for (const preview of [false, true]) {
+    const { command } = await fixture({
+      parentsExisting: true,
+      existing: 'update',
+      order: ['mapping'],
+      preview,
+    });
+    const lines = [];
+    command.jsonEnabled = () => false;
+    command.log = (line) => lines.push(line);
+    const result = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.ok(!lines.some((line) => line.startsWith('Deleted field mappings:')));
+    if (preview) {
+      assert.ok(lines.includes('Planned update: mapping:SourceGenerated.'));
+      assert.ok(!lines.some((line) => /^(Updated|Added field mappings):/u.test(line)));
+    } else assert.ok(lines.includes('Added field mappings: Note__c -> Note__c.'));
+  }
+});
+
 test('canonical mapping admission coalesces exact selectors, freezes shape and binds original bytes', async () => {
   const { cwd, receipt } = await fixture();
   const inputs = await readDeployInputs({

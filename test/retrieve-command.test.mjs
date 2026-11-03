@@ -9,6 +9,178 @@ import { RelationshipDefinitionError } from '../lib/artifacts/write-relationship
 
 import { MappingDefinitionError } from '../lib/artifacts/write-mapping-definition.js';
 
+test('human retrieval groups successful names and counts receipts for named, type and bare modes', async () => {
+  for (const selection of [
+    undefined,
+    ['dlo', 'dmo', 'mapping'],
+    ['dlo:Alpha__dll', 'dlo:Zulu__dll', 'dmo:Sample__dlm', 'mapping:Map'],
+  ]) {
+    for (const json of [false, true]) {
+      const command = invocation({ metadata: selection, 'api-version': 'auto' });
+      const lines = [];
+      command.jsonEnabled = () => json;
+      command.log = (line) => lines.push(line);
+      command.listNativeNames = async (_connection, _version, family) =>
+        family === 'dlo' ? ['Alpha__dll', 'Zulu__dll'] : ['Sample__dlm'];
+      command.listNativeMappingNames = async () => ['Map'];
+      command.writeMapping = async (name) => ({ path: `${name}.json`, outcome: 'retrieved' });
+      command.createDloClient = () => ({});
+      command.acquireDlo = async (name) => ({
+        kind: 'dlo',
+        identity: { dataSpace: 'default', apiName: name },
+      });
+      command.writeDlo = async (document) => ({
+        path: `${document.identity.apiName}.json`,
+        outcome: 'unchanged',
+      });
+      const { result } = await run(command);
+      assert.equal(result.status, 'success', JSON.stringify({ result, lines }));
+      assert.deepEqual(
+        lines,
+        json
+          ? []
+          : [
+              'Retrieve: success.',
+              'Downloaded dlo:Alpha__dll (unchanged).',
+              'Downloaded dlo:Zulu__dll (unchanged).',
+              'Downloaded dlo: 2',
+              'Downloaded dmo:Sample__dlm (retrieved).',
+              'Downloaded dmo: 1',
+              'Downloaded mapping:Map (retrieved).',
+              'Downloaded mapping: 1',
+            ],
+      );
+      assert.ok(!JSON.stringify(result).includes('Downloaded'));
+    }
+  }
+});
+
+test('human retrieval reports empty type and excludes failed names from downloads', async () => {
+  for (const empty of [false, true]) {
+    const command = invocation({ metadata: ['mapping'], 'api-version': 'auto' });
+    const lines = [];
+    command.jsonEnabled = () => false;
+    command.log = (line) => lines.push(line);
+    command.listNativeNames = async () => [];
+    command.listNativeMappingNames = async () => (empty ? [] : ['Alpha', 'Failed']);
+    command.writeMapping = async (name) => ({ path: `${name}.json`, outcome: 'retrieved' });
+    command.acquireNativeMapping = async (name) => {
+      if (name === 'Failed') throw new Error('failure');
+      return { kind: 'mapping', identity: { dataSpace: 'default', apiName: name } };
+    };
+    const { result } = await run(command);
+    assert.equal(result.status, empty ? 'success' : 'failed');
+    assert.equal(lines.at(-1), `Downloaded mapping: ${empty ? 0 : 1}`);
+    assert.ok(!lines.some((line) => line.startsWith('Downloaded mapping:Failed')));
+    if (!empty) assert.ok(lines.some((line) => line.startsWith('mapping:Failed:')));
+  }
+});
+
+test('mixed DLO acquisition failure stays in its human group without changing JSON diagnostics', async () => {
+  for (const json of [false, true]) {
+    const command = invocation({
+      metadata: ['dlo:Broken__dll', 'segment:Audience'],
+      'api-version': 'auto',
+    });
+    const lines = [];
+    command.jsonEnabled = () => json;
+    command.log = (line) => lines.push(line);
+    command.createDloClient = () => ({});
+    command.acquireDlo = async () => {
+      throw new Error('private-token');
+    };
+    command.writeDlo = () => assert.fail('failed acquisition must not write');
+    command.selectDependencies = async () => ({
+      entries: [
+        {
+          document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+          definitionXml: '<xml/>',
+        },
+      ],
+      reasons: new Map(),
+    });
+    command.writeSegment = async () => ({ path: 'Audience.xml', outcome: 'retrieved' });
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'failed');
+    assert.equal(exitCode, 1);
+    assert.deepEqual(result.diagnostics.errors, [
+      {
+        code: 'RETRIEVE_FAILED',
+        message:
+          'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.',
+        retryable: false,
+        identity: { dataSpace: 'default', apiName: 'Broken__dll' },
+      },
+    ]);
+    assert.deepEqual(
+      result.result.items.map((item) => item.identity.apiName),
+      ['Audience'],
+    );
+    assert.deepEqual(
+      lines,
+      json
+        ? []
+        : [
+            'Retrieve: failed.',
+            `dlo:Broken__dll: RETRIEVE_FAILED: ${result.diagnostics.errors[0].message}`,
+            'Downloaded dlo: 0',
+            'Downloaded segment:Audience (retrieved).',
+            'Downloaded segment: 1',
+          ],
+    );
+  }
+});
+
+test('non-DMO output failure uses document kind and excludes failure from human counts', async () => {
+  for (const json of [false, true]) {
+    const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
+    const lines = [];
+    command.jsonEnabled = () => json;
+    command.log = (line) => lines.push(line);
+    command.selectDependencies = async () => ({
+      entries: [
+        { document: candidate },
+        {
+          document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+          definitionXml: '<xml/>',
+        },
+      ],
+      reasons: new Map(),
+    });
+    command.writeSegment = async () => {
+      throw new DmoWriteError('OUTPUT_FAILED');
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'failed');
+    assert.equal(exitCode, 1);
+    assert.deepEqual(result.diagnostics.errors, [
+      {
+        code: 'OUTPUT_FAILED',
+        message:
+          'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.',
+        retryable: false,
+        identity: { dataSpace: 'default', apiName: 'Audience' },
+      },
+    ]);
+    assert.deepEqual(
+      result.result.items.map((item) => item.identity.apiName),
+      ['Sample__dlm'],
+    );
+    assert.deepEqual(
+      lines,
+      json
+        ? []
+        : [
+            'Retrieve: failed.',
+            'Downloaded dmo:Sample__dlm (retrieved).',
+            'Downloaded dmo: 1',
+            `segment:Audience: OUTPUT_FAILED: ${result.diagnostics.errors[0].message}`,
+            'Downloaded segment: 0',
+          ],
+    );
+  }
+});
+
 for (const version of ['65.0', 'auto']) {
   test(`mapping export sorted unique opaque definitions at ${version}`, async () => {
     const command = invocation({

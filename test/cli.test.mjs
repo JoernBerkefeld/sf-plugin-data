@@ -76,27 +76,71 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'data360/mapping/<name>.mapping-meta.json',
     'explicit numeric pins are preserved',
     'planned-dependencies',
-    'exactly one nonconflicting additive field',
+    'the desired pair set',
+    'one names-only, selector-free PATCH',
+    'installed public API68 Text reconciliation acceptance below',
+    'Installed creation/reconciliation acceptance is API68',
+    'passed removal of A with batch addition of D/E',
+    'B-to-C same-source/new-target retargeting and F-to-D new-source/same-target retargeting',
+    'sequentially on the same empty fixture',
+    'Each reconciliation preview and repeat performed zero writes',
+    'Exact desired pairs, retained selectors, full DLO state and DMO schema/nonflag properties',
+    'allowing only expected `isMapped` changes',
+    'Full raw DMO preservation is therefore not claimed across reconciliation',
+    'does not qualify installed Number removal',
+    'not populated-object, cross-org, arbitrary-schema or all-version qualification',
+    'Installed API61 and API68 public deletion acceptance each unmapped two authored identity Text pairs',
+    'exactly three DELETE responses of HTTP `204`',
+    'typed selected-mapping `404`',
+    'the unchanged survivor and exact fixture inventory',
+    'Last-for-DMO preview and execution were both blocked with zero writes at API61/68',
+    'API61 fixtures were provisioned at API68; this does not qualify API61 creation',
+    'API62..67 are an explicitly accepted compatibility assumption, not live-qualified',
+    'not successful public bare/type inventory retrieval acceptance',
+    'Desired-state removal/retarget remains API68-only',
     'zero-write repeat',
     'DMO GET has no status field',
-    'derived field `isMapped`',
-    'MAPPING_LAST_MAPPING_DELETE_BLOCKED',
+    'last mapping for a DMO is blocked before any unmaps',
+    '`--preview` performs zero writes',
+    'all five metadata-qualified protected pairs',
+    'DMO `Count__c`/`Gamma__c` fields',
+    'MAPPING_PARENT_CHANGED',
     'An already-absent mapping is conservatively blocked without writes',
     'unchanged-on-404 handling applies only to native DLO/DMO deletion',
     'non-last native DELETE HTTP `204`',
-    'full raw preservation',
-    'Field-pair removal',
+    'complete pre-final schema',
+    'Desired-state deployment uses the same',
   ])
     assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
   for (const obsolete of [
     'There is no public plugin Delete command',
     'Exact API65/default opaque XML export only',
     'pending public plugin integration acceptance',
+    'installed public reconciliation acceptance remains separate',
+    'installed mapping lifecycle acceptance is API68 only',
+    'This does not claim installed API61 CLI acceptance',
+    'installed deletion acceptance remains separate',
     'mixed-family deployment remain blocked',
     'The whole\nselection is preflighted before any executor call',
   ])
     assert.ok(!readme.includes(obsolete), `obsolete README contract: ${obsolete}`);
   assert.match(readme, /Native batches instead\s+order DLO, DMO, mapping/u);
+});
+
+test('delete help discloses guarded unmap-first deletion and bounded qualification', async () => {
+  const { default: Delete } = await import('../lib/commands/data360/delete.js');
+  assert.match(Delete.summary, /qualified non-last mapping/u);
+  for (const text of [
+    'unmapped first',
+    'last mapping for a DMO is blocked before any unmaps',
+    'all five metadata-qualified protected pairs',
+    'empty custom fixtures',
+    '--preview performs zero writes',
+    'partial failure stops the batch',
+    'no local deletion, parent DELETE, retries or rollback',
+  ])
+    assert.ok(Delete.description.includes(text), text);
+  assert.ok(!Delete.description.includes('No cascade'));
 });
 
 test('API flags opt into exact latest while preserving core numeric validation and defaults', async () => {

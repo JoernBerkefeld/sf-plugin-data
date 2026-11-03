@@ -10,7 +10,7 @@ import {
 } from '../artifacts/native-mapping-document.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
-import { nativeApiVersion } from './api-version.js';
+import { isNativeMappingDeletionVersion, nativeApiVersion } from './api-version.js';
 
 export type MappingWriteBody = {
   sourceEntityDeveloperName: string;
@@ -18,6 +18,8 @@ export type MappingWriteBody = {
   fieldMapping: { sourceFieldDeveloperName: string; targetFieldDeveloperName: string }[];
 };
 export type MappingClient = {
+  readonly apiVersion: string;
+  deleteField: (mappingDeveloperName: string, observedSelector: string) => Promise<void>;
   list: (dmoDeveloperName: string, dloDeveloperName?: string) => Promise<unknown>;
   get: (mappingDeveloperName: string) => Promise<unknown>;
   create: (body: MappingWriteBody) => Promise<unknown>;
@@ -67,6 +69,7 @@ export function createMappingClient(
   )
     throw new NativeMappingError('UNSUPPORTED_MAPPING_SELECTION');
   const endpoint = `/services/data/v${version}/ssot/data-model-object-mappings`;
+  const scopeQuery = '?dataspace=default';
 
   /**
    * Validate exact mapping names, never source IDs or guessed suffixes.
@@ -136,22 +139,50 @@ export function createMappingClient(
   }
 
   return {
+    apiVersion: version,
+    deleteField: async (name, observedSelector) => {
+      if (!isNativeMappingDeletionVersion(version))
+        throw new NativeMappingError('MAPPING_UNMAP_VERSION_UNQUALIFIED');
+      // Validate the observed selector through the existing artifact grammar, never synthesize it.
+      validateNativeMappingDocument({
+        schemaVersion: 1,
+        kind: 'mapping',
+        identity: { apiName: name, dataSpace: 'default' },
+        spec: {
+          sourceEntityDeveloperName: 'Input__dll',
+          targetEntityDeveloperName: 'Input__dlm',
+          fieldMappings: [
+            {
+              sourceFieldDeveloperName: 'Input__c',
+              targetFieldDeveloperName: 'Input__c',
+              developerName: observedSelector,
+            },
+          ],
+        },
+      });
+      if (!observedSelector) throw new NativeMappingError('INVALID_MAPPING_FIELD');
+      await request(
+        'DELETE',
+        `${nameSuffix(name)}/field-mappings/${observedSelector}${scopeQuery}`,
+      );
+    },
     list: async (dmoDeveloperName, dloDeveloperName) => {
       if (
         !mappingDmoName.test(dmoDeveloperName) ||
         (dloDeveloperName !== undefined && !mappingDloName.test(dloDeveloperName))
       )
         throw new NativeMappingError('INVALID_MAPPING_BINDING');
-      const query = new URLSearchParams({ dataspace: 'default', dmoDeveloperName });
+      const query = new URLSearchParams({ dataspace: 'default' });
+      query.set('dmoDeveloperName', dmoDeveloperName);
       if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
       return request('GET', `?${query}`);
     },
-    get: async (name) => request('GET', `${nameSuffix(name)}?dataspace=default`),
-    create: async (body) => request('POST', '?dataspace=default', body),
+    get: async (name) => request('GET', `${nameSuffix(name)}${scopeQuery}`),
+    create: async (body) => request('POST', scopeQuery, body),
     update: async (name, body) =>
-      request('PATCH', `${nameSuffix(name)}/field-mappings?dataspace=default`, body),
+      request('PATCH', `${nameSuffix(name)}/field-mappings${scopeQuery}`, body),
     delete: async (name) => {
-      await request('DELETE', `${nameSuffix(name)}?dataspace=default`);
+      await request('DELETE', `${nameSuffix(name)}${scopeQuery}`);
     },
   };
 }

@@ -77,7 +77,7 @@ test('mapping create preserves arbitrary custom Id/system-looking fields rather 
 test('mapping unqualified multi-pair delta is blocked before any write', async () => {
   await assert.rejects(
     preflightNativeMapping(desired(), client(['Id__c']), dependencies()),
-    /MULTI_PAIR_UPDATE/,
+    /UNMAP_VERSION_UNQUALIFIED/,
   );
 });
 
@@ -118,7 +118,7 @@ test('mapping same-target replacement and source retarget additions are blocked'
     ];
     await assert.rejects(
       preflightNativeMapping(input, client(['Id__c', 'Another__c']), dependencies()),
-      /RETARGET/,
+      /UNMAP_VERSION_UNQUALIFIED/,
     );
   }
 });

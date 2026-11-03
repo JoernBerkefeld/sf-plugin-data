@@ -11,6 +11,8 @@ import {
   preflightNativeMapping,
   preflightDeleteNativeMapping,
   retrieveNativeMapping,
+  preflightUnmapNativeMapping,
+  unmapNativeMappingFields,
 } from '../lib/services/native-mapping.js';
 import { executeMapping, preflightMapping } from '../lib/services/command-native-mapping.js';
 
@@ -82,10 +84,29 @@ const missing = () => new NativeMappingError('MAPPING_HTTP_ERROR', 404);
  */
 function fixture(initial = raw()) {
   let state = initial;
+  const schema = target();
+  for (const field of schema.fields)
+    if (state.fieldMappings.some((pair) => pair.targetFieldDeveloperName === field.name))
+      field.isMapped = true;
+  const deps = {
+    source: { get: async () => source() },
+    target: { get: async () => structuredClone(schema) },
+  };
   const calls = [];
   return {
     calls,
+    deps,
+    state,
+    schema,
     client: {
+      apiVersion: '68.0',
+      deleteField: async (name, selector) => {
+        calls.push(['unmap', name, selector]);
+        const removed = state.fieldMappings.find((pair) => pair.developerName === selector);
+        state.fieldMappings = state.fieldMappings.filter((pair) => pair !== removed);
+        delete schema.fields.find((field) => field.name === removed.targetFieldDeveloperName)
+          .isMapped;
+      },
       list: async (dmo, dlo) => {
         calls.push(['list', dmo, dlo]);
         return { objectSourceTargetMaps: state ? [structuredClone(state)] : [] };
@@ -102,10 +123,14 @@ function fixture(initial = raw()) {
       },
       update: async (name, body) => {
         calls.push(['update', name, body]);
-        state.fieldMappings.push({
-          ...body.fieldMapping[0],
-          developerName: 'fresh_server_selector',
-        });
+        for (const [index, pair] of body.fieldMapping.entries()) {
+          state.fieldMappings.push({
+            ...pair,
+            developerName: index === 0 ? 'fresh_server_selector' : `fresh_server_selector_${index}`,
+          });
+          schema.fields.find((field) => field.name === pair.targetFieldDeveloperName).isMapped =
+            true;
+        }
         return structuredClone(state);
       },
       delete: async (name) => {
@@ -159,8 +184,8 @@ test('mapping unique pair resolution produces no-op with zero writes despite sou
 });
 
 test('mapping adds a never-observed pair without selectors and preserves all existing pairs independently', async () => {
-  const { client, calls } = fixture(raw(names.filter((name) => name !== 'Name__c')));
-  const result = await deployNativeMapping(desired(), client, dependencies());
+  const { client, calls, deps } = fixture(raw(names.filter((name) => name !== 'Name__c')));
+  const result = await deployNativeMapping(desired(), client, deps);
   assert.equal(result.operation, 'update');
   const writes = calls.filter(([kind]) => kind === 'update');
   assert.equal(writes.length, 1);
@@ -271,7 +296,7 @@ test('mapping create fails closed for unknown generated policy and missing prima
   assert.equal(plan.writes[0].body.fieldMapping.length, 3);
 });
 
-test('mapping removal and replacement remain blocked without reusing source selectors', async () => {
+test('mapping removal and replacement fail closed without qualified metadata', async () => {
   const full = fixture().client;
   await assert.rejects(
     preflightNativeMapping(
@@ -279,7 +304,7 @@ test('mapping removal and replacement remain blocked without reusing source sele
       full,
       dependencies(),
     ),
-    /REMOVAL_OR_RETARGET/,
+    /UNPROVEN/,
   );
   const collision = raw();
   collision.fieldMappings = collision.fieldMappings.filter(
@@ -288,7 +313,7 @@ test('mapping removal and replacement remain blocked without reusing source sele
   collision.fieldMappings.push({ ...pair('Name__c'), targetFieldDeveloperName: 'Note__c' });
   await assert.rejects(
     preflightNativeMapping(desired(), fixture(collision).client, dependencies()),
-    /REMOVAL_OR_RETARGET/,
+    /UNPROVEN/,
   );
 });
 
@@ -305,13 +330,12 @@ test('mapping bounded settlement rejects echoes, loss of omitted pairs, selector
       })),
     },
   ]) {
-    const { client, calls } = fixture(raw(names.filter((name) => name !== 'Name__c')));
+    const { client, calls, deps } = fixture(raw(names.filter((name) => name !== 'Name__c')));
     const original = client.get;
-    let reads = 0;
-    client.get = async (name) => (++reads === 1 ? original(name) : returned);
-    await assert.rejects(deployNativeMapping(desired(), client, dependencies()), /PERSISTENCE/);
+    client.get = async (name) =>
+      calls.some(([kind]) => kind === 'update') ? returned : original(name);
+    await assert.rejects(deployNativeMapping(desired(), client, deps), /PERSISTENCE/);
     assert.equal(calls.filter(([kind]) => kind === 'update').length, 1);
-    assert.equal(reads, 4);
   }
   const { client, calls } = fixture();
   client.list = async () => ({ objectSourceTargetMaps: [] });
@@ -353,19 +377,31 @@ test('mapping create preserves every server-returned generated pair even for an 
 const deleteFixture = () => {
   const selected = raw();
   const survivor = {
-    ...raw(),
+    ...raw(names.filter((name) => !['Name__c', 'Note__c'].includes(name))),
     developerName: 'OtherGenerated_456',
     sourceEntityDeveloperName: 'Other__dll',
   };
+  const schema = target();
+  for (const field of schema.fields) field.isMapped = true;
   const calls = [];
   let deleted = false;
   let survivorReads = 0;
   const deps = dependencies();
   deps.source.get = async (name) => ({ ...source(), name });
+  deps.target.get = async () => structuredClone(schema);
   const client = {
+    apiVersion: '68.0',
+    deleteField: async (name, selector) => {
+      calls.push(['unmap', name, selector]);
+      const field = selected.fieldMappings.find((pair) => pair.developerName === selector);
+      selected.fieldMappings = selected.fieldMappings.filter((pair) => pair !== field);
+      delete schema.fields.find((value) => value.name === field.targetFieldDeveloperName).isMapped;
+    },
     list: async (...arguments_) => {
       calls.push(['list', ...arguments_]);
-      return { objectSourceTargetMaps: [selected, survivor] };
+      return {
+        objectSourceTargetMaps: structuredClone(deleted ? [survivor] : [selected, survivor]),
+      };
     },
     get: async (name) => {
       calls.push(['get', name]);
@@ -384,32 +420,174 @@ const deleteFixture = () => {
       deleted = true;
     },
   };
-  return { client, deps, calls, selected, survivor };
+  return { client, deps, calls, selected, survivor, schema };
 };
 
-test('mapping non-last delete uses DMO-only complete inventory, typed absence and bounded survivor settlement', async () => {
+// API62..67 cases are synthetic compatibility checks, not live qualification.
+for (const version of ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0', '68.0']) {
+  test(`deletion compatibility ${version} preserves legacy raw parents and exact None tags`, async () => {
+    const f = deleteFixture();
+    f.client.apiVersion = version;
+    const parents = new Map();
+    for (const name of ['Example__dll', 'Other__dll']) {
+      const value = { ...source(), name, runtimeSentinel: { retained: true } };
+      value.fields.find((field) => field.name === 'Note__c').dataType = 'Number';
+      parents.set(name, {
+        dataLakeObjects: [{ ...value, dataLakeFieldInfoRepresentation: value.fields }],
+      });
+      delete parents.get(name).dataLakeObjects[0].fields;
+    }
+    f.deps.source.get = async (name) => structuredClone(parents.get(name));
+    f.schema.creationType = 'Custom';
+    f.schema.runtimeSentinel = { retained: true };
+    for (const field of f.schema.fields) {
+      if (field.name !== 'KQ_Id__c') field.usageTag = 'None';
+      if (!field.isPrimaryKey) delete field.isPrimaryKey;
+      if (field.name === 'Note__c') field.type = 'Number';
+    }
+    const beforeParents = structuredClone(parents);
+    const expected = structuredClone(f.schema);
+    for (const field of expected.fields)
+      if (['Name__c', 'Note__c'].includes(field.name)) delete field.isMapped;
+    const survivor = structuredClone(f.survivor);
+    const plan = await preflightDeleteNativeMapping('TargetGenerated_123', f.client, f.deps);
+    assert.equal(plan.protectedPairs.length, 5);
+    await deleteNativeMapping('TargetGenerated_123', f.client, f.deps);
+    assert.deepEqual(
+      f.calls.filter(([kind]) => ['unmap', 'delete'].includes(kind)),
+      [
+        ['unmap', 'TargetGenerated_123', 'target_Name__c'],
+        ['unmap', 'TargetGenerated_123', 'target_Note__c'],
+        ['delete', 'TargetGenerated_123'],
+      ],
+    );
+    assert.deepEqual(parents, beforeParents);
+    assert.deepEqual(f.schema, expected);
+    assert.deepEqual(f.survivor, survivor);
+  });
+}
+
+test('deletion and shared unmap reject unnormalized or outside versions before reads', async () => {
+  for (const version of ['60.0', '69.0', '61', 'v61.0', '61.1', 'auto', '', undefined]) {
+    const f = deleteFixture();
+    f.client.apiVersion = version;
+    await assert.rejects(
+      preflightDeleteNativeMapping('TargetGenerated_123', f.client, f.deps),
+      /VERSION_UNQUALIFIED/,
+    );
+    await assert.rejects(
+      preflightUnmapNativeMapping(normalizeNativeMapping(f.selected), f.client, f.deps),
+      /VERSION_UNQUALIFIED/,
+    );
+    await assert.rejects(
+      unmapNativeMappingFields({}, f.client, f.deps, () => assert.fail()),
+      /VERSION_UNQUALIFIED/,
+    );
+    assert.deepEqual(f.calls, []);
+  }
+});
+
+test('deletion refuses special usage and qualifiers and detects raw None metadata drift', async () => {
+  // eslint-disable-next-line unicorn/no-null -- Explicit raw API null must not qualify as absent metadata.
+  for (const tag of ['KeyQualifier', 'Unknown', '', null]) {
+    const f = deleteFixture();
+    f.client.apiVersion = '61.0';
+    f.schema.fields[1].usageTag = tag;
+    await assert.rejects(
+      deleteNativeMapping('TargetGenerated_123', f.client, f.deps),
+      /POLICY_UNPROVEN/,
+    );
+    assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  }
+  for (const mode of ['qualifier', 'drift']) {
+    const f = deleteFixture();
+    f.client.apiVersion = '61.0';
+    f.schema.fields[1].usageTag = 'None';
+    if (mode === 'qualifier') f.schema.fields[1].keyQualifierName = 'Unexpected';
+    else {
+      const remove = f.client.deleteField;
+      f.client.deleteField = async (...arguments_) => {
+        await remove(...arguments_);
+        f.schema.fields[2].usageTag = 'None';
+      };
+    }
+    await assert.rejects(deleteNativeMapping('TargetGenerated_123', f.client, f.deps));
+    assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, mode === 'drift' ? 1 : 0);
+    assert.equal(f.calls.filter(([kind]) => kind === 'delete').length, 0);
+  }
+});
+
+test('lower-version deletion admission never widens desired-state removals or Text retarget', async () => {
+  for (const version of ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0']) {
+    for (const retarget of [false, true]) {
+      const f = fixture(raw(names.filter((name) => name !== 'Note__c')));
+      f.client.apiVersion = version;
+      const input = desired(names.filter((name) => !['Name__c', 'Note__c'].includes(name)));
+      if (retarget)
+        input.spec.fieldMappings.push({
+          sourceFieldDeveloperName: 'Name__c',
+          targetFieldDeveloperName: 'Note__c',
+        });
+      await assert.rejects(deployNativeMapping(input, f.client, f.deps), /VERSION_UNQUALIFIED/);
+      assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+    }
+  }
+});
+
+test('mapping preview qualifies the complete ordered unmap plan without writes', async () => {
   const f = deleteFixture();
-  const before = structuredClone(await f.deps.target.get());
-  const preview = await preflightDeleteNativeMapping('TargetGenerated_123', f.client, f.deps);
-  assert.equal(preview.selected.identity.apiName, 'TargetGenerated_123');
-  assert.equal(
-    f.calls.some(([kind]) => kind === 'delete'),
-    false,
+  const plan = await preflightDeleteNativeMapping('TargetGenerated_123', f.client, f.deps);
+  assert.deepEqual(
+    plan.removals.map((pair) => pair.developerName),
+    ['target_Name__c', 'target_Note__c'],
   );
-  const g = deleteFixture();
-  assert.deepEqual(await deleteNativeMapping('TargetGenerated_123', g.client, g.deps), {
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+});
+
+test('mapping survivor requires independently qualified protected metadata before unmaps', async () => {
+  for (const mode of ['coverage', 'key', 'selector', 'version']) {
+    const f = deleteFixture();
+    if (mode === 'coverage') f.survivor.fieldMappings.shift();
+    if (mode === 'selector') delete f.survivor.fieldMappings[0].developerName;
+    if (mode === 'version') f.client.apiVersion = '69.0';
+    if (mode === 'key')
+      f.deps.source.get = async (name) => ({
+        ...source(),
+        name,
+        fields: source().fields.map((field) =>
+          name === 'Other__dll' ? { ...field, isPrimaryKey: false } : field,
+        ),
+      });
+    await assert.rejects(deleteNativeMapping('TargetGenerated_123', f.client, f.deps));
+    assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  }
+});
+
+test('production unmap-first deletion verifies ordered writes, absence and full raw survivor/parent preservation', async () => {
+  const f = deleteFixture();
+  assert.deepEqual(await deleteNativeMapping('TargetGenerated_123', f.client, f.deps), {
     apiName: 'TargetGenerated_123',
   });
   assert.deepEqual(
-    g.calls.find(([kind]) => kind === 'list'),
-    ['list', 'Example__dlm'],
+    f.calls.filter(([kind]) => ['unmap', 'delete'].includes(kind)),
+    [
+      ['unmap', 'TargetGenerated_123', 'target_Name__c'],
+      ['unmap', 'TargetGenerated_123', 'target_Note__c'],
+      ['delete', 'TargetGenerated_123'],
+    ],
   );
-  assert.equal(g.calls.filter(([kind]) => kind === 'delete').length, 1);
-  assert.equal(
-    g.calls.filter(([kind, name]) => kind === 'get' && name === 'OtherGenerated_456').length,
-    3,
+  assert.deepEqual(await f.deps.target.get(), f.schema);
+});
+
+test('mapping last-for-DMO guard precedes authored unmap classification', async () => {
+  const f = deleteFixture();
+  f.client.list = async () => ({ objectSourceTargetMaps: [f.selected] });
+  f.deps.target.get = async () => assert.fail('last guard must precede dependency classification');
+  await assert.rejects(
+    deleteNativeMapping('TargetGenerated_123', f.client, f.deps),
+    /LAST_MAPPING_DELETE_BLOCKED/,
   );
-  assert.deepEqual(await g.deps.target.get(), before);
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
 });
 
 test('mapping last/incomplete/ambiguous/inactive inventory blocks preview and execution before deletion', async () => {
@@ -443,8 +621,43 @@ test('mapping last/incomplete/ambiguous/inactive inventory blocks preview and ex
   }
 });
 
+test('mapping final deletion settles CREATING survivor status but rejects concurrent content drift', async () => {
+  for (const drift of [false, true]) {
+    const f = deleteFixture();
+    const remove = f.client.delete;
+    const get = f.client.get;
+    const list = f.client.list;
+    let deleted = false;
+    let passes = 0;
+    f.client.delete = async (name) => {
+      await remove(name);
+      deleted = true;
+    };
+    f.client.list = async () => {
+      const value = await list();
+      if (deleted && passes++ === 0) {
+        value.objectSourceTargetMaps[0].status = 'CREATING';
+        if (drift) value.objectSourceTargetMaps[0].fieldMappings[0].developerName = 'drift';
+      }
+      return value;
+    };
+    f.client.get = async (name) => {
+      const value = await get(name);
+      if (deleted && passes === 1) value.status = 'CREATING';
+      return value;
+    };
+    await (drift
+      ? assert.rejects(
+          deleteNativeMapping('TargetGenerated_123', f.client, f.deps),
+          /PERSISTENCE_UNCONFIRMED/,
+        )
+      : deleteNativeMapping('TargetGenerated_123', f.client, f.deps));
+    assert.equal(f.calls.filter(([kind]) => kind === 'delete').length, 1);
+  }
+});
+
 test('mapping delete stops on dispatch error or failed absence/survivor/parent checks without write retry', async () => {
-  for (const mode of ['write', 'auth', 'present', 'survivor', 'pending', 'parent']) {
+  for (const mode of ['write', 'auth', 'present', 'survivor', 'pending', 'parent', 'field-loss']) {
     const f = deleteFixture();
     let dispatched = false;
     const get = f.client.get;
@@ -470,6 +683,7 @@ test('mapping delete stops on dispatch error or failed absence/survivor/parent c
     f.deps.target.get = async () => ({
       ...(await targetGet()),
       ...(dispatched && mode === 'parent' ? { label: 'Changed' } : {}),
+      ...(dispatched && mode === 'field-loss' ? { fields: target().fields.slice(1) } : {}),
     });
     await assert.rejects(deleteNativeMapping('TargetGenerated_123', f.client, f.deps));
     assert.equal(f.calls.filter(([kind]) => kind === 'delete').length, 1);
@@ -479,19 +693,182 @@ test('mapping delete stops on dispatch error or failed absence/survivor/parent c
     /INVALID_MAPPING_NAME/,
   );
   await assert.rejects(
-    deleteNativeMapping('SourceGenerated_456', fixture().client, dependencies()),
+    deleteNativeMapping(
+      'SourceGenerated_456',
+      { ...fixture().client, apiVersion: '68.0' },
+      dependencies(),
+    ),
     /IDENTITY/,
   );
 });
 
+const unmapFixture = () => {
+  const state = raw();
+  const schema = target();
+  for (const field of schema.fields) field.isMapped = true;
+  const calls = [];
+  const client = {
+    apiVersion: '68.0',
+    list: async () => ({ objectSourceTargetMaps: [structuredClone(state)] }),
+    get: async () => structuredClone(state),
+    deleteField: async (name, selector) => {
+      calls.push([name, selector]);
+      const pair = state.fieldMappings.find((field) => field.developerName === selector);
+      state.fieldMappings = state.fieldMappings.filter((field) => field !== pair);
+      delete schema.fields.find((field) => field.name === pair.targetFieldDeveloperName).isMapped;
+    },
+  };
+  const deps = {
+    source: { get: async () => source() },
+    target: { get: async () => structuredClone(schema) },
+  };
+  return { state, schema, client, deps, calls };
+};
+
+test('guarded unmap uses fresh observed selectors, preserves five protected pairs and exact schema', async () => {
+  const f = unmapFixture();
+  const plan = await preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps);
+  assert.equal(plan.protectedPairs.length, 5);
+  assert.deepEqual(
+    plan.removals.map((pair) => pair.sourceFieldDeveloperName),
+    ['Name__c', 'Note__c'],
+  );
+  let dispatched = 0;
+  const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => dispatched++);
+  assert.equal(dispatched, 2);
+  assert.deepEqual(f.calls, [
+    ['TargetGenerated_123', 'target_Name__c'],
+    ['TargetGenerated_123', 'target_Note__c'],
+  ]);
+  assert.deepEqual(result.selected.spec.fieldMappings, plan.protectedPairs);
+  assert.equal(result.removals.length, 0);
+  assert.deepEqual(f.schema, result.target);
+  assert.equal(plan.removals.length, 2, 'caller evidence is immutable');
+});
+
+test('guarded unmap accepts Number identity fields and checks CREATING snapshots before settling', async () => {
+  const f = unmapFixture();
+  f.schema.fields[1].type = 'Number';
+  f.deps.source.get = async () => ({
+    ...source(),
+    fields: source().fields.map((field) =>
+      field.name === 'Name__c' ? { ...field, dataType: 'Number' } : field,
+    ),
+  });
+  let remaining = 0;
+  const get = f.client.get;
+  const list = f.client.list;
+  f.client.get = async () => ({ ...(await get()), status: remaining > 0 ? 'CREATING' : 'ACTIVE' });
+  f.client.list = async () => {
+    const value = await list();
+    if (remaining-- > 0) value.objectSourceTargetMaps[0].status = 'CREATING';
+    return value;
+  };
+  const remove = f.client.deleteField;
+  f.client.deleteField = async (...arguments_) => {
+    await remove(...arguments_);
+    remaining = 1;
+  };
+  const plan = await preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps);
+  await unmapNativeMappingFields(plan, f.client, f.deps, () => {});
+  assert.equal(f.calls.length, 2);
+});
+
+test('guarded unmap refuses authored fields also covered by another inventory mapping', async () => {
+  const f = unmapFixture();
+  const other = { ...raw(), developerName: 'Other', sourceEntityDeveloperName: 'Other__dll' };
+  f.client.list = async () => ({ objectSourceTargetMaps: [f.state, other] });
+  f.deps.source.get = async (name) => ({ ...source(), name });
+  await assert.rejects(
+    preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps),
+    /POLICY_UNPROVEN/,
+  );
+  assert.deepEqual(f.calls, []);
+});
+
+test('guarded unmap refuses unknown metadata, missing selectors and nonqualified versions before writes', async () => {
+  for (const mode of ['version', 'flag', 'key', 'type', 'selector', 'qualifier']) {
+    const f = unmapFixture();
+    if (mode === 'version') f.client.apiVersion = '69.0';
+    if (mode === 'flag') delete f.schema.fields[1].isMapped;
+    if (mode === 'key') f.schema.fields[0].keyQualifierName = 'Unknown';
+    if (mode === 'type') f.schema.fields[1].type = 'Date';
+    if (mode === 'selector') delete f.state.fieldMappings[1].developerName;
+    if (mode === 'qualifier') f.schema.fields[6].usageTag = 'Unknown';
+    await assert.rejects(
+      preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps),
+    );
+    assert.deepEqual(f.calls, []);
+  }
+});
+
+test('guarded unmap stops after lost response, ignored removal, schema drift or CREATING content drift', async () => {
+  for (const mode of ['lost', 'ignored', 'schema', 'creating', 'selector']) {
+    const f = unmapFixture();
+    const plan = await preflightUnmapNativeMapping(
+      normalizeNativeMapping(f.state),
+      f.client,
+      f.deps,
+    );
+    const remove = f.client.deleteField;
+    f.client.deleteField = async (...arguments_) => {
+      if (mode === 'ignored') {
+        f.calls.push(arguments_);
+        return;
+      }
+      await remove(...arguments_);
+      if (mode === 'lost') throw new Error('lost response');
+      if (mode === 'schema') f.schema.fields[0].label = 'drift';
+      if (mode === 'creating') {
+        f.state.status = 'CREATING';
+        f.state.fieldMappings[0].developerName = 'drift';
+      }
+      if (mode === 'selector') f.state.fieldMappings[0].developerName = 'drift';
+    };
+    let dispatched = 0;
+    await assert.rejects(unmapNativeMappingFields(plan, f.client, f.deps, () => dispatched++));
+    assert.equal(dispatched, 1);
+    assert.equal(f.calls.length, 1);
+  }
+});
+
+test('guarded unmap revalidates stale evidence and accepts only flag absence, never false', async () => {
+  const stale = unmapFixture();
+  const plan = await preflightUnmapNativeMapping(
+    normalizeNativeMapping(stale.state),
+    stale.client,
+    stale.deps,
+  );
+  stale.schema.label = 'changed';
+  await assert.rejects(
+    unmapNativeMappingFields(plan, stale.client, stale.deps, () => assert.fail()),
+    /PLAN_CHANGED/,
+  );
+  const f = unmapFixture();
+  const fresh = await preflightUnmapNativeMapping(
+    normalizeNativeMapping(f.state),
+    f.client,
+    f.deps,
+  );
+  const remove = f.client.deleteField;
+  f.client.deleteField = async (...arguments_) => {
+    await remove(...arguments_);
+    f.schema.fields[1].isMapped = false;
+  };
+  await assert.rejects(
+    unmapNativeMappingFields(fresh, f.client, f.deps, () => {}),
+    /PARENT_CHANGED/,
+  );
+  assert.equal(f.calls.length, 1);
+});
+
 test('mapping HTTP200 ignored addition is failed/unknown, with bounded reads and no write retry', async () => {
   const current = raw(names.filter((name) => name !== 'Name__c'));
-  const { client, calls } = fixture(current);
+  const { client, calls, deps } = fixture(current);
   client.update = async (name, body) => {
     calls.push(['update', name, body]);
     return raw(); // A convincing response echo is not independent persistence.
   };
-  const deps = dependencies();
   const beforeSource = await deps.source.get();
   const beforeTarget = await deps.target.get();
   const result = await executeMapping(desired(), client, deps);
@@ -499,9 +876,211 @@ test('mapping HTTP200 ignored addition is failed/unknown, with bounded reads and
   assert.equal(result.mutation, 'unknown');
   assert.equal(result.diagnostics[0].code, 'MAPPING_PERSISTENCE_UNCONFIRMED');
   assert.equal(calls.filter(([kind]) => kind === 'update').length, 1);
-  assert.equal(calls.filter(([kind]) => kind === 'get').length, 4);
   assert.deepEqual(await deps.source.get(), beforeSource);
   assert.deepEqual(await deps.target.get(), beforeTarget);
+});
+
+test('desired-state removal preserves retained selectors and previews observed target selectors', async () => {
+  const f = fixture();
+  const input = desired(names.filter((name) => name !== 'Name__c'));
+  const before = structuredClone(input);
+  const preview = await preflightMapping(input, f.client, f.deps);
+  assert.deepEqual(preview.plan, [
+    { operation: 'unmap', apiName: 'TargetGenerated_123', ...pair('Name__c') },
+  ]);
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  const changes = [];
+  const result = await deployNativeMapping(input, f.client, f.deps, (change) =>
+    changes.push(change),
+  );
+  assert.deepEqual(changes, [{ deleted: [pair('Name__c')], added: [] }]);
+  assert.equal(result.operation, 'update');
+  assert.deepEqual(
+    result.document.spec.fieldMappings,
+    raw().fieldMappings.filter((pair) => pair.sourceFieldDeveloperName !== 'Name__c'),
+  );
+  assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
+  assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 0);
+  assert.deepEqual(input, before);
+});
+
+test('desired-state batch additions and both qualified retarget directions use one names-only PATCH after unmap', async () => {
+  for (const mode of ['batch', 'source', 'target']) {
+    const f = fixture(
+      raw(
+        names.filter((name) =>
+          mode === 'batch' ? !['Name__c', 'Note__c'].includes(name) : name !== 'Note__c',
+        ),
+      ),
+    );
+    for (const field of f.schema.fields)
+      if (!['KeyQualifier'].includes(field.usageTag) && field.creationType === 'Custom')
+        field.usageTag = 'None';
+    const input = desired();
+    if (mode !== 'batch') {
+      input.spec.fieldMappings = input.spec.fieldMappings.filter(
+        (pair) => !['Name__c', 'Note__c'].includes(pair.sourceFieldDeveloperName),
+      );
+      input.spec.fieldMappings.push({
+        sourceFieldDeveloperName: mode === 'source' ? 'Name__c' : 'Note__c',
+        targetFieldDeveloperName: mode === 'source' ? 'Note__c' : 'Name__c',
+        developerName: 'source_not_target',
+      });
+    }
+    const changes = [];
+    const result = await deployNativeMapping(input, f.client, f.deps, (change) =>
+      changes.push(change),
+    );
+    assert.equal(changes.length, 1);
+    assert.deepEqual(changes[0].deleted, mode === 'batch' ? [] : [pair('Name__c')]);
+    assert.deepEqual(
+      changes[0].added,
+      mode === 'batch'
+        ? ['Name__c', 'Note__c'].map((name) => ({
+            sourceFieldDeveloperName: name,
+            targetFieldDeveloperName: name,
+          }))
+        : [
+            {
+              sourceFieldDeveloperName: mode === 'source' ? 'Name__c' : 'Note__c',
+              targetFieldDeveloperName: mode === 'source' ? 'Note__c' : 'Name__c',
+            },
+          ],
+    );
+    assert.deepEqual(
+      new Set(
+        result.document.spec.fieldMappings.map(
+          (pair) => `${pair.sourceFieldDeveloperName}:${pair.targetFieldDeveloperName}`,
+        ),
+      ),
+      new Set(
+        input.spec.fieldMappings.map(
+          (pair) => `${pair.sourceFieldDeveloperName}:${pair.targetFieldDeveloperName}`,
+        ),
+      ),
+    );
+    const writes = f.calls.filter(([kind]) => ['unmap', 'update'].includes(kind));
+    assert.deepEqual(
+      writes.map(([kind]) => kind),
+      mode === 'batch' ? ['update'] : ['unmap', 'update'],
+    );
+    assert.equal(writes.at(-1)[2].fieldMapping.length, mode === 'batch' ? 2 : 1);
+    assert.ok(writes.at(-1)[2].fieldMapping.every((pair) => !('developerName' in pair)));
+  }
+});
+
+test('desired-state protected omission and unsupported additions block before any unmap', async () => {
+  for (const mode of ['protected', 'version', 'type', 'occupied']) {
+    const f = fixture();
+    const input = desired(
+      names.filter((name) => name !== (mode === 'protected' ? 'Id__c' : 'Name__c')),
+    );
+    if (mode === 'version') f.client.apiVersion = '67.0';
+    if (mode === 'type')
+      input.spec.fieldMappings.push({
+        sourceFieldDeveloperName: 'Name__c',
+        targetFieldDeveloperName: 'Id__c',
+      });
+    if (mode === 'occupied')
+      input.spec.fieldMappings.push({
+        sourceFieldDeveloperName: 'Name__c',
+        targetFieldDeveloperName: 'Note__c',
+      });
+    await assert.rejects(deployNativeMapping(input, f.client, f.deps));
+    assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  }
+});
+
+for (const mode of [
+  'occupied',
+  'special-usage',
+  'source-type',
+  'target-type',
+  'both-types',
+  'source-retarget-type',
+  'target-retarget-type',
+]) {
+  test(`desired-state ${mode} drift at evidence read blocks all writes even when subsequently stable`, async () => {
+    const f = fixture(raw(names.filter((name) => name !== 'Note__c')));
+    const input = desired(names.filter((name) => !['Name__c', 'Note__c'].includes(name)));
+    input.spec.fieldMappings.push({
+      sourceFieldDeveloperName: mode === 'source-retarget-type' ? 'Name__c' : 'Note__c',
+      targetFieldDeveloperName: mode === 'target-retarget-type' ? 'Name__c' : 'Note__c',
+    });
+    const readSource = f.deps.source.get;
+    const readTarget = f.deps.target.get;
+    let sourceReads = 0;
+    let targetReads = 0;
+    f.deps.source.get = async () => {
+      const definition = await readSource();
+      if (++sourceReads > 1 && ['source-type', 'both-types', 'target-retarget-type'].includes(mode))
+        definition.fields.find((field) => field.name === 'Note__c').dataType = 'Number';
+      return definition;
+    };
+    f.deps.target.get = async () => {
+      const definition = await readTarget();
+      if (++targetReads > 1) {
+        const field = definition.fields.find((field) => field.name === 'Note__c');
+        if (mode === 'occupied') field.isMapped = true;
+        if (mode === 'special-usage') field.usageTag = 'Email';
+        if (['target-type', 'both-types', 'source-retarget-type'].includes(mode))
+          field.type = 'Number';
+      }
+      return definition;
+    };
+    const result = await executeMapping(input, f.client, f.deps);
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.match(
+      result.diagnostics[0].code,
+      /MAPPING_(?:ADDITION_POLICY_UNPROVEN|FIELD_TYPE_MISMATCH)/,
+    );
+    assert.ok(sourceReads >= 2);
+    assert.ok(targetReads >= 2);
+    assert.deepEqual(
+      f.calls.filter(([kind]) => ['unmap', 'update', 'create', 'delete'].includes(kind)),
+      [],
+    );
+    // Subsequent reads retain the evidence state, not the initially admitted definitions.
+    assert.deepEqual(await f.deps.source.get(), await f.deps.source.get());
+    assert.deepEqual(await f.deps.target.get(), await f.deps.target.get());
+  });
+}
+
+test('desired-state lost unmap, patch failure and exact final-set drift are failed/unknown without retry', async () => {
+  for (const mode of ['unmap', 'patch', 'extra', 'parent', 'creating']) {
+    const f = fixture(raw(names.filter((name) => name !== 'Note__c')));
+    const input = desired(names.filter((name) => !['Name__c', 'Note__c'].includes(name)));
+    input.spec.fieldMappings.push({
+      sourceFieldDeveloperName: 'Name__c',
+      targetFieldDeveloperName: 'Note__c',
+    });
+    const remove = f.client.deleteField;
+    const update = f.client.update;
+    f.client.deleteField = async (...arguments_) => {
+      await remove(...arguments_);
+      if (mode === 'unmap') throw new Error('lost');
+    };
+    f.client.update = async (...arguments_) => {
+      const value = await update(...arguments_);
+      if (mode === 'patch') throw new Error('lost');
+      if (mode === 'parent') f.schema.label = 'drift';
+      if (mode === 'extra' || mode === 'creating') {
+        f.state.fieldMappings.push(pair('Name__c'));
+        if (mode === 'creating') f.state.status = 'CREATING';
+      }
+      if (mode === 'parent') {
+        const get = f.deps.target.get;
+        f.deps.target.get = async () => ({ ...(await get()), label: 'drift' });
+      }
+      return value;
+    };
+    const result = await executeMapping(input, f.client, f.deps);
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
+    assert.equal(f.calls.filter(([kind]) => kind === 'update').length, mode === 'unmap' ? 0 : 1);
+  }
 });
 
 test('mapping command outcomes distinguish blocked, unknown write result and independently confirmed success', async () => {
@@ -513,7 +1092,16 @@ test('mapping command outcomes distinguish blocked, unknown write result and ind
   client.create = async () => {
     throw new Error('request dispatched but response lost');
   };
-  const failed = await executeMapping(desired(), client, dependencies());
+  const reported = [];
+  const failed = await executeMapping(desired(), client, dependencies(), (change) =>
+    reported.push(change),
+  );
+  assert.deepEqual(reported, []);
+  const unchanged = fixture();
+  await executeMapping(desired(), unchanged.client, unchanged.deps, (change) =>
+    reported.push(change),
+  );
+  assert.deepEqual(reported, []);
   assert.equal(failed.outcome, 'failed');
   assert.equal(failed.mutation, 'unknown');
   assert.equal(failed.diagnostics[0].code, 'MAPPING_REQUEST_UNCONFIRMED');
@@ -522,6 +1110,6 @@ test('mapping command outcomes distinguish blocked, unknown write result and ind
   const createResult = await executeMapping(desired(), created.client, dependencies());
   assert.equal(createResult.mutation, 'confirmed-created');
   const update = fixture(raw(names.filter((n) => n !== 'Name__c')));
-  const updateResult = await executeMapping(desired(), update.client, dependencies());
+  const updateResult = await executeMapping(desired(), update.client, update.deps);
   assert.equal(updateResult.mutation, 'confirmed-updated');
 });

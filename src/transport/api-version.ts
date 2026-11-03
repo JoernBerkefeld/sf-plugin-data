@@ -19,6 +19,15 @@ export function nativeApiVersion(requested = 'auto'): string {
   throw new Error('INVALID_SCOPE');
 }
 
+/**
+ * Admit only the bounded mapping deletion compatibility pins, after boundary normalization.
+ * @param {string} version Exact numeric client version.
+ * @returns {boolean} Whether deletion is admitted; intermediate pins are assumed compatible.
+ */
+export function isNativeMappingDeletionVersion(version: string): boolean {
+  return ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0', '68.0'].includes(version);
+}
+
 export type OperationalFamily =
   'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
 

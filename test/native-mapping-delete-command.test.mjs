@@ -28,61 +28,261 @@ const run = async (command) => {
   }
 };
 
-const guard = async () => {
-  throw new NativeMappingError('MAPPING_LAST_MAPPING_DELETE_BLOCKED');
+const mappingFixture = (command) => {
+  const names = [
+    'Id__c',
+    'Name__c',
+    'Note__c',
+    'DataSource__c',
+    'DataSourceObject__c',
+    'InternalOrganization__c',
+    'KQ_Id__c',
+  ];
+  const pairs = names.map((name) => ({
+    sourceFieldDeveloperName: name,
+    targetFieldDeveloperName: name,
+    developerName: `observed_${name}`,
+  }));
+  const selected = {
+    developerName: 'Generated_123',
+    sourceEntityDeveloperName: 'Source__dll',
+    targetEntityDeveloperName: 'Target__dlm',
+    status: 'ACTIVE',
+    fieldMappings: pairs,
+  };
+  const survivor = {
+    ...selected,
+    developerName: 'Other_456',
+    sourceEntityDeveloperName: 'Other__dll',
+    fieldMappings: pairs.filter(
+      (pair) => !['Name__c', 'Note__c'].includes(pair.sourceFieldDeveloperName),
+    ),
+  };
+  const schema = {
+    name: 'Target__dlm',
+    label: 'Target',
+    category: 'OTHER',
+    dataSpaceName: 'default',
+    fields: names.map((name, index) => ({
+      name,
+      label: name,
+      type: 'Text',
+      isPrimaryKey: index === 0,
+      creationType: index >= 3 ? 'System' : 'Custom',
+      isMapped: true,
+      ...(index === 0 ? { keyQualifierName: 'KQ_Id' } : {}),
+      ...(name === 'KQ_Id__c' ? { usageTag: 'KeyQualifier' } : {}),
+    })),
+  };
+  const calls = [];
+  let deleted = false;
+  const client = {
+    apiVersion: '68.0',
+    list: async () => ({
+      objectSourceTargetMaps: structuredClone(deleted ? [survivor] : [selected, survivor]),
+    }),
+    get: async (name) => {
+      if (deleted && name === selected.developerName)
+        throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+      return structuredClone(name === selected.developerName ? selected : survivor);
+    },
+    deleteField: async (name, selector) => {
+      calls.push(['unmap', name, selector]);
+      const pair = selected.fieldMappings.find((pair) => pair.developerName === selector);
+      selected.fieldMappings = selected.fieldMappings.filter((field) => field !== pair);
+      delete schema.fields.find((field) => field.name === pair.targetFieldDeveloperName).isMapped;
+    },
+    delete: async (name) => {
+      calls.push(['delete', name]);
+      deleted = true;
+    },
+  };
+  command.createMappingClient = () => client;
+  command.createDloClient = () => ({
+    get: async (name) => ({
+      name,
+      label: name,
+      category: 'Other',
+      dataSpaceInfo: [{ name: 'default' }],
+      fields: names.map((name, index) => ({
+        name,
+        label: name,
+        dataType: 'Text',
+        isPrimaryKey: index === 0,
+      })),
+    }),
+  });
+  command.createDmoClient = () => ({ get: async () => structuredClone(schema) });
+  return { calls, client, selected, survivor, schema };
 };
 
 for (const preview of [true, false]) {
-  test(`public mapping delete exact canonical selection preview=${preview} has zero preview writes`, async () => {
+  for (const json of [true, false]) {
+    test(`public mapping unmap-first deletion preview=${preview} json=${json}`, async () => {
+      const command = invocation({ preview });
+      const f = mappingFixture(command);
+      const lines = [];
+      command.jsonEnabled = () => json;
+      command.log = (line) => lines.push(line);
+      const result = await run(command);
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      const item = result.result.items[0];
+      assert.equal(item.mutation, preview ? 'not-attempted' : 'confirmed-deleted');
+      if (preview) {
+        assert.deepEqual(f.calls, []);
+        assert.deepEqual(
+          item.plan.map((step) => step.operation),
+          ['unmap', 'unmap', 'delete'],
+        );
+        assert.equal(item.plan[0].developerName, 'observed_Name__c');
+        assert.ok(!JSON.stringify(item).includes('fieldMappings'));
+      } else
+        assert.deepEqual(
+          f.calls.map(([kind]) => kind),
+          ['unmap', 'unmap', 'delete'],
+        );
+      if (json) assert.deepEqual(lines, []);
+      else
+        assert.ok(
+          lines.includes(
+            `${preview ? 'Planned delete' : 'Deleted'}: mapping:Generated_123; mutation: ${item.mutation}.`,
+          ),
+        );
+    });
+  }
+}
+
+test('human deletion prints one identified action for each item and stops at failure', async () => {
+  for (const failure of [false, true]) {
     const command = invocation({
-      preview,
-      metadata: ['mapping:Generated_123', 'mapping:Generated_123'],
+      metadata: ['dlo:First__dll', 'dmo:Second__dlm', 'dlo:Third__dll'],
     });
-    let writes = 0;
-    let preflights = 0;
-    command.createMappingClient = (target, version) => {
-      assert.equal(target, 'target');
-      assert.equal(version, '68.0');
-      return {
-        delete: async (name) => {
-          assert.equal(name, 'Generated_123');
-          writes++;
-        },
-      };
-    };
-    command.preflightDeleteMapping = async (name, _client, deps) => {
-      assert.equal(name, 'Generated_123');
-      assert.equal(typeof deps.source.get, 'function');
-      assert.equal(typeof deps.target.get, 'function');
-      preflights++;
-    };
-    command.deleteMapping = async (name, client) => {
+    const lines = [];
+    command.jsonEnabled = () => false;
+    command.log = (line) => lines.push(line);
+    command.createDloClient = command.createDmoClient = () => ({ delete: async () => {} });
+    command.deleteDlo = async (name, client) => client.delete(name);
+    command.deleteDmo = async (name, client) => {
       await client.delete(name);
+      if (failure) throw new Error('readback failed');
     };
     const result = await run(command);
-    assert.equal(result.status, 'success', JSON.stringify(result));
-    assert.equal(result.result.items.length, 1);
-    assert.equal(writes, preview ? 0 : 1);
-    assert.equal(preflights, preview ? 1 : 0);
-    assert.equal(result.result.items[0].mutation, preview ? 'not-attempted' : 'confirmed-deleted');
-  });
-  test(`public last mapping delete blocks preview/execution without dispatch preview=${preview}`, async () => {
-    const command = invocation({ preview });
-    let writes = 0;
-    command.createMappingClient = () => ({
-      delete: async () => {
-        writes++;
-      },
+    assert.equal(result.status, failure ? 'failed' : 'success');
+    assert.deepEqual(
+      lines.slice(1),
+      failure
+        ? [
+            'Deleted: dlo:First__dll; mutation: confirmed-deleted.',
+            'Failed: dmo:Second__dlm; mutation: unknown.',
+          ]
+        : [
+            'Deleted: dlo:First__dll; mutation: confirmed-deleted.',
+            'Deleted: dmo:Second__dlm; mutation: confirmed-deleted.',
+            'Deleted: dlo:Third__dll; mutation: confirmed-deleted.',
+          ],
+    );
+  }
+});
+
+// API62..67 exercise assumed compatibility only, not live qualification.
+for (const version of [
+  '61.0',
+  '62.0',
+  '63.0',
+  '64.0',
+  '65.0',
+  '66.0',
+  '67.0',
+  '68.0',
+  'auto',
+  undefined,
+]) {
+  for (const preview of [true, false]) {
+    test(`mapping delete compatibility ${version} preview=${preview} pins all clients`, async () => {
+      const command = invocation({ 'api-version': version, preview });
+      const f = mappingFixture(command);
+      const pin = version === 'auto' || version === undefined ? '68.0' : version;
+      f.client.apiVersion = pin;
+      const factories = [];
+      for (const method of ['createMappingClient', 'createDloClient', 'createDmoClient']) {
+        const factory = command[method];
+        command[method] = (target, requested) => {
+          factories.push([method, target, requested]);
+          const client = factory(target, requested);
+          if (pin !== '61.0' || method !== 'createDloClient') return client;
+          return {
+            get: async (name) => {
+              const value = await client.get(name);
+              const { fields, ...rest } = value;
+              return { dataLakeObjects: [{ ...rest, dataLakeFieldInfoRepresentation: fields }] };
+            },
+          };
+        };
+      }
+      if (pin === '61.0') {
+        for (const field of f.schema.fields) {
+          if (field.name !== 'KQ_Id__c') field.usageTag = 'None';
+          if (!field.isPrimaryKey) delete field.isPrimaryKey;
+        }
+      }
+      const result = await run(command);
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      assert.deepEqual(factories, [
+        ['createMappingClient', 'target', pin],
+        ['createDloClient', 'target', pin],
+        ['createDmoClient', 'target', pin],
+      ]);
+      assert.deepEqual(
+        f.calls.map(([kind]) => kind),
+        preview ? [] : ['unmap', 'unmap', 'delete'],
+      );
+      if (preview)
+        assert.deepEqual(
+          result.result.items[0].plan.map((step) => step.operation),
+          ['unmap', 'unmap', 'delete'],
+        );
     });
-    command.preflightDeleteMapping = command.deleteMapping = guard;
+  }
+}
+
+for (const mode of ['first-lost', 'second-lost', 'ignored', 'final-lost', 'last', 'coverage']) {
+  test(`public mapping ${mode} stops batch with honest mutation bookkeeping`, async () => {
+    const command = invocation({ metadata: ['mapping:Generated_123', 'dlo:Later__dll'] });
+    const f = mappingFixture(command);
+    const remove = f.client.deleteField;
+    f.client.deleteField = async (...arguments_) => {
+      if (mode === 'ignored') {
+        f.calls.push(['unmap']);
+        return;
+      }
+      await remove(...arguments_);
+      if (mode === 'first-lost' || (mode === 'second-lost' && f.calls.length === 2))
+        throw new Error('response lost');
+    };
+    if (mode === 'final-lost')
+      f.client.delete = async () => {
+        f.calls.push(['delete']);
+        throw new Error('lost');
+      };
+    if (mode === 'last')
+      f.client.list = async () => ({ objectSourceTargetMaps: [structuredClone(f.selected)] });
+    if (mode === 'coverage') f.survivor.fieldMappings.shift();
+    command.deleteDlo = async () => assert.fail('later batch member dispatched');
     const result = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors[0].code, 'MAPPING_LAST_MAPPING_DELETE_BLOCKED');
-    assert.equal(writes, 0);
+    const blocked = ['last', 'coverage'].includes(mode);
+    assert.equal(result.status, blocked ? 'blocked' : 'failed', JSON.stringify(result));
+    assert.equal(result.result.items.length, 1);
+    assert.equal(result.result.items[0].mutation, blocked ? 'not-attempted' : 'unknown');
+    assert.equal(
+      f.calls.length,
+      blocked ? 0 : mode === 'second-lost' ? 2 : mode === 'final-lost' ? 3 : 1,
+    );
+    if (mode === 'last')
+      assert.equal(result.diagnostics.errors[0].code, 'MAPPING_LAST_MAPPING_DELETE_BLOCKED');
   });
 }
 
-for (const selector of ['dlo:Source__dll', 'dmo:Target__dlm', 'mapping:Generated_123']) {
+for (const selector of ['dlo:Source__dll', 'dmo:Target__dlm']) {
   for (const preview of [true, false]) {
     test(`public delete human output preserves ${selector} preview=${preview}`, async () => {
       const command = invocation({ metadata: [selector], preview });
@@ -90,26 +290,20 @@ for (const selector of ['dlo:Source__dll', 'dmo:Target__dlm', 'mapping:Generated
       let writes = 0;
       command.jsonEnabled = () => false;
       command.log = (line) => lines.push(line);
-      command.createDloClient =
-        command.createDmoClient =
-        command.createMappingClient =
-          () => ({
-            get: async () => ({}),
-            delete: async () => {
-              writes++;
-            },
-          });
-      command.retrieveDlo = command.retrieveDmo = command.preflightDeleteMapping = async () => ({});
-      command.deleteDlo =
-        command.deleteDmo =
-        command.deleteMapping =
-          async (name, client) => client.delete(name);
+      command.createDloClient = command.createDmoClient = () => ({
+        get: async () => ({}),
+        delete: async () => {
+          writes++;
+        },
+      });
+      command.retrieveDlo = command.retrieveDmo = async () => ({});
+      command.deleteDlo = command.deleteDmo = async (name, client) => client.delete(name);
       const result = await run(command);
       assert.equal(result.status, 'success', JSON.stringify(result));
       assert.equal(writes, preview ? 0 : 1);
       assert.deepEqual(lines, [
         `Delete${preview ? ' preview' : ''}: success.`,
-        `${selector}: ${preview ? 'delete' : 'deleted'}; mutation: ${preview ? 'not-attempted' : 'confirmed-deleted'}.`,
+        `${preview ? 'Planned delete' : 'Deleted'}: ${selector}; mutation: ${preview ? 'not-attempted' : 'confirmed-deleted'}.`,
       ]);
       assert.deepEqual(result.result.items[0].identity, {
         dataSpace: 'default',
@@ -126,7 +320,9 @@ test('public delete rejects type-wide, malformed selectors and unqualified mappi
     { metadata: ['mapping:../escape'] },
     { metadata: ['dlo'] },
     { metadata: ['dmo'] },
-    { 'api-version': '67.0' },
+    { 'api-version': '60.0' },
+    { 'api-version': '69.0' },
+    { 'api-version': '61.1' },
     { 'api-version': 'latest' },
   ]) {
     const command = invocation(flags);
@@ -141,16 +337,16 @@ test('public delete rejects type-wide, malformed selectors and unqualified mappi
   }
 });
 
-test('public mapping deletion dispatch failure is unknown and stops the batch without retry', async () => {
-  const command = invocation({ metadata: ['mapping:Generated_123', 'mapping:Other_456'] });
+test('public delete transport failure remains unknown and stops a non-mapping batch without retry', async () => {
+  const command = invocation({ metadata: ['dlo:Source__dll', 'dlo:Other__dll'] });
   let writes = 0;
-  command.createMappingClient = () => ({
+  command.createDloClient = () => ({
     delete: async () => {
       writes++;
       throw new Error('response lost');
     },
   });
-  command.deleteMapping = async (name, client) => client.delete(name);
+  command.deleteDlo = async (name, client) => client.delete(name);
   const result = await run(command);
   assert.equal(result.status, 'failed');
   assert.equal(result.result.items.length, 1);

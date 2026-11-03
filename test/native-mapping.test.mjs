@@ -217,6 +217,71 @@ test('mapping DELETE accepts documented200 and observed204 empty without field d
   );
 });
 
+test('mapping field DELETE uses exact observed selector once and rejects unsafe or unqualified inputs', async () => {
+  const calls = [];
+  const client = createMappingClient('target', '68.0', async (arguments_) => {
+    calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
+    return http(204);
+  });
+  assert.equal(client.apiVersion, '68.0');
+  await client.deleteField(mappingName, 'observed_selector_123');
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].url,
+    `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123?dataspace=default`,
+  );
+  assert.deepEqual(calls[0].body, { mode: 'raw', raw: '' });
+  for (const selector of ['', '../escape', 'a/b', 'a?dataspace=other', undefined])
+    await assert.rejects(client.deleteField(mappingName, selector));
+  for (const version of ['69.0'])
+    await assert.rejects(
+      createMappingClient('target', version, async () => assert.fail()).deleteField(
+        mappingName,
+        'observed',
+      ),
+      /VERSION_UNQUALIFIED/,
+    );
+  assert.equal(calls.length, 1);
+  let attempts = 0;
+  await assert.rejects(
+    createMappingClient('target', '68.0', async () => {
+      attempts++;
+      return http(500);
+    }).deleteField(mappingName, 'observed'),
+    /HTTP_ERROR/,
+  );
+  assert.equal(attempts, 1);
+});
+
+test('mapping field DELETE preserves every admitted compatibility pin and normalizes default/auto', async () => {
+  for (const version of [
+    '61.0',
+    '62.0',
+    '63.0',
+    '64.0',
+    '65.0',
+    '66.0',
+    '67.0',
+    '68.0',
+    'auto',
+    undefined,
+  ]) {
+    const calls = [];
+    const client = createMappingClient('target', version, async (arguments_) => {
+      calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
+      return http(204);
+    });
+    await client.deleteField(mappingName, 'observed_selector_123');
+    assert.deepEqual(calls, [
+      {
+        url: `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123?dataspace=default`,
+        method: 'DELETE',
+        body: { mode: 'raw', raw: '' },
+      },
+    ]);
+  }
+});
+
 test('mapping version guard admits explicit >=61 and default/auto68 before calls, preserving pins', async () => {
   let calls = 0;
   const runner = async (arguments_) => {

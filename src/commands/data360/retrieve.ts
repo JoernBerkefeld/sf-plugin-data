@@ -273,6 +273,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         items: [],
       },
     };
+    const outputTypes = new Set<string>();
+    const errorTypes = new Map<RetrieveEnvelope['diagnostics']['errors'][number], string>();
     const finish = (status: RetrieveEnvelope['status'], code?: string): RetrieveEnvelope => {
       envelope.status = status;
       if (code)
@@ -285,10 +287,35 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (status !== 'success') process.exitCode = 1;
       if (!this.jsonEnabled()) {
         this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
-        for (const diagnostic of envelope.diagnostics.errors)
+        const groups = new Set([
+          ...outputTypes,
+          ...envelope.result.items.map((item) => item.family ?? 'dmo'),
+        ]);
+        const printError = (
+          diagnostic: RetrieveEnvelope['diagnostics']['errors'][number],
+        ): void => {
           this.log(
-            `${diagnostic.identity ? `${diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: ` : ''}${diagnostic.code}: ${diagnostic.message}`,
+            `${diagnostic.identity ? `${errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: ` : ''}${diagnostic.code}: ${diagnostic.message}`,
           );
+        };
+        for (const family of groups) {
+          const items = envelope.result.items.filter((item) => (item.family ?? 'dmo') === family);
+          for (const item of items)
+            this.log(`Downloaded ${family}:${item.identity.apiName} (${item.outcome}).`);
+          for (const diagnostic of envelope.diagnostics.errors)
+            if (
+              diagnostic.identity &&
+              (errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo') === family
+            )
+              printError(diagnostic);
+          this.log(`Downloaded ${family}: ${items.length}`);
+        }
+        for (const diagnostic of envelope.diagnostics.errors)
+          if (
+            !diagnostic.identity ||
+            !groups.has(errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo')
+          )
+            printError(diagnostic);
       }
       return envelope;
     };
@@ -375,6 +402,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       );
       let failed = false;
       for (const family of nativeFamilies) {
+        if (
+          selectors.length === 0 ||
+          selectors.some((selector) => selector === family || selector.startsWith(`${family}:`))
+        )
+          outputTypes.add(family);
         for (const apiName of selected.get(family) ?? []) {
           try {
             const document =
@@ -429,6 +461,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               identity: { dataSpace: 'default', apiName },
               ...(family === 'mapping' ? { family } : {}),
             });
+            errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
           }
         }
       }
@@ -632,7 +665,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return finish('blocked', 'TARGET_ORG_REQUIRED');
     }
     let failed = false;
-    const diagnose = (error: unknown, apiName?: string): void => {
+    const diagnose = (error: unknown, apiName?: string, family = 'dmo'): void => {
       let code = 'RETRIEVE_FAILED';
       if (
         error instanceof DloError ||
@@ -662,6 +695,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         failed = true;
       if (error instanceof RetrieveDependencyError) {
         apiName = error.identity.apiName;
+        family = error.identity.kind;
         envelope.result.dependencies = [{ identity: error.identity, reason: error.reason }];
       }
       envelope.diagnostics.errors.push({
@@ -672,6 +706,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         retryable: false,
         ...(apiName ? { identity: { dataSpace: flags['data-space'], apiName } } : {}),
       });
+      errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
     };
     try {
       envelope.provenance.sourceOrgId = org.getOrgId();
@@ -732,7 +767,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ...receipt,
           });
         } catch (error: unknown) {
-          diagnose(error, apiName);
+          diagnose(error, apiName, 'dlo');
           if (
             !(error instanceof SegmentError) ||
             ![
@@ -847,6 +882,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       const names = hasDmos
         ? await this.selectDocuments(connection, dmoSelectors, selection, flags['data-space'])
         : [];
+      if (hasDmos) outputTypes.add('dmo');
+      for (const selector of selectors) outputTypes.add(selector.split(':')[0]);
       // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
       const segments = [...new Set(segmentSelectors.map((value) => value.slice(8)))].sort();
       envelope.result.selection = [
@@ -1205,7 +1242,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               ...receipt,
             });
           } catch (error: unknown) {
-            diagnose(error, document.identity.apiName);
+            diagnose(error, document.identity.apiName, document.kind);
             // Do not publish dependents after an ambiguous prerequisite output failure.
             break;
           }

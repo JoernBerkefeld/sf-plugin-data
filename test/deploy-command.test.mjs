@@ -501,7 +501,7 @@ test('human execution output reports unknown mutation and never aggregate succes
   assert.equal(exitCode, 1);
   assert.match(logs.join('\n'), /Deploy execution: failed/u);
   assert.match(logs.join('\n'), /Mutation may have occurred/u);
-  assert.match(logs.join('\n'), /Execution: not-attempted; mutation: not-attempted/u);
+  assert.match(logs.join('\n'), /Not attempted: dmo:.*; mutation: not-attempted/u);
   assert.doesNotMatch(logs.join('\n'), /No deployment executed|execution: success/u);
 });
 
@@ -658,5 +658,5 @@ test('human summary states preview only, never actual deployment', async () => {
   command.log = (message) => logs.push(message);
   await run(command);
   assert.match(logs.join('\n'), /No deployment executed/u);
-  assert.match(logs.join('\n'), /Preview: create/u);
+  assert.match(logs.join('\n'), /Planned create: dmo:/u);
 });

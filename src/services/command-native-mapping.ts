@@ -22,6 +22,20 @@ export async function preflightMapping(
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'confirmed-pair-lookup' : 'none',
     diagnostics: [],
+    plan: [
+      ...(plan.removals ?? []).map((pair) => ({
+        operation: 'unmap' as const,
+        apiName: plan.target!.identity.apiName,
+        ...pair,
+      })),
+      ...plan.writes.flatMap(({ body }) =>
+        body.fieldMapping.map((pair) => ({
+          operation: plan.operation === 'create' ? ('create' as const) : ('add' as const),
+          ...(plan.target ? { apiName: plan.target.identity.apiName } : {}),
+          ...pair,
+        })),
+      ),
+    ],
   };
 }
 
@@ -30,16 +44,22 @@ export async function preflightMapping(
  * @param {unknown} value Portable mapping.
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target readers.
+ * @param {Function} [onUpdated] Receive independently confirmed changes without changing JSON.
  * @returns {Promise<object>} Payload-free execution outcome.
  */
 export async function executeMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
+  onUpdated?: Parameters<typeof deployNativeMapping>[3],
 ) {
   let dispatched = false;
   const guarded: MappingClient = {
     ...client,
+    deleteField: async (name, selector) => {
+      dispatched = true;
+      return client.deleteField(name, selector);
+    },
     create: async (body) => {
       dispatched = true;
       return client.create(body);
@@ -50,7 +70,7 @@ export async function executeMapping(
     },
   };
   try {
-    const result = await deployNativeMapping(value, guarded, dependencies);
+    const result = await deployNativeMapping(value, guarded, dependencies, onUpdated);
     return {
       outcome:
         result.operation === 'noop'

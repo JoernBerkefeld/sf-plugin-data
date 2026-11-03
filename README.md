@@ -51,7 +51,7 @@ plugin features.
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />      | Native default/auto API68: canonical JSON, all/type/exact retrieval, target-name POST/PATCH, label/additive Text updates and exact-name delete. Explicit numeric pins are preserved. Independent GET confirms writes; explicit native batches order DLO, DMO, mapping. Native Git and dependency expansion remain blocked; legacy adapters are separate.                                                                    |
 | Data Lake Objects (DLOs), `dlo`            | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" />                                                                                             | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" /> | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" />    | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup. |
-| DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="One additive nonconflicting pair" />           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Conditional non-last mapping deletion" /> | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, one additive pair, zero-write repeats and non-last DELETE204 with preserved parents/survivor. Last mapping, field-pair removal and retargeting are blocked; not cross-org or populated-object qualification.                                            |
+| DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Qualified desired-state pair reconciliation" />           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded unmap-first non-last deletion" /> | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, canonical retrieval, one additive pair, JSON Text removal with batch addition, both Text retarget directions and zero-write previews/repeats. Guarded API61..68/default68 deletion (62..67 assumed compatible) unmaps qualified authored identity Text/Number pairs before protected-only deletion, with an independently qualified other-source survivor. Installed API61/68 two-Text-pair deletion and zero-write last-for-DMO preview/execution guards passed; installed Number removal is not qualified. Empty custom fixture scope only; API61 fixtures were provisioned at API68. Desired-state removal/retargeting remain API68-only; not cross-org or populated-object qualification.                                            |
 | DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved.                                                                                                                                                                                              |
 | Source object definitions                  | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Definition XML only, not connectors or credentials.                                                                                                                                                                                                                                                                                                                                                                         |
 | Stream definitions                         | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Definition XML only; public stream orchestration remains queued. Ingestion schema sync above is not general stream support.                                                                                                                                                                                                                                                                                                 |
@@ -76,13 +76,13 @@ Current plugin limits:
   members. Default data space only. Default/`auto` uses API68 for native routes;
   explicit numeric pins are preserved, not silently upgraded. Numeric admission
   (61.0 and above for native retrieval/deploy) is not live qualification at every
-  version; native mapping deletion requires 68.0. Legacy routes remain family-specific
+  version; native mapping deletion admits 61.0 through 68.0 (62..67 assumed compatible). Legacy routes remain family-specific
   (API65 legacy families; API67 IR/Graph/Ingestion), not the latest API.
-- Native DLO/DMO creation and bounded updates, mapping creation and one nonconflicting
-  additive field pair, Segment DBT label/description or qualified forward empty-audience
+- Native DLO/DMO creation and bounded updates, mapping creation and qualified API68/default
+  desired-state pair reconciliation, Segment DBT label/description or qualified forward empty-audience
   predicate updates, CI predicate updates, IR reconciliation updates and Graph projection
   updates are separate bounded profiles. Explicit native batches settle DLOs, then
-  DMOs, then mappings. General schema edits, field-pair removal, mapping retargeting
+  DMOs, then mappings. General schema edits, unqualified mapping changes
   and new IR/Graph provisioning are not enabled. Use `--preview` before deployment.
 - Installed revision `518a219` has bounded two-org existing-owner IR/Graph retrieval,
   target Graph LastName update, independent full preservation and actual zero-write
@@ -601,8 +601,11 @@ Omitted selectors retrieve all implemented native families (DLO, DMO and mapping
 a bare type retrieves its inventory, and exact members are sorted and deduplicated.
 Only the `default` data space is supported. Default/`auto` selects native API `68.0`;
 explicit numeric pins are preserved. Native retrieval/deploy admits numeric versions
-from `61.0`, but installed mapping lifecycle acceptance is API68 only. `latest` is
-not a native mapping route and dependency expansion remains unsupported.
+from `61.0`. Installed creation/reconciliation acceptance is API68; bounded guarded
+deletion and last-for-DMO guards passed at API61 and API68. API61 fixtures were
+provisioned at API68, not through API61 creation; API62..67 remain an explicitly
+accepted compatibility assumption, not live-qualified. `latest` is not a native
+mapping route and dependency expansion remains unsupported.
 Output is `data360/mapping/<name>.mapping-meta.json` beneath `--output-dir` (default cwd).
 The document contains `schemaVersion: 1`, `kind: "mapping"`, logical `identity` and
 `spec` with DLO/DMO developer-name bindings and field pairs. Retrieved field selectors
@@ -610,7 +613,7 @@ are retained; source record IDs and runtime observations are not replayed. Ident
 bytes are unchanged; differing files require `--overwrite`. Independent failures
 retain successful member receipts and return nonzero status.
 
-#### Create / bounded additive update
+#### Create / desired-state mapping reconciliation
 
 Choose exactly one explicit input mode: exact project member selectors, or local
 canonical files/directories. Bare types, wildcards and omitted deploy selections
@@ -633,40 +636,112 @@ proof (`MAPPING_DEPENDENCIES_PLANNED`), not confirmed create readiness.
 
 Creation resolves the exact DLO/DMO pair in the target and uses the target-generated
 mapping name, not the source artifact name. An existing logically identical mapping
-is a zero-write repeat. Update permits exactly one nonconflicting additive field
-pair per invocation, with a names-only, selector-free PATCH; existing pairs and their
-selectors must survive independent readback. It is not pair replacement. Field-pair
-removal, multiple new pairs, existing-pair retargeting and changing either parent
-binding are blocked before writes. No implicit parent creation or PK/KQ inference
-is performed outside explicitly selected, supported parent definitions.
+is a zero-write repeat. At API68/default, the existing `spec.fieldMappings` array is
+the desired pair set: qualified omitted authored identity Text/Number pairs are
+unmapped individually using fresh target selectors, then new Text pairs are added
+in one names-only, selector-free PATCH. Qualified Text retargeting supports the same
+source/new target and new source/same target directions. Generated/key pairs cannot
+be omitted or changed; retained pairs keep their target selectors. All policy checks
+precede the first removal. Shared or occupied authored targets, unknown metadata,
+nonidentity removals and parent-binding changes are refused. Preview lists removals
+before additions with zero writes. Exact final pairs, full parents and inventory are
+independently checked, allowing only expected `isMapped` transitions. Partial or
+unknown mutation stops immediately without write retry or rollback.
+
+To remove an eligible custom field mapping, remove its pair from `spec.fieldMappings`
+and deploy the complete JSON file. This removes the connection between the two
+fields, not the DMO field itself, within the guarded scope above. Keep all protected
+key, qualifier and system pairs. To retarget a field pair, replace the old pair with
+the new pair: deployment removes the old connection first, then adds the new one.
+This does not change the mapping's source DLO or target DMO.
+
+Without `--json`, deployment and deletion print one action line per component,
+including its type and API name. A confirmed mapping update also prints
+`Deleted field mappings: source -> target, ...` and
+`Added field mappings: source -> target, ...` on separate lines. Empty lists are
+omitted; a retarget appears in both lists. Preview lines start with `Planned` and
+never claim a completed write. Unchanged items are not reported as updated, and
+failed or unknown outcomes do not print completed field-change lists. `--json`
+keeps the structured result without these human-readable lines.
+
+Execution ends with `Deployed: n (x created / y updated / z failed)`. The total
+`n` is only the confirmed created plus updated components. Unchanged, blocked and
+unattempted items are excluded; each failed component counts once, even if several
+field operations were attempted. Preview never claims a completed deployment.
+For example: `Deployed: 2 (1 created / 1 updated / 1 failed)`.
+
+Retrieval prints each successfully retrieved name, grouped by type, followed by
+`Downloaded <type>: n` for that type (for example, `Downloaded mapping: 2`).
+Named selection, type selection and bare retrieve count successful component
+receipts, including unchanged local files, not requests, file counts or API
+`totalSize`. Failures remain visible and are not counted. A count does not qualify
+inventory completeness or resolve the deferred mapping inventory limitation.
+
+These reconciliation paths are qualified by raw API68/default experiments on empty
+custom definitions, with installed public API68 Text reconciliation acceptance below.
+Populated-object, cross-org and other-version guarantees are not established. No
+implicit parent creation or PK/KQ inference is performed outside explicitly selected,
+supported parent definitions.
 
 Installed public API68 acceptance on owned empty custom definitions covers ordered
 parent/mapping creation, canonical retrieval, an unchanged zero-write redeploy, one
-additive pair and a second zero-write repeat. DLO raw state and DMO schema/key/field
-definitions were preserved across PATCH, but DMO's derived field `isMapped` can
-change when a pair is added. Full raw DMO preservation is therefore not claimed
-across PATCH. This is not populated-object, cross-org or all-version qualification.
+additive pair and a second zero-write repeat. That historical single Number addition
+does not qualify installed Number removal. Installed JSON Text reconciliation also
+passed removal of A with batch addition of D/E, then B-to-C same-source/new-target
+retargeting and F-to-D new-source/same-target retargeting, sequentially on the same
+empty fixture. Each reconciliation preview and repeat performed zero writes. Exact
+desired pairs, retained selectors, full DLO state and DMO schema/nonflag properties
+were independently verified, allowing only expected `isMapped` changes. Full raw
+DMO preservation is therefore not claimed across reconciliation. This is not
+populated-object, cross-org, arbitrary-schema or all-version qualification.
 
-#### Conditional delete and limitations
+#### Guarded unmap-first native mapping deletion
 
 ```sh
 sf data360 delete -m mapping:ExactTargetMappingName -o TARGET_ALIAS --api-version 68.0 --preview --json
 sf data360 delete -m mapping:ExactTargetMappingName -o TARGET_ALIAS --api-version 68.0 --json
 ```
 
-Delete accepts exact mapping selectors only, executes without prompting unless
-`--preview` is set, and requires native API `68.0` (also selected by default/`auto`).
-A complete fresh DMO-only mapping inventory must establish another `ACTIVE` mapping
-from a distinct DLO to the same DMO. The last mapping is blocked in both preview and
-execution with `MAPPING_LAST_MAPPING_DELETE_BLOCKED` and zero writes. An already-absent
-mapping is conservatively blocked without writes; unchanged-on-404 handling applies
-only to native DLO/DMO deletion. There is no parent-delete fallback, artificial
-survivor creation, automatic retry, rollback or local artifact deletion.
+Deletion is admitted at API `61.0` through `68.0` in the default data space for the
+qualified empty-custom-object profile; default/`auto` remains `68.0`. Native API61
+Text/Number unmap-first deletion passed with complete raw parent/survivor preservation.
+API62..67 are an explicitly accepted compatibility assumption, not live-qualified.
+API60's mapping read route returned 404 below the documented API61 floor; no API60
+DELETE was attempted. Installed API61 and API68 public deletion acceptance each
+unmapped two authored identity Text pairs and deleted the protected-only mapping:
+exactly three DELETE responses of HTTP `204`. Independent reads confirmed typed
+selected-mapping `404`, complete DLO parents, DMO schema/nonflag properties with only
+expected mapped-flag changes, the unchanged survivor and exact fixture inventory.
+Last-for-DMO preview and execution were both blocked with zero writes at API61/68.
+API61 fixtures were provisioned at API68; this does not qualify API61 creation or
+installed Number removal. Exact fixture inventory checks are destructive-safety
+proof, not successful public bare/type inventory retrieval acceptance. Desired-state
+removal/retarget remains API68-only; create, noop and existing single-add behavior are unchanged. Before any writes, complete fresh inventory must prove
+another source's mapping independently covers all five metadata-qualified protected
+pairs (primary key, qualifier and three system pairs). The last mapping for a DMO is
+blocked before any unmaps. Last-for-DLO alone is not a blocker. An already-absent mapping
+is conservatively blocked without writes; unchanged-on-404 handling applies only to
+native DLO/DMO deletion.
 
-Installed public acceptance confirmed non-last native DELETE HTTP `204` with an empty
-body, independent exact-name `404` absence, and full raw preservation of the surviving
-`ACTIVE` mapping, both DLOs and the DMO. This is conditional whole-mapping deletion,
-not field-pair removal or unrestricted mapping deletion.
+The ordered plan first unmaps each qualified authored identity Text/Number pair using
+its fresh observed selector, then deletes the protected-only mapping once. Shared
+authored targets, unsupported metadata/types and ambiguous inventory are refused.
+`--preview` performs zero writes and reports the ordered selectors without payloads.
+Every write is followed by bounded GET-only checks of complete DLO/DMO schemas,
+remaining mappings and retained selectors. Only the expected authored target's
+`isMapped` true-to-absent transition is allowed during unmapping; final deletion must
+preserve the complete pre-final schema. Survivor content is checked even while
+`CREATING`, then must settle `ACTIVE`. Typed selected-mapping 404 and exact remaining
+inventory are required, not merely an accepted DELETE response.
+
+Direct non-last native DELETE HTTP `204` previously removed DMO `Count__c`/`Gamma__c`
+fields and triggered `MAPPING_PARENT_CHANGED`; survivor coverage alone was insufficient.
+The qualified unmap-first sequence avoids admitting that direct-delete path, but does
+not establish populated-object, cross-org or all-version guarantees. Any partial or
+lost-response failure stops the batch with mutation unknown, including after the first
+unmap. There is no parent DELETE, override, artificial survivor creation, automatic
+retry, rollback or local artifact deletion. Desired-state deployment uses the same
+guarded individual unmap checks within the reconciliation scope described above.
 
 Supporting API68 route tests rejected retargeting only the DLO, only the DMO, or both
 with HTTP `404` input-binding mismatch for both last and secondary mappings; original
@@ -1833,8 +1908,9 @@ Only all-created/updated/unchanged results yield aggregate success/exit 0; block
 execution exits 1 even after prior mutations. Unknown mutation means creation or update may have
 occurred: inspect target before another attempt. No retry or rollback. Legacy additions,
 descriptions, primary-key labels and other unproven changes block before writes;
-native DLO/DMO additive fields and one nonconflicting mapping pair use their separate
-bounded profiles. Mapping field-pair removal/retargeting remains blocked.
+native DLO/DMO additive fields and API68/default mapping desired-state reconciliation
+use their separate bounded profiles. Mapping removal/retargeting outside the qualified
+empty-custom-definition scope remains blocked.
 Parser/auth flag errors retain core formatting. No public plan or saved-plan infrastructure.
 
 ## Scope and safety

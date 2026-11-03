@@ -223,7 +223,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create, one-pair additive update and unchanged repeats are supported, not removal or retargeting. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -484,6 +484,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         items: [],
       },
     };
+    const families = new Map<string, string>();
+    const mappingChanges = new Map<
+      string,
+      Parameters<NonNullable<Parameters<typeof executeMapping>[3]>>[0]
+    >();
     const finish = (status: DeployEnvelope['status'], code?: string): DeployEnvelope => {
       envelope.status = status;
       if (code)
@@ -502,13 +507,54 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : `Deploy execution: ${status}${code ? ` (${code})` : ''}. No automatic retry or rollback performed.`,
         );
         for (const item of envelope.result.items) {
+          const component = `${families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo'}:${item.identity.apiName}`;
           this.log(
             item.operation === 'preview'
-              ? `Preview: ${item.outcome}.`
-              : `Execution: ${item.outcome}; mutation: ${item.mutation}.`,
+              ? `Planned ${item.outcome}: ${component}.`
+              : `${item.outcome === 'created' ? 'Created' : item.outcome === 'updated' ? 'Updated' : item.outcome === 'unchanged' ? 'Unchanged' : item.outcome === 'failed' ? 'Failed' : item.outcome === 'blocked' ? 'Blocked' : 'Not attempted'}: ${component}; mutation: ${item.mutation}.`,
           );
+          if (
+            item.operation === 'execute' &&
+            item.outcome === 'updated' &&
+            item.mutation === 'confirmed-updated'
+          ) {
+            const changes = mappingChanges.get(item.path);
+            for (const [label, pairs] of [
+              ['Deleted', changes?.deleted],
+              ['Added', changes?.added],
+            ] as const)
+              if (pairs?.length)
+                this.log(
+                  `${label} field mappings: ${pairs.map((pair) => `${pair.sourceFieldDeveloperName} -> ${pair.targetFieldDeveloperName}`).join(', ')}.`,
+                );
+          }
+          if (item.operation === 'preview' && 'plan' in item)
+            for (const step of item.plan)
+              this.log(
+                `Planned field ${step.operation}: ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName}${'developerName' in step ? ` (${step.developerName})` : ''}.`,
+              );
           if (item.operation === 'execute' && item.mutation === 'unknown')
             this.log('Mutation may have occurred. Inspect target before any further attempt.');
+        }
+        if (!flags.preview) {
+          const created = envelope.result.items.filter(
+            (item) =>
+              item.operation === 'execute' &&
+              item.outcome === 'created' &&
+              item.mutation === 'confirmed-created',
+          ).length;
+          const updated = envelope.result.items.filter(
+            (item) =>
+              item.operation === 'execute' &&
+              item.outcome === 'updated' &&
+              item.mutation === 'confirmed-updated',
+          ).length;
+          const failed = envelope.result.items.filter(
+            (item) => item.operation === 'execute' && item.outcome === 'failed',
+          ).length;
+          this.log(
+            `Deployed: ${created + updated} (${created} created / ${updated} updated / ${failed} failed)`,
+          );
         }
       }
       return envelope;
@@ -543,6 +589,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      for (const input of resolvedInputs) families.set(input.path, input.document.kind ?? 'dmo');
       if (resolvedInputs.length === 0 && changedSince === undefined)
         return finish('blocked', 'INVALID_SELECTION');
       const nativeInputs = resolvedInputs.filter(
@@ -645,10 +692,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           // Each executor independently admits and settles this item before the next dependency read.
           const result =
             kind === 'mapping'
-              ? await (this.executeMapping ?? executeMapping)(input.document, mapping(), {
-                  source,
-                  target: dmo,
-                })
+              ? await (this.executeMapping ?? executeMapping)(
+                  input.document,
+                  mapping(),
+                  {
+                    source,
+                    target: dmo,
+                  },
+                  (changes) => mappingChanges.set(input.path, changes),
+                )
               : kind === 'dlo'
                 ? await (this.executeDlo ?? executeDloDeploy)(input.document, source)
                 : await (this.executeNativeDmo ?? executeDmo)(input.document, dmo);

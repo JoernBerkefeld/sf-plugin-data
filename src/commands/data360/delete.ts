@@ -13,7 +13,7 @@ import {
   deleteNativeMapping,
   preflightDeleteNativeMapping,
 } from '../../services/native-mapping.js';
-import { nativeApiVersion } from '../../transport/api-version.js';
+import { isNativeMappingDeletionVersion, nativeApiVersion } from '../../transport/api-version.js';
 
 export type DeleteEnvelope = {
   contract: 'sf-data360-delete';
@@ -31,6 +31,13 @@ export type DeleteEnvelope = {
       operation: 'preview' | 'delete';
       outcome: 'delete' | 'deleted' | 'unchanged' | 'blocked' | 'failed';
       mutation: 'not-attempted' | 'confirmed-deleted' | 'unknown';
+      plan?: Array<{
+        operation: 'unmap' | 'delete';
+        apiName: string;
+        sourceFieldDeveloperName?: string;
+        targetFieldDeveloperName?: string;
+        developerName?: string;
+      }>;
     }>;
   };
 };
@@ -38,9 +45,9 @@ export type DeleteEnvelope = {
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
   public static readonly summary =
-    'Delete exact Data360 DLO, DMO or non-last mapping definitions; --preview is read-only.';
+    'Delete exact Data360 DLO, DMO or qualified non-last mapping definitions.';
   public static readonly description =
-    'Executes explicit type:ApiName selections without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion is API68-only and requires another distinct ACTIVE DLO mapping to the same DMO, with independent survivor and parent verification. Last mapping deletion is blocked. No cascade, local deletion, retries or rollback. Use --preview for the same read-only guards with zero mutations.';
+    'Executes explicit type:ApiName selections without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -54,7 +61,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       summary: 'Exact dlo:Name__dll, dmo:Name__dlm or mapping:ApiName selections only.',
     }),
     'api-version': Flags.string({
-      summary: 'Native numeric route >=61, default/auto68; mapping deletion requires68.',
+      summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
     }),
     'data-space': Flags.string({ default: 'default' }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
@@ -107,8 +114,26 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       if (envelope.status !== 'success') process.exitCode = 1;
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
-        for (const item of envelope.result.items)
-          this.log(`${selectorsByItem.get(item)}: ${item.outcome}; mutation: ${item.mutation}.`);
+        for (const item of envelope.result.items) {
+          const action =
+            item.operation === 'preview'
+              ? `Planned ${item.outcome}`
+              : item.outcome === 'deleted'
+                ? 'Deleted'
+                : item.outcome === 'unchanged'
+                  ? 'Unchanged'
+                  : item.outcome === 'failed'
+                    ? 'Failed'
+                    : 'Blocked';
+          this.log(`${action}: ${selectorsByItem.get(item)}; mutation: ${item.mutation}.`);
+          if (item.operation === 'preview')
+            for (const step of item.plan ?? [])
+              this.log(
+                step.operation === 'unmap'
+                  ? `Planned field unmap: ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName}.`
+                  : `Planned mapping delete: ${item.identity.apiName}.`,
+              );
+        }
       }
       return envelope;
     };
@@ -131,8 +156,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         throw new DloError('INVALID_SCOPE');
       }
       const selectors = [...new Set(flags.metadata)];
-      // Mapping DELETE is qualified at API68 only; never upgrade another explicit pin.
-      if (selectors.some((selector) => selector.startsWith('mapping:')) && version !== '68.0')
+      // Never upgrade explicit pins for the qualified mapping deletion route.
+      if (
+        selectors.some((selector) => selector.startsWith('mapping:')) &&
+        !isNativeMappingDeletionVersion(version)
+      )
         throw new NativeMappingError('MAPPING_DELETE_VERSION_UNQUALIFIED');
       const target = await this.resolveTarget(flags['target-org']);
       for (const selector of selectors) {
@@ -162,18 +190,34 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         envelope.result.items.push(item);
         try {
           if (mapping) {
-            const mappingClient = client as ReturnType<typeof createMappingClient>;
+            const mappingBase = baseClient as ReturnType<typeof createMappingClient>;
+            const mappingClient = {
+              ...client,
+              deleteField: async (name: string, observedSelector: string): Promise<void> => {
+                dispatched = true;
+                await mappingBase.deleteField(name, observedSelector);
+              },
+            } as ReturnType<typeof createMappingClient>;
             const dependencies = {
               source: (this.createDloClient ?? createDloClient)(target, version),
               target: (this.createDmoClient ?? createDmoClient)(target, version),
             };
-            await (flags.preview
-              ? (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
-                  apiName,
-                  mappingClient,
-                  dependencies,
-                )
-              : (this.deleteMapping ?? deleteNativeMapping)(apiName, mappingClient, dependencies));
+            if (flags.preview) {
+              const plan = await (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
+                apiName,
+                mappingClient,
+                dependencies,
+              );
+              item.plan = [
+                ...plan.removals.map((pair) => ({ operation: 'unmap' as const, apiName, ...pair })),
+                { operation: 'delete', apiName },
+              ];
+            } else
+              await (this.deleteMapping ?? deleteNativeMapping)(
+                apiName,
+                mappingClient,
+                dependencies,
+              );
           } else {
             const definitionClient = client as ReturnType<typeof createDloClient>;
             if (flags.preview)
@@ -216,7 +260,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             ? error.code
             : 'DELETE_FAILED',
         message:
-          'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry, cascade or rollback.',
+          'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         retryable: false,
       });
     }
