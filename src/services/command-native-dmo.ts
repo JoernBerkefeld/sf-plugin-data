@@ -42,6 +42,12 @@ export async function executeDmo(value: unknown, client: DmoClient, requestScope
   };
   try {
     const result = await deployNativeDmo(value, guarded, requestScope);
+    if (result.operation === 'unchanged')
+      return {
+        outcome: 'unchanged' as const,
+        mutation: 'not-attempted' as const,
+        diagnostics: [],
+      };
     return {
       outcome: result.operation === 'create' ? ('created' as const) : ('updated' as const),
       mutation:

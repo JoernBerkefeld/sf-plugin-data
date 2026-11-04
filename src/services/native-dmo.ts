@@ -9,13 +9,19 @@ import {
 import type { NativeDmoDocument, NativeDmoField } from '../artifacts/native-dmo-document.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
 
-export type NativeDmoDeployPlan = {
-  operation: 'create' | 'update';
-  apiName: string;
-  targetApiName?: string;
-  omittedTargetFields?: NativeDmoField[];
-  body: Record<string, unknown>;
-};
+export type NativeDmoDeployPlan =
+  | {
+      operation: 'create' | 'update';
+      apiName: string;
+      targetApiName?: string;
+      omittedTargetFields?: NativeDmoField[];
+      body: Record<string, unknown>;
+    }
+  | {
+      operation: 'unchanged';
+      apiName: string;
+      document: NativeDmoDocument;
+    };
 
 const systemFields = new Set(['DataSource__c', 'DataSourceObject__c', 'InternalOrganization__c']);
 
@@ -173,6 +179,9 @@ export async function preflightNativeDmo(
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))
     throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_ADDITION');
+  const fields = added.map((field) => fieldInput(field));
+  if (added.length === 0 && desired.spec.label === target.spec.label)
+    return { operation: 'unchanged', apiName, document: target };
   return {
     operation: 'update',
     apiName,
@@ -181,7 +190,7 @@ export async function preflightNativeDmo(
     body: {
       label: desired.spec.label,
       ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
-      ...(added.length > 0 ? { fields: added.map((field) => fieldInput(field)) } : {}),
+      ...(fields.length > 0 ? { fields } : {}),
     },
   };
 }
@@ -210,20 +219,21 @@ function confirmed(desired: NativeDmoDocument, actual: NativeDmoDocument): boole
 }
 
 /**
- * Perform exactly one write, then require independent bounded GET confirmation.
+ * Skip unchanged definitions, otherwise write once and require independent bounded GET confirmation.
  * Stale PATCH bodies never establish persistence; failed readback never triggers another write.
  * @param {unknown} value Portable requested definition.
  * @param {DmoClient} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
- * @returns {Promise<{operation: 'create' | 'update', document: NativeDmoDocument}>} Confirmed definition, not activation proof.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument}>} Observed or confirmed definition, not activation proof.
  */
 export async function deployNativeDmo(
   value: unknown,
   client: DmoClient,
   requestScope?: string,
-): Promise<{ operation: 'create' | 'update'; document: NativeDmoDocument }> {
+): Promise<{ operation: 'create' | 'update' | 'unchanged'; document: NativeDmoDocument }> {
   const desired = validateNativeDmoDocument(value);
   const plan = await preflightNativeDmo(desired, client, requestScope);
+  if (plan.operation === 'unchanged') return { operation: 'unchanged', document: plan.document };
   // Bind readback expectations to the same target snapshot that authorized PATCH.
   desired.spec.fields.push(...(plan.omittedTargetFields ?? []));
   const response =

@@ -91,16 +91,18 @@ test('native writer retains fields and binds canonical source bytes', async () =
 test('DMO wrappers forward explicit scope while retaining conservative dispatch evidence', async () => {
   const saved = structuredClone(document);
   saved.identity.dataSpace = 'other';
+  saved.spec.label = 'Changed';
   const scoped = { ...wire, dataSpaceName: 'other' };
+  const updated = { ...scoped, label: saved.spec.label };
   const preview = await preflightDmo(saved, client({ get: async () => scoped }), 'other');
   assert.equal(preview.outcome, 'update');
   let writes = 0;
   const target = client({
-    get: async () => scoped,
+    get: async () => (writes ? updated : scoped),
     update: async (_name, body) => {
       writes++;
       assert.equal(body.dataSpaceName, 'other');
-      return scoped;
+      return updated;
     },
   });
   const result = await executeDmo(saved, target, 'other');
@@ -109,6 +111,61 @@ test('DMO wrappers forward explicit scope while retaining conservative dispatch 
   assert.equal(blocked.mutation, 'not-attempted');
   assert.equal(writes, 1);
 });
+
+test('DMO wrapper unchanged preview and execution are GET-only and not-attempted', async () => {
+  const calls = [];
+  const target = client({
+    get: async (apiName) => {
+      calls.push(['get', apiName]);
+      return structuredClone(wire);
+    },
+    create: async () => assert.fail('no POST'),
+    update: async () => assert.fail('no PATCH'),
+    delete: async () => assert.fail('no DELETE'),
+  });
+  assert.deepEqual(await preflightDmo(document, target), {
+    family: 'dmo',
+    outcome: 'unchanged',
+    target: 'existing',
+    absenceProof: 'none',
+    diagnostics: [],
+  });
+  assert.deepEqual(await executeDmo(document, target), {
+    outcome: 'unchanged',
+    mutation: 'not-attempted',
+    diagnostics: [],
+  });
+  assert.deepEqual(calls, [
+    ['get', name],
+    ['get', name],
+  ]);
+});
+
+for (const preview of [true, false])
+  test(`public native DMO identical deploy reports unchanged preview=${preview}`, async () => {
+    const cwd = await scratch();
+    await writeNativeDmoDocument(document, cwd, false);
+    const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
+    const calls = [];
+    const command = invocation(Deploy, { preview, 'target-org': org });
+    command.resolveInputs = async () => inputs;
+    command.createDmoClient = () =>
+      client({
+        get: async (apiName) => {
+          calls.push(['get', apiName]);
+          return structuredClone(wire);
+        },
+        create: async () => assert.fail('no POST'),
+        update: async () => assert.fail('no PATCH'),
+        delete: async () => assert.fail('no DELETE'),
+      });
+    const result = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(result.result.items[0].outcome, 'unchanged');
+    assert.equal(result.result.items[0].mutation, preview ? undefined : 'not-attempted');
+    assert.ok(calls.length > 0);
+    assert.ok(calls.every(([method, apiName]) => method === 'get' && apiName === name));
+  });
 
 test('canonical exact selection accepts native DMO names with consecutive underscores', async () => {
   const cwd = await scratch();
@@ -156,7 +213,9 @@ for (const preview of [false, true]) {
   test(`native deploy PATCH or confirmed404 POST preview=${preview}`, async () => {
     for (const existing of [true, false]) {
       const cwd = await scratch();
-      await writeNativeDmoDocument(document, cwd, false);
+      const desired = structuredClone(document);
+      desired.spec.label = 'Changed';
+      await writeNativeDmoDocument(desired, cwd, false);
       const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
       let writes = 0;
       const command = invocation(Deploy, { preview, 'target-org': org });
@@ -165,7 +224,7 @@ for (const preview of [false, true]) {
         client({
           get: async () => {
             if (!existing && writes === 0) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
-            return wire;
+            return writes ? { ...wire, label: desired.spec.label } : wire;
           },
           create: async () => {
             assert.equal(existing, false);
@@ -227,6 +286,7 @@ for (const scope of [undefined, 'Team'])
       const cwd = await scratch();
       const desired = structuredClone(document);
       desired.identity.dataSpace = scope ?? 'default';
+      desired.spec.label = 'Changed';
       await writeNativeDmoDocument(desired, cwd, false);
       const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
       const actual = { ...wire, dataSpaceName: desired.identity.dataSpace };
@@ -235,7 +295,7 @@ for (const scope of [undefined, 'Team'])
       deploy.resolveInputs = async () => inputs;
       deploy.createDmoClient = () =>
         client({
-          get: async () => actual,
+          get: async () => (updates ? { ...actual, label: desired.spec.label } : actual),
           update: async (_name, body) => {
             updates++;
             assert.equal(Object.hasOwn(body, 'dataSpaceName'), scope !== undefined);

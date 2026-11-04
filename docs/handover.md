@@ -1,3 +1,34 @@
+# Installed standalone DMO cross-org acceptance — 2026-11-04
+
+Source `mcnext-sdo` -> target `mcnext-thuy`, API68/default, fresh empty custom
+Other/Text-only definitions. Exact plugin source retrieval -> portable artifact ->
+target-name create produced different local IDs. Independent raw GETs confirmed
+six fields including generated fields/PK; portable files matched and deliberately
+omit ordinary System `KQ_Id__c`. Label plus nonprimary Text addition persisted,
+with all six previous raw field definitions preserved and seven fields afterward.
+Repeat preview/execution returned unchanged/not-attempted with sanitized native
+client GET-only capture. Create, update and both delete previews explicitly passed
+--preview and independent reads confirmed no mutation. No-op does not bypass
+existing field preservation or unsupported-addition checks.
+
+Both exact owned fixtures were deleted without cascade after fresh identity,
+definition and scoped mapping API67/relationship API68 checks. Independent name
+GET404 confirms absence; ID-path400 INVALID_INPUT is retained, not absence proof; the DMO item key
+is its developer name. Protected returned source/target subsets were preserved.
+Each inventory returned200, without total or next page: not complete inventory.
+The dependency checks are scoped, not exhaustive dependency discovery.
+
+Evidence: `F:/Temp/dmo-crossorg-7bsUkU` retains command envelopes/stdout/stderr, portable/hash snapshots,
+raw independent reads, package/input/installed binding, lifecycle/cleanup/final audit.
+Archive SHA256 `92a15313d79fc373cffad7d2172924a1155d7b80115abd2787d8686f13b22c6b`. Native capture observed two POST201,
+one PATCH200 and two DELETE204; full auth/HTTP wire counts remain unknown.
+No ingestion, populated object, arbitrary schemas, lower versions, released package
+or mixed-family B/E/full-product closure is claimed. No local recursive cleanup.
+
+Normal full verification, final dedicated review and scoped normal-hook commit/tree
+audit receipts are retained separately after this text is frozen. Seven preexisting
+config/hook/license edits remain excluded; guide edits are never committed or pushed.
+
 # Installed standalone DLO cross-org acceptance — 2026-11-04
 
 Source `mcnext-sdo` -> target `mcnext-thuy`, API68/default, standalone Other/default

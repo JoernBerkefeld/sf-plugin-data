@@ -1,5 +1,26 @@
 # Capability contract checklist
 
+## Native standalone DMO unchanged deployment — 2026-11-04
+
+Exact native `dmo:Name__dlm` deployment compares the existing target only after
+all scope, key and field-preservation checks. Equal labels with no additions return
+`unchanged` / `not-attempted`, without POST or PATCH. Field order is immaterial;
+the deliberate omission of ordinary generated System `KQ_Id__c` from saved JSON
+is not a removal. Other field edits/removals remain blocked. Label changes and
+ordinary nonprimary Text additions retain independent post-write GET confirmation.
+
+Fresh isolated-installed API68 acceptance transported an exact source-retrieved
+portable Other/default empty Text DMO into the target with a different local ID.
+Raw generated-field and primary-key definitions were preserved; portable source
+and target definitions matched. Label plus additive Text update persisted; actual
+repeat was GET-only. All create/update/delete previews were explicitly selected
+and independently checked as nonmutating. Both exact owned fixtures were deleted
+without cascade and independently absent by name. Protected returned inventory
+subsets were preserved; 200 returned entries without count/page metadata do not
+establish complete inventories. Scoped mapping/relationship checks are not
+exhaustive dependency discovery. No ingestion, populated-object, lower-version,
+mixed-family or released-package qualification is earned.
+
 ## Native standalone DLO unchanged deployment — 2026-11-04
 
 Exact native `dlo:Name__dll` deployment now compares the existing target after all

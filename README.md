@@ -338,7 +338,12 @@ this README describe separate API research, not additional plugin capabilities.
 label/additive Text updates and exact deletion are available.** Native default/auto
 uses API68 and preserves explicit numeric pins; see the
 [native plugin workflow](#native-plugin-workflow). This is not a general migration
-tool; released-package and cross-org acceptance remain separate.
+tool. Installed API68 acceptance covers an unchanged source-retrieved Other/default
+empty Text DMO artifact creating a target with a different local ID, a label plus
+nonprimary Text addition, and a GET-only repeat returning `unchanged` /
+`not-attempted`. Create, update and exact-owned delete previews are read-only.
+This does not qualify arbitrary schemas, populated objects, ingestion, mixed-family
+dependency migration, lower versions or the released package.
 
 The older saved-project common-service adapter below is a separate API65 profile,
 not the native default or the mapping workflow:
