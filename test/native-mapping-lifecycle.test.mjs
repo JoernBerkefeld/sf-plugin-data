@@ -1229,3 +1229,32 @@ test('mapping command outcomes distinguish blocked, unknown write result and ind
   const updateResult = await executeMapping(desired(), update.client, update.deps);
   assert.equal(updateResult.mutation, 'confirmed-updated');
 });
+
+// API61 single-add admission does not qualify lower-pin destructive reconciliation.
+test('API61 omitted context preserves create, retrieve, single addition and no-op boundaries', async () => {
+  const created = fixture();
+  created.client.apiVersion = '61.0';
+  created.client.list = async () => ({ objectSourceTargetMaps: [] });
+  const create = await deployNativeMapping(desired(), created.client, dependencies());
+  assert.equal(create.operation, 'create');
+  assert.equal(created.calls.filter(([kind]) => kind === 'create').length, 1);
+  const f = fixture(raw(names.filter((name) => name !== 'Name__c')));
+  f.client.apiVersion = '61.0';
+  const input = desired();
+  const before = structuredClone(input);
+  const preview = await preflightMapping(input, f.client, f.deps);
+  assert.equal(preview.outcome, 'update');
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  const result = await deployNativeMapping(input, f.client, f.deps);
+  assert.equal(result.operation, 'update');
+  assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 1);
+  const retrieved = await retrieveNativeMapping('TargetGenerated_123', f.client);
+  assert.equal(retrieved.identity.dataSpace, 'default');
+  assert.equal(retrieved.spec.fieldMappings.length, 7);
+  const repeat = await executeMapping(input, f.client, f.deps);
+  assert.equal(repeat.outcome, 'unchanged');
+  assert.equal(repeat.mutation, 'not-attempted');
+  assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 1);
+  assert.ok(f.calls.every(([kind]) => !['unmap', 'delete'].includes(kind)));
+  assert.deepEqual(input, before);
+});

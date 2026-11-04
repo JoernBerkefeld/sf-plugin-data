@@ -1,3 +1,23 @@
+## Installed API61 mapping create and single addition — 2026-11-04
+
+Fresh empty custom Other/Text fixtures passed installed public mapping create, exact
+canonical retrieval, filtered target binding lookup, one additive Text identity pair
+and a GET-only unchanged repeat at explicit API61, with `--dataspace` omitted.
+Captured native routes retained v61.0 and omitted the dataspace query; mapping write
+bodies carried no scope field. Independent reads confirmed ACTIVE mapping settlement,
+all prior pairs/selectors, the full DLO and DMO field/key definitions; only the added
+Extra__c isMapped flag changed during update. Create/update previews were read-only.
+
+This closes the exercised API61 create/read/single-add omission path, not general
+CRUD or inventory pagination. API61 is the lowest live-tested success for these
+mapping operations in this record, not a universal introduction claim. API60 GET404
+is separate evidence, not POST/PATCH/DELETE rejection proof. API62–67 operation
+qualification remains open; their deletion compatibility is still assumed. Desired-state
+removal and retarget remain API68-only. No nondefault space, ingestion, populated data
+or released-package qualification follows. The fresh sole mapping and both parents
+are deliberately retained under the accepted last-mapping limitation; no delete,
+parent cascade or terminal cleanup was attempted.
+
 # Recovered installed mapping cross-org acceptance — 2026-11-04
 
 Existing Gate1/2 plan/review reused; the user acknowledged the sole cleanup finding
