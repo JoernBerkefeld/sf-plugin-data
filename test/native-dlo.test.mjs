@@ -117,7 +117,8 @@ test('DLO save/load omits only generated KQ_Id and roundtrips seven/eight raw fi
         return raw;
       },
     });
-    assert.equal(writes, 1);
+    assert.equal(writes, added ? 1 : 0);
+    assert.equal(result.operation, added ? 'update' : 'unchanged');
     assert.equal(result.document.spec.fields.length, added ? 8 : 7);
     const created = await deployNativeDlo(saved, { get: absent, create: async () => raw });
     assert.equal(created.operation, 'create');
@@ -225,6 +226,38 @@ test('create selects only authoritative 404, omits generated fields and keeps Id
   }
 });
 
+test('unchanged compares fields by name and retains target generated qualifiers without writes', async () => {
+  for (const omitQualifier of [false, true]) {
+    const raw = native();
+    raw.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
+    const saved = normalizeDlo(raw);
+    if (omitQualifier) saved.spec.fields = saved.spec.fields.filter((f) => f.name !== 'KQ_Id__c');
+    saved.spec.fields.reverse();
+    const before = structuredClone(saved);
+    let writes = 0;
+    const client = {
+      get: async () => raw,
+      create: async () => {
+        writes++;
+        return raw;
+      },
+      update: async () => {
+        writes++;
+        return raw;
+      },
+    };
+    const plan = await preflightNativeDlo(saved, client);
+    assert.equal(plan.operation, 'unchanged');
+    assert.equal(plan.targetId, targetId);
+    assert.equal(Object.hasOwn(plan, 'body'), false);
+    const result = await deployNativeDlo(saved, client);
+    assert.equal(result.operation, 'unchanged');
+    assert.deepEqual(result.document, normalizeDlo(raw));
+    assert.deepEqual(saved, before);
+    assert.equal(writes, 0);
+  }
+});
+
 test('update uses target ID, label and ordinary additions only; mutation/removal/category/PK changes refuse', async () => {
   const client = { get: async () => ({ dataLakeObjects: [native()] }) };
   const saved = document();
@@ -276,7 +309,9 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
     },
   };
   assert.deepEqual(await retrieveNativeDlo(apiName, client), document());
-  const deployed = await deployNativeDlo(document(), client);
+  const changed = document();
+  changed.spec.label = 'Updated';
+  const deployed = await deployNativeDlo(changed, client);
   assert.equal(deployed.operation, 'update');
   assert.deepEqual(await deleteNativeDlo(apiName, client), {
     apiName,
@@ -345,7 +380,7 @@ test('DLO concrete membership binding, required create scope and collision refus
   await assert.rejects(retrieveNativeDlo(apiName, client, 'other'), /DATASPACE/);
   assert.equal(writes, 0);
   const multiplePlan = await preflightNativeDlo(saved, { get: async () => multiple }, 'other');
-  assert.equal(multiplePlan.operation, 'update');
+  assert.equal(multiplePlan.operation, 'unchanged');
   await assert.rejects(
     deployNativeDlo(saved, { get: absent, create: async () => native() }, 'other'),
     /DATASPACE/,

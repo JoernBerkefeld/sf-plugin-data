@@ -9,12 +9,19 @@ import {
 import type { DloDocument, DloField } from '../artifacts/dlo-document.js';
 import type { DloClient } from '../transport/dlo-rest.js';
 
-export type DloDeployPlan = {
-  operation: 'create' | 'update';
-  apiName: string;
-  targetId?: string;
-  body: Record<string, unknown>;
-};
+export type DloDeployPlan =
+  | {
+      operation: 'create' | 'update';
+      apiName: string;
+      targetId?: string;
+      body: Record<string, unknown>;
+    }
+  | {
+      operation: 'unchanged';
+      apiName: string;
+      targetId: string;
+      document: DloDocument;
+    };
 
 const systemFields = new Set([
   'cdp_sys_SourceVersion__c',
@@ -147,6 +154,13 @@ export async function preflightNativeDlo(
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))
     throw new DloError('UNSUPPORTED_DLO_FIELD_ADDITION');
+  if (added.length === 0 && desired.spec.label === target.document.spec.label)
+    return {
+      operation: 'unchanged',
+      apiName,
+      targetId: target.targetId,
+      document: target.document,
+    };
   return {
     operation: 'update',
     apiName,
@@ -165,15 +179,16 @@ export async function preflightNativeDlo(
  * @param {unknown} value Portable document.
  * @param {DloClient} client Target client.
  * @param {string} [requestScope] Optional expected data space, never a URL query.
- * @returns {Promise<{operation: 'create' | 'update', document: DloDocument}>} Accepted definition, not terminal activation proof.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: DloDocument}>} Accepted or unchanged definition, not terminal activation proof.
  */
 export async function deployNativeDlo(
   value: unknown,
   client: DloClient,
   requestScope?: string,
-): Promise<{ operation: 'create' | 'update'; document: DloDocument }> {
+): Promise<{ operation: 'create' | 'update' | 'unchanged'; document: DloDocument }> {
   const desired = validateDloDocument(value);
   const plan = await preflightNativeDlo(desired, client, requestScope);
+  if (plan.operation === 'unchanged') return { operation: 'unchanged', document: plan.document };
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)

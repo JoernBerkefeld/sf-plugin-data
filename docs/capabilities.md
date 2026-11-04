@@ -1,5 +1,24 @@
 # Capability contract checklist
 
+## Native standalone DLO unchanged deployment — 2026-11-04
+
+Exact native `dlo:Name__dll` deployment now compares the existing target after all
+category, data-space, primary-key and field-preservation admission. Equal labels
+and no added fields return `unchanged` / `not-attempted`, without POST or PATCH.
+Field order is immaterial; the deliberate portable omission of ordinary generated
+`KQ_Id__c` remains a preservation exception, not deletion. Other field changes or
+removals still block. Label changes and ordinary nonprimary Text additions retain
+the existing update route.
+
+Fresh isolated-installed API68 acceptance retrieved an empty standalone Other/default
+DLO from the source and deployed the exact saved file into the target, with differing
+org-local IDs and independent full generated/primary-key preservation. A label and
+additive Text update persisted; repeated deploy captured only GET, no mutation.
+Both exact owned fixtures were independently confirmed absent after guarded deletion.
+This does not close mixed-family dependency acceptance, ingestion, populated-object,
+lower-version or released-package qualification.
+
+
 ## Qualified Segment forward predicate update — 2026-10-30
 
 Existing ACTIVE API65/default single-model DBT owners now admit the isolated forward

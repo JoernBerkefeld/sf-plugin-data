@@ -681,7 +681,10 @@ sf data360 deploy --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS -
 ```
 
 Deploy is manifest-free and automatic: resolve the exact API name in the **target**.
-An existing target selects PATCH using the resolved target ID. Only an authoritative
+An existing target with a supported difference selects PATCH using its resolved ID.
+An equal label and preserved field inventory return `unchanged` / `not-attempted`
+without POST or PATCH; field ordering and the portable omission of ordinary generated
+`KQ_Id__c` do not trigger a write. Only an authoritative
 not-found response permits POST. Authentication, permission, malformed-response and
 other lookup failures stop; a failed PATCH never falls back to POST. `--preview`
 performs the target comparison without any mutation and is never the default.
@@ -712,7 +715,14 @@ before another attempt. HTTP204 acceptance can precede a brief `DELETING` state;
 independently confirm exact-target absence with bounded read-only checks before
 calling deletion terminally complete.
 
-Public plugin lifecycle acceptance is API68/default: a fresh owned fixture was
+Installed API68/default standalone Other/default cross-org acceptance now covers
+source retrieval followed by target creation from that exact portable file, different
+org-local IDs, independently regenerated full field/key inventories, a label plus
+additive Text update, and a zero-write repeated deployment. Both owned empty fixtures
+were deleted with independent name/ID absence checks. This is not ingestion, populated
+object, mixed-family dependency or released-package qualification.
+
+Earlier public plugin lifecycle acceptance was API68/default: a fresh owned fixture was
 created, retrieved with seven raw readback fields, updated with preserved primary key and eight
 raw readback fields (historical counts, not current saved-file counts), previewed without deletion, then deleted by default with absence readback
 and the local file retained. Separately, native API61–68 standalone CRUD succeeded;

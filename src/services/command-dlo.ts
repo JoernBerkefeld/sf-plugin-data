@@ -5,14 +5,14 @@ import type { DloClient } from '../transport/dlo-rest.js';
 
 export type DloPreview = {
   family: 'dlo';
-  outcome: 'create' | 'update' | 'blocked';
+  outcome: 'create' | 'update' | 'unchanged' | 'blocked';
   target: 'absent' | 'existing' | 'unknown';
   absenceProof: 'confirmed-404' | 'none';
   diagnostics: Array<{ code: string; message: string }>;
 };
 export type DloExecution = {
   family: 'dlo';
-  outcome: 'created' | 'updated' | 'failed' | 'blocked';
+  outcome: 'created' | 'updated' | 'unchanged' | 'failed' | 'blocked';
   mutation: 'confirmed-created' | 'confirmed-updated' | 'unknown' | 'not-attempted';
   diagnostics: Array<{ code: string; message: string }>;
 };
@@ -63,6 +63,13 @@ export async function executeDloDeploy(
   };
   try {
     const result = await deployNativeDlo(value, guarded, requestScope);
+    if (result.operation === 'unchanged')
+      return {
+        family: 'dlo',
+        outcome: 'unchanged',
+        mutation: 'not-attempted',
+        diagnostics: [],
+      };
     return {
       family: 'dlo',
       outcome: result.operation === 'create' ? 'created' : 'updated',

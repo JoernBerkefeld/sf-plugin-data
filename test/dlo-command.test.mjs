@@ -105,7 +105,9 @@ for (const scope of [undefined, 'Team'])
       });
     const deployed = await run(deploy);
     assert.equal(deployed.status, 'success');
-    assert.equal(writes, 1);
+    assert.equal(writes, 0);
+    assert.equal(deployed.result.items[0].outcome, 'unchanged');
+    assert.equal(deployed.result.items[0].mutation, 'not-attempted');
     let deletes = 0;
     const remove = invocation(Delete, { dataspace: scope });
     remove.resolveTarget = async () => 'target';
@@ -196,7 +198,7 @@ test('DLO wrappers preserve optional explicit scope and block mismatch before di
   saved.identity.dataSpace = 'other';
   const scoped = { ...wire, dataSpaceInfo: [{ name: 'other' }] };
   const preview = await preflightDloDeploy(saved, client({ get: async () => scoped }), 'other');
-  assert.equal(preview.outcome, 'update');
+  assert.equal(preview.outcome, 'unchanged');
   let writes = 0;
   const target = client({
     get: async () => scoped,
@@ -206,10 +208,48 @@ test('DLO wrappers preserve optional explicit scope and block mismatch before di
     },
   });
   const result = await executeDloDeploy(saved, target, 'other');
-  assert.equal(result.outcome, 'updated');
+  assert.equal(result.outcome, 'unchanged');
+  assert.equal(result.mutation, 'not-attempted');
   const blocked = await executeDloDeploy(saved, target, 'default');
   assert.equal(blocked.mutation, 'not-attempted');
-  assert.equal(writes, 1);
+  assert.equal(writes, 0);
+});
+
+test('DLO preview and execution report portable reordered fields unchanged with zero mutations', async () => {
+  const qualifier = { name: 'KQ_Id__c', label: 'Qualifier', dataType: 'Text', isPrimaryKey: false };
+  const ordinary = { name: 'Note__c', label: 'Note', dataType: 'Text', isPrimaryKey: false };
+  const saved = structuredClone(document);
+  saved.spec.fields = [ordinary, { ...saved.spec.fields[0], keyQualifierName: 'KQ_Id' }];
+  const actual = {
+    ...wire,
+    fields: [saved.spec.fields[1], qualifier, ordinary],
+  };
+  const calls = [];
+  const target = client({
+    get: async () => actual,
+    create: async () => {
+      calls.push('create');
+      return actual;
+    },
+    update: async () => {
+      calls.push('update');
+      return actual;
+    },
+  });
+  assert.deepEqual(await preflightDloDeploy(saved, target), {
+    family: 'dlo',
+    outcome: 'unchanged',
+    target: 'existing',
+    absenceProof: 'none',
+    diagnostics: [],
+  });
+  assert.deepEqual(await executeDloDeploy(saved, target), {
+    family: 'dlo',
+    outcome: 'unchanged',
+    mutation: 'not-attempted',
+    diagnostics: [],
+  });
+  assert.deepEqual(calls, []);
 });
 
 test('native DLO Git selection uses root JSON and blocks deletion', async () => {
@@ -306,7 +346,9 @@ for (const preview of [true, false])
   for (const existing of [true, false])
     test(`deploy auto target ${existing ? 'PATCH' : 'POST'} preview=${preview}`, async () => {
       const cwd = await scratch();
-      const receipt = await writeDloDocument(document, cwd, false);
+      const changed = structuredClone(document);
+      changed.spec.label = 'Updated';
+      const receipt = await writeDloDocument(changed, cwd, false);
       const inputs = await readDeployInputs({ cwd, sourceDir: [receipt.path] });
       const writes = [];
       const command = invocation(Deploy, {

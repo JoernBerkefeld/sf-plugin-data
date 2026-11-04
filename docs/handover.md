@@ -1,3 +1,33 @@
+# Installed standalone DLO cross-org acceptance — 2026-11-04
+
+Source `mcnext-sdo` -> target `mcnext-thuy`, API68/default, standalone Other/default
+empty fixtures only. Exact source-retrieved portable JSON created the target with
+a different ID. Independent raw readbacks confirmed generated fields and PK;
+portable files deliberately omit ordinary generated `KQ_Id__c`. Label plus one
+nonprimary Text addition persisted. Repeated deploy returned unchanged/not-attempted
+and sanitized native-client capture recorded GET only. Source and target exact
+owned deletion followed identity/ACTIVE/dependency checks and independent name+ID404.
+Source deletion had read-only preview plus identity readback. The target cleanup script
+initially omitted --preview: that call performed its authorized exact deletion; no
+target delete-preview claim follows. No cascade, unrelated deletion or disk cleanup.
+
+Evidence: `F:/Temp/dlo-crossorg-vjolaz` (archive/input/installed byte binding, command receipts,
+raw reads, dependencies, lifecycle-complete, cleanup-complete and final-audit).
+Archive SHA256 `41a8f4ee14e98ff403605041a93e9696ca3d1ed17bcabb62792fe38390cbc79b`. Captured native mutations were two POST201,
+one PATCH200 and two DELETE204. Underlying auth/HTTP wire count is unknown.
+Protected returned DLO identities were compared before/after; source inventory
+reported94 but returned92 with no next page, so no complete-inventory claim follows.
+No mixed-family/include-dependencies, ingestion, populated-data, lower-version or
+released-package support is earned. Existing historical ingestion ledgers below
+remain scoped to that separate adapter.
+
+The minimal implementation adds an unchanged native plan before write dispatch;
+all admission/preservation errors remain fail-closed. No schema/selector change.
+Guide no-op documentation/test stays uncommitted by explicit instruction; no push.
+Exact verification/review/commit receipts are recorded in the parent handover and
+retained evidence after this text is frozen. Seven preexisting config/hook/license
+line-ending-only changes are excluded from this chunk.
+
 # Data Child 10 — limited local receipt
 
 Runner close shares the same in-flight or settled promise and propagates rejection;
