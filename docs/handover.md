@@ -1,3 +1,48 @@
+# Recovered installed mapping cross-org acceptance — 2026-11-04
+
+Existing Gate1/2 plan/review reused; the user acknowledged the sole cleanup finding
+and accepted exact owned retained fixtures. Gate3 remains one serial live/input
+owner. No runtime change was needed. Source retrieval -> target logical DLO/DMO
+rebinding -> create -> canonical retrieval -> additive Extra Text pair -> GET-only
+no-op passed at API68/default on fresh empty Other/Text fixtures. Source portable
+SHA256: `7a1b04b9a5cff9e3f5aded44bc41f888dec13baca954b44602e72dc49c8f6d04`.
+Installed archive SHA256: `367d4063a00f0bd5265a3548066eda276016eced04752b70f2ba738849459457`;
+183 input hashes and 150 installed files matched before recovery checks.
+
+Missing terminal372994 is not evidence of failure to delete. Retained
+`cli-selected-delete.json` records exit0/confirmed-deleted and exactly three
+DELETE requests. `STOP-1793781795606-d0e9c4.json` records TypeError: fetch failed
+in the independent post-command read, after deletion completed at08:43:15Z.
+No create/delete was replayed. Fresh recovery API68 GET confirmed typed404
+NOT_FOUND for selected mapping
+`MapX1793780574451t_map_MapX1793780574451t_1793780949140`.
+Target filtered inventory contains only the unchanged ACTIVE survivor
+`MapX1793780574451u_map_MapX1793780574451t_1793781254210`.
+Both target DLOs and the complete target DMO schema/key definitions are unchanged;
+only Extra__c/Note__c isMapped flags disappeared. Source mapping remains ACTIVE.
+
+Accepted retained fixtures, all confirmed by exact name GET200:
+- Source DLO `MapX1793780574451s__dll` / `1dlaj00000Af8IPAAZ` and DMO
+  `MapX1793780574451s__dlm` / `0gjaj00000JYJmrAAH`, linked by
+  `MapX1793780574451s_map_MapX1793780574451s_1793780832090`.
+- Target survivor DLO `MapX1793780574451u__dll` / `1dlfj0000071lqTAAQ`
+  links to DMO `MapX1793780574451t__dlm` / `0gjfj00000Hqu7ZAAR` through
+  the survivor above. Target selected DLO `MapX1793780574451t__dll` /
+  `1dlfj0000071lorAAA` also remains; no exhaustive dependency/cleanup qualification
+  was inferred from the selected mapping's absence.
+The last DLO-to-DMO mapping restriction is the observed limitation, not evidence
+that DMO-object deletion was attempted. No raw bypass, parent cascade or complete
+cleanup claim. No ingestion/populated schema/lower-version/mixed-family closure.
+
+Evidence root `F:/Temp/mapping-crossorg-MQfnco`: original lifecycle, request/CLI
+receipts, ownership marker, installed/archive binding and recovery readbacks.
+The first recovery guard preview safely stopped GET-only with expired isolated
+credentials; refreshing only that isolated target profile enabled guard validation.
+Fresh full verification, final independent review and normal-hook scoped commit
+receipts are recorded separately. Seven unrelated config/hook/license edits remain
+excluded; guide changes remain uncommitted. No push or local recursive cleanup.
+Step5 lower-API work, Step6 CI and Step7 Graph implementation remain unstarted.
+
 # Installed standalone DMO cross-org acceptance — 2026-11-04
 
 Source `mcnext-sdo` -> target `mcnext-thuy`, API68/default, fresh empty custom

@@ -1,5 +1,24 @@
 # Capability contract checklist
 
+## Installed mapping cross-org acceptance — 2026-11-04
+
+API68/default empty Other/Text fixtures passed exact source mapping retrieval,
+portable JSON transport changing only logical source-DLO/target-DMO bindings,
+target-local mapping creation and canonical retrieval. One additive Extra Text
+identity pair persisted; repeated preview/execution was GET-only and unchanged.
+Explicit create/update/delete previews were independently checked as nonmutating.
+Guarded selected deletion unmapped the two authored pairs before whole-mapping
+deletion. Independent name GET returned typed 404 NOT_FOUND; the other-source
+survivor remained identical and ACTIVE, with all parent schema/key definitions
+preserved. Only Extra/Note isMapped flags disappeared, as expected.
+
+The original harness stopped on a failed independent fetch after the installed
+CLI had already confirmed deletion; recovery did not replay a write. Last-mapping
+preview/execution guards retain their no-write policy. The accepted platform
+limitation leaves exact owned source and target final mappings and their parents;
+DMO object deletion/cascade was not tested. This is not general schema portability,
+populated-object, lower-version, inventory-completeness or released-package proof.
+
 ## Native standalone DMO unchanged deployment — 2026-11-04
 
 Exact native `dmo:Name__dlm` deployment compares the existing target only after
