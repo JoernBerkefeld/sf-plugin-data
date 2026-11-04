@@ -1,4 +1,9 @@
-import { nativeApiVersion } from '../../transport/api-version.js';
+import { operationDiagnostic } from '../../services/operation-diagnostic.js';
+import { dataStreamApiVersion, nativeApiVersion } from '../../transport/api-version.js';
+import { DataStreamError } from '../../artifacts/data-stream-document.js';
+import { writeDataStreamDocument } from '../../artifacts/write-data-stream.js';
+import { createDataStreamClient } from '../../transport/data-stream-rest.js';
+import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
 import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
 import { retrieveNativeMapping } from '../../services/native-mapping.js';
 import { createMappingClient, createMappingInventoryReader } from '../../transport/mapping-rest.js';
@@ -62,7 +67,7 @@ import {
   selectDmos,
   validateDmoSelection,
 } from '../../services/retrieve-other-dmo.js';
-import { ConnectError } from '../../transport/connect-client.js';
+import { ConnectClient, ConnectError } from '../../transport/connect-client.js';
 import { plugin as packageMetadata } from '../../plugin.js';
 import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
 import { writeSegmentDocument } from '../../artifacts/write-segment.js';
@@ -117,6 +122,7 @@ export type RetrieveEnvelope = {
         | 'identity-resolution'
         | 'calculated-insight'
         | 'data-graph'
+        | 'data-stream'
         | 'dlo'
         | 'relationship'
         | 'mapping';
@@ -138,7 +144,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -182,6 +188,26 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireDataStream = retrieveNativeDataStream;
+  protected writeDataStream = writeDataStreamDocument;
+  protected createDataStreamClients = (
+    connection: Connection,
+    target: string,
+    version: string,
+  ): Parameters<typeof retrieveNativeDataStream>[1] => {
+    const reader = new ConnectClient(connection, version);
+    return {
+      streams: createDataStreamClient(target, reader, version),
+      facade: new McpExecuteClient(connection, {
+        requested: '67.0',
+        restSelector: 'v67.0',
+        soapNumeric: '67.0',
+      }),
+      dlo: {
+        get: (name) => reader.get(`/services/data/v${version}/ssot/data-lake-objects/${name}`),
+      },
+    };
+  };
   protected acquireNativeDmo = retrieveNativeDmo;
   protected createDmoClient = createDmoClient;
   protected writeNativeDmo = writeNativeDmoDocument;
@@ -324,6 +350,79 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    if (selectors.some((value) => value === 'data-stream' || value.startsWith('data-stream:'))) {
+      if (selectors.some((value) => !/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
+        return finish('blocked', 'INVALID_SELECTION');
+      if (flags['include-dependencies'])
+        return finish('blocked', 'DATA_STREAM_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      let version: string;
+      try {
+        version = dataStreamApiVersion(flags['api-version']);
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
+      } catch {
+        return finish('blocked', 'INVALID_SCOPE');
+      }
+      let org;
+      try {
+        org = await this.resolveOrg(flags['target-org']);
+      } catch {
+        return finish('blocked', 'TARGET_ORG_REQUIRED');
+      }
+      const connection = org.getConnection(version);
+      const target = flags['target-org'] ?? connection.getUsername();
+      if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
+      envelope.provenance.sourceOrgId = org.getOrgId();
+      envelope.metadata.soapApiVersion = version;
+      const names = [...new Set(selectors.map((value) => value.slice('data-stream:'.length)))];
+      names.sort();
+      envelope.result.selection = names.map((name) => `data-stream:${name}`);
+      outputTypes.add('data-stream');
+      let failed = false;
+      for (const apiName of names) {
+        try {
+          const document = await this.acquireDataStream(
+            apiName,
+            this.createDataStreamClients(connection, target, version),
+            effectiveScope,
+          );
+          const receipt = await this.writeDataStream(
+            document,
+            flags['output-dir'] ?? process.cwd(),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: document.identity,
+            operation: 'retrieve',
+            family: 'data-stream',
+            routes: [
+              { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
+              { operation: 'dlo.get', apiVersion: version, transport: 'native' },
+              { operation: 'connection.read', apiVersion: '67.0', transport: 'facade' },
+            ],
+            ...receipt,
+          });
+        } catch (error) {
+          const code =
+            error instanceof DataStreamError ? error.code : 'DATA_STREAM_RETRIEVE_FAILED';
+          if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
+            failed = true;
+          const diagnostic = {
+            code,
+            message: operationDiagnostic(
+              error,
+              'Data stream retrieval did not complete; no write attempted.',
+            ),
+            retryable: false as const,
+            identity: { dataSpace: effectiveScope, apiName },
+          };
+          envelope.diagnostics.errors.push(diagnostic);
+          errorTypes.set(diagnostic, 'data-stream');
+        }
+      }
+      return finish(
+        envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
+      );
+    }
     const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
     if (
       !flags['include-dependencies'] &&
@@ -471,7 +570,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               failed = true;
             envelope.diagnostics.errors.push({
               code,
-              message: 'Native component retrieval did not complete.',
+              message: operationDiagnostic(
+                error,
+                'Native component retrieval did not complete; no write attempted.',
+              ),
               retryable: false,
               identity: { dataSpace: effectiveScope, apiName },
               ...(family === 'mapping' ? { family } : {}),

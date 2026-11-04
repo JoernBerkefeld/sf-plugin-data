@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { explainMismatch } from './operation-diagnostic.js';
 import {
   NativeDmoError,
   nativeDmoName,
@@ -160,7 +161,14 @@ export async function preflightNativeDmo(
       continue;
     }
     if (!isDeepStrictEqual(field, incoming.get(name)))
-      throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE');
+      throw explainMismatch(
+        new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE'),
+        'update field preservation',
+        apiName,
+        field,
+        incoming.get(name),
+        `fields.${name}`,
+      );
   }
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))
@@ -225,11 +233,19 @@ export async function deployNativeDmo(
   const accepted = normalizeNativeDmo(response, desired.identity.dataSpace);
   if (accepted.identity.apiName !== plan.apiName)
     throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+  let last: NativeDmoDocument | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
     const document = await resolveTarget(plan.apiName, client, desired.identity.dataSpace);
+    last = document;
     if (confirmed(desired, document)) return { operation: plan.operation, document };
   }
-  throw new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED');
+  throw explainMismatch(
+    new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED'),
+    'post-write requested definition readback',
+    plan.apiName,
+    desired,
+    last,
+  );
 }
 
 /**

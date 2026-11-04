@@ -8,6 +8,16 @@ export type ApiVersionSelection = Readonly<{
 const numericVersion = /^\d{2,3}\.0$/u;
 
 /**
+ * Admit the qualified initial native stream pin without widening other families.
+ * @param {string} requested Explicit pin or default/auto.
+ * @returns {string} Fixed native stream version.
+ */
+export function dataStreamApiVersion(requested = 'auto'): string {
+  if (requested === 'auto' || requested === '68.0') return '68.0';
+  throw new Error('INVALID_SCOPE');
+}
+
+/**
  * Admit native DLO, DMO and mapping routes without discovery or upgrading numeric pins.
  * Admission is not a claim of live qualification at every admitted version.
  * @param {string} requested Explicit numeric version or default/auto.

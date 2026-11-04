@@ -1,0 +1,175 @@
+import { isDeepStrictEqual } from 'node:util';
+
+const details = new WeakMap<Error, string>();
+const visibleKeys = new Set([
+  'name',
+  'apiName',
+  'dataSpace',
+  'dataSpaceName',
+  'connectionName',
+  'event',
+  'availabilityStatus',
+  'availability',
+  'status',
+  'dataType',
+  'datatype',
+  'category',
+  'isPrimaryKey',
+  'isMapped',
+  'isDynamicLookup',
+  'creationType',
+  'usageTag',
+  'refreshMode',
+  'connectorType',
+  'dataStreamType',
+  'sourceFieldName',
+  'targetFieldName',
+  'sourceFieldDeveloperName',
+  'targetFieldDeveloperName',
+  'sourceEntityDeveloperName',
+  'targetEntityDeveloperName',
+]);
+
+/**
+ * Render only bounded schema identifiers, enums and flags; never raw objects or free text.
+ * @param {unknown} value Compared leaf.
+ * @param {string} key Leaf property name.
+ * @returns {string} Safe diagnostic value.
+ */
+function safeValue(value: unknown, key: string): string {
+  if (value === undefined) return '[missing]';
+  if (value === null) return 'null';
+  if (!visibleKeys.has(key)) return '[redacted]';
+  if (typeof value === 'boolean' || typeof value === 'number') return String(value);
+  if (typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_ -]{0,119}$/u.test(value))
+    return JSON.stringify(value);
+  return '[redacted]';
+}
+
+/**
+ * Describe the first concrete mismatch without serializing snapshots or secret-bearing fields.
+ * @param {unknown} expected Expected protected state.
+ * @param {unknown} observed Freshly observed state.
+ * @param {string} path Logical field path supplied by the check.
+ * @param {number} [depth] Bounded traversal depth.
+ * @returns {string} Safe first differing path and leaf values.
+ */
+function difference(expected: unknown, observed: unknown, path: string, depth = 0): string {
+  if (
+    depth < 12 &&
+    expected &&
+    observed &&
+    typeof expected === 'object' &&
+    typeof observed === 'object'
+  ) {
+    const a = expected as Record<string, unknown>;
+    const b = observed as Record<string, unknown>;
+    if (Array.isArray(expected) && Array.isArray(observed) && expected.length !== observed.length)
+      return `${path}.length: expected ${expected.length}; observed ${observed.length}`;
+    for (const key of [...new Set([...Object.keys(a), ...Object.keys(b)])].slice(0, 500)) {
+      if (!isDeepStrictEqual(a[key], b[key])) {
+        // Do not blame an admitted native mapping permutation when another field drifted.
+        if (key === 'mappings' && Array.isArray(a[key]) && Array.isArray(b[key])) {
+          const remaining = [...(b[key] as unknown[])];
+          if (
+            (a[key] as unknown[]).length === remaining.length &&
+            (a[key] as unknown[]).every((entry) => {
+              const index = remaining.findIndex((item) => isDeepStrictEqual(entry, item));
+              if (index === -1) return false;
+              remaining.splice(index, 1);
+              return true;
+            })
+          )
+            continue;
+        }
+        // Unknown keys can themselves contain secrets; never echo them.
+        const safeKey =
+          visibleKeys.has(key) ||
+          /^\d{1,5}$/u.test(key) ||
+          [
+            'identity',
+            'spec',
+            'fields',
+            'sourceFields',
+            'mappings',
+            'fieldMappings',
+            'binding',
+            'target',
+            'observed',
+            'inventory',
+            'dataLakeObjectInfo',
+            'dataSpaceInfo',
+            'parents',
+            'document',
+            'body',
+            'newDlo',
+            'primaryKey',
+            'connectorInfo',
+            'refreshConfig',
+            'source',
+            'connectionId',
+            'recordId',
+            'id',
+            'label',
+          ].includes(key)
+            ? key
+            : '[other property]';
+        if (safeKey === '[other property]')
+          return `${path}.${safeKey}: protected value changed (values redacted)`;
+        return difference(a[key], b[key], `${path}.${safeKey}`, depth + 1);
+      }
+    }
+  }
+  if (expected && observed && typeof expected === 'object' && typeof observed === 'object')
+    return `${path}: protected content differs (values redacted; diagnostic traversal limit or admitted ordering difference)`;
+  const key = path.split('.').at(-1)!;
+  return `${path}: expected ${safeValue(expected, key)}; observed ${safeValue(observed, key)}`;
+}
+
+/**
+ * Add an explanation only after the existing safety predicate rejects; never changes its outcome.
+ * @template {Error} T
+ * @param {T} error Existing typed error and compatibility code.
+ * @param {string} check Static operation/check description.
+ * @param {unknown} resource Resource API name where independently known.
+ * @param {unknown} expected Expected protected state (not retained).
+ * @param {unknown} observed Observed protected state (not retained).
+ * @param {string} [path] Logical comparison root.
+ * @returns {T} The original error with a bounded, safe human explanation.
+ */
+export function explainMismatch<T extends Error>(
+  error: T,
+  check: string,
+  resource: unknown,
+  expected: unknown,
+  observed: unknown,
+  path = 'state',
+): T {
+  const identity = safeValue(resource, 'apiName');
+  const message = `Plugin verification failed during ${check} for ${identity}: ${difference(expected, observed, path)}.`;
+  details.set(error, message);
+  error.message = `${error.message} ${message}`;
+  return error;
+}
+
+/**
+ * Reuse existing diagnostic messages while distinguishing local verification from API rejection.
+ * Arbitrary exception messages, bodies and stack traces are never forwarded.
+ * @param {unknown} error Caught error.
+ * @param {string} nextAction Existing outcome-specific safe next action.
+ * @returns {string} Bounded diagnostic suitable for console and JSON.
+ */
+export function operationDiagnostic(error: unknown, nextAction: string): string {
+  if (error instanceof Error && details.has(error)) return `${details.get(error)!} ${nextAction}`;
+  const status =
+    error && typeof error === 'object'
+      ? 'status' in error
+        ? error.status
+        : 'statusCode' in error
+          ? error.statusCode
+          : undefined
+      : undefined;
+  if (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599)
+    return `Salesforce API rejected the request (HTTP ${status}); no response payload is disclosed. ${nextAction}`;
+  return `Plugin verification or request completion failed; no Salesforce rejection was confirmed. ${nextAction}`;
+}

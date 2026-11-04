@@ -1,3 +1,14 @@
+import { operationDiagnostic } from '../../services/operation-diagnostic.js';
+import {
+  preflightDataStream,
+  executeDataStream,
+} from '../../services/command-native-data-stream.js';
+import { verifyDataStreamInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { DataStreamDeployInput } from '../../artifacts/read-deploy-input.js';
+import { dataStreamApiVersion } from '../../transport/api-version.js';
+import { ConnectClient } from '../../transport/connect-client.js';
+import { McpExecuteClient } from '../../transport/mcp-execute.js';
+import { createDataStreamClient } from '../../transport/data-stream-rest.js';
 import { preflightMapping, executeMapping } from '../../services/command-native-mapping.js';
 import { createMappingClient } from '../../transport/mapping-rest.js';
 import { NativeMappingError } from '../../artifacts/native-mapping-document.js';
@@ -131,7 +142,10 @@ type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
     | DataGraphDeployExecution['family']
     | 'dlo'
     | 'dmo'
-    | 'mapping';
+    | 'mapping'
+    | 'data-stream';
+  targetApiName?: string;
+  targetDloName?: string;
   route?:
     | SegmentDeployExecution['route']
     | IdentityResolutionDeployExecution['route']
@@ -196,6 +210,7 @@ export type DeployEnvelope = {
           | IdentityResolutionDeployPreview
           | CalculatedInsightPreview
           | DataGraphDeployPreview
+          | Awaited<ReturnType<typeof preflightDataStream>>
           | Awaited<ReturnType<typeof preflightDmo>>
           | Awaited<ReturnType<typeof preflightMapping>>
           | {
@@ -223,7 +238,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -255,7 +270,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Exact mapping:ApiName, dlo:Name__dll, dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName member.',
+        'Exact data-stream:ApiName, mapping:ApiName, dlo:Name__dll, dmo:ApiName, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName or identity-resolution:ExactObjectApiName member.',
       exclusive: ['changed-since'],
     }),
     'changed-since': Flags.string({
@@ -271,7 +286,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     'allow-processing': Flags.boolean({
       default: false,
       summary:
-        'Acknowledge qualified Segment/CI/Graph processing and IR publication/generated-output effects.',
+        'Acknowledge qualified stream create/update and Segment/CI/Graph processing and IR publication/generated-output effects.',
     }),
     preview: Flags.boolean({
       default: false,
@@ -279,6 +294,30 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
   };
 
+  protected preflightDataStream = preflightDataStream;
+  protected executeDataStream = executeDataStream;
+  protected verifyDataStreamInput = verifyDataStreamInputDigest;
+  protected createDataStreamClients = (
+    connection: Connection,
+    target: string,
+    version: string,
+  ): Parameters<typeof executeDataStream>[1] => {
+    const reader = new ConnectClient(connection, version);
+    return {
+      streams: createDataStreamClient(target, reader, version),
+      facade: new McpExecuteClient(connection, {
+        requested: '67.0',
+        restSelector: 'v67.0',
+        soapNumeric: '67.0',
+      }),
+      dlo: {
+        get: (name) =>
+          reader.get(
+            `/services/data/v${version}/ssot/data-lake-objects/${encodeURIComponent(name)}`,
+          ),
+      },
+    };
+  };
   protected createMappingClient = createMappingClient;
   protected preflightMapping = preflightMapping;
   protected executeMapping = executeMapping;
@@ -492,14 +531,21 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       string,
       Parameters<NonNullable<Parameters<typeof executeMapping>[3]>>[0]
     >();
-    const finish = (status: DeployEnvelope['status'], code?: string): DeployEnvelope => {
+    const finish = (
+      status: DeployEnvelope['status'],
+      code?: string,
+      error?: unknown,
+    ): DeployEnvelope => {
       envelope.status = status;
       if (code)
         envelope.diagnostics.errors.push({
           code,
-          message: flags.preview
-            ? 'Preview did not complete. Check explicit authored inputs, target authentication and supported scope. No deployment executed.'
-            : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
+          message: operationDiagnostic(
+            error,
+            flags.preview
+              ? 'Preview did not complete. Check explicit authored inputs, target authentication and supported scope. No deployment executed.'
+              : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
+          ),
           retryable: false,
         });
       if (status !== 'success') process.exitCode = 1;
@@ -510,7 +556,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : `Deploy execution: ${status}${code ? ` (${code})` : ''}. No automatic retry or rollback performed.`,
         );
         for (const item of envelope.result.items) {
-          const component = `${families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo'}:${item.identity.apiName}`;
+          const component = `${families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo'}:${item.operation === 'execute' && item.targetApiName ? item.targetApiName : item.identity.apiName}`;
           this.log(
             item.operation === 'preview'
               ? `Planned ${item.outcome}: ${component}.`
@@ -595,6 +641,79 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       for (const input of resolvedInputs) families.set(input.path, input.document.kind ?? 'dmo');
       if (resolvedInputs.length === 0 && changedSince === undefined)
         return finish('blocked', 'INVALID_SELECTION');
+      const streamInputs = resolvedInputs.filter(
+        (input): input is DataStreamDeployInput => input.document.kind === 'data-stream',
+      );
+      if (streamInputs.length > 0) {
+        if (streamInputs.length !== resolvedInputs.length || changedSince !== undefined)
+          return finish('blocked', 'DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED');
+        if (flags['include-dependencies'])
+          return finish('blocked', 'DATA_STREAM_DEPENDENCY_EXPANSION_UNSUPPORTED');
+        let version: string;
+        try {
+          version = dataStreamApiVersion(flags['api-version']);
+          if (
+            effectiveScope !== 'default' ||
+            streamInputs.some((input) => input.document.identity.dataSpace !== 'default')
+          )
+            return finish('blocked', 'INVALID_SCOPE');
+        } catch {
+          return finish('blocked', 'INVALID_SCOPE');
+        }
+        const verify = async (): Promise<void> => {
+          for (const input of streamInputs)
+            await (this.verifyDataStreamInput ?? verifyDataStreamInputDigest)(input);
+        };
+        await verify();
+        const injected = flags['target-org'] as unknown;
+        const org =
+          injected && typeof injected === 'object'
+            ? (injected as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
+            : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
+        if (!org?.getUsername()) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        envelope.provenance.targetOrgId = org.getOrgId();
+        envelope.metadata.soapApiVersion = version;
+        const clients = this.createDataStreamClients(
+          org.getConnection(version),
+          org.getUsername()!,
+          version,
+        );
+        for (const input of streamInputs) {
+          await verify();
+          const routes: ExecutionItem['routes'] = [
+            { operation: 'data-stream.deploy', apiVersion: version, transport: 'native' },
+            { operation: 'dlo.get', apiVersion: version, transport: 'native' },
+            { operation: 'connection.read', apiVersion: '67.0', transport: 'facade' },
+          ];
+          if (flags.preview) {
+            const preview = await this.preflightDataStream(input.document, clients);
+            await verify();
+            envelope.result.items.push({
+              ...preview,
+              routes,
+              identity: input.document.identity,
+              operation: 'preview',
+              path: input.path,
+            });
+          } else {
+            const result = await this.executeDataStream(input.document, clients, {
+              allowProcessing: flags['allow-processing'] === true,
+              verifyInput: verify,
+            });
+            envelope.result.items.push({
+              ...result,
+              routes,
+              identity: input.document.identity,
+              operation: 'execute',
+              path: input.path,
+            });
+            if (result.outcome === 'blocked' || result.outcome === 'failed')
+              return finish(result.outcome);
+          }
+        }
+        await verify();
+        return finish('success');
+      }
       const nativeInputs = resolvedInputs.filter(
         (input) =>
           isNativeDmoInput(input) ||
@@ -807,7 +926,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           DeployInput,
           | import('../../artifacts/read-deploy-input.js').NativeDmoDeployInput
           | import('../../artifacts/read-deploy-input.js').MappingDeployInput
-        > => !isNativeDmoInput(input) && input.document.kind !== 'mapping',
+          | DataStreamDeployInput
+        > =>
+          !isNativeDmoInput(input) &&
+          input.document.kind !== 'mapping' &&
+          input.document.kind !== 'data-stream',
       );
       const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
       if (hasDlos) {
@@ -1386,7 +1509,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           });
           if (preview.outcome === 'blocked' || preview.outcome === 'blocked-changes')
             blocked = true;
-        } catch {
+        } catch (error) {
           failed = true;
           envelope.result.items.push({
             identity: { ...input.document.identity },
@@ -1398,7 +1521,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             diagnostics: [
               {
                 code: 'PREFLIGHT_FAILED',
-                message: 'Target preview failed; no deployment was executed.',
+                message: operationDiagnostic(
+                  error,
+                  'Target preview failed; no deployment was executed.',
+                ),
               },
             ],
           });
@@ -1699,10 +1825,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         return finish('blocked');
       }
       if (error instanceof NativeDmoError || error instanceof NativeMappingError)
-        return finish('blocked', error.code);
+        return finish('blocked', error.code, error);
       if (error instanceof DeployInputError || error instanceof DependencySelectionError)
         return finish('blocked', error.code);
-      return finish('failed', flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED');
+      return finish(
+        'failed',
+        flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED',
+        error,
+      );
     }
   }
 }

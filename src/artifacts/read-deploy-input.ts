@@ -1,3 +1,5 @@
+import { validateDataStreamDocument } from './data-stream-document.js';
+import type { DataStreamDocument } from './data-stream-document.js';
 import { nativeMappingName, validateNativeMappingDocument } from './native-mapping-document.js';
 import type { NativeMappingDocument } from './native-mapping-document.js';
 import { nativeDmoName, validateNativeDmoDocument } from './native-dmo-document.js';
@@ -161,7 +163,64 @@ async function readMappingInput(file: string): Promise<MappingDeployInput> {
   });
 }
 
+export type DataStreamDeployInput = {
+  path: string;
+  document: DataStreamDocument;
+  inputDigest: string;
+};
+
+/**
+ * Admit only canonical stream JSON using the existing bounded no-link exact-byte reader.
+ * @param {string} file Absolute selected member.
+ * @returns {Promise<DataStreamDeployInput>} Detached frozen intent and byte binding.
+ */
+async function readDataStreamInput(file: string): Promise<DataStreamDeployInput> {
+  const suffix = '.data-stream-meta.json';
+  const name = path.basename(file).slice(0, -suffix.length);
+  const directory = path.dirname(file);
+  if (
+    !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(name) ||
+    path.basename(directory) !== 'data-stream' ||
+    path.basename(path.dirname(directory)) !== 'data360'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: DataStreamDocument;
+  try {
+    document = validateDataStreamDocument(strictJson(decode(bytes)));
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
+/**
+ * Re-admit every exact local byte and immutable logical input before relying on it.
+ * @param {DataStreamDeployInput} input Captured stream admission.
+ * @returns {Promise<void>} Resolves only without local drift.
+ */
+export async function verifyDataStreamInputDigest(input: DataStreamDeployInput): Promise<void> {
+  try {
+    const current = await readDataStreamInput(input.path);
+    if (
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+  } catch {
+    throw new DeployInputError('UNSAFE_SOURCE');
+  }
+}
+
 export type DeployInput =
+  | DataStreamDeployInput
   | MappingDeployInput
   | NativeDmoDeployInput
   | SupportedDeployInput
@@ -622,6 +681,10 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if (input.document.kind === 'data-stream') {
+    await verifyDataStreamInputDigest(input as DataStreamDeployInput);
+    return (input as DataStreamDeployInput).inputDigest;
+  }
   if (input.document.kind === 'mapping') {
     const current = await readMappingInput(input.path);
     if (
@@ -686,6 +749,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('INVALID_SELECTION');
   if (!path.isAbsolute(flags.cwd)) throw new DeployInputError('INVALID_SELECTION');
   const selectors = metadata?.map((value) => {
+    if (/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value))
+      return { kind: 'data-stream', name: value.slice(12) };
     if (value.startsWith('mapping:') && nativeMappingName.test(value.slice(8)))
       return { kind: 'mapping', name: value.slice(8) };
     if (value.startsWith('dmo:') && nativeDmoName.test(value.slice(4)))
@@ -703,7 +768,11 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('INVALID_SELECTION');
   });
   const base = selectors?.some(
-    (item) => item.kind !== 'dmo' && item.kind !== 'dlo' && item.kind !== 'mapping',
+    (item) =>
+      item.kind !== 'dmo' &&
+      item.kind !== 'dlo' &&
+      item.kind !== 'mapping' &&
+      item.kind !== 'data-stream',
   )
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
@@ -724,27 +793,29 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           ? legacyDmos.has(name)
             ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
             : path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
-          : kind === 'mapping'
-            ? path.join(flags.cwd, 'data360', 'mapping', `${name}.mapping-meta.json`)
-            : kind === 'dlo'
-              ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
-              : kind === 'data-graph'
-                ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
-                : kind === 'calculated-insight'
-                  ? path.join(
-                      base!,
-                      'data360',
-                      'calculatedInsights',
-                      `${name}.calculatedInsight.json`,
-                    )
-                  : kind === 'identity-resolution'
+          : kind === 'data-stream'
+            ? path.join(flags.cwd, 'data360', 'data-stream', `${name}.data-stream-meta.json`)
+            : kind === 'mapping'
+              ? path.join(flags.cwd, 'data360', 'mapping', `${name}.mapping-meta.json`)
+              : kind === 'dlo'
+                ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
+                : kind === 'data-graph'
+                  ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
+                  : kind === 'calculated-insight'
                     ? path.join(
                         base!,
                         'data360',
-                        'identityResolution',
-                        `${name}.identityResolution.json`,
+                        'calculatedInsights',
+                        `${name}.calculatedInsight.json`,
                       )
-                    : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+                    : kind === 'identity-resolution'
+                      ? path.join(
+                          base!,
+                          'data360',
+                          'identityResolution',
+                          `${name}.identityResolution.json`,
+                        )
+                      : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -814,6 +885,22 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           !selectors.some(
             (item) =>
               item.kind === 'calculated-insight' && item.name === input.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.data-stream-meta.json')) {
+        const input = await readDataStreamInput(file);
+        const key =
+          `data-stream:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some(
+            (item) => item.kind === 'data-stream' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

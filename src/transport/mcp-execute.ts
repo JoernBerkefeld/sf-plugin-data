@@ -5,6 +5,8 @@ import { ConnectError } from './connect-client.js';
 export type IngestionReadOperation =
   | 'd360_dlo_get'
   | 'd360_dlo_kq_list'
+  | 'd360_dlo_dependencies_list'
+  | 'd360_datastream_dependencies_list'
   | 'd360_datastream_get'
   | 'd360_datastream_list'
   | 'd360_connection_list'
@@ -33,6 +35,8 @@ type CoreTransport = {
 const ingestionReads = new Set<string>([
   'd360_dlo_get',
   'd360_dlo_kq_list',
+  'd360_dlo_dependencies_list',
+  'd360_datastream_dependencies_list',
   'd360_datastream_get',
   'd360_datastream_list',
   'd360_connection_list',
@@ -267,6 +271,17 @@ function parameters(operation: Operation, value: unknown): JsonObject {
       if (
         typeof input.connectionId !== 'string' ||
         !/^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u.test(input.connectionId)
+      )
+        invalid();
+      return input;
+    }
+    case 'd360_dlo_dependencies_list':
+    case 'd360_datastream_dependencies_list': {
+      const input = object(value, ['recordIdOrDeveloperName']);
+      const identity = input.recordIdOrDeveloperName;
+      if (
+        !name(identity) &&
+        (typeof identity !== 'string' || !/^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u.test(identity))
       )
         invalid();
       return input;

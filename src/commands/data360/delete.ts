@@ -1,3 +1,4 @@
+import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { deleteNativeDmo, retrieveNativeDmo } from '../../services/native-dmo.js';
@@ -13,7 +14,19 @@ import {
   deleteNativeMapping,
   preflightDeleteNativeMapping,
 } from '../../services/native-mapping.js';
-import { isNativeMappingDeletionVersion, nativeApiVersion } from '../../transport/api-version.js';
+import {
+  isNativeMappingDeletionVersion,
+  nativeApiVersion,
+  dataStreamApiVersion,
+} from '../../transport/api-version.js';
+import { DataStreamError } from '../../artifacts/data-stream-document.js';
+import { ConnectClient } from '../../transport/connect-client.js';
+import { createDataStreamClient } from '../../transport/data-stream-rest.js';
+import { McpExecuteClient } from '../../transport/mcp-execute.js';
+import {
+  preflightDeleteDataStream,
+  executeDeleteDataStream,
+} from '../../services/command-native-data-stream.js';
 
 export type DeleteEnvelope = {
   contract: 'sf-data360-delete';
@@ -29,6 +42,10 @@ export type DeleteEnvelope = {
     items: Array<{
       identity: { dataSpace: string; apiName: string };
       operation: 'preview' | 'delete';
+      deleteDlo?: boolean;
+      targetApiName?: string;
+      targetDloName?: string;
+      routes?: Array<{ operation: string; transport: 'native' | 'facade'; apiVersion: string }>;
       outcome: 'delete' | 'deleted' | 'unchanged' | 'blocked' | 'failed';
       mutation: 'not-attempted' | 'confirmed-deleted' | 'unknown';
       plan?: Array<{
@@ -45,9 +62,9 @@ export type DeleteEnvelope = {
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
   public static readonly summary =
-    'Delete exact Data360 DLO, DMO or qualified non-last mapping definitions.';
+    'Delete exact Data360 streams, DLOs, DMOs or qualified non-last mappings.';
   public static readonly description =
-    'Executes explicit type:ApiName selections without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
+    'Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Executes explicit type:ApiName selections without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -58,7 +75,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       required: true,
-      summary: 'Exact dlo:Name__dll, dmo:Name__dlm or mapping:ApiName selections only.',
+      summary:
+        'Exact data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName selections only.',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
@@ -68,6 +86,37 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       summary: 'Optional native data space; --data-space is a compatibility alias.',
     }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
+    'delete-dlo': Flags.boolean({
+      default: false,
+      summary:
+        'Stream-only acknowledgement: delete the exclusively linked DLO; otherwise preserve it.',
+    }),
+  };
+  protected preflightDeleteDataStream = preflightDeleteDataStream;
+  protected executeDeleteDataStream = executeDeleteDataStream;
+  protected createDataStreamClients = async (
+    target: string,
+    version: string,
+  ): Promise<Parameters<typeof executeDeleteDataStream>[1]> => {
+    const connection = await Connection.create({
+      authInfo: await AuthInfo.create({ username: target }),
+      connectionOptions: { version },
+    });
+    const reader = new ConnectClient(connection, version);
+    return {
+      streams: createDataStreamClient(target, reader, version),
+      facade: new McpExecuteClient(connection, {
+        requested: '67.0',
+        restSelector: 'v67.0',
+        soapNumeric: '67.0',
+      }),
+      dlo: {
+        get: (identity) =>
+          reader.get(
+            `/services/data/v${version}/ssot/data-lake-objects/${encodeURIComponent(identity)}`,
+          ),
+      },
+    };
   };
   protected createMappingClient = createMappingClient;
   protected preflightDeleteMapping = preflightDeleteNativeMapping;
@@ -143,6 +192,85 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return envelope;
     };
     try {
+      const streamSelection = flags.metadata?.some(
+        (selector) => selector === 'data-stream' || selector.startsWith('data-stream:'),
+      );
+      if (streamSelection) {
+        if (
+          !flags.metadata.every((selector) =>
+            /^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(selector),
+          )
+        )
+          throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
+        if (effectiveScope !== 'default') throw new DataStreamError('INVALID_STREAM_BINDING');
+        const version = dataStreamApiVersion(flags['api-version']);
+        envelope.metadata.apiVersion = version;
+        // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh selection within the ES2022 library target.
+        const selected = Object.freeze([...new Set(flags.metadata)].sort());
+        const snapshot = JSON.stringify({
+          metadata: flags.metadata,
+          version: flags['api-version'],
+          scope: flags.dataspace,
+          cascade: flags['delete-dlo'],
+          preview: flags.preview,
+          target: flags['target-org'],
+        });
+        const verifyInput = async (): Promise<void> => {
+          if (
+            JSON.stringify({
+              metadata: flags.metadata,
+              version: flags['api-version'],
+              scope: flags.dataspace,
+              cascade: flags['delete-dlo'],
+              preview: flags.preview,
+              target: flags['target-org'],
+            }) !== snapshot
+          )
+            throw new DataStreamError('STREAM_DELETE_INPUT_DRIFT');
+        };
+        await verifyInput();
+        const target = await this.resolveTarget(flags['target-org']);
+        const clients = await this.createDataStreamClients(target, version);
+        for (const selector of selected) {
+          const apiName = selector.slice('data-stream:'.length);
+          const item: DeleteEnvelope['result']['items'][number] = {
+            identity: { apiName, dataSpace: 'default' },
+            operation: flags.preview ? 'preview' : 'delete',
+            outcome: 'blocked',
+            mutation: 'not-attempted',
+            deleteDlo: flags['delete-dlo'] === true,
+            routes: [
+              { operation: 'data-stream.delete', transport: 'native', apiVersion: version },
+              { operation: 'dlo.get', transport: 'native', apiVersion: version },
+              { operation: 'dependency.read', transport: 'facade', apiVersion: '67.0' },
+            ],
+          };
+          selectorsByItem.set(item, selector);
+          envelope.result.items.push(item);
+          await verifyInput();
+          const options = { deleteDlo: flags['delete-dlo'] === true, verifyInput };
+          if (flags.preview) {
+            const preview = await this.preflightDeleteDataStream(apiName, clients, options);
+            await verifyInput();
+            item.outcome = preview.outcome;
+          } else {
+            const result = await this.executeDeleteDataStream(apiName, clients, options);
+            item.outcome = result.outcome;
+            item.mutation = result.mutation;
+            if ('targetApiName' in result) item.targetApiName = result.targetApiName;
+            if ('targetDloName' in result) item.targetDloName = result.targetDloName;
+            if (result.outcome !== 'deleted') {
+              envelope.status = result.outcome;
+              envelope.diagnostics.errors.push(...result.diagnostics);
+              return finish();
+            }
+          }
+        }
+        envelope.status = 'success';
+        return finish();
+      }
+      if (flags['delete-dlo'])
+        throw new DataStreamError('STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION');
       if (
         !flags.metadata?.length ||
         flags.metadata.some(
@@ -270,11 +398,14 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         code:
           error instanceof DloError ||
           error instanceof NativeDmoError ||
-          error instanceof NativeMappingError
+          error instanceof NativeMappingError ||
+          error instanceof DataStreamError
             ? error.code
             : 'DELETE_FAILED',
-        message:
+        message: operationDiagnostic(
+          error,
           'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+        ),
         retryable: false,
       });
     }

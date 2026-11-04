@@ -1,7 +1,7 @@
 # Data360 Salesforce CLI plugin
 
 `sf-plugin-data` adds `sf data360 retrieve`, `sf data360 deploy` and exact native
-DMO/DLO/mapping `sf data360 delete` to Salesforce CLI
+DMO/DLO/mapping/Data Stream `sf data360 delete` to Salesforce CLI
 for downloading portable Data360 configuration, previewing local changes and applying
 supported, guarded updates. Support is resource- and operation-specific: this is
 **not a complete backup, restore or migration tool**. Deployment can cause processing;
@@ -32,7 +32,7 @@ Salesforce can do. **Partial** means an implemented bounded subset, not full-res
 or released-package qualification. **Unavailable** means no public plugin operation;
 it does not mean Salesforce lacks that capability. No resource has full CRUD support.
 Retrieve uses `sf data360 retrieve`; Create/Update use `sf data360 deploy`.
-Delete uses `sf data360 delete` for exact native DLO, DMO and conditionally non-last
+Delete uses `sf data360 delete` for exact native DLO, DMO, Data Stream and conditionally non-last
 mapping selections only. Exact selectors and limits follow below.
 
 **Route legend (separate from support):**
@@ -54,7 +54,7 @@ plugin features.
 | DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Qualified desired-state pair reconciliation" />           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded unmap-first non-last deletion" /> | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, canonical retrieval, one additive pair, JSON Text removal with batch addition, both Text retarget directions and zero-write previews/repeats. Guarded API61..68/default68 deletion (62..67 assumed compatible) unmaps qualified authored identity Text/Number pairs before protected-only deletion, with an independently qualified other-source survivor. Installed API61/68 two-Text-pair deletion and zero-write last-for-DMO preview/execution guards passed; installed Number removal is not qualified. Empty custom fixture scope only; API61 fixtures were provisioned at API68. Desired-state removal/retargeting remain API68-only; not cross-org or populated-object qualification.                                            |
 | DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved.                                                                                                                                                                                              |
 | Source object definitions                  | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Definition XML only, not connectors or credentials.                                                                                                                                                                                                                                                                                                                                                                         |
-| Stream definitions                         | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Definition XML only; public stream orchestration remains queued. Ingestion schema sync above is not general stream support.                                                                                                                                                                                                                                                                                                 |
+| Data Streams, `data-stream` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native stream retrieval" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded Ingestion API stream creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Additive nonprimary Text mapping update" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded exact stream deletion" /> | Exact stream-only API68/default Ingestion API/Other/UPSERT subset; portable JSON, preview and processing acknowledgement. Installed cross-org qualification covers source create/retrieve, connectionName-only target remap/create/retrieve, additive Text update, zero-write repeat and explicit cascade cleanup on both sides. Preserve-DLO deletion has separate bounded evidence. Not general connectors, populated data, other API versions or released-package qualification. |
 | Calculated insights, `calculated-insight`  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable                                                                                                                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Unavailable                                                                                                               | Qualified existing-insight predicate edit only; installed target-retrieved NOT_SCHEDULED update and zero-mutation repeat passed. Not unchanged-source cross-org acceptance.                                                                                                                                                                                                                                                 |
 | Segments, `segment`                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Unavailable                                                                                                                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                          | Unavailable                                                                                                               | Plugin: exact single-model DBT XML/JSON pair, existing label/description update and qualified forward empty-audience selected-ID `IS NOT NULL` predicate addition. Source existing-owner definition change independently settled ACTIVE with runtime/Metadata correlation; installed unchanged acceptance remains separately recorded. No creation, cross-org, arbitrary SQL or computation claim.                          |
 | Segment members                            | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                    | Unavailable                                                                                                               | Bounded membership reads, not a full population export. Runtime rows are outside plugin configuration scope.                                                                                                                                                                                                                                                                                                                |
@@ -91,6 +91,118 @@ Current plugin limits:
   Broader family and released-package acceptance remain separate gates.
 - Unknown mutation outcomes stop without automatic retry or rollback. Processing
   acknowledgements authorize only the selected supported change, not arbitrary runs.
+
+## Main workflow: Data Stream, DMO, then mapping
+
+A Data Stream brings source data into a landing Data Lake Object (DLO). A Data
+Model Object (DMO) is the separate model that receives mapped fields. Use this order:
+
+1. **Create the Data Stream.** It creates its landing DLO. The supported plugin
+   create profile uses an existing Ingestion API connection and source event, with
+   an empty `spec.additiveFieldMappings` array and a Text primary key. Do not create
+   a standalone DLO first as a substitute for the stream's landing DLO.
+2. **Create or prepare the DMO and its required fields.** This is independent of
+   step 1: either step can run first, or they can be prepared in parallel. A stream
+   does not create the DMO or its fields.
+3. **Create the DLO-to-DMO mapping last.** Both objects and the compatible fields
+   being mapped must already exist. Check the actual landing DLO name after stream
+   creation; generated target names need not match the proposed names.
+
+Run stream commands separately from DMO and mapping commands. The native mixed
+DLO → DMO → mapping deploy order does **not** include Data Streams. For the exact
+DMO and mapping document contracts, see [Public DMO workflow](#public-dmo-workflow)
+and [DLO-to-DMO mapping](#dlo-to-dmo-mapping-native-definition-crud).
+
+### Add a landing DLO field through its owning stream
+
+For a stream-linked DLO, use the owning Data Stream to make the supported schema
+addition. Standalone [DLO definition CRUD](#native-dlo-definition-workflow) is not a
+complete ingestion workflow and is not the route for this stream-owned change.
+
+First retrieve the existing stream into your local project. Run the following
+commands from that project's root; replace `ExampleStream` with its actual API name:
+
+```sh
+sf data360 retrieve -o target -m data-stream:ExampleStream --api-version auto -d . --json
+```
+
+The canonical file is
+`data360/data-stream/ExampleStream.data-stream-meta.json`. Keep its strict document
+shape, identity, connection, event, labels, primary key and read-only `observed`
+content intact. Use the retrieved actual labels rather than assuming the original
+creation proposal still matches the target.
+
+**Modification example only, not a complete deployable document:** append this
+entry to `spec.additiveFieldMappings`, retaining any existing entries:
+
+```json
+{
+  "sourceFieldLabel": "ContactEmail",
+  "targetFieldName": "ExtraContactEmail",
+  "targetFieldReturntype": "Text"
+}
+```
+
+This example requires an **already existing**, uniquely resolved, non-primary-key
+Text field whose source-event label is `ContactEmail`. Replace it with the real
+source label; it is not an instruction to add a source field. `ExtraContactEmail`
+is a new ordinary Text landing-field name, supplied without `__c`; the persisted
+DLO field is `ExtraContactEmail__c`. Do not use an existing source-field name, a
+primary key or a generated/system field as the new target.
+
+Preview the stream-only change, then explicitly allow processing to apply it:
+
+```sh
+sf data360 deploy -o target -m data-stream:ExampleStream --api-version auto --preview --json
+sf data360 deploy -o target -m data-stream:ExampleStream --api-version auto --allow-processing --json
+```
+
+The stream PATCH maps that existing source field to the new landing field. It
+**does not extend the source-event schema**, create DMO fields or create/update
+downstream DLO-to-DMO mappings. Prepare any required compatible DMO field separately,
+then deploy the downstream mapping as a separate final step. Removing entries from
+`spec.additiveFieldMappings` does not remove existing target fields or mappings.
+Label changes, primary-key changes, type changes, retargeting and destructive schema
+reconciliation are outside this additive-only profile. An unchanged supported
+stream needs no processing acknowledgement and makes no write.
+
+### Scope and verification status
+
+The native `data-stream:ApiName` retrieve/deploy/delete subset is implemented and covered
+by synthetic plugin tests. It uses default/`auto` API 68 (or explicit `68.0`), the
+**default data space**, one existing Ingestion API source event, `UPSERT`, category
+`Other` and the qualified Text-field profile only. It is not general connector or
+schema support. Exact stream-only selections are required; inventory retrieval,
+mixed-family batches, Git selection and dependency expansion are not supported.
+
+Installed API68 qualification passed source create/retrieve, then target
+create/retrieve after changing only `spec.connectionName` to an existing compatible
+target connection. A target-retrieved document then passed one additive Text mapping
+update and an unchanged repeat with no write. Explicit `--delete-dlo` cleanup passed
+on both sides, with independent stream and linked-DLO absence checks and protected
+resources unchanged. This qualifies only that bounded cross-org profile, not all
+connectors, API versions, populated data, complete migration or a published release.
+The earlier unexplained run is disregarded as qualification evidence; its cause is
+not inferred from this fresh success.
+
+For exact stream deletion, preview first. The default preserves the DLO;
+`--delete-dlo` explicitly requests cascade removal of the linked DLO too. Fresh
+identity, binding and dependency checks must pass, and completion is verified by
+independent reads, not HTTP success alone. The fresh cross-org run covered cascade
+mode; it does not requalify preserve mode across orgs. `DataStreamDefinition`
+Metadata XML examples below remain separate from this native JSON workflow.
+
+### Safe operation diagnostics
+
+Native stream, DLO, DMO and mapping checks distinguish a plugin verification failure
+from a confirmed Salesforce API rejection. A failed protected-state comparison can
+name the check, resource and first differing path, with expected/observed values
+only for bounded schema identifiers, enums and flags. IDs, labels, free text,
+unknown properties and other sensitive values are redacted; raw remote payloads,
+exception messages and stack traces are not forwarded. A confirmed API rejection
+can report its HTTP status without its body. Without that evidence, the diagnostic
+does not claim Salesforce rejected the request. These explanations do not weaken
+safety checks, change error codes or authorize retrying an unknown mutation.
 
 ## Native DLO definition workflow
 

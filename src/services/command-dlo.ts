@@ -1,3 +1,4 @@
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { DloError } from '../artifacts/dlo-document.js';
 import { preflightNativeDlo, deployNativeDlo } from './native-dlo.js';
 import type { DloClient } from '../transport/dlo-rest.js';
@@ -76,9 +77,12 @@ export async function executeDloDeploy(
       diagnostics: [
         {
           code: error instanceof DloError ? error.code : 'DLO_REQUEST_UNCONFIRMED',
-          message: dispatched
-            ? 'Write outcome is unknown; inspect target before another attempt.'
-            : 'Target lookup or definition admission failed; no write attempted.',
+          message: operationDiagnostic(
+            error,
+            dispatched
+              ? 'Write outcome is unknown; inspect target before another attempt.'
+              : 'Target lookup or definition admission failed; no write attempted.',
+          ),
         },
       ],
     };

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { explainMismatch } from './operation-diagnostic.js';
 import { isNativeMappingDeletionVersion } from '../transport/api-version.js';
 import {
   NativeMappingError,
@@ -51,7 +52,21 @@ function checkBinding(expected: NativeMappingDocument, actual: NativeMappingDocu
     expected.spec.sourceEntityDeveloperName !== actual.spec.sourceEntityDeveloperName ||
     expected.spec.targetEntityDeveloperName !== actual.spec.targetEntityDeveloperName
   )
-    throw new NativeMappingError('MAPPING_TARGET_BINDING_MISMATCH');
+    throw explainMismatch(
+      new NativeMappingError('MAPPING_TARGET_BINDING_MISMATCH'),
+      'mapping binding readback',
+      expected.identity.apiName,
+      {
+        dataSpace: expected.identity.dataSpace,
+        sourceEntityDeveloperName: expected.spec.sourceEntityDeveloperName,
+        targetEntityDeveloperName: expected.spec.targetEntityDeveloperName,
+      },
+      {
+        dataSpace: actual.identity.dataSpace,
+        sourceEntityDeveloperName: actual.spec.sourceEntityDeveloperName,
+        targetEntityDeveloperName: actual.spec.targetEntityDeveloperName,
+      },
+    );
 }
 
 /**
@@ -132,7 +147,15 @@ async function validateDependencies(
     const from = sources.get(pair.sourceFieldDeveloperName);
     const to = targets.get(pair.targetFieldDeveloperName);
     if (!from || !to) throw new NativeMappingError('MAPPING_FIELD_NOT_FOUND');
-    if (from.dataType !== to.dataType) throw new NativeMappingError('MAPPING_FIELD_TYPE_MISMATCH');
+    if (from.dataType !== to.dataType)
+      throw explainMismatch(
+        new NativeMappingError('MAPPING_FIELD_TYPE_MISMATCH'),
+        'mapping source/target type compatibility',
+        desired.identity.apiName,
+        from.dataType,
+        to.dataType,
+        `fields.${pair.sourceFieldDeveloperName}.target.${pair.targetFieldDeveloperName}.dataType`,
+      );
     if (from.name !== to.name) continue;
     if (
       system.has(to.name) &&
@@ -599,7 +622,13 @@ async function checkUnmapSnapshot(
   );
   const target = await dependencies.target.get(plan.selected.spec.targetEntityDeveloperName);
   if (!isDeepStrictEqual(parents, plan.parents) || !isDeepStrictEqual(target, plan.target))
-    throw new NativeMappingError('MAPPING_PARENT_CHANGED');
+    throw explainMismatch(
+      new NativeMappingError('MAPPING_PARENT_CHANGED'),
+      'unmap parent preservation',
+      plan.selected.identity.apiName,
+      { parents: plan.parents, target: plan.target },
+      { parents, target },
+    );
   const response = await client.list(plan.selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
@@ -616,7 +645,13 @@ async function checkUnmapSnapshot(
         !['ACTIVE', 'CREATING'].includes(value.status as string) ||
         !isDeepStrictEqual({ ...value, status: 'ACTIVE' }, expected)
       )
-        throw new NativeMappingError('MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
+        throw explainMismatch(
+          new NativeMappingError('MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED'),
+          'unmap inventory/detail preservation',
+          expected.developerName,
+          expected,
+          value,
+        );
       if (value.status !== 'ACTIVE') active = false;
     }
   }
@@ -650,7 +685,13 @@ export async function unmapNativeMappingFields(
     requestScope,
   );
   if (!isDeepStrictEqual(fresh, evidence))
-    throw new NativeMappingError('MAPPING_UNMAP_PLAN_CHANGED');
+    throw explainMismatch(
+      new NativeMappingError('MAPPING_UNMAP_PLAN_CHANGED'),
+      'unmap pre-dispatch plan recheck',
+      evidence.selected.identity.apiName,
+      evidence,
+      fresh,
+    );
   const plan = structuredClone(evidence);
   for (const pair of plan.removals) {
     if (!(await checkUnmapSnapshot(plan, client, dependencies)))

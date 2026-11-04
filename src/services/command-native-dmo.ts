@@ -1,3 +1,4 @@
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { NativeDmoError } from '../artifacts/native-dmo-document.js';
 import { preflightNativeDmo, deployNativeDmo } from './native-dmo.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
@@ -56,7 +57,12 @@ export async function executeDmo(value: unknown, client: DmoClient, requestScope
       diagnostics: [
         {
           code: error instanceof NativeDmoError ? error.code : 'DMO_REQUEST_UNCONFIRMED',
-          message: 'Deployment stopped; inspect unknown outcomes before another attempt.',
+          message: operationDiagnostic(
+            error,
+            dispatched
+              ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
+              : 'No write attempted; correct the reported check before another attempt.',
+          ),
         },
       ],
     };

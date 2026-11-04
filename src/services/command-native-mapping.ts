@@ -1,3 +1,4 @@
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { NativeMappingError } from '../artifacts/native-mapping-document.js';
 import { deployNativeMapping, preflightNativeMapping } from './native-mapping.js';
 import type { MappingDependencies } from './native-mapping.js';
@@ -97,7 +98,12 @@ export async function executeMapping(
       diagnostics: [
         {
           code: error instanceof NativeMappingError ? error.code : 'MAPPING_REQUEST_UNCONFIRMED',
-          message: 'Deployment stopped; inspect unknown outcomes before another attempt.',
+          message: operationDiagnostic(
+            error,
+            dispatched
+              ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
+              : 'No write attempted; correct the reported check before another attempt.',
+          ),
         },
       ],
     };

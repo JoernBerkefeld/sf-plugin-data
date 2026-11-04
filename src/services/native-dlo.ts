@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { explainMismatch } from './operation-diagnostic.js';
 import {
   DloError,
   normalizeDlo,
@@ -134,7 +135,14 @@ export async function preflightNativeDlo(
     )
       continue;
     if (!isDeepStrictEqual(field, incoming.get(name)))
-      throw new DloError('UNSUPPORTED_DLO_FIELD_CHANGE');
+      throw explainMismatch(
+        new DloError('UNSUPPORTED_DLO_FIELD_CHANGE'),
+        'update field preservation',
+        apiName,
+        field,
+        incoming.get(name),
+        `fields.${name}`,
+      );
   }
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))
