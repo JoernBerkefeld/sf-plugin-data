@@ -324,7 +324,6 @@ test('Graph public retrieve refuses numeric65/latest/expansion/invalid exact sel
   for (const overrides of [
     { 'api-version': '65.0' },
     { 'api-version': 'latest' },
-    { 'api-version': '68.0' },
     { metadata: ['data-graph'] },
     { metadata: ['data-graph:../unsafe'] },
     { dataspace: 'other' },

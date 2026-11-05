@@ -1,3 +1,30 @@
+# Public native Data Graph CRD closeout — 2026-11-05
+
+Gate4 iteration2 returned zero must-fix/optional findings; Gate5 reconciles README,
+capabilities and the sfmc.guide Graph page/overview. Native API68/default supports
+one root-only NONE standard Individual graph with ordered Text Id/key-qualifier/
+FirstName. Explicit68 retrieve exports the distinct .native-dataGraph.json artifact;
+auto/API68 deploy creates only when absent, returns zero-write unchanged on equality,
+and blocks differences because native UPDATE is deferred. Auto/API67 facade behavior
+and artifacts are preserved. No Git/native mixed-family/dependency expansion.
+
+Delete requires exact matched local intent, --confirm-delete, fresh ready/org/identity/
+created-date/full-definition/root checks and explicitly empty known native dependencies/
+related segments. Exhaustive external-consumer exclusion is unverified. Independent
+graph-definition absence ultimately passed live after stale metadata reconciliation;
+generated DMOs/mappings/transforms/internal state, storage/credits cleanup and
+computation remain unclaimed. GUI UPDATE is not public REST/plugin UPDATE evidence.
+Package smoke exercises offline installed routing, not live installed cross-org proof.
+
+Prior feature verification: 2283 total, 2281 pass, 2 skip; zero-warning lint/build,
+CLI smoke 52 pass and package smoke passed. Documentation changes require fresh
+package verification; its receipt is recorded in the coordinator handover rather
+than asserted here before running. Root shared verification-index inputs/ownership
+remain separately coordinated; this task does not rebuild them. No version change,
+commit, push or guide commit here. Coordinator resumes with scoped CRD commit,
+then separate UPDATE work including live label last and a second commit before
+connectors. Current version is 0.1.0; next version remains unassigned.
+
 # Public native CI integration and installed qualification — 2026-11-05
 
 This current entry supersedes historical CI scope/fixture-budget statements below.
@@ -159,7 +186,7 @@ credentials; refreshing only that isolated target profile enabled guard validati
 Fresh full verification, final independent review and normal-hook scoped commit
 receipts are recorded separately. Seven unrelated config/hook/license edits remain
 excluded; guide changes remain uncommitted. No push or local recursive cleanup.
-Step5 lower-API work, Step6 CI and Step7 Graph implementation remain unstarted.
+Historical checkpoint: Step5 lower-API work, Step6 CI and Step7 Graph implementation were then unstarted; the current CI and native Graph entries above supersede that status.
 
 # Installed standalone DMO cross-org acceptance — 2026-11-04
 

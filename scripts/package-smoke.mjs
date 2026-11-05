@@ -344,6 +344,98 @@ for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unkn
     process.exitCode = previous;
   }
 }
+// Installed native Graph commands exercise public routing without auth or live writes.
+const { mkdirSync, writeFileSync } = await import('node:fs');
+const graphProject = path.join(root, 'graph-project');
+mkdirSync(path.join(graphProject, 'force-app', 'main', 'default'), { recursive: true });
+writeFileSync(
+  path.join(graphProject, 'sfdx-project.json'),
+  JSON.stringify({
+    packageDirectories: [{ path: 'force-app', default: true }],
+    sourceApiVersion: '68.0',
+  }),
+);
+const graphDocument = {
+  schemaVersion: 1,
+  kind: 'native-data-graph',
+  apiVersion: '68.0',
+  definition: {
+    name: 'InstalledGraph',
+    label: 'Installed graph',
+    description: '',
+    dataspaceName: 'default',
+    primaryObjectName: 'ssot__Individual__dlm',
+    type: 'NONE',
+    sourceObject: {
+      name: 'ssot__Individual__dlm',
+      devName: 'Individual',
+      label: 'Individual',
+      jsonPath: '$',
+      path: [],
+      type: 'standard',
+      relatedObjects: [],
+      fields: ['ssot__Id__c', 'KQ_Id__c', 'ssot__FirstName__c'].map((sourceFieldName, index) => ({
+        devName: `Projected${index}`,
+        sourceFieldName,
+        dataType: 'Text',
+        isKeyColumn: index === 0,
+        isProjected: true,
+        usageTag: index === 1 ? 'KEY_QUALIFIER' : 'NONE',
+      })),
+    },
+  },
+};
+const { writeDataGraphDocument: writeGraph } = await import(
+  pathToFileURL(path.join(packageRoot, 'lib/artifacts/write-data-graph.js')).href
+);
+const graphReceipt = await writeGraph(graphDocument, graphProject, false);
+for (const operation of ['retrieve', 'deploy', 'delete']) {
+  const Command = await config.findCommand(`data360:${operation}`, { must: true }).load();
+  const command = Object.create(Command.prototype);
+  const flags = {
+    'api-version': '68.0',
+    metadata: [`data-graph:InstalledGraph`],
+    'source-dir': operation === 'delete' ? graphReceipt.path : undefined,
+    'output-dir': graphProject,
+    overwrite: true,
+    preview: false,
+    'allow-processing': true,
+    'confirm-delete': true,
+  };
+  command.parse = async () => ({ flags });
+  command.jsonEnabled = () => true;
+  const connection = {};
+  const context = { orgId: '00D000000000001AAA' };
+  const org = { getConnection: () => connection, getOrgId: () => context.orgId };
+  command.resolveOrg = command.resolveTargetOrg = async () => org;
+  command.resolveConnection = async () => connection;
+  command.nativeGraphContext = async () => context;
+  command.nativeGraphClient = () => ({});
+  command.writeDataGraph = writeGraph;
+  command.retrieveNativeGraph = async (name, actual) => {
+    assert.equal(name, 'InstalledGraph');
+    assert.equal(actual, context);
+    return graphDocument;
+  };
+  const { readDeployInputs } = await import(
+    pathToFileURL(path.join(packageRoot, 'lib/artifacts/read-deploy-input.js')).href
+  );
+  command.resolveInputs = async () =>
+    readDeployInputs({ cwd: graphProject, sourceDir: [graphReceipt.path] });
+  command.operateNativeGraph = async (document, actual, _client, intent) => {
+    assert.equal(document.kind, 'native-data-graph');
+    assert.equal(actual, context);
+    assert.equal(intent.operation, operation);
+    await intent.verifyInput();
+    return {
+      outcome: operation === 'deploy' ? 'created' : 'deleted',
+      mutation: operation === 'deploy' ? 'confirmed-created' : 'confirmed-deleted',
+    };
+  };
+  const envelope = await command.run();
+  assert.equal(envelope.status, 'success');
+  assert.equal(envelope.result.items[0].routes[0].transport, 'native');
+}
 process.stdout.write(
   `${JSON.stringify({ root, artifact, sha256, helpChecks, aliasValidationChecks: 16, implementations: implementations.size, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
 );

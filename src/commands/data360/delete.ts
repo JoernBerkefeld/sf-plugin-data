@@ -1,4 +1,12 @@
 import {
+  operateNativeDataGraph,
+  nativeGraphLimitations,
+} from '../../services/command-native-data-graph.js';
+import { nativeDataGraphReadContext } from '../../services/native-data-graph-context.js';
+import { createDataGraphClient } from '../../transport/data-graph-rest.js';
+import { verifyNativeDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { NativeDataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
+import {
   DeployInputError,
   readDeployInputs,
   verifyCalculatedInsightInputDigest,
@@ -78,7 +86,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 streams, DLOs, DMOs or qualified non-last mappings.';
   public static readonly description =
-    'Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
+    'Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -102,11 +110,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'source-dir': Flags.string({
       char: 'd',
-      summary: 'CI-only: one exact paired XML or JSON ownership expectation.',
+      summary: 'CI or native Graph: one exact local source expectation.',
     }),
     'confirm-delete': Flags.boolean({
       default: false,
-      summary: 'CI-only: explicitly acknowledge destructive deletion.',
+      summary: 'CI or native Graph: explicitly acknowledge destructive deletion.',
     }),
     'delete-dlo': Flags.boolean({
       default: false,
@@ -114,6 +122,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         'Stream-only acknowledgement: delete the exclusively linked DLO; otherwise preserve it.',
     }),
   };
+  protected nativeGraphContext = nativeDataGraphReadContext;
+  protected nativeGraphClient = createDataGraphClient;
+  protected operateNativeGraph = operateNativeDataGraph;
   protected resolveInputs = readDeployInputs;
   protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
   protected calculatedInsightContext = calculatedInsightReadContext;
@@ -230,6 +241,84 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return envelope;
     };
     try {
+      if (
+        flags.metadata?.some(
+          (selector) => selector === 'data-graph' || selector.startsWith('data-graph:'),
+        )
+      ) {
+        if (
+          flags.metadata.length !== 1 ||
+          !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(flags.metadata[0]) ||
+          flags['delete-dlo'] ||
+          !flags['source-dir']
+        )
+          throw new DloError('INVALID_SELECTION');
+        if (
+          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
+          effectiveScope !== 'default'
+        )
+          throw new DloError('INVALID_SCOPE');
+        const inputs = await this.resolveInputs({
+          cwd: process.cwd(),
+          sourceDir: [flags['source-dir']],
+        });
+        if (inputs.length !== 1 || inputs[0].document.kind !== 'native-data-graph')
+          throw new DloError('INVALID_SELECTION');
+        const input = inputs[0] as NativeDataGraphDeployInput;
+        const name = input.document.definition.name as string;
+        if (flags.metadata[0] !== `data-graph:${name}`) throw new DloError('INVALID_SELECTION');
+        const snapshot = JSON.stringify(flags);
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
+          await verifyNativeDataGraphInputDigest(input);
+        };
+        await verifyInput();
+        const connection = await this.resolveConnection(flags['target-org']);
+        const context = await this.nativeGraphContext(connection, 'default');
+        envelope.metadata.apiVersion = '68.0';
+        envelope.diagnostics.warnings.push(nativeGraphLimitations);
+        const result = await this.operateNativeGraph(
+          input.document,
+          context,
+          this.nativeGraphClient(connection, '68.0', 'default'),
+          {
+            operation: 'delete',
+            preview: flags.preview,
+            confirmed: flags['confirm-delete'] === true,
+            verifyInput,
+          },
+        );
+        const item: DeleteEnvelope['result']['items'][number] = {
+          identity: { dataSpace: 'default', apiName: name },
+          operation: flags.preview ? 'preview' : 'delete',
+          outcome:
+            result.outcome === 'delete'
+              ? 'delete'
+              : result.outcome === 'deleted'
+                ? 'deleted'
+                : result.outcome === 'unchanged'
+                  ? 'unchanged'
+                  : result.outcome === 'failed'
+                    ? 'failed'
+                    : 'blocked',
+          mutation:
+            result.mutation === 'confirmed-deleted'
+              ? 'confirmed-deleted'
+              : result.mutation === 'unknown'
+                ? 'unknown'
+                : 'not-attempted',
+          routes: [{ operation: 'data-graph.delete', apiVersion: '68.0', transport: 'native' }],
+        };
+        envelope.result.items.push(item);
+        selectorsByItem.set(item, flags.metadata[0]);
+        envelope.status =
+          result.outcome === 'failed'
+            ? 'failed'
+            : result.outcome === 'blocked'
+              ? 'blocked'
+              : 'success';
+        return finish();
+      }
       const ciSelection = flags.metadata?.some(
         (selector) =>
           selector === 'calculated-insight' || selector.startsWith('calculated-insight:'),

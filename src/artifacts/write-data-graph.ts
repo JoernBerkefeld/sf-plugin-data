@@ -1,3 +1,4 @@
+import { validateNativeDataGraphDocument } from './native-data-graph-document.js';
 import { randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, open, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
@@ -95,8 +96,13 @@ export async function writeDataGraphDocument(
   overwrite: boolean,
   publish = publication,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateDataGraphDocument(value);
-  const bytes = Buffer.from(serializeDataGraphDocument(document));
+  const native = (value as { kind?: unknown })?.kind === 'native-data-graph';
+  const document = native
+    ? validateNativeDataGraphDocument(value)
+    : validateDataGraphDocument(value);
+  const bytes = Buffer.from(
+    native ? `${JSON.stringify(document, undefined, 2)}\n` : serializeDataGraphDocument(document),
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -114,7 +120,7 @@ export async function writeDataGraphDocument(
       base,
       'data360',
       'dataGraphs',
-      `${document.identity.apiName}.dataGraph.json`,
+      `${'definition' in document ? document.definition.name : document.identity.apiName}${native ? '.native-dataGraph.json' : '.dataGraph.json'}`,
     );
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
@@ -150,7 +156,9 @@ export async function writeDataGraphDocument(
     published = true;
     const completed = await existing(destination);
     if (!completed?.equals(bytes)) throw new DataGraphError('OUTPUT_CHANGED');
-    validateDataGraphDocument(JSON.parse(completed.toString('utf8')));
+    (native ? validateNativeDataGraphDocument : validateDataGraphDocument)(
+      JSON.parse(completed.toString('utf8')),
+    );
     return { path: destination, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new DataGraphError('PARTIAL_DATA_GRAPH_OUTPUT');

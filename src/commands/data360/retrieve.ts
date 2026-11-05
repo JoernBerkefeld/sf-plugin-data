@@ -1,3 +1,5 @@
+import { nativeDataGraphReadContext } from '../../services/native-data-graph-context.js';
+import { retrieveNativeDataGraph } from '../../services/command-native-data-graph.js';
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { dataStreamApiVersion, nativeApiVersion } from '../../transport/api-version.js';
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
@@ -148,7 +150,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -192,6 +194,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected nativeGraphContext = nativeDataGraphReadContext;
+  protected retrieveNativeGraph = retrieveNativeDataGraph;
   protected acquireDataStream = retrieveNativeDataStream;
   protected writeDataStream = writeDataStreamDocument;
   protected createDataStreamClients = (
@@ -428,6 +432,41 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return finish(
         envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
       );
+    }
+    if (
+      flags['api-version'] === '68.0' &&
+      selectors.some((value) => value === 'data-graph' || value.startsWith('data-graph:'))
+    ) {
+      if (
+        selectors.length !== 1 ||
+        !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(selectors[0]) ||
+        flags['include-dependencies']
+      )
+        return finish('blocked', 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
+      if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
+      try {
+        const org = await this.resolveOrg(flags['target-org']);
+        const context = await this.nativeGraphContext(org.getConnection('68.0'), 'default');
+        const apiName = selectors[0].slice(11);
+        const document = await this.retrieveNativeGraph(apiName, context);
+        const receipt = await this.writeDataGraph(
+          document,
+          flags['output-dir'] ?? process.cwd(),
+          flags.overwrite,
+        );
+        envelope.provenance.sourceOrgId = context.orgId;
+        envelope.metadata.soapApiVersion = '68.0';
+        envelope.result.items.push({
+          identity: { dataSpace: 'default', apiName },
+          operation: 'retrieve',
+          family: 'data-graph',
+          routes: [{ operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' }],
+          ...receipt,
+        });
+        return finish('success');
+      } catch {
+        return finish('blocked', 'NATIVE_GRAPH_RETRIEVE_BLOCKED');
+      }
     }
     const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
     if (

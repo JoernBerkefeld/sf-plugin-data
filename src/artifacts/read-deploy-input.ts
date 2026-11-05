@@ -1,3 +1,5 @@
+import { validateNativeDataGraphDocument } from './native-data-graph-document.js';
+import type { NativeDataGraphDocument } from './native-data-graph-document.js';
 import { validateDataStreamDocument } from './data-stream-document.js';
 import type { DataStreamDocument } from './data-stream-document.js';
 import { nativeMappingName, validateNativeMappingDocument } from './native-mapping-document.js';
@@ -219,7 +221,63 @@ export async function verifyDataStreamInputDigest(input: DataStreamDeployInput):
   }
 }
 
+export type NativeDataGraphDeployInput = {
+  path: string;
+  document: NativeDataGraphDocument;
+  inputDigest: string;
+};
+
+/**
+ * Admit native Graph bytes using the existing bounded no-link reader.
+ * @param {string} file Exact native artifact.
+ * @returns {Promise<NativeDataGraphDeployInput>} Byte-bound source.
+ */
+async function readNativeDataGraphInput(file: string): Promise<NativeDataGraphDeployInput> {
+  const name = path.basename(file).slice(0, -'.native-dataGraph.json'.length);
+  const directory = path.dirname(file);
+  const base = path.dirname(path.dirname(directory));
+  if (
+    !dataGraphName.test(name) ||
+    path.basename(directory) !== 'dataGraphs' ||
+    path.basename(path.dirname(directory)) !== 'data360' ||
+    path.basename(base) !== 'default' ||
+    path.basename(path.dirname(base)) !== 'main'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: NativeDataGraphDocument;
+  try {
+    document = validateNativeDataGraphDocument(strictJson(decode(bytes)));
+    if (document.definition.name !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
+/**
+ * Re-admit native Graph exact bytes and logical intent before mutation.
+ * @param {NativeDataGraphDeployInput} input Captured source.
+ */
+export async function verifyNativeDataGraphInputDigest(
+  input: NativeDataGraphDeployInput,
+): Promise<void> {
+  const fresh = await readNativeDataGraphInput(input.path);
+  if (
+    fresh.inputDigest !== input.inputDigest ||
+    JSON.stringify(fresh.document) !== JSON.stringify(input.document)
+  )
+    refuse();
+}
+
 export type DeployInput =
+  | NativeDataGraphDeployInput
   | DataStreamDeployInput
   | MappingDeployInput
   | NativeDmoDeployInput
@@ -681,6 +739,10 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if (input.document.kind === 'native-data-graph') {
+    await verifyNativeDataGraphInputDigest(input as NativeDataGraphDeployInput);
+    return (input as NativeDataGraphDeployInput).inputDigest;
+  }
   if (input.document.kind === 'data-stream') {
     await verifyDataStreamInputDigest(input as DataStreamDeployInput);
     return (input as DataStreamDeployInput).inputDigest;
@@ -787,6 +849,18 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       legacyDmos.add(selector.name);
     }
   }
+  const nativeGraphs = new Set<string>();
+  for (const selector of selectors ?? []) {
+    if (selector.kind !== 'data-graph') continue;
+    try {
+      await lstat(
+        path.join(base!, 'data360', 'dataGraphs', `${selector.name}.native-dataGraph.json`),
+      );
+      nativeGraphs.add(selector.name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
   const roots = selectors
     ? selectors.map(({ kind, name }) =>
         kind === 'dmo'
@@ -800,7 +874,12 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
               : kind === 'dlo'
                 ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
                 : kind === 'data-graph'
-                  ? path.join(base!, 'data360', 'dataGraphs', `${name}.dataGraph.json`)
+                  ? path.join(
+                      base!,
+                      'data360',
+                      'dataGraphs',
+                      `${name}${nativeGraphs.has(name) ? '.native-dataGraph.json' : '.dataGraph.json'}`,
+                    )
                   : kind === 'calculated-insight'
                     ? path.join(
                         base!,
@@ -950,6 +1029,20 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           !selectors.some(
             (item) => item.kind === 'dlo' && item.name === input.document.identity.apiName,
           )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.native-dataGraph.json')) {
+        const input = await readNativeDataGraphInput(file);
+        const name = input.document.definition.name as string;
+        const key = `data-graph:default:${name}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some((item) => item.kind === 'data-graph' && item.name === name)
         )
           throw new DeployInputError('INVALID_SELECTION');
         identities.add(key);

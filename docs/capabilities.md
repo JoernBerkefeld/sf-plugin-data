@@ -1,3 +1,30 @@
+## Public native Data Graph CRD — 2026-11-05
+
+Explicit API68/default retrieval exports a distinct `.native-dataGraph.json`
+(`kind: native-data-graph`, `apiVersion: 68.0`), not the existing API67 facade
+`.dataGraph.json`. Scope is one root-only NONE graph on enabled standard
+`ssot__Individual__dlm`, with ordered Text Id, key-qualifier and FirstName fields.
+Deploy/delete accept auto/API68 for this native artifact; auto/API67 facade
+retrieval and the existing bounded LastName update remain unchanged.
+
+Absent create requires independent absence/root checks and --allow-processing;
+creation automatically generates supporting resources and defaults to daily full
+refresh with incremental refresh disabled, despite omitting schedule input. Identical deploy is
+zero-write unchanged; a different existing definition blocks because native UPDATE
+is not implemented. GUI UPDATE evidence is not native REST/plugin support.
+Preview is read-only. Native Git selection, mixed families, dependency expansion,
+other roots/graphs and cascade are unsupported.
+
+Delete needs an exact selector, matching local native artifact, --confirm-delete
+and fresh ready/identity/created-date/definition/root checks, with explicitly empty
+known dependency/related-segment arrays. Unknown/nonempty dependencies block;
+exhaustive external-consumer exclusion remains unverified. Live API68 create/read/
+delete evidence ultimately confirmed independent graph-definition absence after
+stale-metadata reconciliation. No generated DMO/mapping/transform/internal-state,
+storage/credits cleanup or computation claim. Installed package smoke verifies
+offline routing only, not live installed cross-org acceptance. README's 14-resource
+row records Partial native create/delete and retains the separate facade update.
+
 ## Public native calculated insight lifecycle — 2026-11-05
 
 This current contract supersedes the historical CI-only boundaries below. Explicit
