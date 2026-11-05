@@ -18,6 +18,7 @@ export class ConnectError extends Error {
   public constructor(
     public readonly code: TransportErrorCode,
     public readonly statusCode?: number,
+    public readonly nativeCode?: 'ITEM_NOT_FOUND',
   ) {
     super(
       code === 'AUTHENTICATION_FAILED'
@@ -211,7 +212,7 @@ export class ConnectClient {
     );
   }
 
-  private noRefreshReceiver(): AuthenticatedConnection {
+  protected noRefreshReceiver(): AuthenticatedConnection {
     const receiver = Object.create(this.connection) as AuthenticatedConnection;
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
     return receiver;
@@ -225,7 +226,7 @@ export class ConnectClient {
     );
   }
 
-  private async send<T>(
+  protected async send<T>(
     request: Parameters<Connection['request']>[0],
     receiver: AuthenticatedConnection,
     noContentResponse?: unknown,
@@ -282,9 +283,31 @@ export class ConnectClient {
         typeof error === 'object' &&
         'name' in error &&
         error.name === 'INVALID_SESSION_ID';
+      // Core preserves the parsed single REST error in data. Never infer absence from
+      // HTTP status, message text, raw JSON strings or a mixed/malformed error envelope.
+      const nativeError = error as { name?: unknown; errorCode?: unknown; data?: unknown };
+      const data = nativeError?.data;
+      const nativeCode =
+        typeof request === 'object' &&
+        request.method === 'GET' &&
+        statusCode === 404 &&
+        !expired &&
+        nativeError?.name === 'ITEM_NOT_FOUND' &&
+        nativeError.errorCode === 'ITEM_NOT_FOUND' &&
+        !!data &&
+        typeof data === 'object' &&
+        !Array.isArray(data) &&
+        Object.keys(data).length === 2 &&
+        'errorCode' in data &&
+        data.errorCode === 'ITEM_NOT_FOUND' &&
+        'message' in data &&
+        typeof data.message === 'string'
+          ? 'ITEM_NOT_FOUND'
+          : undefined;
       throw new ConnectError(
         statusCode === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
         statusCode,
+        nativeCode,
       );
     }
   }
@@ -444,7 +467,7 @@ export class ConnectClient {
     throw new ConnectError('INCOMPLETE_LIST');
   }
 
-  private safeUrl(path: string): string {
+  protected safeUrl(path: string): string {
     // Reject normalization ambiguities before URL parsing, including nested encodings.
     if (/[\\\s#\p{Cc}]/u.test(path) || /%(?:2e|2f|5c|25|0[0-9a-f]|1[0-9a-f]|7f)/iu.test(path)) {
       throw new ConnectError('INVALID_REQUEST');

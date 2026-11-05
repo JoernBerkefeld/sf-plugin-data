@@ -43,7 +43,11 @@ import {
   validateCalculatedInsightPair,
 } from '../../artifacts/calculated-insight-document.js';
 import type { CalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
-import { retrieveCalculatedInsight } from '../../services/retrieve-calculated-insight.js';
+import {
+  retrieveCalculatedInsight,
+  calculatedInsightReadContext,
+  acquireExactCalculatedInsight,
+} from '../../services/retrieve-calculated-insight.js';
 import { bindCalculatedInsightDependencies } from '../../services/bind-calculated-insight-dependencies.js';
 import { retrieveCalculatedInsightSourceMetadata } from '../../transport/project-metadata.js';
 import { writeCalculatedInsightDocument } from '../../artifacts/write-calculated-insight.js';
@@ -144,7 +148,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires API65 or auto/default and independently correlated standard XML/JSON pairs; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph requires auto or numeric67 and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR requires auto or numeric67, default space and independent API67 facade/API65 native correlation; IR inventory and dependency expansion are blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -237,6 +241,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected bindDataGraph = bindDataGraphDependencies;
   protected writeDataGraph = writeDataGraphDocument;
   protected acquireCalculatedInsight = retrieveCalculatedInsight;
+  protected calculatedInsightContext = calculatedInsightReadContext;
+  protected acquireExactCalculatedInsight = acquireExactCalculatedInsight;
   protected bindCalculatedInsight = bindCalculatedInsightDependencies;
   protected acquireCalculatedInsightXml = retrieveCalculatedInsightSourceMetadata;
   protected writeCalculatedInsight = writeCalculatedInsightDocument;
@@ -1049,20 +1055,34 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           definitionXml: string;
         }> = [];
         // Complete every CI admission before any selected output and before IR repins the receiver.
+        const ciApiVersion =
+          ciSelectors.length > 0
+            ? operationApiVersion(flags['api-version'], 'calculated-insight')
+            : '65.0';
         const ciVersion = Object.freeze({
-          requested: '65.0',
-          restSelector: 'v65.0',
-          soapNumeric: '65.0',
+          requested: ciApiVersion,
+          restSelector: `v${ciApiVersion}`,
+          soapNumeric: ciApiVersion,
         });
         // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
         for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
-          const ciConnection = org.getConnection('65.0');
-          const acquired = await this.acquireCalculatedInsight(
-            ciConnection,
-            apiName,
-            ciVersion,
-            effectiveScope,
-          );
+          const ciConnection = org.getConnection(ciApiVersion);
+          const context =
+            ciApiVersion === '68.0'
+              ? this.calculatedInsightContext(ciConnection, effectiveScope)
+              : undefined;
+          const acquired = context
+            ? await (async () => {
+                const exact = await this.acquireExactCalculatedInsight(context, apiName);
+                if (exact.state !== 'present' || exact.status !== 'ACTIVE')
+                  throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
+                return {
+                  identity: exact.document.identity,
+                  candidate: exact.document,
+                  blockers: [],
+                };
+              })()
+            : await this.acquireCalculatedInsight(ciConnection, apiName, ciVersion, effectiveScope);
           if (!acquired.candidate || acquired.blockers.length > 0)
             throw new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED');
           if (
@@ -1071,12 +1091,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             acquired.candidate.identity.apiName !== apiName
           )
             throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-          await this.bindCalculatedInsight(
-            acquired.candidate,
-            ciConnection,
-            ciVersion,
-            effectiveScope,
-          );
+          await (context
+            ? context.bind(acquired.candidate)
+            : this.bindCalculatedInsight(
+                acquired.candidate,
+                ciConnection,
+                ciVersion,
+                effectiveScope,
+              ));
           const target = flags['target-org'] ?? ciConnection.getUsername();
           if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
           const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
@@ -1085,6 +1107,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             definitionXml,
             apiName.slice(0, -5),
           );
+          context?.check();
           calculatedInsights.push({ document, definitionXml });
         }
         const discoveredOwners = new Set<string>();
@@ -1346,7 +1369,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                           : [
                               {
                                 operation: `${document.kind}.get`,
-                                apiVersion: '65.0',
+                                apiVersion:
+                                  document.kind === 'calculated-insight' ? ciApiVersion : '65.0',
                                 transport: 'native' as const,
                               },
                               {
@@ -1354,6 +1378,25 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                                 apiVersion: '65.0',
                                 transport: 'metadata' as const,
                               },
+                              ...(document.kind === 'calculated-insight' && ciApiVersion === '68.0'
+                                ? [
+                                    {
+                                      operation: 'calculated-insight.source',
+                                      apiVersion: '65.0',
+                                      transport: 'metadata' as const,
+                                    },
+                                    {
+                                      operation: 'dependency.get',
+                                      apiVersion: '65.0',
+                                      transport: 'native' as const,
+                                    },
+                                    {
+                                      operation: 'dependency.metadata',
+                                      apiVersion: '65.0',
+                                      transport: 'metadata' as const,
+                                    },
+                                  ]
+                                : []),
                             ],
                   }
                 : {}),

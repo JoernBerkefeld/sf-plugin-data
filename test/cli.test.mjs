@@ -184,7 +184,7 @@ test('API flags opt into exact latest while preserving core numeric validation a
 
 test('dataspace parser has no default, accepts the compatibility alias and refuses dual spellings', async () => {
   const { Parser } = await import('@oclif/core');
-  for (const operation of ['retrieve', 'deploy', 'delete']) {
+  for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
     const { default: Command } = await import(`../lib/commands/data360/${operation}.js`);
     assert.equal(Command.flags.dataspace.default, undefined);
     assert.deepEqual(Command.flags.dataspace.aliases, ['data-space']);
@@ -301,6 +301,7 @@ for (const command of topics.flatMap((topic) => [
   `${topic} retrieve`,
   `${topic} deploy`,
   `${topic} delete`,
+  `${topic} publish`,
 ])) {
   test(`${command} help loads without org authentication`, () => {
     const result = spawnSync(process.execPath, ['bin/run.js', ...command.split(' '), '--help'], {
@@ -327,6 +328,21 @@ for (const command of topics.flatMap((topic) => [
         '--dataspace',
       ])
         assert.ok(result.stdout.includes(flag), flag);
+    }
+    if (command.endsWith(' delete')) {
+      for (const flag of ['--source-dir', '--confirm-delete', '--metadata', '--preview'])
+        assert.ok(result.stdout.includes(flag), flag);
+    }
+    if (command.endsWith(' publish')) {
+      for (const flag of [
+        '--source-dir',
+        '--preview',
+        '--allow-processing',
+        '--api-version',
+        '--dataspace',
+      ])
+        assert.ok(result.stdout.includes(flag), flag);
+      assert.ok(!result.stdout.includes('--metadata'));
     }
     if (command.endsWith(' retrieve')) {
       for (const flag of [
@@ -417,6 +433,68 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
   }
 });
 
+test('CI delete parser rejects unbound or unqualified intent before authentication', () => {
+  for (const [arguments_, code] of [
+    [[], 'INVALID_SCOPE'],
+    [['--api-version', '68.0'], 'INVALID_SELECTION'],
+    [
+      ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--data-space', 'other'],
+      'INVALID_SCOPE',
+    ],
+    [
+      ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--preview'],
+      'UNSAFE_SOURCE',
+    ],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      [
+        'bin/run.js',
+        'data360',
+        'delete',
+        '-m',
+        'calculated-insight:Synthetic__cio',
+        ...arguments_,
+        '--json',
+      ],
+      { encoding: 'utf8', env: environment },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const envelope = JSON.parse(result.stdout).result;
+    assert.equal(envelope.contract, 'sf-data360-delete');
+    assert.equal(envelope.status, 'blocked');
+    assert.equal(envelope.diagnostics.errors[0].code, code);
+    assert.deepEqual(envelope.result.items, []);
+  }
+});
+
+test('publish parser blocks missing pairs and unqualified scope before authentication', () => {
+  for (const [arguments_, code] of [
+    [[], 'INVALID_SELECTION'],
+    [['-d', 'Synthetic.calculatedInsight.json'], 'INVALID_SCOPE'],
+    [
+      ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--data-space', 'other'],
+      'INVALID_SCOPE',
+    ],
+    [
+      ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--preview'],
+      'UNSAFE_SOURCE',
+    ],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', 'data360', 'publish', ...arguments_, '--json'],
+      { encoding: 'utf8', env: environment },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const envelope = JSON.parse(result.stdout).result;
+    assert.equal(envelope.contract, 'sf-data360-publish');
+    assert.equal(envelope.status, 'blocked');
+    assert.equal(envelope.diagnostics.errors[0].code, code);
+    assert.deepEqual(envelope.result.items, []);
+  }
+});
+
 test('Git selector flag declares parser exclusivity against both existing modes', async () => {
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   assert.deepEqual(Deploy.flags['changed-since'].exclusive, ['source-dir', 'metadata']);
@@ -424,16 +502,21 @@ test('Git selector flag declares parser exclusivity against both existing modes'
   assert.ok(Deploy.flags.metadata.exclusive.includes('changed-since'));
 });
 
-test('oclif discovers twelve IDs backed by exactly three canonical implementations', async () => {
+test('oclif discovers sixteen IDs backed by exactly four canonical implementations', async () => {
   const config = await Config.load({ root: process.cwd() });
   assert.deepEqual(
     config.commandIDs.toSorted(),
     topics
-      .flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`, `${topic}:delete`])
+      .flatMap((topic) => [
+        `${topic}:deploy`,
+        `${topic}:retrieve`,
+        `${topic}:delete`,
+        `${topic}:publish`,
+      ])
       .toSorted(),
   );
   const implementations = new Set();
-  for (const operation of ['retrieve', 'deploy', 'delete']) {
+  for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
     const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
     assert.deepEqual(
       canonical.aliases,
@@ -471,15 +554,21 @@ test('oclif discovers twelve IDs backed by exactly three canonical implementatio
       implementations.add(implementation);
     }
   }
-  assert.equal(implementations.size, 3);
+  assert.equal(implementations.size, 4);
 });
 
 for (const topic of topics) {
-  for (const operation of ['retrieve', 'deploy', 'delete']) {
+  for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
     test(`${topic} ${operation} preserves canonical validation and JSON identity`, async () => {
       const result = spawnSync(
         process.execPath,
-        ['bin/run.js', topic, operation, '-m', 'invalid', '--json'],
+        [
+          'bin/run.js',
+          topic,
+          operation,
+          ...(operation === 'publish' ? [] : ['-m', 'invalid']),
+          '--json',
+        ],
         { encoding: 'utf8', env: environment },
       );
       assert.equal(result.status, 1, result.stderr);

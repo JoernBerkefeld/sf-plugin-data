@@ -1,3 +1,13 @@
+import {
+  DeployInputError,
+  readDeployInputs,
+  verifyCalculatedInsightInputDigest,
+} from '../../artifacts/read-deploy-input.js';
+import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
+import { validateCalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
+import { deleteCalculatedInsight } from '../../services/delete-calculated-insight.js';
+import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
+import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
@@ -45,7 +55,11 @@ export type DeleteEnvelope = {
       deleteDlo?: boolean;
       targetApiName?: string;
       targetDloName?: string;
-      routes?: Array<{ operation: string; transport: 'native' | 'facade'; apiVersion: string }>;
+      routes?: Array<{
+        operation: string;
+        transport: 'native' | 'facade' | 'metadata';
+        apiVersion: string;
+      }>;
       outcome: 'delete' | 'deleted' | 'unchanged' | 'blocked' | 'failed';
       mutation: 'not-attempted' | 'confirmed-deleted' | 'unknown';
       plan?: Array<{
@@ -64,7 +78,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 streams, DLOs, DMOs or qualified non-last mappings.';
   public static readonly description =
-    'Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Executes explicit type:ApiName selections without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
+    'Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -76,7 +90,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multipleNonGreedy: true,
       required: true,
       summary:
-        'Exact data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName selections only.',
+        'Exact calculated-insight:Name__cio (paired source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName.',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
@@ -86,11 +100,35 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       summary: 'Optional native data space; --data-space is a compatibility alias.',
     }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
+    'source-dir': Flags.string({
+      char: 'd',
+      summary: 'CI-only: one exact paired XML or JSON ownership expectation.',
+    }),
+    'confirm-delete': Flags.boolean({
+      default: false,
+      summary: 'CI-only: explicitly acknowledge destructive deletion.',
+    }),
     'delete-dlo': Flags.boolean({
       default: false,
       summary:
         'Stream-only acknowledgement: delete the exclusively linked DLO; otherwise preserve it.',
     }),
+  };
+  protected resolveInputs = readDeployInputs;
+  protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
+  protected calculatedInsightContext = calculatedInsightReadContext;
+  protected deleteCalculatedInsight = deleteCalculatedInsight;
+  protected calculatedInsightObservations: CalculatedInsightObservation[] = [];
+  protected resolveConnection = async (alias?: string): Promise<Connection> => {
+    const aggregator = await ConfigAggregator.create();
+    const state = await StateAggregator.getInstance();
+    const target = alias ?? aggregator.getPropertyValue<string>('target-org');
+    return Connection.create({
+      authInfo: await AuthInfo.create({
+        username: target ? state.aliases.resolveUsername(target) : undefined,
+      }),
+      connectionOptions: { version: '68.0' },
+    });
   };
   protected preflightDeleteDataStream = preflightDeleteDataStream;
   protected executeDeleteDataStream = executeDeleteDataStream;
@@ -192,6 +230,104 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return envelope;
     };
     try {
+      const ciSelection = flags.metadata?.some(
+        (selector) =>
+          selector === 'calculated-insight' || selector.startsWith('calculated-insight:'),
+      );
+      if (ciSelection) {
+        if (
+          flags.metadata.length !== 1 ||
+          !/^calculated-insight:[A-Za-z][A-Za-z0-9_]*__cio$/u.test(flags.metadata[0]) ||
+          flags['delete-dlo']
+        )
+          throw new DloError('INVALID_SELECTION');
+        if (flags['api-version'] !== '68.0' || effectiveScope !== 'default')
+          throw new DloError('INVALID_SCOPE');
+        const source = flags['source-dir'];
+        if (
+          typeof source !== 'string' ||
+          !source ||
+          !/\.(?:calculatedInsight\.json|mktCalcInsightObjectDef-meta\.xml)$/u.test(source)
+        )
+          throw new DloError('INVALID_SELECTION');
+        const snapshot = JSON.stringify(flags);
+        const inputs = await this.resolveInputs({ cwd: process.cwd(), sourceDir: [source] });
+        if (inputs.length !== 1 || inputs[0].document.kind !== 'calculated-insight')
+          throw new DloError('INVALID_SELECTION');
+        const input = inputs[0] as CalculatedInsightDeployInput;
+        const desired = validateCalculatedInsightDocument(input.document);
+        if (
+          flags.metadata[0] !== `calculated-insight:${desired.identity.apiName}` ||
+          desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED'
+        )
+          throw new DloError('INVALID_SELECTION');
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot) throw new DloError('CI_INPUT_DRIFT');
+          await this.verifyCalculatedInsightInput(input);
+        };
+        await verifyInput();
+        const connection = await this.resolveConnection(flags['target-org']);
+        const context = this.calculatedInsightContext(connection, 'default');
+        await verifyInput();
+        this.calculatedInsightObservations = [];
+        const result = await this.deleteCalculatedInsight(
+          desired,
+          connection,
+          { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
+          'default',
+          {
+            context,
+            preview: flags.preview,
+            confirmDelete: flags['confirm-delete'] === true,
+            verifyInput,
+            recordObservation: async (observation) => {
+              this.calculatedInsightObservations.push(structuredClone(observation));
+            },
+          },
+        );
+        const item = {
+          ...result,
+          identity: desired.identity,
+          operation: flags.preview ? ('preview' as const) : ('delete' as const),
+          routes: [
+            {
+              operation: 'calculated-insight.delete',
+              apiVersion: '68.0',
+              transport: 'native' as const,
+            },
+            {
+              operation: 'calculated-insight.get',
+              apiVersion: '68.0',
+              transport: 'native' as const,
+            },
+            {
+              operation: 'calculated-insight.metadata',
+              apiVersion: '65.0',
+              transport: 'metadata' as const,
+            },
+            { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' as const },
+            {
+              operation: 'dependency.metadata',
+              apiVersion: '65.0',
+              transport: 'metadata' as const,
+            },
+          ],
+        };
+        envelope.result.items.push(item);
+        selectorsByItem.set(item, flags.metadata[0]);
+        envelope.status =
+          result.outcome === 'failed'
+            ? 'failed'
+            : result.outcome === 'blocked'
+              ? 'blocked'
+              : 'success';
+        envelope.diagnostics.errors.push(
+          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
+        );
+        return finish();
+      }
+      if (flags['source-dir'] !== undefined || flags['confirm-delete'])
+        throw new DloError('INVALID_SELECTION');
       const streamSelection = flags.metadata?.some(
         (selector) => selector === 'data-stream' || selector.startsWith('data-stream:'),
       );
@@ -396,6 +532,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     } catch (error) {
       envelope.diagnostics.errors.push({
         code:
+          error instanceof DeployInputError ||
           error instanceof DloError ||
           error instanceof NativeDmoError ||
           error instanceof NativeMappingError ||

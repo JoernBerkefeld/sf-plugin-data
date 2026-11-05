@@ -35,6 +35,8 @@ import { bindDataGraphDependencies } from '../../services/bind-data-graph-depend
 import { validateDataGraphDocument } from '../../artifacts/data-graph-document.js';
 import { verifyDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
+import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
+import type { CalculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import { preflightCalculatedInsightDeploy } from '../../services/preflight-calculated-insight-deploy.js';
 import type { CalculatedInsightPreview } from '../../services/preflight-calculated-insight-deploy.js';
 import { executeCalculatedInsightDeploy } from '../../services/execute-calculated-insight-deploy.js';
@@ -238,7 +240,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights support only API65/default existing ACTIVE qualified forward same-aggregation expression updates or unchanged repeats, with --allow-processing for updates. CI creation, shell conversion and dependency expansion are blocked. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Graph supports exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -287,6 +289,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       default: false,
       summary:
         'Acknowledge qualified stream create/update and Segment/CI/Graph processing and IR publication/generated-output effects.',
+    }),
+    draft: Flags.boolean({
+      default: false,
+      summary:
+        'CI-only explicit API68: create or edit DRAFT without publishing; never converts ACTIVE.',
     }),
     preview: Flags.boolean({
       default: false,
@@ -396,6 +403,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       .digest('hex');
   }
 
+  protected calculatedInsightContext = calculatedInsightReadContext;
   protected preflightCalculatedInsight = preflightCalculatedInsightDeploy;
   protected executeCalculatedInsight = executeCalculatedInsightDeploy;
   protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
@@ -638,6 +646,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      if (
+        flags.draft &&
+        (flags['api-version'] !== '68.0' ||
+          effectiveScope !== 'default' ||
+          resolvedInputs.length === 0 ||
+          resolvedInputs.some((input) => input.document.kind !== 'calculated-insight'))
+      )
+        return finish('blocked', 'INVALID_DRAFT_SCOPE');
       for (const input of resolvedInputs) families.set(input.path, input.document.kind ?? 'dmo');
       if (resolvedInputs.length === 0 && changedSince === undefined)
         return finish('blocked', 'INVALID_SELECTION');
@@ -1008,7 +1024,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       );
       if (hasCalculatedInsights) {
         try {
-          operationApiVersion(flags['api-version'], 'calculated-insight');
+          for (const input of admitted)
+            operationApiVersion(flags['api-version'], input.document.kind);
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1247,15 +1264,35 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   },
                   { operation: 'd360_ir_update', apiVersion: '67.0', transport: 'facade' },
                 ]
-              : flags['api-version'] === 'auto'
+              : input.document.kind === 'calculated-insight' && flags['api-version'] === '68.0'
                 ? [
                     {
-                      operation: `${input.document.kind ?? 'dmo'}.deploy`,
-                      apiVersion: '65.0',
+                      operation: 'calculated-insight.deploy',
+                      apiVersion: '68.0',
                       transport: 'native',
                     },
+                    {
+                      operation: 'calculated-insight.get',
+                      apiVersion: '68.0',
+                      transport: 'native',
+                    },
+                    {
+                      operation: 'calculated-insight.metadata',
+                      apiVersion: '65.0',
+                      transport: 'metadata',
+                    },
+                    { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' },
+                    { operation: 'dependency.metadata', apiVersion: '65.0', transport: 'metadata' },
                   ]
-                : undefined;
+                : flags['api-version'] === 'auto'
+                  ? [
+                      {
+                        operation: `${input.document.kind ?? 'dmo'}.deploy`,
+                        apiVersion: '65.0',
+                        transport: 'native',
+                      },
+                    ]
+                  : undefined;
       const injectedOrg = flags['target-org'] as unknown;
       const org =
         injectedOrg && typeof injectedOrg === 'object'
@@ -1306,6 +1343,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             (input) =>
               input.document.kind !== 'identity-resolution' &&
               input.document.kind !== 'data-graph' &&
+              input.document.kind !== 'calculated-insight' &&
               input.document.kind !== 'dlo',
           )
         )
@@ -1365,15 +1403,28 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (prior !== undefined && prior !== fingerprint) throw new Error('IR binding drift');
         irBindings.set(input.path, fingerprint);
       };
+      const ciContexts = new Map<string, CalculatedInsightReadContext>();
+      const ciIntent = (
+        input: DeployInput,
+      ): { context?: CalculatedInsightReadContext; draft?: true } => {
+        if (input.document.kind !== 'calculated-insight' || selection.soapNumeric !== '68.0')
+          return {};
+        let context = ciContexts.get(input.path);
+        if (!context) {
+          context = this.calculatedInsightContext(connection, effectiveScope);
+          ciContexts.set(input.path, context);
+        }
+        context.check();
+        return { context, ...(flags.draft ? { draft: true as const } : {}) };
+      };
       const ciBindings = new Map<string, string>();
       const verifyCiBinding = async (input: DeployInput): Promise<void> => {
         if (input.document.kind !== 'calculated-insight') return;
-        const bound = await this.bindCalculatedInsight(
-          input.document,
-          connection,
-          selection,
-          effectiveScope,
-        );
+        const context = ciIntent(input).context;
+        const bound = context
+          ? await context.bind(input.document, context.check)
+          : await this.bindCalculatedInsight(input.document, connection, selection, effectiveScope);
+        context?.check();
         const fingerprint = createHash('sha256').update(JSON.stringify(bound)).digest('hex');
         const prior = ciBindings.get(input.path);
         if (prior !== undefined && prior !== fingerprint) throw new Error('CI binding drift');
@@ -1401,6 +1452,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       connection,
                       selection,
                       effectiveScope,
+                      undefined,
+                      undefined,
+                      ciIntent(input),
                     )
                   : input.document.kind === 'identity-resolution'
                     ? await this.preflightIdentityResolution(
@@ -1464,11 +1518,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           }
           if (input.document.kind === 'calculated-insight') {
             await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
-            if (preview.outcome === 'update' || preview.outcome === 'unchanged')
+            if (['create', 'update', 'unchanged'].includes(preview.outcome))
               await verifyCiBinding(input);
             if (
               !flags.preview &&
-              preview.outcome === 'update' &&
+              (preview.outcome === 'create' || preview.outcome === 'update') &&
               (flags['allow-processing'] !== true ||
                 !(preview as CalculatedInsightPreview).requiredEffects.includes('processing'))
             ) {
@@ -1567,11 +1621,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             ...(input.document.kind === 'calculated-insight'
               ? {
                   family: 'calculated-insight' as const,
-                  route: {
-                    apiVersion: '65.0' as const,
-                    method: 'PATCH' as const,
-                    resource: 'calculated-insights' as const,
-                  },
+                  route: (envelope.result.items[index] as CalculatedInsightPreview).route,
                   requiredEffects: (envelope.result.items[index] as CalculatedInsightPreview)
                     .requiredEffects,
                 }
@@ -1648,10 +1698,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     connection,
                     selection,
                     effectiveScope,
+                    undefined,
+                    undefined,
+                    ciIntent(pending),
                   );
                   if (
-                    !['unchanged', 'update'].includes(fresh.outcome) ||
-                    (fresh.outcome === 'update' &&
+                    ![
+                      'unchanged',
+                      'update',
+                      ...(selection.soapNumeric === '68.0' ? ['create'] : []),
+                    ].includes(fresh.outcome) ||
+                    ((fresh.outcome === 'update' || fresh.outcome === 'create') &&
                       (flags['allow-processing'] !== true ||
                         !fresh.requiredEffects.includes('processing')))
                   )
@@ -1713,6 +1770,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                           selection,
                           effectiveScope,
                           {
+                            ...ciIntent(input),
                             allowProcessing: flags['allow-processing'] === true,
                             verifyInput: verifyInputs,
                             recordObservation: async (observation) =>

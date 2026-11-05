@@ -18,6 +18,9 @@ import {
 import { documentDependencyNode } from '../lib/artifacts/dependency-selection.js';
 import { operationApiVersion } from '../lib/transport/api-version.js';
 import { retrieveCalculatedInsightSourceMetadata } from '../lib/transport/project-metadata.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
+import { executeCalculatedInsightDeploy } from '../lib/services/execute-calculated-insight-deploy.js';
+import { preflightCalculatedInsightDeploy } from '../lib/services/preflight-calculated-insight-deploy.js';
 
 // eslint-disable-next-line unicorn/no-null -- Complete qualified wire settings preserve explicit nulls.
 const wireNull = null;
@@ -229,6 +232,404 @@ test('public CI exact multiple retrieve admits all independent pairs before outp
     ),
   );
 });
+const nativeRetrieve = () => {
+  const fixture = retrieve({ 'api-version': '68.0' });
+  const { command, calls } = fixture;
+  const connection = { getApiVersion: () => '68.0' };
+  command.resolveOrg = async () => ({
+    getOrgId: () => 'synthetic',
+    getConnection: (pin) => {
+      assert.equal(pin, '68.0');
+      return connection;
+    },
+  });
+  command.calculatedInsightContext = (receiver, space) => {
+    assert.equal(receiver, connection);
+    assert.equal(space, 'default');
+    return {
+      check: () => assert.equal(receiver.getApiVersion(), '68.0'),
+      bind: async () => {
+        calls.push('bind65');
+      },
+    };
+  };
+  command.acquireExactCalculatedInsight = async (_, name) => {
+    calls.push(`native68:${name}`);
+    return { state: 'present', status: 'ACTIVE', document: candidate(name) };
+  };
+  command.acquireCalculatedInsight = async () => assert.fail('legacy acquisition');
+  command.bindCalculatedInsight = async () => assert.fail('legacy binding');
+  return fixture;
+};
+test('explicit68 retrieve reuses strict paired output and reports independent fixed65 routes', async () => {
+  const { command, calls } = nativeRetrieve();
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  const routes = result.result.items[0].routes;
+  assert.equal(
+    routes.find(({ operation }) => operation === 'calculated-insight.get').apiVersion,
+    '68.0',
+  );
+  for (const operation of [
+    'calculated-insight.metadata',
+    'calculated-insight.source',
+    'dependency.get',
+    'dependency.metadata',
+  ])
+    assert.equal(routes.find((route) => route.operation === operation).apiVersion, '65.0');
+  assert.deepEqual(calls, [
+    'native68:SyntheticInsight__cio',
+    'bind65',
+    'xml:SyntheticInsight__cio',
+    'write:SyntheticInsight__cio',
+  ]);
+});
+for (const acquisition of [
+  { state: 'absent' },
+  { state: 'unknown', diagnostics: ['synthetic-sensitive-detail'] },
+  ...['DRAFT', 'PROCESSING', 'DELETING'].map((status) => ({
+    state: 'present',
+    status,
+    document: candidate(),
+  })),
+]) {
+  test(`native68 public export refuses ${acquisition.status ?? acquisition.state} before output`, async () => {
+    const { command, calls } = nativeRetrieve();
+    command.acquireExactCalculatedInsight = async () => acquisition;
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.deepEqual(calls, []);
+    assert.ok(!JSON.stringify(result).includes('synthetic-sensitive-detail'));
+  });
+}
+test('native68 pair mismatch and receiver drift prevent publication', async () => {
+  for (const drift of [false, true]) {
+    const { command, calls } = nativeRetrieve();
+    if (drift)
+      command.calculatedInsightContext = () => ({
+        bind: async () => {},
+        check: () => {
+          throw new Error('private receiver drift');
+        },
+      });
+    else
+      command.acquireCalculatedInsightXml = async () =>
+        xml().replace('Synthetic insight', 'foreign');
+    const result = await run(command);
+    assert.notEqual(result.status, 'success');
+    assert.ok(!calls.some((call) => call.startsWith('write:')));
+  }
+});
+test('native68 later pair or binding failure prevents every selected output', async () => {
+  for (const failure of ['pair', 'binding']) {
+    const { command, calls } = nativeRetrieve();
+    command.parse = async () => ({
+      flags: {
+        metadata: ['calculated-insight:First__cio', 'calculated-insight:Second__cio'],
+        'api-version': '68.0',
+        dataspace: 'default',
+        'target-org': 'synthetic',
+        overwrite: false,
+      },
+    });
+    if (failure === 'pair')
+      command.acquireCalculatedInsightXml = async (_, name) =>
+        name === 'Second__cio'
+          ? xml(candidate(name)).replace('Synthetic insight', 'foreign')
+          : xml(candidate(name));
+    else
+      command.calculatedInsightContext = () => ({
+        check: () => {},
+        bind: async (document) => {
+          if (document.identity.apiName === 'Second__cio') throw new Error('private dependency');
+        },
+      });
+    const result = await run(command);
+    assert.notEqual(result.status, 'success');
+    assert.equal(result.result.items.length, 0);
+    assert.ok(!calls.some((call) => call.startsWith('write:')));
+  }
+});
+test('retrieve help contract distinguishes native68 from fixed65 and ACTIVE-only pairs', () => {
+  assert.match(Retrieve.description, /API65\/auto or explicit API68/u);
+  assert.match(Retrieve.description, /ACTIVE configurations only/u);
+  assert.match(Retrieve.description, /fixed API65 Metadata, source XML and dependency reads/u);
+});
+test('native68 mixed unsupported family is refused before authentication', async () => {
+  const { command } = retrieve({
+    'api-version': '68.0',
+    metadata: ['calculated-insight:SyntheticInsight__cio', 'segment:Example'],
+  });
+  command.resolveOrg = async () => assert.fail('auth');
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+});
+/**
+ * Route neutral paired inputs through the real guarded native services.
+ * @param {object} flags Explicit command intent.
+ * @param {string} initial Initial exact target state.
+ * @param {string[]} names Selected neutral members.
+ * @returns {Promise<object>} Command fixture with independent reader/writer journal.
+ */
+async function nativeDeploy(flags = {}, initial = 'absent', names = ['SyntheticInsight__cio']) {
+  const h = await deploy({ 'api-version': '68.0', ...flags }, names);
+  for (const input of h.inputs) {
+    const document = structuredClone(input.document);
+    document.spec.publishScheduleInterval = 'NOT_SCHEDULED';
+    await writeFile(input.companionPath, `${JSON.stringify(document)}\n`);
+  }
+  const inputs = await readDeployInputs({ cwd: h.cwd, sourceDir: h.flags['source-dir'] });
+  h.command.resolveInputs = async () => inputs;
+  const states = new Map(names.map((name) => [name, initial]));
+  const expressions = new Map(names.map((name) => [name, candidate(name).spec.expression]));
+  const receiver = { getApiVersion: () => '68.0' };
+  h.flags['target-org'].getConnection = (pin) => {
+    assert.equal(pin, '68.0');
+    return receiver;
+  };
+  const context = {
+    check: () => assert.equal(receiver.getApiVersion(), '68.0'),
+    async get(name) {
+      h.calls.push(`GET:${name}`);
+      if (states.get(name) === 'absent')
+        throw new ConnectError('REQUEST_FAILED', 404, 'ITEM_NOT_FOUND');
+      const document = structuredClone(
+        inputs.find((input) => input.document.identity.apiName === name).document,
+      );
+      return {
+        ...document.spec,
+        apiName: name,
+        dataSpace: 'default',
+        expression: expressions.get(name),
+        calculatedInsightStatus: states.get(name),
+        dimensions:
+          states.get(name) === 'DRAFT'
+            ? []
+            : document.spec.dimensions.map((field) => ({ ...field, dataSource: wireNull })),
+        measures:
+          states.get(name) === 'DRAFT'
+            ? []
+            : document.spec.measures.map((field) => ({ ...field, dataSource: wireNull })),
+        dependencies: undefined,
+        lastCalcInsightStatusDateTime: '2026-11-01T00:00:00.000Z',
+        lastCalcInsightStatusErrorCode: wireNull,
+        lastRunDateTime: wireNull,
+        lastRunStatus: wireNull,
+        lastRunStatusDateTime: wireNull,
+        lastRunStatusErrorCode: wireNull,
+        historyPublishScheduleInterval: wireNull,
+        historyPublishScheduleTimeZone: wireNull,
+        historyPublishTime: wireNull,
+        publishScheduleTimeZone: wireNull,
+        sourceCiDevName: wireNull,
+        sourceCiId: wireNull,
+        sourceCiName: wireNull,
+        isFromPackage: false,
+        queryDialect: 'ANSI_SQL',
+      };
+    },
+    async metadata(name) {
+      return states.get(name) === 'absent'
+        ? [{}]
+        : [
+            {
+              fullName: name.slice(0, -5),
+              creationType: 'Custom',
+              expression: expressions.get(name),
+              masterLabel: 'Synthetic insight',
+            },
+          ];
+    },
+    async bind() {
+      h.calls.push('bind65');
+      return { stable: 'binding' };
+    },
+  };
+  // Dependencies are semantic input, not a runtime property.
+  const get = context.get;
+  context.get = async (name) => {
+    const value = await get(name);
+    delete value.dependencies;
+    return value;
+  };
+  h.command.calculatedInsightContext = () => context;
+  h.command.bindCalculatedInsight = async () => assert.fail('legacy bind');
+  h.command.preflightCalculatedInsight = preflightCalculatedInsightDeploy;
+  h.command.executeCalculatedInsight = (document, connection, selection, space, options) =>
+    executeCalculatedInsightDeploy(document, connection, selection, space, {
+      ...options,
+      delay: async () => {},
+      nativeClient: {
+        async create(value) {
+          h.calls.push('POST');
+          states.set(value.identity.apiName, 'DRAFT');
+          expressions.set(value.identity.apiName, value.spec.expression);
+        },
+        async update(value, intent) {
+          h.calls.push(intent?.draft ? 'PATCH:draft' : 'PATCH:active');
+          expressions.set(value.identity.apiName, value.spec.expression);
+        },
+      },
+    });
+  return { ...h, inputs, context, states, expressions };
+}
+test('native68 paired draft creation previews POST and executes once without publication', async () => {
+  const h = await nativeDeploy({ draft: true, preview: false, 'allow-processing': true });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].outcome, 'created');
+  assert.equal(result.result.items[0].route.method, 'POST');
+  assert.equal(h.calls.filter((call) => call === 'POST').length, 1);
+  assert.equal(h.states.get('SyntheticInsight__cio'), 'DRAFT');
+  assert.ok(
+    result.result.items[0].routes.some(
+      (route) => route.apiVersion === '65.0' && route.operation === 'dependency.get',
+    ),
+  );
+});
+test('native68 absent target requires draft; create requires processing acknowledgement', async () => {
+  for (const flags of [{}, { draft: true }]) {
+    const h = await nativeDeploy({ preview: false, ...flags });
+    const result = await run(h.command);
+    assert.equal(result.status, 'blocked');
+    assert.ok(!h.calls.includes('POST'));
+  }
+});
+test('native68 create preview is read-only with honest native68 POST and fixed65 routes', async () => {
+  const h = await nativeDeploy({ draft: true });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].outcome, 'create');
+  assert.deepEqual(result.result.items[0].route, {
+    apiVersion: '68.0',
+    method: 'POST',
+    resource: 'calculated-insights',
+  });
+  assert.ok(!h.calls.includes('POST'));
+});
+for (const state of ['DRAFT', 'ACTIVE']) {
+  test(`native68 ${state} qualified edit preserves state and repeat is GET-only without acknowledgement`, async () => {
+    const h = await nativeDeploy(
+      { draft: state === 'DRAFT', preview: false, 'allow-processing': true },
+      state,
+    );
+    h.expressions.set(
+      'SyntheticInsight__cio',
+      candidate().spec.expression.replace('WHERE 1 = 0', `WHERE 1 = 0 AND ${device} IS NOT NULL`),
+    );
+    const result = await run(h.command);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result.items[0].outcome, 'updated');
+    assert.equal(h.states.get('SyntheticInsight__cio'), state);
+    assert.deepEqual(
+      h.calls.filter((call) => call.startsWith('PATCH')),
+      [state === 'DRAFT' ? 'PATCH:draft' : 'PATCH:active'],
+    );
+    h.flags['allow-processing'] = false;
+    h.calls.length = 0;
+    const repeat = await run(h.command);
+    assert.equal(repeat.status, 'success');
+    assert.equal(repeat.result.items[0].outcome, 'unchanged');
+    assert.ok(h.calls.every((call) => call.startsWith('GET:') || call === 'bind65'));
+  });
+}
+test('native68 draft never converts ACTIVE and unknown mutation stops later selected create', async () => {
+  const active = await nativeDeploy(
+    { draft: true, preview: false, 'allow-processing': true },
+    'ACTIVE',
+  );
+  const activeResult = await run(active.command);
+  assert.equal(activeResult.status, 'blocked');
+  const h = await nativeDeploy(
+    { draft: true, preview: false, 'allow-processing': true },
+    'absent',
+    ['First__cio', 'Second__cio'],
+  );
+  h.command.executeCalculatedInsight = async () => {
+    h.calls.push('unknown');
+    return { outcome: 'failed', mutation: 'unknown', diagnostics: [] };
+  };
+  const result = await run(h.command);
+  assert.equal(result.status, 'failed');
+  assert.equal(h.calls.filter((call) => call === 'unknown').length, 1);
+  assert.equal(result.result.items[1].mutation, 'not-attempted');
+});
+for (const flags of [
+  { 'api-version': 'auto' },
+  { 'api-version': '65.0' },
+  { dataspace: 'other' },
+]) {
+  test(`draft rejects unsupported scope before auth ${JSON.stringify(flags)}`, async () => {
+    const h = await deploy({ draft: true, ...flags });
+    h.flags['target-org'].getOrgId = () => assert.fail('auth');
+    const result = await run(h.command);
+    assert.equal(result.status, 'blocked');
+  });
+}
+test('native68 pending binding or paired-byte drift blocks every dispatch', async () => {
+  for (const drift of ['binding', 'pair', 'receiver']) {
+    const h = await nativeDeploy(
+      { draft: true, preview: false, 'allow-processing': true },
+      'absent',
+      ['First__cio', 'Second__cio'],
+    );
+    let bindings = 0;
+    if (drift === 'binding') h.context.bind = async () => ({ changed: ++bindings });
+    else {
+      const preflight = h.command.preflightCalculatedInsight;
+      h.command.preflightCalculatedInsight = async (...arguments_) => {
+        const result = await preflight(...arguments_);
+        if (drift === 'pair')
+          await writeFile(h.inputs[1].path, `${await readFile(h.inputs[1].path, 'utf8')}\n`);
+        else
+          h.context.check = () => {
+            throw new Error('private receiver drift');
+          };
+        return result;
+      };
+    }
+    const result = await run(h.command);
+    assert.notEqual(result.status, 'success');
+    assert.ok(!h.calls.includes('POST'));
+    assert.ok(!JSON.stringify(result).includes('private receiver drift'));
+  }
+});
+test('native68 Git paired selection preserves captured admission and draft intent', async () => {
+  const h = await nativeDeploy({ draft: true });
+  delete h.flags['source-dir'];
+  h.flags['changed-since'] = 'main';
+  h.command.selectGitInputs = async () => ({
+    paths: h.inputs.map((input) => input.path),
+    calculatedInsights: h.inputs,
+    segments: [],
+    identityResolutions: [],
+    provenance: {},
+  });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].outcome, 'create');
+});
+test('native68 mixed unqualified family and draft unrelated family reject before authentication', async () => {
+  for (const draft of [false, true]) {
+    const h = await deploy({ 'api-version': '68.0', draft });
+    h.command.resolveInputs = async () => [
+      ...h.inputs,
+      {
+        path: 'synthetic-dmo.json',
+        document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: table } },
+      },
+    ];
+    h.flags['target-org'].getOrgId = () => assert.fail('auth');
+    const result = await run(h.command);
+    assert.equal(result.status, 'blocked');
+  }
+});
+test('deploy help documents explicit draft retention and read-only equality', () => {
+  assert.ok(Deploy.flags.draft);
+  assert.match(Deploy.description, /--draft creates or edits DRAFT without publication/u);
+  assert.match(Deploy.description, /identical deploy is read-only/u);
+});
+
 test('later CI pair mismatch prevents ALL mixed selected outputs', async () => {
   const { command, calls } = retrieve({
     metadata: ['dmo:Example__dlm', 'calculated-insight:SyntheticInsight__cio'],

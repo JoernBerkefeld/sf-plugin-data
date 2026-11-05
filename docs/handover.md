@@ -1,3 +1,100 @@
+# Public native CI integration and installed qualification — 2026-11-05
+
+This current entry supersedes historical CI scope/fixture-budget statements below.
+Gate4 whole-feature review returned zero must-fix on 193 inputs; subsequent work
+here is documentation-only. Explicit API68/default is the public draft/create,
+separate publish, ACTIVE expression-edit and source-bound delete route. Auto stays
+legacy65. Internal native64–68 feasibility is not public-version qualification;
+standard XML/Metadata/dependency receivers remain independently fixed65.
+
+Actual isolated-installed cross-org acceptance used one frozen public-retrieved
+XML/JSON pair. Target-local dependencies differed in ID. Create retained DRAFT;
+separate NOT_SCHEDULED publication reached ACTIVE; target retrieval matched BOTH
+source files byte-for-byte. Frozen JSON SHA256:
+`8e492f397623bfb7bd7f51c3e8c1b31774ef84624323fe03ef4dd38b84a7f355`;
+XML SHA256: `bd28d43f4cdab5f40198f39e4bd04ec37e8194fb5174069bedbee4de0deef166`.
+Unchanged deployment omitted --draft/--allow-processing and captured only native
+GET requests; Metadata implementation is read-only, but no wire-level SOAP-body
+observer was retained. A separately derived pair reversed the qualified predicate
+on ACTIVE while preserving the immutable source bytes. No computation was run.
+
+Both initial public deletes returned exit1 CI_DELETION_UNCONFIRMED; independent
+later dual absence confirmed both fixtures clean. Exact failing intermediate
+runtime/Metadata responses were not retained, so the causes remain unexplained.
+A later repeated already-absent delete returned unchanged/exit0 with GET-only
+native observations, not another DELETE.
+
+A separate single-fixture installed probe passed public delete, exit0 in35.200s:
+six exact DELETING/runtime plus matching Metadata observations, then native
+ITEM_NOT_FOUND plus Metadata [{}] on poll7; independent next acquisition confirmed
+absence. DELETE-to-final-Metadata took17.375s. Six captured present pairs replayed
+through unchanged acquisition successfully. The last SDK error omitted numeric
+HTTP status, so no retained raw404 claim or synthetic replay of poll7 is made.
+Successful completion does not explain the earlier failures, prove reliable
+completion every time, or establish a version-specific defect. Native64 deletion
+was asynchronous feasibility evidence, not proof of a version-specific defect.
+No cause-specific production fix, timeout increase or guard relaxation was earned.
+
+Evidence limitation: the outer observer harness overwrote child journal receipts
+with stale pre-child memory after success. Reconciliation used independent retained
+observations, child summary, predelete ownership and cleanup evidence, preserving
+an explicit journalFinalizationGap. Detailed child CLI raw stdout/stderr and exact
+per-command args from that overwritten journal are unrecoverable; do not claim a
+retained raw canonical public envelope. No operation was replayed to repair evidence.
+The child exit0, command summaries and original per-request observations remain.
+
+All CI fixtures are confirmed runtime/Metadata absent; no live effects remain
+unresolved. Total creation attempts7of9, two remain; no further live work is needed
+for this documentation pass. No run/ingestion/enable/disable/shared-DMO writes,
+physical storage/credit cleanup, populated-owner support or calculation proof.
+ACTIVE is a publication/configuration state, not successful computation.
+The inspected live tarball SHA256 was
+`f523d595826506f77a80df90a7f7686541764437e1d21d6a8e38c45b57ecd1dc`;
+160 installed files and all193 repository inputs were unchanged during observation.
+Fresh documentation verification belongs to the later Gate5 handover, not this
+historical live-artifact hash. No commit/push/release or version assignment here.
+
+# Historical bounded native CI feasibility and internal adapter — 2026-11-04
+
+Native API65–67/default configuration feasibility passed on fresh owned source
+fixtures: minimal draft create, expression-only update, explicit `NotScheduled`
+publication and independent ACTIVE/SQL/schema/schedule readback. API65 updated the
+ACTIVE expression; API66–67 updated the draft before publication. DELETE was
+independently confirmed by exact runtime `ITEM_NOT_FOUND` and Metadata absence;
+raw DELETE HTTP status was not retained, so DELETE204 is not claimed. No explicit
+calculation run, ingestion or successful-computation qualification follows.
+
+The same existing definition retrieved by standard CLI sequentially at API65–68
+produced byte-identical 678-byte XML (SHA256
+`4d186288f31b1847a260ce6d2d6a48004e5e765272b9f62cb414983a6192ced2`).
+Separate standard Metadata API65 definition CRUD succeeded, but independent runtime
+reads after create/update still returned `ITEM_NOT_FOUND`. Definition persistence
+and runtime creation are different evidence. All four newly owned fixtures were
+confirmed deleted; physical storage/credit cleanup remains unknown. The fixture
+ceiling is exhausted: native API68, plausible lower bounds, general SQL/schema
+support and unchanged-source cross-org acceptance remain unqualified. Compatible
+source/target dependency identities alone do not establish cross-org deployment.
+
+The new internal `createCalculatedInsightClient` admits only exact API65–67/default
+scope and the existing validated CI document. It reuses guarded authenticated
+Connect requests; create emits minimal draft fields, update expression only, and
+separate explicit publish emits label/false draft/`NotScheduled`. Full save bodies
+are not replayed; exact item names and sanitized failures retain no-refresh,
+no-retry, no-redirect behavior. DELETE accepts an undefined parsed result without
+claiming completion. Responses remain untrusted; lifecycle ownership, dependency
+binding, absence, settlement, preservation and deletion checks remain the caller's
+responsibility. No public wiring, automatic publish/upsert/polling/no-op orchestration
+or general scheduling support was added. The public README 14-resource CRUD row
+was checked and left unchanged; no public capability promotion is earned.
+
+Implementation verification recorded 49 new adapter regressions, 1885 passing
+full-suite tests with two skips, zero-warning lint, explicit build and 42 passing
+offline CLI smoke tests. Independent whole-feature review returned zero must-fix
+findings. Normal-hook commit and exact-input/tree audit receipts are retained in
+the coordinator handover, not inferred from this documentation. No push or release;
+resource-guide reconciliation is a separate coordinator workstream. Qualification
+receipts remain private because raw API responses can contain sensitive headers.
+
 ## Installed API61 mapping create and single addition — 2026-11-04
 
 Fresh empty custom Other/Text fixtures passed installed public mapping create, exact
@@ -42,6 +139,7 @@ Both target DLOs and the complete target DMO schema/key definitions are unchange
 only Extra__c/Note__c isMapped flags disappeared. Source mapping remains ACTIVE.
 
 Accepted retained fixtures, all confirmed by exact name GET200:
+
 - Source DLO `MapX1793780574451s__dll` / `1dlaj00000Af8IPAAZ` and DMO
   `MapX1793780574451s__dlm` / `0gjaj00000JYJmrAAH`, linked by
   `MapX1793780574451s_map_MapX1793780574451s_1793780832090`.
@@ -50,9 +148,9 @@ Accepted retained fixtures, all confirmed by exact name GET200:
   the survivor above. Target selected DLO `MapX1793780574451t__dll` /
   `1dlfj0000071lorAAA` also remains; no exhaustive dependency/cleanup qualification
   was inferred from the selected mapping's absence.
-The last DLO-to-DMO mapping restriction is the observed limitation, not evidence
-that DMO-object deletion was attempted. No raw bypass, parent cascade or complete
-cleanup claim. No ingestion/populated schema/lower-version/mixed-family closure.
+  The last DLO-to-DMO mapping restriction is the observed limitation, not evidence
+  that DMO-object deletion was attempted. No raw bypass, parent cascade or complete
+  cleanup claim. No ingestion/populated schema/lower-version/mixed-family closure.
 
 Evidence root `F:/Temp/mapping-crossorg-MQfnco`: original lifecycle, request/CLI
 receipts, ownership marker, installed/archive binding and recovery readbacks.
@@ -588,6 +686,7 @@ targetFieldDeveloperName}],sourceEntityDeveloperName,status,targetEntityDevelope
 Those historical target receipts are not current target ownership or absence proof.
 
 First clean sequential slice, intentionally not the complete acquisition outcome:
+
 - `retrieveMappingSourceMetadata(targetOrg,apiName,runner?) -> Promise<string>`
   extends the existing exact standard transport, unchanged terminal/member/path
   safeguards and API65 isolated project. No XML generator or org write.
@@ -691,6 +790,7 @@ owner using existing projection, twelve-output verifier and root field/key binde
 No suffix parsing, IDs in portable files, unrelated owner adoption or new creation.
 Gate3 parallelization: sole editor, shared command ordering/fingerprint invariants
 require one sequential coherent slice rather than infrastructure-only checkpoints.
+
 1. Add bounded exact source discovery against native inventory identityResolutions /
    reconciliationRules[].unifiedDmoName and independent exact owner acquisition.
 2. Integrate actual explicit/reversed and opt-in expanded retrieval with independent
@@ -703,7 +803,7 @@ require one sequential coherent slice rather than infrastructure-only checkpoint
    enabled hooks/exact staged-HEAD tree, scoped commit/push, exact-SHA hosted CI.
 5. README/handover truthful support/remaining live acceptance; no org/fixture/guide/
    rootDB/index changes, product creation, release or DMO additive/wholefeature review.
-Stop for a concrete interface decision if discovery cannot be authoritative.
+   Stop for a concrete interface decision if discovery cannot be authoritative.
 
 # IR-owned Graph local selector checkpoint — 2026-10-28
 
@@ -1103,6 +1203,7 @@ reviewer returned zero must-fix. Single coupled family worker, no shared-package
 writers. Am I overengineering this? Existing family/transport seams only, no framework.
 
 Implemented interfaces (all internal, no public routing):
+
 - `validateDataGraphDocument`, `projectDataGraph`, `serializeDataGraphDocument` in
   `src/artifacts/data-graph-document.ts`: strict observed root/node/field inventory,
   only qualified none/NONE and day/Day normalization, private full expectations;
@@ -1390,7 +1491,7 @@ retain strict three-field source XML versus existing four-field SOAP fullName co
 writeCalculatedInsightDocument(value,definitionXml,projectRoot,overwrite,publication?)
 returns {path,companionPath,outcome}. Canonical XML member omits__cio; JSON keeps it:
 mktCalcInsightObjectDefs/<member>.mktCalcInsightObjectDef-meta.xml and
- data360/calculatedInsights/<apiName>.calculatedInsight.json under configured package
+data360/calculatedInsights/<apiName>.calculatedInsight.json under configured package
 main/default. Independent XML retained, never synthesized/predeployed by production.
 Writer checks bounded no-link handles before/after read, binds both destinations,
 requires overwrite for differences, reports PARTIAL_CI_OUTPUT after publication drift.
@@ -1520,12 +1621,12 @@ Connection API65 and default space):
   Exact native GET plus independent guarded SOAP MktCalcInsightObjectDef read;
   one exact Metadata record, full correlation, no absence/create inference.
 - `bindCalculatedInsightDependencies(value, connection, selection, dataSpace,
-  acquire?)` returns private `{identity, targetId, fields}` for the exact fixed
+acquire?)` returns private `{identity, targetId, fields}` for the exact fixed
   DMO and two mapped Text fields. Independent REST/CustomObject Metadata checks
   require Standard enabled ENGAGEMENT/default identity and unique fields; no
   first-match/name fallback or source-ID adoption.
 - `preflightCalculatedInsightDeploy(value, connection, selection, dataSpace,
-  acquire?, bind?)` returns update/unchanged/blocked, present/unknown, absenceProof
+acquire?, bind?)` returns update/unchanged/blocked, present/unknown, absenceProof
   none, fixed PATCH route and processing effect only for update. Create/shell
   conversion remain blocked, not absence-safe.
 - `executeCalculatedInsightDeploy(value, connection, selection, dataSpace, options)`
@@ -1691,12 +1792,12 @@ Implemented `src/artifacts/calculated-insight-document.ts` and synthetic
   block rather than disappear. Only recorded error-free, never-run runtime
   profile is admitted; populated last-run fields remain unqualified.
 - `buildCalculatedInsightUpdateDelta(desired, runtimeDetail, metadataDefinition,
-  targetDataSpace)` returns payload-free blocked, unchanged with no patch, or
+targetDataSpace)` returns payload-free blocked, unchanged with no patch, or
   candidate with exactly `{expression}` plus expected document and attribution
   observations. It has no connection/writer/dispatch seam. Synthetic zero-dispatch
   unchanged is not live repeated-deploy acceptance or network-provenance proof.
 - SQL is exact-byte bounded to the recorded baseline and forward `DeviceId IS
-  NOT NULL` addition after `WHERE 1 = 0`, preserving `APPROX_COUNT_DISTINCT` and
+NOT NULL` addition after `WHERE 1 = 0`, preserving `APPROX_COUNT_DISTINCT` and
   Text/Number NONAGGREGATABLE output. Removal/reversal, formatting-only changes,
   COUNT, alternate predicates/aliases/schema/settings changes block. No arbitrary
   SQL parser, dependency resolver or general omitted-field replay is introduced.
@@ -2049,7 +2150,7 @@ rebuild/validate/gaps. No live org calls/mutations or repeated qualification her
   identity.logicalName (alone OR alongside apiName) explicitly throws
   `LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED`; no migration or reinterpretation.
   Output identities strictly use `{owner:{kind:'identity-resolution',
-  dataSpace:'default',apiName},entity:{kind:'dmo',dataSpace:'default',apiName},role}`.
+dataSpace:'default',apiName},entity:{kind:'dmo',dataSpace:'default',apiName},role}`.
   Twelve ordered owner+space+entity+role references remain; generated names and
   record IDs exist only in private acquisition/target-verification expectations.
 - `projectIdentityResolution(facade:unknown,native:unknown,apiName:string)` requires
@@ -2078,7 +2179,7 @@ rebuild/validate/gaps. No live org calls/mutations or repeated qualification her
   Output verifier also requires every logical owner API to match the exact target
   and reacquires that owner before/after generated-DMO reads.
 - Writer publishes `<package>/main/default/data360/identityResolution/
-  <apiName>.identityResolution.json`; exact API filename/admission/selector/
+<apiName>.identityResolution.json`; exact API filename/admission/selector/
   duplicate-identity checks replace logicalName checks. Original strict JSON,
   no-link/single-link bytes, immutable recursive freeze and SHA256 digest remain.
   Existing `readDeployInputs`, `verifyIdentityResolutionInputDigest`,
@@ -2340,7 +2441,7 @@ rebuild/validate/gaps. No live org calls, DB writes, installation or release.
 ## Exact interfaces and boundary
 
 - `writeIdentityResolutionDocument(value: unknown, projectRoot: string,
-  overwrite: boolean, publish = {link, rename, unlink})` returns
+overwrite: boolean, publish = {link, rename, unlink})` returns
   `{path, outcome: 'retrieved' | 'unchanged'}`. Uses strict complete portable IR
   validation and configured/default package root, publishing
   `<package>/main/default/data360/identityResolution/<logicalName>.identityResolution.json`.
@@ -2354,7 +2455,7 @@ rebuild/validate/gaps. No live org calls, DB writes, installation or release.
   `PARTIAL_IDENTITY_RESOLUTION_OUTPUT`. No recursive cleanup. Checks narrow races,
   not a filesystem transaction or protection against hostile concurrent replacement.
 - `DeployInput` now additionally admits `IdentityResolutionDeployInput =
-  {path, document: IdentityResolutionDocument, inputDigest}`. IR paths must have
+{path, document: IdentityResolutionDocument, inputDigest}`. IR paths must have
   exact suffix/layout and matching logical filename; `identity-resolution:Name`
   resolves configured/default package selection. Strict duplicate-key UTF-8 JSON,
   no-link/single-link bounded reads, case-insensitive duplicate identity refusal,
@@ -2573,9 +2674,9 @@ This is NOT IR-family, Chunk D, cross-org or roadmap completion.
 `src/services/bind-identity-resolution-dependencies.ts` exports:
 
 - `bindIdentityResolutionDependencies(value:unknown,
-  connection:IdentityResolutionTargetConnection,selection:ApiVersionSelection,
-  dataSpace:string,acquire?:(name:string)=>Promise<{detail:unknown;metadata:unknown}>)
-  :Promise<{fingerprint:string}>`. Validate the complete portable document, then
+connection:IdentityResolutionTargetConnection,selection:ApiVersionSelection,
+dataSpace:string,acquire?:(name:string)=>Promise<{detail:unknown;metadata:unknown}>)
+:Promise<{fingerprint:string}>`. Validate the complete portable document, then
   freshly read all six exact reconciliation input names, bounded to six REST plus
   six Metadata reads per invocation. No source IDs, list/first-match/name fallback,
   cache or dependency creation. Require explicit normalized `default` on caller,
@@ -2592,7 +2693,7 @@ This is NOT IR-family, Chunk D, cross-org or roadmap completion.
   across admission/pre-dispatch/settlement. This is required compatibility only,
   NOT a complete DMO schema/relationship fingerprint or cross-org acceptance.
 - `verifyIdentityResolutionOutputs(owner,outputs,connection,selection,acquire?,
-  acquireOwner?=retrieveIdentityResolution):Promise<IdentityResolutionOutputBinding[]>`
+acquireOwner?=retrieveIdentityResolution):Promise<IdentityResolutionOutputBinding[]>`
   exactly matches the executor callback. Owner is explicit target API name/ID/
   default space. Outputs are the ordered 12 logical owner+space+entity+role and
   targetApiName mappings. Independently reacquire facade/native PUBLISHED owner,
@@ -2686,9 +2787,9 @@ command/writer/Git-selection/API-auto integration, installs, DB edits or release
 New `src/services/execute-identity-resolution-deploy.ts` exports:
 
 - `executeIdentityResolutionDeploy(value:unknown,
-  connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
-  dataSpace:string,options:IdentityResolutionExecutionOptions):
-  Promise<IdentityResolutionDeployExecution>`.
+connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
+dataSpace:string,options:IdentityResolutionExecutionOptions):
+Promise<IdentityResolutionDeployExecution>`.
 - Options require `targetApiName:string`, `allowProcessing:boolean`,
   `verifyInput:()=>Promise<void>`. Required runtime callbacks (optional in the
   type only to support fail-closed invocation) are `verifyDependencies` and
@@ -2703,7 +2804,7 @@ New `src/services/execute-identity-resolution-deploy.ts` exports:
   `{identity:IdentityResolutionOutputIdentity,targetApiName:string}[]`, from
   target-owned PUBLISHED reconciliation names, never source guesses. Each proof
   is `{identity,targetApiName,targetId,creationType:'Derived'|'Bridge',
-  fields:Array<{apiName:string,dataType:'Text'}>}`. Exactly 12 ordered bindings,
+fields:Array<{apiName:string,dataType:'Text'}>}`. Exactly 12 ordered bindings,
   distinct nonempty IDs, exact names/owner+space+entity+role and role-specific
   creation types/required Text fields are enforced. Unified requires
   `ssot__Id__c`; link requires `UnifiedRecordId__c`. Callback must independently
@@ -2729,8 +2830,8 @@ New `src/services/execute-identity-resolution-deploy.ts` exports:
   completion after deadline cannot succeed. Independent native API65 full owner
   read follows facade PUBLISHED; native omission of filters:[] only is admitted.
 - Public result: `{family:'identity-resolution',route:{apiVersion:'67.0',
-  operation:'d360_ir_update'},outcome:'unchanged'|'blocked'|'updated'|'failed',
-  mutation:'not-attempted'|'confirmed-updated'|'unknown',diagnostics}`. No raw
+operation:'d360_ir_update'},outcome:'unchanged'|'blocked'|'updated'|'failed',
+mutation:'not-attempted'|'confirmed-updated'|'unknown',diagnostics}`. No raw
   owner/output identities, payloads or exception text enter public results.
 
 Equality needs neither acknowledgement nor recorder and performs zero mutations,
@@ -2803,25 +2904,25 @@ installs, release/version/tag, shared transport, commands, writer or DB edits.
 `src/services/preflight-identity-resolution-deploy.ts` exports:
 
 - `IdentityResolutionTargetConnection = Pick<Connection,
-  'instanceUrl'|'request'|'getApiVersion'>`.
+'instanceUrl'|'request'|'getApiVersion'>`.
 - `IdentityResolutionPreflightOptions = {targetApiName:string,
-  verifyDependencies?:(document:IdentityResolutionDocument,
-  connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
-  dataSpace:string)=>Promise<void>, acquire?:typeof retrieveIdentityResolution}`.
+verifyDependencies?:(document:IdentityResolutionDocument,
+connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
+dataSpace:string)=>Promise<void>, acquire?:typeof retrieveIdentityResolution}`.
   Although optional in the options type for fail-closed callers, the dependency
   verifier is REQUIRED at runtime. No verifier means blocked before reads. It must
   independently verify fresh exact target logical input-DMO/field compatibility;
   production binder remains unimplemented/unqualified, not supplied as a no-op.
 - `preflightIdentityResolutionDeploy(value:unknown,
-  connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
-  dataSpace:string,options:IdentityResolutionPreflightOptions):
-  Promise<IdentityResolutionDeployPreview>`.
+connection:IdentityResolutionTargetConnection,apiVersion:ApiVersionSelection,
+dataSpace:string,options:IdentityResolutionPreflightOptions):
+Promise<IdentityResolutionDeployPreview>`.
 - Preview is `{family:'identity-resolution',
-  outcome:'update'|'unchanged'|'blocked-changes'|'blocked',
-  target:'present'|'unknown',absenceProof:'none',
-  route:{apiVersion:'67.0',operation:'d360_ir_update'},
-  requiredEffects:Array<'publication'|'generated-output-provisioning'>,
-  diagnostics:Array<{code:string,message:string}>}`. No raw expectations or
+outcome:'update'|'unchanged'|'blocked-changes'|'blocked',
+target:'present'|'unknown',absenceProof:'none',
+route:{apiVersion:'67.0',operation:'d360_ir_update'},
+requiredEffects:Array<'publication'|'generated-output-provisioning'>,
+diagnostics:Array<{code:string,message:string}>}`. No raw expectations or
   target IDs/names/payloads escape. Preview is NOT execution authorization.
 
 Validate/detach complete document before reads; explicit numeric API67 selection,
@@ -2934,9 +3035,9 @@ retains once-feature review and public documentation/propagation.
   `validateIdentityResolutionDocument(value: unknown): IdentityResolutionDocument`,
   `serializeIdentityResolutionDocument(value: unknown): string`, and
   `projectIdentityResolution(facade: unknown, native: unknown, sourceApiName: string,
-  logicalName: string): IdentityResolutionProjection`.
+logicalName: string): IdentityResolutionProjection`.
 - Document v1 kind `identity-resolution` has identity `{dataSpace:'default',
-  logicalName}`. Explicit authored logicalName is supplied separately from source
+logicalName}`. Explicit authored logicalName is supplied separately from source
   objectApiName; it is never inferred from runtime suffixes. Spec preserves label,
   description, Individual configuration, automatic=false, isCaseSensitive=true,
   typed secondary DMO, filters=[], one labelled match rule with all three ordered
@@ -2945,7 +3046,7 @@ retains once-feature review and public documentation/propagation.
   Individual allows LastUpdated or MostFrequent; the five generated reconciliation
   entries remain LastUpdated. Every entity has unified/link output identities
   `{owner:{kind:'identity-resolution',dataSpace:'default',logicalName},
-  entity:{kind:'dmo',dataSpace:'default',apiName},role:'unified'|'link'}`.
+entity:{kind:'dmo',dataSpace:'default',apiName},role:'unified'|'link'}`.
 - Only observed response lower-case enum spellings are mapped to portable enum
   spellings. Full native API65 and facade API67 representations must compare
   deeply equal after removing facade filters:[] only. Exact keys/ordering/settings
@@ -2962,9 +3063,9 @@ retains once-feature review and public documentation/propagation.
 - `src/services/retrieve-identity-resolution.ts` exports
   `IdentityResolutionAcquisition` and
   `retrieveIdentityResolution(connection: Pick<Connection,
-  'instanceUrl'|'request'|'getApiVersion'>, sourceApiName: string,
-  logicalName: string, apiVersion: ApiVersionSelection, dataSpace: string):
-  Promise<IdentityResolutionAcquisition>`.
+'instanceUrl'|'request'|'getApiVersion'>, sourceApiName: string,
+logicalName: string, apiVersion: ApiVersionSelection, dataSpace: string):
+Promise<IdentityResolutionAcquisition>`.
   Selection and numeric connection must explicitly be API67/default; invalid scope
   throws payload-free INVALID_SCOPE before requests. Frozen McpExecuteClient reads
   `d360_ir_get` with `{identityResolution:sourceApiName}` at API67, then independently

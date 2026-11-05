@@ -16,6 +16,15 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
   assert.throws(() => operationApiVersion('67.0', 'ingestion-dlo'), /INVALID_SCOPE/u);
 });
 
+test('CI preserves auto65 and admits only explicit qualified68 beside legacy65', () => {
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
+  assert.equal(operationApiVersion('65.0', 'calculated-insight'), '65.0');
+  assert.equal(operationApiVersion('68.0', 'calculated-insight'), '68.0');
+  for (const pin of ['64.0', '66.0', '67.0', '69.0', 'latest'])
+    assert.throws(() => operationApiVersion(pin, 'calculated-insight'), /INVALID_SCOPE/u);
+  assert.throws(() => operationApiVersion('68.0', 'segment'), /INVALID_SCOPE/u);
+});
+
 for (const requested of ['65.0', '68.0', '99.0', '100.0']) {
   test(`numeric ${requested} is preserved without discovery`, async () => {
     const result = await resolveApiVersion(requested, () => assert.fail('Unexpected discovery'));

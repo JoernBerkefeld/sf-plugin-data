@@ -1,3 +1,32 @@
+## Public native calculated insight lifecycle — 2026-11-05
+
+This current contract supersedes the historical CI-only boundaries below. Explicit
+API68/default supports paired draft create/edit, separate NOT_SCHEDULED publish,
+qualified bidirectional expression edits on ACTIVE, exact ACTIVE retrieval and
+source-paired confirmed deletion. Default/auto retains legacy65 existing-ACTIVE
+behavior. Internal native64–68 feasibility does not qualify public lifecycle at
+those other versions. Native68 runtime and fixed65 XML/Metadata/dependency routes
+remain distinct. No general SQL, schedule conversion, populated/ran owner or
+Metadata-shell conversion is admitted.
+
+Create needs exact dual absence and --draft; draft edits retain draft:true.
+Publication is explicit; ACTIVE expression PATCH omits draft. Full equality is
+GET-only unchanged without processing acknowledgement. Present-owner delete needs
+its matching XML/JSON pair, exact selector, --confirm-delete, fresh never-run
+NOT_SCHEDULED content and dependencies. No cascade/local removal/retry/rollback.
+Bounded independent settlement, not response echoes, confirms mutations.
+
+Installed cross-org create/publish, byte-identical XML/JSON retrieval, GET-only no-op,
+and ACTIVE edit passed. Two initial installed deletes returned
+CI_DELETION_UNCONFIRMED despite later confirmed runtime/Metadata absence; their
+causes remain unexplained. A later installed delete passed after six DELETING polls
+and dual absence on poll seven (35.2 seconds). This is not reliable-every-time or
+version-specific-defect proof. All CI fixtures are independently absent. ACTIVE is
+not calculation proof; physical storage/credits and computation remain unknown.
+The README 14-resource table now records scoped Partial create/update/delete,
+not general CRUD or released-package qualification. Private evidence has a recovered
+observer-journal finalization gap; see the current handover for its exact limits.
+
 ## Installed API61 mapping create and single addition — 2026-11-04
 
 Fresh empty custom Other/Text fixtures passed installed public mapping create, exact
@@ -77,7 +106,6 @@ additive Text update persisted; repeated deploy captured only GET, no mutation.
 Both exact owned fixtures were independently confirmed absent after guarded deletion.
 This does not close mixed-family dependency acceptance, ingestion, populated-object,
 lower-version or released-package qualification.
-
 
 ## Qualified Segment forward predicate update — 2026-10-30
 
@@ -196,6 +224,38 @@ recorder failure fails closed. It does not expose observations in public results
 permit mutation recording, retry transport failures or weaken supported status guards.
 The public family workflow above consumes this boundary. Installed/live public
 zero-write acceptance remains separate from synthetic implementation verification.
+
+## Internal native CI transport and feasibility — 2026-11-04
+
+Direct native configuration lifecycles were independently exercised at API65–67
+in one source org, using fresh default-space fixtures and the bounded engagement
+expression. Draft POST, expression PATCH, explicit `NotScheduled` publication and
+GET settlement succeeded; exact DELETE was confirmed by runtime `ITEM_NOT_FOUND`
+and Metadata absence. API65 edited the ACTIVE expression; API66–67 edited the draft
+before publication. Parsed DELETE responses did not retain raw HTTP status, so
+no live DELETE204 claim follows. No calculation was explicitly run.
+
+The separate standard CLI baseline retrieved the same definition sequentially at
+API65–68: all four XML files were byte-identical, 678 bytes. Standard API65
+Metadata definition create/read/update/delete also passed, while runtime reads
+still returned `ITEM_NOT_FOUND` after create and update. Definition CRUD is not
+runtime creation; these observations do not establish universal runtime absence.
+All four owned qualification fixtures were independently confirmed deleted; physical
+storage/credit cleanup is unknown. The four-fixture ceiling is exhausted. Native
+API68, plausible lower versions and unchanged-source cross-org acceptance remain
+unqualified; no introduction-version or public minimum-version claim follows.
+
+`createCalculatedInsightClient` is an internal-only API65–67/default adapter,
+not wired into public commands or lifecycle execution. It reuses guarded Connect
+transport without refresh, retries or redirects. Create sends only the validated
+minimal draft payload; update sends expression only; explicit publish separately
+sends label, `draft: false` and `NotScheduled`. Full saved configuration is not
+replayed as a write body. Item names are exact `__cio` identities. Responses,
+including undefined DELETE and PROCESSING, remain untrusted; the lifecycle owner
+must independently establish target ownership, dependencies, absence, settlement,
+schema/schedule preservation and deletion. There is no automatic publication,
+upsert, polling, no-op orchestration or public create/delete support in this slice.
+The README's 14-resource CRUD table was checked and left unchanged.
 
 ## Public CI command boundary
 
@@ -415,6 +475,9 @@ the disconnected transport does not establish any new deletion qualification.
 - [ ] Prove safe configuration-only create/update/no-op for declared variants.
 
 ## calculated-insight: unimplemented
+
+The existing public predicate-edit workflow and internal native transport above
+have distinct boundaries; neither closes general lifecycle or cross-org support.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve exact SQL, dimensions, measures, relationships and settings.

@@ -69,6 +69,10 @@ export type CalculatedInsightProjection = {
   document: CalculatedInsightDocument;
   observations: {
     derivedAttribution: { dimensions: [Attribution]; measures: [Attribution] };
+    nativeProfile?: {
+      isFromPackage: false | null;
+      schema: 'unmaterialized' | 'materialized';
+    };
   };
 };
 
@@ -340,15 +344,36 @@ function attribution(value: unknown): Attribution {
   return structuredClone(source) as Exclude<Attribution, null>;
 }
 
+export type CalculatedInsightProfile = {
+  apiVersion?: '65.0' | '68.0';
+  expectedStatus?: 'ACTIVE' | 'DRAFT';
+};
+
 /**
  * Validate a complete runtime observation without fabricating Metadata correlation.
  * Pending observations are usable only for echo/poll preservation, never settled admission.
- * @param {unknown} runtimeDetail Exact API65 response body.
- * @returns {CalculatedInsightProjection & {status: 'ACTIVE' | 'PROCESSING'}} Detached runtime observation.
+ * @param {unknown} runtimeDetail Exact version-specific response body.
+ * @param {string} apiVersion Explicit qualified profile; legacy defaults to API65.
+ * @returns {CalculatedInsightProjection & {status: 'ACTIVE' | 'PROCESSING' | 'DRAFT'}} Detached runtime observation.
  */
-export function observeCalculatedInsight(
+export function observeCalculatedInsight<Version extends '65.0' | '68.0' = '65.0'>(
   runtimeDetail: unknown,
-): CalculatedInsightProjection & { status: 'ACTIVE' | 'PROCESSING' } {
+  apiVersion: Version = '65.0' as Version,
+): CalculatedInsightProjection & {
+  status: 'ACTIVE' | 'PROCESSING' | (Version extends '68.0' ? 'DRAFT' : never);
+} {
+  if (apiVersion !== '65.0' && apiVersion !== '68.0')
+    throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
+  const native68 = apiVersion === '68.0';
+  const nativeNullKeys = [
+    'historyPublishScheduleInterval',
+    'historyPublishScheduleTimeZone',
+    'historyPublishTime',
+    'publishScheduleTimeZone',
+    'sourceCiDevName',
+    'sourceCiId',
+    'sourceCiName',
+  ];
   const semanticKeys = Object.keys(
     specification('label', originalExpression, 'SYSTEM_MANAGED'),
   ).filter((key) => key !== 'dependencies');
@@ -366,9 +391,20 @@ export function observeCalculatedInsight(
     'calculatedInsightStatus',
     ...semanticKeys,
     ...transientKeys,
+    ...(native68 ? [...nativeNullKeys, 'isFromPackage', 'queryDialect'] : []),
   ]);
-  if (raw.calculatedInsightStatus !== 'ACTIVE' && raw.calculatedInsightStatus !== 'PROCESSING')
+  const status = raw.calculatedInsightStatus;
+  if (status !== 'ACTIVE' && status !== 'PROCESSING' && !(native68 && status === 'DRAFT'))
     throw new CalculatedInsightError('CI_NOT_SETTLED');
+  if (
+    native68 &&
+    (nativeNullKeys.some((key) => raw[key] !== wireNull) ||
+      raw.queryDialect !== 'ANSI_SQL' ||
+      raw.publishScheduleInterval !== 'NOT_SCHEDULED' ||
+      (raw.isFromPackage !== false && raw.isFromPackage !== wireNull) ||
+      (status === 'ACTIVE' && raw.isFromPackage !== false))
+  )
+    throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
   // Only the recorded never-run, error-free profile is qualified. Timestamps are observations.
   if (
     transientKeys.some((key) => key !== 'lastCalcInsightStatusDateTime' && raw[key] !== wireNull) ||
@@ -381,8 +417,22 @@ export function observeCalculatedInsight(
     derivedAttribution: { dimensions: [wireNull], measures: [wireNull] },
   };
   const spec = Object.fromEntries(semanticKeys.map((key) => [key, structuredClone(raw[key])]));
+  const draft = status === 'DRAFT';
+  if (native68)
+    observations.nativeProfile = {
+      isFromPackage: raw.isFromPackage as false | null,
+      schema: draft ? 'unmaterialized' : 'materialized',
+    };
   for (const role of ['dimensions', 'measures'] as const) {
     const fields = spec[role];
+    if (draft) {
+      if (!Array.isArray(fields) || fields.length > 0)
+        throw new CalculatedInsightError('CI_SCHEMA_UNQUALIFIED');
+      // DRAFT has no derived fields: portable schema is the qualified SQL expectation,
+      // not a claim that publication has materialized it.
+      spec[role] = specification('label', originalExpression, 'NOT_SCHEDULED')[role];
+      continue;
+    }
     if (!Array.isArray(fields) || fields.length !== 1)
       throw new CalculatedInsightError('CI_SCHEMA_UNQUALIFIED');
     const expectedField = specification('label', originalExpression, 'SYSTEM_MANAGED')[role][0];
@@ -397,21 +447,33 @@ export function observeCalculatedInsight(
     identity: { dataSpace: raw.dataSpace, apiName: raw.apiName },
     spec,
   });
-  return { document, observations, status: raw.calculatedInsightStatus };
+  return {
+    document,
+    observations,
+    status: status as 'ACTIVE' | 'PROCESSING' | (Version extends '68.0' ? 'DRAFT' : never),
+  };
 }
 
 /**
  * Correlate a settled runtime observation with separately acquired Metadata.
- * @param {unknown} runtimeDetail Independent API65 detail body.
+ * @param {unknown} runtimeDetail Independent version-specific detail body.
  * @param {unknown} metadataDefinition Independent Metadata definition.
+ * @param {CalculatedInsightProfile} profile Explicit native version and required stable state.
  * @returns {CalculatedInsightProjection} Complete admitted semantics and observations.
  */
 export function projectCalculatedInsight(
   runtimeDetail: unknown,
   metadataDefinition: unknown,
+  profile: CalculatedInsightProfile = {},
 ): CalculatedInsightProjection {
-  const { document, observations, status } = observeCalculatedInsight(runtimeDetail);
-  if (status !== 'ACTIVE') throw new CalculatedInsightError('CI_NOT_SETTLED');
+  if (profile.expectedStatus !== undefined && !['ACTIVE', 'DRAFT'].includes(profile.expectedStatus))
+    throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
+  const { document, observations, status } = observeCalculatedInsight(
+    runtimeDetail,
+    profile.apiVersion,
+  );
+  if (status !== (profile.expectedStatus ?? 'ACTIVE'))
+    throw new CalculatedInsightError('CI_NOT_SETTLED');
   const metadata = record(metadataDefinition, [
     'fullName',
     'creationType',
@@ -436,13 +498,15 @@ export function projectCalculatedInsight(
  * @param {unknown} runtimeDetail Independently read current runtime body.
  * @param {unknown} metadataDefinition Independently read current Metadata definition.
  * @param {unknown} targetDataSpace Explicit target binding.
- * @returns {CalculatedInsightUpdateDelta} Unchanged, forward expression candidate, or blockers.
+ * @param {CalculatedInsightProfile} profile Explicit qualified lifecycle profile; legacy defaults remain unchanged.
+ * @returns {CalculatedInsightUpdateDelta} Unchanged, qualified expression candidate, or blockers.
  */
 export function buildCalculatedInsightUpdateDelta(
   desired: unknown,
   runtimeDetail: unknown,
   metadataDefinition: unknown,
   targetDataSpace: unknown,
+  profile: CalculatedInsightProfile = {},
 ): CalculatedInsightUpdateDelta {
   try {
     if (targetDataSpace !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
@@ -450,6 +514,7 @@ export function buildCalculatedInsightUpdateDelta(
     const { document: current, observations } = projectCalculatedInsight(
       runtimeDetail,
       metadataDefinition,
+      profile,
     );
     if (!isDeepStrictEqual(source.identity, current.identity))
       throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
@@ -458,8 +523,9 @@ export function buildCalculatedInsightUpdateDelta(
     if (source.spec.expression === current.spec.expression)
       return { status: 'unchanged', blockers: [], expected: source, observations };
     if (
-      current.spec.expression !== originalExpression ||
-      source.spec.expression !== editedExpression
+      profile.apiVersion !== '68.0' &&
+      (current.spec.expression !== originalExpression ||
+        source.spec.expression !== editedExpression)
     )
       throw new CalculatedInsightError('CI_EXPRESSION_DIRECTION_UNQUALIFIED');
     return {

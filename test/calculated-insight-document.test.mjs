@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   projectCalculatedInsight,
+  observeCalculatedInsight,
   validateCalculatedInsightDocument,
   serializeCalculatedInsightDocument,
   buildCalculatedInsightUpdateDelta,
@@ -342,3 +343,201 @@ test('unknown Metadata, authored label edit, mismatched identity and nondefault 
   assert.deepEqual(delta(desired).blockers, ['CI_IDENTITY_CHANGED']);
   assert.deepEqual(delta(document(), runtime(), metadata(), 'other').blockers, ['INVALID_SCOPE']);
 });
+
+const nativeNullKeys = [
+  'historyPublishScheduleInterval',
+  'historyPublishScheduleTimeZone',
+  'historyPublishTime',
+  'publishScheduleTimeZone',
+  'sourceCiDevName',
+  'sourceCiId',
+  'sourceCiName',
+];
+const nativeRuntime = (status = 'ACTIVE', expression = original) => ({
+  ...runtime(expression),
+  ...Object.fromEntries(nativeNullKeys.map((key) => [key, wireNull])),
+  calculatedInsightStatus: status,
+  publishScheduleInterval: 'NOT_SCHEDULED',
+  isFromPackage: status === 'DRAFT' ? wireNull : false,
+  queryDialect: 'ANSI_SQL',
+  ...(status === 'DRAFT' ? { dimensions: [], measures: [] } : {}),
+});
+const nativeProfile = { apiVersion: '68.0' };
+
+for (const expression of [original, edited]) {
+  for (const status of ['DRAFT', 'PROCESSING', 'ACTIVE']) {
+    test(`API68 ${status} observes only qualified SQL ${expression === original ? 'original' : 'edited'}`, () => {
+      const raw = nativeRuntime(status, expression);
+      const observed = observeCalculatedInsight(raw, '68.0');
+      assert.equal(observed.status, status);
+      assert.equal(observed.document.spec.expression, expression);
+      assert.deepEqual(observed.observations.nativeProfile, {
+        isFromPackage: status === 'DRAFT' ? wireNull : false,
+        schema: status === 'DRAFT' ? 'unmaterialized' : 'materialized',
+      });
+      assert.throws(() => observeCalculatedInsight(raw));
+      assert.doesNotMatch(
+        serializeCalculatedInsightDocument(observed.document),
+        /isFromPackage|queryDialect|sourceCi|historyPublish|unmaterialized|DRAFT/u,
+      );
+      if (status === 'PROCESSING') {
+        for (const expectedStatus of ['DRAFT', 'ACTIVE'])
+          assert.throws(() =>
+            projectCalculatedInsight(raw, metadata(expression), {
+              ...nativeProfile,
+              expectedStatus,
+            }),
+          );
+      } else {
+        const projected = projectCalculatedInsight(raw, metadata(expression), {
+          ...nativeProfile,
+          expectedStatus: status,
+        });
+        assert.deepEqual(projected.document, observed.document);
+        assert.throws(() =>
+          projectCalculatedInsight(raw, metadata(expression), {
+            ...nativeProfile,
+            expectedStatus: status === 'DRAFT' ? 'ACTIVE' : 'DRAFT',
+          }),
+        );
+        if (status === 'DRAFT')
+          assert.throws(() => projectCalculatedInsight(raw, metadata(expression), nativeProfile));
+        else
+          assert.deepEqual(
+            projectCalculatedInsight(raw, metadata(expression), nativeProfile),
+            projected,
+          );
+      }
+    });
+  }
+}
+
+for (const status of ['DRAFT', 'PROCESSING']) {
+  test(`API68 ${status} preserves both evidenced package observations`, () => {
+    for (const isFromPackage of [wireNull, false]) {
+      const result = observeCalculatedInsight({ ...nativeRuntime(status), isFromPackage }, '68.0');
+      assert.equal(result.observations.nativeProfile.isFromPackage, isFromPackage);
+    }
+  });
+}
+
+for (const [label, mutate] of Object.entries({
+  ...Object.fromEntries(
+    nativeNullKeys.map((key) => [
+      key,
+      (raw) => {
+        raw[key] = 'unqualified';
+      },
+    ]),
+  ),
+  unknown: (raw) => {
+    raw.extra = true;
+  },
+  missing: (raw) => {
+    delete raw.queryDialect;
+  },
+  dialect: (raw) => {
+    raw.queryDialect = 'SQL';
+  },
+  package: (raw) => {
+    raw.isFromPackage = true;
+  },
+  schedule: (raw) => {
+    raw.publishScheduleInterval = 'SYSTEM_MANAGED';
+  },
+  hasRun: (raw) => {
+    raw.lastRunDateTime = '2026-11-04T10:00:00.000Z';
+  },
+  runStatus: (raw) => {
+    raw.lastRunStatus = 'SUCCESS';
+  },
+  runError: (raw) => {
+    raw.lastRunStatusErrorCode = 'ERROR';
+  },
+  statusError: (raw) => {
+    raw.lastCalcInsightStatusErrorCode = 'ERROR';
+  },
+  schema: (raw) => {
+    raw.dimensions.push({});
+  },
+  expression: (raw) => {
+    raw.expression = 'SELECT COUNT(*) FROM Synthetic__dlm';
+  },
+})) {
+  test(`API68 rejects ${label} in every admitted state`, () => {
+    for (const status of ['DRAFT', 'PROCESSING', 'ACTIVE']) {
+      const raw = nativeRuntime(status);
+      mutate(raw);
+      assert.throws(() => observeCalculatedInsight(raw, '68.0'));
+      assert.equal(
+        buildCalculatedInsightUpdateDelta(document(), raw, metadata(), 'default', {
+          ...nativeProfile,
+          expectedStatus: status === 'DRAFT' ? 'DRAFT' : 'ACTIVE',
+        }).status,
+        'blocked',
+      );
+    }
+  });
+}
+
+test('API68 draft schema never masquerades as materialized publication or deletion', () => {
+  assert.throws(() =>
+    observeCalculatedInsight(
+      { ...nativeRuntime('DRAFT'), dimensions: runtime().dimensions },
+      '68.0',
+    ),
+  );
+  assert.throws(() => observeCalculatedInsight({ ...nativeRuntime(), dimensions: [] }, '68.0'));
+  assert.throws(() =>
+    observeCalculatedInsight({ ...nativeRuntime(), isFromPackage: wireNull }, '68.0'),
+  );
+  for (const status of ['DELETING', 'ERROR', 'OTHER'])
+    assert.throws(() => observeCalculatedInsight(nativeRuntime(status), '68.0'));
+  assert.throws(() => observeCalculatedInsight(nativeRuntime(), '69.0'));
+  assert.throws(() =>
+    projectCalculatedInsight(nativeRuntime(), metadata(), {
+      ...nativeProfile,
+      expectedStatus: 'DELETING',
+    }),
+  );
+  assert.throws(() =>
+    projectCalculatedInsight(
+      nativeRuntime('DRAFT'),
+      { ...metadata(), expression: edited },
+      { ...nativeProfile, expectedStatus: 'DRAFT' },
+    ),
+  );
+});
+
+for (const status of ['DRAFT', 'ACTIVE']) {
+  test(`API68 ${status} supports both exact expression directions without widening API65`, () => {
+    for (const [current, desired] of [
+      [original, edited],
+      [edited, original],
+    ]) {
+      const raw = nativeRuntime(status, current);
+      const profile = { ...nativeProfile, expectedStatus: status };
+      const expected = observeCalculatedInsight(nativeRuntime(status, desired), '68.0').document;
+      const result = buildCalculatedInsightUpdateDelta(
+        expected,
+        raw,
+        metadata(current),
+        'default',
+        profile,
+      );
+      assert.equal(result.status, 'candidate');
+      assert.deepEqual(result.patch, { expression: desired });
+      assert.equal(
+        buildCalculatedInsightUpdateDelta(
+          expected,
+          nativeRuntime(status, desired),
+          metadata(desired),
+          'default',
+          profile,
+        ).status,
+        'unchanged',
+      );
+      assert.equal(delta(document(), runtime(edited), metadata(edited)).status, 'blocked');
+    }
+  });
+}

@@ -66,6 +66,14 @@ assert.ok(artifact.files.some((file) => file.path === 'lib/services/retrieve-oth
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/retrieve-other-dmo.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-document.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-document.d.ts'));
+for (const member of [
+  'commands/data360/publish',
+  'services/publish-calculated-insight',
+  'commands/data360/delete',
+  'services/delete-calculated-insight',
+])
+  for (const extension of ['js', 'd.ts'])
+    assert.ok(artifact.files.some((file) => file.path === `lib/${member}.${extension}`));
 const installation = path.join(root, 'installation');
 const installed = spawnSync(
   process.execPath,
@@ -88,6 +96,7 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
   [topic, 'retrieve'],
   [topic, 'deploy'],
   [topic, 'delete'],
+  [topic, 'publish'],
 ])) {
   const result = spawnSync(process.execPath, [runner, ...command, '--help'], {
     cwd: root,
@@ -102,7 +111,8 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
   } else {
     assert.match(result.stdout, /ALIASES/u);
     for (const flag of [
-      '--metadata',
+      ...(command[1] === 'publish' ? ['--source-dir', '--allow-processing'] : ['--metadata']),
+      ...(command[1] === 'delete' ? ['--source-dir', '--confirm-delete'] : []),
       '--target-org',
       '--api-version',
       '--data-space',
@@ -130,11 +140,16 @@ const config = await Config.load({ root: packageRoot });
 assert.deepEqual(
   config.commandIDs.toSorted(),
   ['data360', 'datacloud', 'd360', 'dc']
-    .flatMap((topic) => [`${topic}:deploy`, `${topic}:retrieve`, `${topic}:delete`])
+    .flatMap((topic) => [
+      `${topic}:deploy`,
+      `${topic}:retrieve`,
+      `${topic}:delete`,
+      `${topic}:publish`,
+    ])
     .toSorted(),
 );
 const implementations = new Set();
-for (const operation of ['retrieve', 'deploy', 'delete']) {
+for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
   const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
   for (const topic of ['data360', 'datacloud', 'd360', 'dc']) {
     const implementation = await config.findCommand(`${topic}:${operation}`, { must: true }).load();
@@ -142,7 +157,7 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
     implementations.add(implementation);
     const result = spawnSync(
       process.execPath,
-      [runner, topic, operation, '-m', 'invalid', '--json'],
+      [runner, topic, operation, ...(operation === 'publish' ? [] : ['-m', 'invalid']), '--json'],
       {
         cwd: root,
         encoding: 'utf8',
@@ -159,7 +174,63 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
     assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
   }
 }
-assert.equal(implementations.size, 3);
+assert.equal(implementations.size, 4);
+for (const [arguments_, code] of [
+  [[], 'INVALID_SELECTION'],
+  [['-d', 'Synthetic.calculatedInsight.json'], 'INVALID_SCOPE'],
+  [
+    ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--data-space', 'other'],
+    'INVALID_SCOPE',
+  ],
+  [
+    ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--preview'],
+    'UNSAFE_SOURCE',
+  ],
+]) {
+  const result = spawnSync(
+    process.execPath,
+    [runner, 'data360', 'publish', ...arguments_, '--json'],
+    { cwd: root, encoding: 'utf8', env: environment },
+  );
+  assert.equal(result.status, 1, result.stderr);
+  const envelope = JSON.parse(result.stdout).result;
+  assert.equal(envelope.contract, 'sf-data360-publish');
+  assert.equal(envelope.status, 'blocked');
+  assert.equal(envelope.diagnostics.errors[0].code, code);
+  assert.deepEqual(envelope.result.items, []);
+}
+for (const [arguments_, code] of [
+  [[], 'INVALID_SCOPE'],
+  [['--api-version', '68.0'], 'INVALID_SELECTION'],
+  [
+    ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--data-space', 'other'],
+    'INVALID_SCOPE',
+  ],
+  [
+    ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--preview'],
+    'UNSAFE_SOURCE',
+  ],
+]) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      runner,
+      'data360',
+      'delete',
+      '-m',
+      'calculated-insight:Synthetic__cio',
+      ...arguments_,
+      '--json',
+    ],
+    { cwd: root, encoding: 'utf8', env: environment },
+  );
+  assert.equal(result.status, 1, result.stderr);
+  const envelope = JSON.parse(result.stdout).result;
+  assert.equal(envelope.contract, 'sf-data360-delete');
+  assert.equal(envelope.status, 'blocked');
+  assert.equal(envelope.diagnostics.errors[0].code, code);
+  assert.deepEqual(envelope.result.items, []);
+}
 for (const operation of ['retrieve', 'deploy']) {
   const { default: Command } = await import(
     pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', `${operation}.js`)).href
@@ -274,5 +345,5 @@ for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unkn
   }
 }
 process.stdout.write(
-  `${JSON.stringify({ root, artifact, sha256, helpChecks, aliasValidationChecks: 12, implementations: implementations.size, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
+  `${JSON.stringify({ root, artifact, sha256, helpChecks, aliasValidationChecks: 16, implementations: implementations.size, installedEnvelopeChecks: 6, hostVersion: '2.151.7', pluginVersion: metadata.version }, undefined, 2)}\n`,
 );

@@ -2,6 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { calculatedInsightScope } from '../lib/services/retrieve-calculated-insight.js';
+import { calculatedInsightDeployContext } from '../lib/services/preflight-calculated-insight-deploy.js';
 
 const connection = { getApiVersion: () => '65.0' };
 const selection = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
@@ -32,3 +33,56 @@ test('CI fixed scope refuses connection version disagreement', () => {
     calculatedInsightScope({ getApiVersion: () => '67.0' }, selection, 'default', 'Synthetic__cio'),
   );
 });
+const native = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' };
+for (const [name, change] of [
+  [
+    'selection',
+    (_target, pin) => {
+      pin.restSelector = 'v65.0';
+    },
+  ],
+  [
+    'origin',
+    (target) => {
+      target.instanceUrl = 'https://other.my.salesforce.com';
+    },
+  ],
+  [
+    'receiver version',
+    (target) => {
+      target.getApiVersion = () => '65.0';
+    },
+  ],
+  [
+    'draft removal',
+    (_target, _pin, options) => {
+      delete options.draft;
+    },
+  ],
+  [
+    'draft false',
+    (_target, _pin, options) => {
+      options.draft = false;
+    },
+  ],
+])
+  test(`native deploy context rejects mid-operation ${name} drift`, () => {
+    const target = {
+      instanceUrl: 'https://synthetic.my.salesforce.com',
+      getApiVersion: () => '68.0',
+    };
+    const pin = { ...native };
+    const options = { draft: true, context: { check() {} } };
+    const context = calculatedInsightDeployContext(target, pin, 'default', options);
+    change(target, pin, options);
+    assert.throws(() => context.check());
+  });
+for (const draft of [false, undefined, 'true'])
+  test(`native deploy context refuses explicit malformed draft ${String(draft)}`, () => {
+    assert.throws(() =>
+      calculatedInsightDeployContext({ getApiVersion: () => '68.0' }, native, 'default', {
+        draft,
+        context: { check() {} },
+      }),
+    );
+  });

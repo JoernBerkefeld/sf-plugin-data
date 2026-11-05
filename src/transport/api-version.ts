@@ -49,13 +49,28 @@ export type OperationalFamily =
  * @returns {string} Effective numeric version or unchanged legacy latest selector.
  */
 export function operationApiVersion(requested: string, family: OperationalFamily): string {
-  if (family === 'dlo') {
-    if (requested === 'auto' || requested === '68.0') return '68.0';
-  } else if (family === 'identity-resolution' || family === 'data-graph') {
-    if (requested === 'auto' || requested === '67.0') return '67.0';
-  } else {
-    if (requested === 'auto') return '65.0';
-    if (requested === '65.0' || (family === 'dmo' && requested === 'latest')) return requested;
+  switch (family) {
+    case 'dlo': {
+      if (requested === 'auto' || requested === '68.0') return '68.0';
+
+      break;
+    }
+    case 'calculated-insight': {
+      if (requested === 'auto' || requested === '65.0') return '65.0';
+      if (requested === '68.0') return '68.0';
+
+      break;
+    }
+    case 'identity-resolution':
+    case 'data-graph': {
+      if (requested === 'auto' || requested === '67.0') return '67.0';
+
+      break;
+    }
+    default: {
+      if (requested === 'auto') return '65.0';
+      if (requested === '65.0' || (family === 'dmo' && requested === 'latest')) return requested;
+    }
   }
   throw new Error('INVALID_SCOPE');
 }
