@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 const details = new WeakMap<Error, string>();
 const visibleKeys = new Set([
@@ -160,6 +161,16 @@ export function explainMismatch<T extends Error>(
  * @returns {string} Bounded diagnostic suitable for console and JSON.
  */
 export function operationDiagnostic(error: unknown, nextAction: string): string {
+  const connect = getConnectDiagnostic(error);
+  if (connect) {
+    const explanation =
+      connect.statusCode === 429
+        ? 'Connect API rate limiting: HTTP 429 Too Many Requests.'
+        : 'Connect API HTTP 503 Service Unavailable: POSSIBLE Connect rate limit; maintenance, load or other availability issues are also possible. The cause is not confirmed.';
+    const wait =
+      connect.retryAfter === undefined ? '' : ` Server Retry-After: ${connect.retryAfter}.`;
+    return `${explanation} Reduce request frequency and try later; effective limits can vary with load and change.${wait} Inspect the target before rerunning a write whose outcome is unknown; no automatic replay was performed. ${nextAction}`;
+  }
   if (error instanceof Error && details.has(error)) return `${details.get(error)!} ${nextAction}`;
   const status =
     error && typeof error === 'object'

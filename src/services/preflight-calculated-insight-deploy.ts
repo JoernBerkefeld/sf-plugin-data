@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import {
   buildCalculatedInsightUpdateDelta,
   projectCalculatedInsight,
@@ -76,7 +78,8 @@ export async function planNativeCalculatedInsightDeploy(
   if (desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED') throw new Error('Schedule blocked');
   const acquired = await acquireExactCalculatedInsight(context, desired.identity.apiName);
   context.check();
-  if (acquired.state === 'unknown') throw new Error('Target unknown');
+  if (acquired.state === 'unknown')
+    throw retainConnectDiagnostic(new Error('Target unknown'), getConnectDiagnostic(acquired));
   if (acquired.state === 'absent') {
     if (!draft) throw new Error('Draft create intent required');
     return { action: 'create' as const, acquired };
@@ -151,7 +154,7 @@ export async function preflightCalculatedInsightDeploy(
         requiredEffects: plan.action === 'unchanged' ? [] : ['processing'],
         diagnostics: [],
       };
-    } catch {
+    } catch (error) {
       return {
         family: 'calculated-insight',
         outcome: 'blocked',
@@ -162,7 +165,9 @@ export async function preflightCalculatedInsightDeploy(
         diagnostics: [
           {
             code: 'CI_ADMISSION_FAILED',
-            message: 'Native CI intent, scope, content or dependencies are unqualified.',
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(error, 'Native CI deployment was not attempted.')
+              : 'Native CI intent, scope, content or dependencies are unqualified.',
           },
         ],
       };
@@ -171,6 +176,7 @@ export async function preflightCalculatedInsightDeploy(
   const result = (
     outcome: CalculatedInsightPreview['outcome'],
     code?: string,
+    error?: unknown,
   ): CalculatedInsightPreview => ({
     family: 'calculated-insight',
     outcome,
@@ -182,8 +188,9 @@ export async function preflightCalculatedInsightDeploy(
       ? [
           {
             code,
-            message:
-              'CI target, dependency or expression is not qualified; create and shell conversion are unavailable.',
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(error, 'CI deployment was not attempted.')
+              : 'CI target, dependency or expression is not qualified; create and shell conversion are unavailable.',
           },
         ]
       : [],
@@ -200,7 +207,7 @@ export async function preflightCalculatedInsightDeploy(
       acquired.blockers.length > 0 ||
       !isDeepStrictEqual(acquired.identity, desired.identity)
     )
-      return result('blocked', 'CI_TARGET_OR_SHELL_UNQUALIFIED');
+      return result('blocked', 'CI_TARGET_OR_SHELL_UNQUALIFIED', acquired);
     const projection = projectCalculatedInsight(
       acquired.expectations.runtime,
       acquired.expectations.metadata,
@@ -217,7 +224,7 @@ export async function preflightCalculatedInsightDeploy(
     return delta.status === 'blocked'
       ? result('blocked', delta.blockers[0])
       : result(delta.status === 'candidate' ? 'update' : 'unchanged');
-  } catch {
-    return result('blocked', 'CI_ADMISSION_FAILED');
+  } catch (error) {
+    return result('blocked', 'CI_ADMISSION_FAILED', error);
   }
 }

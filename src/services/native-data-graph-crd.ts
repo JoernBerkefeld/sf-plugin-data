@@ -1,3 +1,5 @@
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -98,11 +100,13 @@ export async function acquireNativeDataGraph(
   context: NativeGraphContext,
   document: NativeDataGraphDocument,
 ): Promise<NativeGraphAcquisition> {
+  let diagnostic: ConnectDiagnostic | undefined;
   try {
     const expected = validateNativeDataGraphDocument(document);
     const name = expected.definition.name as string;
     context.check();
     const item = await context.get(name);
+    diagnostic = getConnectDiagnostic(item);
     context.check();
     if (item.status === 200)
       return { state: 'present', observation: observeNativeDataGraph(item.body, expected) };
@@ -113,6 +117,7 @@ export async function acquireNativeDataGraph(
         ]),
     );
     const exact = await context.metadata(name);
+    diagnostic = getConnectDiagnostic(exact);
     context.check();
     if (exact.status === 200) return { state: 'pending' };
     graphRequire(exact.status === 404 && Array.isArray(exact.body) && exact.body.length === 1);
@@ -126,6 +131,7 @@ export async function acquireNativeDataGraph(
         nested.message.startsWith(`NOT_FOUND: DaoEntity with daoId = ${name} and tenantId = `),
     );
     const inventory = await context.inventory();
+    diagnostic = getConnectDiagnostic(inventory);
     context.check();
     const entries = graphRecord(inventory.body).dataGraphMetadata;
     graphRequire(inventory.status === 200 && Array.isArray(entries));
@@ -148,8 +154,8 @@ export async function acquireNativeDataGraph(
     );
     if (names.has(name) || rows.records.length > 0) return { state: 'pending' };
     return { state: 'absent', proof: 'item+metadata+inventory+soql' };
-  } catch {
-    return { state: 'unknown' };
+  } catch (error) {
+    return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error) ?? diagnostic);
   }
 }
 
@@ -195,8 +201,8 @@ export async function settleNativeDataGraph(
         timer = setTimeout(() => resolve({ state: 'unknown' }), 120_000);
       }),
     ]);
-  } catch {
-    return { state: 'unknown' };
+  } catch (error) {
+    return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error));
   } finally {
     expired = true;
     clearTimeout(timer);
@@ -273,6 +279,7 @@ export function nativeDataGraphLifecycle(
       return { outcome: 'blocked', mutation: 'not-attempted' };
     busy = true;
     let attempted = false;
+    let diagnostic: ConnectDiagnostic | undefined;
     let expired = false;
     const now = guards.now ?? Date.now;
     let previous = now();
@@ -292,10 +299,15 @@ export function nativeDataGraphLifecycle(
       previous = current;
     };
     const readers = { ...context, check };
+    const acquire = async (): Promise<NativeGraphAcquisition> => {
+      const result = await acquireNativeDataGraph(readers, document);
+      diagnostic = getConnectDiagnostic(result) ?? diagnostic;
+      return result;
+    };
     const work = async (): Promise<NativeGraphResult> => {
       check();
       const root = await bindNativeGraphRoot(readers);
-      const before = await acquireNativeDataGraph(readers, document);
+      const before = await acquire();
       check();
       if (operation === 'create') {
         graphRequire(before.state === 'absent');
@@ -309,13 +321,17 @@ export function nativeDataGraphLifecycle(
         let response: unknown;
         try {
           response = await client.create(document.definition);
-        } catch {
-          await settleNativeDataGraph(readers, document, 'ready', guards.pause);
-          return { outcome: 'unknown', mutation: 'attempted' };
+        } catch (error) {
+          const settled = await settleNativeDataGraph(readers, document, 'ready', guards.pause);
+          return retainConnectDiagnostic(
+            { outcome: 'unknown', mutation: 'attempted' },
+            getConnectDiagnostic(error) ?? getConnectDiagnostic(settled),
+          );
         }
         check();
         const returned = observeNativeDataGraph(response, document);
         const settled = await settleNativeDataGraph(readers, document, 'ready', guards.pause);
+        diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
         graphRequire(
           settled.state === 'present' &&
             settled.observation.id === returned.id &&
@@ -358,7 +374,7 @@ export function nativeDataGraphLifecycle(
           owned.bodySHA256 === bodySHA256,
       );
       graphRequire((await guards.safeToDelete(structuredClone(owned))) === true);
-      const fresh = await acquireNativeDataGraph(readers, document);
+      const fresh = await acquire();
       graphRequire(
         isDeepStrictEqual(before, fresh) &&
           isDeepStrictEqual(root, await bindNativeGraphRoot(readers)),
@@ -369,11 +385,13 @@ export function nativeDataGraphLifecycle(
       attempted = true;
       try {
         await client.delete(name);
-      } catch {
+      } catch (error) {
+        diagnostic = getConnectDiagnostic(error) ?? diagnostic;
         /* Reconcile ambiguous acknowledgement with independent GETs only. */
       }
       check();
       const settled = await settleNativeDataGraph(readers, document, 'absent', guards.pause);
+      diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
       graphRequire(settled.state === 'absent');
       return { outcome: 'deleted', mutation: 'attempted', receipt: structuredClone(owned) };
     };
@@ -384,11 +402,14 @@ export function nativeDataGraphLifecycle(
           timer = setTimeout(() => reject(new Error('Native Graph deadline')), 120_000);
         }),
       ]);
-    } catch {
-      return {
-        outcome: attempted ? 'unknown' : 'blocked',
-        mutation: attempted ? 'attempted' : 'not-attempted',
-      };
+    } catch (error) {
+      return retainConnectDiagnostic(
+        {
+          outcome: attempted ? 'unknown' : 'blocked',
+          mutation: attempted ? 'attempted' : 'not-attempted',
+        },
+        getConnectDiagnostic(error) ?? diagnostic,
+      );
     } finally {
       expired = true;
       clearTimeout(timer);

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { connectReceiptDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -203,7 +204,11 @@ export function createDataStreamClient(
       .slice(match[0].length)
       .replace(/^(?:[^\r\n]+:[^\r\n]*\r?\n|\r?\n)*/u, '')
       .trim();
-    if (status < 200 || status >= 300) throw new DataStreamHttpError('STREAM_HTTP_ERROR', status);
+    if (status < 200 || status >= 300)
+      throw retainConnectDiagnostic(
+        new DataStreamHttpError('STREAM_HTTP_ERROR', status),
+        connectReceiptDiagnostic(receipt.stdout),
+      );
     if (
       receipt.exitCode !== 0 ||
       status !== (method === 'POST' ? 201 : method === 'PATCH' ? 200 : 204)

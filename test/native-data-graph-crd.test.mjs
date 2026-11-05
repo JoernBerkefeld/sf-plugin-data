@@ -29,6 +29,13 @@ import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+  connectDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
+
 const name = 'SyntheticNativeGraph';
 const fields = ['ssot__Id__c', 'KQ_Id__c', 'ssot__FirstName__c'];
 const document = () => ({
@@ -251,6 +258,46 @@ for (const reader of ['root', 'get'])
     assert.deepEqual(f.calls, []);
     assert.equal(t.mock.timers.tick(120_000), undefined);
   });
+
+test('late Graph Connect evidence cannot mutate a returned failure or leak into next invocation', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture();
+  let release;
+  let entered;
+  const started = new Promise((resolve) => {
+    entered = resolve;
+  });
+  f.context.get = () =>
+    new Promise((resolve) => {
+      release = () =>
+        resolve(
+          retainConnectDiagnostic(
+            { status: 503, body: { secret: 'late-secret' } },
+            connectDiagnostic(503),
+          ),
+        );
+      entered();
+    });
+  const pending = operateNativeDataGraph(document(), f.context, f.client, options());
+  await started;
+  t.mock.timers.tick(120_000);
+  const result = await pending;
+  const message = operationDiagnostic(result, 'stopped');
+  release();
+  for (let turn = 0; turn < 50; turn++) await Promise.resolve();
+  assert.equal(getConnectDiagnostic(result), undefined);
+  assert.equal(operationDiagnostic(result, 'stopped'), message);
+  const clean = fixture();
+  const next = await operateNativeDataGraph(
+    document(),
+    clean.context,
+    clean.client,
+    options('deploy', { preview: true }),
+  );
+  assert.equal(next.outcome, 'create');
+  assert.equal(getConnectDiagnostic(next), undefined);
+  assert.deepEqual(f.calls, []);
+});
 
 test('public delete deadline bounds unresolved DELETE and late acknowledgement never replays', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -766,6 +813,128 @@ test('create refuses independent target binding mismatch and deadline overrun', 
     'blocked',
   );
   assert.deepEqual(late.calls, []);
+});
+
+for (const status of [429, 503]) {
+  const evidence = connectDiagnostic(status, { 'retry-after': '11' });
+  for (const reader of ['get', 'metadata', 'inventory'])
+    for (const thrown of [false, true])
+      test(`Graph acquisition ${reader} HTTP${status} thrown=${thrown} retains safe evidence without writes`, async () => {
+        const f = fixture();
+        f.context[reader] = async () => {
+          if (thrown) throw retainConnectDiagnostic(new Error('private-secret'), evidence);
+          return retainConnectDiagnostic({ status, body: { secret: 'private-secret' } }, evidence);
+        };
+        const acquired = await acquireNativeDataGraph(f.context, document());
+        assert.equal(acquired.state, 'unknown');
+        assert.deepEqual(getConnectDiagnostic(acquired), evidence);
+        const settled = await settleNativeDataGraph(f.context, document(), 'ready', async () => {});
+        assert.deepEqual(getConnectDiagnostic(settled), evidence);
+        const result = await operateNativeDataGraph(document(), f.context, f.client, options());
+        assert.deepEqual(result, { outcome: 'blocked', mutation: 'not-attempted' });
+        assert.deepEqual(getConnectDiagnostic(result), evidence);
+        assert.equal(operationDiagnostic(result, '').includes('private-secret'), false);
+        assert.deepEqual(f.calls, []);
+        const clean = fixture();
+        assert.equal(
+          getConnectDiagnostic(await acquireNativeDataGraph(clean.context, document())),
+          undefined,
+        );
+      });
+  for (const operation of ['deploy', 'delete'])
+    test(`Graph ${operation} HTTP${status} swallowed write retains evidence only on failure`, async () => {
+      for (const succeeds of [false, true]) {
+        const f = fixture();
+        if (operation === 'delete') f.setGraph(runtime());
+        let writes = 0;
+        f.client[operation === 'deploy' ? 'create' : 'delete'] = async () => {
+          writes++;
+          if (succeeds) f.setGraph(operation === 'deploy' ? runtime() : undefined);
+          throw retainConnectDiagnostic(new Error('private-secret'), evidence);
+        };
+        const result = await operateNativeDataGraph(
+          document(),
+          f.context,
+          f.client,
+          options(operation),
+        );
+        assert.equal(writes, 1);
+        if (operation === 'delete' && succeeds) {
+          assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
+          assert.equal(getConnectDiagnostic(result), undefined);
+        } else {
+          assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
+          assert.deepEqual(getConnectDiagnostic(result), evidence);
+          assert.match(
+            operationDiagnostic(result, ''),
+            status === 429 ? /429 Too Many Requests/u : /POSSIBLE Connect rate limit/u,
+          );
+        }
+        assert.equal(JSON.stringify(result).includes('private-secret'), false);
+      }
+    });
+}
+
+test('Graph command diagnostics render JSON and human failures including before context exists', async () => {
+  const cwd = await project();
+  const receipt = await writeDataGraphDocument(document(), cwd, false);
+  for (const Class of [Retrieve, Deploy, Delete])
+    for (const json of [false, true])
+      for (const phase of ['context', 'acquisition'])
+        for (const status of [429, 503]) {
+          const f = fixture();
+          const evidence = connectDiagnostic(status, { 'retry-after': '13' });
+          const command = Object.create(Class.prototype);
+          const logs = [];
+          const flags = {
+            'api-version': '68.0',
+            metadata: [`data-graph:${name}`],
+            'source-dir': Class === Delete ? receipt.path : [receipt.path],
+            'output-dir': cwd,
+            preview: false,
+            'allow-processing': true,
+            'confirm-delete': true,
+          };
+          command.parse = async () => ({ flags });
+          command.jsonEnabled = () => json;
+          command.log = (message) => logs.push(message);
+          const org = { getConnection: () => ({}), getOrgId: () => f.context.orgId };
+          command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+          command.resolveTargetOrg = async () => org;
+          command.resolveOrg = async () => org;
+          command.resolveConnection = async () => ({});
+          command.nativeGraphContext = async () => {
+            if (phase === 'context')
+              throw retainConnectDiagnostic(new Error('private-secret'), evidence);
+            return f.context;
+          };
+          f.context.get = async () =>
+            retainConnectDiagnostic({ status, body: { secret: 'private-secret' } }, evidence);
+          command.retrieveNativeGraph = retrieveNativeDataGraph;
+          command.nativeGraphClient = () => f.client;
+          command.operateNativeGraph = (value, context, client, intent) =>
+            operateNativeDataGraph(value, context, client, { ...intent, pause: async () => {} });
+          const prior = process.exitCode;
+          let result;
+          try {
+            result = await command.run();
+          } finally {
+            process.exitCode = prior;
+          }
+          assert.notEqual(result.status, 'success');
+          assert.equal(result.diagnostics.errors.length, 1);
+          assert.equal(result.diagnostics.errors[0].retryable, false);
+          const message = result.diagnostics.errors[0].message;
+          assert.match(
+            message,
+            status === 429 ? /429 Too Many Requests/u : /POSSIBLE Connect rate limit/u,
+          );
+          assert.match(message, /Retry-After: 13/u);
+          assert.equal(JSON.stringify(result).includes('private-secret'), false);
+          assert.equal(logs.join('\n').includes('private-secret'), false);
+          if (!json) assert.ok(logs.some((line) => line.includes(message)));
+          assert.deepEqual(f.calls, []);
+        }
 });
 
 test('ambiguous POST grants no receipt, retry or deletion authority', async () => {

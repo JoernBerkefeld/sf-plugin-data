@@ -176,6 +176,9 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       this.log(`Publish${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
       for (const item of envelope.result.items)
         this.log(`${item.outcome}: ${item.identity.apiName}; mutation: ${item.mutation}.`);
+      for (const diagnostic of envelope.diagnostics.errors)
+        if (/HTTP (?:429|503)/u.test(diagnostic.message))
+          this.log(`${diagnostic.code}: ${diagnostic.message}`);
     }
     return envelope;
   }

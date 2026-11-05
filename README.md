@@ -225,6 +225,14 @@ can report its HTTP status without its body. Without that evidence, the diagnost
 does not claim Salesforce rejected the request. These explanations do not weaken
 safety checks, change error codes or authorize retrying an unknown mutation.
 
+Connect API failures report HTTP 429 **Too Many Requests** as rate limiting.
+HTTP 503 **Service Unavailable** can indicate a Connect rate limit, maintenance,
+load or another availability issue; the cause is not confirmed. Human-readable
+and JSON diagnostics include a server `Retry-After` value only when it passes
+validation. Reduce request frequency and try later; effective limits can vary
+with load and change. Inspect the target before rerunning a write whose outcome
+is unknown. The plugin does not automatically replay the write.
+
 ## Native DLO definition workflow
 
 The DLO workflow uses native Data Cloud API 68 through authenticated

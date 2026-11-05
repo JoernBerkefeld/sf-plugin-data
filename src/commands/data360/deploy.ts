@@ -601,6 +601,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               this.log(
                 `Planned field ${step.operation}: ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName}${'developerName' in step ? ` (${step.developerName})` : ''}.`,
               );
+          for (const diagnostic of [
+            ...item.diagnostics,
+            ...(item.operation === 'execute' && 'preflight' in item
+              ? (item.preflight?.diagnostics ?? [])
+              : []),
+          ])
+            this.log(`${diagnostic.code}: ${diagnostic.message}`);
           if (item.operation === 'execute' && item.mutation === 'unknown')
             this.log('Mutation may have occurred. Inspect target before any further attempt.');
         }
@@ -624,6 +631,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             `Deployed: ${created + updated} (${created} created / ${updated} updated / ${failed} failed)`,
           );
         }
+        for (const diagnostic of envelope.diagnostics.errors)
+          this.log(`${diagnostic.code}: ${diagnostic.message}`);
       }
       return envelope;
     };
@@ -765,6 +774,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : result.outcome === 'failed'
               ? 'failed'
               : 'success',
+          result.outcome === 'blocked' || result.outcome === 'failed'
+            ? flags.preview
+              ? 'DEPLOY_PREVIEW_FAILED'
+              : 'DEPLOY_EXECUTION_FAILED'
+            : undefined,
+          result,
         );
       }
       const streamInputs = resolvedInputs.filter(
@@ -1846,13 +1861,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   throw new DependencySelectionError('SEGMENT_FRESH_ADMISSION_BLOCKED');
               }
               await verifyInputs();
-            } catch {
+            } catch (error) {
               item.outcome = 'blocked';
               item.diagnostics = [
                 {
                   code: 'DEPLOY_FRESH_ADMISSION_BLOCKED',
-                  message:
+                  message: operationDiagnostic(
+                    error,
                     'Fresh input or dependency admission failed before this item. No further writes were attempted.',
+                  ),
                 },
               ];
               blocked = true;
@@ -1923,12 +1940,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                               effectiveScope,
                             );
               Object.assign(item, result);
-            } catch {
+            } catch (error) {
               item.diagnostics = [
                 {
                   code: 'EXECUTION_UNCONFIRMED',
-                  message:
+                  message: operationDiagnostic(
+                    error,
                     'Mutation may have occurred. Inspect target before any further attempt; no retry or rollback was performed.',
+                  ),
                 },
               ];
             }

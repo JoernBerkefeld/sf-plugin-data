@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { setTimeout as pause } from 'node:timers/promises';
 import {
   buildCalculatedInsightUpdateDelta,
@@ -76,6 +78,7 @@ async function executeNativeCalculatedInsightDeploy(
     outcome: CalculatedInsightExecution['outcome'],
     mutation: CalculatedInsightExecution['mutation'],
     code?: string,
+    error?: unknown,
   ): CalculatedInsightExecution => ({
     family: 'calculated-insight',
     route: { apiVersion: '68.0', method, resource: 'calculated-insights' },
@@ -85,8 +88,14 @@ async function executeNativeCalculatedInsightDeploy(
       ? [
           {
             code,
-            message:
-              mutation === 'unknown'
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(
+                  error,
+                  mutation === 'unknown'
+                    ? 'CI mutation may have occurred.'
+                    : 'CI deployment was not attempted.',
+                )
+              : mutation === 'unknown'
                 ? 'CI mutation may have occurred; no replay or rollback was performed.'
                 : 'Native CI deployment was not attempted; qualification or explicit intent is required.',
           },
@@ -161,7 +170,10 @@ async function executeNativeCalculatedInsightDeploy(
         );
         check();
         if (settled.state !== 'present' || !isDeepStrictEqual(settled.binding, bound))
-          throw new Error('Settlement unknown');
+          throw retainConnectDiagnostic(
+            new Error('Settlement unknown'),
+            getConnectDiagnostic(settled),
+          );
         await options.recordObservation({
           phase: 'settled',
           status: settled.acquisition.status as 'ACTIVE' | 'DRAFT',
@@ -182,10 +194,10 @@ async function executeNativeCalculatedInsightDeploy(
       expired = true;
       clearTimeout(timer);
     }
-  } catch {
+  } catch (error) {
     return attempted
-      ? result('failed', 'unknown', 'CI_MUTATION_UNCONFIRMED')
-      : result('blocked', 'not-attempted', 'CI_ADMISSION_FAILED');
+      ? result('failed', 'unknown', 'CI_MUTATION_UNCONFIRMED', error)
+      : result('blocked', 'not-attempted', 'CI_ADMISSION_FAILED', error);
   }
 }
 
@@ -218,6 +230,7 @@ export async function executeCalculatedInsightDeploy(
     outcome: CalculatedInsightExecution['outcome'],
     mutation: CalculatedInsightExecution['mutation'],
     code?: string,
+    error?: unknown,
   ): CalculatedInsightExecution => ({
     family: 'calculated-insight',
     route: { apiVersion: '65.0', method: 'PATCH', resource: 'calculated-insights' },
@@ -227,8 +240,14 @@ export async function executeCalculatedInsightDeploy(
       ? [
           {
             code,
-            message:
-              mutation === 'unknown'
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(
+                  error,
+                  mutation === 'unknown'
+                    ? 'CI mutation may have occurred.'
+                    : 'CI deployment was not attempted.',
+                )
+              : mutation === 'unknown'
                 ? 'CI update may have occurred; no replay or rollback was performed.'
                 : 'CI deployment was not attempted; resolve input, scope, effects or target qualification.',
           },
@@ -272,7 +291,10 @@ export async function executeCalculatedInsightDeploy(
         acquired.blockers.length > 0 ||
         !isDeepStrictEqual(acquired.identity, desired.identity)
       )
-        throw new Error('Target unavailable');
+        throw retainConnectDiagnostic(
+          new Error('Target unavailable'),
+          getConnectDiagnostic(acquired),
+        );
       const projection = projectCalculatedInsight(
         acquired.expectations.runtime,
         acquired.expectations.metadata,
@@ -365,9 +387,9 @@ export async function executeCalculatedInsightDeploy(
       return result('updated', 'confirmed-updated');
     }
     return result('failed', 'unknown', 'CI_SETTLEMENT_UNCONFIRMED');
-  } catch {
+  } catch (error) {
     return attempted
-      ? result('failed', 'unknown', 'CI_UPDATE_UNCONFIRMED')
-      : result('blocked', 'not-attempted', 'CI_ADMISSION_FAILED');
+      ? result('failed', 'unknown', 'CI_UPDATE_UNCONFIRMED', error)
+      : result('blocked', 'not-attempted', 'CI_ADMISSION_FAILED', error);
   }
 }

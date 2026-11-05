@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   CalculatedInsightError,
@@ -110,9 +111,14 @@ export async function settleCalculatedInsight(
     }
     throw new CalculatedInsightError('CI_SETTLEMENT_TIMEOUT');
   } catch (error) {
-    return {
-      state: 'unknown',
-      diagnostics: [error instanceof CalculatedInsightError ? error.code : 'CI_SETTLEMENT_FAILED'],
-    };
+    return retainConnectDiagnostic(
+      {
+        state: 'unknown' as const,
+        diagnostics: [
+          error instanceof CalculatedInsightError ? error.code : 'CI_SETTLEMENT_FAILED',
+        ],
+      },
+      getConnectDiagnostic(error),
+    );
   }
 }

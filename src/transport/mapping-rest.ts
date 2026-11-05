@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import { connectReceiptDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
 import { ConnectClient, ConnectError } from './connect-client.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -170,7 +171,11 @@ export function createMappingClient(
       .slice(match[0].length)
       .replace(/^(?:[^\r\n]+:[^\r\n]*\r?\n|\r?\n)*/u, '')
       .trim();
-    if (status < 200 || status >= 300) throw new NativeMappingError('MAPPING_HTTP_ERROR', status);
+    if (status < 200 || status >= 300)
+      throw retainConnectDiagnostic(
+        new NativeMappingError('MAPPING_HTTP_ERROR', status),
+        connectReceiptDiagnostic(receipt.stdout),
+      );
     if (
       receipt.exitCode !== 0 ||
       (status !== 200 &&

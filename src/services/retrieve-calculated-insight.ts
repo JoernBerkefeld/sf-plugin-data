@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { isDeepStrictEqual } from 'node:util';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import { bindCalculatedInsightDependencies } from './bind-calculated-insight-dependencies.js';
@@ -85,10 +86,13 @@ export async function retrieveCalculatedInsight(
       blockers: [],
     };
   } catch (error) {
-    return {
-      identity,
-      blockers: [error instanceof CalculatedInsightError ? error.code : 'CI_ACQUISITION_FAILED'],
-    };
+    return retainConnectDiagnostic(
+      {
+        identity,
+        blockers: [error instanceof CalculatedInsightError ? error.code : 'CI_ACQUISITION_FAILED'],
+      },
+      getConnectDiagnostic(error),
+    );
   }
 }
 
@@ -179,7 +183,10 @@ export async function acquireExactCalculatedInsight(
         error.statusCode === 404 &&
         error.nativeCode === 'ITEM_NOT_FOUND'
       ))
-        throw new CalculatedInsightError('CI_RUNTIME_UNKNOWN');
+        throw retainConnectDiagnostic(
+          new CalculatedInsightError('CI_RUNTIME_UNKNOWN'),
+          getConnectDiagnostic(error),
+        );
       missing = true;
     }
     context.check();
@@ -218,9 +225,14 @@ export async function acquireExactCalculatedInsight(
       expectations: { runtime: structuredClone(runtime), metadata: structuredClone(metadata) },
     };
   } catch (error) {
-    return {
-      state: 'unknown',
-      diagnostics: [error instanceof CalculatedInsightError ? error.code : 'CI_ACQUISITION_FAILED'],
-    };
+    return retainConnectDiagnostic(
+      {
+        state: 'unknown' as const,
+        diagnostics: [
+          error instanceof CalculatedInsightError ? error.code : 'CI_ACQUISITION_FAILED',
+        ],
+      },
+      getConnectDiagnostic(error),
+    );
   }
 }

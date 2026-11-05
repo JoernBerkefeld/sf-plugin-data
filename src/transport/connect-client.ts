@@ -1,4 +1,6 @@
 import { Org } from '@salesforce/core';
+import { connectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
 import type { Connection } from '@salesforce/core';
 import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
@@ -34,7 +36,7 @@ type ObservableTransport = {
   httpRequest: (
     request: unknown,
     options: unknown,
-  ) => Promise<{ statusCode?: unknown }> & { stream: () => unknown };
+  ) => Promise<{ statusCode?: unknown; headers?: unknown }> & { stream: () => unknown };
 };
 
 /** Bounded SSOT transport; Salesforce core owns credentials. */
@@ -232,11 +234,12 @@ export class ConnectClient {
     noContentResponse?: unknown,
   ): Promise<T> {
     let responseStatus: number | undefined;
+    let diagnostic: ConnectDiagnostic | undefined;
     const transport =
-      typeof request === 'object' && request.method === 'GET' && '_transport' in receiver
+      '_transport' in receiver
         ? (receiver._transport as ObservableTransport | undefined)
         : undefined;
-    // Observe only this GET before JSforce discards the numeric wire error status.
+    // Observe this request before JSforce discards numeric wire error status and headers.
     const observer =
       transport && typeof transport.httpRequest === 'function'
         ? {
@@ -244,6 +247,7 @@ export class ConnectClient {
               const pending = transport.httpRequest.call(transport, input, options);
               const observed = pending.then((response) => {
                 const status = response?.statusCode;
+                diagnostic = connectDiagnostic(status, response?.headers);
                 if (
                   typeof status === 'number' &&
                   Number.isInteger(status) &&
@@ -304,10 +308,13 @@ export class ConnectClient {
         typeof data.message === 'string'
           ? 'ITEM_NOT_FOUND'
           : undefined;
-      throw new ConnectError(
-        statusCode === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
-        statusCode,
-        nativeCode,
+      throw retainConnectDiagnostic(
+        new ConnectError(
+          statusCode === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
+          statusCode,
+          nativeCode,
+        ),
+        diagnostic ?? connectDiagnostic(statusCode),
       );
     }
   }

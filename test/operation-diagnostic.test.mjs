@@ -6,6 +6,30 @@ import { executeDloDeploy } from '../lib/services/command-dlo.js';
 import { executeDmo } from '../lib/services/command-native-dmo.js';
 import { preflightNativeMapping } from '../lib/services/native-mapping.js';
 import { DloError } from '../lib/artifacts/dlo-document.js';
+import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+
+for (const status of [429, 503]) {
+  test(`Connect HTTP ${status} guidance is safe, explicit and server-delay only`, () => {
+    for (const retry of [undefined, '0', '120', 'Bearer secret']) {
+      const error = retainConnectDiagnostic(
+        new Error('<html>secret</html>'),
+        connectDiagnostic(status, { 'Retry-After': retry }),
+      );
+      const message = operationDiagnostic(error, 'No write attempted.');
+      assert.match(
+        message,
+        status === 429 ? /429 Too Many Requests/u : /503.*POSSIBLE Connect rate limit/u,
+      );
+      assert.match(message, /Reduce request frequency and try later/u);
+      assert.match(message, /limits can vary with load and change/u);
+      assert.match(message, /Inspect the target.*no automatic replay/u);
+      assert.doesNotMatch(JSON.stringify({ message }), /secret|html|quota|reset/iu);
+      assert.equal(message.includes('Server Retry-After:'), retry === '0' || retry === '120');
+      assert.match(message, /No write attempted/u);
+    }
+    assert.doesNotMatch(operationDiagnostic({ statusCode: status }, 'Stop.'), /Connect API/u);
+  });
+}
 
 const fields = [{ name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true }];
 const raw = (name) => ({

@@ -1,9 +1,16 @@
 import type { Connection } from '@salesforce/core';
+import {
+  connectDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../transport/connect-diagnostic.js';
+import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { ConnectError } from '../transport/connect-client.js';
 import { dataGraphName, graphRequire } from '../artifacts/data-graph-document.js';
 import { readDmoMetadata } from './retrieve-other-dmo.js';
 import type { NativeGraphContext, NativeGraphRead } from './native-data-graph-crd.js';
 
-type TransportResponse = { statusCode?: unknown; body?: unknown };
+type TransportResponse = { statusCode?: unknown; body?: unknown; headers?: unknown };
 type Transport = {
   httpRequest: (
     request: unknown,
@@ -57,6 +64,7 @@ export async function nativeDataGraphReadContext(
   const read = async (route: string): Promise<NativeGraphRead> => {
     check();
     let observed: NativeGraphRead | undefined;
+    let diagnostic: ConnectDiagnostic | undefined;
     let calls = 0;
     const receiver = Object.create(connection) as Connection;
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
@@ -67,6 +75,8 @@ export async function nativeDataGraphReadContext(
         const pending = transport.httpRequest.call(transport, request, options);
         const captured = pending.then((response) => {
           check();
+          if (route.startsWith('/services/data/v68.0/ssot/'))
+            diagnostic = connectDiagnostic(response.statusCode, response.headers);
           graphRequire(
             Number.isInteger(response.statusCode) &&
               (response.statusCode as number) >= 200 &&
@@ -92,11 +102,16 @@ export async function nativeDataGraphReadContext(
       } as unknown as Parameters<Connection['request']>[1]);
     } catch {
       // A parsed HTTP error is evidence, not absence. Network/redirect/parser failures stay unknown.
+      if (observed === undefined && diagnostic)
+        throw retainConnectDiagnostic(
+          new ConnectError('REQUEST_FAILED', diagnostic.statusCode),
+          diagnostic,
+        );
       graphRequire(observed !== undefined && observed.status >= 400);
     }
     check();
     graphRequire(calls === 1 && observed !== undefined);
-    return structuredClone(observed);
+    return retainConnectDiagnostic(structuredClone(observed), diagnostic);
   };
   const base = '/services/data/v68.0';
   const graphs = `${base}/ssot/data-graphs`;
@@ -134,7 +149,11 @@ export async function nativeDataGraphReadContext(
     root: async () => {
       const rootName = 'ssot__Individual__dlm';
       const detail = await read(`${base}/ssot/data-model-objects/${rootName}?dataspace=default`);
-      graphRequire(detail.status === 200);
+      if (detail.status !== 200)
+        throw retainConnectDiagnostic(
+          new Error('Native Graph root unavailable'),
+          getConnectDiagnostic(detail),
+        );
       check();
       const receiver = Object.create(connection) as Connection;
       Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });

@@ -237,6 +237,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   : `Planned mapping delete: ${item.identity.apiName}.`,
               );
         }
+        for (const diagnostic of envelope.diagnostics.errors)
+          if (diagnostic.message.startsWith('Connect API'))
+            this.log(`${diagnostic.code}: ${diagnostic.message}`);
       }
       return envelope;
     };
@@ -317,6 +320,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             : result.outcome === 'blocked'
               ? 'blocked'
               : 'success';
+        if (result.outcome === 'failed' || result.outcome === 'blocked')
+          envelope.diagnostics.errors.push({
+            code: 'DELETE_FAILED',
+            message: operationDiagnostic(
+              result,
+              'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+            ),
+            retryable: false,
+          });
         return finish();
       }
       const ciSelection = flags.metadata?.some(

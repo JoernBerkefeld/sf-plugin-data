@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
@@ -52,6 +54,7 @@ export async function deleteCalculatedInsight(
   const result = (
     outcome: CalculatedInsightDeleteResult['outcome'],
     code?: string,
+    error?: unknown,
   ): CalculatedInsightDeleteResult => ({
     family: 'calculated-insight',
     route: { apiVersion: '68.0', method: 'DELETE', resource: 'calculated-insights' },
@@ -66,9 +69,14 @@ export async function deleteCalculatedInsight(
       ? [
           {
             code,
-            message: attempted
-              ? 'CI deletion may have occurred; no replay or rollback was performed.'
-              : 'CI deletion was not attempted; paired input, scope, ownership, dependencies or intent are unqualified.',
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(
+                  error,
+                  attempted ? 'CI deletion may have occurred.' : 'CI deletion was not attempted.',
+                )
+              : attempted
+                ? 'CI deletion may have occurred; no replay or rollback was performed.'
+                : 'CI deletion was not attempted; paired input, scope, ownership, dependencies or intent are unqualified.',
           },
         ]
       : [],
@@ -96,7 +104,7 @@ export async function deleteCalculatedInsight(
           (!['DRAFT', 'ACTIVE'].includes(acquired.status) ||
             !isDeepStrictEqual(acquired.document, desired)))
       )
-        throw new Error('Ownership');
+        throw retainConnectDiagnostic(new Error('Ownership'), getConnectDiagnostic(acquired));
       return acquired;
     };
     await options.verifyInput();
@@ -152,7 +160,8 @@ export async function deleteCalculatedInsight(
           delay: options.delay,
         });
         check();
-        if (settled.state !== 'absent') throw new Error('Settlement');
+        if (settled.state !== 'absent')
+          throw retainConnectDiagnostic(new Error('Settlement'), getConnectDiagnostic(settled));
         return result('deleted');
       };
       return await Promise.race([
@@ -165,10 +174,11 @@ export async function deleteCalculatedInsight(
       expired = true;
       clearTimeout(timer);
     }
-  } catch {
+  } catch (error) {
     return result(
       attempted ? 'failed' : 'blocked',
       attempted ? 'CI_DELETION_UNCONFIRMED' : 'CI_ADMISSION_FAILED',
+      error,
     );
   }
 }

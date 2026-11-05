@@ -5,6 +5,91 @@ import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-do
 import { publishCalculatedInsight } from '../lib/services/publish-calculated-insight.js';
 import { deleteCalculatedInsight } from '../lib/services/delete-calculated-insight.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
+import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { preflightCalculatedInsightDeploy } from '../lib/services/preflight-calculated-insight-deploy.js';
+import { executeCalculatedInsightDeploy } from '../lib/services/execute-calculated-insight-deploy.js';
+
+for (const status of [429, 503]) {
+  for (const phase of ['admission', 'write', 'settlement']) {
+    for (const operation of ['deploy', 'delete', 'publish']) {
+      test(`${operation} CI ${phase} HTTP ${status} stays conservative without replay`, async () => {
+        const h = harness();
+        const fail = () => {
+          throw retainConnectDiagnostic(
+            new Error('Bearer secret <html>'),
+            connectDiagnostic(status, { 'Retry-After': '17' }),
+          );
+        };
+        h.options.confirmDelete = true;
+        h.options.nativeClient = {
+          create: async () => {
+            h.calls.writes++;
+            if (phase === 'write') fail();
+          },
+          update: async () => {
+            h.calls.writes++;
+            if (phase === 'write') fail();
+          },
+          delete: async () => {
+            h.calls.writes++;
+            if (phase === 'write') fail();
+          },
+          publish: async () => {
+            h.calls.writes++;
+            if (phase === 'write') fail();
+          },
+        };
+        h.context.get = async () => {
+          if (phase === 'admission' || h.calls.writes) fail();
+          return runtime();
+        };
+        const run =
+          operation === 'publish'
+            ? publishCalculatedInsight
+            : operation === 'delete'
+              ? deleteCalculatedInsight
+              : executeCalculatedInsightDeploy;
+        const options = operation === 'deploy' ? { ...h.options, draft: true } : h.options;
+        if (operation === 'deploy' && phase !== 'admission') {
+          h.desired.spec.expression = expression.replace(
+            'WHERE 1 = 0',
+            `WHERE 1 = 0 AND ${device} IS NOT NULL`,
+          );
+        }
+        const result = await run(h.desired, h.target, h.pin, 'default', options);
+        assert.equal(result.outcome, phase === 'admission' ? 'blocked' : 'failed');
+        assert.equal(result.mutation, phase === 'admission' ? 'not-attempted' : 'unknown');
+        assert.equal(result.diagnostics.length, 1);
+        assert.match(
+          result.diagnostics[0].message,
+          status === 429 ? /429 Too Many Requests/u : /503.*POSSIBLE Connect rate limit/u,
+        );
+        assert.match(result.diagnostics[0].message, /Server Retry-After: 17/u);
+        assert.doesNotMatch(JSON.stringify(result), /secret|html/u);
+        assert.equal(h.calls.writes, phase === 'admission' ? 0 : 1);
+      });
+    }
+  }
+  test(`CI preview HTTP ${status} exposes one no-write diagnostic`, async () => {
+    const h = harness();
+    h.context.get = async () => {
+      throw retainConnectDiagnostic(new Error('secret'), connectDiagnostic(status));
+    };
+    const result = await preflightCalculatedInsightDeploy(
+      h.desired,
+      h.target,
+      h.pin,
+      'default',
+      undefined,
+      undefined,
+      { context: h.context, draft: true },
+    );
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.diagnostics.length, 1);
+    assert.match(result.diagnostics[0].message, new RegExp(String(status), 'u'));
+    assert.equal(h.calls.writes, 0);
+  });
+}
 
 // eslint-disable-next-line unicorn/no-null -- Complete synthetic wire profiles require null.
 const nil = null;

@@ -9,6 +9,7 @@ import Publish from '../lib/commands/data360/publish.js';
 import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-document.js';
 import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
 import { publishCalculatedInsight } from '../lib/services/publish-calculated-insight.js';
+import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 import {
   readDeployInputs,
   verifyCalculatedInsightInputDigest,
@@ -281,6 +282,70 @@ for (const drift of ['flags', 'receiver', 'target', 'unknown'])
     assert.doesNotMatch(JSON.stringify(result), /private response/u);
     if (drift === 'unknown') assert.equal(result.result.items[0].mutation, 'unknown');
   });
+for (const status of [429, 503])
+  for (const phase of ['admission', 'write', 'settlement'])
+    for (const json of [false, true])
+      test(`publish ${phase} HTTP${status} guidance once in ${json ? 'JSON' : 'human'} output`, async () => {
+        const h = await harness();
+        const output = [];
+        h.command.jsonEnabled = () => json;
+        h.command.log = (line) => output.push(line);
+        const failure = () => {
+          throw retainConnectDiagnostic(
+            new Error('Bearer private-secret <html>private-body</html>'),
+            connectDiagnostic(status, { 'Retry-After': '17', authorization: 'private-token' }),
+          );
+        };
+        const get = h.context.get;
+        h.context.get = async () => {
+          if (phase === 'admission' || h.calls.writes) failure();
+          return get();
+        };
+        h.command.publishCalculatedInsight = (...arguments_) =>
+          publishCalculatedInsight(...arguments_.slice(0, 4), {
+            ...arguments_[4],
+            delay: async () => {},
+            nativeClient: {
+              publish: async () => {
+                h.calls.writes++;
+                if (phase === 'write') failure();
+              },
+            },
+          });
+        const { result, exit } = await run(h.command);
+        assert.equal(exit, 1);
+        assert.equal(result.status, phase === 'admission' ? 'blocked' : 'failed');
+        assert.equal(
+          result.result.items[0].mutation,
+          phase === 'admission' ? 'not-attempted' : 'unknown',
+        );
+        assert.equal(h.calls.writes, phase === 'admission' ? 0 : 1);
+        assert.equal(result.diagnostics.errors.length, 1);
+        assert.equal(result.diagnostics.errors[0].retryable, false);
+        const message = result.diagnostics.errors[0].message;
+        assert.match(
+          message,
+          status === 429 ? /429 Too Many Requests/u : /503.*POSSIBLE Connect rate limit/u,
+        );
+        assert.match(message, /Server Retry-After: 17/u);
+        assert.match(message, /no automatic replay/u);
+        assert.doesNotMatch(JSON.stringify(result) + output.join('\n'), /private-|Bearer|<html>/u);
+        if (json) assert.deepEqual(output, []);
+        else assert.equal(output.filter((line) => line.includes(message)).length, 1);
+      });
+
+test('publish ordinary blocked human output remains unchanged', async () => {
+  const h = await harness({ 'allow-processing': false });
+  const output = [];
+  h.command.jsonEnabled = () => false;
+  h.command.log = (line) => output.push(line);
+  await run(h.command);
+  assert.deepEqual(output, [
+    'Publish: blocked.',
+    'blocked: SyntheticPublish__cio; mutation: not-attempted.',
+  ]);
+});
+
 test('publish help preserves separate lifecycle and no scheduling guarantees', () => {
   assert.deepEqual(Publish.aliases, ['datacloud:publish', 'd360:publish', 'dc:publish']);
   assert.match(Publish.description, /--preview is read-only/u);

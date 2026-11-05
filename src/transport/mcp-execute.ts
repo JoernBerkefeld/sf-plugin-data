@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import { connectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import type { ApiVersionSelection } from './api-version.js';
 import { ConnectError } from './connect-client.js';
 
@@ -26,7 +28,7 @@ export type McpMutationOperation =
   | 'd360_ir_delete';
 type Operation = McpReadOperation | McpMutationOperation;
 type JsonObject = Record<string, unknown>;
-type WireResponse = { statusCode: number };
+type WireResponse = { statusCode: number; headers?: unknown };
 type WirePromise = Promise<WireResponse> & { stream: () => unknown };
 type CoreTransport = {
   httpRequest: (...arguments_: unknown[]) => WirePromise;
@@ -543,6 +545,8 @@ export class McpExecuteClient {
     value: unknown,
     observe?: McpReadObserver,
   ): Promise<JsonObject> {
+    let responseStatus: number | undefined;
+    let diagnostic: ConnectDiagnostic | undefined;
     try {
       json(value);
       const parametersJson = JSON.stringify(value);
@@ -556,6 +560,13 @@ export class McpExecuteClient {
         httpRequest: (...arguments_: unknown[]) => {
           const pending = transport.httpRequest(...arguments_);
           const checked = pending.then((response) => {
+            if (
+              Number.isInteger(response?.statusCode) &&
+              response.statusCode >= 400 &&
+              response.statusCode <= 599
+            )
+              responseStatus = response.statusCode;
+            diagnostic = connectDiagnostic(response?.statusCode, response?.headers);
             if (
               !response ||
               !Number.isInteger(response.statusCode) ||
@@ -599,9 +610,16 @@ export class McpExecuteClient {
         typeof error === 'object' &&
         'name' in error &&
         error.name === 'INVALID_SESSION_ID';
-      throw new ConnectError(
-        status === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
-        typeof status === 'number' && status >= 400 && status <= 599 ? status : undefined,
+      const statusCode =
+        typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599
+          ? status
+          : responseStatus;
+      throw retainConnectDiagnostic(
+        new ConnectError(
+          statusCode === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
+          statusCode,
+        ),
+        diagnostic ?? connectDiagnostic(statusCode),
       );
     }
   }

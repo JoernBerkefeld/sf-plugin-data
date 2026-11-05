@@ -9,6 +9,33 @@ import {
 import { settleCalculatedInsight } from '../lib/services/settle-calculated-insight.js';
 import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-document.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
+import {
+  connectDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+for (const status of [429, 503]) {
+  test(`swallowed CI HTTP ${status} acquisition and settlement retain only safe evidence`, async () => {
+    const h = harness();
+    const evidence = connectDiagnostic(status, { 'Retry-After': '42' });
+    h.context.get = async () => {
+      throw retainConnectDiagnostic(new Error('Bearer secret <html>'), evidence);
+    };
+    const acquired = await acquire(h.context);
+    assert.equal(acquired.state, 'unknown');
+    assert.deepEqual(acquired.diagnostics, ['CI_RUNTIME_UNKNOWN']);
+    assert.deepEqual(getConnectDiagnostic(acquired), evidence);
+    const settled = await settle(h);
+    assert.equal(settled.state, 'unknown');
+    assert.deepEqual(getConnectDiagnostic(settled), evidence);
+    assert.doesNotMatch(JSON.stringify({ acquired, settled }), /secret|html|Retry-After/u);
+    assert.equal(h.counts.metadata, 0);
+    const healthy = await acquire(harness().context);
+    assert.equal(healthy.state, 'present');
+    assert.equal(getConnectDiagnostic(healthy), undefined);
+  });
+}
 
 // eslint-disable-next-line unicorn/no-null -- Synthetic native wire profiles require explicit null.
 const nil = null;

@@ -186,7 +186,7 @@ for (const [index, change] of changes.entries())
   });
 
 for (const [operation, execute] of Object.entries(operations)) {
-  for (const statusCode of [operation === 'create' ? 201 : 200, 204, 400, 401, 403, 429, 500])
+  for (const statusCode of [operation === 'create' ? 201 : 200, 204, 400, 401, 403, 429, 500, 503])
     test(`actual core Graph ${operation} HTTP${statusCode} has no refresh or replay`, async () => {
       let calls = 0;
       const connection = Object.assign(Object.create(Connection.prototype), {

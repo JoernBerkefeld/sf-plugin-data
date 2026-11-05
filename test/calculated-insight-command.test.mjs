@@ -1,6 +1,10 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { PassThrough } from 'node:stream';
+import { Connection } from '@salesforce/core';
+import { listNativeNames, listNativeMappingNames } from '../lib/services/select-native-retrieve.js';
+import { createMappingInventoryReader } from '../lib/transport/mapping-rest.js';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -19,6 +23,37 @@ import { documentDependencyNode } from '../lib/artifacts/dependency-selection.js
 import { operationApiVersion } from '../lib/transport/api-version.js';
 import { retrieveCalculatedInsightSourceMetadata } from '../lib/transport/project-metadata.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
+import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+
+for (const status of [429, 503]) {
+  for (const json of [false, true]) {
+    test(`legacy CI retrieve HTTP ${status} safe guidance in ${json ? 'JSON' : 'human'} output`, async () => {
+      const h = retrieve();
+      const output = [];
+      h.command.jsonEnabled = () => json;
+      h.command.log = (line) => output.push(line);
+      h.command.warn = (line) => output.push(line);
+      h.command.acquireCalculatedInsight = async () =>
+        retainConnectDiagnostic(
+          {
+            identity: candidate().identity,
+            blockers: ['CI_ACQUISITION_FAILED'],
+          },
+          connectDiagnostic(status, { 'Retry-After': '31' }),
+        );
+      const envelope = await run(h.command);
+      assert.equal(envelope.diagnostics.errors.length, 1);
+      assert.equal(envelope.diagnostics.errors[0].retryable, false);
+      const message = json ? JSON.stringify(envelope) : output.join('\n');
+      assert.match(
+        message,
+        status === 429 ? /429 Too Many Requests/u : /503.*POSSIBLE Connect rate limit/u,
+      );
+      assert.match(message, /Server Retry-After: 31/u);
+      assert.equal(h.calls.length, 0);
+    });
+  }
+}
 import { executeCalculatedInsightDeploy } from '../lib/services/execute-calculated-insight-deploy.js';
 import { preflightCalculatedInsightDeploy } from '../lib/services/preflight-calculated-insight-deploy.js';
 
@@ -134,6 +169,89 @@ const retrieve = (overrides = {}) => {
   };
   return { command, calls };
 };
+for (const family of ['dlo', 'dmo', 'mapping'])
+  for (const status of [429, 503])
+    for (const retryAfter of ['31', 'private-invalid'])
+      for (const json of [false, true])
+        test(`native ${family} inventory HTTP${status} ${retryAfter} in ${json ? 'JSON' : 'human'} output`, async () => {
+          const h = retrieve({ metadata: [family], 'api-version': '68.0' });
+          const output = [];
+          const requests = [];
+          h.command.listNativeNames = listNativeNames;
+          h.command.listNativeMappingNames = listNativeMappingNames;
+          h.command.createMappingInventoryReader = createMappingInventoryReader;
+          let writes = 0;
+          h.command.jsonEnabled = () => json;
+          h.command.log = (line) => output.push(line);
+          const connection = Object.assign(Object.create(Connection.prototype), {
+            instanceUrl: 'https://synthetic.my.salesforce.com',
+            version: '68.0',
+            accessToken: 'private-token',
+            logger: { getRawLogger: () => ({ debug() {} }) },
+            _propagators: [],
+            _refreshDelegate: {
+              isRefreshing: () => assert.fail('no refresh'),
+              refresh: () => assert.fail('no refresh'),
+            },
+            _transport: {
+              httpRequest(request, options) {
+                requests.push(request);
+                assert.equal(options.retry.maxRetries, 0);
+                const inventory = family === 'mapping' && requests.length === 1;
+                const pending = Promise.resolve({
+                  statusCode: inventory ? 200 : status,
+                  headers: {
+                    'retry-after': retryAfter,
+                    'content-type': 'application/json',
+                    authorization: 'private-header',
+                  },
+                  body: JSON.stringify(
+                    inventory
+                      ? { dataModelObject: [{ name: 'Synthetic__dlm', dataSpaceName: 'default' }] }
+                      : [{ errorCode: 'INTERNAL_ERROR', message: 'Bearer private-body <html>' }],
+                  ),
+                });
+                pending.stream = () => new PassThrough();
+                return pending;
+              },
+            },
+          });
+          h.command.resolveOrg = async () => ({
+            getOrgId: () => 'synthetic',
+            getConnection: (pin) => {
+              assert.equal(pin, '68.0');
+              return connection;
+            },
+          });
+          for (const method of ['writeDlo', 'writeNativeDmo', 'writeNativeMapping'])
+            h.command[method] = async () => {
+              writes++;
+              assert.fail('inventory failure must not write files');
+            };
+          const result = await run(h.command);
+          assert.equal(result.status, 'blocked');
+          assert.deepEqual(result.result.items, []);
+          assert.equal(result.diagnostics.errors.length, 1);
+          assert.equal(result.diagnostics.errors[0].code, 'NATIVE_INVENTORY_FAILED');
+          assert.equal(result.diagnostics.errors[0].retryable, false);
+          const message = json ? JSON.stringify(result) : output.join('\n');
+          assert.match(
+            message,
+            status === 429 ? /429 Too Many Requests/u : /503.*POSSIBLE Connect rate limit/u,
+          );
+          if (retryAfter === '31') assert.match(message, /Server Retry-After: 31/u);
+          else assert.doesNotMatch(message, /Server Retry-After/u);
+          assert.doesNotMatch(
+            JSON.stringify(result) + output.join('\n'),
+            /private-|Bearer|<html>/u,
+          );
+          if (json) assert.deepEqual(output, []);
+          else assert.equal(output.filter((line) => line.includes(`HTTP ${status}`)).length, 1);
+          assert.equal(requests.length, family === 'mapping' ? 2 : 1);
+          if (family === 'mapping') assert.match(requests[1].url, /data-model-object-mappings/u);
+          assert.equal(writes, 0);
+        });
+
 const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
   const cwd = await root();
   const receipts = [];
@@ -261,6 +379,26 @@ const nativeRetrieve = () => {
   command.bindCalculatedInsight = async () => assert.fail('legacy binding');
   return fixture;
 };
+for (const status of [429, 503])
+  for (const json of [false, true])
+    test(`native CI retrieve HTTP${status} retains safe ${json ? 'JSON' : 'human'} diagnostic`, async () => {
+      const h = nativeRetrieve();
+      const logs = [];
+      h.command.jsonEnabled = () => json;
+      h.command.log = (line) => logs.push(line);
+      h.command.warn = (line) => logs.push(line);
+      h.command.acquireExactCalculatedInsight = async () =>
+        retainConnectDiagnostic({ state: 'unknown' }, connectDiagnostic(status));
+      const result = await run(h.command);
+      assert.equal(result.diagnostics.errors.length, 1);
+      assert.equal(result.diagnostics.errors[0].retryable, false);
+      assert.match(
+        json ? JSON.stringify(result) : logs.join('\n'),
+        status === 429 ? /429 Too Many Requests/u : /POSSIBLE Connect rate limit/u,
+      );
+      assert.deepEqual(h.calls, []);
+    });
+
 test('explicit68 retrieve reuses strict paired output and reports independent fixed65 routes', async () => {
   const { command, calls } = nativeRetrieve();
   const result = await run(command);
@@ -473,6 +611,42 @@ async function nativeDeploy(flags = {}, initial = 'absent', names = ['SyntheticI
     });
   return { ...h, inputs, context, states, expressions };
 }
+for (const phase of ['binding', 'fresh', 'execution'])
+  for (const status of [429, 503])
+    test(`CI deploy ${phase} catch retains HTTP${status} diagnostic`, async () => {
+      const h = await nativeDeploy({ draft: true, preview: false, 'allow-processing': true });
+      // eslint-disable-next-line unicorn/consistent-function-scoping -- Bind this regression's exact status evidence.
+      const failure = () => {
+        throw retainConnectDiagnostic(new Error('private-secret'), connectDiagnostic(status));
+      };
+      if (phase === 'binding') h.context.bind = async () => failure();
+      if (phase === 'fresh') {
+        const preview = h.command.preflightCalculatedInsight;
+        let calls = 0;
+        h.command.preflightCalculatedInsight = async (...arguments_) =>
+          ++calls > 1 ? failure() : preview(...arguments_);
+      }
+      if (phase === 'execution') h.command.executeCalculatedInsight = async () => failure();
+      const result = await run(h.command);
+      const diagnostics = [
+        ...result.diagnostics.errors,
+        ...result.result.items.flatMap((item) => [
+          ...item.diagnostics,
+          ...(item.preflight?.diagnostics ?? []),
+        ]),
+      ];
+      assert.ok(
+        diagnostics.some(({ message }) =>
+          status === 429
+            ? message.includes('429 Too Many Requests')
+            : message.includes('POSSIBLE Connect rate limit'),
+        ),
+        JSON.stringify(result),
+      );
+      assert.equal(JSON.stringify(result).includes('private-secret'), false);
+      assert.ok(!h.calls.some((call) => call.startsWith('POST:')));
+    });
+
 test('native68 paired draft creation previews POST and executes once without publication', async () => {
   const h = await nativeDeploy({ draft: true, preview: false, 'allow-processing': true });
   const result = await run(h.command);

@@ -4,6 +4,7 @@ import test from 'node:test';
 import { PassThrough } from 'node:stream';
 import { Connection } from '@salesforce/core';
 import { nativeDataGraphReadContext } from '../lib/services/native-data-graph-context.js';
+import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 
 const orgId = '00D000000000001AAA';
 const origin = 'https://synthetic.my.salesforce.com';
@@ -49,8 +50,8 @@ function fixture() {
             : result;
           const pending = Promise.resolve({
             statusCode: value.statusCode,
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(value.body),
+            headers: { 'content-type': 'application/json', 'retry-after': '9' },
+            body: value.rawBody ?? JSON.stringify(value.body),
           });
           pending.stream = () => new PassThrough();
           return pending;
@@ -94,7 +95,51 @@ test('concrete Graph context independently verifies org then uses exact API68/de
   assert.deepEqual(Object.getOwnPropertyDescriptors(f.connection), descriptors);
 });
 
-for (const statusCode of [400, 401, 403, 404, 429, 500])
+test('Graph HTML503 keeps safe wire evidence but SOQL503 is not Connect evidence', async () => {
+  const f = fixture();
+  const context = await nativeDataGraphReadContext(f.connection, 'default');
+  f.setResult({ statusCode: 503, rawBody: '<html>secret</html>' });
+  await assert.rejects(context.get('SyntheticGraph'), (error) => {
+    assert.deepEqual(getConnectDiagnostic(error), {
+      statusCode: 503,
+      kind: 'service-unavailable',
+      retryAfter: '9',
+    });
+    assert.equal(String(error).includes('secret'), false);
+    return true;
+  });
+  await assert.rejects(context.query('SyntheticGraph'), (error) => {
+    assert.equal(getConnectDiagnostic(error), undefined);
+    return true;
+  });
+  f.setResult({ statusCode: 503, body: [{ errorCode: 'INTERNAL_ERROR', message: 'secret' }] });
+  const result = await context.get('SyntheticGraph');
+  assert.equal(result.status, 503);
+  assert.equal(getConnectDiagnostic(result).kind, 'service-unavailable');
+  assert.equal(getConnectDiagnostic(await context.query('SyntheticGraph')), undefined);
+});
+
+for (const statusCode of [429, 503])
+  for (const html of [false, true])
+    test(`root HTTP${statusCode} html=${html} retains safe evidence before Metadata`, async () => {
+      const f = fixture();
+      const context = await nativeDataGraphReadContext(f.connection, 'default');
+      f.connection.metadata.read = async () => assert.fail('no Metadata after rejected root');
+      f.setResult({
+        statusCode,
+        ...(html
+          ? { rawBody: '<html>private-secret</html>' }
+          : { body: [{ message: 'private-secret' }] }),
+      });
+      await assert.rejects(context.root(), (error) => {
+        assert.equal(getConnectDiagnostic(error).statusCode, statusCode);
+        assert.equal(String(error).includes('private-secret'), false);
+        return true;
+      });
+      assert.equal(f.calls.length, 2);
+    });
+
+for (const statusCode of [400, 401, 403, 404, 429, 500, 503])
   test(`concrete Graph HTTP${statusCode} retains detached exact evidence without replay`, async () => {
     const f = fixture();
     const context = await nativeDataGraphReadContext(f.connection, 'default');

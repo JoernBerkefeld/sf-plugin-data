@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
@@ -52,6 +54,7 @@ export async function publishCalculatedInsight(
   const result = (
     outcome: CalculatedInsightPublishResult['outcome'],
     code?: string,
+    error?: unknown,
   ): CalculatedInsightPublishResult => ({
     family: 'calculated-insight',
     route: { apiVersion: '68.0', method: 'PATCH', resource: 'calculated-insights' },
@@ -66,9 +69,16 @@ export async function publishCalculatedInsight(
       ? [
           {
             code,
-            message: attempted
-              ? 'CI publication may have occurred; no replay or rollback was performed.'
-              : 'CI publication was not attempted; paired input, scope, content, dependencies or intent are unqualified.',
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(
+                  error,
+                  attempted
+                    ? 'CI publication may have occurred.'
+                    : 'CI publication was not attempted.',
+                )
+              : attempted
+                ? 'CI publication may have occurred; no replay or rollback was performed.'
+                : 'CI publication was not attempted; paired input, scope, content, dependencies or intent are unqualified.',
           },
         ]
       : [],
@@ -95,7 +105,7 @@ export async function publishCalculatedInsight(
         !['DRAFT', 'ACTIVE'].includes(acquired.status) ||
         !isDeepStrictEqual(acquired.document, desired)
       )
-        throw new Error('Ownership');
+        throw retainConnectDiagnostic(new Error('Ownership'), getConnectDiagnostic(acquired));
       return acquired;
     };
     await options.verifyInput();
@@ -151,7 +161,7 @@ export async function publishCalculatedInsight(
         });
         check();
         if (settled.state !== 'present' || !isDeepStrictEqual(settled.binding, bound))
-          throw new Error('Settlement');
+          throw retainConnectDiagnostic(new Error('Settlement'), getConnectDiagnostic(settled));
         await options.recordObservation({
           phase: 'settled',
           status: 'ACTIVE',
@@ -170,10 +180,11 @@ export async function publishCalculatedInsight(
       expired = true;
       clearTimeout(timer);
     }
-  } catch {
+  } catch (error) {
     return result(
       attempted ? 'failed' : 'blocked',
       attempted ? 'CI_PUBLICATION_UNCONFIRMED' : 'CI_ADMISSION_FAILED',
+      error,
     );
   }
 }

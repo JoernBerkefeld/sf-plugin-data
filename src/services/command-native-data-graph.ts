@@ -1,3 +1,5 @@
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { isDeepStrictEqual } from 'node:util';
 import { graphRequire } from '../artifacts/data-graph-document.js';
 import { observeNativeDataGraph } from '../artifacts/native-data-graph-document.js';
@@ -25,7 +27,11 @@ export async function retrieveNativeDataGraph(
   context.check();
   const root = await bindNativeGraphRoot(context);
   const read = await context.get(name);
-  graphRequire(read.status === 200);
+  if (read.status !== 200)
+    throw retainConnectDiagnostic(
+      new Error('Native Graph read unavailable'),
+      getConnectDiagnostic(read),
+    );
   const raw = graphRecord(read.body);
   graphRequire(raw.name === name);
   const node = graphRecord(raw.sourceObject);
@@ -65,12 +71,16 @@ export async function retrieveNativeDataGraph(
   });
   const observed = observeNativeDataGraph(raw, document);
   graphRequire(observed.status === 'ready');
-  graphRequire(
-    isDeepStrictEqual(
-      { state: 'present', observation: observed },
-      await acquireNativeDataGraph(context, document),
-    ) && isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
-  );
+  const fresh = await acquireNativeDataGraph(context, document);
+  try {
+    graphRequire(
+      isDeepStrictEqual({ state: 'present', observation: observed }, fresh) &&
+        isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
+    );
+  } catch (error) {
+    if (error instanceof Error) retainConnectDiagnostic(error, getConnectDiagnostic(fresh));
+    throw error;
+  }
   return document;
 }
 
@@ -107,6 +117,7 @@ export async function operateNativeDataGraph(
   },
 ): Promise<NativeGraphOperationResult> {
   let attempted = false;
+  let diagnostic: ConnectDiagnostic | undefined;
   const original = context;
   const end = Date.now() + 120_000;
   let expired = false;
@@ -132,13 +143,20 @@ export async function operateNativeDataGraph(
       return client.delete(name);
     },
   };
+  const acquire = async (
+    document: Parameters<typeof acquireNativeDataGraph>[1],
+  ): Promise<Awaited<ReturnType<typeof acquireNativeDataGraph>>> => {
+    const result = await acquireNativeDataGraph(context, document);
+    diagnostic = getConnectDiagnostic(result) ?? diagnostic;
+    return result;
+  };
   const work = async (): Promise<NativeGraphOperationResult> => {
     context.check();
     const document = validateNativeDataGraphDocument(value);
     const orgId = context.orgId;
     await options.verifyInput();
     const root = await bindNativeGraphRoot(context);
-    const before = await acquireNativeDataGraph(context, document);
+    const before = await acquire(document);
     context.check();
     graphRequire(context.orgId === orgId);
     if (before.state === 'absent' && options.operation === 'delete')
@@ -150,7 +168,7 @@ export async function operateNativeDataGraph(
     ) {
       await options.verifyInput();
       graphRequire(
-        isDeepStrictEqual(before, await acquireNativeDataGraph(context, document)) &&
+        isDeepStrictEqual(before, await acquire(document)) &&
           isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
       );
       return { outcome: 'unchanged', mutation: 'not-attempted' };
@@ -162,7 +180,7 @@ export async function operateNativeDataGraph(
     );
     await options.verifyInput();
     graphRequire(
-      isDeepStrictEqual(before, await acquireNativeDataGraph(context, document)) &&
+      isDeepStrictEqual(before, await acquire(document)) &&
         isDeepStrictEqual(root, await bindNativeGraphRoot(context)) &&
         context.orgId === orgId,
     );
@@ -180,43 +198,48 @@ export async function operateNativeDataGraph(
           if (phase === 'create-attempt')
             graphRequire(
               isDeepStrictEqual(root, await bindNativeGraphRoot(context)) &&
-                isDeepStrictEqual(before, await acquireNativeDataGraph(context, document)),
+                isDeepStrictEqual(before, await acquire(document)),
             );
         },
         safeToDelete: async () => false,
         pause: options.pause,
       });
       const result = await lifecycle.create(true);
-      return {
-        outcome:
-          result.outcome === 'created'
-            ? 'created'
-            : result.outcome === 'unknown'
-              ? 'failed'
-              : 'blocked',
-        mutation:
-          result.outcome === 'created'
-            ? 'confirmed-created'
-            : result.mutation === 'attempted'
-              ? 'unknown'
-              : 'not-attempted',
-      };
+      return retainConnectDiagnostic(
+        {
+          outcome:
+            result.outcome === 'created'
+              ? 'created'
+              : result.outcome === 'unknown'
+                ? 'failed'
+                : 'blocked',
+          mutation:
+            result.outcome === 'created'
+              ? 'confirmed-created'
+              : result.mutation === 'attempted'
+                ? 'unknown'
+                : 'not-attempted',
+        },
+        getConnectDiagnostic(result) ?? diagnostic,
+      );
     }
     // Observation validation requires explicit empty native node/field dependencies and segments.
     // Compare all captured identity/date/definition fields again after local admission, immediately before dispatch.
     await options.verifyInput();
     graphRequire(
-      isDeepStrictEqual(before, await acquireNativeDataGraph(context, document)) &&
+      isDeepStrictEqual(before, await acquire(document)) &&
         isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
     );
     context.check();
     graphRequire(context.orgId === orgId);
     try {
       await writer.delete(document.definition.name as string);
-    } catch {
+    } catch (error) {
+      diagnostic = getConnectDiagnostic(error) ?? diagnostic;
       /* GET-only reconciliation; never replay DELETE. */
     }
     const settled = await settleNativeDataGraph(context, document, 'absent', options.pause);
+    diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
     graphRequire(settled.state === 'absent');
     return { outcome: 'deleted', mutation: 'confirmed-deleted' };
   };
@@ -230,11 +253,14 @@ export async function operateNativeDataGraph(
         }, 120_000);
       }),
     ]);
-  } catch {
-    return {
-      outcome: attempted ? 'failed' : 'blocked',
-      mutation: attempted ? 'unknown' : 'not-attempted',
-    };
+  } catch (error) {
+    return retainConnectDiagnostic(
+      {
+        outcome: attempted ? 'failed' : 'blocked',
+        mutation: attempted ? 'unknown' : 'not-attempted',
+      },
+      getConnectDiagnostic(error) ?? diagnostic,
+    );
   } finally {
     expired = true;
     clearTimeout(timer);

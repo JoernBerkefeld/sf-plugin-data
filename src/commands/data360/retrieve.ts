@@ -1,4 +1,8 @@
 import { nativeDataGraphReadContext } from '../../services/native-data-graph-context.js';
+import {
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../../transport/connect-diagnostic.js';
 import { retrieveNativeDataGraph } from '../../services/command-native-data-graph.js';
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { dataStreamApiVersion, nativeApiVersion } from '../../transport/api-version.js';
@@ -315,13 +319,22 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
     const outputTypes = new Set<string>();
     const errorTypes = new Map<RetrieveEnvelope['diagnostics']['errors'][number], string>();
-    const finish = (status: RetrieveEnvelope['status'], code?: string): RetrieveEnvelope => {
+    const finish = (
+      status: RetrieveEnvelope['status'],
+      code?: string,
+      error?: unknown,
+    ): RetrieveEnvelope => {
       envelope.status = status;
       if (code)
         envelope.diagnostics.errors.push({
           code,
           message:
-            'Retrieval did not complete. Check selection, authenticated org, service capability and output path.',
+            error === undefined
+              ? 'Retrieval did not complete. Check selection, authenticated org, service capability and output path.'
+              : operationDiagnostic(
+                  error,
+                  'Retrieval did not complete. Check selection, authenticated org, service capability and output path.',
+                ),
           retryable: false,
         });
       if (status !== 'success') process.exitCode = 1;
@@ -464,8 +477,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ...receipt,
         });
         return finish('success');
-      } catch {
-        return finish('blocked', 'NATIVE_GRAPH_RETRIEVE_BLOCKED');
+      } catch (error) {
+        return finish('blocked', 'NATIVE_GRAPH_RETRIEVE_BLOCKED', error);
       }
     }
     const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
@@ -548,6 +561,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           error instanceof NativeMappingError || error instanceof DmoRetrieveError
             ? error.code
             : 'NATIVE_INVENTORY_FAILED',
+          error,
         );
       }
       envelope.result.selection = [...selected].flatMap(([family, names]) =>
@@ -681,6 +695,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         return finish(
           'blocked',
           error instanceof NativeDmoError ? error.code : 'DMO_RETRIEVE_FAILED',
+          error,
         );
       }
     }
@@ -863,9 +878,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       envelope.diagnostics.errors.push({
         code,
-        message: apiName
-          ? 'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.'
-          : 'DMO inventory could not be resolved completely; no files were written.',
+        message: getConnectDiagnostic(error)
+          ? operationDiagnostic(
+              error,
+              'This component was not retrieved; no files were written for it.',
+            )
+          : apiName
+            ? 'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.'
+            : 'DMO inventory could not be resolved completely; no files were written.',
         retryable: false,
         ...(apiName ? { identity: { dataSpace: effectiveScope, apiName } } : {}),
       });
@@ -1114,7 +1134,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ? await (async () => {
                 const exact = await this.acquireExactCalculatedInsight(context, apiName);
                 if (exact.state !== 'present' || exact.status !== 'ACTIVE')
-                  throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
+                  throw retainConnectDiagnostic(
+                    new CalculatedInsightError('CI_ACQUISITION_FAILED'),
+                    getConnectDiagnostic(exact),
+                  );
                 return {
                   identity: exact.document.identity,
                   candidate: exact.document,
@@ -1123,7 +1146,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               })()
             : await this.acquireCalculatedInsight(ciConnection, apiName, ciVersion, effectiveScope);
           if (!acquired.candidate || acquired.blockers.length > 0)
-            throw new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED');
+            throw retainConnectDiagnostic(
+              new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED'),
+              getConnectDiagnostic(acquired),
+            );
           if (
             acquired.identity.apiName !== apiName ||
             acquired.identity.dataSpace !== 'default' ||
