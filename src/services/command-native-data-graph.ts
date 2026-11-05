@@ -2,7 +2,10 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { isDeepStrictEqual } from 'node:util';
 import { graphRequire } from '../artifacts/data-graph-document.js';
-import { observeNativeDataGraph } from '../artifacts/native-data-graph-document.js';
+import {
+  observeNativeDataGraph,
+  nativeDataGraphDocumentFromResponse,
+} from '../artifacts/native-data-graph-document.js';
 import { graphRecord } from '../artifacts/data-graph-document.js';
 import { validateNativeDataGraphDocument } from '../artifacts/native-data-graph-document.js';
 import {
@@ -10,6 +13,7 @@ import {
   bindNativeGraphRoot,
   nativeDataGraphLifecycle,
   settleNativeDataGraph,
+  updateNativeDataGraph,
 } from './native-data-graph-crd.js';
 import type { NativeGraphContext } from './native-data-graph-crd.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
@@ -34,41 +38,7 @@ export async function retrieveNativeDataGraph(
     );
   const raw = graphRecord(read.body);
   graphRequire(raw.name === name);
-  const node = graphRecord(raw.sourceObject);
-  graphRequire(Array.isArray(node.fields));
-  const document = validateNativeDataGraphDocument({
-    schemaVersion: 1,
-    kind: 'native-data-graph',
-    apiVersion: '68.0',
-    definition: {
-      name,
-      label: raw.label,
-      description: raw.description,
-      dataspaceName: raw.dataspaceName,
-      primaryObjectName: raw.primaryObjectName,
-      type: 'NONE',
-      sourceObject: {
-        name: node.name,
-        devName: 'Individual',
-        label: node.label,
-        jsonPath: '$',
-        path: [],
-        type: 'standard',
-        relatedObjects: [],
-        fields: node.fields.map((value, index) => {
-          const field = graphRecord(value);
-          return {
-            devName: `Projected${index}`,
-            sourceFieldName: field.sourceFieldName,
-            dataType: 'Text',
-            isKeyColumn: index === 0,
-            isProjected: true,
-            usageTag: index === 1 ? 'KEY_QUALIFIER' : 'NONE',
-          };
-        }),
-      },
-    },
-  });
+  const document = nativeDataGraphDocumentFromResponse(raw);
   const observed = observeNativeDataGraph(raw, document);
   graphRequire(observed.status === 'ready');
   const fresh = await acquireNativeDataGraph(context, document);
@@ -87,8 +57,18 @@ export async function retrieveNativeDataGraph(
 export const nativeGraphLimitations =
   'Native dependency and related-segment arrays are explicitly empty; exhaustive external-consumer exclusion is unverified. Definition absence does not establish generated DMO, mapping or transform cleanup, computation success, storage reclamation or credit savings.';
 export type NativeGraphOperationResult = {
-  outcome: 'create' | 'delete' | 'created' | 'deleted' | 'unchanged' | 'blocked' | 'failed';
-  mutation: 'not-attempted' | 'confirmed-created' | 'confirmed-deleted' | 'unknown';
+  outcome:
+    | 'create'
+    | 'update'
+    | 'delete'
+    | 'created'
+    | 'updated'
+    | 'deleted'
+    | 'unchanged'
+    | 'blocked'
+    | 'failed';
+  mutation:
+    'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'confirmed-deleted' | 'unknown';
 };
 
 /**
@@ -102,6 +82,9 @@ export type NativeGraphOperationResult = {
  * @param {boolean} options.confirmed Explicit processing/deletion acknowledgement.
  * @param {Function} options.verifyInput Re-admit exact local bytes and flags.
  * @param {Function} [options.pause] Read-only polling seam.
+ * @param {Function} [options.now] Injectable monotonic clock.
+ * @param {number} [options.waitTimeoutSeconds] Deploy invocation budget in seconds.
+ * @param {Function} [options.progress] Stderr-only progress sink.
  * @returns {Promise<NativeGraphOperationResult>} Truthful mutation evidence.
  */
 export async function operateNativeDataGraph(
@@ -114,19 +97,37 @@ export async function operateNativeDataGraph(
     confirmed: boolean;
     verifyInput: () => Promise<void>;
     pause?: Parameters<typeof settleNativeDataGraph>[3];
+    now?: () => number;
+    waitTimeoutSeconds?: number;
+    progress?: (message: string) => void;
   },
 ): Promise<NativeGraphOperationResult> {
   let attempted = false;
   let diagnostic: ConnectDiagnostic | undefined;
   const original = context;
-  const end = Date.now() + 120_000;
+  const now = options.now ?? Date.now;
+  const started = now();
+  const budget =
+    options.operation === 'deploy' ? (options.waitTimeoutSeconds ?? 1800) * 1000 : 120_000;
+  const end = started + budget;
+  let previous = started;
   let expired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   context = {
     ...original,
     check: () => {
       original.check();
-      graphRequire(!expired && Date.now() < end && context.orgId === original.orgId);
+      const current = now();
+      graphRequire(
+        !expired &&
+          Number.isFinite(budget) &&
+          budget > 0 &&
+          Number.isFinite(current) &&
+          current >= previous &&
+          current < end &&
+          context.orgId === original.orgId,
+      );
+      previous = current;
     },
   };
   // Guard the actual dispatch, including CREATE delegated to the fixture lifecycle.
@@ -137,6 +138,13 @@ export async function operateNativeDataGraph(
       attempted = true;
       return client.create(definition);
     },
+    update: (name, definition) => {
+      context.check();
+      const update = client.update;
+      graphRequire(typeof update === 'function');
+      attempted = true;
+      return update(name, definition);
+    },
     delete: (name) => {
       context.check();
       attempted = true;
@@ -146,7 +154,7 @@ export async function operateNativeDataGraph(
   const acquire = async (
     document: Parameters<typeof acquireNativeDataGraph>[1],
   ): Promise<Awaited<ReturnType<typeof acquireNativeDataGraph>>> => {
-    const result = await acquireNativeDataGraph(context, document);
+    const result = await acquireNativeDataGraph(context, document, options.operation === 'deploy');
     diagnostic = getConnectDiagnostic(result) ?? diagnostic;
     return result;
   };
@@ -161,17 +169,27 @@ export async function operateNativeDataGraph(
     graphRequire(context.orgId === orgId);
     if (before.state === 'absent' && options.operation === 'delete')
       return { outcome: 'unchanged', mutation: 'not-attempted' };
-    if (
-      before.state === 'present' &&
-      before.observation.status === 'ready' &&
-      options.operation === 'deploy'
-    ) {
-      await options.verifyInput();
-      graphRequire(
-        isDeepStrictEqual(before, await acquire(document)) &&
-          isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
-      );
-      return { outcome: 'unchanged', mutation: 'not-attempted' };
+    if (before.state === 'present' && options.operation === 'deploy') {
+      const outcome = await updateNativeDataGraph(context, writer, document, before.observation, {
+        preview: options.preview,
+        confirmed: options.confirmed,
+        verify: async () => {
+          await options.verifyInput();
+          graphRequire(isDeepStrictEqual(root, await bindNativeGraphRoot(context)));
+        },
+        now,
+        pause:
+          options.pause ??
+          (async (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
+        progress:
+          options.progress ??
+          ((message) => {
+            process.stderr.write(`${message}\n`);
+          }),
+        started,
+        end,
+      });
+      return { outcome, mutation: outcome === 'updated' ? 'confirmed-updated' : 'not-attempted' };
     }
     graphRequire(
       options.operation === 'deploy'
@@ -247,10 +265,18 @@ export async function operateNativeDataGraph(
     return await Promise.race([
       work(),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          expired = true;
-          reject(new Error('Native Graph deadline'));
-        }, 120_000);
+        const schedule = (): void => {
+          if (expired) return;
+          const remaining = end - now();
+          if (remaining <= 0) {
+            expired = true;
+            reject(new Error('Native Graph deadline'));
+            return;
+          }
+          // Node overflows longer delays to 1ms; retain the original invocation deadline.
+          timer = setTimeout(schedule, Math.min(remaining, 2_147_483_647));
+        };
+        schedule();
       }),
     ]);
   } catch (error) {

@@ -144,8 +144,14 @@ export async function nativeDataGraphReadContext(
     metadata: (value) =>
       read(`${graphs}/metadata?dataspace=default&dataGraphEntityName=${name(value)}`),
     inventory: () => read(`${graphs}/metadata?dataspace=default`),
+    dataSpace: () =>
+      query(
+        "SELECT Id, DataSpaceApiName, Status, IsDeleted FROM DataSpace WHERE DataSpaceApiName = 'default' LIMIT 2",
+      ),
     query: (value) =>
-      query(`SELECT Id, DataGraphApiName FROM DataGraph WHERE DataGraphApiName = '${name(value)}'`),
+      query(
+        `SELECT Id, DataGraphApiName, Status, LastRunStatus, Version, DataSpaceId FROM DataGraph WHERE DataGraphApiName = '${name(value)}'`,
+      ),
     root: async () => {
       const rootName = 'ssot__Individual__dlm';
       const detail = await read(`${base}/ssot/data-model-objects/${rootName}?dataspace=default`);

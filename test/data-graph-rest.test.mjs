@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PassThrough } from 'node:stream';
 import { inspect } from 'node:util';
+import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 import { Connection } from '@salesforce/core';
 import {
   buildDataGraphCreateRequest,
@@ -40,9 +41,10 @@ const candidate = () => ({
 const operations = {
   get: (client) => client.get(name),
   create: (client) => client.create(candidate()),
+  update: (client) => client.update(name, candidate()),
   delete: (client) => client.delete(name),
 };
-const verbs = { get: 'GET', create: 'POST', delete: 'DELETE' };
+const verbs = { get: 'GET', create: 'POST', update: 'PUT', delete: 'DELETE' };
 
 test('native Graph binds raw lowercase dataspaceName and exact API68 CRD only', async () => {
   const calls = [];
@@ -59,8 +61,7 @@ test('native Graph binds raw lowercase dataspaceName and exact API68 CRD only', 
     },
   };
   const client = createDataGraphClient(connection, '68.0', 'default');
-  assert.deepEqual(Object.keys(client), ['get', 'create', 'delete']);
-  assert.equal(client.update, undefined);
+  assert.deepEqual(Object.keys(client), ['get', 'create', 'update', 'delete']);
   for (const [operation, execute] of Object.entries(operations))
     assert.equal(await execute(client), operation === 'delete' ? undefined : response);
   assert.deepEqual(calls, [
@@ -68,6 +69,12 @@ test('native Graph binds raw lowercase dataspaceName and exact API68 CRD only', 
     {
       method: 'POST',
       url: endpoint,
+      body: JSON.stringify(candidate()),
+      headers: { 'content-type': 'application/json' },
+    },
+    {
+      method: 'PUT',
+      url: `${endpoint}/${name}`,
       body: JSON.stringify(candidate()),
       headers: { 'content-type': 'application/json' },
     },
@@ -97,7 +104,23 @@ test('native Graph rejects other versions, spaces and route injection without re
   ]) {
     await assert.rejects(client.get(unsafe));
     await assert.rejects(client.delete(unsafe));
+    await assert.rejects(client.update(unsafe, candidate()));
   }
+});
+
+test('native PUT rejects payload identity mismatch and executable shape without dispatch', async () => {
+  const client = createDataGraphClient(
+    { instanceUrl: origin, request: () => assert.fail('unexpected request') },
+    '68.0',
+    'default',
+  );
+  await assert.rejects(client.update('OtherGraph', candidate()));
+  const value = candidate();
+  Object.defineProperty(value.sourceObject.fields[0], 'sourceFieldName', {
+    enumerable: true,
+    get: () => assert.fail('getter'),
+  });
+  await assert.rejects(client.update(name, value));
 });
 
 const changes = [
@@ -204,7 +227,7 @@ for (const [operation, execute] of Object.entries(operations)) {
             calls++;
             assert.equal(request.method, verbs[operation]);
             assert.equal(options.retry.maxRetries, 0);
-            if (operation !== 'create') assert.equal(request.body, undefined);
+            if (!['create', 'update'].includes(operation)) assert.equal(request.body, undefined);
             const pending = Promise.resolve({
               statusCode,
               headers: { 'content-type': 'application/json' },
@@ -236,6 +259,8 @@ for (const [operation, execute] of Object.entries(operations)) {
         await assert.rejects(pending, (error) => {
           assert.equal(error.code, statusCode === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED');
           assert.equal(error.nativeCode, undefined);
+          if ([429, 503].includes(statusCode))
+            assert.equal(getConnectDiagnostic(error).statusCode, statusCode);
           assert.equal(inspect(error).includes('secret detail'), false);
           return true;
         });

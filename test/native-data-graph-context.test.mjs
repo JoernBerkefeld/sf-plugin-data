@@ -77,6 +77,7 @@ test('concrete Graph context independently verifies org then uses exact API68/de
   await context.metadata('SyntheticGraph');
   await context.inventory();
   await context.query('SyntheticGraph');
+  await context.dataSpace();
   assert.deepEqual(await context.root(), {
     detail: { synthetic: true },
     metadata: [{ fullName: 'ssot__Individual__dlm' }],
@@ -88,7 +89,8 @@ test('concrete Graph context independently verifies org then uses exact API68/de
       `${origin}/services/data/v68.0/ssot/data-graphs/SyntheticGraph`,
       `${origin}/services/data/v68.0/ssot/data-graphs/metadata?dataspace=default&dataGraphEntityName=SyntheticGraph`,
       `${origin}/services/data/v68.0/ssot/data-graphs/metadata?dataspace=default`,
-      `${origin}/services/data/v68.0/query?q=${encodeURIComponent("SELECT Id, DataGraphApiName FROM DataGraph WHERE DataGraphApiName = 'SyntheticGraph'")}`,
+      `${origin}/services/data/v68.0/query?q=${encodeURIComponent("SELECT Id, DataGraphApiName, Status, LastRunStatus, Version, DataSpaceId FROM DataGraph WHERE DataGraphApiName = 'SyntheticGraph'")}`,
+      `${origin}/services/data/v68.0/query?q=${encodeURIComponent("SELECT Id, DataSpaceApiName, Status, IsDeleted FROM DataSpace WHERE DataSpaceApiName = 'default' LIMIT 2")}`,
       `${origin}/services/data/v68.0/ssot/data-model-objects/ssot__Individual__dlm?dataspace=default`,
     ],
   );

@@ -1,9 +1,11 @@
 import { dataGraphName, DataGraphError, graphRequire } from '../artifacts/data-graph-document.js';
 import { ConnectClient } from './connect-client.js';
+import { validateNativeDataGraphDocument } from '../artifacts/native-data-graph-document.js';
 
 export type DataGraphClient = {
   get: (apiName: string) => Promise<unknown>;
   create: (definition: unknown) => Promise<unknown>;
+  update?: (apiName: string, definition: unknown) => Promise<unknown>;
   delete: (apiName: string) => Promise<unknown>;
 };
 
@@ -127,13 +129,13 @@ class DataGraphTransport extends ConnectClient {
   /**
    * Send an exact operation with refresh/replay/redirect disabled.
    * @param {string} route Fixed qualified route.
-   * @param {'GET' | 'POST' | 'DELETE'} method Native verb; UPDATE is deliberately absent.
+   * @param {'GET' | 'POST' | 'PUT' | 'DELETE'} method Native single-attempt verb.
    * @param {Record<string, unknown>} [body] Validated create definition only.
    * @returns {Promise<unknown>} Untrusted response, including undefined for HTTP204.
    */
   public async request(
     route: string,
-    method: 'GET' | 'POST' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     body?: Record<string, unknown>,
   ): Promise<unknown> {
     return this.send(
@@ -156,13 +158,13 @@ class DataGraphTransport extends ConnectClient {
  * @param {ConstructorParameters<typeof ConnectClient>[0]} connection Authenticated core receiver.
  * @param {string} apiVersion Explicit qualified numeric version.
  * @param {string} dataSpace Explicit qualified space.
- * @returns {DataGraphClient} Exact operations with no update or automatic retries.
+ * @returns {DataGraphClient} Exact operations without automatic retries.
  */
 export function createDataGraphClient(
   connection: ConstructorParameters<typeof ConnectClient>[0],
   apiVersion: string,
   dataSpace: string,
-): DataGraphClient {
+): DataGraphClient & Required<Pick<DataGraphClient, 'update'>> {
   if (apiVersion !== '68.0' || dataSpace !== 'default')
     throw new DataGraphError('INVALID_NATIVE_DATA_GRAPH_SCOPE');
   const transport = new DataGraphTransport(connection, apiVersion);
@@ -181,6 +183,17 @@ export function createDataGraphClient(
     get: async (apiName) => transport.request(item(apiName), 'GET'),
     create: async (value) =>
       transport.request(endpoint, 'POST', buildDataGraphCreateRequest(value)),
+    update: async (apiName, value) => {
+      const route = item(apiName);
+      const { definition } = validateNativeDataGraphDocument({
+        schemaVersion: 1,
+        kind: 'native-data-graph',
+        apiVersion: '68.0',
+        definition: value,
+      });
+      graphRequire(definition.name === apiName);
+      return transport.request(route, 'PUT', definition);
+    },
     delete: async (apiName) => transport.request(item(apiName), 'DELETE'),
   };
 }

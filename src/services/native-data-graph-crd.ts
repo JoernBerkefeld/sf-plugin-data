@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { graphRecord, graphRequire, graphText } from '../artifacts/data-graph-document.js';
 import {
   nativeGraphFingerprint,
+  nativeDataGraphDocumentFromResponse,
+  buildNativeDataGraphUpdateRequest,
   observeNativeDataGraph,
   validateNativeDataGraphDocument,
 } from '../artifacts/native-data-graph-document.js';
@@ -25,12 +27,29 @@ export type NativeGraphContext = {
   inventory: () => Promise<NativeGraphRead>;
   query: (name: string) => Promise<NativeGraphRead>;
   root: () => Promise<{ detail: unknown; metadata: unknown }>;
+  dataSpace?: () => Promise<NativeGraphRead>;
 };
 export type NativeGraphAcquisition =
   | { state: 'present'; observation: NativeDataGraphObservation }
   | { state: 'absent'; proof: 'item+metadata+inventory+soql' }
   | { state: 'pending' }
   | { state: 'unknown' };
+
+/**
+ * Canonicalize validated keyed root inventories without discarding field properties.
+ * @param {Map<string, Record<string, unknown>>} values Unique field records indexed by name.
+ * @returns {Record<string, unknown>[]} Name-ordered records.
+ */
+function orderedRootFields(
+  values: Map<string, Record<string, unknown>>,
+): Record<string, unknown>[] {
+  return (
+    [...values.entries()]
+      // eslint-disable-next-line unicorn/no-array-sort -- ES2022 target lacks toSorted; entries is newly allocated.
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([, field]) => field)
+  );
+}
 
 /**
  * Independently bind an enabled mapped Standard Individual and its exact primary key/qualifier.
@@ -87,6 +106,9 @@ export async function bindNativeGraphRoot(
       graphRecord(field.mktDataModelFieldAttributes).primaryIndexOrder === '1',
   );
   graphRequire(primary.length === 1 && primary[0][0] === 'ssot__Id__c');
+  // These field inventories are keyed sets, not ordered projections. Preserve every property.
+  detail.fields = orderedRootFields(fields);
+  metadata.fields = orderedRootFields(meta);
   return { id: detail.id, fingerprint: nativeGraphFingerprint(acquired) };
 }
 
@@ -94,11 +116,13 @@ export async function bindNativeGraphRoot(
  * Acquire exact native state. HTTP400 alone is never absence evidence; stale metadata is pending.
  * @param {NativeGraphContext} context Independent exact readers, not mutation responses.
  * @param {NativeDataGraphDocument} document Native intent.
+ * @param {boolean} [baseline] Acquire target independent of desired equality.
  * @returns {Promise<NativeGraphAcquisition>} Correlated state or conservative uncertainty.
  */
 export async function acquireNativeDataGraph(
   context: NativeGraphContext,
   document: NativeDataGraphDocument,
+  baseline = false,
 ): Promise<NativeGraphAcquisition> {
   let diagnostic: ConnectDiagnostic | undefined;
   try {
@@ -108,8 +132,11 @@ export async function acquireNativeDataGraph(
     const item = await context.get(name);
     diagnostic = getConnectDiagnostic(item);
     context.check();
-    if (item.status === 200)
-      return { state: 'present', observation: observeNativeDataGraph(item.body, expected) };
+    if (item.status === 200) {
+      const admitted = baseline ? nativeDataGraphDocumentFromResponse(item.body) : expected;
+      graphRequire(admitted.definition.name === name);
+      return { state: 'present', observation: observeNativeDataGraph(item.body, admitted) };
+    }
     graphRequire(
       item.status === 400 &&
         isDeepStrictEqual(item.body, [
@@ -206,6 +233,272 @@ export async function settleNativeDataGraph(
   } finally {
     expired = true;
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Resolve the authoritative default dataspace once per invocation.
+ * @param {NativeGraphContext} context Bound target readers.
+ * @returns {Promise<string>} Exact active default record identity.
+ */
+export async function bindNativeGraphDataSpace(context: NativeGraphContext): Promise<string> {
+  context.check();
+  graphRequire(typeof context.dataSpace === 'function');
+  const read = await context.dataSpace();
+  context.check();
+  const body = graphRecord(read.body);
+  graphRequire(
+    read.status === 200 &&
+      body.done === true &&
+      body.totalSize === 1 &&
+      Array.isArray(body.records) &&
+      body.records.length === 1,
+  );
+  const row = graphRecord(body.records[0]);
+  graphText(row.Id);
+  graphRequire(
+    row.DataSpaceApiName === 'default' && row.Status === 'ACTIVE' && row.IsDeleted === false,
+  );
+  return row.Id;
+}
+
+/** Independently correlated readiness; metadata version/tree may legitimately lag. */
+export type NativeGraphReadiness = {
+  observation: NativeDataGraphObservation;
+  ready: boolean;
+  status: string;
+};
+
+/**
+ * Read one fresh item/metadata/SOQL tuple without unrelated reads or write replay.
+ * @param {NativeGraphContext} context Bound target readers.
+ * @param {NativeDataGraphDocument} document Exact API name.
+ * @param {string} dataSpaceId Invocation-resolved default identity.
+ * @returns {Promise<NativeGraphReadiness>} Detached independent tuple.
+ */
+export async function readNativeGraphReadiness(
+  context: NativeGraphContext,
+  document: NativeDataGraphDocument,
+  dataSpaceId: string,
+): Promise<NativeGraphReadiness> {
+  const name = document.definition.name as string;
+  context.check();
+  const item = await context.get(name);
+  context.check();
+  if (item.status !== 200)
+    throw retainConnectDiagnostic(
+      new Error('Native Graph item unavailable'),
+      getConnectDiagnostic(item),
+    );
+  const actual = nativeDataGraphDocumentFromResponse(item.body);
+  graphRequire(actual.definition.name === name);
+  const observation = observeNativeDataGraph(item.body, actual);
+  const metadata = await context.metadata(name);
+  context.check();
+  if (metadata.status !== 200)
+    throw retainConnectDiagnostic(
+      new Error('Native Graph metadata unavailable'),
+      getConnectDiagnostic(metadata),
+    );
+  const entries = graphRecord(metadata.body).dataGraphMetadata;
+  graphRequire(Array.isArray(entries) && entries.length === 1);
+  const entry = graphRecord(entries[0]);
+  graphRequire(
+    entry.developerName === name &&
+      entry.dataspaceName === 'default' &&
+      entry.primaryObjectName === actual.definition.primaryObjectName,
+  );
+  graphText(entry.status);
+  const query = await context.query(name);
+  context.check();
+  const rows = graphRecord(query.body);
+  graphRequire(
+    query.status === 200 &&
+      rows.done === true &&
+      rows.totalSize === 1 &&
+      Array.isArray(rows.records) &&
+      rows.records.length === 1,
+  );
+  const row = graphRecord(rows.records[0]);
+  graphRequire(
+    row.Id === observation.id &&
+      row.DataGraphApiName === name &&
+      row.Version === observation.target.version &&
+      row.DataSpaceId === dataSpaceId,
+  );
+  graphText(row.Status);
+  graphText(row.LastRunStatus);
+  return {
+    observation,
+    ready:
+      observation.status === 'ready' &&
+      entry.status === 'Ready' &&
+      row.Status === 'READY' &&
+      row.LastRunStatus === 'ACTIVE',
+    status: `${observation.status}/${entry.status}/${row.Status}/${row.LastRunStatus}`,
+  };
+}
+
+/**
+ * Apply one bound additive/display delta, then reconcile solely with paced GETs.
+ * @param {NativeGraphContext} context Invocation/deadline guarded readers.
+ * @param {DataGraphClient} client Single-attempt guarded writer.
+ * @param {NativeDataGraphDocument} document Authored delta.
+ * @param {NativeDataGraphObservation} baseline Initial independently acquired target.
+ * @param {object} options Shared invocation controls.
+ * @param {boolean} options.preview Zero-write comparison.
+ * @param {boolean} options.confirmed Processing acknowledgement.
+ * @param {Function} options.verify Revalidate bytes/flags/root before final tuple.
+ * @param {Function} options.now Invocation clock.
+ * @param {Function} options.pause Injectable read-only delay.
+ * @param {Function} options.progress Stderr-only progress sink.
+ * @param {number} options.started Invocation start time.
+ * @param {number} options.end Invocation deadline.
+ * @returns {Promise<'update'|'updated'|'unchanged'>} Independent result, never response echo.
+ */
+export async function updateNativeDataGraph(
+  context: NativeGraphContext,
+  client: DataGraphClient,
+  document: NativeDataGraphDocument,
+  baseline: NativeDataGraphObservation,
+  options: {
+    preview: boolean;
+    confirmed: boolean;
+    verify: () => Promise<void>;
+    now: () => number;
+    pause: (milliseconds: number) => Promise<unknown>;
+    progress: (message: string) => void;
+    started: number;
+    end: number;
+  },
+): Promise<'update' | 'updated' | 'unchanged'> {
+  const dataSpaceId = await bindNativeGraphDataSpace(context);
+  const desired = buildNativeDataGraphUpdateRequest(baseline.target, document);
+  const same = isDeepStrictEqual(
+    desired,
+    nativeDataGraphDocumentFromResponse(baseline.target).definition,
+  );
+  if (!same && options.preview) return 'update';
+  if (!same) graphRequire(options.confirmed && typeof client.update === 'function');
+  options.progress(
+    'Data Graph processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load.',
+  );
+  let lastDiagnostic: ConnectDiagnostic | undefined;
+  /**
+   * Wait before every retry under the same invocation deadline.
+   * @param {string} stage Lifecycle stage/status.
+   */
+  const pause = async (stage: string): Promise<void> => {
+    context.check();
+    const header = lastDiagnostic?.retryAfter;
+    const retry =
+      header && /^\d+$/u.test(header)
+        ? Number(header) * 1000
+        : header
+          ? Date.parse(header) - options.now()
+          : 0;
+    const wait = Math.max(20_000, Number.isFinite(retry) ? retry : 0);
+    options.progress(
+      `Data Graph ${stage}; elapsed ${Math.floor((options.now() - options.started) / 1000)}s; next wait ${Math.min(wait, options.end - options.now()) / 1000}s.`,
+    );
+    await options.pause(Math.min(wait, options.end - options.now()));
+    context.check();
+  };
+  /**
+   * Retry only explicit safe GET throttling/service failures; unknown shapes stop.
+   * @param {boolean} [beforeWrite] Revalidate local/root inputs before each fresh prewrite attempt.
+   * @returns {Promise<NativeGraphReadiness>} Fresh readiness tuple.
+   */
+  const read = async (beforeWrite = false): Promise<NativeGraphReadiness> => {
+    for (;;) {
+      if (beforeWrite) await options.verify();
+      context.check();
+      try {
+        return await readNativeGraphReadiness(context, document, dataSpaceId);
+      } catch (error) {
+        const diagnostic = getConnectDiagnostic(error);
+        if (!diagnostic || ![429, 503].includes(diagnostic.statusCode)) throw error;
+        lastDiagnostic = diagnostic;
+        try {
+          await pause(`GET HTTP${diagnostic.statusCode}`);
+        } catch {
+          throw retainConnectDiagnostic(new Error('Native Graph deadline'), diagnostic);
+        }
+      }
+    }
+  };
+  for (;;) {
+    context.check();
+    const fresh = await read(true);
+    graphRequire(fresh.observation.definitionFingerprint === baseline.definitionFingerprint);
+    if (fresh.ready) {
+      if (same) return 'unchanged';
+      const payload = buildNativeDataGraphUpdateRequest(fresh.observation.target, document);
+      graphRequire(isDeepStrictEqual(payload, desired));
+      context.check();
+      const update = client.update;
+      graphRequire(typeof update === 'function');
+      // A rejected/uncertain PUT is never replayed or reported confirmed from a later echo.
+      await update(document.definition.name as string, payload);
+      context.check();
+      break;
+    }
+    await pause(`readiness ${fresh.status}`);
+  }
+  for (;;) {
+    await pause('settlement');
+    const settled = await read();
+    graphRequire(
+      settled.observation.id === baseline.id &&
+        settled.observation.createdDate === baseline.createdDate,
+    );
+    if (settled.ready) {
+      const expected = { ...document, definition: desired };
+      observeNativeDataGraph({ ...settled.observation.target, status: 'ready' }, expected);
+      const actual = nativeDataGraphDocumentFromResponse(settled.observation.target).definition;
+      for (const key of Object.keys(desired).filter((key) => key !== 'sourceObject'))
+        graphRequire(isDeepStrictEqual(actual[key], desired[key]));
+      /**
+       * Match every retained binding; only new projections/nodes may gain generated names.
+       * @param {Record<string, unknown>} wanted Complete dispatched node.
+       * @param {Record<string, unknown>} found Independent settled node.
+       */
+      function preserved(wanted: Record<string, unknown>, found: Record<string, unknown>): void {
+        for (const key of Object.keys(wanted).filter(
+          (key) => !['fields', 'relatedObjects', 'path'].includes(key),
+        ))
+          graphRequire(isDeepStrictEqual(wanted[key], found[key]));
+        const wantedPaths = wanted.path as Record<string, unknown>[];
+        const foundPaths = found.path as Record<string, unknown>[];
+        graphRequire(
+          wantedPaths.length === foundPaths.length &&
+            (wanted.fields as unknown[]).length === (found.fields as unknown[]).length &&
+            (wanted.relatedObjects as unknown[]).length ===
+              (found.relatedObjects as unknown[]).length,
+        );
+        for (const [index, path] of wantedPaths.entries())
+          for (const key of Object.keys(path))
+            graphRequire(isDeepStrictEqual(path[key], foundPaths[index][key]));
+        for (const field of wanted.fields as Record<string, unknown>[]) {
+          const match = (found.fields as Record<string, unknown>[]).find(
+            (candidate) => candidate.sourceFieldName === field.sourceFieldName,
+          );
+          graphRequire(match);
+          for (const key of Object.keys(field))
+            graphRequire(isDeepStrictEqual(field[key], match[key]));
+        }
+        for (const child of wanted.relatedObjects as Record<string, unknown>[]) {
+          const match = (found.relatedObjects as Record<string, unknown>[]).find(
+            (candidate) => candidate.jsonPath === child.jsonPath,
+          );
+          graphRequire(match);
+          preserved(child, match);
+        }
+      }
+      preserved(graphRecord(desired.sourceObject), graphRecord(actual.sourceObject));
+      context.check();
+      return 'updated';
+    }
   }
 }
 

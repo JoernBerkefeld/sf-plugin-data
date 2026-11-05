@@ -322,6 +322,7 @@ for (const command of topics.flatMap((topic) => [
         '--metadata',
         '--source-dir',
         '--changed-since',
+        '--wait-timeout',
         '--preview',
         '--target-org',
         '--api-version',
@@ -405,6 +406,26 @@ test('retrieve parser accepts repeatable exact, type and omitted selectors witho
     },
   );
   assert.equal(JSON.parse(invalid.stdout).result.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
+});
+
+test('deploy wait-timeout parser requires positive integer seconds and help describes native Graph scope', async () => {
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  assert.equal(Deploy.flags['wait-timeout'].min, 1);
+  assert.match(Deploy.description, /default 1800.*at least 20 seconds with stderr progress/u);
+  assert.equal(Deploy.description.includes('native UPDATE is deferred'), false);
+  for (const value of ['0', '-1', '1.5', 'Infinity']) {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', 'data360', 'deploy', '--wait-timeout', value, '--json'],
+      {
+        encoding: 'utf8',
+        env: environment,
+      },
+    );
+    assert.equal(result.status, 2, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(Object.hasOwn(output, 'result'), false);
+  }
 });
 
 test('deploy parser admits repeated non-greedy explicit flags but blocks invalid selections before org work', () => {

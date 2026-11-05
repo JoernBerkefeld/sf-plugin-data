@@ -5,6 +5,8 @@ import { validateDataGraphDocument } from '../lib/artifacts/data-graph-document.
 import {
   observeNativeDataGraph,
   validateNativeDataGraphDocument,
+  nativeDataGraphDocumentFromResponse,
+  buildNativeDataGraphUpdateRequest,
 } from '../lib/artifacts/native-data-graph-document.js';
 import {
   acquireNativeDataGraph,
@@ -179,9 +181,58 @@ function fixture() {
     check() {},
     root: async () => root(),
     get: async () => (graph ? { status: 200, body: structuredClone(graph) } : missing()),
-    metadata: async () => missingMetadata(),
+    metadata: async () =>
+      graph
+        ? {
+            status: 200,
+            body: {
+              dataGraphMetadata: [
+                {
+                  developerName: name,
+                  dataspaceName: 'default',
+                  primaryObjectName: 'ssot__Individual__dlm',
+                  status: 'Ready',
+                  version: 'old',
+                },
+              ],
+            },
+          }
+        : missingMetadata(),
+    dataSpace: async () => ({
+      status: 200,
+      body: {
+        done: true,
+        totalSize: 1,
+        records: [
+          {
+            Id: 'synthetic-default-space',
+            DataSpaceApiName: 'default',
+            Status: 'ACTIVE',
+            IsDeleted: false,
+          },
+        ],
+      },
+    }),
     inventory: async () => ({ status: 200, body: { dataGraphMetadata: [] } }),
-    query: async () => ({ status: 200, body: { done: true, totalSize: 0, records: [] } }),
+    query: async () => ({
+      status: 200,
+      body: {
+        done: true,
+        totalSize: graph ? 1 : 0,
+        records: graph
+          ? [
+              {
+                Id: graph.id,
+                DataGraphApiName: name,
+                Status: 'READY',
+                LastRunStatus: 'ACTIVE',
+                Version: graph.version,
+                DataSpaceId: 'synthetic-default-space',
+              },
+            ]
+          : [],
+      },
+    }),
   };
   const client = {
     get: async () => assert.fail('use independent reader'),
@@ -229,12 +280,13 @@ const options = (operation = 'deploy', overrides = {}) => ({
   confirmed: true,
   verifyInput: async () => {},
   pause: async () => {},
+  progress: () => {},
   ...overrides,
 });
 
 for (const reader of ['root', 'get'])
   test(`public delete deadline bounds unresolved admission ${reader} and forbids late writes`, async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     const f = fixture();
     f.setGraph(runtime());
     const original = f.context[reader];
@@ -260,7 +312,7 @@ for (const reader of ['root', 'get'])
   });
 
 test('late Graph Connect evidence cannot mutate a returned failure or leak into next invocation', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = fixture();
   let release;
   let entered;
@@ -280,7 +332,7 @@ test('late Graph Connect evidence cannot mutate a returned failure or leak into 
     });
   const pending = operateNativeDataGraph(document(), f.context, f.client, options());
   await started;
-  t.mock.timers.tick(120_000);
+  t.mock.timers.tick(1_800_000);
   const result = await pending;
   const message = operationDiagnostic(result, 'stopped');
   release();
@@ -300,7 +352,7 @@ test('late Graph Connect evidence cannot mutate a returned failure or leak into 
 });
 
 test('public delete deadline bounds unresolved DELETE and late acknowledgement never replays', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = fixture();
   f.setGraph(runtime());
   let release;
@@ -574,6 +626,900 @@ test('public native68 retrieve deploy delete route through real services with se
   process.exitCode = 0;
 });
 
+/**
+ * Build detached synthetic recursive native evidence without live org data.
+ * @returns {object} Complete two-hop graph.
+ */
+function recursiveRuntime() {
+  const graph = runtime();
+  graph.version = '3';
+  const address = structuredClone(graph.sourceObject);
+  const account = structuredClone(graph.sourceObject);
+  for (const [index, node] of [address, account].entries()) {
+    node.name = index === 0 ? 'Address__dlm' : 'Account__dlm';
+    node.projectedName = node.name;
+    node.referenceDeveloperName = index === 0 ? 'Address' : 'Account';
+    node.categoryDevName = index === 0 ? 'Related' : 'Profile';
+    node.id = `node-${index}`;
+    node.devName = `GeneratedNode${index}`;
+    node.fragmentDMOName = `Fragment${index}__dlm`;
+    node.jsonPath = `${index === 0 ? '$' : address.jsonPath}.${node.name}`;
+    node.path = [
+      {
+        devName: `GeneratedJoin${index}`,
+        fieldName: 'ssot__Id__c',
+        parentFieldName: 'ssot__Id__c',
+        fieldLabel: 'GET only',
+        parentFieldLabel: 'GET only parent',
+      },
+    ];
+    node.topKFilterCriteria = {
+      limit: 100,
+      orderCriteria: [{ fieldApiName: 'ssot__Id__c', sortOrder: 'desc' }],
+    };
+    for (const [fieldIndex, field] of node.fields.entries()) {
+      field.id = `field-${index}-${fieldIndex}`;
+      field.devName = `Generated${index}Field${fieldIndex}`;
+      field.name = field.devName;
+    }
+  }
+  address.relatedObjects = [account];
+  graph.sourceObject.relatedObjects = [address];
+  return graph;
+}
+
+test('recursive native document and PUT preserve full target bindings and normalize GET-only input', () => {
+  const baseline = recursiveRuntime();
+  const saved = nativeDataGraphDocumentFromResponse(baseline);
+  assert.equal(
+    saved.definition.sourceObject.relatedObjects[0].relatedObjects[0].jsonPath,
+    '$.Address__dlm.Account__dlm',
+  );
+  const authored = structuredClone(saved);
+  authored.definition.label = 'Updated label';
+  authored.definition.description = 'Updated description';
+  authored.definition.sourceObject.devName = 'ForeignNodeHint';
+  authored.definition.sourceObject.fields[0].devName = 'ForeignFieldHint';
+  authored.definition.sourceObject.relatedObjects[0].path[0].devName = 'ForeignJoinHint';
+  authored.definition.sourceObject.fields.push({
+    sourceFieldName: 'ssot__LastName__c',
+    dataType: 'Text',
+    isKeyColumn: false,
+    isProjected: true,
+    usageTag: 'NONE',
+    devName: 'ForeignNewHint',
+  });
+  const request = buildNativeDataGraphUpdateRequest(baseline, authored);
+  assert.equal(request.sourceObject.devName, baseline.sourceObject.devName);
+  assert.equal(request.sourceObject.fields[0].devName, baseline.sourceObject.fields[0].devName);
+  assert.equal(request.sourceObject.fields.at(-1).devName, undefined);
+  assert.equal(request.label, 'Updated label');
+  assert.equal(request.description, 'Updated description');
+  assert.equal(request.fullRefreshConfig.schedule.timeGranularity, 'Day');
+  const child = request.sourceObject.relatedObjects[0];
+  assert.deepEqual(child.path, [
+    { devName: 'GeneratedJoin0', fieldName: 'ssot__Id__c', parentFieldName: 'ssot__Id__c' },
+  ]);
+  assert.equal(child.topKFilterCriteria.orderCriteria[0].sortOrder, 'DESC');
+  assert.equal(child.relatedObjects[0].fragmentDMOName, 'Fragment1__dlm');
+  assert.equal(child.fields[0].keyQualifierName, 'KQ_Id__c');
+  const omitted = structuredClone(saved);
+  omitted.definition.sourceObject.fields.pop();
+  omitted.definition.sourceObject.relatedObjects = [];
+  assert.deepEqual(buildNativeDataGraphUpdateRequest(baseline, omitted), saved.definition);
+  assert.equal(observeNativeDataGraph(baseline, saved).target.version, '3');
+  assert.deepEqual(nativeDataGraphDocumentFromResponse(baseline), saved);
+});
+
+test('native PUT admits genuinely new recursive children without adopting generated hints', () => {
+  const baseline = runtime();
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  const request = buildNativeDataGraphUpdateRequest(baseline, desired);
+  const child = request.sourceObject.relatedObjects[0];
+  assert.equal(child.devName, undefined);
+  assert.equal(child.fragmentDMOName, undefined);
+  assert.equal(child.path[0].devName, undefined);
+  assert.equal(child.relatedObjects[0].fields[0].devName, undefined);
+  assert.equal(child.relatedObjects[0].path[0].parentFieldName, 'ssot__Id__c');
+});
+
+for (const [label, change] of Object.entries({
+  name: (d) => {
+    d.definition.name = 'Different';
+  },
+  root: (d) => {
+    d.definition.primaryObjectName = 'Other__dlm';
+  },
+  qualifier: (d) => {
+    d.definition.sourceObject.fields[0].keyQualifierName = 'Other';
+  },
+  key: (d) => {
+    d.definition.sourceObject.fields[0].isKeyColumn = false;
+  },
+  type: (d) => {
+    d.definition.sourceObject.fields[2].dataType = 'Number';
+  },
+  schedule: (d) => {
+    d.definition.fullRefreshConfig.schedule.frequency = 7;
+  },
+  path: (d) => {
+    d.definition.sourceObject.relatedObjects[0].path[0].parentFieldName = 'Missing';
+  },
+  duplicate: (d) => {
+    d.definition.sourceObject.fields.push(d.definition.sourceObject.fields[2]);
+  },
+  setting: (d) => {
+    d.definition.sourceObject.relatedObjects[0].topKFilterCriteria.limit = 101;
+  },
+  getter: (d) => {
+    Object.defineProperty(d.definition.sourceObject, 'label', {
+      enumerable: true,
+      get: () => assert.fail('getter'),
+    });
+  },
+}))
+  test(`native PUT rejects unsafe ${label} before payload construction`, () => {
+    const baseline = recursiveRuntime();
+    const desired = nativeDataGraphDocumentFromResponse(baseline);
+    change(desired);
+    assert.throws(() => buildNativeDataGraphUpdateRequest(baseline, desired));
+  });
+
+for (const [label, change] of Object.entries({
+  top: (g) => {
+    g.unqualified = true;
+  },
+  duplicateId: (g) => {
+    g.sourceObject.fields[1].id = g.sourceObject.fields[0].id;
+  },
+  node: (g) => {
+    g.sourceObject.unqualified = true;
+  },
+  field: (g) => {
+    g.sourceObject.fields[0].unqualified = true;
+  },
+  path: (g) => {
+    g.sourceObject.relatedObjects[0].path[0].unqualified = true;
+  },
+  recency: (g) => {
+    g.sourceObject.recencyCriteria = [{ unqualified: true }];
+  },
+}))
+  test(`native GET stops on unknown nonvolatile ${label} rather than dropping it`, () => {
+    const baseline = recursiveRuntime();
+    change(baseline);
+    assert.throws(() => nativeDataGraphDocumentFromResponse(baseline));
+  });
+
+/**
+ * Supply fake-clock lifecycle with an independently regenerated server response.
+ * @param {object} [graph] Existing target.
+ * @returns {object} Offline update seams.
+ */
+function updateFixture(graph = recursiveRuntime()) {
+  const f = fixture();
+  f.setGraph(graph);
+  let clock = 0;
+  const waits = [];
+  const progress = [];
+  const payloads = [];
+  const oldGet = f.context.get;
+  const events = [];
+  for (const key of ['get', 'metadata', 'query', 'root', 'dataSpace']) {
+    const original = f.context[key];
+    f.context[key] = async (...arguments_) => {
+      events.push(key);
+      return original(...arguments_);
+    };
+  }
+  f.client.update = async (apiName, payload) => {
+    events.push('PUT');
+    f.calls.push('PUT');
+    assert.equal(apiName, name);
+    payloads.push(structuredClone(payload));
+    const currentRead = await oldGet();
+    const current = currentRead.body;
+    current.label = payload.label;
+    current.description = payload.description;
+    current.version = String(Number(current.version) + 1);
+    /**
+     * Model generated properties only for new fields/nodes.
+     * @param {object} request Dispatched node.
+     * @param {object} actual Current server node.
+     */
+    function merge(request, actual) {
+      for (const field of request.fields) {
+        if (!actual.fields.some((entry) => entry.sourceFieldName === field.sourceFieldName)) {
+          const index = actual.fields.length;
+          actual.fields.push({
+            ...field,
+            id: `${actual.id}-new-${index}`,
+            devName: `NewField${index}`,
+            name: `NewField${index}`,
+            dependency: [],
+          });
+        }
+      }
+      for (const child of request.relatedObjects) {
+        const target = actual.relatedObjects.find((entry) => entry.jsonPath === child.jsonPath);
+        if (target) merge(child, target);
+      }
+    }
+    merge(payload.sourceObject, current.sourceObject);
+    f.setGraph(current);
+    return { accepted: true };
+  };
+  return {
+    ...f,
+    waits,
+    progress,
+    payloads,
+    events,
+    get clock() {
+      return clock;
+    },
+    setClock(value) {
+      clock = value;
+    },
+    intent: options('deploy', {
+      now: () => clock,
+      pause: async (milliseconds) => {
+        waits.push(milliseconds);
+        clock += milliseconds;
+      },
+      progress: (message) => progress.push(message),
+    }),
+  };
+}
+
+for (const json of [false, true])
+  test(`public recursive Graph retrieve/edit/preview/update/repeat keeps ${json ? 'JSON' : 'human'} output truthful`, async (t) => {
+    const cwd = await project();
+    const f = updateFixture();
+    const saved = await retrieveNativeDataGraph(name, f.context);
+    assert.deepEqual(saved, nativeDataGraphDocumentFromResponse(recursiveRuntime()));
+    assert.equal(saved.definition.sourceObject.devName, 'ServerGeneratedNode');
+    assert.equal(saved.definition.sourceObject.relatedObjects[0].relatedObjects.length, 1);
+    const receipt = await writeDataGraphDocument(saved, cwd, false);
+    saved.definition.description = 'Public recursive update';
+    await writeFile(receipt.path, `${JSON.stringify(saved)}\n`);
+    const stdout = [];
+    const stderr = [];
+    t.mock.method(process.stdout, 'write', (message) => {
+      stdout.push(String(message));
+      return true;
+    });
+    t.mock.method(process.stderr, 'write', (message) => {
+      stderr.push(String(message));
+      return true;
+    });
+    const budgets = [];
+    const run = async (flags = {}) => {
+      const command = Object.create(Deploy.prototype);
+      command.parse = async () => ({
+        flags: {
+          'api-version': '68.0',
+          'source-dir': [receipt.path],
+          preview: false,
+          'allow-processing': true,
+          ...flags,
+        },
+      });
+      // Exercise inherited JSON detection and real output methods, not logger stubs.
+      command.argv = json ? ['--json'] : [];
+      command.config = {};
+      assert.equal(command.jsonEnabled(), json);
+      command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+      command.resolveTargetOrg = async () => ({ getConnection: () => ({}) });
+      command.nativeGraphContext = async () => f.context;
+      command.nativeGraphClient = () => f.client;
+      command.operateNativeGraph = (value, context, client, intent) => {
+        budgets.push(intent.waitTimeoutSeconds);
+        return operateNativeDataGraph(value, context, client, {
+          ...intent,
+          now: f.intent.now,
+          pause: f.intent.pause,
+        });
+      };
+      const result = await command.run();
+      if (command.jsonEnabled()) command.logJson(result);
+      return result;
+    };
+    const preview = await run({ preview: true, 'allow-processing': false });
+    assert.equal(preview.result.items[0].outcome, 'update');
+    assert.equal(preview.result.items[0].target, 'present');
+    assert.equal(f.calls.length, 0);
+    const get = f.context.get;
+    let reads = 0;
+    f.context.get = async () => {
+      if (++reads === 2)
+        throw retainConnectDiagnostic(new Error('private-secret'), connectDiagnostic(429, {}));
+      return get();
+    };
+    const updated = await run({ 'wait-timeout': 45 });
+    f.context.get = get;
+    assert.equal(updated.status, 'success');
+    assert.equal(updated.result.items[0].outcome, 'updated');
+    assert.equal(updated.result.items[0].mutation, 'confirmed-updated');
+    assert.deepEqual(f.calls, ['PUT']);
+    assert.deepEqual(
+      f.payloads[0].sourceObject.relatedObjects,
+      buildNativeDataGraphUpdateRequest(recursiveRuntime(), saved).sourceObject.relatedObjects,
+    );
+    const unchanged = await run({ 'allow-processing': false });
+    assert.equal(unchanged.result.items[0].outcome, 'unchanged');
+    assert.equal(unchanged.result.items[0].mutation, 'not-attempted');
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(budgets, [1800, 45, 1800]);
+    assert.match(stderr[0], /seconds to many minutes, up to 30 minutes/u);
+    assert.ok(stderr.some((message) => /GET HTTP429; elapsed 0s; next wait 20s/u.test(message)));
+    assert.equal(stderr.join('').includes('private-secret'), false);
+    assert.equal(JSON.stringify(updated).includes('confirmed-updated'), true);
+    if (json) {
+      assert.deepEqual(
+        stdout.map((message) => JSON.parse(message)),
+        [preview, updated, unchanged],
+      );
+      assert.equal(stdout.join('').includes('Data Graph processing'), false);
+    } else {
+      assert.ok(stdout.some((message) => /Planned update:/u.test(message)));
+      assert.ok(stdout.some((message) => /Updated: data-graph:.*confirmed-updated/u.test(message)));
+      assert.ok(stdout.some((message) => /Unchanged:/u.test(message)));
+    }
+  });
+
+for (const mode of ['timeout', 'preservation', 429, 503])
+  test(`public Graph ${mode} failure keeps progress and mutation evidence in JSON`, async (t) => {
+    const cwd = await project();
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'Public failure check';
+    const receipt = await writeDataGraphDocument(desired, cwd, false);
+    if (mode === 'timeout') {
+      const query = f.context.query;
+      f.context.query = async () => {
+        const read = await query();
+        read.body.records[0].LastRunStatus = 'PROCESSING';
+        return read;
+      };
+    } else if (mode === 'preservation') {
+      const update = f.client.update;
+      f.client.update = async (...arguments_) => {
+        const result = await update(...arguments_);
+        const read = await f.context.get();
+        read.body.sourceObject.relatedObjects = [];
+        f.setGraph(read.body);
+        return result;
+      };
+    } else {
+      f.client.update = async () => {
+        f.calls.push('PUT');
+        throw retainConnectDiagnostic(new Error('private-secret'), connectDiagnostic(mode, {}));
+      };
+    }
+    const stderr = [];
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: {
+        'api-version': '68.0',
+        'source-dir': [receipt.path],
+        preview: false,
+        'allow-processing': true,
+        'wait-timeout': 45,
+      },
+    });
+    command.argv = ['--json'];
+    command.config = {};
+    assert.equal(command.jsonEnabled(), true);
+    t.mock.method(process.stdout, 'write', () => assert.fail('JSON progress must not use stdout'));
+    t.mock.method(process.stderr, 'write', (message) => {
+      stderr.push(String(message));
+      return true;
+    });
+    command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+    command.resolveTargetOrg = async () => ({ getConnection: () => ({}) });
+    command.nativeGraphContext = async () => f.context;
+    command.nativeGraphClient = () => f.client;
+    command.operateNativeGraph = (value, context, client, intent) =>
+      operateNativeDataGraph(value, context, client, {
+        ...intent,
+        now: f.intent.now,
+        pause: f.intent.pause,
+      });
+    const result = await command.run();
+    assert.equal(result.status, mode === 'timeout' ? 'blocked' : 'failed');
+    assert.equal(result.result.items[0].mutation, mode === 'timeout' ? 'not-attempted' : 'unknown');
+    assert.deepEqual(f.calls, mode === 'timeout' ? [] : ['PUT']);
+    assert.match(stderr[0], /seconds to many minutes/u);
+    if (mode === 'timeout') assert.equal(f.clock, 45_000);
+    if (typeof mode === 'number')
+      assert.match(result.diagnostics.errors[0].message, new RegExp(String(mode), 'u'));
+    assert.equal(JSON.stringify(result).includes('private-secret'), false);
+    process.exitCode = 0;
+  });
+
+for (const selection of ['other-family', 'git'])
+  test(`public Graph wait budget rejects ${selection} before auth or Git work`, async () => {
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: {
+        'api-version': '68.0',
+        preview: true,
+        'wait-timeout': 45,
+        ...(selection === 'git' ? { 'changed-since': 'HEAD' } : {}),
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveInputs = async () => [{ path: 'synthetic', document: { kind: 'dmo' } }];
+    command.selectGitInputs = async () => assert.fail('unsupported wait flag precedes Git work');
+    command.resolveTargetOrg = async () => assert.fail('unsupported wait flag precedes auth');
+    const result = await command.run();
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');
+    process.exitCode = 0;
+  });
+
+for (const budget of [0, -1, 1.5, Number.POSITIVE_INFINITY])
+  test(`public Graph invalid wait budget ${budget} blocks before auth`, async () => {
+    const cwd = await project();
+    const receipt = await writeDataGraphDocument(document(), cwd, false);
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: {
+        'api-version': '68.0',
+        'source-dir': [receipt.path],
+        preview: true,
+        'wait-timeout': budget,
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+    command.resolveTargetOrg = async () => assert.fail('local admission must precede auth');
+    const result = await command.run();
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');
+    process.exitCode = 0;
+  });
+
+test('native update fresh tuple binds default once and retains complete recursive target identities', async () => {
+  const graph = recursiveRuntime();
+  const f = updateFixture(graph);
+  const desired = nativeDataGraphDocumentFromResponse(graph);
+  desired.definition.description = 'New description';
+  desired.definition.sourceObject.fields.push({
+    sourceFieldName: 'ssot__LastName__c',
+    dataType: 'Text',
+    isKeyColumn: false,
+    isProjected: true,
+    usageTag: 'NONE',
+  });
+  const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(result, { outcome: 'updated', mutation: 'confirmed-updated' });
+  assert.deepEqual(f.calls, ['PUT']);
+  assert.deepEqual(f.events.slice(f.events.indexOf('PUT') - 3, f.events.indexOf('PUT')), [
+    'get',
+    'metadata',
+    'query',
+  ]);
+  assert.equal(f.events.filter((event) => event === 'dataSpace').length, 1);
+  assert.deepEqual(f.waits, [20_000]);
+  assert.match(
+    f.progress[0],
+    /seconds to many minutes, up to 30 minutes.*objects, fields, data volume and service load/u,
+  );
+  assert.equal(f.payloads[0].sourceObject.relatedObjects[0].path[0].devName, 'GeneratedJoin0');
+  assert.equal(
+    f.payloads[0].sourceObject.relatedObjects[0].relatedObjects[0].fragmentDMOName,
+    'Fragment1__dlm',
+  );
+  const repeat = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(repeat, { outcome: 'unchanged', mutation: 'not-attempted' });
+  assert.equal(f.calls.length, 1);
+});
+
+for (const mode of ['inactive', 'metadata', 'editing'])
+  test(`native update GET-only ${mode} waits beyond legacy limits with progress every retry`, async () => {
+    const graph = runtime();
+    const f = updateFixture(graph);
+    const desired = document();
+    desired.definition.description = 'change';
+    const query = f.context.query;
+    const metadata = f.context.metadata;
+    const get = f.context.get;
+    f.context.query = async () => {
+      const r = await query();
+      if (mode === 'inactive' && f.clock < 400_000)
+        r.body.records[0].LastRunStatus = 'ACTIVE_VERSION_REFRESH';
+      return r;
+    };
+    f.context.metadata = async () => {
+      const r = await metadata();
+      if (mode === 'metadata' && f.clock < 400_000)
+        r.body.dataGraphMetadata[0].status = 'Processing';
+      return r;
+    };
+    f.context.get = async () => {
+      const r = await get();
+      if (mode === 'editing' && f.clock < 400_000) r.body.status = 'editing_post_sync';
+      return r;
+    };
+    const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+    assert.equal(result.outcome, 'updated');
+    assert.equal(f.clock, 420_000);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.waits.length, 21);
+    assert.ok(f.waits.every((wait) => wait === 20_000));
+    assert.equal(f.progress.length, 22);
+  });
+
+for (const [mode, change] of Object.entries({
+  missing: (r) => {
+    r.body.records = [];
+    r.body.totalSize = 0;
+  },
+  ambiguous: (r) => {
+    r.body.records.push(r.body.records[0]);
+    r.body.totalSize = 2;
+  },
+  incomplete: (r) => {
+    r.body.done = false;
+  },
+  name: (r) => {
+    r.body.records[0].DataSpaceApiName = 'other';
+  },
+  inactive: (r) => {
+    r.body.records[0].Status = 'INACTIVE';
+  },
+  deleted: (r) => {
+    r.body.records[0].IsDeleted = true;
+  },
+  error: (r) => {
+    r.status = 403;
+  },
+}))
+  test(`native update authoritative dataspace ${mode} blocks before PUT`, async () => {
+    const f = updateFixture();
+    const original = f.context.dataSpace;
+    f.context.dataSpace = async () => {
+      const r = await original();
+      change(r);
+      return r;
+    };
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, f.intent), {
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+    });
+    assert.deepEqual(f.calls, []);
+  });
+
+for (const mode of [
+  'id',
+  'createdDate',
+  'baseline',
+  'space',
+  'org',
+  'root',
+  'input',
+  'queryVersion',
+  'metadataName',
+])
+  test(`native update final ${mode} drift prevents write`, async () => {
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    const get = f.context.get;
+    let reads = 0;
+    f.context.get = async () => {
+      const r = await get();
+      if (++reads > 1) {
+        if (mode === 'id') r.body.id = 'other';
+        if (mode === 'createdDate') r.body.createdDate = '2026-11-06T00:00:00Z';
+        if (mode === 'baseline') r.body.description = 'concurrent edit';
+        if (mode === 'org') f.context.orgId = '00D000000000002AAA';
+      }
+      return r;
+    };
+    const query = f.context.query;
+    f.context.query = async () => {
+      const r = await query();
+      if (mode === 'space') r.body.records[0].DataSpaceId = 'other';
+      if (mode === 'queryVersion') r.body.records[0].Version = '9';
+      return r;
+    };
+    const metadata = f.context.metadata;
+    f.context.metadata = async () => {
+      const r = await metadata();
+      if (mode === 'metadataName') r.body.dataGraphMetadata[0].developerName = 'other';
+      return r;
+    };
+    const rootRead = f.context.root;
+    let roots = 0;
+    f.context.root = async () => {
+      const r = await rootRead();
+      if (++roots > 1 && mode === 'root') r.detail.id = 'other';
+      return r;
+    };
+    let verifies = 0;
+    const intent = {
+      ...f.intent,
+      verifyInput: async () => {
+        if (++verifies > 1 && mode === 'input') throw new Error('changed');
+      },
+    };
+    assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, intent), {
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+    });
+    assert.deepEqual(f.calls, []);
+  });
+
+for (const seconds of [45, 1800])
+  test(`native update ${seconds}s invocation budget is paced and never dispatches at deadline`, async () => {
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    const query = f.context.query;
+    f.context.query = async () => {
+      const r = await query();
+      r.body.records[0].LastRunStatus = 'PROCESSING';
+      return r;
+    };
+    const intent = seconds === 1800 ? f.intent : { ...f.intent, waitTimeoutSeconds: seconds };
+    assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, intent), {
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+    });
+    assert.equal(f.clock, seconds * 1000);
+    assert.ok(f.waits.slice(0, -1).every((wait) => wait === 20_000));
+    assert.deepEqual(f.calls, []);
+  });
+
+for (const status of [429, 503])
+  test(`native update PUT HTTP${status} is single-attempt unknown with private diagnostics`, async () => {
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    const evidence = connectDiagnostic(status, { 'retry-after': '31' });
+    f.client.update = async () => {
+      f.calls.push('PUT');
+      throw retainConnectDiagnostic(new Error('private-secret'), evidence);
+    };
+    const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+    assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
+    assert.deepEqual(getConnectDiagnostic(result), evidence);
+    assert.deepEqual(f.calls, ['PUT']);
+    assert.equal(JSON.stringify(result).includes('private-secret'), false);
+  });
+
+test('native update safe GET retry honors Retry-After without retrying PUT', async () => {
+  const f = updateFixture();
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  desired.definition.description = 'change';
+  const get = f.context.get;
+  let reads = 0;
+  f.context.get = async () =>
+    ++reads === 2
+      ? retainConnectDiagnostic(
+          { status: 429, body: [] },
+          connectDiagnostic(429, { 'retry-after': '31' }),
+        )
+      : get();
+  const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.equal(result.outcome, 'updated');
+  assert.equal(f.waits[0], 31_000);
+  assert.deepEqual(f.calls, ['PUT']);
+});
+
+for (const stage of ['get', 'PUT'])
+  test(`native update deadline during unresolved ${stage} blocks late continuation and replay`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    let entered;
+    let release;
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    if (stage === 'get') {
+      const get = f.context.get;
+      let reads = 0;
+      f.context.get = async () => {
+        const response = await get();
+        if (++reads === 2)
+          return new Promise((resolve) => {
+            release = () => resolve(response);
+            entered();
+          });
+        return response;
+      };
+    } else {
+      f.client.update = () => {
+        f.calls.push('PUT');
+        entered();
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      };
+    }
+    const pending = operateNativeDataGraph(desired, f.context, f.client, {
+      ...f.intent,
+      waitTimeoutSeconds: 40,
+    });
+    await started;
+    f.setClock(40_000);
+    t.mock.timers.tick(40_000);
+    const result = await pending;
+    assert.deepEqual(
+      result,
+      stage === 'get'
+        ? { outcome: 'blocked', mutation: 'not-attempted' }
+        : { outcome: 'failed', mutation: 'unknown' },
+    );
+    release();
+    for (let turn = 0; turn < 50; turn++) await Promise.resolve();
+    assert.deepEqual(f.calls, stage === 'get' ? [] : ['PUT']);
+    assert.equal(getConnectDiagnostic(result), undefined);
+  });
+
+test('native update revalidation accepts reordered root field inventories without losing properties', async () => {
+  const f = updateFixture();
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  desired.definition.description = 'change';
+  let reads = 0;
+  f.context.root = async () => {
+    const value = root();
+    value.detail.fields.push(
+      { name: 'ssot__BirthDate__c', type: 'DateTime', isMapped: true },
+      { name: 'ssot__BirthDt__c', type: 'Date' },
+    );
+    value.metadata[0].fields.push(
+      { fullName: 'ssot__BirthDate__c', type: 'DateTime' },
+      { fullName: 'ssot__BirthDt__c', type: 'Date' },
+    );
+    if (++reads > 1) {
+      value.detail.fields.reverse();
+      value.metadata[0].fields.reverse();
+    }
+    return value;
+  };
+  assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, f.intent), {
+    outcome: 'updated',
+    mutation: 'confirmed-updated',
+  });
+  assert.deepEqual(f.calls, ['PUT']);
+});
+
+for (const mode of ['property', 'duplicate'])
+  test(`native update root inventory ${mode} still blocks revalidation`, async () => {
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    let reads = 0;
+    f.context.root = async () => {
+      const value = root();
+      value.detail.fields.push({ name: 'ssot__BirthDt__c', type: 'Date' });
+      if (++reads > 1) {
+        value.detail.fields.reverse();
+        if (mode === 'property') value.detail.fields[0].unqualified = true;
+        else value.detail.fields.push({ name: 'ssot__BirthDt__c', type: 'Date' });
+      }
+      return value;
+    };
+    assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, f.intent), {
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+    });
+    assert.deepEqual(f.calls, []);
+  });
+
+for (const stage of ['root', 'get'])
+  test(`native update long deadline chunks unresolved admission ${stage} without late PUT`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    let entered;
+    let release;
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const original = f.context[stage];
+    f.context[stage] = async (...arguments_) => {
+      const response = await original(...arguments_);
+      return new Promise((resolve) => {
+        release = () => resolve(response);
+        entered();
+      });
+    };
+    let settled = false;
+    const pending = operateNativeDataGraph(desired, f.context, f.client, {
+      ...f.intent,
+      waitTimeoutSeconds: 2_147_484,
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await started;
+    const tick = async (milliseconds) => {
+      f.setClock(f.clock + milliseconds);
+      t.mock.timers.tick(milliseconds);
+      for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    };
+    await tick(1);
+    assert.equal(settled, false);
+    await tick(2_147_483_646);
+    assert.equal(settled, false);
+    await tick(352);
+    assert.equal(settled, false);
+    await tick(1);
+    assert.deepEqual(await pending, { outcome: 'blocked', mutation: 'not-attempted' });
+    release();
+    for (let turn = 0; turn < 50; turn++) await Promise.resolve();
+    await tick(2_147_484_000);
+    assert.deepEqual(f.calls, []);
+  });
+
+test('native update settlement admits six-minute editing and confirms only preserved independent bindings', async () => {
+  const f = updateFixture();
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  desired.definition.description = 'change';
+  const get = f.context.get;
+  f.context.get = async () => {
+    const r = await get();
+    if (f.calls.length > 0 && f.clock < 400_000) r.body.status = 'editing_no_version_update';
+    return r;
+  };
+  const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(result, { outcome: 'updated', mutation: 'confirmed-updated' });
+  assert.equal(f.clock, 400_000);
+  assert.equal(f.calls.length, 1);
+});
+
+for (const mode of ['top', 'field', 'path', 'identity', 'malformed'])
+  test(`native update independently rejects postPUT ${mode} drift with one write`, async () => {
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    const get = f.context.get;
+    f.context.get = async () => {
+      const r = await get();
+      if (f.calls.length > 0) {
+        if (mode === 'top') r.body.idDmoName = 'Different__dlm';
+        if (mode === 'identity') r.body.id = 'different';
+        if (mode === 'malformed') r.body.unknown = 'unqualified';
+        if (mode === 'path')
+          r.body.sourceObject.relatedObjects[0].path[0].devName = 'DifferentJoin';
+        if (mode === 'field') {
+          r.body.sourceObject.fields[0].devName = 'DifferentField';
+          r.body.sourceObject.fields[0].name = 'DifferentField';
+        }
+      }
+      return r;
+    };
+    assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, f.intent), {
+      outcome: 'failed',
+      mutation: 'unknown',
+    });
+    assert.deepEqual(f.calls, ['PUT']);
+  });
+
+test('native update preview and missing acknowledgement never dispatch', async () => {
+  for (const preview of [false, true]) {
+    const f = updateFixture();
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    desired.definition.description = 'change';
+    const result = await operateNativeDataGraph(desired, f.context, f.client, {
+      ...f.intent,
+      preview,
+      confirmed: false,
+    });
+    assert.equal(result.outcome, preview ? 'update' : 'blocked');
+    assert.deepEqual(f.calls, []);
+  }
+});
+
 test('native artifact is distinct, detached and binds generated names', () => {
   const input = document();
   const checked = validateNativeDataGraphDocument(input);
@@ -716,6 +1662,7 @@ test('creating metadata404 is not absence; settlement waits for ready and stale 
   );
   assert.equal(reads, 3);
   reads = 0;
+  f.setGraph(undefined);
   f.context.get = async () => missing();
   f.context.metadata = async () => (++reads < 3 ? { status: 200, body: {} } : missingMetadata());
   await expectResult(

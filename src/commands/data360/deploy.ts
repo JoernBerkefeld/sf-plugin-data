@@ -248,7 +248,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing, identical ready configuration is unchanged, and different configuration blocks because native UPDATE is deferred. Native Graph Git, mixed-family selections and dependency expansion are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Native Graph Git, mixed-family selections and dependency expansion are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -297,6 +297,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       default: false,
       summary:
         'Acknowledge qualified stream create/update and Segment/CI/Graph processing and IR publication/generated-output effects.',
+    }),
+    'wait-timeout': Flags.integer({
+      min: 1,
+      summary:
+        'Native Graph-only invocation wait budget in seconds; default 1800, no write retries.',
     }),
     draft: Flags.boolean({
       default: false,
@@ -638,6 +643,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     };
     try {
       const changedSince = flags['changed-since'];
+      if (flags['wait-timeout'] !== undefined && changedSince !== undefined)
+        return finish('blocked', 'INVALID_WAIT_TIMEOUT_SCOPE');
       if (
         changedSince !== undefined &&
         (flags['source-dir'] !== undefined || flags.metadata !== undefined)
@@ -680,6 +687,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const graphInputs = resolvedInputs.filter(
         (input): input is NativeDataGraphDeployInput => input.document.kind === 'native-data-graph',
       );
+      if (
+        flags['wait-timeout'] !== undefined &&
+        (graphInputs.length !== 1 ||
+          resolvedInputs.length !== 1 ||
+          !Number.isSafeInteger(flags['wait-timeout']) ||
+          flags['wait-timeout'] < 1)
+      )
+        return finish('blocked', 'INVALID_WAIT_TIMEOUT_SCOPE');
       if (graphInputs.length > 0) {
         if (
           graphInputs.length !== 1 ||
@@ -692,6 +707,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (!['auto', '68.0'].includes(flags['api-version']) || effectiveScope !== 'default')
           return finish('blocked', 'INVALID_SCOPE');
         const input = graphInputs[0];
+        families.set(input.path, 'data-graph');
         const snapshot = JSON.stringify(flags);
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new Error('Input drift');
@@ -713,6 +729,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             operation: 'deploy',
             preview: flags.preview,
             confirmed: flags['allow-processing'] === true,
+            waitTimeoutSeconds: flags['wait-timeout'] ?? 1800,
+            progress: (message) => {
+              // oclif logToStderr suppresses output in JSON mode; progress must remain visible.
+              process.stderr.write(`${message}\n`);
+            },
             verifyInput,
           },
         );
@@ -732,13 +753,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             outcome:
               result.outcome === 'create'
                 ? 'create'
-                : result.outcome === 'unchanged'
-                  ? 'unchanged'
-                  : 'blocked',
+                : result.outcome === 'update'
+                  ? 'update'
+                  : result.outcome === 'unchanged'
+                    ? 'unchanged'
+                    : 'blocked',
             target:
               result.outcome === 'create'
                 ? 'absent'
-                : result.outcome === 'unchanged'
+                : result.outcome === 'unchanged' || result.outcome === 'update'
                   ? 'present'
                   : 'unknown',
             absenceProof: 'none',
@@ -754,17 +777,21 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             outcome:
               result.outcome === 'created'
                 ? 'created'
-                : result.outcome === 'unchanged'
-                  ? 'unchanged'
-                  : result.outcome === 'failed'
-                    ? 'failed'
-                    : 'blocked',
+                : result.outcome === 'updated'
+                  ? 'updated'
+                  : result.outcome === 'unchanged'
+                    ? 'unchanged'
+                    : result.outcome === 'failed'
+                      ? 'failed'
+                      : 'blocked',
             mutation:
               result.mutation === 'confirmed-created'
                 ? 'confirmed-created'
-                : result.mutation === 'unknown'
-                  ? 'unknown'
-                  : 'not-attempted',
+                : result.mutation === 'confirmed-updated'
+                  ? 'confirmed-updated'
+                  : result.mutation === 'unknown'
+                    ? 'unknown'
+                    : 'not-attempted',
             diagnostics: [],
             routes,
           });
