@@ -38,6 +38,16 @@ export function isNativeMappingDeletionVersion(version: string): boolean {
   return ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0', '68.0'].includes(version);
 }
 
+/**
+ * Keep historical IR deployment pinned until its independent native-write migration.
+ * @param {string} requested Exact user selection.
+ * @returns {string} Historical deployment version.
+ */
+export function legacyIdentityResolutionApiVersion(requested: string): string {
+  if (requested === 'auto' || requested === '67.0') return '67.0';
+  throw new Error('INVALID_SCOPE');
+}
+
 export type OperationalFamily =
   'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
 
@@ -61,7 +71,11 @@ export function operationApiVersion(requested: string, family: OperationalFamily
 
       break;
     }
-    case 'identity-resolution':
+    case 'identity-resolution': {
+      if (requested === 'auto' || requested === '68.0') return '68.0';
+
+      break;
+    }
     case 'data-graph': {
       if (requested === 'auto' || requested === '67.0') return '67.0';
 

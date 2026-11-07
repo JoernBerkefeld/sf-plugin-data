@@ -1004,14 +1004,14 @@ test('mixed CI and IR retrieve acquires CI at API65 before IR shared receiver re
     return { identity: candidate().identity, candidate: candidate(), blockers: [] };
   };
   command.acquireIdentityResolution = async (receiver) => {
-    assert.equal(receiver.getApiVersion(), '67.0');
-    calls.push('ir67');
+    assert.equal(receiver.getApiVersion(), '68.0');
+    calls.push('ir68');
     return { identity: ir.identity, candidate: ir, blockers: [] };
   };
   command.writeIdentityResolution = async () => ({ path: 'ir.json', outcome: 'retrieved' });
   const result = await run(command);
   assert.equal(result.status, 'success');
-  assert.ok(calls.indexOf('ci65') < calls.indexOf('ir67'));
+  assert.ok(calls.indexOf('ci65') < calls.indexOf('ir68'));
 });
 test('CI dependency node keeps actual DMO prerequisite and fixed version rejects upgrades', () => {
   assert.deepEqual(documentDependencyNode(candidate()).dependencies, [

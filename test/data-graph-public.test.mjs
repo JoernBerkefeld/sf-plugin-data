@@ -503,6 +503,8 @@ const deploy = (overrides = {}, mixed = false) => {
 test('public owned Graph deploy orders selected owner, expands opt-in and rebinds only after confirmed settlement', async () => {
   const pair = irFixture();
   const owner = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
+  owner.candidate.spec.trustedSources = [];
+  for (const rule of owner.candidate.spec.reconciliationRules) rule.ruleType = 'LastUpdated';
   const identity = owner.expectations.outputs[0].identity;
   for (const mode of [
     'explicit',
@@ -567,6 +569,8 @@ test('public owned Graph deploy orders selected owner, expands opt-in and rebind
     d.command.captureInput = async () =>
       mode === 'pending-byte' && ++digests > 6 ? 'changed' : 'a'.repeat(64);
     d.command.preflightIdentityResolution = async () => ({
+      family: 'identity-resolution',
+      route: { apiVersion: '68.0', operation: 'identity-resolutions.patch' },
       outcome: 'update',
       target: 'present',
       absenceProof: 'none',

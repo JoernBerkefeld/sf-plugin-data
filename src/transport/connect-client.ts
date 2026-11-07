@@ -1,4 +1,9 @@
 import { Org } from '@salesforce/core';
+import {
+  buildNativeIdentityResolutionCreate,
+  buildNativeIdentityResolutionUpdate,
+  nativeIdentityResolutionDocument,
+} from '../services/preflight-identity-resolution-deploy.js';
 import { connectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
@@ -208,6 +213,43 @@ export class ConnectClient {
         method: 'PATCH',
         url: this.safeUrl(`${this.prefix}calculated-insights/${document.identity.apiName}`),
         body: JSON.stringify({ expression: document.spec.expression }),
+        headers: { 'content-type': 'application/json' },
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
+  /**
+   * Create exactly one native68 IR owner without refresh, replay or redirect.
+   * @param {unknown} value Complete independently admitted portable definition.
+   * @returns {Promise<unknown>} Untrusted response, never settlement evidence.
+   */
+  public async createIdentityResolution(value: unknown): Promise<unknown> {
+    if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
+    return this.send(
+      {
+        method: 'POST',
+        url: this.safeUrl(`${this.prefix}identity-resolutions`),
+        body: JSON.stringify(buildNativeIdentityResolutionCreate(value)),
+        headers: { 'content-type': 'application/json' },
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
+  /**
+   * PATCH the complete preserved input shape on one exact native68 owner; never run processing.
+   * @param {unknown} value Complete independently admitted desired definition.
+   * @returns {Promise<unknown>} Untrusted response, never settlement evidence.
+   */
+  public async patchIdentityResolution(value: unknown): Promise<unknown> {
+    if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
+    const document = nativeIdentityResolutionDocument(value);
+    return this.send(
+      {
+        method: 'PATCH',
+        url: this.safeUrl(`${this.prefix}identity-resolutions/${document.identity.apiName}`),
+        body: JSON.stringify(buildNativeIdentityResolutionUpdate(document)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

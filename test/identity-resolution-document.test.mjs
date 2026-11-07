@@ -2,10 +2,210 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   projectIdentityResolution,
+  projectNativeIdentityResolution,
   serializeIdentityResolutionDocument,
   validateIdentityResolutionDocument,
 } from '../lib/artifacts/identity-resolution-document.js';
-import { irFixture } from './identity-resolution-fixtures.mjs';
+import {
+  expandedNativeIrFixture,
+  irFixture,
+  nativeIrFixture,
+} from './identity-resolution-fixtures.mjs';
+
+test('native68 rejects demonstrated unsupported FirstName case-sensitive matching in documents and readback', () => {
+  const raw = nativeIrFixture();
+  const desired = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
+  desired.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;
+  assert.throws(() => validateIdentityResolutionDocument(desired), {
+    code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
+  });
+  raw.matchRules[0].criteria[0].caseSensitiveMatch = true;
+  assert.throws(() => projectNativeIdentityResolution(raw, raw.objectApiName), {
+    code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
+  });
+});
+
+test('native68 retains empty trustedSources and all admitted definition without private owner/output identities', () => {
+  const raw = nativeIrFixture();
+  const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
+  assert.equal(projection.expectations.facade, undefined);
+  assert.deepEqual(projection.expectations.native, raw);
+  assert.deepEqual(projection.candidate.spec.trustedSources, []);
+  const bytes = serializeIdentityResolutionDocument(projection.candidate);
+  assert.ok(bytes.includes('"trustedSources": []'));
+  for (const secret of [
+    raw.id,
+    raw.rulesetId,
+    ...raw.reconciliationRules.flatMap((r) => [r.unifiedDmoName, r.linkDmoName]),
+  ]) {
+    // The owner suffix is authored identity; private rulesetId is not serialized as a property.
+    if (secret !== raw.rulesetId) assert.equal(bytes.includes(secret), false);
+  }
+  raw.label = 'changed';
+  assert.equal(projection.expectations.native.label, 'Synthetic owner');
+  for (const mutate of [
+    (r) => {
+      delete r.trustedSources;
+    },
+    (r) => {
+      r.trustedSources = [{}];
+    },
+    (r) => {
+      r.trustedSources = {};
+    },
+    (r) => {
+      r.rulesetId = 'Z9y8';
+    },
+    (r) => {
+      r.reconciliationRules[0].ruleType = 'unsupported';
+    },
+    (r) => {
+      r.matchRules[0].criteria[0].matchMethodType = 'Fuzzy';
+    },
+  ]) {
+    const value = nativeIrFixture();
+    mutate(value);
+    assert.throws(() => projectNativeIdentityResolution(value, 'Individual_A1b2'));
+  }
+  const invalid = structuredClone(projection.candidate);
+  invalid.spec.trustedSources = [{}];
+  assert.throws(() => validateIdentityResolutionDocument(invalid));
+});
+
+test('native68 live-shaped GET preserves empty filters and complete raw comparison evidence', () => {
+  const raw = nativeIrFixture();
+  const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
+  assert.deepEqual(projection.candidate.spec.filters, []);
+  assert.deepEqual(projection.expectations.native, raw);
+  assert.deepEqual(
+    validateIdentityResolutionDocument(
+      JSON.parse(serializeIdentityResolutionDocument(projection.candidate)),
+    ),
+    projection.candidate,
+  );
+  const omitted = structuredClone(raw);
+  delete omitted.filters;
+  const normalized = projectNativeIdentityResolution(omitted, omitted.objectApiName);
+  assert.deepEqual(normalized.candidate, projection.candidate);
+  assert.notDeepEqual(normalized.expectations.native, projection.expectations.native);
+  raw.filters.push({ fieldName: 'ssot__FirstName__c', value: 'Meaningful' });
+  assert.deepEqual(projection.expectations.native.filters, []);
+  for (const filters of [raw.filters, {}, undefined, false])
+    assert.throws(() => projectNativeIdentityResolution({ ...raw, filters }, raw.objectApiName), {
+      code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
+    });
+});
+
+test('native68 uses exact optional alphanumeric suffix mapping while historical Graph reads stay four-character', () => {
+  for (const suffix of ['', 'A', 't1', 'Ab3', 'A1b2']) {
+    const raw = nativeIrFixture();
+    raw.objectApiName = suffix ? `Individual_${suffix}` : 'Individual';
+    if (suffix) raw.rulesetId = suffix;
+    else delete raw.rulesetId;
+    const document = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
+    assert.equal(document.identity.apiName, raw.objectApiName);
+    assert.deepEqual(
+      validateIdentityResolutionDocument(JSON.parse(serializeIdentityResolutionDocument(document))),
+      document,
+    );
+    if (suffix.length !== 4) {
+      const pair = irFixture();
+      pair.facade.objectApiName = raw.objectApiName;
+      if (suffix) pair.facade.rulesetId = suffix;
+      else delete pair.facade.rulesetId;
+      pair.native = structuredClone(pair.facade);
+      delete pair.native.filters;
+      assert.throws(() => projectIdentityResolution(pair.facade, pair.native, raw.objectApiName));
+    }
+  }
+  for (const [apiName, suffix] of [
+    ['Individual_', ''],
+    ['Individual', ''],
+    ['Individual', 0],
+    ['Individual_A', undefined],
+    ['Individual_A', 'a'],
+    ['Individual_A1234', 'A1234'],
+    ['Individual_A_b', 'A_b'],
+    ['Individual_A-b', 'A-b'],
+    ['Individual_A ', 'A '],
+  ]) {
+    const raw = nativeIrFixture();
+    raw.objectApiName = apiName;
+    if (suffix === undefined) delete raw.rulesetId;
+    else raw.rulesetId = suffix;
+    assert.throws(() => projectNativeIdentityResolution(raw, apiName));
+  }
+});
+
+const nativeSettings = (r) => ({
+  ruleType: r.ruleType.toLowerCase(),
+  shouldIgnoreEmptyValue: r.shouldIgnoreEmptyValue,
+  sources: r.sources.map((s) => ({ name: s.apiName })),
+});
+test('expanded native GET roundtrips ordered settings into input-shaped semantics without inherited overrides', () => {
+  const raw = expandedNativeIrFixture();
+  const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
+  const saved = JSON.parse(serializeIdentityResolutionDocument(projection.candidate));
+  assert.deepEqual(
+    saved.spec.matchRules.map((r) => ({
+      label: r.label,
+      criteria: r.criteria.map((c) => ({
+        entityName: c.field.parentApiName,
+        fieldName: c.field.apiName,
+        matchMethodType: c.matchMethodType.toLowerCase(),
+        caseSensitiveMatch: c.caseSensitiveMatch,
+        shouldMatchOnBlank: c.shouldMatchOnBlank,
+      })),
+    })),
+    raw.matchRules,
+  );
+  assert.deepEqual(
+    saved.spec.reconciliationRules.map((r) => ({
+      entityName: r.entity.apiName,
+      ...nativeSettings(r),
+      fields: r.fields.map((f) => ({ fieldName: f.field.apiName, ...nativeSettings(f) })),
+    })),
+    raw.reconciliationRules.map((r) => ({
+      entityName: r.entityName,
+      ruleType: r.ruleType,
+      shouldIgnoreEmptyValue: r.shouldIgnoreEmptyValue,
+      sources: r.sources,
+      fields: r.fields,
+    })),
+  );
+  assert.deepEqual(projection.expectations.native, raw);
+  assert.equal(projection.expectations.outputs.length, 12);
+  assert.deepEqual(saved.spec.reconciliationRules[5].fields, []);
+  for (const mutate of [
+    (d) => d.spec.matchRules.push(structuredClone(d.spec.matchRules[0])),
+    (d) => d.spec.matchRules[0].criteria.push(structuredClone(d.spec.matchRules[0].criteria[0])),
+    (d) =>
+      d.spec.reconciliationRules[0].fields.push(
+        structuredClone(d.spec.reconciliationRules[0].fields[0]),
+      ),
+    (d) =>
+      d.spec.reconciliationRules[0].sources.push(
+        structuredClone(d.spec.reconciliationRules[0].sources[0]),
+      ),
+    (d) => {
+      d.spec.reconciliationRules[0].fields[0].unknown = true;
+    },
+    (d) => {
+      d.spec.reconciliationRules[0].sources[0].dataSpace = 'other';
+    },
+  ]) {
+    const invalid = structuredClone(saved);
+    mutate(invalid);
+    assert.throws(() => validateIdentityResolutionDocument(invalid));
+  }
+  const reset = structuredClone(raw);
+  reset.reconciliationRules[0].fields = [];
+  assert.deepEqual(
+    projectNativeIdentityResolution(reset, reset.objectApiName).candidate.spec
+      .reconciliationRules[0].fields,
+    [],
+  );
+});
 
 const project = ({ facade, native } = irFixture()) =>
   projectIdentityResolution(facade, native, 'Individual_A1b2');
@@ -203,7 +403,7 @@ test('IR portable validation refuses identity drift, unknown settings and execut
       d.identity.id = 'source';
     },
     (d) => {
-      d.spec.matchRules[0].criteria.reverse();
+      d.spec.matchRules[0].criteria[0].matchMethodType = 'Unknown';
     },
   ]) {
     const value = structuredClone(document);

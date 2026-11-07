@@ -2,7 +2,11 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { inspect } from 'node:util';
-import { operationApiVersion, resolveApiVersion } from '../lib/transport/api-version.js';
+import {
+  operationApiVersion,
+  resolveApiVersion,
+  legacyIdentityResolutionApiVersion,
+} from '../lib/transport/api-version.js';
 
 test('native DLO auto pins API68 without changing unrelated qualified family routes', () => {
   assert.equal(operationApiVersion('auto', 'dlo'), '68.0');
@@ -11,8 +15,11 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
     assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
   for (const family of ['dmo', 'segment', 'calculated-insight'])
     assert.equal(operationApiVersion('auto', family), '65.0');
-  for (const family of ['identity-resolution', 'data-graph'])
-    assert.equal(operationApiVersion('auto', family), '67.0');
+  assert.equal(operationApiVersion('auto', 'identity-resolution'), '68.0');
+  for (const requested of ['auto', '67.0'])
+    assert.equal(legacyIdentityResolutionApiVersion(requested), '67.0');
+  assert.throws(() => legacyIdentityResolutionApiVersion('68.0'), /INVALID_SCOPE/u);
+  assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
   assert.throws(() => operationApiVersion('67.0', 'ingestion-dlo'), /INVALID_SCOPE/u);
 });
 

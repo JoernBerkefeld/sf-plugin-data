@@ -9,6 +9,13 @@ import {
 import { operationApiVersion } from '../lib/transport/api-version.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
 
+test('IR retrieve help describes native68 routing without claiming installed lifecycle acceptance', () => {
+  assert.match(Retrieve.description, /IR uses native API68 exact owner reads in default space/u);
+  assert.match(Retrieve.description, /auto and explicit numeric68 are supported/u);
+  assert.match(Retrieve.description, /numeric67 is rejected/u);
+  assert.doesNotMatch(Retrieve.description, /IR requires auto or numeric67/u);
+});
+
 const document = (apiName) => {
   const { facade, native } = irFixture();
   facade.objectApiName = apiName;
@@ -28,7 +35,7 @@ const invocation = (overrides = {}) => {
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
   const calls = [];
-  const connection = { getApiVersion: () => '67.0' };
+  const connection = { getApiVersion: () => '68.0' };
   command.resolveOrg = async () => {
     calls.push('org');
     return {
@@ -61,7 +68,7 @@ const invocation = (overrides = {}) => {
   command.acquireIdentityResolution = async (conn, apiName, version, space) => {
     assert.equal(conn, connection);
     assert.equal(space, 'default');
-    assert.deepEqual(version, { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' });
+    assert.deepEqual(version, { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' });
     calls.push(`ir:${apiName}`);
     return {
       identity: { dataSpace: 'default', apiName },
@@ -96,17 +103,20 @@ test('fixed per-family auto routes never discover or reinterpret numeric/latest 
   for (const family of ['dmo', 'segment', 'identity-resolution'])
     assert.equal(
       operationApiVersion('auto', family),
-      family === 'identity-resolution' ? '67.0' : '65.0',
+      family === 'identity-resolution' ? '68.0' : '65.0',
     );
   assert.equal(operationApiVersion('latest', 'dmo'), 'latest');
-  assert.equal(operationApiVersion('67.0', 'identity-resolution'), '67.0');
+  assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
+  assert.equal(operationApiVersion('67.0', 'data-graph'), '67.0');
+  assert.throws(() => operationApiVersion('68.0', 'data-graph'), /INVALID_SCOPE/u);
+  assert.equal(operationApiVersion('68.0', 'identity-resolution'), '68.0');
   for (const [requested, family] of [
     ['65.0', 'identity-resolution'],
     ['latest', 'identity-resolution'],
     ['latest', 'segment'],
-    ['67.0', 'dmo'],
-    ['67.0', 'segment'],
-    ['68.0', 'identity-resolution'],
+    ['68.0', 'dmo'],
+    ['68.0', 'segment'],
+    ['67.0', 'identity-resolution'],
   ])
     assert.throws(() => operationApiVersion(requested, family), /INVALID_SCOPE/u);
 });
@@ -115,14 +125,14 @@ test('IR explicit65/latest, unsupported numeric mixed routes and expansion block
   for (const overrides of [
     { 'api-version': '65.0' },
     { 'api-version': 'latest' },
-    { 'api-version': '68.0' },
+    { 'api-version': '67.0' },
     { metadata: ['identity-resolution'] },
     { metadata: ['identity-resolution:../unsafe'] },
     { dataspace: 'other' },
     { 'include-dependencies': true },
-    { 'api-version': '67.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
+    { 'api-version': '68.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
     {
-      'api-version': '67.0',
+      'api-version': '68.0',
       metadata: ['identity-resolution:Individual_A1b2', 'segment:Audience'],
     },
   ]) {
@@ -135,7 +145,7 @@ test('IR explicit65/latest, unsupported numeric mixed routes and expansion block
 });
 
 test('one/two repeated exact IR names use existing writer with exact identity and per-operation evidence', async () => {
-  for (const requested of ['auto', '67.0']) {
+  for (const requested of ['auto', '68.0']) {
     for (const names of [
       ['Individual_A1b2'],
       ['Individual_Z9y8', 'Individual_A1b2', 'Individual_Z9y8'],
@@ -160,8 +170,7 @@ test('one/two repeated exact IR names use existing writer with exact identity an
       for (const item of result.result.items) {
         assert.equal(item.family, 'identity-resolution');
         assert.deepEqual(item.routes, [
-          { operation: 'd360_ir_get', apiVersion: '67.0', transport: 'facade' },
-          { operation: 'identity-resolutions.get', apiVersion: '65.0', transport: 'native' },
+          { operation: 'identity-resolutions.get', apiVersion: '68.0', transport: 'native' },
         ]);
       }
     }
@@ -178,11 +187,7 @@ test('auto mixed DMO/Segment/IR acquires every family before first publication',
   assert.ok(calls.indexOf('ir:Individual_A1b2') < calls.indexOf('write:Sample__dlm'));
   assert.deepEqual(
     result.result.items.map((item) => item.routes.map((route) => route.apiVersion)),
-    [
-      ['65.0', '65.0'],
-      ['65.0', '65.0'],
-      ['67.0', '65.0'],
-    ],
+    [['65.0', '65.0'], ['65.0', '65.0'], ['68.0']],
   );
 });
 

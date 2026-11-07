@@ -3,15 +3,20 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   IdentityResolutionError,
   projectIdentityResolution,
+  projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../artifacts/identity-resolution-document.js';
 import type { IdentityResolutionOutputIdentity } from '../artifacts/identity-resolution-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
 import type { IdentityResolutionOutputBinding } from './execute-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import { readDmoMetadata } from './retrieve-other-dmo.js';
-import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
+import {
+  retrieveIdentityResolution,
+  retrieveLegacyIdentityResolution,
+} from './retrieve-identity-resolution.js';
 
 type Acquisition = { detail: unknown; metadata: unknown };
 type Acquire = (name: string) => Promise<Acquisition>;
@@ -35,8 +40,8 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Enforce the command's API67 scope while fixing both independent dependency reads at API65.
- * @param {IdentityResolutionTargetConnection} connection Existing API67 connection.
+ * Admit exact native68 binding or the unchanged historical API67 deployment/graph scope.
+ * @param {IdentityResolutionTargetConnection} connection Existing family connection.
  * @param {ApiVersionSelection} selection Explicit family version selection.
  */
 function scope(
@@ -44,26 +49,27 @@ function scope(
   selection: ApiVersionSelection,
 ): void {
   requireProof(
-    selection?.requested === '67.0' &&
-      selection.restSelector === 'v67.0' &&
-      selection.soapNumeric === '67.0' &&
-      connection.getApiVersion() === '67.0',
+    ['67.0', '68.0'].includes(selection?.requested) &&
+      selection.restSelector === `v${selection.requested}` &&
+      selection.soapNumeric === selection.requested &&
+      connection.getApiVersion() === selection.requested,
   );
 }
 
 /**
- * Use an operation-local receiver: never mutate the caller's API67 connection or Metadata client.
- * @param {IdentityResolutionTargetConnection} connection Existing API67 connection.
- * @returns {Acquire} Exact API65 independent reader.
+ * Use an operation-local receiver without mutating the caller's connection or Metadata client.
+ * @param {IdentityResolutionTargetConnection} connection Existing family connection.
+ * @returns {Acquire} Native68 reader, or the historical API65 dependency reader.
  */
 function reader(connection: IdentityResolutionTargetConnection): Acquire {
   return async (name) => {
     const receiver = Object.create(connection) as Parameters<typeof readDmoMetadata>[0];
-    Object.defineProperty(receiver, 'version', { value: '65.0' });
+    const version = connection.getApiVersion() === '68.0' ? '68.0' : '65.0';
+    Object.defineProperty(receiver, 'version', { value: version });
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
     return {
-      detail: await new ConnectClient(connection, '65.0').get(
-        `/services/data/v65.0/ssot/data-model-objects/${name}`,
+      detail: await new ConnectClient(connection, version).get(
+        `/services/data/v${version}/ssot/${name.endsWith('__dll') ? 'data-lake-objects' : 'data-model-objects'}/${name}`,
       ),
       metadata: await readDmoMetadata(receiver, name),
     };
@@ -171,20 +177,76 @@ export async function bindIdentityResolutionDependencies(
   selection = { ...selection };
   scope(connection, selection);
   requireProof(dataSpace === 'default');
+  const acquisitions = new Map<string, Acquisition>();
+  const acquireOnce: Acquire = async (name) => {
+    const cached = acquisitions.get(name);
+    if (cached) return cached;
+    const acquired = await acquire(name);
+    acquisitions.set(name, acquired);
+    return acquired;
+  };
   const bindings = [];
   const ids = new Set<string>();
   for (const rule of document.spec.reconciliationRules) {
     const name = rule.entity.apiName;
     const required = [
-      'ssot__Id__c',
-      ...document.spec.matchRules[0].criteria
-        .filter((item) => item.field.parentApiName === name)
-        .map((item) => item.field.apiName),
+      ...new Set([
+        'ssot__Id__c',
+        ...document.spec.matchRules
+          .flatMap((match) => match.criteria)
+          .filter((item) => item.field.parentApiName === name)
+          .map((item) => item.field.apiName),
+        ...rule.fields.map((override) => override.field.apiName),
+      ]),
     ];
-    const proof = compatible(await acquire(name), name, required);
+    const proof = compatible(await acquireOnce(name), name, required);
     requireProof(!ids.has(proof.id));
     ids.add(proof.id);
-    bindings.push({ identity: rule.entity, ...proof });
+    const priorities = [];
+    for (const settings of [rule, ...rule.fields]) {
+      const sources = [];
+      for (const source of settings.sources) {
+        const acquired = await acquireOnce(source.apiName);
+        const raw = unwrapDlo(acquired.detail);
+        const portable = normalizeDlo(raw, 'default');
+        requireProof(
+          portable.identity.apiName === source.apiName &&
+            raw.status === 'ACTIVE' &&
+            typeof raw.id === 'string' &&
+            raw.id.trim().length > 0,
+        );
+        requireProof(Array.isArray(acquired.metadata) && acquired.metadata.length === 1);
+        const metadata = record(acquired.metadata[0]);
+        requireProof(metadata.fullName === source.apiName);
+        const rawFields = fields(raw.dataLakeFieldInfoRepresentation ?? raw.fields, 'name');
+        const metaFields = fields(metadata.fields, 'fullName');
+        requireProof(rawFields.size === metaFields.size);
+        for (const [name, field] of rawFields) {
+          const metadataType = metaFields.get(name)?.type;
+          // Native DLO Boolean fields are represented as Checkbox in Metadata reads.
+          requireProof(
+            metadataType === field.dataType ||
+              (field.dataType === 'Boolean' && metadataType === 'Checkbox'),
+          );
+        }
+        sources.push({
+          identity: source,
+          targetId: raw.id,
+          fields: portable.spec.fields.map(({ name, dataType, isPrimaryKey }) => ({
+            name,
+            dataType,
+            isPrimaryKey,
+          })),
+        });
+        scope(connection, selection);
+      }
+      priorities.push({ field: 'field' in settings ? settings.field : undefined, sources });
+    }
+    bindings.push({
+      identity: rule.entity,
+      ...proof,
+      ...(priorities.some((entry) => entry.sources.length > 0) ? { priorities } : {}),
+    });
     scope(connection, selection);
   }
   return { fingerprint: createHash('sha256').update(JSON.stringify(bindings)).digest('hex') };
@@ -210,7 +272,9 @@ export async function verifyIdentityResolutionOutputs(
   connection: IdentityResolutionTargetConnection,
   selection: ApiVersionSelection,
   acquire: Acquire = reader(connection),
-  acquireOwner = retrieveIdentityResolution,
+  acquireOwner = connection.getApiVersion() === '68.0'
+    ? retrieveIdentityResolution
+    : retrieveLegacyIdentityResolution,
 ): Promise<IdentityResolutionOutputBinding[]> {
   selection = { ...selection };
   scope(connection, selection);
@@ -234,17 +298,20 @@ export async function verifyIdentityResolutionOutputs(
     'default',
   );
   requireProof(acquired.expectations && acquired.candidate && acquired.blockers.length === 0);
-  const projection = projectIdentityResolution(
-    acquired.expectations.facade,
-    acquired.expectations.native,
-    target.targetApiName,
-  );
+  const projection =
+    selection.requested === '68.0'
+      ? projectNativeIdentityResolution(acquired.expectations.native, target.targetApiName)
+      : projectIdentityResolution(
+          acquired.expectations.facade,
+          acquired.expectations.native,
+          target.targetApiName,
+        );
   const expected = projection.expectations.outputs.map(({ identity, sourceApiName }) => ({
     identity,
     targetApiName: sourceApiName,
   }));
   requireProof(
-    projection.expectations.facade.id === target.targetId && isDeepStrictEqual(requested, expected),
+    projection.expectations.native.id === target.targetId && isDeepStrictEqual(requested, expected),
   );
   const bindings: IdentityResolutionOutputBinding[] = [];
   const ids = new Set<string>([target.targetId]);
@@ -264,11 +331,14 @@ export async function verifyIdentityResolutionOutputs(
   }
   const final = await acquireOwner(connection, target.targetApiName, { ...selection }, 'default');
   requireProof(final.expectations && final.candidate && final.blockers.length === 0);
-  const finalProjection = projectIdentityResolution(
-    final.expectations.facade,
-    final.expectations.native,
-    target.targetApiName,
-  );
+  const finalProjection =
+    selection.requested === '68.0'
+      ? projectNativeIdentityResolution(final.expectations.native, target.targetApiName)
+      : projectIdentityResolution(
+          final.expectations.facade,
+          final.expectations.native,
+          target.targetApiName,
+        );
   requireProof(isDeepStrictEqual(finalProjection, projection));
   scope(connection, selection);
   return bindings;

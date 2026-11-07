@@ -2,16 +2,18 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Deploy from '../lib/commands/data360/deploy.js';
-import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
-import { irFixture } from './identity-resolution-fixtures.mjs';
+import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
+import { preflightNativeIdentityResolutionDeploy } from '../lib/services/preflight-identity-resolution-deploy.js';
+import { expandedNativeIrFixture, nativeIrFixture } from './identity-resolution-fixtures.mjs';
 
 const ir = (name = 'Individual_A1b2') => {
-  const { facade, native } = irFixture();
-  facade.objectApiName = native.objectApiName = name;
+  const native = nativeIrFixture();
+  native.objectApiName = name;
+  native.rulesetId = name.slice('Individual_'.length);
   return {
     path: `${name}.json`,
     inputDigest: 'a'.repeat(64),
-    document: projectIdentityResolution(facade, native, name).candidate,
+    document: projectNativeIdentityResolution(native, name).candidate,
   };
 };
 const dmo = {
@@ -22,9 +24,8 @@ const preview = (family, outcome = 'update') => ({
   ...(family === 'identity-resolution'
     ? {
         family,
-        route: { apiVersion: '67.0', operation: 'd360_ir_update' },
-        requiredEffects:
-          outcome === 'update' ? ['publication', 'generated-output-provisioning'] : [],
+        route: { apiVersion: '68.0', operation: 'identity-resolutions.patch' },
+        requiredEffects: outcome === 'update' ? ['processing'] : [],
       }
     : {}),
   outcome,
@@ -63,9 +64,9 @@ const setup = (overrides = {}, selected = [ir()]) => {
     return 'stable';
   };
   command.preflightIdentityResolution = async (document, conn, selection, space) => {
-    assert.equal(conn.getApiVersion(), '67.0');
+    assert.equal(conn.getApiVersion(), '68.0');
     assert.equal(connection.getApiVersion(), '65.0');
-    assert.deepEqual(selection, { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' });
+    assert.deepEqual(selection, { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' });
     assert.equal(space, 'default');
     calls.push(`preview:${document.identity.apiName}`);
     return preview('identity-resolution');
@@ -81,17 +82,11 @@ const setup = (overrides = {}, selected = [ir()]) => {
   command.executeIdentityResolution = async (document, conn, selection, space, options) => {
     await options.verifyInput();
     assert.equal(options.allowProcessing, true);
-    await options.recordPoll({
-      attempt: 0,
-      timestamp: 1,
-      statusPresent: true,
-      statusType: 'string',
-      statusValue: 'PUBLISHING',
-    });
+    assert.equal(options.allowGeneratedOutputProvisioning, true);
     calls.push(`ir-write:${document.identity.apiName}`);
     return {
       family: 'identity-resolution',
-      route: { apiVersion: '67.0', operation: 'd360_ir_update' },
+      route: { apiVersion: '68.0', operation: 'identity-resolutions.patch' },
       outcome: 'updated',
       mutation: 'confirmed-updated',
       diagnostics: [],
@@ -114,13 +109,10 @@ test('IR auto mixed preview is read-only and reports operation versions and publ
   assert.equal(result.status, 'success');
   assert.equal(result.metadata.apiVersion, 'auto');
   assert.equal(result.result.items.length, 2);
-  assert.deepEqual(result.result.items[1].requiredEffects, [
-    'publication',
-    'generated-output-provisioning',
-  ]);
+  assert.deepEqual(result.result.items[1].requiredEffects, ['processing']);
   assert.deepEqual(
     result.result.items[1].routes.map(({ apiVersion }) => apiVersion),
-    ['67.0', '65.0', '65.0', '67.0'],
+    ['68.0', '68.0', '68.0', '68.0'],
   );
   assert.ok(!calls.some((call) => call.includes('write')));
 });
@@ -184,7 +176,9 @@ test('IR numeric65/latest/unsupported mixed numeric67 and dependency expansion b
   for (const [flags, selected, code] of [
     [{ 'api-version': '65.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': 'latest' }, [ir()], 'INVALID_SCOPE'],
-    [{ 'api-version': '67.0' }, [ir(), dmo], 'INVALID_SCOPE'],
+    [{ 'api-version': '67.0' }, [ir()], 'INVALID_SCOPE'],
+    [{ 'api-version': '69.0' }, [ir()], 'INVALID_SCOPE'],
+    [{ 'api-version': '68.0' }, [ir(), dmo], 'INVALID_SCOPE'],
     [{ dataspace: 'other' }, [ir()], 'INVALID_SCOPE'],
     [
       { 'include-dependencies': true },
@@ -200,17 +194,15 @@ test('IR numeric65/latest/unsupported mixed numeric67 and dependency expansion b
   }
 });
 
-test('IR numeric67 existing-owner execution keeps native65 reads separate and records private poll', async () => {
-  const { command, calls } = setup({ 'api-version': '67.0' });
-  const result = await run(command);
-  assert.equal(result.status, 'success');
-  assert.ok(calls.includes('ir-write:Individual_A1b2'));
-  assert.equal(
-    command.identityResolutionPolls.get('Individual_A1b2.json')[0].statusValue,
-    'PUBLISHING',
-  );
-  assert.ok(!JSON.stringify(result).includes('PUBLISHING'));
-  assert.equal(result.result.items[0].mutation, 'confirmed-updated');
+test('IR auto/API68 existing-owner execution uses only native68 and processing effects', async () => {
+  for (const requested of ['auto', '68.0']) {
+    const { command, calls } = setup({ 'api-version': requested });
+    const result = await run(command);
+    assert.equal(result.status, 'success');
+    assert.ok(calls.includes('ir-write:Individual_A1b2'));
+    assert.equal(result.result.items[0].route.apiVersion, '68.0');
+    assert.equal(result.result.items[0].mutation, 'confirmed-updated');
+  }
 });
 
 test('missing processing acknowledgement or late IR binding failure prevents earlier DMO mutation', async () => {
@@ -274,7 +266,7 @@ test('IR no-op batch executes no mutations or Metadata jobs and needs no effects
     await options.verifyInput();
     return {
       family: 'identity-resolution',
-      route: { apiVersion: '67.0', operation: 'd360_ir_update' },
+      route: { apiVersion: '68.0', operation: 'identity-resolutions.patch' },
       outcome: 'unchanged',
       mutation: 'not-attempted',
       diagnostics: [],
@@ -284,6 +276,179 @@ test('IR no-op batch executes no mutations or Metadata jobs and needs no effects
   assert.equal(result.status, 'success');
   assert.equal(result.result.items[0].mutation, 'not-attempted');
   assert.ok(!calls.some((call) => call.includes('write')));
+});
+
+const createPreview = () => ({
+  ...preview('identity-resolution', 'create'),
+  target: 'absent',
+  absenceProof: 'exact-item-not-found',
+  route: { apiVersion: '68.0', operation: 'identity-resolutions.post' },
+  requiredEffects: ['processing', 'generated-output-provisioning'],
+  precreateBinding: { phase: 'precreate', fingerprint: 'a'.repeat(64) },
+});
+
+test('public native CREATE preview and execution acknowledge generated provisioning with existing flag', async () => {
+  for (const requested of ['auto', '68.0'])
+    for (const previewOnly of [true, false])
+      for (const acknowledged of [true, false]) {
+        const { command, calls } = setup({
+          'api-version': requested,
+          preview: previewOnly,
+          'allow-processing': acknowledged,
+        });
+        command.preflightIdentityResolution = async () => createPreview();
+        command.executeIdentityResolution = async (_, conn, selection, space, options) => {
+          assert.equal(conn.getApiVersion(), '68.0');
+          assert.equal(selection.soapNumeric, '68.0');
+          assert.equal(space, 'default');
+          assert.equal(options.allowProcessing, true);
+          assert.equal(options.allowGeneratedOutputProvisioning, true);
+          await options.verifyInput();
+          calls.push('create');
+          return {
+            family: 'identity-resolution',
+            route: createPreview().route,
+            outcome: 'created',
+            mutation: 'confirmed-created',
+            diagnostics: [],
+          };
+        };
+        const result = await run(command);
+        assert.equal(result.status, previewOnly || acknowledged ? 'success' : 'blocked');
+        assert.equal(calls.includes('create'), !previewOnly && acknowledged);
+        assert.deepEqual(result.result.items[0].requiredEffects, [
+          'processing',
+          'generated-output-provisioning',
+        ]);
+        assert.equal(result.result.items[0].route.operation, 'identity-resolutions.post');
+      }
+});
+
+test('CREATE target appearance or input binding drift prevents earlier mixed batch mutation', async () => {
+  for (const drift of ['owner', 'input']) {
+    const { command, calls } = setup({}, [dmo, ir()]);
+    let previews = 0;
+    command.preflightIdentityResolution = async () =>
+      ++previews === 1 || drift !== 'owner'
+        ? createPreview()
+        : preview('identity-resolution', 'unchanged');
+    let bindings = 0;
+    command.bindIdentityResolution = async () =>
+      ++bindings === 1 ? 'precreate' : drift === 'owner' ? 'precreate' : `${drift}-changed`;
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.ok(!calls.some((call) => call.includes('write')));
+    assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+  }
+});
+
+test('public CREATE binding hashes absence and current inputs without enumeration or output lookup', async () => {
+  const { command } = setup();
+  command.preflightIdentityResolution = async () => createPreview();
+  const bind = () =>
+    Deploy.prototype.bindIdentityResolution.call(
+      command,
+      ir(),
+      { getApiVersion: () => '68.0', request: () => assert.fail('No predicted output reads') },
+      { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
+    );
+  const first = await bind();
+  assert.equal(await bind(), first);
+  command.preflightIdentityResolution = async () => ({
+    ...createPreview(),
+    precreateBinding: { ...createPreview().precreateBinding, fingerprint: 'b'.repeat(64) },
+  });
+  assert.notEqual(await bind(), first);
+});
+
+test('public CREATE binding succeeds with exact absence and compatible inputs but no enumeration', async () => {
+  const { command } = setup();
+  let gets = 0;
+  command.preflightIdentityResolution = (document, connection, selection, space) =>
+    preflightNativeIdentityResolutionDeploy(document, connection, selection, space, {
+      verifyDependencies: async () => {},
+      verifyPrecreateInputs: async () => ({ fingerprint: 'a'.repeat(64) }),
+    });
+  const connection = {
+    instanceUrl: 'https://synthetic.example.com',
+    getApiVersion: () => '68.0',
+    request: async (request) => {
+      gets++;
+      assert.equal(request.method, 'GET');
+      assert.equal(request.url.endsWith('/identity-resolutions/Individual_A1b2'), true);
+      throw {
+        statusCode: 404,
+        name: 'ITEM_NOT_FOUND',
+        errorCode: 'ITEM_NOT_FOUND',
+        data: { errorCode: 'ITEM_NOT_FOUND', message: 'No owner' },
+      };
+    },
+  };
+  const fingerprint = await Deploy.prototype.bindIdentityResolution.call(
+    command,
+    ir(),
+    connection,
+    {
+      requested: '68.0',
+      restSelector: 'v68.0',
+      soapNumeric: '68.0',
+    },
+  );
+  assert.match(fingerprint, /^[a-f0-9]{64}$/u);
+  assert.equal(gets, 1);
+});
+
+test('legacy IR documents require explicit migration before any target access', async () => {
+  const input = ir();
+  delete input.document.spec.trustedSources;
+  const { command, calls } = setup({}, [input]);
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(
+    result.diagnostics.errors[0].code,
+    'IDENTITY_RESOLUTION_TRUSTED_SOURCES_MIGRATION_REQUIRED',
+  );
+  assert.deepEqual(calls, []);
+});
+
+test('public FirstName case-sensitive matching rejects before any target access or mutation', async () => {
+  const input = ir();
+  input.document.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;
+  const { command, calls } = setup({}, [input]);
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(calls, []);
+});
+
+test('public rich IR admission retains complete supported settings and existing argv', async () => {
+  const input = ir();
+  input.document = projectNativeIdentityResolution(
+    expandedNativeIrFixture(),
+    input.document.identity.apiName,
+  ).candidate;
+  const { command, calls } = setup({}, [input]);
+  command.preflightIdentityResolution = async (document) => {
+    assert.deepEqual(document, input.document);
+    return preview('identity-resolution');
+  };
+  command.executeIdentityResolution = async (document, _connection, selection, space, options) => {
+    assert.deepEqual(document, input.document);
+    assert.equal(selection.requested, '68.0');
+    assert.equal(space, 'default');
+    assert.equal(options.allowProcessing, true);
+    await options.verifyInput();
+    calls.push('rich-write');
+    return {
+      family: 'identity-resolution',
+      route: preview('identity-resolution').route,
+      outcome: 'updated',
+      mutation: 'confirmed-updated',
+      diagnostics: [],
+    };
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(calls.includes('rich-write'), true);
 });
 
 test('Git IR snapshots cannot disappear or be rebound to changed bytes before routing', async () => {

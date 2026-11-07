@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { projectIdentityResolution } from '../artifacts/identity-resolution-document.js';
 import type { IdentityResolutionOutputIdentity } from '../artifacts/identity-resolution-document.js';
 import { verifyIdentityResolutionOutputs } from './bind-identity-resolution-dependencies.js';
-import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
+import { retrieveLegacyIdentityResolution as retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 import {
   graphRecord,
   graphRequire,
@@ -91,7 +91,7 @@ export async function bindDataGraphDependencies(
     const outputs = await verifyIdentityResolutionOutputs(
       {
         targetApiName: root.owner.apiName,
-        targetId: projection.expectations.facade.id as string,
+        targetId: projection.expectations.native.id as string,
         dataSpace: 'default',
       },
       projection.expectations.outputs.map(({ identity, sourceApiName }) => ({

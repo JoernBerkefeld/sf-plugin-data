@@ -14,7 +14,7 @@ import { McpExecuteClient } from '../transport/mcp-execute.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { preflightIdentityResolutionDeploy } from './preflight-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
-import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
+import { retrieveLegacyIdentityResolution as retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 import {
   bindIdentityResolutionDependencies,
   verifyIdentityResolutionOutputs,
@@ -201,7 +201,7 @@ export async function executeIdentityResolutionDeploy(
         await verifyOutputs(
           {
             targetApiName,
-            targetId: projection.expectations.facade.id as string,
+            targetId: projection.expectations.native.id as string,
             dataSpace: 'default',
           },
           structuredClone(expected),
@@ -310,6 +310,7 @@ export async function executeIdentityResolutionDeploy(
       },
     };
     const expected = structuredClone(fresh.expectations.facade);
+    if (!expected) throw new Error('Legacy deployment projection required');
     (expected.reconciliationRules as Array<Record<string, unknown>>)[0].ruleType = 'mostfrequent';
     const started = now();
     if (!Number.isFinite(started)) throw new Error('Invalid clock');

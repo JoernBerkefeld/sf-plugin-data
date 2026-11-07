@@ -63,20 +63,19 @@ import {
   operationApiVersion,
   resolveApiVersion,
 } from '../../transport/api-version.js';
-import { preflightIdentityResolutionDeploy } from '../../services/preflight-identity-resolution-deploy.js';
-import type { IdentityResolutionDeployPreview } from '../../services/preflight-identity-resolution-deploy.js';
-import { executeIdentityResolutionDeploy } from '../../services/execute-identity-resolution-deploy.js';
-import type {
-  IdentityResolutionDeployExecution,
-  IdentityResolutionPollEvidence,
-} from '../../services/execute-identity-resolution-deploy.js';
+import {
+  preflightNativeIdentityResolutionDeploy,
+  nativeIdentityResolutionDocument,
+} from '../../services/preflight-identity-resolution-deploy.js';
+import type { NativeIdentityResolutionPreview as IdentityResolutionDeployPreview } from '../../services/preflight-identity-resolution-deploy.js';
+import { executeNativeIdentityResolutionDeploy } from '../../services/execute-native-identity-resolution-deploy.js';
+import type { NativeIdentityResolutionDeployExecution as IdentityResolutionDeployExecution } from '../../services/execute-native-identity-resolution-deploy.js';
 import { createHash } from 'node:crypto';
 import { retrieveIdentityResolution } from '../../services/retrieve-identity-resolution.js';
 import {
   bindIdentityResolutionDependencies,
   verifyIdentityResolutionOutputs,
 } from '../../services/bind-identity-resolution-dependencies.js';
-import { validateIdentityResolutionDocument } from '../../artifacts/identity-resolution-document.js';
 import type {
   DeployInput,
   IdentityResolutionDeployInput,
@@ -248,7 +247,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Native Graph Git, mixed-family selections and dependency expansion are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates and existing-owner IR reconciliation updates require --allow-processing; IR also acknowledges publication and generated-output provisioning. Exact IR requires auto or numeric67, while mixed IR/legacy selections require auto. Segment and IR creation remain blocked. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Native Graph Git, mixed-family selections and dependency expansion are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment updates require --allow-processing; Segment creation remains blocked. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Legacy IR documents must be explicitly migrated by retrieval. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. Mixed IR/legacy selections require auto. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -296,7 +295,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     'allow-processing': Flags.boolean({
       default: false,
       summary:
-        'Acknowledge qualified stream create/update and Segment/CI/Graph processing and IR publication/generated-output effects.',
+        'Acknowledge qualified stream create/update and Segment/CI/Graph/IR processing; IR CREATE also provisions generated outputs.',
     }),
     'wait-timeout': Flags.integer({
       min: 1,
@@ -449,13 +448,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   protected captureInput = captureDeployInputDigest;
   protected execute = executeDmoDeploy;
   protected executeSegment = executeSegmentDeploy;
-  protected preflightIdentityResolution = preflightIdentityResolutionDeploy;
-  protected executeIdentityResolution = executeIdentityResolutionDeploy;
+  protected preflightIdentityResolution = preflightNativeIdentityResolutionDeploy;
+  protected executeIdentityResolution = executeNativeIdentityResolutionDeploy;
   protected verifyIdentityResolutionInput = verifyIdentityResolutionInputDigest;
   /**
-   * Bind complete existing owner dependencies and generated outputs before any batch mutation.
+   * Bind exact CREATE absence or independently settled owner/outputs before batch mutation.
    * @param {IdentityResolutionDeployInput} input Immutable authored IR input.
-   * @param {Connection} connection Fixed API67 operation receiver.
+   * @param {Connection} connection Fixed API68 operation receiver.
    * @param {ApiVersionSelection} selection Fixed per-operation selection.
    * @returns {Promise<string>} Private stable target fingerprint.
    */
@@ -464,6 +463,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     connection: Connection,
     selection: ApiVersionSelection,
   ): Promise<string> {
+    const preview = await this.preflightIdentityResolution(
+      input.document,
+      connection,
+      selection,
+      'default',
+    );
+    if (preview.outcome === 'create')
+      return createHash('sha256')
+        .update(
+          JSON.stringify({
+            phase: 'precreate',
+            absenceProof: preview.absenceProof,
+            binding: preview.precreateBinding,
+          }),
+        )
+        .digest('hex');
+    if (!['update', 'unchanged'].includes(preview.outcome))
+      throw new Error('IR target binding unavailable');
     const dependencies = await bindIdentityResolutionDependencies(
       input.document,
       connection,
@@ -481,7 +498,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     const outputs = await verifyIdentityResolutionOutputs(
       {
         targetApiName: input.document.identity.apiName,
-        targetId: acquired.expectations.facade.id as string,
+        targetId: acquired.expectations.native.id as string,
         dataSpace: 'default',
       },
       acquired.expectations.outputs.map(({ identity, sourceApiName }) => ({
@@ -491,24 +508,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       connection,
       selection,
     );
-    return createHash('sha256').update(JSON.stringify({ dependencies, outputs })).digest('hex');
-  }
-  protected identityResolutionPolls?: Map<string, IdentityResolutionPollEvidence[]>;
-
-  /**
-   * Preserve bounded private status observations before executor classification, never in results.
-   * @param {string} key Exact local selected input path.
-   * @param {IdentityResolutionPollEvidence} evidence Private status-only observation.
-   * @returns {Promise<void>} Resolves after detached preservation.
-   */
-  protected async recordIdentityResolutionPoll(
-    key: string,
-    evidence: IdentityResolutionPollEvidence,
-  ): Promise<void> {
-    this.identityResolutionPolls ??= new Map();
-    const observations = this.identityResolutionPolls.get(key) ?? [];
-    observations.push(structuredClone(evidence));
-    this.identityResolutionPolls.set(key, observations);
+    return createHash('sha256')
+      .update(
+        JSON.stringify({ phase: 'existing', dependencies, owner: acquired.expectations, outputs }),
+      )
+      .digest('hex');
   }
 
   /**
@@ -1108,8 +1112,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
       if (hasDlos) {
         try {
-          for (const input of admitted)
-            operationApiVersion(flags['api-version'], input.document.kind);
+          for (const input of admitted) {
+            if (input.document.kind === 'identity-resolution')
+              operationApiVersion(flags['api-version'], 'identity-resolution');
+            else operationApiVersion(flags['api-version'], input.document.kind);
+          }
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1141,8 +1148,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const hasDataGraphs = admitted.some((input) => input.document.kind === 'data-graph');
       if (hasDataGraphs) {
         try {
-          for (const input of admitted)
-            operationApiVersion(flags['api-version'], input.document.kind);
+          for (const input of admitted) {
+            if (input.document.kind === 'identity-resolution')
+              operationApiVersion(flags['api-version'], 'identity-resolution');
+            else operationApiVersion(flags['api-version'], input.document.kind);
+          }
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1181,8 +1191,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       );
       if (hasCalculatedInsights) {
         try {
-          for (const input of admitted)
-            operationApiVersion(flags['api-version'], input.document.kind);
+          for (const input of admitted) {
+            if (input.document.kind === 'identity-resolution')
+              operationApiVersion(flags['api-version'], 'identity-resolution');
+            else operationApiVersion(flags['api-version'], input.document.kind);
+          }
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1255,11 +1268,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       ? 'dlo'
                       : 'dmo';
           try {
-            operationApiVersion(flags['api-version'], family);
+            if (family === 'identity-resolution')
+              operationApiVersion(flags['api-version'], 'identity-resolution');
+            else operationApiVersion(flags['api-version'], family);
           } catch {
             return finish('blocked', 'INVALID_SCOPE');
           }
-          if (family === 'identity-resolution') validateIdentityResolutionDocument(input.document);
+          if (family === 'identity-resolution') {
+            try {
+              nativeIdentityResolutionDocument(input.document);
+            } catch (error) {
+              return finish(
+                'blocked',
+                error instanceof Error && /^IDENTITY_RESOLUTION_[A-Z0-9_]+$/u.test(error.message)
+                  ? error.message
+                  : 'INVALID_SOURCE',
+              );
+            }
+          }
         }
         if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
         if (flags['include-dependencies'] && !hasDataGraphs)
@@ -1385,9 +1411,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       };
       await verifyInputs();
       const familySelection = (input: DeployInput): ApiVersionSelection =>
-        input.document.kind === 'dlo'
+        input.document.kind === 'dlo' || input.document.kind === 'identity-resolution'
           ? Object.freeze({ requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' })
-          : input.document.kind === 'identity-resolution' || input.document.kind === 'data-graph'
+          : input.document.kind === 'data-graph'
             ? Object.freeze({ requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' })
             : selection;
       const routes = (input: DeployInput): ExecutionItem['routes'] =>
@@ -1408,18 +1434,42 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               ]
             : input.document.kind === 'identity-resolution'
               ? [
-                  { operation: 'd360_ir_get', apiVersion: '67.0', transport: 'facade' },
                   {
                     operation: 'identity-resolutions.get',
-                    apiVersion: '65.0',
+                    apiVersion: '68.0',
                     transport: 'native',
                   },
                   {
-                    operation: 'dependency-and-output.metadata',
-                    apiVersion: '65.0',
+                    operation:
+                      irAdmissions.get(input.path)?.outcome === 'create'
+                        ? 'dependency.get'
+                        : 'dependency-and-output.get',
+                    apiVersion: '68.0',
+                    transport: 'native',
+                  },
+                  {
+                    operation:
+                      irAdmissions.get(input.path)?.outcome === 'create'
+                        ? 'dependency.metadata'
+                        : 'dependency-and-output.metadata',
+                    apiVersion: '68.0',
                     transport: 'metadata',
                   },
-                  { operation: 'd360_ir_update', apiVersion: '67.0', transport: 'facade' },
+                  ...(irAdmissions.get(input.path)?.outcome === 'create'
+                    ? [
+                        {
+                          operation: 'data-model-objects.list',
+                          apiVersion: '68.0',
+                          transport: 'native' as const,
+                        },
+                      ]
+                    : []),
+                  {
+                    operation:
+                      irAdmissions.get(input.path)?.route.operation ?? 'identity-resolutions.patch',
+                    apiVersion: '68.0',
+                    transport: 'native',
+                  },
                 ]
               : input.document.kind === 'calculated-insight' && flags['api-version'] === '68.0'
                 ? [
@@ -1493,7 +1543,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         });
         return finish('blocked');
       }
-      envelope.metadata.soapApiVersion = selection.soapNumeric;
+      envelope.metadata.soapApiVersion = inputs.every(
+        (input) => input.document.kind === 'identity-resolution',
+      )
+        ? '68.0'
+        : selection.soapNumeric;
       try {
         if (
           inputs.some(
@@ -1525,8 +1579,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         )
           return connection;
         const receiver = Object.create(connection) as Connection;
-        Object.defineProperty(receiver, 'version', { value: '67.0' });
-        Object.defineProperty(receiver, 'getApiVersion', { value: () => '67.0' });
+        const version = familySelection(input).soapNumeric;
+        Object.defineProperty(receiver, 'version', { value: version });
+        Object.defineProperty(receiver, 'getApiVersion', { value: () => version });
         Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
         return receiver;
       };
@@ -1548,6 +1603,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (prior !== undefined && prior !== fingerprint) throw new Error('Graph binding drift');
         graphBindings.set(input.path, fingerprint);
       };
+      const irAdmissions = new Map<string, IdentityResolutionDeployPreview>();
       const irBindings = new Map<string, string>();
       const verifyIrBinding = async (input: DeployInput): Promise<void> => {
         if (input.document.kind !== 'identity-resolution') return;
@@ -1646,7 +1702,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 !(preview as DataGraphDeployPreview).requiredEffects.includes('processing'))
             ) {
               blocked = true;
-              preview.diagnostics.push({
+              (preview.diagnostics as Array<{ code: string; message: string }>).push({
                 code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                 message:
                   'Graph processing requires explicit --allow-processing. No batch writes were attempted.',
@@ -1655,21 +1711,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           }
           if (input.document.kind === 'identity-resolution') {
             await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
-            if (preview.outcome === 'update' || preview.outcome === 'unchanged')
+            irAdmissions.set(input.path, preview as IdentityResolutionDeployPreview);
+            if (['create', 'update', 'unchanged'].includes(preview.outcome))
               await verifyIrBinding(input);
-            const effects = (preview as IdentityResolutionDeployPreview).requiredEffects;
+            const effects: readonly string[] = (preview as IdentityResolutionDeployPreview)
+              .requiredEffects;
             if (
               !flags.preview &&
-              preview.outcome === 'update' &&
+              (preview.outcome === 'create' || preview.outcome === 'update') &&
               (flags['allow-processing'] !== true ||
-                !effects?.includes('publication') ||
-                !effects.includes('generated-output-provisioning'))
+                !effects?.includes('processing') ||
+                (preview.outcome === 'create' &&
+                  !effects.includes('generated-output-provisioning')))
             ) {
               blocked = true;
-              preview.diagnostics.push({
+              (preview.diagnostics as Array<{ code: string; message: string }>).push({
                 code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                 message:
-                  'IR publication and generated effects require explicit --allow-processing. No batch writes were attempted.',
+                  'IR processing and CREATE generated-output provisioning require explicit --allow-processing. No batch writes were attempted.',
               });
             }
           }
@@ -1684,7 +1743,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 !(preview as CalculatedInsightPreview).requiredEffects.includes('processing'))
             ) {
               blocked = true;
-              preview.diagnostics.push({
+              (preview.diagnostics as Array<{ code: string; message: string }>).push({
                 code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                 message:
                   'CI processing requires explicit --allow-processing. No batch writes were attempted.',
@@ -1701,7 +1760,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   (flags['allow-processing'] !== true || !effects?.includes('processing'))))
             ) {
               blocked = true;
-              preview.diagnostics.push({
+              (preview.diagnostics as Array<{ code: string; message: string }>).push({
                 code:
                   preview.outcome === 'create'
                     ? 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED'
@@ -1770,7 +1829,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             ...(input.document.kind === 'identity-resolution'
               ? {
                   family: 'identity-resolution' as const,
-                  route: { apiVersion: '67.0' as const, operation: 'd360_ir_update' as const },
+                  route: (envelope.result.items[index] as IdentityResolutionDeployPreview).route,
                   requiredEffects: (envelope.result.items[index] as IdentityResolutionDeployPreview)
                     .requiredEffects,
                 }
@@ -1837,11 +1896,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     effectiveScope,
                   );
                   if (
-                    !['unchanged', 'update'].includes(fresh.outcome) ||
-                    (fresh.outcome === 'update' &&
+                    (irAdmissions.get(pending.path)?.outcome === 'create') !==
+                      (fresh.outcome === 'create') ||
+                    !['create', 'unchanged', 'update'].includes(fresh.outcome) ||
+                    ((fresh.outcome === 'update' || fresh.outcome === 'create') &&
                       (flags['allow-processing'] !== true ||
-                        !fresh.requiredEffects.includes('publication') ||
-                        !fresh.requiredEffects.includes('generated-output-provisioning')))
+                        !fresh.requiredEffects.includes('processing') ||
+                        (fresh.outcome === 'create' &&
+                          !fresh.requiredEffects.includes('generated-output-provisioning'))))
                   )
                     throw new DependencySelectionError(
                       'IDENTITY_RESOLUTION_FRESH_ADMISSION_BLOCKED',
@@ -1944,9 +2006,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                             effectiveScope,
                             {
                               allowProcessing: flags['allow-processing'] === true,
-                              verifyInput: verifyInputs,
-                              recordPoll: async (evidence) =>
-                                this.recordIdentityResolutionPoll(input.path, evidence),
+                              verifyInput: async () => {
+                                await verifyInputs();
+                                await verifyIrBinding(input);
+                              },
+                              allowGeneratedOutputProvisioning: flags['allow-processing'] === true,
                             },
                           )
                         : input.document.kind === 'segment'

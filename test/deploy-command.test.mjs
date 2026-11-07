@@ -133,8 +133,8 @@ test('auto deploy uses fixed API65 without discovery and refuses malformed IR', 
   ];
   command.preflight = command.execute = () => assert.fail('IR must never dispatch DMO');
   const blocked = await run(command);
-  assert.equal(blocked.result.status, 'failed');
-  assert.equal(blocked.result.diagnostics.errors[0].code, 'DEPLOY_PREVIEW_FAILED');
+  assert.equal(blocked.result.status, 'blocked');
+  assert.equal(blocked.result.diagnostics.errors[0].code, 'INVALID_SOURCE');
   assert.ok(!calls.includes('execute'));
 });
 
