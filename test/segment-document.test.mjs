@@ -21,6 +21,11 @@ import {
 } from '../lib/artifacts/segment-document.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { retrieveSegment, projectSegment } from '../lib/services/retrieve-segment.js';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
 import { retrieveSegmentMetadata } from '../lib/transport/project-metadata.js';
 const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
 const candidate = () => ({
@@ -314,6 +319,34 @@ for (const [label, change] of Object.entries({
     assert.ok(result.blockers.length);
   });
 }
+test('Segment acquisition retains normalized evidence without publishing remote error properties', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'The target configuration is unavailable.' },
+  ]);
+  let reads = 0;
+  const result = await retrieveSegment(
+    {
+      instanceUrl: 'https://synthetic.example',
+      getApiVersion: () => '65.0',
+      getUsername: () => 'synthetic',
+      request: async () => {
+        reads++;
+        return raw();
+      },
+    },
+    'Audience',
+    '65.0',
+    'default',
+    async () => {
+      throw retainConnectDiagnostic(new Error('hidden'), evidence);
+    },
+  );
+  assert.equal(reads, 1);
+  assert.deepEqual(result.blockers, ['SEGMENT_ACQUISITION_FAILED']);
+  assert.equal(getConnectDiagnostic(result), evidence);
+  assert.doesNotMatch(JSON.stringify(result), /hidden|INVALID_INPUT|statusCode/u);
+});
+
 test('generic404 is not absence proof and latest refuses before request', async () => {
   const connection = {
     instanceUrl: 'https://synthetic.example',

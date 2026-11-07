@@ -20,6 +20,54 @@ import {
   nativeSelection,
 } from './identity-resolution-fixtures.mjs';
 
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+for (const failureRead of [1, 2]) {
+  test(`IR output owner rejection at read ${failureRead} retains safe evidence and unchanged proof failure`, async () => {
+    let reads = 0;
+    let dependencies = 0;
+    const diagnostic = apiDiagnostic(400, [
+      { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+    ]);
+    await assert.rejects(
+      verifyIdentityResolutionOutputs(
+        owner,
+        outputs,
+        connection,
+        selection,
+        async (name) => {
+          dependencies++;
+          return outputRead(name);
+        },
+        async () => {
+          reads++;
+          return reads === failureRead
+            ? retainConnectDiagnostic(
+                {
+                  identity: document.identity,
+                  blockers: ['IDENTITY_RESOLUTION_ACQUISITION_FAILED'],
+                },
+                diagnostic,
+              )
+            : acquireOwner();
+        },
+      ),
+      (error) => {
+        assert.equal(error.code, 'IDENTITY_RESOLUTION_BINDING_UNQUALIFIED');
+        assert.deepEqual(getConnectDiagnostic(error), diagnostic);
+        assert.doesNotMatch(JSON.stringify(error), /Reduce the ruleset|INVALID_INPUT/u);
+        return true;
+      },
+    );
+    assert.equal(reads, failureRead);
+    assert.equal(dependencies, failureRead === 1 ? 0 : 12);
+  });
+}
+
 const connection = {
   instanceUrl: 'https://synthetic.example',
   getApiVersion: () => '67.0',

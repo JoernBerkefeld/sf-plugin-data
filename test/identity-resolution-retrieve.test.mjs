@@ -7,6 +7,30 @@ import {
   nativeSelection,
 } from './identity-resolution-fixtures.mjs';
 
+import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+
+test('IR acquisition privately carries safe HTTP rejection without changing blockers', async () => {
+  const { conn, requests } = connection();
+  conn.request = async () => {
+    requests.push({});
+    throw {
+      statusCode: 400,
+      data: [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }],
+    };
+  };
+  const result = await retrieveIdentityResolution(
+    conn,
+    'Individual_A1b2',
+    nativeSelection,
+    'default',
+  );
+  assert.deepEqual(result.blockers, ['IDENTITY_RESOLUTION_ACQUISITION_FAILED']);
+  assert.equal(result.candidate, undefined);
+  assert.equal(requests.length, 1);
+  assert.equal(getConnectDiagnostic(result).errors[0].message, 'Reduce the ruleset count to 10.');
+  assert.doesNotMatch(JSON.stringify(result), /INVALID_INPUT|ruleset count/u);
+});
+
 const connection = (reply = nativeIrFixture()) => {
   const requests = [];
   const conn = {

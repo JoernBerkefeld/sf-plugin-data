@@ -30,6 +30,73 @@ import { selectDeployDependencies } from '../lib/services/select-deploy-dependen
 import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { writeIdentityResolutionDocument } from '../lib/artifacts/write-identity-resolution.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
+import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+
+test('supported legacy Graph acquisition blocker carries safe diagnostics to both terminal modes', async () => {
+  for (const human of [true, false]) {
+    const { command, calls } = retrieve({
+      metadata: ['dmo:Example__dlm', 'data-graph:SyntheticGraph'],
+    });
+    const logs = [];
+    command.jsonEnabled = () => !human;
+    command.log = (line) => logs.push(line);
+    command.readRawDataGraph = async () => ({});
+    command.discoverDataGraphOwner = async () => ({
+      root: { identity: { owner: { apiName: 'Individual_A1b2' } } },
+    });
+    command.acquireDataGraph = async () =>
+      retainConnectDiagnostic(
+        { blockers: ['DATA_GRAPH_ACQUISITION_FAILED'] },
+        apiDiagnostic(400, [
+          { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+        ]),
+      );
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    const diagnostic = result.diagnostics.errors[0];
+    assert.equal(diagnostic.code, 'DATA_GRAPH_ACQUISITION_FAILED');
+    assert.match(diagnostic.message, /HTTP 400.*INVALID_INPUT/u);
+    assert.match(diagnostic.message, /Reduce the ruleset count to 10/u);
+    assert.equal(logs.filter((line) => line.includes(diagnostic.message)).length, human ? 1 : 0);
+    assert.ok(!calls.some((call) => call.startsWith('write:')));
+    assert.doesNotMatch(JSON.stringify(result), /statusCode/u);
+  }
+});
+
+test('exact sensitive echoes fall back in human and JSON while unfamiliar safe prose survives', async () => {
+  for (const human of [true, false])
+    for (const message of [
+      "Invalid API key 'sk_live_1234567890'.",
+      "Invalid value 'Alice' for FirstName.",
+      'Rejected customer Alice Smith.',
+      'The indexing stage is warming. Wait for index readiness before retrying.',
+    ]) {
+      const { command, calls } = retrieve({
+        metadata: ['dmo:Example__dlm', 'data-graph:SyntheticGraph'],
+      });
+      const logs = [];
+      command.jsonEnabled = () => !human;
+      command.log = (line) => logs.push(line);
+      command.readRawDataGraph = async () => ({});
+      command.discoverDataGraphOwner = async () => ({
+        root: { identity: { owner: { apiName: 'Individual_A1b2' } } },
+      });
+      command.acquireDataGraph = async () =>
+        retainConnectDiagnostic(
+          { blockers: ['DATA_GRAPH_ACQUISITION_FAILED'] },
+          apiDiagnostic(400, [{ errorCode: 'NEW_REASON', message }], undefined, 'req-12345678'),
+        );
+      const result = await run(command);
+      assert.equal(result.status, 'blocked');
+      const rendered = result.diagnostics.errors[0].message;
+      assert.match(rendered, /HTTP 400.*NEW_REASON.*Request ID: req-12345678/u);
+      const output = JSON.stringify(result) + logs.join('\n');
+      assert.doesNotMatch(output, /sk_live_1234567890|Alice|Smith/u);
+      assert.equal(rendered.includes(message), message.startsWith('The indexing'));
+      assert.equal(logs.filter((line) => line.includes(rendered)).length, human ? 1 : 0);
+      assert.ok(!calls.some((call) => call.startsWith('write:')));
+    }
+});
 
 const document = (apiName = 'SyntheticGraph') => ({
   schemaVersion: 1,

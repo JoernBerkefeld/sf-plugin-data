@@ -7,6 +7,11 @@ import { bindSegmentDependencies } from '../lib/services/bind-segment-dependenci
 import { SegmentError } from '../lib/artifacts/segment-document.js';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { DmoWriteError } from '../lib/artifacts/write-other-dmo.js';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
 const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
 const version = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
 const document = (name) => ({
@@ -210,6 +215,64 @@ test('unknown closure, foreign identities, node and request limits fail closed b
   );
   assert.equal(fixture.calls.dmo.length, 4);
 });
+test('dependency wrappers retain Segment and DMO evidence into human and JSON diagnostics', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'The target configuration is unavailable.' },
+  ]);
+  const previous = process.exitCode;
+  try {
+    for (const kind of ['segment', 'dmo']) {
+      for (const json of [true, false]) {
+        const { services } = fixtures();
+        services[kind] = async () =>
+          retainConnectDiagnostic(
+            { blockers: ['SOURCE_UNAVAILABLE'], status: 'blocked' },
+            evidence,
+          );
+        const root = identity(kind, kind === 'segment' ? 'Zulu' : 'Person__dlm');
+        await assert.rejects(
+          selectRetrieveDependencies([root], {}, version, false, services),
+          (error) => {
+            assert.equal(error.code, 'SOURCE_UNAVAILABLE');
+            assert.equal(getConnectDiagnostic(error), evidence);
+            assert.doesNotMatch(JSON.stringify(error), /INVALID_INPUT|statusCode/u);
+            return true;
+          },
+        );
+        const command = Object.create(Retrieve.prototype);
+        command.parse = async () => ({
+          flags: {
+            metadata: [`${kind}:${root.apiName}`],
+            'include-dependencies': true,
+            'api-version': '65.0',
+            'data-space': 'default',
+          },
+        });
+        command.jsonEnabled = () => json;
+        command.resolveOrg = async () => ({
+          getOrgId: () => 'synthetic',
+          getConnection: () => ({ getUsername: () => 'synthetic' }),
+        });
+        command.selectDocuments = async () => [root.apiName];
+        command.selectDependencies = (roots, conn, selection, include) =>
+          selectRetrieveDependencies(roots, conn, selection, include, services);
+        command.writeSegment = command.writeDocument = () => assert.fail('no publication');
+        const logs = [];
+        command.log = (message) => logs.push(message);
+        const result = await command.run();
+        assert.equal(result.status, 'blocked');
+        assert.equal(result.diagnostics.errors[0].code, 'SOURCE_UNAVAILABLE');
+        assert.match(result.diagnostics.errors[0].message, /INVALID_INPUT.*target configuration/u);
+        if (json) assert.deepEqual(logs, []);
+        else assert.match(logs.join('\n'), /INVALID_INPUT/u);
+        process.exitCode = undefined;
+      }
+    }
+  } finally {
+    process.exitCode = previous;
+  }
+});
+
 test('unexpected acquisition failure is sanitized and prevents every output', async () => {
   const previous = process.exitCode;
   try {

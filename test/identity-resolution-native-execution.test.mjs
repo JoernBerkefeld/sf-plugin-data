@@ -128,6 +128,67 @@ function harness(creating = true) {
   return Object.assign(h, { connection, options, run });
 }
 
+test('native IR write rejection keeps uncertainty, one attempt and safe actionable evidence', async () => {
+  for (const message of [
+    'Reduce the ruleset count to 10.',
+    'password=never-display-this',
+    'Internal Server Error',
+  ]) {
+    const h = harness();
+    h.writeFailure = async () => {
+      throw { statusCode: 400, data: [{ errorCode: 'INVALID_INPUT', message }] };
+    };
+    const result = await h.run();
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(result.diagnostics[0].code, 'IDENTITY_RESOLUTION_NATIVE68_MUTATION_UNCONFIRMED');
+    assert.equal(h.writes.length, 1);
+    assert.equal(h.outputs, 0);
+    assert.match(result.diagnostics[0].message, /HTTP 400.*INVALID_INPUT/u);
+    assert.match(
+      result.diagnostics[0].message,
+      /IR write acknowledgement unconfirmed.*No retry or rollback/u,
+    );
+    if (message.startsWith('Reduce')) assert.ok(result.diagnostics[0].message.includes(message));
+    else assert.ok(!JSON.stringify(result).includes(message));
+  }
+});
+
+test('native IR acknowledged write preserves output-verification API evidence without replay', async () => {
+  const h = harness();
+  h.options.verifyOutputs = async () => {
+    const { apiDiagnostic, retainConnectDiagnostic } =
+      await import('../lib/transport/connect-diagnostic.js');
+    throw retainConnectDiagnostic(
+      new Error('Output verification unavailable'),
+      apiDiagnostic(503, [{ errorCode: 'UNAVAILABLE', message: 'Internal Server Error' }]),
+    );
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(result.diagnostics[0].code, 'IDENTITY_RESOLUTION_NATIVE68_MUTATION_UNCONFIRMED');
+  assert.equal(h.writes.length, 1);
+  assert.match(result.diagnostics[0].message, /HTTP 503/u);
+  assert.match(result.diagnostics[0].message, /IR write acknowledged; settlement unconfirmed/u);
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /Internal Server Error|Output verification unavailable/u,
+  );
+});
+
+test('native IR preflight rejection reaches execution result without attempting a mutation', async () => {
+  const h = harness();
+  h.ownerRead = async () => {
+    throw { statusCode: 500, data: 'unclear private body' };
+  };
+  const result = await h.run();
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(h.writes.length, 0);
+  assert.match(result.diagnostics[0].message, /HTTP 500.*IR deployment blocked/u);
+  assert.doesNotMatch(JSON.stringify(result), /unclear private body/u);
+});
+
 test('native CREATE without DMO enumeration verifies server-returned outputs and sends exactly one full POST', async () => {
   const h = harness();
   const result = await h.run();

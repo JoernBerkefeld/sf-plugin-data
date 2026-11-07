@@ -1,5 +1,10 @@
 import type { Connection } from '@salesforce/core';
-import { connectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import {
+  apiDiagnostic,
+  diagnosticDataProperty,
+  diagnosticRequestId,
+  retainConnectDiagnostic,
+} from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import type { ApiVersionSelection } from './api-version.js';
 import { ConnectError } from './connect-client.js';
@@ -566,7 +571,13 @@ export class McpExecuteClient {
               response.statusCode <= 599
             )
               responseStatus = response.statusCode;
-            diagnostic = connectDiagnostic(response?.statusCode, response?.headers);
+            const headers = diagnosticDataProperty(response, 'headers');
+            diagnostic = apiDiagnostic(
+              diagnosticDataProperty(response, 'statusCode'),
+              diagnosticDataProperty(response, 'body'),
+              headers,
+              diagnosticRequestId(headers),
+            );
             if (
               !response ||
               !Number.isInteger(response.statusCode) ||
@@ -619,7 +630,7 @@ export class McpExecuteClient {
           statusCode === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
           statusCode,
         ),
-        diagnostic ?? connectDiagnostic(statusCode),
+        diagnostic ?? apiDiagnostic(statusCode, diagnosticDataProperty(error, 'data')),
       );
     }
   }

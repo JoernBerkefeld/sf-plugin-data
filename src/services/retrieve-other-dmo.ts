@@ -7,6 +7,12 @@ import {
 import type { DmoCommonProjection, DmoDocument } from '../artifacts/dmo-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
+import {
+  apiDiagnostic,
+  diagnosticDataProperty,
+  diagnosticRequestId,
+  retainConnectDiagnostic,
+} from '../transport/connect-diagnostic.js';
 
 /**
  * Snapshot current DMO version capability while retaining literal REST selector provenance.
@@ -96,7 +102,10 @@ export async function selectDmos(
 }
 
 type MetadataTransport = {
-  httpRequest: (request: unknown, options: Record<string, unknown>) => unknown;
+  httpRequest: (
+    request: unknown,
+    options: Record<string, unknown>,
+  ) => Promise<unknown> & { stream: () => unknown };
 };
 
 /**
@@ -141,20 +150,29 @@ async function readIndependentMetadata(
   fullName: string,
   type: 'CustomObject' | 'MktCalcInsightObjectDef',
 ): Promise<unknown> {
+  let status: unknown;
+  let headers: unknown;
   try {
     const transport = (connection as unknown as { _transport: MetadataTransport })._transport;
     if (typeof transport?.httpRequest !== 'function')
       throw new DmoRetrieveError('ACQUISITION_FAILED');
     const receiver = Object.create(connection) as ReadConnection;
     const guardedTransport = Object.create(transport) as MetadataTransport;
-    guardedTransport.httpRequest = (request, options) =>
-      transport.httpRequest(request, {
+    guardedTransport.httpRequest = (request, options) => {
+      const pending = transport.httpRequest(request, {
         ...options,
         followRedirect: () => {
           throw new DmoRetrieveError('METADATA_REDIRECT_REFUSED');
         },
         retry: { maxRetries: 0 },
       });
+      const observed = pending.then((response) => {
+        status = diagnosticDataProperty(response, 'statusCode');
+        headers = diagnosticDataProperty(response, 'headers');
+        return response;
+      });
+      return Object.assign(observed, { stream: () => pending.stream() });
+    };
     Object.defineProperty(receiver, '_transport', { value: guardedTransport });
     const metadata = Object.create(connection.metadata) as Connection['metadata'];
     Object.defineProperty(metadata, '_conn', { value: receiver });
@@ -166,7 +184,17 @@ async function readIndependentMetadata(
     return await read.call(metadata, type, [fullName]);
   } catch (error: unknown) {
     if (error instanceof DmoRetrieveError) throw error;
-    throw new DmoRetrieveError('ACQUISITION_FAILED');
+    // Installed SOAP parser exposes only faultcode/faultstring as data.errorCode/message.
+    // Admit those parsed leaves only with independently observed HTTP failure.
+    throw retainConnectDiagnostic(
+      new DmoRetrieveError('ACQUISITION_FAILED'),
+      apiDiagnostic(
+        status,
+        diagnosticDataProperty(error, 'data'),
+        headers,
+        diagnosticRequestId(headers),
+      ),
+    );
   }
 }
 

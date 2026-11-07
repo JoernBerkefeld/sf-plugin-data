@@ -1,4 +1,6 @@
 import type { Connection } from '@salesforce/core';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import {
   isQualifiedSegmentUpdate,
@@ -38,23 +40,32 @@ export async function preflightSegmentDeploy(
     outcome: SegmentDeployPreview['outcome'],
     target: SegmentDeployPreview['target'],
     code?: string,
-  ): SegmentDeployPreview => ({
-    family: 'segment',
-    route: { apiVersion: '65.0', method: 'GET', resource: 'segments' },
-    outcome,
-    target,
-    absenceProof: 'none',
-    requiredEffects: outcome === 'update' ? ['processing'] : [],
-    diagnostics: code
-      ? [
-          {
-            code,
-            message:
-              'Segment preview is not execution authorization. Resolve the unsupported configuration or target qualification before deployment.',
-          },
-        ]
-      : [],
-  });
+    evidence?: unknown,
+  ): SegmentDeployPreview =>
+    retainConnectDiagnostic(
+      {
+        family: 'segment',
+        route: { apiVersion: '65.0', method: 'GET', resource: 'segments' },
+        outcome,
+        target,
+        absenceProof: 'none',
+        requiredEffects: outcome === 'update' ? ['processing'] : [],
+        diagnostics: code
+          ? [
+              {
+                code,
+                message: getConnectDiagnostic(evidence)
+                  ? operationDiagnostic(
+                      evidence,
+                      'Segment preview is not execution authorization. Resolve the unsupported configuration or target qualification before deployment.',
+                    )
+                  : 'Segment preview is not execution authorization. Resolve the unsupported configuration or target qualification before deployment.',
+              },
+            ]
+          : [],
+      },
+      getConnectDiagnostic(evidence),
+    );
   let desired;
   try {
     desired = validateSegmentDocument(value);
@@ -78,12 +89,13 @@ export async function preflightSegmentDeploy(
       'blocked',
       'unknown',
       error instanceof SegmentError ? error.code : 'SEGMENT_DEPENDENCY_UNQUALIFIED',
+      error,
     );
   }
   try {
     const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
     if (!acquired.candidate || acquired.blockers.length > 0 || !acquired.expectations)
-      return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED');
+      return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED', acquired);
     const current = validateSegmentDocument(acquired.candidate);
     if (JSON.stringify(current.identity) !== JSON.stringify(desired.identity))
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
@@ -96,7 +108,7 @@ export async function preflightSegmentDeploy(
       JSON.stringify(desired) === JSON.stringify(current) ? 'unchanged' : 'update',
       'present',
     );
-  } catch {
-    return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED');
+  } catch (error) {
+    return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED', error);
   }
 }

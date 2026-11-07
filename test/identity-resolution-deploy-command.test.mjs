@@ -2,9 +2,122 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Deploy from '../lib/commands/data360/deploy.js';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+test('native IR binding preview wrapper reaches human and JSON diagnostics without changing admission', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+  ]);
+  for (const human of [true, false]) {
+    const { command, calls } = setup();
+    const logs = [];
+    command.jsonEnabled = () => !human;
+    command.log = (line) => logs.push(line);
+    command.bindIdentityResolution = Deploy.prototype.bindIdentityResolution;
+    let previews = 0;
+    command.preflightIdentityResolution = async () =>
+      ++previews === 1
+        ? preview('identity-resolution')
+        : retainConnectDiagnostic(preview('identity-resolution', 'blocked'), evidence);
+    previews = 1;
+    await assert.rejects(command.bindIdentityResolution(ir(), {}, {}), (error) => {
+      assert.equal(error.message, 'IR target binding unavailable');
+      assert.equal(getConnectDiagnostic(error), evidence);
+      assert.deepEqual(Object.keys(error), []);
+      return true;
+    });
+    previews = 0;
+    const result = await run(command);
+    assert.equal(result.status, 'failed');
+    const diagnostic = result.result.items[0].preflight.diagnostics.find((item) =>
+      item.message.includes('INVALID_INPUT'),
+    );
+    assert.ok(diagnostic, JSON.stringify(result));
+    assert.match(diagnostic.message, /HTTP 400.*INVALID_INPUT/u);
+    assert.match(diagnostic.message, /Reduce the ruleset count to 10/u);
+    assert.equal(logs.filter((line) => line.includes(diagnostic.message)).length, human ? 1 : 0);
+    assert.ok(!calls.some((call) => call.includes('write')));
+    assert.doesNotMatch(JSON.stringify(result), /statusCode/u);
+  }
+});
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { preflightNativeIdentityResolutionDeploy } from '../lib/services/preflight-identity-resolution-deploy.js';
 import { expandedNativeIrFixture, nativeIrFixture } from './identity-resolution-fixtures.mjs';
+
+test('native IR binding preserves acquired owner diagnostics after successful independent dependency reads', async () => {
+  const input = ir();
+  const { command } = setup();
+  command.preflightIdentityResolution = async () => preview('identity-resolution');
+  const names = new Map(
+    input.document.spec.reconciliationRules.map((rule, index) => [rule.entity.apiName, index]),
+  );
+  const fields = (name) => [
+    ...new Set([
+      'ssot__Id__c',
+      ...input.document.spec.matchRules
+        .flatMap((rule) => rule.criteria)
+        .filter((item) => item.field.parentApiName === name)
+        .map((item) => item.field.apiName),
+    ]),
+  ];
+  let ownerReads = 0;
+  const connection = {
+    instanceUrl: 'https://synthetic.example',
+    getApiVersion: () => '68.0',
+    _transport: { httpRequest: () => assert.fail('No actual HTTP') },
+    metadata: {
+      read: async (_type, [name]) => [
+        {
+          fullName: name,
+          mktDataModelAttributes: { dataSpaceName: 'default' },
+          fields: fields(name).map((fullName) => ({
+            fullName,
+            type: 'Text',
+            mktDataModelFieldAttributes: {
+              primaryIndexOrder: fullName === 'ssot__Id__c' ? '1' : '',
+            },
+          })),
+        },
+      ],
+    },
+    request: async (request) => {
+      const name = request.url.split('/').at(-1);
+      if (request.url.includes('/identity-resolutions/')) {
+        ownerReads++;
+        throw {
+          statusCode: 400,
+          data: [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }],
+        };
+      }
+      assert.ok(names.has(name));
+      return {
+        name,
+        id: `target-${names.get(name)}`,
+        dataSpaceName: 'default',
+        fields: fields(name).map((name) => ({ name, type: 'Text' })),
+      };
+    },
+  };
+  await assert.rejects(
+    Deploy.prototype.bindIdentityResolution.call(command, input, connection, {
+      requested: '68.0',
+      restSelector: 'v68.0',
+      soapNumeric: '68.0',
+    }),
+    (error) => {
+      assert.equal(error.message, 'IR target binding unavailable');
+      assert.equal(getConnectDiagnostic(error).statusCode, 400);
+      assert.equal(getConnectDiagnostic(error).errors[0].code, 'INVALID_INPUT');
+      assert.deepEqual(Object.keys(error), []);
+      return true;
+    },
+  );
+  assert.equal(ownerReads, 1);
+});
 
 const ir = (name = 'Individual_A1b2') => {
   const native = nativeIrFixture();

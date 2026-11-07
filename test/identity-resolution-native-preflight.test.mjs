@@ -55,6 +55,31 @@ function harness() {
   return { raw, desired, calls, connection, options, run };
 }
 
+test('native68 API rejection survives target wrapping without qualifying absence', async () => {
+  const h = harness();
+  h.connection.request = async () => {
+    throw {
+      statusCode: 400,
+      data: [
+        {
+          errorCode: 'FUNCTIONALITY_NOT_ENABLED',
+          message: 'trustedSources is not enabled for this organization.',
+        },
+      ],
+    };
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.target, 'unknown');
+  assert.equal(result.absenceProof, 'none');
+  assert.equal(result.diagnostics[0].code, 'IDENTITY_RESOLUTION_TARGET_UNQUALIFIED');
+  assert.match(
+    result.diagnostics[0].message,
+    /HTTP 400.*FUNCTIONALITY_NOT_ENABLED: trustedSources/u,
+  );
+  assert.match(result.diagnostics[0].message, /admission is incomplete/u);
+});
+
 test('native68 FirstName case-sensitive input is rejected by builders and preflight before target access', async () => {
   const h = harness();
   h.desired.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;

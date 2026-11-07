@@ -5,6 +5,58 @@ import { PassThrough } from 'node:stream';
 import { Connection } from '@salesforce/core';
 import { nativeDataGraphReadContext } from '../lib/services/native-data-graph-context.js';
 import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
+import { bindNativeGraphDataSpace } from '../lib/services/native-data-graph-crd.js';
+import Retrieve from '../lib/commands/data360/retrieve.js';
+
+for (const phase of ['identity', 'dataSpace'])
+  for (const json of [false, true])
+    test(`Graph ${phase} HTTP500 QUERY_ERROR reaches ${json ? 'JSON' : 'human'} output once`, async () => {
+      const f = fixture();
+      const failure = {
+        statusCode: 500,
+        body: [
+          {
+            errorCode: 'QUERY_ERROR',
+            message: 'The indexing stage is warming. Wait for index readiness before retrying.',
+          },
+        ],
+      };
+      if (phase === 'identity') f.setIdentity(failure);
+      else f.setResult(failure);
+      const command = Object.create(Retrieve.prototype);
+      const logs = [];
+      command.parse = async () => ({
+        flags: {
+          'api-version': '68.0',
+          metadata: ['data-graph:SyntheticGraph'],
+          dataspace: 'default',
+        },
+      });
+      command.jsonEnabled = () => json;
+      command.log = (message) => logs.push(message);
+      command.resolveOrg = async () => ({ getConnection: () => f.connection });
+      command.nativeGraphContext = nativeDataGraphReadContext;
+      command.retrieveNativeGraph = async (_name, context) => {
+        await bindNativeGraphDataSpace(context);
+        assert.fail('failed qualification cannot continue');
+      };
+      command.writeDataGraph = async () => assert.fail('failed qualification cannot publish');
+      const previous = process.exitCode;
+      let result;
+      try {
+        result = await command.run();
+      } finally {
+        process.exitCode = previous;
+      }
+      assert.notEqual(result.status, 'success');
+      assert.equal(result.diagnostics.errors.length, 1);
+      const message = result.diagnostics.errors[0].message;
+      assert.match(message, /HTTP 500.*QUERY_ERROR: The indexing stage is warming/u);
+      assert.equal(logs.filter((line) => line.includes(message)).length, json ? 0 : 1);
+      assert.match(JSON.stringify(result), /Wait for index readiness before retrying/u);
+      assert.equal(f.calls.length, phase === 'identity' ? 1 : 2);
+    });
 
 const orgId = '00D000000000001AAA';
 const origin = 'https://synthetic.my.salesforce.com';
@@ -14,6 +66,7 @@ const origin = 'https://synthetic.my.salesforce.com';
  */
 function fixture() {
   const calls = [];
+  let identity = { statusCode: 200, body: { done: true, totalSize: 1, records: [{ Id: orgId }] } };
   let result = { statusCode: 200, body: { synthetic: true } };
   const connection = Object.assign(
     Object.defineProperty(Object.create(Connection.prototype), 'metadata', {
@@ -46,7 +99,7 @@ function fixture() {
           assert.equal(request.method, 'GET');
           assert.equal(options.retry.maxRetries, 0);
           const value = request.url.includes(encodeURIComponent('SELECT Id FROM Organization'))
-            ? { statusCode: 200, body: { done: true, totalSize: 1, records: [{ Id: orgId }] } }
+            ? identity
             : result;
           const pending = Promise.resolve({
             statusCode: value.statusCode,
@@ -64,6 +117,9 @@ function fixture() {
     calls,
     setResult(value) {
       result = value;
+    },
+    setIdentity(value) {
+      identity = value;
     },
   };
 }
@@ -97,7 +153,7 @@ test('concrete Graph context independently verifies org then uses exact API68/de
   assert.deepEqual(Object.getOwnPropertyDescriptors(f.connection), descriptors);
 });
 
-test('Graph HTML503 keeps safe wire evidence but SOQL503 is not Connect evidence', async () => {
+test('Graph and SOQL HTTP503 both retain normalized display evidence', async () => {
   const f = fixture();
   const context = await nativeDataGraphReadContext(f.connection, 'default');
   f.setResult({ statusCode: 503, rawBody: '<html>secret</html>' });
@@ -111,14 +167,14 @@ test('Graph HTML503 keeps safe wire evidence but SOQL503 is not Connect evidence
     return true;
   });
   await assert.rejects(context.query('SyntheticGraph'), (error) => {
-    assert.equal(getConnectDiagnostic(error), undefined);
+    assert.equal(getConnectDiagnostic(error).statusCode, 503);
     return true;
   });
   f.setResult({ statusCode: 503, body: [{ errorCode: 'INTERNAL_ERROR', message: 'secret' }] });
   const result = await context.get('SyntheticGraph');
   assert.equal(result.status, 503);
   assert.equal(getConnectDiagnostic(result).kind, 'service-unavailable');
-  assert.equal(getConnectDiagnostic(await context.query('SyntheticGraph')), undefined);
+  assert.equal(getConnectDiagnostic(await context.query('SyntheticGraph')).statusCode, 503);
 });
 
 for (const statusCode of [429, 503])
@@ -153,6 +209,28 @@ for (const statusCode of [400, 401, 403, 404, 429, 500, 503])
     assert.equal(body[0].message, 'synthetic-not-absence');
     assert.equal(f.calls.length, 2);
   });
+
+test('Graph rejected read keeps raw proof separate from private actionable diagnostics', async () => {
+  const f = fixture();
+  const context = await nativeDataGraphReadContext(f.connection, 'default');
+  const body = [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }];
+  f.setResult({ statusCode: 400, body });
+  const result = await context.get('SyntheticGraph');
+  assert.deepEqual(result, { status: 400, body });
+  assert.match(
+    operationDiagnostic(result, 'Read failed.'),
+    /INVALID_INPUT: Reduce the ruleset count to 10/u,
+  );
+  assert.equal(getConnectDiagnostic(result).statusCode, 400);
+  assert.equal(f.calls.length, 2);
+  f.setResult({
+    statusCode: 500,
+    body: [{ errorCode: 'INTERNAL_ERROR', message: 'Bearer private-credential' }],
+  });
+  const unsafe = await context.get('SyntheticGraph');
+  assert.deepEqual(getConnectDiagnostic(unsafe).errors, [{ code: 'INTERNAL_ERROR' }]);
+  assert.doesNotMatch(operationDiagnostic(unsafe, 'Read failed.'), /private-credential/u);
+});
 
 test('concrete Graph rejects invalid names and connection drift before further requests', async () => {
   const f = fixture();

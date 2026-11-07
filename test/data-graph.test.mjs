@@ -21,6 +21,47 @@ import {
 import { preflightDataGraphDeploy } from '../lib/services/preflight-data-graph-deploy.js';
 import { bindDataGraphDependencies } from '../lib/services/bind-data-graph-dependencies.js';
 import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+test('Graph owner wrappers preserve safe diagnostics at initial, fresh and final acquisition', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+  ]);
+  for (const failAt of [1, 2, 3, 4]) {
+    const f = ownedRootFixture();
+    let owners = 0;
+    await assert.rejects(
+      bindDataGraphDependencies(
+        f.document,
+        connection,
+        selection,
+        'default',
+        f.acquire,
+        async (...arguments_) => {
+          owners++;
+          if (owners === failAt)
+            return retainConnectDiagnostic(
+              { identity: f.projection.candidate.identity, blockers: ['UNQUALIFIED'] },
+              evidence,
+            );
+          return f.acquireOwner(...arguments_);
+        },
+      ),
+      (error) => {
+        assert.equal(error.code, 'UNSUPPORTED_DATA_GRAPH_CONFIGURATION');
+        assert.equal(getConnectDiagnostic(error), evidence);
+        assert.doesNotMatch(JSON.stringify(error), /statusCode|INVALID_INPUT/u);
+        return true;
+      },
+    );
+    assert.equal(owners, failAt);
+    assert.equal(f.reads.length, failAt <= 2 ? 0 : failAt === 3 ? 12 : 13);
+  }
+});
+import {
   dataGraphPollBudget,
   executeDataGraphDeploy,
 } from '../lib/services/execute-data-graph-deploy.js';

@@ -8,6 +8,11 @@ import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { readDeployInputs, verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
 import { preflightSegmentDeploy as preflightWithBinding } from '../lib/services/preflight-segment-deploy.js';
 import { bindSegmentDependencies } from '../lib/services/bind-segment-dependencies.js';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
 const dependencyMetadata = () => ({
   detail: {
     name: 'Person__dlm',
@@ -65,6 +70,40 @@ const acquire = async () => ({
   candidate: document(),
   blockers: [],
   expectations: { runtime: { segmentStatus: 'ACTIVE' } },
+});
+
+test('Segment dependency and target acquisition retain private API evidence without absence proof', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'The target configuration is unavailable.' },
+  ]);
+  const failure = retainConnectDiagnostic(new Error('hidden'), evidence);
+  const failedBind = (value, conn, api, space) =>
+    bindSegmentDependencies(value, conn, api, space, async () => {
+      throw failure;
+    });
+  await assert.rejects(failedBind(document(), connection, '65.0', 'default'), (error) => {
+    assert.equal(error.code, 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED');
+    assert.equal(getConnectDiagnostic(error), evidence);
+    return true;
+  });
+  for (const mode of ['dependency', 'target', 'throw']) {
+    const result = await preflightWithBinding(
+      document(),
+      connection,
+      '65.0',
+      'default',
+      async () => {
+        if (mode === 'throw') throw failure;
+        return retainConnectDiagnostic({ blockers: ['SEGMENT_ACQUISITION_FAILED'] }, evidence);
+      },
+      mode === 'dependency' ? failedBind : bind,
+    );
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.absenceProof, 'none');
+    assert.equal(getConnectDiagnostic(result), evidence);
+    assert.match(result.diagnostics[0].message, /INVALID_INPUT/u);
+    assert.doesNotMatch(JSON.stringify(result), /hidden|"statusCode"/u);
+  }
 });
 
 test('forward predicate is update with processing effects; reverse remains blocked', async () => {

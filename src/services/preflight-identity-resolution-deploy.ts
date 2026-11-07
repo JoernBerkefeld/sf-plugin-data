@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import {
   identityResolutionName,
   projectIdentityResolution,
@@ -267,7 +269,10 @@ export async function preflightNativeIdentityResolutionDeploy(
           precreateBinding,
         };
       }
-      throw new Error('IDENTITY_RESOLUTION_TARGET_UNQUALIFIED');
+      throw retainConnectDiagnostic(
+        new Error('IDENTITY_RESOLUTION_TARGET_UNQUALIFIED'),
+        getConnectDiagnostic(error),
+      );
     }
     const current = projectNativeIdentityResolution(raw, desired.identity.apiName).candidate;
     if (!isDeepStrictEqual(selection, frozen) || connection.getApiVersion() !== '68.0')
@@ -287,8 +292,13 @@ export async function preflightNativeIdentityResolutionDeploy(
       /^(?:IDENTITY_RESOLUTION_[A-Z0-9_]+|INVALID_SCOPE)$/u.test(error.message)
         ? error.message
         : 'IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED';
+    const fallback = 'Native68 IR deployment admission is incomplete or unqualified.';
+    retainConnectDiagnostic(result, getConnectDiagnostic(error));
     result.diagnostics = [
-      { code, message: 'Native68 IR deployment admission is incomplete or unqualified.' },
+      {
+        code,
+        message: getConnectDiagnostic(error) ? operationDiagnostic(error, fallback) : fallback,
+      },
     ];
   }
   return result;
@@ -340,23 +350,33 @@ export async function preflightIdentityResolutionDeploy(
     outcome: IdentityResolutionDeployPreview['outcome'],
     target: IdentityResolutionDeployPreview['target'],
     code?: string,
-  ): IdentityResolutionDeployPreview => ({
-    family: 'identity-resolution',
-    outcome,
-    target,
-    absenceProof: 'none',
-    route: { apiVersion: '67.0', operation: 'd360_ir_update' },
-    requiredEffects: outcome === 'update' ? ['publication', 'generated-output-provisioning'] : [],
-    diagnostics: code
-      ? [
-          {
-            code,
-            message:
-              'IR preview is not execution authorization. Resolve target, dependency or configuration qualification before deployment.',
-          },
-        ]
-      : [],
-  });
+    evidence?: unknown,
+  ): IdentityResolutionDeployPreview =>
+    retainConnectDiagnostic(
+      {
+        family: 'identity-resolution',
+        outcome,
+        target,
+        absenceProof: 'none',
+        route: { apiVersion: '67.0', operation: 'd360_ir_update' },
+        requiredEffects:
+          outcome === 'update' ? ['publication', 'generated-output-provisioning'] : [],
+        diagnostics: code
+          ? [
+              {
+                code,
+                message: getConnectDiagnostic(evidence)
+                  ? operationDiagnostic(
+                      evidence,
+                      'IR preview is not execution authorization. Resolve target, dependency or configuration qualification before deployment.',
+                    )
+                  : 'IR preview is not execution authorization. Resolve target, dependency or configuration qualification before deployment.',
+              },
+            ]
+          : [],
+      },
+      getConnectDiagnostic(evidence),
+    );
   let desired: IdentityResolutionDocument;
   try {
     desired = validateIdentityResolutionDocument(value);
@@ -390,7 +410,12 @@ export async function preflightIdentityResolutionDeploy(
       !Array.isArray(acquired.blockers) ||
       acquired.blockers.length > 0
     )
-      return result('blocked', 'unknown', 'IDENTITY_RESOLUTION_CREATE_AND_TARGET_UNQUALIFIED');
+      return result(
+        'blocked',
+        'unknown',
+        'IDENTITY_RESOLUTION_CREATE_AND_TARGET_UNQUALIFIED',
+        acquired,
+      );
     // Re-project independent full representations instead of trusting a candidate or injected success flag.
     const projection = projectIdentityResolution(
       acquired.expectations.facade,
@@ -417,7 +442,12 @@ export async function preflightIdentityResolutionDeploy(
     return isDeepStrictEqual(expected, desired)
       ? result('update', 'present')
       : result('blocked-changes', 'present', 'IDENTITY_RESOLUTION_UPDATE_UNQUALIFIED');
-  } catch {
-    return result('blocked', 'unknown', 'IDENTITY_RESOLUTION_TARGET_OR_DEPENDENCY_UNQUALIFIED');
+  } catch (error) {
+    return result(
+      'blocked',
+      'unknown',
+      'IDENTITY_RESOLUTION_TARGET_OR_DEPENDENCY_UNQUALIFIED',
+      error,
+    );
   }
 }

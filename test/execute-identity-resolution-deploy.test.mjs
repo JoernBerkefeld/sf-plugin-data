@@ -9,6 +9,75 @@ import {
   identityResolutionPollBudget,
 } from '../lib/services/execute-identity-resolution-deploy.js';
 import { irFixture, selection } from './identity-resolution-fixtures.mjs';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+test('historical IR execution carries preview, capture, write and recorded poll failures privately', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+  ]);
+  for (const seam of ['preview', 'capture', 'dependency', 'write', 'poll']) {
+    const h = harness();
+    const error = retainConnectDiagnostic(new Error('not exposed'), evidence);
+    switch (seam) {
+      case 'preview':
+      case 'capture': {
+        const acquire = h.options.acquire;
+        h.options.acquire = async (...arguments_) => {
+          if (seam === 'preview' || h.calls.acquisitions > 0)
+            return retainConnectDiagnostic(
+              { identity: h.desired.identity, blockers: ['UNQUALIFIED'] },
+              evidence,
+            );
+          return acquire(...arguments_);
+        };
+
+        break;
+      }
+      case 'dependency': {
+        h.options.verifyDependencies = async () => {
+          throw error;
+        };
+        break;
+      }
+      case 'write': {
+        h.options.mutate = async (parameters) => {
+          h.calls.mutations.push(parameters);
+          throw error;
+        };
+        break;
+      }
+      default: {
+        h.options.readFacade = async () => {
+          h.calls.reads++;
+          throw error;
+        };
+      }
+    }
+    const result = await h.run();
+    const attempted = seam === 'write' || seam === 'poll';
+    assert.equal(result.outcome, attempted ? 'failed' : 'blocked');
+    assert.equal(result.mutation, attempted ? 'unknown' : 'not-attempted');
+    assert.equal(
+      result.diagnostics[0].code,
+      attempted
+        ? 'IDENTITY_RESOLUTION_UPDATE_UNCONFIRMED'
+        : seam === 'capture'
+          ? 'IDENTITY_RESOLUTION_ADMISSION_FAILED'
+          : 'IDENTITY_RESOLUTION_TARGET_UNQUALIFIED',
+    );
+    assert.match(result.diagnostics[0].message, /HTTP 400.*INVALID_INPUT/u);
+    assert.equal(getConnectDiagnostic(result), evidence);
+    assert.equal(h.calls.mutations.length, attempted ? 1 : 0);
+    assert.equal(h.calls.reads, seam === 'poll' ? 1 : 0);
+    assert.equal(h.calls.polls.length, seam === 'poll' ? 1 : 0);
+    if (seam === 'poll') assert.equal(h.calls.polls[0].statusType, 'unavailable');
+    assert.doesNotMatch(JSON.stringify(result), /not exposed|statusCode/u);
+  }
+});
 
 /**
  * Build a synthetic target and instrument all execution boundaries.

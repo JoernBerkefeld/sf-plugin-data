@@ -8,6 +8,10 @@ import { verifyNativeDataGraphInputDigest } from '../../artifacts/read-deploy-in
 import type { NativeDataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import {
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../../transport/connect-diagnostic.js';
+import {
   preflightDataStream,
   executeDataStream,
 } from '../../services/command-native-data-stream.js';
@@ -480,7 +484,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         )
         .digest('hex');
     if (!['update', 'unchanged'].includes(preview.outcome))
-      throw new Error('IR target binding unavailable');
+      throw retainConnectDiagnostic(
+        new Error('IR target binding unavailable'),
+        getConnectDiagnostic(preview),
+      );
     const dependencies = await bindIdentityResolutionDependencies(
       input.document,
       connection,
@@ -494,7 +501,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       'default',
     );
     if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
-      throw new Error('IR target binding unavailable');
+      throw retainConnectDiagnostic(
+        new Error('IR target binding unavailable'),
+        getConnectDiagnostic(acquired),
+      );
     const outputs = await verifyIdentityResolutionOutputs(
       {
         targetApiName: input.document.identity.apiName,

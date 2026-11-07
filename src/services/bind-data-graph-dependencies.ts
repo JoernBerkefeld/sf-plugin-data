@@ -5,6 +5,7 @@ import type { IdentityResolutionOutputIdentity } from '../artifacts/identity-res
 import { verifyIdentityResolutionOutputs } from './bind-identity-resolution-dependencies.js';
 import { retrieveLegacyIdentityResolution as retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 import {
+  DataGraphError,
   graphRecord,
   graphRequire,
   graphText,
@@ -12,6 +13,7 @@ import {
 } from '../artifacts/data-graph-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { readDmoMetadata } from './retrieve-other-dmo.js';
 import { dataGraphScope, graphCanonicalObject } from './retrieve-data-graph.js';
 import type { DataGraphConnection } from './retrieve-data-graph.js';
@@ -70,15 +72,16 @@ export async function bindDataGraphDependencies(
   else {
     const owner = await acquireOwner(connection, root.owner.apiName, { ...version }, dataSpace);
     scope();
-    graphRequire(
+    if (!(
       owner.candidate &&
-        owner.expectations &&
-        owner.blockers.length === 0 &&
-        isDeepStrictEqual(owner.identity, {
-          dataSpace: 'default',
-          apiName: root.owner.apiName,
-        }),
-    );
+      owner.expectations &&
+      owner.blockers.length === 0 &&
+      isDeepStrictEqual(owner.identity, {
+        dataSpace: 'default',
+        apiName: root.owner.apiName,
+      })
+    ))
+      throw retainConnectDiagnostic(new DataGraphError(), getConnectDiagnostic(owner));
     const projection = projectIdentityResolution(
       owner.expectations.facade,
       owner.expectations.native,
@@ -104,14 +107,15 @@ export async function bindDataGraphDependencies(
       async (...arguments_: Parameters<typeof retrieveIdentityResolution>) => {
         const fresh = await acquireOwner(...arguments_);
         scope();
-        graphRequire(
+        if (!(
           fresh.expectations &&
-            fresh.candidate &&
-            fresh.blockers.length === 0 &&
-            isDeepStrictEqual(fresh.identity, owner.identity) &&
-            isDeepStrictEqual(fresh.candidate, projection.candidate) &&
-            isDeepStrictEqual(fresh.expectations, projection.expectations),
-        );
+          fresh.candidate &&
+          fresh.blockers.length === 0 &&
+          isDeepStrictEqual(fresh.identity, owner.identity) &&
+          isDeepStrictEqual(fresh.candidate, projection.candidate) &&
+          isDeepStrictEqual(fresh.expectations, projection.expectations)
+        ))
+          throw retainConnectDiagnostic(new DataGraphError(), getConnectDiagnostic(fresh));
         return fresh;
       },
     );
@@ -179,7 +183,8 @@ export async function bindDataGraphDependencies(
       { ...version },
       dataSpace,
     );
-    graphRequire(final.expectations && final.candidate && final.blockers.length === 0);
+    if (!(final.expectations && final.candidate && final.blockers.length === 0))
+      throw retainConnectDiagnostic(new DataGraphError(), getConnectDiagnostic(final));
     const projection = projectIdentityResolution(
       final.expectations.facade,
       final.expectations.native,

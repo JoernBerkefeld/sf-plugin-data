@@ -6,6 +6,8 @@ import { inspect } from 'node:util';
 import test from 'node:test';
 import { Connection } from '@salesforce/core';
 import { readDmoMetadata } from '../lib/services/retrieve-other-dmo.js';
+import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
 // Loopback HTTP fixtures exercise installed core -> Metadata -> SOAP -> transport -> request.
 const listen = async (handler) => {
@@ -76,6 +78,55 @@ test('installed core SOAP stack refuses every same/cross-origin redirect without
       }
     }
   }
+});
+
+for (const message of ['Reduce the ruleset count to 10.', 'Bearer private-credential'])
+  test(`actual Metadata SOAP fault privately retains safe structured leaves: ${message}`, async () => {
+    let requests = 0;
+    const local = await listen(async (request, response) => {
+      requests++;
+      for await (const chunk of request) assert.ok(chunk.length > 0);
+      response.writeHead(500, { 'content-type': 'text/xml', 'x-sfdc-request-id': 'req-12345678' });
+      response.end(
+        `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><soapenv:Fault><faultcode>INVALID_INPUT</faultcode><faultstring>${message}</faultstring></soapenv:Fault></soapenv:Body></soapenv:Envelope>`,
+      );
+    });
+    try {
+      await assert.rejects(
+        readDmoMetadata(coreConnection(local.origin), 'Fixture__dlm'),
+        (error) => {
+          assert.equal(error.code, 'ACQUISITION_FAILED');
+          assert.equal(getConnectDiagnostic(error).statusCode, 500);
+          assert.equal(getConnectDiagnostic(error).errors[0].code, 'INVALID_INPUT');
+          const rendered = operationDiagnostic(error, 'Metadata acquisition failed.');
+          assert.match(rendered, /Request ID: req-12345678/u);
+          if (!message.startsWith('Bearer')) assert.match(rendered, /ruleset count to 10/u);
+          assert.doesNotMatch(
+            rendered + inspect(error) + JSON.stringify(error),
+            /private-credential|synthetic-soap-secret/u,
+          );
+          return true;
+        },
+      );
+      assert.equal(requests, 1);
+    } finally {
+      await close(local.server);
+    }
+  });
+
+test('Metadata thrown data without actual HTTP failure is not admitted', async () => {
+  const connection = coreConnection('http://127.0.0.1');
+  connection.metadata.read = async () => {
+    throw Object.assign(new Error('private-credential'), {
+      data: { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+    });
+  };
+  await assert.rejects(readDmoMetadata(connection, 'Fixture__dlm'), (error) => {
+    assert.equal(error.code, 'ACQUISITION_FAILED');
+    assert.equal(getConnectDiagnostic(error), undefined);
+    assert.doesNotMatch(inspect(error), /private-credential|ruleset/u);
+    return true;
+  });
 });
 
 test('guarded actual Metadata SOAP preserves successful core parsing and caller transport', async () => {

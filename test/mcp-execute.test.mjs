@@ -5,6 +5,8 @@ import test from 'node:test';
 import { inspect } from 'node:util';
 import { Connection } from '@salesforce/core';
 import { McpExecuteClient } from '../lib/transport/mcp-execute.js';
+import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
 const origin = 'https://synthetic.my.salesforce.com';
 const version = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
@@ -164,6 +166,42 @@ function fixture(body, statusCode = 201, failure) {
   });
   return { calls, connection, client: new McpExecuteClient(connection, version), refresh };
 }
+
+for (const mutation of [false, true])
+  for (const message of ['Reduce the ruleset count to 10.', 'Bearer private-credential'])
+    test(`facade HTTP400 mutation=${mutation} privately retains only safe parsed detail: ${message}`, async () => {
+      const f = fixture([{ errorCode: 'INVALID_INPUT', message }], 400);
+      const operation = mutation
+        ? f.client.mutate('d360_data_graph_delete', { dataGraphName: 'Synthetic' })
+        : f.client.read('d360_data_graph_get', graphRead);
+      await assert.rejects(operation, (error) => {
+        assert.equal(error.code, 'REQUEST_FAILED');
+        assert.equal(error.statusCode, 400);
+        assert.equal(getConnectDiagnostic(error).errors[0].code, 'INVALID_INPUT');
+        const rendered = operationDiagnostic(error, 'No replay.');
+        assert.match(rendered, /INVALID_INPUT/u);
+        if (!message.startsWith('Bearer')) assert.match(rendered, /ruleset count to 10/u);
+        assert.doesNotMatch(
+          rendered + inspect(error) + JSON.stringify(error),
+          /private-credential/u,
+        );
+        return true;
+      });
+      assert.equal(f.calls.length, 1);
+    });
+
+test('facade native data without observed HTTP failure is not display evidence', async () => {
+  const failure = Object.assign(new Error('private-credential'), {
+    data: { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+  });
+  const f = fixture(undefined, 201, failure);
+  await assert.rejects(f.client.read('d360_data_graph_get', graphRead), (error) => {
+    assert.equal(getConnectDiagnostic(error), undefined);
+    assert.doesNotMatch(inspect(error), /private-credential|ruleset/u);
+    return true;
+  });
+  assert.equal(f.calls.length, 1);
+});
 
 const transformRead = { dataTransformNameOrId: 'OwnerReturnedTransform' };
 const transformResult = {

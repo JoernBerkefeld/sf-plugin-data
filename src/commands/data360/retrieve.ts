@@ -1250,7 +1250,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               }
             }
             if (!acquired.candidate || acquired.blockers.length > 0)
-              throw new DataGraphError(acquired.blockers[0] ?? 'DATA_GRAPH_ACQUISITION_FAILED');
+              throw retainConnectDiagnostic(
+                new DataGraphError(acquired.blockers[0] ?? 'DATA_GRAPH_ACQUISITION_FAILED'),
+                getConnectDiagnostic(acquired),
+              );
             const document = validateDataGraphDocument(acquired.candidate);
             if (
               flags['include-dependencies'] &&
@@ -1285,8 +1288,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               effectiveScope,
             );
             if (acquired.blockers.length > 0 || !acquired.candidate)
-              throw new IdentityResolutionError(
-                acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
+              throw retainConnectDiagnostic(
+                new IdentityResolutionError(
+                  acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
+                ),
+                getConnectDiagnostic(acquired),
               );
             const document = validateIdentityResolutionDocument(acquired.candidate);
             if (

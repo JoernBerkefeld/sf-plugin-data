@@ -8,6 +8,55 @@ import {
 } from '../lib/artifacts/identity-resolution-document.js';
 import { operationApiVersion } from '../lib/transport/api-version.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
+import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+
+test('IR retrieve terminal and JSON share safe API explanations with unchanged failure control flow', async () => {
+  for (const human of [true, false]) {
+    for (const [status, message] of [
+      [400, 'Reduce the ruleset count to 10.'],
+      [500, 'Internal Server Error'],
+      [400, 'password=never-display-this'],
+    ]) {
+      const { command, calls } = invocation();
+      const logs = [];
+      command.jsonEnabled = () => !human;
+      command.log = (line) => logs.push(line);
+      command.acquireIdentityResolution = async () =>
+        retainConnectDiagnostic(
+          {
+            identity: { dataSpace: 'default', apiName: 'Individual_A1b2' },
+            blockers: ['IDENTITY_RESOLUTION_ACQUISITION_FAILED'],
+          },
+          apiDiagnostic(status, [{ errorCode: 'INVALID_INPUT', message }]),
+        );
+      const previous = process.exitCode;
+      let result;
+      let exitCode;
+      try {
+        result = await command.run();
+        exitCode = process.exitCode;
+      } finally {
+        process.exitCode = previous;
+      }
+      assert.equal(result.status, 'failed');
+      assert.equal(exitCode, 1);
+      assert.deepEqual(result.result.items, []);
+      assert.equal(
+        calls.some((call) => call.startsWith('write:')),
+        false,
+      );
+      const diagnostic = result.diagnostics.errors[0];
+      assert.equal(diagnostic.code, 'IDENTITY_RESOLUTION_ACQUISITION_FAILED');
+      assert.equal(diagnostic.retryable, false);
+      assert.match(diagnostic.message, new RegExp(`HTTP ${status}.*INVALID_INPUT`, 'u'));
+      assert.match(diagnostic.message, /no files were written/u);
+      if (message.startsWith('Reduce')) assert.ok(diagnostic.message.includes(message));
+      else assert.ok(!JSON.stringify(result).includes(message));
+      assert.equal(logs.filter((line) => line.includes(diagnostic.message)).length, human ? 1 : 0);
+      assert.doesNotMatch(logs.join('\n'), /never-display-this|Internal Server Error/u);
+    }
+  }
+});
 
 test('IR retrieve help describes native68 routing without claiming installed lifecycle acceptance', () => {
   assert.match(Retrieve.description, /IR uses native API68 exact owner reads in default space/u);

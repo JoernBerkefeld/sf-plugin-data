@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import {
   isQualifiedSegmentUpdate,
   validateSegmentDocument,
@@ -78,23 +80,34 @@ export async function executeSegmentDeploy(
     outcome: DmoDeployExecution['outcome'],
     mutation: DmoDeployExecution['mutation'],
     code?: string,
-  ): SegmentDeployExecution => ({
-    family: 'segment',
-    route: { apiVersion: '65.0', method: 'PATCH', resource: 'segments' },
-    outcome,
-    mutation,
-    diagnostics: code
-      ? [
-          {
-            code,
-            message:
-              mutation === 'unknown'
-                ? 'Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
-                : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.',
-          },
-        ]
-      : [],
-  });
+    evidence?: unknown,
+  ): SegmentDeployExecution =>
+    retainConnectDiagnostic(
+      {
+        family: 'segment',
+        route: { apiVersion: '65.0', method: 'PATCH', resource: 'segments' },
+        outcome,
+        mutation,
+        diagnostics: code
+          ? [
+              {
+                code,
+                message: getConnectDiagnostic(evidence)
+                  ? operationDiagnostic(
+                      evidence,
+                      mutation === 'unknown'
+                        ? 'Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
+                        : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.',
+                    )
+                  : mutation === 'unknown'
+                    ? 'Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
+                    : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.',
+              },
+            ]
+          : [],
+      },
+      getConnectDiagnostic(evidence),
+    );
   const acquire = options.acquire ?? retrieveSegment;
   const bind = options.bind ?? bindSegmentDependencies;
   const now = options.now ?? Date.now;
@@ -114,10 +127,13 @@ export async function executeSegmentDeploy(
       bind,
     );
     if (preview.outcome !== 'update' && preview.outcome !== 'unchanged')
-      return {
-        ...result('blocked', 'not-attempted', 'SEGMENT_TARGET_UNQUALIFIED'),
-        preflight: preview,
-      };
+      return retainConnectDiagnostic(
+        {
+          ...result('blocked', 'not-attempted', 'SEGMENT_TARGET_UNQUALIFIED', preview),
+          preflight: preview,
+        },
+        getConnectDiagnostic(preview),
+      );
     if (preview.outcome === 'update' && options.allowProcessing !== true)
       return {
         ...result('blocked', 'not-attempted', 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED'),
@@ -127,7 +143,7 @@ export async function executeSegmentDeploy(
     bindings = await bind(desired, connection, apiVersion, dataSpace);
     const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
     if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
-      return result('blocked', 'not-attempted', 'SEGMENT_TARGET_UNQUALIFIED');
+      return result('blocked', 'not-attempted', 'SEGMENT_TARGET_UNQUALIFIED', acquired);
     const projected = projectSegment(
       { segments: [acquired.expectations.runtime] },
       desired.identity.apiName,
@@ -149,14 +165,15 @@ export async function executeSegmentDeploy(
       return result('unchanged', 'not-attempted');
     if (options.allowProcessing !== true)
       return result('blocked', 'not-attempted', 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
-  } catch {
-    return result('blocked', 'not-attempted', 'SEGMENT_ADMISSION_FAILED');
+  } catch (error) {
+    return result('blocked', 'not-attempted', 'SEGMENT_ADMISSION_FAILED', error);
   }
   const client = new ConnectClient(connection, apiVersion);
   const read =
     options.read ?? ((name: string) => client.get(`/services/data/v65.0/ssot/segments/${name}`));
   const patch = options.patch ?? ((document: unknown) => client.patchSegment(document));
   let responseQualified = false;
+  let writeFailure: unknown;
   try {
     // Exactly one attempt. An uncertain response remains unknown even after reconciliation.
     const response = projectSegment({ segments: [await patch(desired)] }, desired.identity.apiName);
@@ -164,10 +181,11 @@ export async function executeSegmentDeploy(
       ['PROCESSING', 'ACTIVE'].includes(String(response.runtime.segmentStatus)) &&
       isDeepStrictEqual(preservation(response.runtime), baseline) &&
       isDeepStrictEqual(response.candidate, desired);
-  } catch {
+  } catch (error) {
+    writeFailure = error;
     // Bounded independent reads may reveal the target, but cannot authorize a replay.
   }
-  const unknown = result('failed', 'unknown', 'SEGMENT_UPDATE_UNCONFIRMED');
+  const unknown = result('failed', 'unknown', 'SEGMENT_UPDATE_UNCONFIRMED', writeFailure);
   const started = now();
   if (!Number.isFinite(started)) return unknown;
   for (let attempt = 0; attempt < segmentPollBudget.reads; attempt++) {
@@ -185,10 +203,10 @@ export async function executeSegmentDeploy(
         !isDeepStrictEqual(preservation(observed.runtime), baseline) ||
         !isDeepStrictEqual(observed.candidate, desired)
       )
-        return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH');
+        return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH', writeFailure);
       if (['PROCESSING', 'COUNTING'].includes(String(observed.runtime.segmentStatus))) continue;
       if (observed.runtime.segmentStatus !== 'ACTIVE')
-        return result('failed', 'unknown', 'SEGMENT_SETTLEMENT_UNQUALIFIED');
+        return result('failed', 'unknown', 'SEGMENT_SETTLEMENT_UNQUALIFIED', writeFailure);
       // A separately acquired runtime + Metadata pair, not the PATCH echo or poll response.
       const settled = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
       if (
@@ -205,10 +223,17 @@ export async function executeSegmentDeploy(
         !isDeepStrictEqual(preservation(settled.expectations.runtime), baseline) ||
         !isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace))
       )
-        return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH');
+        return result(
+          'failed',
+          'unknown',
+          'SEGMENT_READBACK_MISMATCH',
+          getConnectDiagnostic(writeFailure) ? writeFailure : settled,
+        );
       return responseQualified ? result('updated', 'confirmed-updated') : unknown;
-    } catch {
-      return unknown;
+    } catch (error) {
+      return getConnectDiagnostic(writeFailure)
+        ? unknown
+        : result('failed', 'unknown', 'SEGMENT_UPDATE_UNCONFIRMED', error);
     }
   }
   return unknown;

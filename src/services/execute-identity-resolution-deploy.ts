@@ -12,6 +12,8 @@ import type {
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { McpExecuteClient } from '../transport/mcp-execute.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { preflightIdentityResolutionDeploy } from './preflight-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import { retrieveLegacyIdentityResolution as retrieveIdentityResolution } from './retrieve-identity-resolution.js';
@@ -92,23 +94,34 @@ export async function executeIdentityResolutionDeploy(
     outcome: IdentityResolutionDeployExecution['outcome'],
     mutation: IdentityResolutionDeployExecution['mutation'],
     code?: string,
-  ): IdentityResolutionDeployExecution => ({
-    family: 'identity-resolution',
-    route: { apiVersion: '67.0', operation: 'd360_ir_update' },
-    outcome,
-    mutation,
-    diagnostics: code
-      ? [
-          {
-            code,
-            message:
-              mutation === 'unknown'
-                ? 'IR mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
-                : 'IR deployment blocked. Resolve input, effects, scope or target verification.',
-          },
-        ]
-      : [],
-  });
+    evidence?: unknown,
+  ): IdentityResolutionDeployExecution =>
+    retainConnectDiagnostic(
+      {
+        family: 'identity-resolution',
+        route: { apiVersion: '67.0', operation: 'd360_ir_update' },
+        outcome,
+        mutation,
+        diagnostics: code
+          ? [
+              {
+                code,
+                message: getConnectDiagnostic(evidence)
+                  ? operationDiagnostic(
+                      evidence,
+                      mutation === 'unknown'
+                        ? 'IR mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
+                        : 'IR deployment blocked. Resolve input, effects, scope or target verification.',
+                    )
+                  : mutation === 'unknown'
+                    ? 'IR mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
+                    : 'IR deployment blocked. Resolve input, effects, scope or target verification.',
+              },
+            ]
+          : [],
+      },
+      getConnectDiagnostic(evidence),
+    );
   let attempted = false;
   try {
     const desired = validateIdentityResolutionDocument(value);
@@ -174,7 +187,10 @@ export async function executeIdentityResolutionDeploy(
         acquired.blockers.length > 0 ||
         !isDeepStrictEqual(acquired.identity, desired.identity)
       )
-        throw new Error('Target unavailable');
+        throw retainConnectDiagnostic(
+          new Error('Target unavailable'),
+          getConnectDiagnostic(acquired),
+        );
       const projected = projectIdentityResolution(
         acquired.expectations.facade,
         acquired.expectations.native,
@@ -243,7 +259,7 @@ export async function executeIdentityResolutionDeploy(
       },
     );
     if (preview.outcome !== 'unchanged' && preview.outcome !== 'update')
-      return result('blocked', 'not-attempted', 'IDENTITY_RESOLUTION_TARGET_UNQUALIFIED');
+      return result('blocked', 'not-attempted', 'IDENTITY_RESOLUTION_TARGET_UNQUALIFIED', preview);
     if (preview.outcome === 'update' && allowProcessing !== true)
       return result('blocked', 'not-attempted', 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
     const baseline = await capture();
@@ -343,7 +359,7 @@ export async function executeIdentityResolutionDeploy(
       let observation: unknown;
       try {
         observation = await read(targetApiName);
-      } catch {
+      } catch (error) {
         // The frozen transport can reject malformed application status before returning a body.
         // Record unavailable status explicitly; never invent a value or expose the rejected payload.
         await recordPoll({
@@ -353,7 +369,7 @@ export async function executeIdentityResolutionDeploy(
           statusType: 'unavailable',
           statusValue: undefined,
         });
-        throw new Error('Poll read failed');
+        throw retainConnectDiagnostic(new Error('Poll read failed'), getConnectDiagnostic(error));
       }
       const descriptor =
         observation && typeof observation === 'object'
@@ -386,9 +402,9 @@ export async function executeIdentityResolutionDeploy(
       return result('updated', 'confirmed-updated');
     }
     return result('failed', 'unknown', 'IDENTITY_RESOLUTION_SETTLEMENT_UNCONFIRMED');
-  } catch {
+  } catch (error) {
     return attempted
-      ? result('failed', 'unknown', 'IDENTITY_RESOLUTION_UPDATE_UNCONFIRMED')
-      : result('blocked', 'not-attempted', 'IDENTITY_RESOLUTION_ADMISSION_FAILED');
+      ? result('failed', 'unknown', 'IDENTITY_RESOLUTION_UPDATE_UNCONFIRMED', error)
+      : result('blocked', 'not-attempted', 'IDENTITY_RESOLUTION_ADMISSION_FAILED', error);
   }
 }

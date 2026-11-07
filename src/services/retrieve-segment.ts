@@ -9,6 +9,7 @@ import {
 } from '../artifacts/segment-document.js';
 import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { retrieveSegmentMetadata } from '../transport/project-metadata.js';
 
@@ -198,9 +199,12 @@ export async function retrieveSegment(
       expectations: { runtime: projection.runtime },
     };
   } catch (error: unknown) {
-    return {
-      identity,
-      blockers: [error instanceof SegmentError ? error.code : 'SEGMENT_ACQUISITION_FAILED'],
-    };
+    return retainConnectDiagnostic(
+      {
+        identity,
+        blockers: [error instanceof SegmentError ? error.code : 'SEGMENT_ACQUISITION_FAILED'],
+      },
+      getConnectDiagnostic(error),
+    );
   }
 }

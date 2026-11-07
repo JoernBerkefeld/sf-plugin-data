@@ -1,5 +1,5 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { connectReceiptDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import { apiReceiptDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
 import os from 'node:os';
 import path from 'node:path';
 import { NativeDmoError, nativeDmoName } from '../artifacts/native-dmo-document.js';
@@ -89,7 +89,7 @@ export function createDmoClient(
     if (status < 200 || status >= 300)
       throw retainConnectDiagnostic(
         new NativeDmoError('DMO_HTTP_ERROR', status),
-        connectReceiptDiagnostic(receipt.stdout),
+        apiReceiptDiagnostic(receipt.stdout),
       );
     if (receipt.exitCode !== 0) throw new NativeDmoError('DMO_REQUEST_UNCONFIRMED', status);
     if (method === 'DELETE') {

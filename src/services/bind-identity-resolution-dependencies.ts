@@ -9,6 +9,7 @@ import {
 import type { IdentityResolutionOutputIdentity } from '../artifacts/identity-resolution-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
 import type { IdentityResolutionOutputBinding } from './execute-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
@@ -297,7 +298,11 @@ export async function verifyIdentityResolutionOutputs(
     { ...selection },
     'default',
   );
-  requireProof(acquired.expectations && acquired.candidate && acquired.blockers.length === 0);
+  if (!acquired.expectations || !acquired.candidate || acquired.blockers.length > 0)
+    throw retainConnectDiagnostic(
+      new IdentityResolutionError('IDENTITY_RESOLUTION_BINDING_UNQUALIFIED'),
+      getConnectDiagnostic(acquired),
+    );
   const projection =
     selection.requested === '68.0'
       ? projectNativeIdentityResolution(acquired.expectations.native, target.targetApiName)
@@ -330,7 +335,11 @@ export async function verifyIdentityResolutionOutputs(
     scope(connection, selection);
   }
   const final = await acquireOwner(connection, target.targetApiName, { ...selection }, 'default');
-  requireProof(final.expectations && final.candidate && final.blockers.length === 0);
+  if (!final.expectations || !final.candidate || final.blockers.length > 0)
+    throw retainConnectDiagnostic(
+      new IdentityResolutionError('IDENTITY_RESOLUTION_BINDING_UNQUALIFIED'),
+      getConnectDiagnostic(final),
+    );
   const finalProjection =
     selection.requested === '68.0'
       ? projectNativeIdentityResolution(final.expectations.native, target.targetApiName)

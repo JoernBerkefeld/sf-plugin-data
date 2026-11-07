@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import {
   IdentityResolutionError,
   identityResolutionName,
@@ -96,13 +97,16 @@ async function acquireOwner(
     );
     return { identity, ...projectNativeIdentityResolution(native, apiName), blockers: [] };
   } catch (error: unknown) {
-    return {
-      identity,
-      blockers: [
-        error instanceof IdentityResolutionError
-          ? error.code
-          : 'IDENTITY_RESOLUTION_ACQUISITION_FAILED',
-      ],
-    };
+    return retainConnectDiagnostic(
+      {
+        identity,
+        blockers: [
+          error instanceof IdentityResolutionError
+            ? error.code
+            : 'IDENTITY_RESOLUTION_ACQUISITION_FAILED',
+        ],
+      },
+      getConnectDiagnostic(error),
+    );
   }
 }

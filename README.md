@@ -217,15 +217,23 @@ Metadata XML examples below remain separate from this native JSON workflow.
 
 ### Safe operation diagnostics
 
-Native stream, DLO, DMO and mapping checks distinguish a plugin verification failure
-from a confirmed Salesforce API rejection. A failed protected-state comparison can
-name the check, resource and first differing path, with expected/observed values
-only for bounded schema identifiers, enums and flags. IDs, labels, free text,
-unknown properties and other sensitive values are redacted; raw remote payloads,
-exception messages and stack traces are not forwarded. A confirmed API rejection
-can report its HTTP status without its body. Without that evidence, the diagnostic
+Supported stream, DLO, DMO, mapping, identity-resolution, Data Graph, calculated
+insight and Segment operations distinguish plugin verification failures from
+confirmed Salesforce API rejections. A failed protected-state comparison can name
+the check, resource and first differing path, with expected/observed values only
+for bounded schema identifiers, enums and flags. IDs, labels, free text, unknown
+properties and other sensitive comparison values are redacted.
+
+For confirmed API failures, human-readable and JSON diagnostics can include the
+real HTTP status, Salesforce error code, request ID and useful explanation admitted
+from structured API error fields. Empty, generic, unrecognized or unsafe details
+use an operation-specific fallback instead. Bounded, conservative filtering rejects
+recognized sensitive echoes; it is not a universal guarantee that server prose is
+free of personal information. Raw remote payloads, arbitrary exception messages
+and stack traces are not forwarded. Without confirmed API evidence, the diagnostic
 does not claim Salesforce rejected the request. These explanations do not weaken
-safety checks, change error codes or authorize retrying an unknown mutation.
+safety checks, change public contracts or error codes, or authorize retrying an
+unknown mutation.
 
 Connect API failures report HTTP 429 **Too Many Requests** as rate limiting.
 HTTP 503 **Service Unavailable** can indicate a Connect rate limit, maintenance,

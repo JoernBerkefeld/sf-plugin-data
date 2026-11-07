@@ -1,6 +1,7 @@
 import type { Connection } from '@salesforce/core';
 import {
-  connectDiagnostic,
+  apiDiagnostic,
+  diagnosticRequestId,
   getConnectDiagnostic,
   retainConnectDiagnostic,
 } from '../transport/connect-diagnostic.js';
@@ -75,8 +76,12 @@ export async function nativeDataGraphReadContext(
         const pending = transport.httpRequest.call(transport, request, options);
         const captured = pending.then((response) => {
           check();
-          if (route.startsWith('/services/data/v68.0/ssot/'))
-            diagnostic = connectDiagnostic(response.statusCode, response.headers);
+          diagnostic = apiDiagnostic(
+            response.statusCode,
+            response.body,
+            response.headers,
+            diagnosticRequestId(response.headers),
+          );
           graphRequire(
             Number.isInteger(response.statusCode) &&
               (response.statusCode as number) >= 200 &&
@@ -119,14 +124,19 @@ export async function nativeDataGraphReadContext(
     read(`${base}/query?q=${encodeURIComponent(soql)}`);
   const identity = await query('SELECT Id FROM Organization');
   const body = identity.body as { done?: unknown; totalSize?: unknown; records?: unknown };
-  graphRequire(
-    identity.status === 200 &&
-      body?.done === true &&
-      body.totalSize === 1 &&
-      Array.isArray(body.records) &&
-      body.records.length === 1 &&
-      body.records[0]?.Id === orgId,
-  );
+  try {
+    graphRequire(
+      identity.status === 200 &&
+        body?.done === true &&
+        body.totalSize === 1 &&
+        Array.isArray(body.records) &&
+        body.records.length === 1 &&
+        body.records[0]?.Id === orgId,
+    );
+  } catch (error) {
+    if (error instanceof Error) retainConnectDiagnostic(error, getConnectDiagnostic(identity));
+    throw error;
+  }
   /**
    * Admit a developer name before constructing fixed item, metadata or SOQL requests.
    * @param {string} name Exact Graph developer name.

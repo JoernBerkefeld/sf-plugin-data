@@ -4,7 +4,13 @@ import {
   buildNativeIdentityResolutionUpdate,
   nativeIdentityResolutionDocument,
 } from '../services/preflight-identity-resolution-deploy.js';
-import { connectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import {
+  apiDiagnostic,
+  connectDiagnostic,
+  diagnosticDataProperty,
+  diagnosticRequestId,
+  retainConnectDiagnostic,
+} from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
 import type { Connection } from '@salesforce/core';
@@ -41,7 +47,9 @@ type ObservableTransport = {
   httpRequest: (
     request: unknown,
     options: unknown,
-  ) => Promise<{ statusCode?: unknown; headers?: unknown }> & { stream: () => unknown };
+  ) => Promise<{ statusCode?: unknown; headers?: unknown; body?: unknown }> & {
+    stream: () => unknown;
+  };
 };
 
 /** Bounded SSOT transport; Salesforce core owns credentials. */
@@ -289,7 +297,13 @@ export class ConnectClient {
               const pending = transport.httpRequest.call(transport, input, options);
               const observed = pending.then((response) => {
                 const status = response?.statusCode;
-                diagnostic = connectDiagnostic(status, response?.headers);
+                const headers = diagnosticDataProperty(response, 'headers');
+                diagnostic = apiDiagnostic(
+                  status,
+                  diagnosticDataProperty(response, 'body'),
+                  headers,
+                  diagnosticRequestId(headers),
+                );
                 if (
                   typeof status === 'number' &&
                   Number.isInteger(status) &&
@@ -356,7 +370,9 @@ export class ConnectClient {
           statusCode,
           nativeCode,
         ),
-        diagnostic ?? connectDiagnostic(statusCode),
+        diagnostic ??
+          apiDiagnostic(statusCode, diagnosticDataProperty(error, 'data')) ??
+          connectDiagnostic(statusCode),
       );
     }
   }

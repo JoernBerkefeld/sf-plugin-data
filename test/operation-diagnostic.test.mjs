@@ -6,7 +6,167 @@ import { executeDloDeploy } from '../lib/services/command-dlo.js';
 import { executeDmo } from '../lib/services/command-native-dmo.js';
 import { preflightNativeMapping } from '../lib/services/native-mapping.js';
 import { DloError } from '../lib/artifacts/dlo-document.js';
-import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import {
+  apiDiagnostic,
+  connectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+const renderApi = (status, body, requestId) =>
+  operationDiagnostic(
+    retainConnectDiagnostic(
+      new Error('unchanged plugin error'),
+      apiDiagnostic(status, body, undefined, requestId),
+    ),
+    'IR preview failed; no write attempted.',
+  );
+
+test('structured API explanations retain unfamiliar actionable reasons and compatibility codes', () => {
+  for (const [code, message] of [
+    ['INVALID_INPUT', 'A maximum of 10 rulesets is supported. Reduce the ruleset count.'],
+    ['FUNCTIONALITY_NOT_ENABLED', 'trustedSources is not enabled for this organization.'],
+    ['INVALID_FIELD', 'Field FirstName is case-sensitive; use the exact schema field name.'],
+    [
+      'NEW_CAPACITY_REASON',
+      'The matching stage requires fewer partitions. Reduce the partition count.',
+    ],
+  ]) {
+    const error = Object.assign(new Error('fixed'), { code: 'REQUEST_FAILED' });
+    retainConnectDiagnostic(error, apiDiagnostic(400, [{ errorCode: code, message }]));
+    const output = operationDiagnostic(error, 'No write attempted.');
+    assert.match(output, /HTTP 400/u);
+    assert.ok(output.includes(`${code}: ${message}`));
+    assert.equal(error.code, 'REQUEST_FAILED');
+    assert.equal(error.message, 'fixed');
+    assert.equal(JSON.stringify(error), '{"code":"REQUEST_FAILED"}');
+  }
+  assert.match(
+    renderApi(500, {
+      errorCode: 'NEW_REASON',
+      message: 'Reduce the partition count before retrying.',
+    }),
+    /Reduce the partition count/u,
+  );
+});
+
+test('unsafe echoes and generic errors keep status/code/request ID with contextual fallback', () => {
+  for (const message of [
+    'The matching stage requires fewer partitions. password=hunter2',
+    'The matching stage requires fewer partitions. Private payload: customer-value',
+    'Bearer abcdef',
+    'Cookie: synthetic',
+    'accessToken=abcdef',
+    'Rejected customer@example.com',
+    'Rejected https://host/path?key=abcdef',
+    'Rejected {"customer":"abcdef"}',
+    'SELECT Name FROM Account',
+    'Rejected "Jane Smith"',
+    '<html>abcdef</html>',
+    'bad\u001B[31mtext',
+    'bad\ntext',
+    'bad\u202Etext',
+    'x'.repeat(401),
+    'Internal Server Error',
+  ]) {
+    const output = renderApi(500, { errorCode: 'INVALID_INPUT', message }, 'req-12345678');
+    assert.match(output, /HTTP 500.*INVALID_INPUT; Request ID: req-12345678/u);
+    assert.match(output, /IR preview failed; no write attempted/u);
+    assert.ok(!output.includes(message));
+  }
+  for (const body of ['', 'not JSON', '<html>secret</html>', {}, undefined]) {
+    assert.match(renderApi(500, body), /HTTP 500.*IR preview failed/u);
+  }
+  assert.doesNotMatch(
+    renderApi(401, { errorCode: 'INVALID_SESSION_ID', message: 'secret' }),
+    /secret/u,
+  );
+  assert.doesNotMatch(
+    renderApi(400, { message: 'Safe explanation.' }, 'secret?value=abc'),
+    /secret/u,
+  );
+});
+
+test('API normalization bounds known containers without getters, coercion or recursive enumeration', () => {
+  const entry = { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' };
+  for (const body of [
+    entry,
+    [entry],
+    { data: entry },
+    { errors: [entry] },
+    JSON.stringify([entry]),
+    { message: JSON.stringify([entry]) },
+  ])
+    assert.match(renderApi(400, body), /Reduce the ruleset count to 10/u);
+  const getter = Object.defineProperty({}, 'message', {
+    get() {
+      throw new Error('getter invoked');
+    },
+  });
+  const headers = Object.defineProperty({}, 'Retry-After', {
+    get() {
+      throw new Error('header getter invoked');
+    },
+  });
+  assert.equal(apiDiagnostic(429, getter, headers).retryAfter, undefined);
+  const cycle = {};
+  cycle.data = cycle;
+  const proxy = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor() {
+        assert.fail('proxy');
+      },
+      get() {
+        assert.fail('proxy');
+      },
+    },
+  );
+  for (const body of [
+    getter,
+    proxy,
+    cycle,
+    new Error('Reduce the ruleset count to 10.'),
+    { unknown: entry },
+    { data: { data: { data: { data: entry } } } },
+    Array.from({ length: 4 }, () => entry),
+    ' '.repeat(16_384) + JSON.stringify(entry),
+  ])
+    assert.doesNotMatch(renderApi(400, body), /Reduce the ruleset count/u);
+  assert.equal(apiDiagnostic('400', entry), undefined);
+  assert.equal(apiDiagnostic(200, entry), undefined);
+  assert.equal(apiDiagnostic(600, entry), undefined);
+  assert.match(
+    operationDiagnostic(
+      Object.defineProperty({}, 'status', {
+        get() {
+          throw new Error('status getter invoked');
+        },
+      }),
+      'Stop.',
+    ),
+    /no Salesforce rejection was confirmed/u,
+  );
+  const diagnostic = apiDiagnostic(400, entry);
+  assert.ok(Object.isFrozen(diagnostic.errors[0]));
+  assert.ok(Object.isFrozen(diagnostic.errors));
+});
+
+for (const status of [429, 503])
+  test(`API detail preserves HTTP${status} guidance and delay`, () => {
+    const error = retainConnectDiagnostic(
+      new Error('fixed'),
+      apiDiagnostic(
+        status,
+        { errorCode: 'CAPACITY_ERROR', message: 'Reduce the partition count.' },
+        { 'Retry-After': '7' },
+      ),
+    );
+    const output = operationDiagnostic(error, 'Stop.');
+    assert.match(output, /CAPACITY_ERROR: Reduce the partition count/u);
+    assert.match(output, /Server Retry-After: 7/u);
+    assert.match(output, /no automatic replay/u);
+    assert.ok(output.length < 1500);
+  });
 
 for (const status of [429, 503]) {
   test(`Connect HTTP ${status} guidance is safe, explicit and server-delay only`, () => {

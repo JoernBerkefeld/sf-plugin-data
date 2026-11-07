@@ -3,6 +3,48 @@ import { test } from 'node:test';
 import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { preflightIdentityResolutionDeploy } from '../lib/services/preflight-identity-resolution-deploy.js';
 import { irFixture, selection } from './identity-resolution-fixtures.mjs';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
+
+test('historical IR preview preserves private acquired and thrown API diagnostics without absence proof', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
+  ]);
+  for (const seam of ['acquired', 'acquire', 'dependency']) {
+    const h = harness();
+    const error = retainConnectDiagnostic(new Error('not exposed'), evidence);
+    if (seam === 'dependency')
+      h.options.verifyDependencies = async () => {
+        throw error;
+      };
+    else
+      h.options.acquire = async () => {
+        if (seam === 'acquire') throw error;
+        return retainConnectDiagnostic(
+          { identity: h.acquisition.identity, blockers: ['UNQUALIFIED'] },
+          evidence,
+        );
+      };
+    const result = await h.run();
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.target, 'unknown');
+    assert.equal(result.absenceProof, 'none');
+    assert.equal(
+      result.diagnostics[0].code,
+      seam === 'acquired'
+        ? 'IDENTITY_RESOLUTION_CREATE_AND_TARGET_UNQUALIFIED'
+        : 'IDENTITY_RESOLUTION_TARGET_OR_DEPENDENCY_UNQUALIFIED',
+    );
+    assert.match(result.diagnostics[0].message, /HTTP 400.*INVALID_INPUT/u);
+    assert.match(result.diagnostics[0].message, /Reduce the ruleset count to 10/u);
+    assert.equal(getConnectDiagnostic(result), evidence);
+    assert.equal(h.calls.writes, 0);
+    assert.doesNotMatch(JSON.stringify(result), /not exposed|statusCode/u);
+  }
+});
 
 /**
  * Build independent synthetic acquisition and count all reads and mutations.

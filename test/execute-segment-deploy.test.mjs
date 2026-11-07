@@ -5,6 +5,11 @@ import { Connection } from '@salesforce/core';
 import { PassThrough } from 'node:stream';
 import { executeSegmentDeploy, segmentPollBudget } from '../lib/services/execute-segment-deploy.js';
 import { ConnectClient } from '../lib/transport/connect-client.js';
+import {
+  apiDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../lib/transport/connect-diagnostic.js';
 
 const document = () => ({
   schemaVersion: 1,
@@ -85,6 +90,101 @@ const harness = (desired = changed(), overrides = {}) => {
     options,
   };
 };
+test('Segment retains primary PATCH evidence over secondary poll failure with one dispatch', async () => {
+  const primary = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'A maximum of 10 rulesets is supported.' },
+  ]);
+  const secondary = apiDiagnostic(503, []);
+  for (const writeFails of [true, false]) {
+    let writes = 0;
+    let reads = 0;
+    const h = harness(changed(), {
+      patch: async () => {
+        writes++;
+        if (writeFails) throw retainConnectDiagnostic(new Error('hidden-write'), primary);
+        return runtime(changed(), 'PROCESSING');
+      },
+      read: async () => {
+        reads++;
+        throw retainConnectDiagnostic(new Error('hidden-read'), secondary);
+      },
+    });
+    const result = await h.run();
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(writes, 1);
+    assert.equal(reads, 1);
+    assert.equal(getConnectDiagnostic(result), writeFails ? primary : secondary);
+    assert.match(
+      result.diagnostics[0].message,
+      writeFails ? /INVALID_INPUT.*10 rulesets/u : /HTTP 503/u,
+    );
+    assert.doesNotMatch(JSON.stringify(result), /hidden-|"statusCode"|"errors"/u);
+  }
+});
+
+test('Segment preview and fresh acquisition block with retained evidence before dispatch', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'The target configuration is unavailable.' },
+  ]);
+  for (const failAt of [1, 2]) {
+    let acquisitions = 0;
+    const h = harness(changed(), {
+      acquire: async () =>
+        ++acquisitions === failAt
+          ? retainConnectDiagnostic({ blockers: ['SEGMENT_ACQUISITION_FAILED'] }, evidence)
+          : { candidate: document(), blockers: [], expectations: { runtime: runtime() } },
+    });
+    const result = await h.run();
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(h.counts().writes, 0);
+    assert.equal(getConnectDiagnostic(result), evidence);
+    assert.match(result.diagnostics[0].message, /INVALID_INPUT/u);
+  }
+});
+
+test('Segment late binding and independent pair failures retain evidence at existing stop points', async () => {
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'The target configuration is unavailable.' },
+  ]);
+  for (const mode of ['binding', 'pair', 'reconciled', 'bounded']) {
+    let bindings = 0;
+    let acquisitions = 0;
+    let writes = 0;
+    let reads = 0;
+    const h = harness(changed(), {
+      bind: async () => {
+        if (++bindings === 2 && mode === 'binding')
+          throw retainConnectDiagnostic(new Error('hidden'), evidence);
+        return [];
+      },
+      acquire: async () => {
+        acquisitions++;
+        if (acquisitions === 3 && mode === 'pair')
+          return retainConnectDiagnostic({ blockers: ['SEGMENT_ACQUISITION_FAILED'] }, evidence);
+        const d = acquisitions <= 2 ? document() : changed();
+        return { candidate: d, blockers: [], expectations: { runtime: runtime(d) } };
+      },
+      patch: async () => {
+        writes++;
+        if (mode !== 'pair') throw retainConnectDiagnostic(new Error('hidden'), evidence);
+        return runtime(changed(), 'PROCESSING');
+      },
+      read: async () => {
+        reads++;
+        return { segments: [runtime(changed(), mode === 'bounded' ? 'PROCESSING' : 'ACTIVE')] };
+      },
+    });
+    const result = await h.run();
+    assert.equal(result.mutation, mode === 'binding' ? 'not-attempted' : 'unknown');
+    assert.equal(result.outcome, mode === 'binding' ? 'blocked' : 'failed');
+    assert.equal(writes, mode === 'binding' ? 0 : 1);
+    assert.equal(reads, mode === 'binding' ? 0 : mode === 'bounded' ? segmentPollBudget.reads : 1);
+    assert.equal(getConnectDiagnostic(result), evidence);
+    assert.match(result.diagnostics[0].message, /INVALID_INPUT/u);
+  }
+});
+
 test('exact equality makes zero mutation/poll calls without acknowledgement', async () => {
   const h = harness(document(), { allowProcessing: false });
   const r = await h.run();

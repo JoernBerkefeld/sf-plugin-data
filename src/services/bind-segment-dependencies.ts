@@ -2,6 +2,7 @@ import type { Connection } from '@salesforce/core';
 import { SegmentError, validateSegmentDocument } from '../artifacts/segment-document.js';
 import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { readDmoMetadata } from './retrieve-other-dmo.js';
 
@@ -125,6 +126,9 @@ export async function bindSegmentDependencies(
     ];
   } catch (error: unknown) {
     if (error instanceof SegmentError) throw error;
-    throw new SegmentError('SEGMENT_DEPENDENCY_ACQUISITION_FAILED');
+    throw retainConnectDiagnostic(
+      new SegmentError('SEGMENT_DEPENDENCY_ACQUISITION_FAILED'),
+      getConnectDiagnostic(error),
+    );
   }
 }

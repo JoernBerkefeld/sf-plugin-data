@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { operationDiagnostic } from './operation-diagnostic.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { projectNativeIdentityResolution } from '../artifacts/identity-resolution-document.js';
 import type { IdentityResolutionProjection } from '../artifacts/identity-resolution-document.js';
@@ -221,7 +223,7 @@ export async function executeNativeIdentityResolutionDeploy(
       },
     );
     if (!['create', 'update', 'unchanged'].includes(preview.outcome))
-      throw new Error('Admission failed');
+      throw retainConnectDiagnostic(new Error('Admission failed'), getConnectDiagnostic(preview));
     const creating = preview.outcome === 'create';
     operation = creating ? 'identity-resolutions.post' : 'identity-resolutions.patch';
     let baseline: IdentityResolutionProjection | undefined;
@@ -436,10 +438,14 @@ export async function executeNativeIdentityResolutionDeploy(
     }
     failureReason = 'read-budget-exhausted';
     throw new Error('Settlement budget exhausted');
-  } catch {
+  } catch (error) {
     expired = true;
-    return attempted
+    const failed = attempted
       ? result('failed', 'unknown', 'IDENTITY_RESOLUTION_NATIVE68_MUTATION_UNCONFIRMED')
       : result('blocked', 'not-attempted', 'IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED');
+    retainConnectDiagnostic(failed, getConnectDiagnostic(error));
+    if (getConnectDiagnostic(error))
+      failed.diagnostics[0].message = operationDiagnostic(error, failed.diagnostics[0].message);
+    return failed;
   }
 }

@@ -15,6 +15,7 @@ import { retrieveSegment } from './retrieve-segment.js';
 import { retrieveDmo, readDmoMetadata, DmoRetrieveError } from './retrieve-other-dmo.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 /** Payload-free dependency refusal retaining the affected logical identity and reason. */
 export class RetrieveDependencyError extends Error {
@@ -108,7 +109,10 @@ export async function selectRetrieveDependencies(
           identity.dataSpace,
         );
         if (acquired.blockers.length > 0 || !acquired.candidate || !acquired.definitionXml)
-          throw new SegmentError(acquired.blockers[0] ?? 'INCOMPLETE_SEGMENT');
+          throw retainConnectDiagnostic(
+            new SegmentError(acquired.blockers[0] ?? 'INCOMPLETE_SEGMENT'),
+            getConnectDiagnostic(acquired),
+          );
         entry = { document: acquired.candidate, definitionXml: acquired.definitionXml };
       } else {
         reserve(103);
@@ -119,7 +123,10 @@ export async function selectRetrieveDependencies(
           identity.dataSpace,
         );
         if (acquired.status !== 'projected' || acquired.blockers.length > 0 || !acquired.candidate)
-          throw new DmoRetrieveError(acquired.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
+          throw retainConnectDiagnostic(
+            new DmoRetrieveError(acquired.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION'),
+            getConnectDiagnostic(acquired),
+          );
         entry = { document: acquired.candidate };
       }
       const node = documentDependencyNode(entry.document);
@@ -168,14 +175,17 @@ export async function selectRetrieveDependencies(
       // Check edge/cycle bounds incrementally, before further acquisition.
       orderDependencyNodes([...nodes.values()]);
     } catch (error: unknown) {
-      throw new RetrieveDependencyError(
-        error instanceof SegmentError ||
-          error instanceof DmoRetrieveError ||
-          error instanceof DependencySelectionError
-          ? error.code
-          : 'DEPENDENCY_ACQUISITION_FAILED',
-        identity,
-        reasons.get(key)!,
+      throw retainConnectDiagnostic(
+        new RetrieveDependencyError(
+          error instanceof SegmentError ||
+            error instanceof DmoRetrieveError ||
+            error instanceof DependencySelectionError
+            ? error.code
+            : 'DEPENDENCY_ACQUISITION_FAILED',
+          identity,
+          reasons.get(key)!,
+        ),
+        getConnectDiagnostic(error),
       );
     }
   }

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { diagnosticDataProperty, getConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 const details = new WeakMap<Error, string>();
 const visibleKeys = new Set([
@@ -162,25 +162,32 @@ export function explainMismatch<T extends Error>(
  */
 export function operationDiagnostic(error: unknown, nextAction: string): string {
   const connect = getConnectDiagnostic(error);
-  if (connect) {
+  const apiDetail = connect
+    ? [
+        ...(connect.errors ?? []).map(({ code, message }) =>
+          [code, message].filter(Boolean).join(': '),
+        ),
+        ...(connect.requestId ? [`Request ID: ${connect.requestId}`] : []),
+      ].join('; ')
+    : '';
+  const remote = apiDetail ? ` Salesforce API detail: ${apiDetail}.` : '';
+  if (connect && connect.kind !== 'api-error') {
     const explanation =
       connect.statusCode === 429
         ? 'Connect API rate limiting: HTTP 429 Too Many Requests.'
         : 'Connect API HTTP 503 Service Unavailable: POSSIBLE Connect rate limit; maintenance, load or other availability issues are also possible. The cause is not confirmed.';
     const wait =
       connect.retryAfter === undefined ? '' : ` Server Retry-After: ${connect.retryAfter}.`;
-    return `${explanation} Reduce request frequency and try later; effective limits can vary with load and change.${wait} Inspect the target before rerunning a write whose outcome is unknown; no automatic replay was performed. ${nextAction}`;
+    return `${explanation} Reduce request frequency and try later; effective limits can vary with load and change.${wait}${remote} Inspect the target before rerunning a write whose outcome is unknown; no automatic replay was performed. ${nextAction}`;
   }
   if (error instanceof Error && details.has(error)) return `${details.get(error)!} ${nextAction}`;
   const status =
-    error && typeof error === 'object'
-      ? 'status' in error
-        ? error.status
-        : 'statusCode' in error
-          ? error.statusCode
-          : undefined
-      : undefined;
+    connect?.statusCode ??
+    diagnosticDataProperty(error, 'status') ??
+    diagnosticDataProperty(error, 'statusCode');
+  if (connect && (status === 401 || status === 403))
+    return `Salesforce API authentication or authorization failed (HTTP ${status}); no authentication response is disclosed.${remote} ${nextAction}`;
   if (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599)
-    return `Salesforce API rejected the request (HTTP ${status}); no response payload is disclosed. ${nextAction}`;
+    return `Salesforce API rejected the request (HTTP ${status}); no response payload is disclosed.${remote} ${nextAction}`;
   return `Plugin verification or request completion failed; no Salesforce rejection was confirmed. ${nextAction}`;
 }

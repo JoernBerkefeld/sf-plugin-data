@@ -11,6 +11,7 @@ import {
 import {
   acquireNativeDataGraph,
   bindNativeGraphRoot,
+  readNativeGraphReadiness,
   nativeDataGraphLifecycle,
   settleNativeDataGraph,
 } from '../lib/services/native-data-graph-crd.js';
@@ -32,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  apiDiagnostic,
   connectDiagnostic,
   getConnectDiagnostic,
   retainConnectDiagnostic,
@@ -1924,6 +1926,80 @@ test('exclusive journal and concurrent calls fail closed before writes', async (
   await expectResult(pending, 'outcome', 'blocked');
   assert.deepEqual(f.calls, []);
 });
+test('run-owned DELETE preserves primary API rejection over failed settlement diagnostic', async () => {
+  const f = fixture();
+  const lifecycle = nativeDataGraphLifecycle(document(), f.context, f.client, f.guards);
+  await expectResult(lifecycle.create(true), 'outcome', 'created');
+  const primary = apiDiagnostic(400, {
+    errorCode: 'INVALID_INPUT',
+    message: 'Reduce the ruleset count to 10.',
+  });
+  const secondary = apiDiagnostic(500, {
+    errorCode: 'INTERNAL_ERROR',
+    message: 'Metadata unavailable.',
+  });
+  f.client.delete = async () => {
+    f.calls.push('DELETE');
+    f.context.get = async () => retainConnectDiagnostic({ status: 500, body: [] }, secondary);
+    throw retainConnectDiagnostic(new Error('Deletion unavailable'), primary);
+  };
+  const result = await lifecycle.delete(true);
+  assert.deepEqual(result, { outcome: 'unknown', mutation: 'attempted' });
+  assert.equal(getConnectDiagnostic(result), primary);
+  assert.match(
+    operationDiagnostic(result, 'No replay.'),
+    /INVALID_INPUT: Reduce the ruleset count to 10/u,
+  );
+  assert.equal(f.calls.filter((c) => c === 'DELETE').length, 1);
+});
+
+test('Graph existence and readiness query failures retain HTTP evidence without absence or writes', async () => {
+  const evidence = apiDiagnostic(500, {
+    errorCode: 'QUERY_ERROR',
+    message: 'The indexing stage is warming. Wait for index readiness before retrying.',
+  });
+  const f = fixture();
+  let queries = 0;
+  f.context.query = async () => {
+    queries++;
+    return retainConnectDiagnostic({ status: 500, body: [{ errorCode: 'QUERY_ERROR' }] }, evidence);
+  };
+  const acquired = await acquireNativeDataGraph(f.context, document());
+  assert.deepEqual(acquired, { state: 'unknown' });
+  assert.equal(getConnectDiagnostic(acquired), evidence);
+  f.setGraph(runtime());
+  await assert.rejects(
+    readNativeGraphReadiness(f.context, document(), 'synthetic-default-space'),
+    (error) => {
+      assert.equal(getConnectDiagnostic(error), evidence);
+      assert.match(operationDiagnostic(error, 'No replay.'), /HTTP 500.*QUERY_ERROR/u);
+      return true;
+    },
+  );
+  assert.equal(queries, 2);
+  assert.deepEqual(f.calls, []);
+});
+
+test('acquisition carries private API diagnostics without weakening raw absence checks', async () => {
+  const evidence = apiDiagnostic(400, {
+    errorCode: 'INVALID_INPUT',
+    message: 'Reduce the ruleset count to 10.',
+  });
+  const f = fixture();
+  f.context.get = async () =>
+    retainConnectDiagnostic(
+      {
+        status: 400,
+        body: [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }],
+      },
+      evidence,
+    );
+  const acquired = await acquireNativeDataGraph(f.context, document());
+  assert.deepEqual(acquired, { state: 'unknown' });
+  assert.equal(getConnectDiagnostic(acquired), evidence);
+  assert.deepEqual(f.calls, []);
+});
+
 test('ambiguous DELETE settles reads only and cannot replay after stale metadata timeout', async () => {
   const f = fixture();
   const lifecycle = nativeDataGraphLifecycle(document(), f.context, f.client, f.guards);

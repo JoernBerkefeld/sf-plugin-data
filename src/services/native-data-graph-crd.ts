@@ -170,6 +170,7 @@ export async function acquireNativeDataGraph(
       names.add(entry.developerName);
     }
     const query = await context.query(name);
+    diagnostic = getConnectDiagnostic(query);
     context.check();
     const rows = graphRecord(query.body);
     graphRequire(
@@ -246,20 +247,25 @@ export async function bindNativeGraphDataSpace(context: NativeGraphContext): Pro
   graphRequire(typeof context.dataSpace === 'function');
   const read = await context.dataSpace();
   context.check();
-  const body = graphRecord(read.body);
-  graphRequire(
-    read.status === 200 &&
-      body.done === true &&
-      body.totalSize === 1 &&
-      Array.isArray(body.records) &&
-      body.records.length === 1,
-  );
-  const row = graphRecord(body.records[0]);
-  graphText(row.Id);
-  graphRequire(
-    row.DataSpaceApiName === 'default' && row.Status === 'ACTIVE' && row.IsDeleted === false,
-  );
-  return row.Id;
+  try {
+    const body = graphRecord(read.body);
+    graphRequire(
+      read.status === 200 &&
+        body.done === true &&
+        body.totalSize === 1 &&
+        Array.isArray(body.records) &&
+        body.records.length === 1,
+    );
+    const row = graphRecord(body.records[0]);
+    graphText(row.Id);
+    graphRequire(
+      row.DataSpaceApiName === 'default' && row.Status === 'ACTIVE' && row.IsDeleted === false,
+    );
+    return row.Id;
+  } catch (error) {
+    if (error instanceof Error) retainConnectDiagnostic(error, getConnectDiagnostic(read));
+    throw error;
+  }
 }
 
 /** Independently correlated readiness; metadata version/tree may legitimately lag. */
@@ -311,6 +317,11 @@ export async function readNativeGraphReadiness(
   graphText(entry.status);
   const query = await context.query(name);
   context.check();
+  if (query.status !== 200)
+    throw retainConnectDiagnostic(
+      new Error('Native Graph query unavailable'),
+      getConnectDiagnostic(query),
+    );
   const rows = graphRecord(query.body);
   graphRequire(
     query.status === 200 &&
@@ -684,7 +695,7 @@ export function nativeDataGraphLifecycle(
       }
       check();
       const settled = await settleNativeDataGraph(readers, document, 'absent', guards.pause);
-      diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
+      diagnostic = diagnostic ?? getConnectDiagnostic(settled);
       graphRequire(settled.state === 'absent');
       return { outcome: 'deleted', mutation: 'attempted', receipt: structuredClone(owned) };
     };
