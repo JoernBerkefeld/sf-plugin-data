@@ -264,6 +264,28 @@ export class ConnectClient {
     );
   }
 
+  /**
+   * Delete exactly one native68 owner by its freshly resolved Salesforce record ID.
+   * No name routing, refresh, replay, redirect or arbitrary DELETE path is exposed.
+   * @param {string} id Independently bound target-local IR record ID.
+   * @returns {Promise<void>} Acknowledged HTTP204 only, never owner absence proof.
+   */
+  public async deleteIdentityResolution(id: string): Promise<void> {
+    if (
+      this.selection.requested !== '68.0' ||
+      typeof id !== 'string' ||
+      !/^1ir[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/u.test(id)
+    )
+      throw new ConnectError('INVALID_REQUEST');
+    const noContent = Symbol('identity-resolution-deleted');
+    const response = await this.send<unknown>(
+      { method: 'DELETE', url: this.safeUrl(`${this.prefix}identity-resolutions/${id}`) },
+      this.noRefreshReceiver(),
+      noContent,
+    );
+    if (response !== noContent) throw new ConnectError('REQUEST_FAILED');
+  }
+
   protected noRefreshReceiver(): AuthenticatedConnection {
     const receiver = Object.create(this.connection) as AuthenticatedConnection;
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
