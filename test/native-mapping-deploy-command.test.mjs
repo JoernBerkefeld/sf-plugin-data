@@ -228,18 +228,108 @@ test('human deployment identifies each created component and keeps JSON unchange
     const result = await run(command);
     assert.equal(result.status, 'success');
     assert.deepEqual(
-      lines.filter((line) => line.startsWith('Created:')),
+      lines.filter((line) => line.startsWith('created ')),
       json
         ? []
         : [
-            'Created: dlo:Example__dll; mutation: confirmed-created.',
-            'Created: dmo:Example__dlm; mutation: confirmed-created.',
-            'Created: mapping:SourceGenerated; mutation: confirmed-created.',
+            'created dlo Example__dll',
+            'created dmo Example__dlm',
+            'created mapping TargetGenerated',
           ],
     );
     assert.ok(!JSON.stringify(result).includes('deleted'));
     if (!json) assert.equal(lines.at(-1), 'Deployed: 3 (3 created / 0 updated / 0 failed)');
   }
+});
+
+test('DLO processing evidence is private and cleared only by existing parent settlement', async () => {
+  for (const withMapping of [false, true])
+    for (const pending of [false, true]) {
+      const { command, inputs } = await fixture({ pending: pending ? 'dlo' : undefined });
+      command.resolveInputs = async () =>
+        withMapping ? inputs : inputs.filter((input) => input.document.kind === 'dlo');
+      command.executeDlo = async () => ({
+        outcome: 'created',
+        mutation: 'confirmed-created',
+        serverProcessing: true,
+        diagnostics: [],
+      });
+      const lines = [];
+      command.jsonEnabled = () => false;
+      command.log = (line) => lines.push(line);
+      // The synthetic executor admits the DLO; independent reads still enforce settlement.
+      command.createDloClient = () => ({
+        get: async () => ({ ...wire('dlo'), status: pending ? 'PROCESSING' : 'ACTIVE' }),
+      });
+      const result = await run(command);
+      if (withMapping && pending) {
+        assert.equal(result.status, 'failed');
+        assert.ok(!lines.some((line) => line.includes('(server is still processing)')));
+      } else {
+        assert.equal(result.status, 'success', JSON.stringify(result));
+        assert.ok(
+          lines.includes(
+            `created dlo Example__dll${withMapping ? '' : ' (server is still processing)'}`,
+          ),
+        );
+      }
+      assert.ok(!JSON.stringify(result).includes('serverProcessing'));
+    }
+});
+
+test('mixed legacy deployment carries DLO processing without changing JSON', async () => {
+  const { command, inputs } = await fixture({ version: 'auto' });
+  command.resolveInputs = async () => [
+    inputs.find((input) => input.document.kind === 'dlo'),
+    {
+      path: 'legacy.json',
+      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Legacy__dlm' } },
+    },
+  ];
+  command.resolveTargetOrg = async () => ({ ...org, getConnection: () => ({}) });
+  command.captureInput = async () => 'unchanged';
+  command.createDloClient = () => ({});
+  command.verifyDloInput = async () => {};
+  command.preflight = command.preflightDlo = async () => ({
+    outcome: 'create',
+    target: 'absent',
+    absenceProof: 'confirmed-404',
+    diagnostics: [],
+  });
+  command.executeDlo = async () => ({
+    outcome: 'created',
+    mutation: 'confirmed-created',
+    serverProcessing: true,
+    diagnostics: [],
+  });
+  command.execute = async () => ({
+    outcome: 'created',
+    mutation: 'confirmed-created',
+    diagnostics: [],
+  });
+  const lines = [];
+  command.jsonEnabled = () => false;
+  command.log = (line) => lines.push(line);
+  const result = await run(command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.ok(lines.includes('created dlo Example__dll (server is still processing)'));
+  assert.ok(lines.includes('created dmo Legacy__dlm'));
+  assert.ok(!JSON.stringify(result).includes('serverProcessing'));
+});
+
+test('mapping update human name is independently resolved, not the authored alias', async () => {
+  const { command } = await fixture({
+    parentsExisting: true,
+    existing: 'update',
+    order: ['mapping'],
+  });
+  const lines = [];
+  command.jsonEnabled = () => false;
+  command.log = (line) => lines.push(line);
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.ok(lines.includes('updated mapping TargetGenerated'));
+  assert.ok(!lines.some((line) => line.includes('(server is still processing)')));
 });
 
 test('deployment totals mix created, updated, unchanged and failed components without double counting', async () => {
@@ -319,7 +409,7 @@ test('human mapping update lists confirmed removed and added pairs only', async 
           `Deployed: ${outcome === 'updated' ? 1 : 0} (0 created / ${outcome === 'updated' ? 1 : 0} updated / ${outcome === 'failed' ? 1 : 0} failed)`,
         );
       if (!json && outcome !== 'updated')
-        assert.ok(!lines.some((line) => line.startsWith('Updated:')));
+        assert.ok(!lines.some((line) => line.startsWith('updated ')));
     }
   }
 });

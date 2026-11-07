@@ -14,6 +14,7 @@ export type DloExecution = {
   family: 'dlo';
   outcome: 'created' | 'updated' | 'unchanged' | 'failed' | 'blocked';
   mutation: 'confirmed-created' | 'confirmed-updated' | 'unknown' | 'not-attempted';
+  serverProcessing?: true;
   diagnostics: Array<{ code: string; message: string }>;
 };
 /**
@@ -74,6 +75,7 @@ export async function executeDloDeploy(
       family: 'dlo',
       outcome: result.operation === 'create' ? 'created' : 'updated',
       mutation: result.operation === 'create' ? 'confirmed-created' : 'confirmed-updated',
+      ...(result.serverProcessing ? { serverProcessing: true as const } : {}),
       diagnostics: [],
     };
   } catch (error) {

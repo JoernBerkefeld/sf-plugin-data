@@ -241,6 +241,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             this.log(
               `deleted identity-resolution ${item.identity.apiName}${item.mutation === 'acknowledged-processing' ? ' (server is still processing)' : ''}`,
             );
+          else if (item.operation !== 'preview' && item.outcome === 'deleted')
+            this.log(
+              `deleted ${selectorsByItem.get(item)?.split(':')[0]} ${item.identity.apiName}`,
+            );
           else this.log(`${action}: ${selectorsByItem.get(item)}; mutation: ${item.mutation}.`);
           if (item.operation === 'preview')
             for (const step of item.plan ?? [])

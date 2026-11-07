@@ -491,6 +491,33 @@ test('supported label update plus mixed unsupported tail blocks whole selection 
   assert.equal(result.result.items[1].preflight.outcome, 'blocked-changes');
 });
 
+test('human successful DMO actions are lowercase and never infer processing from flags', async () => {
+  for (const outcome of ['created', 'updated', 'unchanged']) {
+    const { command } = batchInvocation();
+    const lines = [];
+    command.jsonEnabled = () => false;
+    command.log = (line) => lines.push(line);
+    command.execute = async () => ({
+      outcome,
+      mutation:
+        outcome === 'created'
+          ? 'confirmed-created'
+          : outcome === 'updated'
+            ? 'confirmed-updated'
+            : 'not-attempted',
+      diagnostics: [],
+    });
+    const { result } = await run(command);
+    assert.equal(result.status, 'success');
+    assert.ok(!lines.some((line) => line.includes('(server is still processing)')));
+    if (outcome === 'unchanged') {
+      assert.ok(!lines.some((line) => /^(created|updated) /u.test(line)));
+    } else {
+      assert.equal(lines.filter((line) => line.startsWith(`${outcome} dmo `)).length, 3);
+    }
+  }
+});
+
 test('human execution output reports unknown mutation and never aggregate success', async () => {
   const { command } = batchInvocation();
   const logs = [];

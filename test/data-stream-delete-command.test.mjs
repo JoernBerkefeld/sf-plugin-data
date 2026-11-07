@@ -114,7 +114,9 @@ for (const preview of [false, true])
         else
           assert.ok(
             fixture.lines.includes(
-              `${preview ? 'Planned delete' : 'Deleted'}: data-stream:Selected; mutation: ${preview ? 'not-attempted' : 'confirmed-deleted'}.`,
+              preview
+                ? 'Planned delete: data-stream:Selected; mutation: not-attempted.'
+                : 'deleted data-stream Selected',
             ),
           );
       });

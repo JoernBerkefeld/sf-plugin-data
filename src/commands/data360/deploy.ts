@@ -565,6 +565,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       },
     };
     const families = new Map<string, string>();
+    const mappingNames = new Map<string, string>();
+    const processingDlos = new Set<string>();
     const mappingChanges = new Map<
       string,
       Parameters<NonNullable<Parameters<typeof executeMapping>[3]>>[0]
@@ -594,12 +596,28 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : `Deploy execution: ${status}${code ? ` (${code})` : ''}. No automatic retry or rollback performed.`,
         );
         for (const item of envelope.result.items) {
-          const component = `${families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo'}:${item.operation === 'execute' && item.targetApiName ? item.targetApiName : item.identity.apiName}`;
-          this.log(
-            item.operation === 'preview'
-              ? `Planned ${item.outcome}: ${component}.`
-              : `${item.outcome === 'created' ? 'Created' : item.outcome === 'updated' ? 'Updated' : item.outcome === 'unchanged' ? 'Unchanged' : item.outcome === 'failed' ? 'Failed' : item.outcome === 'blocked' ? 'Blocked' : 'Not attempted'}: ${component}; mutation: ${item.mutation}.`,
-          );
+          const family =
+            families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo';
+          const apiName =
+            mappingNames.get(item.path) ??
+            (item.operation === 'execute' && item.targetApiName
+              ? item.targetApiName
+              : item.identity.apiName);
+          const component = `${family}:${apiName}`;
+          if (
+            item.operation === 'execute' &&
+            ((item.outcome === 'created' && item.mutation === 'confirmed-created') ||
+              (item.outcome === 'updated' && item.mutation === 'confirmed-updated'))
+          )
+            this.log(
+              `${item.outcome} ${family} ${apiName}${processingDlos.has(item.path) ? ' (server is still processing)' : ''}`,
+            );
+          else
+            this.log(
+              item.operation === 'preview'
+                ? `Planned ${item.outcome}: ${component}.`
+                : `${item.outcome === 'created' ? 'Created' : item.outcome === 'updated' ? 'Updated' : item.outcome === 'unchanged' ? 'Unchanged' : item.outcome === 'failed' ? 'Failed' : item.outcome === 'blocked' ? 'Blocked' : 'Not attempted'}: ${component}; mutation: ${item.mutation}.`,
+            );
           if (
             item.operation === 'execute' &&
             item.outcome === 'updated' &&
@@ -1026,12 +1044,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   },
                   (changes) => mappingChanges.set(input.path, changes),
                   requestScope,
+                  (apiName) => mappingNames.set(input.path, apiName),
                 )
               : kind === 'dlo'
                 ? await (this.executeDlo ?? executeDloDeploy)(input.document, source, requestScope)
                 : await (this.executeNativeDmo ?? executeDmo)(input.document, dmo, requestScope);
+          const { serverProcessing, ...execution } = result as typeof result & {
+            serverProcessing?: true;
+          };
+          if (kind === 'dlo' && serverProcessing) processingDlos.add(input.path);
           envelope.result.items.push({
-            ...result,
+            ...execution,
             family: kind as 'mapping' | 'dlo' | 'dmo',
             identity,
             operation: 'execute',
@@ -1079,6 +1102,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   })
                 ) {
                   settled = true;
+                  processingDlos.delete(input.path);
                   break;
                 }
               }
@@ -2040,7 +2064,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                               selection,
                               effectiveScope,
                             );
-              Object.assign(item, result);
+              const { serverProcessing, ...execution } = result as typeof result & {
+                serverProcessing?: true;
+              };
+              if (input.document.kind === 'dlo' && serverProcessing) processingDlos.add(input.path);
+              Object.assign(item, execution);
             } catch (error) {
               item.diagnostics = [
                 {

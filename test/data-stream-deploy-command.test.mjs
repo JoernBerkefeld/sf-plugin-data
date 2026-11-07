@@ -149,9 +149,7 @@ for (const preview of [true, false])
       assert.ok(!calls.includes(preview ? 'execute' : 'preview'));
       if (json) assert.deepEqual(lines, []);
       else if (!preview) {
-        assert.ok(
-          lines.includes('Created: data-stream:GeneratedStream; mutation: confirmed-created.'),
-        );
+        assert.ok(lines.includes('created data-stream GeneratedStream'));
         assert.equal(lines.at(-1), 'Deployed: 1 (1 created / 0 updated / 0 failed)');
       }
     });
@@ -238,7 +236,9 @@ test('updated/unchanged use existing conventions and do not count noop as deploy
     assert.ok(
       lines.some((line) =>
         line.startsWith(
-          `${outcome === 'updated' ? 'Updated' : 'Unchanged'}: data-stream:GeneratedStream`,
+          outcome === 'updated'
+            ? 'updated data-stream GeneratedStream'
+            : 'Unchanged: data-stream:GeneratedStream',
         ),
       ),
     );

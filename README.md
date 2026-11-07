@@ -7,6 +7,17 @@ supported, guarded updates. Support is resource- and operation-specific: this is
 **not a complete backup, restore or migration tool**. Deployment can cause processing;
 preview first and read the limits below.
 
+Successful human CRUD lines use `created|updated|deleted <type> <apiName>`.
+The suffix ` (server is still processing)` appears only when the command retains
+positive evidence of an acknowledged, unsettled operation: an explicit DLO
+`PROCESSING` write response (unless an existing independent read confirms `ACTIVE`
+and the requested definition), or the guarded IR deletion acknowledgement.
+No suffix is not a universal activation or physical-cleanup guarantee: some
+operations confirm only the definition or accepted receipt. HTTP 204 alone and
+`--allow-processing` are not evidence of ongoing processing. Preview, unchanged,
+read and download output do not receive this suffix; failed or unknown outcomes
+remain failures, not successful queued operations.
+
 ## How to install
 
 Requires Salesforce CLI, Node.js `^22.22.2 || ^24.15.0` and npm. The package identity

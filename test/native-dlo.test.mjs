@@ -20,6 +20,8 @@ import {
   retrieveNativeDlo,
 } from '../lib/services/native-dlo.js';
 
+import { executeDloDeploy } from '../lib/services/command-dlo.js';
+
 const apiName = 'Example__dll';
 const targetId = '1dlaj00000Ae4VNAAZ';
 const field = (name, primary = false) => ({
@@ -341,6 +343,39 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
   assert.equal(writes, 1);
   const result = await deployNativeDlo(document(), { get: absent, create: async () => native() });
   assert.equal(result.operation, 'create');
+});
+
+test('DLO create/update retain only explicit PROCESSING after validated write responses', async () => {
+  for (const operation of ['create', 'update'])
+    for (const wrapped of [false, true])
+      for (const status of ['PROCESSING', 'ACTIVE', undefined, 'DELETING_OFFCORE', 'processing']) {
+        const desired = document();
+        desired.spec.label = 'Changed';
+        const raw = { ...native(), label: 'Changed', status };
+        const response = wrapped ? { dataLakeObjects: [raw] } : raw;
+        const client = {
+          get: operation === 'create' ? absent : async () => native(),
+          create: async () => response,
+          update: async () => response,
+        };
+        const result = await deployNativeDlo(desired, client);
+        const execution = await executeDloDeploy(desired, client);
+        assert.equal(result.serverProcessing, status === 'PROCESSING' ? true : undefined);
+        assert.equal(execution.serverProcessing, result.serverProcessing);
+        assert.equal(execution.outcome, operation === 'create' ? 'created' : 'updated');
+        assert.equal(result.document.spec.status, undefined);
+      }
+  const unchanged = await executeDloDeploy(document(), {
+    get: async () => ({ ...native(), status: 'PROCESSING' }),
+  });
+  assert.equal(unchanged.outcome, 'unchanged');
+  assert.equal(unchanged.serverProcessing, undefined);
+  const failed = await executeDloDeploy(document(), {
+    get: absent,
+    create: async () => ({ ...native(), status: 'PROCESSING', name: 'Other__dll' }),
+  });
+  assert.equal(failed.outcome, 'failed');
+  assert.equal(failed.serverProcessing, undefined);
 });
 
 test('DLO concrete membership binding, required create scope and collision refusal', async () => {

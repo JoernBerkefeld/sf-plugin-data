@@ -176,7 +176,9 @@ for (const preview of [true, false]) {
       else
         assert.ok(
           lines.includes(
-            `${preview ? 'Planned delete' : 'Deleted'}: mapping:Generated_123; mutation: ${item.mutation}.`,
+            preview
+              ? `Planned delete: mapping:Generated_123; mutation: ${item.mutation}.`
+              : 'deleted mapping Generated_123',
           ),
         );
     });
@@ -206,15 +208,8 @@ test('human deletion prints one identified action for each item and stops at fai
     assert.deepEqual(
       lines.slice(1),
       failure
-        ? [
-            'Deleted: dlo:First__dll; mutation: confirmed-deleted.',
-            'Failed: dmo:Second__dlm; mutation: unknown.',
-          ]
-        : [
-            'Deleted: dlo:First__dll; mutation: confirmed-deleted.',
-            'Deleted: dmo:Second__dlm; mutation: confirmed-deleted.',
-            'Deleted: dlo:Third__dll; mutation: confirmed-deleted.',
-          ],
+        ? ['deleted dlo First__dll', 'Failed: dmo:Second__dlm; mutation: unknown.']
+        : ['deleted dlo First__dll', 'deleted dmo Second__dlm', 'deleted dlo Third__dll'],
     );
   }
 });
@@ -343,7 +338,9 @@ for (const selector of ['dlo:Source__dll', 'dmo:Target__dlm']) {
       assert.equal(writes, preview ? 0 : 1);
       assert.deepEqual(lines, [
         `Delete${preview ? ' preview' : ''}: success.`,
-        `${preview ? 'Planned delete' : 'Deleted'}: ${selector}; mutation: ${preview ? 'not-attempted' : 'confirmed-deleted'}.`,
+        preview
+          ? `Planned delete: ${selector}; mutation: not-attempted.`
+          : `deleted ${selector.replace(':', ' ')}`,
       ]);
       assert.deepEqual(result.result.items[0].identity, {
         dataSpace: 'default',

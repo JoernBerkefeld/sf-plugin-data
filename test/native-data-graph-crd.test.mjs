@@ -965,7 +965,7 @@ for (const json of [false, true])
       assert.equal(stdout.join('').includes('Data Graph processing'), false);
     } else {
       assert.ok(stdout.some((message) => /Planned update:/u.test(message)));
-      assert.ok(stdout.some((message) => /Updated: data-graph:.*confirmed-updated/u.test(message)));
+      assert.ok(stdout.some((message) => message.startsWith('updated data-graph ')));
       assert.ok(stdout.some((message) => /Unchanged:/u.test(message)));
     }
   });

@@ -49,6 +49,7 @@ export async function preflightMapping(
  * @param {MappingDependencies} dependencies Fresh source/target readers.
  * @param {Function} [onUpdated] Receive independently confirmed changes without changing JSON.
  * @param {string} [requestScope] Optional request scope forwarded without synthesizing a flag.
+ * @param {Function} [onResolvedName] Receive the independently verified target name for presentation.
  * @returns {Promise<object>} Payload-free execution outcome.
  */
 export async function executeMapping(
@@ -57,6 +58,7 @@ export async function executeMapping(
   dependencies: MappingDependencies,
   onUpdated?: Parameters<typeof deployNativeMapping>[3],
   requestScope?: string,
+  onResolvedName?: (apiName: string) => void,
 ) {
   let dispatched = false;
   const guarded: MappingClient = {
@@ -76,6 +78,7 @@ export async function executeMapping(
   };
   try {
     const result = await deployNativeMapping(value, guarded, dependencies, onUpdated, requestScope);
+    if (result.operation !== 'noop') onResolvedName?.(result.document.identity.apiName);
     return {
       outcome:
         result.operation === 'noop'

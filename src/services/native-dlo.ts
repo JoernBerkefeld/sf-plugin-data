@@ -185,7 +185,11 @@ export async function deployNativeDlo(
   value: unknown,
   client: DloClient,
   requestScope?: string,
-): Promise<{ operation: 'create' | 'update' | 'unchanged'; document: DloDocument }> {
+): Promise<{
+  operation: 'create' | 'update' | 'unchanged';
+  document: DloDocument;
+  serverProcessing?: true;
+}> {
   const desired = validateDloDocument(value);
   const plan = await preflightNativeDlo(desired, client, requestScope);
   if (plan.operation === 'unchanged') return { operation: 'unchanged', document: plan.document };
@@ -198,7 +202,11 @@ export async function deployNativeDlo(
     throw new DloError('DLO_DATASPACE_MISMATCH');
   if (document.identity.apiName !== plan.apiName)
     throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
-  return { operation: plan.operation, document };
+  return {
+    operation: plan.operation,
+    document,
+    ...(unwrapDlo(response).status === 'PROCESSING' ? { serverProcessing: true as const } : {}),
+  };
 }
 
 /**
