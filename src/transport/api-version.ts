@@ -65,6 +65,12 @@ export function operationApiVersion(requested: string, family: OperationalFamily
 
       break;
     }
+    case 'segment': {
+      if (requested === 'auto' || requested === '68.0') return '68.0';
+      if (requested === '65.0') return '65.0';
+
+      break;
+    }
     case 'calculated-insight': {
       if (requested === 'auto' || requested === '65.0') return '65.0';
       if (requested === '68.0') return '68.0';

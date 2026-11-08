@@ -12,7 +12,7 @@ import { dataGraphName, validateDataGraphDocument } from './data-graph-document.
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { segmentName, validateSegmentPair } from './segment-document.js';
+import { segmentName, validateSegmentDocument } from './segment-document.js';
 import type { SegmentDocument } from './segment-document.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { buildDmoCreateRequestFromDocument, validateDmoDocument } from './dmo-document.js';
@@ -32,10 +32,16 @@ import type { CalculatedInsightDocument } from './calculated-insight-document.js
 export class DeployInputError extends Error {
   public constructor(
     public readonly code:
-      'INVALID_SELECTION' | 'UNSAFE_SOURCE' | 'INVALID_SOURCE' | 'DUPLICATE_IDENTITY',
+      | 'INVALID_SELECTION'
+      | 'UNSAFE_SOURCE'
+      | 'INVALID_SOURCE'
+      | 'DUPLICATE_IDENTITY'
+      | 'UNSUPPORTED_SEGMENT_XML',
   ) {
     super(
-      'Select explicit, bounded, authored-only DMO sources without links or conflicting identities.',
+      code === 'UNSUPPORTED_SEGMENT_XML'
+        ? 'Select the single .segment.json artifact; legacy Segment XML is not supported.'
+        : 'Select explicit, bounded, authored-only sources without links or conflicting identities.',
     );
     this.name = 'DeployInputError';
   }
@@ -43,7 +49,6 @@ export class DeployInputError extends Error {
 
 export type SegmentDeployInput = {
   path: string;
-  companionPath: string;
   document: SegmentDocument;
   inputDigest: string;
 };
@@ -587,56 +592,42 @@ async function memberBytes(file: string): Promise<Buffer> {
 }
 
 /**
- * Resolve either canonical Segment member and bind both exact byte sets in one digest.
+ * Admit one canonical Segment JSON and bind its exact bytes.
  * @param {string} file Absolute selected member.
- * @returns {Promise<SegmentDeployInput>} Detached correlated pair with immutable digest value.
+ * @returns {Promise<SegmentDeployInput>} Detached immutable JSON admission.
  */
 async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput> {
-  const xmlSuffix = '.marketSegmentDefinition-meta.xml';
-  const jsonSuffix = '.segment.json';
-  const xmlSelected = file.endsWith(xmlSuffix);
-  const name = path.basename(file).slice(0, -(xmlSelected ? xmlSuffix.length : jsonSuffix.length));
+  const suffix = '.segment.json';
+  const name = path.basename(file).slice(0, -suffix.length);
   if (!segmentName.test(name)) throw new DeployInputError('INVALID_SOURCE');
   const directory = path.dirname(file);
-  const base = xmlSelected ? path.dirname(directory) : path.dirname(path.dirname(directory));
+  const base = path.dirname(path.dirname(directory));
   if (
+    !file.endsWith(suffix) ||
     path.basename(base) !== 'default' ||
     path.basename(path.dirname(base)) !== 'main' ||
-    (xmlSelected
-      ? path.basename(directory) !== 'marketSegmentDefinitions'
-      : path.basename(directory) !== 'segments' ||
-        path.basename(path.dirname(directory)) !== 'data360')
+    path.basename(directory) !== 'segments' ||
+    path.basename(path.dirname(directory)) !== 'data360'
   )
     throw new DeployInputError('INVALID_SELECTION');
-  const xmlPath = path.join(base, 'marketSegmentDefinitions', `${name}${xmlSuffix}`);
-  const companionPath = path.join(base, 'data360', 'segments', `${name}${jsonSuffix}`);
-  const xmlBytes = await memberBytes(xmlPath);
-  const jsonBytes = await memberBytes(companionPath);
+  const bytes = await memberBytes(file);
   let document: SegmentDocument;
   try {
-    document = validateSegmentPair(strictJson(decode(jsonBytes)), decode(xmlBytes));
+    document = validateSegmentDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
   } catch {
     throw new DeployInputError('INVALID_SOURCE');
   }
-  const xmlAfter = await memberBytes(xmlPath);
-  const jsonAfter = await memberBytes(companionPath);
-  if (!xmlAfter.equals(xmlBytes) || !jsonAfter.equals(jsonBytes)) refuse();
-  const inputDigest = createHash('sha256')
-    .update(String(xmlBytes.length))
-    .update(':')
-    .update(xmlBytes)
-    .update(String(jsonBytes.length))
-    .update(':')
-    .update(jsonBytes)
-    .digest('hex');
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const inputDigest = createHash('sha256').update(bytes).digest('hex');
   const freeze = (value: object): void => {
     for (const child of Object.values(value))
       if (child && typeof child === 'object') freeze(child as object);
     Object.freeze(value);
   };
   freeze(document);
-  return Object.freeze({ path: xmlPath, companionPath, document, inputDigest });
+  return Object.freeze({ path: file, document, inputDigest });
 }
 
 /**
@@ -719,14 +710,17 @@ export async function verifyCalculatedInsightInputDigest(
 }
 
 /**
- * Revalidate the complete paired input before a caller relies on its captured admission.
- * @param {SegmentDeployInput} input Previously admitted pair.
- * @returns {Promise<void>} Resolves only if both original byte sets remain unchanged.
+ * Revalidate JSON bytes and logical intent before relying on captured admission.
+ * @param {SegmentDeployInput} input Previously admitted JSON.
+ * @returns {Promise<void>} Resolves only if original bytes and content remain unchanged.
  */
 export async function verifySegmentInputDigest(input: SegmentDeployInput): Promise<void> {
   try {
     const current = await readSegmentDeployInput(input.path);
-    if (current.companionPath !== input.companionPath || current.inputDigest !== input.inputDigest)
+    if (
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
       refuse();
   } catch {
     throw new DeployInputError('UNSAFE_SOURCE');
@@ -734,7 +728,7 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
 }
 
 /**
- * Capture admitted exact bytes without changing the existing input shape or Segment pair digest.
+ * Capture admitted exact bytes without changing the existing input shape or Segment JSON digest.
  * @param {DeployInput} input Previously admitted local input.
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
@@ -781,9 +775,9 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
     await verifyCalculatedInsightInputDigest(input as CalculatedInsightDeployInput);
     return (input as CalculatedInsightDeployInput).inputDigest;
   }
-  if ('companionPath' in input) {
+  if (input.document.kind === 'segment') {
     await verifySegmentInputDigest(input as SegmentDeployInput);
-    return input.inputDigest;
+    return (input as SegmentDeployInput).inputDigest;
   }
   const bytes = await memberBytes(input.path);
   const document = validateDmoDocument(strictJson(decode(bytes)));
@@ -917,11 +911,13 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh directory listing within the existing TypeScript library target.
       for (const entry of entries.sort()) await walk(path.join(file, entry), depth + 1);
     } else {
+      if (file.endsWith('.marketSegmentDefinition-meta.xml')) {
+        if (depth === 0) throw new DeployInputError('UNSUPPORTED_SEGMENT_XML');
+        return;
+      }
       if (
         !stat.isFile() ||
-        (path.extname(file) !== '.json' &&
-          !file.endsWith('.marketSegmentDefinition-meta.xml') &&
-          !file.endsWith('.mktCalcInsightObjectDef-meta.xml')) ||
+        (path.extname(file) !== '.json' && !file.endsWith('.mktCalcInsightObjectDef-meta.xml')) ||
         stat.nlink !== 1 ||
         stat.size > 1_048_576
       )
@@ -1082,7 +1078,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         inputs.push(input);
         continue;
       }
-      if (file.endsWith('.segment.json') || file.endsWith('.marketSegmentDefinition-meta.xml')) {
+      if (file.endsWith('.segment.json')) {
         const paired = await readSegmentDeployInput(file);
         const key =
           `segment:${paired.document.identity.dataSpace}:${paired.document.identity.apiName}`.toLowerCase();

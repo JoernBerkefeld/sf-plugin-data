@@ -243,14 +243,11 @@ export async function selectGitDeployInputs(options: {
         return `identity-resolution:${name}`;
       }
       if (segmentMember(file)) {
-        const xml = file.endsWith('.marketSegmentDefinition-meta.xml');
-        const suffix = xml ? '.marketSegmentDefinition-meta.xml' : '.segment.json';
+        if (file.endsWith('.marketSegmentDefinition-meta.xml'))
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        const suffix = '.segment.json';
         const name = path.posix.basename(file).slice(0, -suffix.length);
-        const expected = path.join(
-          segmentBase!,
-          ...(xml ? ['marketSegmentDefinitions'] : ['data360', 'segments']),
-          `${name}${suffix}`,
-        );
+        const expected = path.join(segmentBase!, 'data360', 'segments', `${name}${suffix}`);
         if (
           !segmentName.test(name) ||
           file !== path.relative(repositoryRoot, expected).split(path.sep).join('/')

@@ -1,5 +1,16 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
+test('Segment defaults to API68 retaining only explicit65 compatibility without family drift', () => {
+  for (const requested of ['auto', '68.0', '65.0'])
+    assert.equal(
+      operationApiVersion(requested, 'segment'),
+      requested === 'auto' ? '68.0' : requested,
+    );
+  for (const requested of ['latest', '66.0', '67.0', '69.0'])
+    assert.throws(() => operationApiVersion(requested, 'segment'));
+  assert.equal(operationApiVersion('auto', 'dmo'), '65.0');
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
+});
 import test from 'node:test';
 import { inspect } from 'node:util';
 import {
@@ -13,7 +24,7 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
   assert.equal(operationApiVersion('68.0', 'dlo'), '68.0');
   for (const pin of ['65.0', '66.0', '67.0', 'latest'])
     assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
-  for (const family of ['dmo', 'segment', 'calculated-insight'])
+  for (const family of ['dmo', 'calculated-insight'])
     assert.equal(operationApiVersion('auto', family), '65.0');
   assert.equal(operationApiVersion('auto', 'identity-resolution'), '68.0');
   for (const requested of ['auto', '67.0'])
@@ -29,7 +40,7 @@ test('CI preserves auto65 and admits only explicit qualified68 beside legacy65',
   assert.equal(operationApiVersion('68.0', 'calculated-insight'), '68.0');
   for (const pin of ['64.0', '66.0', '67.0', '69.0', 'latest'])
     assert.throws(() => operationApiVersion(pin, 'calculated-insight'), /INVALID_SCOPE/u);
-  assert.throws(() => operationApiVersion('68.0', 'segment'), /INVALID_SCOPE/u);
+  assert.equal(operationApiVersion('68.0', 'segment'), '68.0');
 });
 
 for (const requested of ['65.0', '68.0', '99.0', '100.0']) {

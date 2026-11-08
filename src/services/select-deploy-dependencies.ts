@@ -2,6 +2,7 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import type {
   SupportedDeployInput,
+  SegmentDeployInput,
   IdentityResolutionDeployInput,
   DataGraphDeployInput,
 } from '../artifacts/read-deploy-input.js';
@@ -122,7 +123,8 @@ export async function selectDeployDependencies(
   );
   const verify = async (): Promise<void> => {
     for (const { input, digest } of digests) {
-      if ('companionPath' in input) await verifySegmentInputDigest(input);
+      if (input.document.kind === 'segment')
+        await verifySegmentInputDigest(input as SegmentDeployInput);
       if ((await captureDeployInputDigest(input)) !== digest)
         throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
     }

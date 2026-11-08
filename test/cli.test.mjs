@@ -65,6 +65,49 @@ test('package metadata points to the renamed repository without changing npm ide
   });
 });
 
+test('Segment help and README distinguish current JSON from historical paired qualification', async () => {
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  assert.match(Deploy.description, /one portable \*\.segment\.json/u);
+  assert.match(Deploy.description, /separate same-version DMO detail and Metadata reads/u);
+  assert.match(Deploy.description, /identical configuration is unchanged without acknowledgement/u);
+  assert.doesNotMatch(Deploy.description, /same-version runtime, Metadata and dependency reads/u);
+  assert.match(
+    Deploy.description,
+    /Bounded absent-target Segment CREATE supports auto\/API68 in default space and requires --allow-processing/u,
+  );
+  assert.match(
+    Deploy.description,
+    /Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks/u,
+  );
+  assert.doesNotMatch(
+    Deploy.description,
+    /Creation and deletion remain blocked|API68 installed live qualification is separate/u,
+  );
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  assert.ok(readme.includes('`data360/segments/<name>.segment.json`'));
+  assert.ok(!readme.includes('`data360/segment/<name>.segment.json`'));
+  const row = readme.split('\n').find((line) => line.startsWith('| Segments, `segment`'));
+  assert.match(row, /portable `\.segment\.json`/u);
+  assert.match(row, /Historical API65 XML-paired/u);
+  assert.equal((row.match(/Partial/gu) ?? []).length, 4);
+  assert.doesNotMatch(row, /Unavailable|No plugin creation\/deletion|icons\/cli\.svg/u);
+  for (const text of [
+    'native JSON-only API68/default retrieve, absent-target CREATE',
+    'source-backed confirmed DELETE have installed acceptance',
+    'Later conservative DELETE processing-guard refinement is offline-qualified',
+    'No general cross-org, arbitrary SQL, completed computation',
+  ])
+    assert.ok(row.includes(text), text);
+  for (const text of [
+    'Actual CREATE and changed UPDATE require',
+    '`--allow-processing`',
+    'execution requires `--confirm-delete`',
+    'Transitional DELETE success branches are synthetic-only',
+    'Generated membership DMOs were not deleted',
+  ])
+    assert.ok(readme.includes(text), text);
+});
+
 test('README documents the native mapping lifecycle without obsolete XML-only or batch claims', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const mapping = readme
@@ -79,7 +122,7 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'the desired pair set',
     'one names-only, selector-free PATCH',
     'installed public API68 Text reconciliation acceptance below',
-    'Installed creation/reconciliation acceptance is API68',
+    'Installed API61 create/read/single-add acceptance with omitted scope',
     'passed removal of A with batch addition of D/E',
     'B-to-C same-source/new-target retargeting and F-to-D new-source/same-target retargeting',
     'sequentially on the same empty fixture',
@@ -94,7 +137,7 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'typed selected-mapping `404`',
     'the unchanged survivor and exact fixture inventory',
     'Last-for-DMO preview and execution were both blocked with zero writes at API61/68',
-    'API61 fixtures were provisioned at API68; this does not qualify API61 creation',
+    'API61 deletion fixtures were provisioned at API68; this deletion evidence does not qualify API61 creation',
     'API62..67 are an explicitly accepted compatibility assumption, not live-qualified',
     'not successful public bare/type inventory retrieval acceptance',
     'Desired-state removal/retarget remains API68-only',
@@ -114,6 +157,8 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
   for (const obsolete of [
     'There is no public plugin Delete command',
+    'Only the `default` data space is supported.',
+    'Installed creation/reconciliation acceptance is API68;',
     'Exact API65/default opaque XML export only',
     'pending public plugin integration acceptance',
     'installed public reconciliation acceptance remains separate',
@@ -150,6 +195,24 @@ test('README describes optional scope without promoting nondefault qualification
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,
     );
+});
+
+test('README separates DLO field admission from live Text qualification', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const dlo = readme
+    .split('### Data Lake Object (DLO): native definition CRUD')[1]
+    ?.split('### DLO-to-DMO mapping:')[0]
+    .replaceAll(/\s+/gu, ' ');
+  assert.ok(dlo);
+  for (const text of [
+    'Local validation accepts nonempty `dataType` strings rather than a Text-only allowlist',
+    'UPDATE admits label changes and ordinary nonprimary field additions',
+    'not live qualification of every field type',
+    'installed additive-field acceptance here covers Text',
+    'Field removal, existing-field changes and primary-key mutation remain blocked',
+  ])
+    assert.ok(dlo.includes(text), text);
+  assert.ok(!dlo.includes('Update supports a label change and new nonprimary Text fields'));
 });
 
 test('delete help discloses guarded unmap-first deletion and bounded qualification', async () => {

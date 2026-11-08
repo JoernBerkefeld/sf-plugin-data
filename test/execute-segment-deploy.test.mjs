@@ -53,7 +53,7 @@ const changed = () => {
   d.spec.description = 'Changed';
   return d;
 };
-const harness = (desired = changed(), overrides = {}) => {
+const harness = (desired = changed(), overrides = {}, version = '65.0') => {
   let writes = 0;
   let reads = 0;
   let acquisitions = 0;
@@ -85,11 +85,330 @@ const harness = (desired = changed(), overrides = {}) => {
     ...overrides,
   };
   return {
-    run: () => executeSegmentDeploy(desired, connection, '65.0', 'default', options),
+    run: () =>
+      executeSegmentDeploy(
+        desired,
+        { ...connection, getApiVersion: () => version },
+        version,
+        'default',
+        options,
+      ),
     counts: () => ({ writes, reads, acquisitions, delays, verifications }),
     options,
   };
 };
+const absent = () =>
+  retainConnectDiagnostic(
+    { blockers: ['SEGMENT_ACQUISITION_FAILED'] },
+    apiDiagnostic(404, [{ errorCode: 'ITEM_NOT_FOUND' }]),
+  );
+
+test('API68 CREATE requires fresh absence, one POST and independent identity/configuration', async () => {
+  for (const mode of [
+    'active',
+    'processing',
+    'no-ack',
+    'conflict',
+    'uncertain',
+    'malformed',
+    'input',
+    'binding',
+    'target',
+    'identity',
+    'sql',
+    'membership',
+  ]) {
+    let posts = 0;
+    let patches = 0;
+    let acquisitions = 0;
+    let checks = 0;
+    let binds = 0;
+    let reads = 0;
+    const desired = document();
+    const before = structuredClone(desired);
+    const full = () => ({
+      ...runtime(desired, mode === 'processing' ? 'PROCESSING' : 'ACTIVE'),
+      segmentOnId: 'target-local',
+      segmentMembershipDmo: { historyTable: 'history', latestTable: 'latest' },
+    });
+    const result = await executeSegmentDeploy(
+      desired,
+      { ...connection, getApiVersion: () => '68.0' },
+      '68.0',
+      'default',
+      {
+        allowProcessing: mode !== 'no-ack',
+        verifyInput: async () => {
+          if (++checks === 3 && mode === 'input') throw new Error('drift');
+        },
+        bind: async () => [
+          {
+            targetId: mode === 'binding' && ++binds >= 4 ? 'drift' : 'target-local',
+            identity: desired.spec.segmentOn,
+          },
+        ],
+        acquire: async () => {
+          acquisitions++;
+          if (acquisitions <= 2 && !(mode === 'target' && acquisitions === 2)) return absent();
+          return { candidate: desired, blockers: [], expectations: { runtime: full() } };
+        },
+        create: async () => {
+          posts++;
+          if (mode === 'conflict')
+            throw retainConnectDiagnostic(
+              new Error('conflict'),
+              apiDiagnostic(409, [{ errorCode: 'ENTITY_SAVE_ERROR' }]),
+            );
+          if (mode === 'uncertain') throw new Error('lost-response');
+          if (mode === 'malformed') return {};
+          return { ...runtime(desired, 'PROCESSING'), segmentOnId: 'target-local' };
+        },
+        patch: async () => {
+          patches++;
+          assert.fail('No PATCH fallback');
+        },
+        read: async () => {
+          reads++;
+          const raw = full();
+          if (mode === 'identity') raw.marketSegmentId = 'foreign';
+          if (mode === 'sql') raw.description = 'not-desired';
+          if (mode === 'membership') delete raw.segmentMembershipDmo;
+          return { segments: [raw] };
+        },
+        now: () => 0,
+        delay: async () => {},
+      },
+    );
+    const blocked = ['no-ack', 'input', 'binding', 'target'].includes(mode);
+    const success = ['active', 'processing'].includes(mode);
+    assert.equal(posts, blocked ? 0 : 1, mode);
+    assert.equal(patches, 0, mode);
+    assert.equal(result.outcome, success ? 'created' : blocked ? 'blocked' : 'failed', mode);
+    assert.equal(
+      result.mutation,
+      success ? 'confirmed-created' : blocked ? 'not-attempted' : 'unknown',
+      mode,
+    );
+    assert.equal(result.route.method, 'POST');
+    assert.equal(result.serverProcessing, mode === 'processing' ? true : undefined);
+    if (mode === 'conflict') assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_CONFLICT');
+    if (!blocked) assert.equal(reads, 1);
+    assert.deepEqual(desired, before);
+  }
+});
+
+test('native API68 CREATE payload is minimal and create-only with no refresh/replay', async () => {
+  const calls = [];
+  const c = {
+    ...connection,
+    request: async (request, options) => {
+      assert.equal(options.retry.maxRetries, 0);
+      assert.throws(() => options.followRedirect());
+      calls.push(request);
+      return {};
+    },
+  };
+  await new ConnectClient(c, '68.0').createSegment(document());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, `${connection.instanceUrl}/services/data/v68.0/ssot/segments`);
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    developerName: 'Audience',
+    displayName: 'Audience',
+    description: 'Description',
+    segmentOnApiName: 'Person__dlm',
+    segmentType: 'Dbt',
+    includeDbt: { models: { models: document().spec.models } },
+    publishSchedule: 'NoRefresh',
+  });
+  await assert.rejects(new ConnectClient(c, '65.0').createSegment(document()));
+  assert.equal(calls.length, 1);
+});
+
+test('API68 bounded update, no-op, no-ack and COUNTING exhaustion never replay', async () => {
+  for (const mode of ['update', 'unchanged', 'no-ack', 'counting', 'unknown']) {
+    const h = harness(
+      mode === 'unchanged' ? document() : changed(),
+      mode === 'no-ack'
+        ? { allowProcessing: false }
+        : mode === 'counting'
+          ? {
+              patch: async () => runtime(changed(), 'COUNTING'),
+              read: async () => ({ segments: [runtime(changed(), 'COUNTING')] }),
+            }
+          : mode === 'unknown'
+            ? {
+                patch: async () => {
+                  throw new Error('uncertain');
+                },
+              }
+            : {},
+      '68.0',
+    );
+    const result = await h.run();
+    assert.equal(result.route.apiVersion, '68.0');
+    assert.equal(
+      result.outcome,
+      mode === 'update'
+        ? 'updated'
+        : mode === 'unchanged'
+          ? 'unchanged'
+          : mode === 'no-ack'
+            ? 'blocked'
+            : 'failed',
+    );
+    assert.equal(
+      result.mutation,
+      ['counting', 'unknown'].includes(mode)
+        ? 'unknown'
+        : mode === 'update'
+          ? 'confirmed-updated'
+          : 'not-attempted',
+    );
+    assert.ok(h.counts().writes <= 1);
+  }
+});
+
+test('API68 default native JSON acquisition updates and repeats without Segment Metadata', async () => {
+  let current = runtime();
+  current.segmentMembershipDmo = { historyTable: 'private-history', latestTable: 'private-latest' };
+  const original = structuredClone(current);
+  const requests = [];
+  const target = {
+    instanceUrl: connection.instanceUrl,
+    getApiVersion: () => '68.0',
+    request: async (request) => {
+      requests.push({ method: request.method, url: request.url });
+      assert.match(request.url, /\/services\/data\/v68\.0\/ssot\/segments\/Audience$/u);
+      if (request.method === 'PATCH') {
+        const body = JSON.parse(request.body);
+        assert.deepEqual(body.includeDbt.models.models, changed().spec.models);
+        assert.equal(body.description, changed().spec.description);
+        current = { ...current, description: body.description };
+        return { ...current, segmentStatus: 'PROCESSING' };
+      }
+      assert.equal(request.method, 'GET');
+      return { segments: [structuredClone(current)] };
+    },
+  };
+  const options = {
+    allowProcessing: true,
+    verifyInput: async () => {},
+    bind: async () => [{ targetId: 'target-local', identity: document().spec.segmentOn }],
+  };
+  const updated = await executeSegmentDeploy(changed(), target, '68.0', 'default', options);
+  assert.equal(updated.outcome, 'updated');
+  assert.equal(updated.mutation, 'confirmed-updated');
+  assert.deepEqual(current, { ...original, description: changed().spec.description });
+  assert.equal(requests.filter((request) => request.method === 'PATCH').length, 1);
+  const beforeRepeat = requests.length;
+  const repeated = await executeSegmentDeploy(changed(), target, '68.0', 'default', {
+    ...options,
+    allowProcessing: false,
+  });
+  assert.equal(repeated.outcome, 'unchanged');
+  assert.equal(repeated.mutation, 'not-attempted');
+  assert.ok(requests.slice(beforeRepeat).every((request) => request.method === 'GET'));
+});
+
+test('only PATCH may omit association and membership; independent full GET stays strict', async () => {
+  for (const status of ['PROCESSING', 'COUNTING', 'ACTIVE']) {
+    const h = harness(
+      changed(),
+      {
+        patch: async () => {
+          const raw = runtime(changed(), 'PROCESSING');
+          delete raw.segmentOnApiName;
+          return raw;
+        },
+        read: async () => ({ segments: [runtime(changed(), status)] }),
+      },
+      '68.0',
+    );
+    const result = await h.run();
+    assert.equal(result.outcome, 'updated');
+    assert.equal(result.serverProcessing, status === 'ACTIVE' ? undefined : true);
+  }
+  for (const corrupt of [
+    'association',
+    'membership',
+    'id',
+    'unknown',
+    'sql',
+    'settings',
+    'missing-id',
+  ]) {
+    const h = harness();
+    h.options.patch = async () => {
+      const raw = runtime(changed(), 'PROCESSING');
+      delete raw.segmentOnApiName;
+      if (corrupt === 'association') raw.segmentOnApiName = 'Other__dlm';
+      if (corrupt === 'membership')
+        raw.segmentMembershipDmo = { historyTable: 'other', latestTable: 'other' };
+      if (corrupt === 'id') raw.marketSegmentDefinitionId = 'foreign';
+      if (corrupt === 'unknown') raw.unrecognized = true;
+      if (corrupt === 'sql') raw.includeDbt.models[0].sql += ' ';
+      if (corrupt === 'settings') raw.lookbackPeriod = 'P2Y';
+      if (corrupt === 'missing-id') delete raw.marketSegmentId;
+      return raw;
+    };
+    const result = await h.run();
+    assert.equal(result.mutation, 'unknown', corrupt);
+    assert.equal(result.serverProcessing, undefined);
+  }
+  for (const omitted of ['segmentOnApiName', 'segmentMembershipDmo']) {
+    const membership = { historyTable: 'private-history', latestTable: 'private-latest' };
+    const h = harness(changed(), {
+      acquire: async () => ({
+        candidate: document(),
+        blockers: [],
+        expectations: { runtime: { ...runtime(), segmentMembershipDmo: membership } },
+      }),
+      patch: async () => {
+        const raw = runtime(changed(), 'PROCESSING');
+        delete raw.segmentOnApiName;
+        return raw;
+      },
+      read: async () => {
+        const raw = { ...runtime(changed(), 'PROCESSING'), segmentMembershipDmo: membership };
+        delete raw[omitted];
+        return { segments: [raw] };
+      },
+    });
+    const result = await h.run();
+    assert.equal(result.mutation, 'unknown', omitted);
+  }
+});
+
+test('partial PATCH accepts omitted membership only with independently preserved generated references', async () => {
+  const membership = { historyTable: 'private-history', latestTable: 'private-latest' };
+  for (const drift of [false, true]) {
+    const h = harness(changed(), {
+      acquire: async () => ({
+        candidate: document(),
+        blockers: [],
+        expectations: { runtime: { ...runtime(), segmentMembershipDmo: membership } },
+      }),
+      patch: async () => {
+        const raw = runtime(changed(), 'PROCESSING');
+        delete raw.segmentOnApiName;
+        return raw;
+      },
+      read: async () => ({
+        segments: [
+          {
+            ...runtime(changed(), 'PROCESSING'),
+            segmentMembershipDmo: { ...membership, ...(drift ? { latestTable: 'foreign' } : {}) },
+          },
+        ],
+      }),
+    });
+    const result = await h.run();
+    assert.equal(result.mutation, drift ? 'unknown' : 'confirmed-updated');
+    assert.equal(result.serverProcessing, drift ? undefined : true);
+  }
+});
+
 test('Segment retains primary PATCH evidence over secondary poll failure with one dispatch', async () => {
   const primary = apiDiagnostic(400, [
     { errorCode: 'INVALID_INPUT', message: 'A maximum of 10 rulesets is supported.' },
@@ -268,7 +587,7 @@ test('forward predicate update settles independently and redundant criteria cann
   assert.equal(reverse.counts().writes, 0);
 });
 
-test('PROCESSING then COUNTING then ACTIVE requires independent complete verification and one PATCH', async () => {
+test('positive PATCH and independent PROCESSING confirm queued configuration with one PATCH', async () => {
   const h = harness();
   const states = ['PROCESSING', 'COUNTING', 'ACTIVE'];
   let reads = 0;
@@ -281,14 +600,20 @@ test('PROCESSING then COUNTING then ACTIVE requires independent complete verific
   const result = await h.run();
   assert.equal(result.outcome, 'updated');
   assert.equal(result.mutation, 'confirmed-updated');
-  assert.equal(reads, 3);
+  assert.equal(result.serverProcessing, true);
+  assert.equal(reads, 1);
   assert.equal(h.counts().writes, 1);
-  assert.equal(h.counts().acquisitions, 3);
-  assert.equal(h.counts().delays, 2);
+  assert.equal(h.counts().acquisitions, 2);
+  assert.equal(h.counts().delays, 0);
   assert.equal(bindings, 4);
 });
-test('persistent COUNTING exhausts the unchanged finite budget without replay or success', async () => {
+test('unacknowledged COUNTING exhausts the unchanged finite budget without replay or success', async () => {
   const h = harness();
+  const patch = h.options.patch;
+  h.options.patch = async () => {
+    await patch();
+    return {};
+  };
   let reads = 0;
   h.options.read = async () => {
     reads++;
@@ -305,6 +630,11 @@ test('persistent COUNTING exhausts the unchanged finite budget without replay or
 test('COUNTING followed by unknown, missing, error or failed reads stays unknown without replay', async () => {
   for (const state of ['UNQUALIFIED', undefined, 'ERROR', 'read-error']) {
     const h = harness();
+    const patch = h.options.patch;
+    h.options.patch = async () => {
+      await patch();
+      return {};
+    };
     let reads = 0;
     h.options.read = async () => {
       if (++reads === 1) return { segments: [runtime(changed(), 'COUNTING')] };
@@ -321,45 +651,47 @@ test('COUNTING followed by unknown, missing, error or failed reads stays unknown
     assert.equal(h.counts().acquisitions, 2);
   }
 });
-test('PATCH payload is complete doubly nested DBT and omits both schedules and lookback', async () => {
-  const calls = [];
-  const c = {
-    ...connection,
-    request: async function (request, options) {
-      assert.equal(this._refreshDelegate, undefined);
-      assert.equal(options.retry.maxRetries, 0);
-      assert.throws(() => options.followRedirect());
-      calls.push(request);
-      return {};
-    },
-    _refreshDelegate: {},
-  };
-  await new ConnectClient(c, '65.0').patchSegment(changed());
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].method, 'PATCH');
-  assert.equal(
-    calls[0].url,
-    `${connection.instanceUrl}/services/data/v65.0/ssot/segments/Audience`,
-  );
-  assert.deepEqual(JSON.parse(calls[0].body), {
-    displayName: 'Audience',
-    description: 'Changed',
-    segmentType: 'Dbt',
-    segmentOnApiName: 'Person__dlm',
-    includeDbt: { models: { models: changed().spec.models } },
+for (const version of ['65.0', '68.0']) {
+  test(`API${version} PATCH payload is complete doubly nested DBT without schedules or lookback`, async () => {
+    const calls = [];
+    const c = {
+      ...connection,
+      request: async function (request, options) {
+        assert.equal(this._refreshDelegate, undefined);
+        assert.equal(options.retry.maxRetries, 0);
+        assert.throws(() => options.followRedirect());
+        calls.push(request);
+        return {};
+      },
+      _refreshDelegate: {},
+    };
+    await new ConnectClient(c, version).patchSegment(changed());
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'PATCH');
+    assert.equal(
+      calls[0].url,
+      `${connection.instanceUrl}/services/data/v${version}/ssot/segments/Audience`,
+    );
+    assert.deepEqual(JSON.parse(calls[0].body), {
+      displayName: 'Audience',
+      description: 'Changed',
+      segmentType: 'Dbt',
+      segmentOnApiName: 'Person__dlm',
+      includeDbt: { models: { models: changed().spec.models } },
+    });
+    for (const version of [
+      '64.0',
+      '66.0',
+      { requested: 'latest', restSelector: 'latest', soapNumeric: '65.0' },
+    ])
+      await assert.rejects(new ConnectClient(c, version).patchSegment(changed()));
+    const bad = changed();
+    bad.identity.apiName = '../other';
+    await assert.rejects(new ConnectClient(c, '65.0').patchSegment(bad));
+    assert.equal(calls.length, 1);
+    assert.ok(c._refreshDelegate);
   });
-  for (const version of [
-    '64.0',
-    '66.0',
-    { requested: 'latest', restSelector: 'latest', soapNumeric: '65.0' },
-  ])
-    await assert.rejects(new ConnectClient(c, version).patchSegment(changed()));
-  const bad = changed();
-  bad.identity.apiName = '../other';
-  await assert.rejects(new ConnectClient(c, '65.0').patchSegment(bad));
-  assert.equal(calls.length, 1);
-  assert.ok(c._refreshDelegate);
-});
+}
 test('auth/network errors never replay; malformed response remains unknown after successful reconciliation', async () => {
   for (const response of ['auth', 'network', 'malformed']) {
     let attempts = 0;
@@ -380,9 +712,10 @@ test('auth/network errors never replay; malformed response remains unknown after
     assert.ok(!JSON.stringify(r).includes('private'));
   }
 });
-test('processing polls have finite read and delay budgets even with a frozen clock', async () => {
+test('unacknowledged processing polls have finite read and delay budgets even with a frozen clock', async () => {
   let reads = 0;
   const h = harness(changed(), {
+    patch: async () => ({}),
     read: async () => {
       reads++;
       return { segments: [runtime(changed(), 'PROCESSING')] };

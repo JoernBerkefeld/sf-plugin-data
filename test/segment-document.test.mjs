@@ -21,12 +21,8 @@ import {
 } from '../lib/artifacts/segment-document.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { retrieveSegment, projectSegment } from '../lib/services/retrieve-segment.js';
-import {
-  apiDiagnostic,
-  getConnectDiagnostic,
-  retainConnectDiagnostic,
-} from '../lib/transport/connect-diagnostic.js';
-import { retrieveSegmentMetadata } from '../lib/transport/project-metadata.js';
+import { apiDiagnostic, getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { retrieveMappingSourceMetadata } from '../lib/transport/project-metadata.js';
 const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
 const candidate = () => ({
   schemaVersion: 1,
@@ -166,25 +162,34 @@ for (const [label, change] of Object.entries({
   test(`pair rejects ${label}`, () =>
     assert.throws(() => validateSegmentPair(candidate(), change(xml()))));
 }
-test('pair writer creates both, repeats byte-stably and refuses differing bytes before changing either', async () => {
+test('JSON writer emits no XML, repeats byte-stably and refuses conflicts', async () => {
   const directory = await root();
-  const first = await writeSegmentDocument(candidate(), xml(), directory, false);
+  const first = await writeSegmentDocument(candidate(), directory, false);
   assert.equal(first.outcome, 'retrieved');
-  const repeat = await writeSegmentDocument(candidate(), xml(), directory, false);
+  const repeat = await writeSegmentDocument(candidate(), directory, false);
   assert.equal(repeat.outcome, 'unchanged');
+  await assert.rejects(
+    readFile(
+      path.join(
+        directory,
+        'force-app/main/default/marketSegmentDefinitions/Audience.marketSegmentDefinition-meta.xml',
+      ),
+    ),
+    { code: 'ENOENT' },
+  );
+  await writeFile(first.path, 'different');
   const before = await readFile(first.path);
-  await writeFile(first.companionPath, 'different');
-  await assert.rejects(writeSegmentDocument(candidate(), xml(), directory, false), {
+  await assert.rejects(writeSegmentDocument(candidate(), directory, false), {
     code: 'OVERWRITE_REQUIRED',
   });
   assert.deepEqual(await readFile(first.path), before);
-  const overwritten = await writeSegmentDocument(candidate(), xml(), directory, true);
+  const overwritten = await writeSegmentDocument(candidate(), directory, true);
   assert.equal(overwritten.outcome, 'retrieved');
 });
 test('writer reports first-publication staging-unlink failure as partial output', async () => {
   const directory = await root();
   await assert.rejects(
-    writeSegmentDocument(candidate(), xml(), directory, false, {
+    writeSegmentDocument(candidate(), directory, false, {
       link,
       rename,
       unlink: async () => {
@@ -198,7 +203,7 @@ test('writer preserves a racing companion and reports incomplete pair rather tha
   const directory = await root();
   let calls = 0;
   await assert.rejects(
-    writeSegmentDocument(candidate(), xml(), directory, false, {
+    writeSegmentDocument(candidate(), directory, false, {
       rename,
       unlink,
       link: async (from, to) => {
@@ -209,7 +214,7 @@ test('writer preserves a racing companion and reports incomplete pair rather tha
             directory,
             'force-app/main/default/data360/segments/Audience.segment.json',
           );
-          await writeFile(companion, 'racing author', { flag: 'wx' });
+          await writeFile(companion, 'racing author');
         }
       },
     }),
@@ -226,7 +231,7 @@ test('writer preserves a racing companion and reports incomplete pair rather tha
 test('writer fails before publication when the first filesystem publication fails', async () => {
   const directory = await root();
   await assert.rejects(
-    writeSegmentDocument(candidate(), xml(), directory, false, {
+    writeSegmentDocument(candidate(), directory, false, {
       rename,
       unlink,
       link: async () => {
@@ -252,7 +257,7 @@ test('writer honors configured package and refuses junction output', async () =>
     path.join(directory, 'sfdx-project.json'),
     JSON.stringify({ packageDirectories: [{ path: 'custom', default: true }] }),
   );
-  const receipt = await writeSegmentDocument(candidate(), xml(), directory, false);
+  const receipt = await writeSegmentDocument(candidate(), directory, false);
   assert.ok(receipt.path.includes(`${path.sep}custom${path.sep}`));
   const outside = await root();
   const linked = await root();
@@ -261,39 +266,31 @@ test('writer honors configured package and refuses junction output', async () =>
     path.join(linked, 'force-app'),
     process.platform === 'win32' ? 'junction' : 'dir',
   );
-  await assert.rejects(writeSegmentDocument(candidate(), xml(), linked, true));
+  await assert.rejects(writeSegmentDocument(candidate(), linked, true));
 });
-test('retrieve exact route, no replay and independently correlated metadata, without private projection publication', async () => {
-  let calls = 0;
-  const connection = {
-    instanceUrl: 'https://synthetic.example',
-    getApiVersion: () => '65.0',
-    getUsername: () => 'synthetic',
-    _refreshDelegate: () => assert.fail(),
-    request: async function (request, options) {
-      calls++;
-      assert.equal(this._refreshDelegate, undefined);
-      assert.equal(options.retry.maxRetries, 0);
-      assert.match(request.url, /\/v65\.0\/ssot\/segments\/Audience$/u);
-      return raw();
-    },
-  };
-  const result = await retrieveSegment(
-    connection,
-    'Audience',
-    '65.0',
-    'default',
-    async (org, name) => {
-      assert.equal(org, 'synthetic');
-      assert.equal(name, 'Audience');
-      return xml();
-    },
-  );
-  assert.equal(calls, 1);
-  assert.deepEqual(result.blockers, []);
-  assert.deepEqual(result.candidate, candidate());
-  assert.equal(result.expectations.runtime.marketSegmentId, 'private-id');
-});
+for (const version of ['65.0', '68.0']) {
+  test(`retrieve API${version} makes only one exact native request without Segment Metadata`, async () => {
+    let calls = 0;
+    const connection = {
+      instanceUrl: 'https://synthetic.example',
+      getApiVersion: () => version,
+      getUsername: () => assert.fail('JSON acquisition must not need Metadata target identity'),
+      _refreshDelegate: () => assert.fail(),
+      request: async function (request, options) {
+        calls++;
+        assert.equal(this._refreshDelegate, undefined);
+        assert.equal(options.retry.maxRetries, 0);
+        assert.ok(request.url.endsWith(`/v${version}/ssot/segments/Audience`));
+        return raw();
+      },
+    };
+    const result = await retrieveSegment(connection, 'Audience', version, 'default');
+    assert.equal(calls, 1);
+    assert.deepEqual(result.blockers, []);
+    assert.deepEqual(result.candidate, candidate());
+    assert.equal(result.expectations.runtime.marketSegmentId, 'private-id');
+  });
+}
 for (const [label, change] of Object.entries({
   unknown: (r) => (r.segments[0].futureMeaningful = true),
   wrong: (r) => (r.segments[0].apiName = 'Other'),
@@ -313,7 +310,6 @@ for (const [label, change] of Object.entries({
       'Audience',
       '65.0',
       'default',
-      async () => assert.fail(),
     );
     assert.equal(result.candidate, undefined);
     assert.ok(result.blockers.length);
@@ -331,19 +327,21 @@ test('Segment acquisition retains normalized evidence without publishing remote 
       getUsername: () => 'synthetic',
       request: async () => {
         reads++;
-        return raw();
+        throw {
+          statusCode: 400,
+          data: [
+            { errorCode: 'INVALID_INPUT', message: 'The target configuration is unavailable.' },
+          ],
+        };
       },
     },
     'Audience',
     '65.0',
     'default',
-    async () => {
-      throw retainConnectDiagnostic(new Error('hidden'), evidence);
-    },
   );
   assert.equal(reads, 1);
   assert.deepEqual(result.blockers, ['SEGMENT_ACQUISITION_FAILED']);
-  assert.equal(getConnectDiagnostic(result), evidence);
+  assert.deepEqual(getConnectDiagnostic(result), evidence);
   assert.doesNotMatch(JSON.stringify(result), /hidden|INVALID_INPUT|statusCode/u);
 });
 
@@ -361,41 +359,54 @@ test('generic404 is not absence proof and latest refuses before request', async 
   assert.equal(result.candidate, undefined);
   await assert.rejects(retrieveSegment(connection, 'Audience', 'latest', 'default'));
 });
-test('standard CLI boundary owns scratch and exact args, validates terminal result and decomposed member', async () => {
-  const output = await retrieveSegmentMetadata('synthetic', 'Audience', async (arguments_, cwd) => {
-    assert.deepEqual(arguments_, [
-      'project',
-      'retrieve',
-      'start',
-      '--metadata',
-      'MarketSegmentDefinition:Audience',
-      '--target-org',
+for (const version of ['65.0']) {
+  test(`shared mapping CLI boundary retains scratch and API${version} project and retrieve version`, async () => {
+    const output = await retrieveMappingSourceMetadata(
       'synthetic',
-      '--api-version',
-      '65.0',
-      '--wait',
-      '5',
-      '--json',
-    ]);
-    assert.equal(path.dirname(cwd), os.tmpdir());
-    const directory = path.join(cwd, 'force-app', 'main', 'default', 'marketSegmentDefinitions');
-    await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, 'Audience.marketSegmentDefinition-meta.xml'), xml());
-    return {
-      exitCode: 0,
-      stdout: JSON.stringify({
-        status: 0,
-        result: {
-          done: true,
-          success: true,
-          status: 'Succeeded',
-          files: [{ type: 'MarketSegmentDefinition', fullName: 'Audience', state: 'Created' }],
-        },
-      }),
-    };
+      'Audience',
+      async (arguments_, cwd) => {
+        assert.deepEqual(arguments_, [
+          'project',
+          'retrieve',
+          'start',
+          '--metadata',
+          'ObjectSourceTargetMap:Audience',
+          '--target-org',
+          'synthetic',
+          '--api-version',
+          version,
+          '--wait',
+          '5',
+          '--json',
+        ]);
+        assert.equal(path.dirname(cwd), os.tmpdir());
+        assert.equal(
+          JSON.parse(await readFile(path.join(cwd, 'sfdx-project.json'), 'utf8')).sourceApiVersion,
+          version,
+        );
+        const directory = path.join(cwd, 'force-app', 'main', 'default', 'objectSourceTargetMaps');
+        await mkdir(directory, { recursive: true });
+        await writeFile(
+          path.join(directory, 'Audience.objectSourceTargetMap-meta.xml'),
+          '<mapping/>',
+        );
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            status: 0,
+            result: {
+              done: true,
+              success: true,
+              status: 'Succeeded',
+              files: [{ type: 'ObjectSourceTargetMap', fullName: 'Audience', state: 'Created' }],
+            },
+          }),
+        };
+      },
+    );
+    assert.equal(output, '<mapping/>');
   });
-  assert.equal(output, xml());
-});
+}
 for (const result of [
   { done: false, success: true, status: 'InProgress' },
   { done: true, success: false, status: 'Failed' },
@@ -404,7 +415,7 @@ for (const result of [
 ]) {
   test(`standard transport refuses unsupported result ${JSON.stringify(result)}`, async () =>
     assert.rejects(
-      retrieveSegmentMetadata('synthetic', 'Audience', async () => ({
+      retrieveMappingSourceMetadata('synthetic', 'Audience', async () => ({
         exitCode: 0,
         stdout: JSON.stringify({ status: 0, result }),
       })),

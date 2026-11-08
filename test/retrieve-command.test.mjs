@@ -488,52 +488,63 @@ test('latest malformed, failed and newer discovery blocks before every DMO or fi
   }
 });
 
-test('exact Segment repeat selection deduplicates and writes pairs without DMO inventory', async () => {
-  const command = invocation({
-    metadata: ['segment:Zulu', 'segment:Alpha', 'segment:Zulu'],
-    'output-dir': 'custom-root',
-  });
-  command.selectDocuments = () => assert.fail('Segment exact must not list DMOs');
-  const acquired = [];
-  command.selectDependencies = async (roots, conn, version) => {
-    const entries = [];
-    for (const root of roots) {
-      const acquired = await command.acquireSegment(conn, root.apiName, version, root.dataSpace);
-      entries.push({ document: acquired.candidate, definitionXml: acquired.definitionXml });
+for (const apiVersion of ['65.0', '68.0', 'auto']) {
+  test(`exact Segment ${apiVersion} repeat selection deduplicates and writes pairs without DMO inventory`, async () => {
+    const command = invocation({
+      metadata: ['segment:Zulu', 'segment:Alpha', 'segment:Zulu'],
+      'api-version': apiVersion,
+      'output-dir': 'custom-root',
+    });
+    command.selectDocuments = () => assert.fail('Segment exact must not list DMOs');
+    const acquired = [];
+    command.selectDependencies = async (roots, conn, version) => {
+      const entries = [];
+      for (const root of roots) {
+        const acquired = await command.acquireSegment(conn, root.apiName, version, root.dataSpace);
+        entries.push({ document: acquired.candidate });
+      }
+      return { entries, reasons: new Map() };
+    };
+    command.acquireSegment = async (conn, name, version, space) => {
+      assert.equal(conn, connection);
+      assert.equal(version.requested, apiVersion === 'auto' ? '68.0' : apiVersion);
+      assert.equal(space, 'default');
+      acquired.push(name);
+      return {
+        candidate: { kind: 'segment', identity: { dataSpace: 'default', apiName: name } },
+        definitionXml: '<independent/>',
+        blockers: [],
+      };
+    };
+    command.writeSegment = async (document, root, overwrite) => {
+      assert.equal(root, 'custom-root');
+      assert.equal(overwrite, false);
+      return {
+        path: `${document.identity.apiName}.segment.json`,
+        outcome: 'unchanged',
+      };
+    };
+    const { result } = await run(command);
+    assert.equal(result.status, 'success');
+    assert.deepEqual(acquired, ['Alpha', 'Zulu']);
+    assert.deepEqual(result.result.selection, ['segment:Alpha', 'segment:Zulu']);
+    assert.ok(
+      result.result.items.every(
+        (item) =>
+          item.family === 'segment' &&
+          !('companionPath' in item) &&
+          item.path.endsWith('.segment.json') &&
+          item.outcome === 'unchanged',
+      ),
+    );
+    for (const item of result.result.items) {
+      assert.deepEqual(
+        item.routes.map((route) => route.apiVersion),
+        [apiVersion === 'auto' ? '68.0' : apiVersion],
+      );
     }
-    return { entries, reasons: new Map() };
-  };
-  command.acquireSegment = async (conn, name, version, space) => {
-    assert.equal(conn, connection);
-    assert.equal(version.requested, '65.0');
-    assert.equal(space, 'default');
-    acquired.push(name);
-    return {
-      candidate: { kind: 'segment', identity: { dataSpace: 'default', apiName: name } },
-      definitionXml: '<independent/>',
-      blockers: [],
-    };
-  };
-  command.writeSegment = async (document, xml, root, overwrite) => {
-    assert.equal(xml, '<independent/>');
-    assert.equal(root, 'custom-root');
-    assert.equal(overwrite, false);
-    return {
-      path: `${document.identity.apiName}.xml`,
-      companionPath: `${document.identity.apiName}.json`,
-      outcome: 'unchanged',
-    };
-  };
-  const { result } = await run(command);
-  assert.equal(result.status, 'success');
-  assert.deepEqual(acquired, ['Alpha', 'Zulu']);
-  assert.deepEqual(result.result.selection, ['segment:Alpha', 'segment:Zulu']);
-  assert.ok(
-    result.result.items.every(
-      (item) => item.family === 'segment' && item.companionPath && item.outcome === 'unchanged',
-    ),
-  );
-});
+  });
+}
 test('Segment bare inventory/latest/invalid identity refuse before auth', async () => {
   for (const flags of [
     { metadata: ['segment'] },

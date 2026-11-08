@@ -47,9 +47,7 @@ const fixture = async () => {
   const file = path.join(cwd, 'data360/default/dmo/Person__dlm.json');
   await writeFile(file, JSON.stringify(dmo()));
   const document = segment();
-  const sql = document.spec.models[0].sql;
-  const xml = `<MarketSegmentDefinition xmlns="http://soap.sforce.com/2006/04/metadata"><includeCriteria>&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;${sql}&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;</includeCriteria><masterLabel>Audience</masterLabel><segmentType>DBT</segmentType></MarketSegmentDefinition>`;
-  await writeSegmentDocument(document, xml, cwd, false);
+  await writeSegmentDocument(document, cwd, false);
   return { cwd, file };
 };
 test('ready-node tie-break retains reverse-order, same-family edges and isolated roots', () => {

@@ -154,7 +154,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment supports only the qualified API65/default single-model DBT subset and publishes correlated XML/JSON pairs. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -818,7 +818,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new SegmentError('INVALID_SELECTION');
       if (
         segmentSelectors.length > 0 &&
-        (effectiveVersion !== '65.0' || effectiveScope !== 'default')
+        (!['65.0', '68.0'].includes(effectiveVersion) || effectiveScope !== 'default')
       )
         throw new SegmentError('INVALID_SCOPE');
       // Validate syntax/scope before auth; latest capability evidence arrives after discovery.
@@ -1380,10 +1380,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         flags['output-dir'] ?? process.cwd(),
                         flags.overwrite,
                       )
-                    : 'definitionXml' in entry
+                    : document.kind === 'segment'
                       ? await this.writeSegment(
                           document,
-                          entry.definitionXml,
                           flags['output-dir'] ?? process.cwd(),
                           flags.overwrite,
                         )
@@ -1401,6 +1400,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 ? { family: document.kind }
                 : {}),
               ...(flags['api-version'] === 'auto' ||
+              document.kind === 'segment' ||
               document.kind === 'identity-resolution' ||
               document.kind === 'calculated-insight' ||
               document.kind === 'data-graph'
@@ -1436,14 +1436,22 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                               {
                                 operation: `${document.kind}.get`,
                                 apiVersion:
-                                  document.kind === 'calculated-insight' ? ciApiVersion : '65.0',
+                                  document.kind === 'calculated-insight'
+                                    ? ciApiVersion
+                                    : document.kind === 'segment'
+                                      ? selection.soapNumeric
+                                      : '65.0',
                                 transport: 'native' as const,
                               },
-                              {
-                                operation: `${document.kind}.metadata`,
-                                apiVersion: '65.0',
-                                transport: 'metadata' as const,
-                              },
+                              ...(document.kind === 'segment'
+                                ? []
+                                : [
+                                    {
+                                      operation: `${document.kind}.metadata`,
+                                      apiVersion: '65.0',
+                                      transport: 'metadata' as const,
+                                    },
+                                  ]),
                               ...(document.kind === 'calculated-insight' && ciApiVersion === '68.0'
                                 ? [
                                     {

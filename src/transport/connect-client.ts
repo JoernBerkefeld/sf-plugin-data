@@ -183,13 +183,41 @@ export class ConnectClient {
   }
 
   /**
-   * PATCH only a validated complete DBT definition on the fixed API65 Segment route.
+   * Create one native API68 Segment without refresh, redirect or replay.
+   * @param {unknown} value Complete admitted portable definition.
+   * @returns {Promise<unknown>} Untrusted acknowledgement, not settlement.
+   */
+  public async createSegment(value: unknown): Promise<unknown> {
+    if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
+    const document = validateSegmentDocument(value);
+    return this.send(
+      {
+        method: 'POST',
+        url: this.safeUrl(`${this.prefix}segments`),
+        body: JSON.stringify({
+          developerName: document.identity.apiName,
+          displayName: document.spec.displayName,
+          description: document.spec.description,
+          segmentOnApiName: document.spec.segmentOn.apiName,
+          segmentType: 'Dbt',
+          includeDbt: { models: { models: document.spec.models } },
+          publishSchedule: 'NoRefresh',
+        }),
+        headers: { 'content-type': 'application/json' },
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
+  /**
+   * PATCH only a validated complete DBT definition on the selected API65/API68 Segment route.
    * Neither schedule field nor lookback is writable through this boundary.
    * @param {unknown} value Complete independently admitted desired Segment document.
    * @returns {Promise<unknown>} Untrusted single-attempt response, never settlement evidence.
    */
   public async patchSegment(value: unknown): Promise<unknown> {
-    if (this.selection.requested !== '65.0') throw new ConnectError('INVALID_REQUEST');
+    if (!['65.0', '68.0'].includes(this.selection.requested))
+      throw new ConnectError('INVALID_REQUEST');
     const document = validateSegmentDocument(value);
     return this.send(
       {
@@ -280,6 +308,23 @@ export class ConnectClient {
     const noContent = Symbol('identity-resolution-deleted');
     const response = await this.send<unknown>(
       { method: 'DELETE', url: this.safeUrl(`${this.prefix}identity-resolutions/${id}`) },
+      this.noRefreshReceiver(),
+      noContent,
+    );
+    if (response !== noContent) throw new ConnectError('REQUEST_FAILED');
+  }
+
+  /**
+   * Delete one exact native68 Segment by API name, without replay or redirect.
+   * @param {string} apiName Freshly matched target API name.
+   * @returns {Promise<void>} HTTP204 acknowledgement, not independent absence proof.
+   */
+  public async deleteSegment(apiName: string): Promise<void> {
+    if (this.selection.requested !== '68.0' || !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(apiName))
+      throw new ConnectError('INVALID_REQUEST');
+    const noContent = Symbol('segment-deleted');
+    const response = await this.send<unknown>(
+      { method: 'DELETE', url: this.safeUrl(`${this.prefix}segments/${apiName}`) },
       this.noRefreshReceiver(),
       noContent,
     );

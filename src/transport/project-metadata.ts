@@ -111,23 +111,6 @@ export async function runProjectMetadata(
 }
 
 /**
- * Retrieve exactly one standard Segment definition into a newly owned isolated DX project.
- * Nonterminal jobs, warnings, unexpected members and ambiguous results fail closed.
- * Scratch is retained; this boundary performs no recursive cleanup or org writes.
- * @param {string} targetOrg Explicit authenticated username or alias.
- * @param {string} apiName Exact Segment API name.
- * @param {MetadataRunner} runner Optional synthetic runner seam.
- * @returns {Promise<string>} Standard source XML bytes as UTF-8 text.
- */
-export async function retrieveSegmentMetadata(
-  targetOrg: string,
-  apiName: string,
-  runner: MetadataRunner = runProjectMetadata,
-): Promise<string> {
-  return retrieveExactMetadata(targetOrg, apiName, 'segment', runner);
-}
-
-/**
  * Retrieve exact standard CI source XML independently of runtime/SOAP acquisition.
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiName Exact runtime identity including __cio.
@@ -177,18 +160,19 @@ export async function retrieveRelationshipSourceMetadata(
  * Execute one allowlisted standard Metadata retrieve and validate its terminal member receipt.
  * @param {string} targetOrg Explicit authenticated target.
  * @param {string} apiName Exact standard member name.
- * @param {'segment' | 'calculated-insight' | 'mapping' | 'relationship'} family Allowlisted source family.
+ * @param {'calculated-insight' | 'mapping' | 'relationship'} family Allowlisted source family.
  * @param {MetadataRunner} runner Installed CLI or synthetic seam.
+ * @param {string} apiVersion Explicit numeric version; non-Segment families retain API65.
  * @returns {Promise<string>} Exact bounded XML.
  */
 async function retrieveExactMetadata(
   targetOrg: string,
   apiName: string,
-  family: 'segment' | 'calculated-insight' | 'mapping' | 'relationship',
+  family: 'calculated-insight' | 'mapping' | 'relationship',
   runner: MetadataRunner,
+  apiVersion = '65.0',
 ): Promise<string> {
   const grammar = {
-    segment: ['MarketSegmentDefinition', 'marketSegmentDefinitions', 'marketSegmentDefinition'],
     'calculated-insight': [
       'MktCalcInsightObjectDef',
       'mktCalcInsightObjectDefs',
@@ -216,7 +200,7 @@ async function retrieveExactMetadata(
   await mkdir(path.join(root, 'force-app'));
   await writeFile(
     path.join(root, 'sfdx-project.json'),
-    `${JSON.stringify({ packageDirectories: [{ path: 'force-app', default: true }], namespace: '', sourceApiVersion: '65.0' })}\n`,
+    `${JSON.stringify({ packageDirectories: [{ path: 'force-app', default: true }], namespace: '', sourceApiVersion: apiVersion })}\n`,
     { flag: 'wx' },
   );
   const receipt = await runner(
@@ -229,7 +213,7 @@ async function retrieveExactMetadata(
       '--target-org',
       targetOrg,
       '--api-version',
-      '65.0',
+      apiVersion,
       '--wait',
       '5',
       '--json',

@@ -1,11 +1,15 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, writeFile, unlink, symlink, link } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, unlink, symlink, link } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
-import { readDeployInputs, verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
+import {
+  readDeployInputs,
+  verifySegmentInputDigest,
+  captureDeployInputDigest,
+} from '../lib/artifacts/read-deploy-input.js';
 import { preflightSegmentDeploy as preflightWithBinding } from '../lib/services/preflight-segment-deploy.js';
 import { bindSegmentDependencies } from '../lib/services/bind-segment-dependencies.js';
 import {
@@ -59,11 +63,9 @@ const document = () => ({
     lookbackPeriod: 'P90D',
   },
 });
-const xml = () =>
-  `<MarketSegmentDefinition xmlns="http://soap.sforce.com/2006/04/metadata"><includeCriteria>&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;${sql}&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;</includeCriteria><masterLabel>Audience</masterLabel><segmentType>DBT</segmentType></MarketSegmentDefinition>`;
 const pair = async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-a2a-test-'));
-  return { cwd, ...(await writeSegmentDocument(document(), xml(), cwd, false)) };
+  return { cwd, ...(await writeSegmentDocument(document(), cwd, false)) };
 };
 const connection = { getApiVersion: () => '65.0' };
 const acquire = async () => ({
@@ -126,29 +128,31 @@ test('forward predicate is update with processing effects; reverse remains block
   assert.equal(reverse.outcome, 'blocked-changes');
 });
 
-test('binding uses exact target-local identity, preserves SQL and refreshes every call', async () => {
-  const desired = document();
-  const before = structuredClone(desired);
-  let reads = 0;
-  const acquireDependency = async (name) => {
-    assert.equal(name, 'Person__dlm');
-    const acquired = dependencyMetadata();
-    acquired.detail.id = `target-${++reads}`;
-    return acquired;
-  };
-  for (const id of ['target-1', 'target-2']) {
-    const bindings = await bindSegmentDependencies(
-      desired,
-      connection,
-      '65.0',
-      'default',
-      acquireDependency,
-    );
-    assert.equal(bindings[0].targetId, id);
-    assert.deepEqual(bindings[0].identity, desired.spec.segmentOn);
-  }
-  assert.deepEqual(desired, before);
-});
+for (const version of ['65.0', '68.0']) {
+  test(`API${version} binding uses exact target-local identity and refreshes every call`, async () => {
+    const desired = document();
+    const before = structuredClone(desired);
+    let reads = 0;
+    const acquireDependency = async (name) => {
+      assert.equal(name, 'Person__dlm');
+      const acquired = dependencyMetadata();
+      acquired.detail.id = `target-${++reads}`;
+      return acquired;
+    };
+    for (const id of ['target-1', 'target-2']) {
+      const bindings = await bindSegmentDependencies(
+        desired,
+        { ...connection, getApiVersion: () => version },
+        version,
+        'default',
+        acquireDependency,
+      );
+      assert.equal(bindings[0].targetId, id);
+      assert.deepEqual(bindings[0].identity, desired.spec.segmentOn);
+    }
+    assert.deepEqual(desired, before);
+  });
+}
 test('missing, ambiguous, incompatible and failed exact dependencies block without name fallback', async () => {
   const mutations = [
     (v) => {
@@ -234,22 +238,45 @@ test('binding rejects unsupported SQL and API before dependency reads', async ()
     );
 });
 
-test('either pair member, overlapping directories and exact selector coalesce with immutable byte digest', async () => {
+test('single JSON, overlapping directories and exact selector coalesce with immutable byte digest', async () => {
   const p = await pair();
   for (const options of [
     { sourceDir: [p.path] },
-    { sourceDir: [p.companionPath] },
-    { sourceDir: [path.dirname(p.path), path.dirname(p.companionPath)] },
+    { sourceDir: [p.path] },
+    { sourceDir: [path.dirname(p.path), path.dirname(p.path)] },
     { metadata: ['segment:Audience', 'segment:Audience'] },
   ]) {
     const inputs = await readDeployInputs({ cwd: p.cwd, ...options });
     assert.equal(inputs.length, 1);
     assert.equal(inputs[0].path, p.path);
-    assert.equal(inputs[0].companionPath, p.companionPath);
+    assert.equal('companionPath' in inputs[0], false);
+    assert.equal(await captureDeployInputDigest(inputs[0]), inputs[0].inputDigest);
     assert.match(inputs[0].inputDigest, /^[a-f0-9]{64}$/u);
     assert.ok(Object.isFrozen(inputs[0].document.spec.models[0]));
     await verifySegmentInputDigest(inputs[0]);
   }
+});
+test('stale Segment XML is ignored recursively but explicit XML is rejected without rewriting it', async () => {
+  const p = await pair();
+  const xmlPath = path.join(
+    p.cwd,
+    'force-app/main/default/marketSegmentDefinitions/Audience.marketSegmentDefinition-meta.xml',
+  );
+  await mkdir(path.dirname(xmlPath));
+  await writeFile(xmlPath, '<stale/>');
+  for (const selection of [
+    { metadata: ['segment:Audience'] },
+    { sourceDir: [p.path] },
+    { sourceDir: [path.join(p.cwd, 'force-app/main/default')] },
+  ]) {
+    const inputs = await readDeployInputs({ cwd: p.cwd, ...selection });
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0].path, p.path);
+  }
+  await assert.rejects(readDeployInputs({ cwd: p.cwd, sourceDir: [xmlPath] }), {
+    code: 'UNSUPPORTED_SEGMENT_XML',
+  });
+  assert.equal(await readFile(xmlPath, 'utf8'), '<stale/>');
 });
 test('selector honors configured package directory', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-a2a-config-'));
@@ -257,28 +284,28 @@ test('selector honors configured package directory', async () => {
     path.join(cwd, 'sfdx-project.json'),
     JSON.stringify({ packageDirectories: [{ path: 'custom', default: true }] }),
   );
-  const p = await writeSegmentDocument(document(), xml(), cwd, false);
+  const p = await writeSegmentDocument(document(), cwd, false);
   const inputs = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
   assert.equal(inputs[0].path, p.path);
 });
 test('missing, divergent, duplicate-key, wrong-identity and invalid UTF8 companion blocks complete selection', async () => {
-  for (const variant of ['missing', 'divergent', 'duplicate', 'identity', 'utf8']) {
+  for (const variant of ['missing', 'unknown', 'duplicate', 'identity', 'utf8']) {
     const p = await pair();
     switch (variant) {
       case 'missing': {
-        await unlink(p.companionPath);
+        await unlink(p.path);
         break;
       }
-      case 'divergent': {
+      case 'unknown': {
         await writeFile(
-          p.companionPath,
-          JSON.stringify({ ...document(), spec: { ...document().spec, displayName: 'Different' } }),
+          p.path,
+          JSON.stringify({ ...document(), spec: { ...document().spec, unknownField: true } }),
         );
         break;
       }
       case 'duplicate': {
         await writeFile(
-          p.companionPath,
+          p.path,
           JSON.stringify(document()).replace(
             '"schemaVersion":1',
             '"schemaVersion":1,"schemaVersion":1',
@@ -288,20 +315,20 @@ test('missing, divergent, duplicate-key, wrong-identity and invalid UTF8 compani
       }
       case 'identity': {
         await writeFile(
-          p.companionPath,
+          p.path,
           JSON.stringify({ ...document(), identity: { dataSpace: 'default', apiName: 'Other' } }),
         );
         break;
       }
       default: {
-        await writeFile(p.companionPath, Buffer.from([0xff]));
+        await writeFile(p.path, Buffer.from([0xff]));
       }
     }
     await assert.rejects(readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] }));
   }
 });
 test('modified XML or companion invalidates captured digest even when semantics remain equal', async () => {
-  for (const member of ['path', 'companionPath']) {
+  for (const member of ['path']) {
     const p = await pair();
     const [input] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     await writeFile(p[member], (await readFile(p[member], 'utf8')) + '\n');
@@ -318,12 +345,12 @@ test('linked and hardlinked companions are refused without following or changing
       await assert.rejects(
         readDeployInputs({
           cwd: p.cwd,
-          sourceDir: [path.join(linked, path.relative(outside.cwd, outside.companionPath))],
+          sourceDir: [path.join(linked, path.relative(outside.cwd, outside.path))],
         }),
       );
     } else {
-      await unlink(p.companionPath);
-      await link(outside.companionPath, p.companionPath);
+      await unlink(p.path);
+      await link(outside.path, p.path);
       await assert.rejects(readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] }));
     }
   }
@@ -346,7 +373,30 @@ test('preview compares exact admitted semantics, reports processing for label/de
     assert.equal(result.absenceProof, 'none');
   }
 });
-test('404, permission failure, metadata-shell ambiguity and malformed target never admit create', async () => {
+test('API68 preview admits exact native404 only, with processing effects and no Metadata absence claim', async () => {
+  for (const version of ['65.0', '68.0']) {
+    for (const status of [404, 401, 403, 503]) {
+      const result = await preflightSegmentDeploy(
+        document(),
+        { getApiVersion: () => version },
+        version,
+        'default',
+        async () =>
+          retainConnectDiagnostic(
+            { blockers: ['SEGMENT_ACQUISITION_FAILED'] },
+            apiDiagnostic(status, [
+              { errorCode: status === 404 ? 'ITEM_NOT_FOUND' : 'SERVER_ERROR' },
+            ]),
+          ),
+      );
+      assert.equal(result.outcome, version === '68.0' && status === 404 ? 'create' : 'blocked');
+      assert.equal(result.absenceProof, 'none');
+      assert.deepEqual(result.requiredEffects, result.outcome === 'create' ? ['processing'] : []);
+    }
+  }
+});
+
+test('unproven404, permission failure and malformed target never admit create', async () => {
   for (const acquisition of [
     async () => {
       throw { statusCode: 404 };
@@ -389,13 +439,13 @@ test('unsupported API/latest/space/input fail before any target read', async () 
     assert.equal(result.outcome, 'blocked');
   }
 });
-const commandSetup = (inputs, preview) => {
+const commandSetup = (inputs, preview, version = '65.0') => {
   const command = Object.create(Deploy.prototype);
   command.parse = async () => ({
     flags: {
       preview,
       'source-dir': ['synthetic'],
-      'api-version': '65.0',
+      'api-version': version,
       'data-space': 'default',
       'target-org': { getOrgId: () => 'synthetic', getConnection: () => connection },
     },
@@ -422,6 +472,100 @@ const run = async (command) => {
     process.exitCode = previous;
   }
 };
+test('public API68 CREATE preview is read-only and execution requires processing acknowledgement', async () => {
+  const p = await pair();
+  const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+  for (const [preview, acknowledge] of [
+    [true, false],
+    [false, false],
+    [false, true],
+  ]) {
+    const command = commandSetup(inputs, preview, '68.0');
+    const parse = command.parse;
+    command.parse = async () => {
+      const parsed = await parse();
+      parsed.flags['allow-processing'] = acknowledge;
+      return parsed;
+    };
+    command.preflightSegment = async () => ({
+      family: 'segment',
+      outcome: 'create',
+      target: 'absent',
+      absenceProof: 'none',
+      requiredEffects: ['processing'],
+      diagnostics: [],
+    });
+    let writes = 0;
+    command.executeSegment = async (value, conn, api, space, options) => {
+      assert.equal(options.allowProcessing, true);
+      await options.verifyInput();
+      writes++;
+      return {
+        family: 'segment',
+        route: { apiVersion: '68.0', method: 'POST', resource: 'segments' },
+        outcome: 'created',
+        mutation: 'confirmed-created',
+        serverProcessing: true,
+        diagnostics: [],
+      };
+    };
+    const result = await run(command);
+    assert.equal(writes, !preview && acknowledge ? 1 : 0);
+    assert.equal(result.status, !preview && !acknowledge ? 'blocked' : 'success');
+    if (writes) {
+      assert.equal(result.result.items[0].outcome, 'created');
+      assert.equal(result.result.items[0].route.method, 'POST');
+    }
+  }
+});
+
+test('queued Segment uses concise processing suffix and existing machine success semantics', async () => {
+  const p = await pair();
+  const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+  for (const json of [false, true]) {
+    const command = commandSetup([segment], false, '68.0');
+    const parse = command.parse;
+    command.parse = async () => {
+      const parsed = await parse();
+      parsed.flags['allow-processing'] = true;
+      return parsed;
+    };
+    command.preflightSegment = async () => ({
+      family: 'segment',
+      outcome: 'update',
+      target: 'present',
+      absenceProof: 'none',
+      diagnostics: [],
+      requiredEffects: ['processing'],
+    });
+    command.executeSegment = async () => ({
+      family: 'segment',
+      route: { apiVersion: '68.0', method: 'PATCH', resource: 'segments' },
+      outcome: 'updated',
+      mutation: 'confirmed-updated',
+      diagnostics: [],
+      serverProcessing: true,
+    });
+    const lines = [];
+    command.jsonEnabled = () => json;
+    command.log = (line) => lines.push(line);
+    const result = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(result.result.items[0].mutation, 'confirmed-updated');
+    assert.ok(!JSON.stringify(result).includes('serverProcessing'));
+    assert.deepEqual(
+      lines,
+      json
+        ? []
+        : [
+            'Deploy execution: success. No automatic retry or rollback performed.',
+            `updated segment ${segment.document.identity.apiName} (server is still processing)`,
+            'Deployed: 1 (0 created / 1 updated / 0 failed)',
+          ],
+    );
+  }
+});
+
 test('mixed DMO plus Segment update without acknowledgement blocks whole selection', async () => {
   const p = await pair();
   const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
@@ -452,53 +596,55 @@ test('mixed DMO plus Segment update without acknowledgement blocks whole selecti
     'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
   );
 });
-test('existing Segment no-op dispatches real executor without ack or mutations', async () => {
-  const { executeSegmentDeploy } = await import('../lib/services/execute-segment-deploy.js');
-  const p = await pair();
-  const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
-  const command = commandSetup(inputs, false);
-  let dispatched = 0;
-  command.executeSegment = async (value, conn, api, space, options) => {
-    dispatched++;
-    assert.equal(options.allowProcessing, false);
-    return executeSegmentDeploy(value, conn, api, space, {
-      ...options,
-      acquire: async () => ({
-        candidate: value,
-        blockers: [],
-        expectations: {
-          runtime: {
-            apiName: value.identity.apiName,
-            dataSpace: 'default',
-            displayName: value.spec.displayName,
-            description: value.spec.description,
-            segmentType: 'DBT',
-            segmentOnApiName: value.spec.segmentOn.apiName,
-            includeDbt: { models: value.spec.models },
-            publishInterval: 'NO_REFRESH',
-            lookbackPeriod: 'P90D',
-            marketSegmentId: 'synthetic-runtime',
-            marketSegmentDefinitionId: 'synthetic-definition',
-            segmentStatus: 'ACTIVE',
+for (const version of ['65.0', '68.0', 'auto']) {
+  test(`Segment ${version} no-op dispatches real executor without ack or mutations`, async () => {
+    const { executeSegmentDeploy } = await import('../lib/services/execute-segment-deploy.js');
+    const p = await pair();
+    const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+    const command = commandSetup(inputs, false, version);
+    let dispatched = 0;
+    command.executeSegment = async (value, conn, api, space, options) => {
+      dispatched++;
+      assert.equal(options.allowProcessing, false);
+      return executeSegmentDeploy(value, conn, api, space, {
+        ...options,
+        acquire: async () => ({
+          candidate: value,
+          blockers: [],
+          expectations: {
+            runtime: {
+              apiName: value.identity.apiName,
+              dataSpace: 'default',
+              displayName: value.spec.displayName,
+              description: value.spec.description,
+              segmentType: 'DBT',
+              segmentOnApiName: value.spec.segmentOn.apiName,
+              includeDbt: { models: value.spec.models },
+              publishInterval: 'NO_REFRESH',
+              lookbackPeriod: 'P90D',
+              marketSegmentId: 'synthetic-runtime',
+              marketSegmentDefinitionId: 'synthetic-definition',
+              segmentStatus: 'ACTIVE',
+            },
           },
-        },
-      }),
-      bind: async () => [],
-      patch: () => assert.fail('No-op must not mutate'),
-      read: () => assert.fail('No-op must not poll'),
+        }),
+        bind: async () => [],
+        patch: () => assert.fail('No-op must not mutate'),
+        read: () => assert.fail('No-op must not poll'),
+      });
+    };
+    const result = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(dispatched, 1);
+    assert.equal(result.result.items[0].outcome, 'unchanged');
+    assert.equal(result.result.items[0].mutation, 'not-attempted');
+    assert.deepEqual(result.result.items[0].route, {
+      apiVersion: version === 'auto' ? '68.0' : version,
+      method: 'PATCH',
+      resource: 'segments',
     });
-  };
-  const result = await run(command);
-  assert.equal(result.status, 'success');
-  assert.equal(dispatched, 1);
-  assert.equal(result.result.items[0].outcome, 'unchanged');
-  assert.equal(result.result.items[0].mutation, 'not-attempted');
-  assert.deepEqual(result.result.items[0].route, {
-    apiVersion: '65.0',
-    method: 'PATCH',
-    resource: 'segments',
   });
-});
+}
 test('reverse mixed selection orders prerequisites first and retains partial/unknown/unattempted outcomes', async () => {
   for (const stop of ['success', 'blocked', 'failed', 'unknown', 'throw']) {
     const p = await pair();
@@ -588,7 +734,7 @@ test('fresh dependency or late pair admission blocks before DMO dispatch and ret
     command.preflightSegment = async () => {
       const fresh = ++admissions > 1;
       if (drift !== 'prerequisite' && !fresh)
-        await writeFile(p.companionPath, `${await readFile(p.companionPath, 'utf8')}\n`);
+        await writeFile(p.path, `${await readFile(p.path, 'utf8')}\n`);
       return {
         family: 'segment',
         outcome: drift === 'prerequisite' && fresh ? 'blocked' : 'unchanged',
@@ -651,8 +797,7 @@ test('late pair or prerequisite drift preserves earlier completed DMO and unatte
     });
     command.execute = async () => {
       completed = true;
-      if (drift === 'pair')
-        await writeFile(p.companionPath, `${await readFile(p.companionPath, 'utf8')}\n`);
+      if (drift === 'pair') await writeFile(p.path, `${await readFile(p.path, 'utf8')}\n`);
       return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
     };
     command.executeSegment = () => assert.fail('Late drift forbids dependent dispatch');
@@ -674,7 +819,7 @@ test('public Segment preview is read-only; drift during target acquisition preve
     const command = commandSetup(inputs, true);
     if (drift)
       command.preflightSegment = async () => {
-        await writeFile(p.companionPath, (await readFile(p.companionPath, 'utf8')) + '\n');
+        await writeFile(p.path, (await readFile(p.path, 'utf8')) + '\n');
         return preflightSegmentDeploy(document(), connection, '65.0', 'default', acquire);
       };
     const result = await run(command);

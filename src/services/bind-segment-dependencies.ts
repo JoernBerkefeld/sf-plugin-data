@@ -31,7 +31,7 @@ function record(value: unknown): Record<string, unknown> {
  * API names are mandatory in A1: a failed exact lookup never falls back to a label.
  * @param {unknown} value Complete authored Segment.
  * @param {ReadConnection} connection Authenticated target connection, never modified.
- * @param {string | ApiVersionSelection} apiVersion Explicit numeric API65 selection.
+ * @param {string | ApiVersionSelection} apiVersion Explicit numeric API65 or API68 selection.
  * @param {string} dataSpace Explicit default target space.
  * @param {Function} acquire Acquire raw detail and independent Metadata, not a write response.
  * @returns {Promise<SegmentDependencyBinding[]>} Private target-local bindings; no source IDs.
@@ -42,21 +42,20 @@ export async function bindSegmentDependencies(
   apiVersion: string | ApiVersionSelection,
   dataSpace: string,
   acquire: (name: string) => Promise<{ detail: unknown; metadata: unknown }> = async (name) => ({
-    detail: await new ConnectClient(connection, '65.0').get(
-      `/services/data/v65.0/ssot/data-model-objects/${name}`,
+    detail: await new ConnectClient(connection, apiVersion).get(
+      `/services/data/v${connection.getApiVersion()}/ssot/data-model-objects/${name}`,
     ),
     metadata: await readDmoMetadata(connection as Parameters<typeof readDmoMetadata>[0], name),
   }),
 ): Promise<SegmentDependencyBinding[]> {
   const document = validateSegmentDocument(value);
+  const version = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   if (
     dataSpace !== 'default' ||
-    connection.getApiVersion() !== '65.0' ||
-    (typeof apiVersion === 'string'
-      ? apiVersion !== '65.0'
-      : apiVersion.requested !== '65.0' ||
-        apiVersion.restSelector !== 'v65.0' ||
-        apiVersion.soapNumeric !== '65.0')
+    !['65.0', '68.0'].includes(version) ||
+    connection.getApiVersion() !== version ||
+    (typeof apiVersion !== 'string' &&
+      (apiVersion.restSelector !== `v${version}` || apiVersion.soapNumeric !== version))
   )
     throw new SegmentError('INVALID_SCOPE');
   // The document validator bounds this to one object and one qualified field.

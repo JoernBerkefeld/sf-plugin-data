@@ -133,10 +133,7 @@ const invocation = (overrides = {}) => {
   };
   command.writeIdentityResolution = writer;
   command.writeDocument = writer;
-  command.writeSegment = (value, xml, root, overwrite) => {
-    assert.equal(xml, '<independent/>');
-    return writer(value, root, overwrite);
-  };
+  command.writeSegment = writer;
   return { command, calls };
 };
 const run = async (command) => {
@@ -150,10 +147,7 @@ const run = async (command) => {
 
 test('fixed per-family auto routes never discover or reinterpret numeric/latest pins', () => {
   for (const family of ['dmo', 'segment', 'identity-resolution'])
-    assert.equal(
-      operationApiVersion('auto', family),
-      family === 'identity-resolution' ? '68.0' : '65.0',
-    );
+    assert.equal(operationApiVersion('auto', family), family === 'dmo' ? '65.0' : '68.0');
   assert.equal(operationApiVersion('latest', 'dmo'), 'latest');
   assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
   assert.equal(operationApiVersion('67.0', 'data-graph'), '67.0');
@@ -164,7 +158,7 @@ test('fixed per-family auto routes never discover or reinterpret numeric/latest 
     ['latest', 'identity-resolution'],
     ['latest', 'segment'],
     ['68.0', 'dmo'],
-    ['68.0', 'segment'],
+    ['67.0', 'segment'],
     ['67.0', 'identity-resolution'],
   ])
     assert.throws(() => operationApiVersion(requested, family), /INVALID_SCOPE/u);
@@ -181,7 +175,7 @@ test('IR explicit65/latest, unsupported numeric mixed routes and expansion block
     { 'include-dependencies': true },
     { 'api-version': '68.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
     {
-      'api-version': '68.0',
+      'api-version': '67.0',
       metadata: ['identity-resolution:Individual_A1b2', 'segment:Audience'],
     },
   ]) {
@@ -236,7 +230,7 @@ test('auto mixed DMO/Segment/IR acquires every family before first publication',
   assert.ok(calls.indexOf('ir:Individual_A1b2') < calls.indexOf('write:Sample__dlm'));
   assert.deepEqual(
     result.result.items.map((item) => item.routes.map((route) => route.apiVersion)),
-    [['65.0', '65.0'], ['65.0', '65.0'], ['68.0']],
+    [['65.0', '65.0'], ['65.0'], ['68.0']],
   );
 });
 

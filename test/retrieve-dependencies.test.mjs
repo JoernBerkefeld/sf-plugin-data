@@ -46,7 +46,7 @@ const fixtures = () => {
   const services = {
     segment: async (_, name) => {
       calls.segment.push(name);
-      return { candidate: document(name), definitionXml: '<paired/>', blockers: [] };
+      return { candidate: document(name), blockers: [] };
     },
     dmo: async (_, name) => {
       calls.dmo.push(name);
@@ -322,14 +322,12 @@ test('command opt-in emits reasons; prerequisite output failure prevents Segment
       command.writeDocument = async () => {
         throw new DmoWriteError('OUTPUT_FAILED');
       };
-      command.writeSegment = async (document_, xml, root, overwrite) => {
+      command.writeSegment = async (document_, root, overwrite) => {
         assert.equal(root, 'synthetic-root');
         assert.equal(overwrite, true);
-        assert.equal(xml, '<paired/>');
         written.push(document_.identity.apiName);
         return {
-          path: `${document_.identity.apiName}.xml`,
-          companionPath: `${document_.identity.apiName}.json`,
+          path: `${document_.identity.apiName}.segment.json`,
           outcome: 'unchanged',
         };
       };

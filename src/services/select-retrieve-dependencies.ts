@@ -39,11 +39,10 @@ type RetrieveServices = {
 };
 
 export type RetrieveDependencyEntry =
-  | { document: DmoDocument }
-  | { document: NonNullable<SegmentAcquisition['candidate']>; definitionXml: string };
+  { document: DmoDocument } | { document: NonNullable<SegmentAcquisition['candidate']> };
 
 // Bound admitted transport operations: DMO detail + Metadata + at most 101
-// relationship pages; Segment exact GET + one separately bounded standard Metadata job.
+// relationship pages; Segment exact GET. DMO dependency Metadata checks remain separate.
 // CLI job-internal polling is bounded by the existing project transport, not this count.
 export const retrieveDependencyLimits = Object.freeze({ requests: 512 });
 
@@ -101,19 +100,19 @@ export async function selectRetrieveDependencies(
     let entry: RetrieveDependencyEntry;
     try {
       if (identity.kind === 'segment') {
-        reserve(2);
+        reserve(1);
         const acquired = await services.segment(
           connection,
           identity.apiName,
           version,
           identity.dataSpace,
         );
-        if (acquired.blockers.length > 0 || !acquired.candidate || !acquired.definitionXml)
+        if (acquired.blockers.length > 0 || !acquired.candidate)
           throw retainConnectDiagnostic(
             new SegmentError(acquired.blockers[0] ?? 'INCOMPLETE_SEGMENT'),
             getConnectDiagnostic(acquired),
           );
-        entry = { document: acquired.candidate, definitionXml: acquired.definitionXml };
+        entry = { document: acquired.candidate };
       } else {
         reserve(103);
         const acquired = await services.dmo(

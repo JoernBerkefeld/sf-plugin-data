@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, open, readFile, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { SegmentError, serializeSegmentDocument, validateSegmentPair } from './segment-document.js';
+import {
+  SegmentError,
+  serializeSegmentDocument,
+  validateSegmentDocument,
+} from './segment-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
 
 const filesystemPublication = { link, rename, unlink };
@@ -85,43 +89,33 @@ export async function segmentSourceRoot(root: string): Promise<string> {
 }
 
 /**
- * Publish independently correlated XML/JSON as one selectable component.
- * Both destinations and previous bytes are admitted before any publication. Two files cannot
- * be atomically renamed as a unit: any failure after the first change is explicit partial output.
+ * Publish one strict portable JSON definition with exact-byte conflict and drift admission.
  * @param {unknown} value Authored candidate.
- * @param {string} definitionXml Independently retrieved standard XML, retained byte-for-byte.
  * @param {string} projectRoot Selected output project root.
  * @param {boolean} overwrite Permit differing existing files.
  * @param {object} publication Narrow filesystem seam for publication-failure regression tests.
- * @returns {Promise<{path: string; companionPath: string; outcome: 'retrieved' | 'unchanged'}>} Complete validated pair receipt.
+ * @returns {Promise<{path: string; outcome: 'retrieved' | 'unchanged'}>} Validated single-file receipt.
  */
 export async function writeSegmentDocument(
   value: unknown,
-  definitionXml: string,
   projectRoot: string,
   overwrite: boolean,
   publication = filesystemPublication,
-): Promise<{ path: string; companionPath: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateSegmentPair(value, definitionXml);
+): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
+  const document = validateSegmentDocument(value);
   if (!projectRoot.trim()) throw new SegmentError('UNSAFE_PATH');
   const root = path.resolve(projectRoot);
   let published = 0;
   try {
     const base = await segmentSourceRoot(root);
     const files = [
-      path.join(
-        base,
-        'marketSegmentDefinitions',
-        `${document.identity.apiName}.marketSegmentDefinition-meta.xml`,
-      ),
       path.join(base, 'data360', 'segments', `${document.identity.apiName}.segment.json`),
     ];
-    const bytes = [Buffer.from(definitionXml), Buffer.from(serializeSegmentDocument(document))];
+    const bytes = [Buffer.from(serializeSegmentDocument(document))];
     for (const file of files) await ensure(path.dirname(file));
     const previous = await Promise.all(files.map((file) => existing(file)));
     const changed = files.map((_, index) => !previous[index]?.equals(bytes[index]));
-    if (!changed.some(Boolean))
-      return { path: files[0], companionPath: files[1], outcome: 'unchanged' };
+    if (!changed.some(Boolean)) return { path: files[0], outcome: 'unchanged' };
     if (!overwrite && previous.some((value, index) => value && changed[index]))
       throw new SegmentError('OVERWRITE_REQUIRED');
     verifyTemporaryDirectory();
@@ -138,7 +132,7 @@ export async function writeSegmentDocument(
         await handle.close();
       }
     }
-    // Bind both observed destinations before changing either member.
+    // Bind the observed destination again before publication.
     for (const [index, file] of files.entries()) {
       await ensure(path.dirname(file));
       const current = await existing(file);
@@ -169,8 +163,8 @@ export async function writeSegmentDocument(
     const completed = await Promise.all(files.map((file) => existing(file)));
     if (completed.some((value, index) => !value?.equals(bytes[index])))
       throw new SegmentError('OUTPUT_CHANGED');
-    validateSegmentPair(JSON.parse(completed[1]!.toString('utf8')), completed[0]!.toString('utf8'));
-    return { path: files[0], companionPath: files[1], outcome: 'retrieved' };
+    validateSegmentDocument(JSON.parse(completed[0]!.toString('utf8')));
+    return { path: files[0], outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new SegmentError('PARTIAL_SEGMENT_OUTPUT');
     if (error instanceof SegmentError) throw error;

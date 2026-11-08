@@ -230,10 +230,9 @@ test('IR auto mixed preview is read-only and reports operation versions and publ
   assert.ok(!calls.some((call) => call.includes('write')));
 });
 
-test('auto mixed IR/Segment/DMO retains legacy fixed65 and whole-selection effects checks', async () => {
+test('auto mixed IR/Segment68 and DMO65 retains isolated routes and whole-selection effects checks', async () => {
   const segment = {
-    path: 'audience.xml',
-    companionPath: 'audience.json',
+    path: 'audience.segment.json',
     inputDigest: 'b'.repeat(64),
     document: {
       schemaVersion: 1,
@@ -259,8 +258,8 @@ test('auto mixed IR/Segment/DMO retains legacy fixed65 and whole-selection effec
     const { command, calls } = setup({ 'allow-processing': acknowledged }, [ir(), segment, dmo]);
     command.verifySegmentInput = async () => {};
     command.preflightSegment = async (_, connection, selection) => {
-      assert.equal(connection.getApiVersion(), '65.0');
-      assert.equal(selection.soapNumeric, '65.0');
+      assert.equal(connection.getApiVersion(), '68.0');
+      assert.equal(selection.soapNumeric, '68.0');
       calls.push('segment-preview');
       return { ...preview('segment'), family: 'segment', requiredEffects: ['processing'] };
     };

@@ -1,3 +1,7 @@
+import { deleteSegment } from '../../services/delete-segment.js';
+import { validateSegmentDocument } from '../../artifacts/segment-document.js';
+import { verifySegmentInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { SegmentDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteIdentityResolution } from '../../services/delete-identity-resolution.js';
 import { nativeIdentityResolutionDocument } from '../../services/preflight-identity-resolution-deploy.js';
 import { verifyIdentityResolutionInputDigest } from '../../artifacts/read-deploy-input.js';
@@ -88,9 +92,9 @@ export type DeleteEnvelope = {
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
   public static readonly summary =
-    'Delete exact Data360 IR owners, streams, DLOs, DMOs or qualified non-last mappings.';
+    'Delete exact Data360 Segments, IR owners, streams, DLOs, DMOs or qualified non-last mappings.';
   public static readonly description =
-    'Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
+    'Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -102,7 +106,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multipleNonGreedy: true,
       required: true,
       summary:
-        'Exact identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName.',
+        'Exact segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName.',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
@@ -114,11 +118,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'source-dir': Flags.string({
       char: 'd',
-      summary: 'IR, CI or native Graph: one exact local source expectation.',
+      summary: 'Segment, IR, CI or native Graph: one exact local source expectation.',
     }),
     'confirm-delete': Flags.boolean({
       default: false,
-      summary: 'IR, CI or native Graph: explicitly acknowledge destructive deletion.',
+      summary: 'Segment, IR, CI or native Graph: explicitly acknowledge destructive deletion.',
     }),
     'delete-dlo': Flags.boolean({
       default: false,
@@ -131,6 +135,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected operateNativeGraph = operateNativeDataGraph;
   protected resolveInputs = readDeployInputs;
   protected deleteIdentityResolution = deleteIdentityResolution;
+  protected deleteSegment = deleteSegment;
+  protected verifySegmentInput = verifySegmentInputDigest;
   protected verifyIdentityResolutionInput = verifyIdentityResolutionInputDigest;
   protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
   protected calculatedInsightContext = calculatedInsightReadContext;
@@ -235,11 +241,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                     ? 'Failed'
                     : 'Blocked';
           if (
-            selectorsByItem.get(item)?.startsWith('identity-resolution:') &&
+            ['identity-resolution', 'segment'].includes(
+              selectorsByItem.get(item)?.split(':')[0] ?? '',
+            ) &&
             ['deleted', 'deletion-processing'].includes(item.outcome)
           )
             this.log(
-              `deleted identity-resolution ${item.identity.apiName}${item.mutation === 'acknowledged-processing' ? ' (server is still processing)' : ''}`,
+              `deleted ${selectorsByItem.get(item)?.split(':')[0]} ${item.identity.apiName}${item.mutation === 'acknowledged-processing' ? ' (server is still processing)' : ''}`,
             );
           else if (item.operation !== 'preview' && item.outcome === 'deleted')
             this.log(
@@ -261,6 +269,81 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return envelope;
     };
     try {
+      if (
+        flags.metadata?.some(
+          (selector) => selector === 'segment' || selector.startsWith('segment:'),
+        )
+      ) {
+        if (
+          flags.metadata.length !== 1 ||
+          !/^segment:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(flags.metadata[0]) ||
+          flags['delete-dlo'] ||
+          typeof flags['source-dir'] !== 'string' ||
+          !flags['source-dir'].endsWith('.segment.json')
+        )
+          throw new DloError('INVALID_SELECTION');
+        if (
+          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
+          effectiveScope !== 'default'
+        )
+          throw new DloError('INVALID_SCOPE');
+        const snapshot = JSON.stringify(flags);
+        const inputs = await this.resolveInputs({
+          cwd: process.cwd(),
+          sourceDir: [flags['source-dir']],
+        });
+        if (inputs.length !== 1 || inputs[0].document.kind !== 'segment')
+          throw new DloError('INVALID_SELECTION');
+        const input = inputs[0] as SegmentDeployInput;
+        const desired = validateSegmentDocument(input.document);
+        if (flags.metadata[0] !== `segment:${desired.identity.apiName}`)
+          throw new DloError('INVALID_SELECTION');
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
+          await this.verifySegmentInput(input);
+        };
+        await verifyInput();
+        const connection = await this.resolveConnection(flags['target-org']);
+        await verifyInput();
+        envelope.metadata.apiVersion = '68.0';
+        envelope.diagnostics.warnings.push(
+          'Segment definition deletion only. Selected source compatibility is checked; exhaustive external-consumer exclusion and physical membership/output cleanup remain unverified. No shared DMO is deleted.',
+        );
+        const result = await this.deleteSegment(
+          desired,
+          connection,
+          { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
+          'default',
+          { preview: flags.preview, confirmDelete: flags['confirm-delete'] === true, verifyInput },
+        );
+        const item = {
+          ...result,
+          identity: desired.identity,
+          operation: flags.preview ? ('preview' as const) : ('delete' as const),
+          routes: [
+            { operation: 'segments.delete', apiVersion: '68.0', transport: 'native' as const },
+            { operation: 'segments.get', apiVersion: '68.0', transport: 'native' as const },
+            { operation: 'dependency.read', apiVersion: '68.0', transport: 'native' as const },
+            {
+              operation: 'dependency.metadata',
+              apiVersion: '68.0',
+              transport: 'metadata' as const,
+            },
+          ],
+        };
+        envelope.result.items.push(item);
+        selectorsByItem.set(item, flags.metadata[0]);
+        envelope.status =
+          result.outcome === 'failed'
+            ? 'failed'
+            : result.outcome === 'blocked'
+              ? 'blocked'
+              : 'success';
+        envelope.diagnostics.errors.push(
+          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
+        );
+        return finish();
+      }
       if (
         flags.metadata?.some(
           (selector) =>

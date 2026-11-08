@@ -13,16 +13,16 @@ import type { DmoDeployPreview } from './preflight-dmo-deploy.js';
 
 export type SegmentDeployPreview = DmoDeployPreview & {
   family: 'segment';
-  route: { apiVersion: '65.0'; method: 'GET'; resource: 'segments' };
+  route: { apiVersion: string; method: 'GET'; resource: 'segments' };
   requiredEffects: Array<'processing'>;
 };
 
 /**
- * Compare only independently admitted exact existing Segments; never prove absence from errors.
- * Admit label/description or the qualified forward empty-audience predicate update only.
+ * Compare independently admitted Segments or native68 exact ITEM_NOT_FOUND404.
+ * CREATE uses create-only POST; Metadata-only collision protection remains untested.
  * @param {unknown} value Desired bounded authored document.
  * @param {Connection} connection Command-owned authenticated target connection.
- * @param {string | ApiVersionSelection} apiVersion Explicit API65 selection.
+ * @param {string | ApiVersionSelection} apiVersion Explicit API65 or API68 selection.
  * @param {string} dataSpace Explicit default target space.
  * @param {Function} acquire Independent acquisition seam for deterministic synthetic tests.
  * @param {Function} bind Fresh independent target dependency binding; never cached across calls.
@@ -36,6 +36,7 @@ export async function preflightSegmentDeploy(
   acquire: typeof retrieveSegment = retrieveSegment,
   bind: typeof bindSegmentDependencies = bindSegmentDependencies,
 ): Promise<SegmentDeployPreview> {
+  const requested = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   const result = (
     outcome: SegmentDeployPreview['outcome'],
     target: SegmentDeployPreview['target'],
@@ -45,11 +46,11 @@ export async function preflightSegmentDeploy(
     retainConnectDiagnostic(
       {
         family: 'segment',
-        route: { apiVersion: '65.0', method: 'GET', resource: 'segments' },
+        route: { apiVersion: requested, method: 'GET', resource: 'segments' },
         outcome,
         target,
         absenceProof: 'none',
-        requiredEffects: outcome === 'update' ? ['processing'] : [],
+        requiredEffects: ['create', 'update'].includes(outcome) ? ['processing'] : [],
         diagnostics: code
           ? [
               {
@@ -72,13 +73,12 @@ export async function preflightSegmentDeploy(
   } catch {
     return result('blocked', 'unknown', 'INVALID_SOURCE');
   }
-  const requested = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   if (
-    requested !== '65.0' ||
+    !['65.0', '68.0'].includes(requested) ||
     dataSpace !== 'default' ||
-    connection.getApiVersion() !== '65.0' ||
+    connection.getApiVersion() !== requested ||
     (typeof apiVersion !== 'string' &&
-      (apiVersion.soapNumeric !== '65.0' || apiVersion.restSelector !== 'v65.0'))
+      (apiVersion.soapNumeric !== requested || apiVersion.restSelector !== `v${requested}`))
   )
     return result('blocked', 'unknown', 'INVALID_SCOPE');
   try {
@@ -94,6 +94,20 @@ export async function preflightSegmentDeploy(
   }
   try {
     const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
+    // API68 POST is create-only (observed duplicate409), never an upsert. Runtime
+    // absence does not claim Metadata-only absence; that collision remains untested.
+    const diagnostic = getConnectDiagnostic(acquired);
+    if (
+      requested === '68.0' &&
+      !acquired.candidate &&
+      !acquired.expectations &&
+      acquired.blockers.length === 1 &&
+      acquired.blockers[0] === 'SEGMENT_ACQUISITION_FAILED' &&
+      diagnostic?.statusCode === 404 &&
+      diagnostic.errors?.length === 1 &&
+      diagnostic.errors[0].code === 'ITEM_NOT_FOUND'
+    )
+      return result('create', 'absent');
     if (!acquired.candidate || acquired.blockers.length > 0 || !acquired.expectations)
       return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED', acquired);
     const current = validateSegmentDocument(acquired.candidate);
