@@ -431,19 +431,37 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
 - Order: the PATCH for other changes first (skipped when removals are the only
   change), then the removal, then readback, which also requires every removed field
   to be absent. No write is retried.
+- Beside selected mappings that target the DMO (all-native selection), the DMO deploys
+  in two stages: PATCH in the DMO position, then the mappings, then the removal and
+  readback right after the last selected mapping targeting the DMO has settled. One
+  result item per file; the DMO item is `updated` with `removedFields` only when both
+  stages succeeded.
 - The primary key and generated fields are never removed.
-- A mapped field is refused with `DMO_FIELD_REMOVAL_MAPPED`: Salesforce would remove
-  it and silently drop its mapping pair. Remove the pair from the mapping first. The
-  refusal lists the mappings that target the DMO read-only, names every mapped field
-  with its mappings (`mappedFields` in JSON) and prints the retrieve, edit and deploy
-  commands; without an identifiable mapping it keeps the generic instruction. An
-  unmapped field on a mapped DMO is removed normally. The `isMapped` marker on fields
-  is never sent, compared or required.
+- A mapped field is removed with one command,
+  `sf data360 deploy -m mapping:<MappingApiName> -m dmo:<Dmo__dlm> --allow-field-removal`,
+  when the DMO file omits the field and the mapping file omits its pair. Before the
+  first write the plugin lists the mappings that target the DMO read-only; every
+  mapping holding a pair for the field must be reconciled by a selected mapping file
+  (same source and target object) without that pair.
+- Otherwise the batch is refused with `DMO_FIELD_REMOVAL_MAPPED` before any write:
+  Salesforce would remove the field and silently drop its mapping pair. The refusal
+  names every mapped field with its mappings (`mappedFields` in JSON) and prints the
+  retrieve command, the file edits and the single deploy command; without an
+  identifiable mapping, or when the list request fails, it keeps the generic
+  instruction. An unmapped field on a mapped DMO is removed normally. The `isMapped`
+  marker on fields is never sent, compared or required.
+- The removal stage reads the DMO again and removes nothing while a planned field is
+  still mapped: the DMO item ends with `DMO_FIELD_REMOVAL_MAPPED` (`failed` after a
+  written PATCH, otherwise `blocked`) and the batch stops. It never sends a second
+  PATCH. A batch that stops between the stages reports `DMO_FIELD_REMOVAL_PENDING`
+  on the DMO item.
+- The two-stage order is covered by synthetic tests only.
 - Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold
   data or are referenced by a segment, calculated insight, relationship or other
   component.
 - Preview reports the planned removals (`removeFields`,
-  `DMO_FIELD_REMOVAL_PLANNED`) and writes nothing. A removal-only deploy reports
+  `DMO_FIELD_REMOVAL_PLANNED`, naming the selected mappings a two-stage removal
+  waits for) and writes nothing. A removal-only deploy reports
   `updated`; a repeat with the same file reports `unchanged`.
 - A deployment that does not report every member as deleted fails with
   `DMO_FIELD_REMOVAL_FAILED` and Salesforce's problem text; the mutation is reported

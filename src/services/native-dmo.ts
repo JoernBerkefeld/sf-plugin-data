@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { explainMismatch } from './operation-diagnostic.js';
+import { explainMismatch, replaceExplanation } from './operation-diagnostic.js';
 import {
   isCustomNativeDmo,
   NativeDmoError,
@@ -37,6 +37,17 @@ export type NativeDmoDeployPlan =
 export type NativeDmoDeployOptions = {
   /** Remove custom target fields missing from the file through the Metadata API. */
   allowFieldRemoval?: boolean;
+  /**
+   * Mapped fields whose pairs the same deployment removes from their mappings before the removal
+   * stage. They are planned for removal instead of refused; the removal stage never accepts them.
+   */
+  coveredMappedFields?: string[];
+  /**
+   * Split an update around the mapping deployments of the same batch. 'edits' sends only the
+   * PATCH and reports the removals as pending; 'removal' re-reads the target, refuses a field that
+   * is still mapped, never sends a PATCH and removes the fields once.
+   */
+  stage?: 'edits' | 'removal';
 };
 
 /** Bounded post-write readback; the single write is never repeated. */
@@ -245,6 +256,8 @@ export async function preflightNativeDmo(
   const edited: NativeDmoField[] = [];
   const removed: string[] = [];
   const mapped: string[] = [];
+  // Only the edit stage of a staged deployment may plan a mapped field for a later removal.
+  const covered = new Set(options.stage === 'removal' ? [] : (options.coveredMappedFields ?? []));
   for (const [name, field] of existing) {
     const authored = incoming.get(name);
     // Generated fields may be left out of an authored definition and are never removed.
@@ -255,7 +268,7 @@ export async function preflightNativeDmo(
         // Salesforce removes a mapped field without objection and silently drops its mapping
         // pair with it (live API 68), so the pair has to be taken out of the mapping first.
         // Every such field is collected so the refusal names all of them at once.
-        if (field.isMapped === true) mapped.push(name);
+        if (field.isMapped === true && !covered.has(name)) mapped.push(name);
         else removed.push(name);
         continue;
       }
@@ -390,7 +403,7 @@ export function nativeDmoConfirmed(
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
- * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[]}>} Observed or confirmed definition, not activation proof.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[], pendingRemoval?: string[]}>} Observed or confirmed definition, not activation proof.
  */
 export async function deployNativeDmo(
   value: unknown,
@@ -402,14 +415,35 @@ export async function deployNativeDmo(
   operation: 'create' | 'update' | 'unchanged';
   document: NativeDmoDocument;
   removedFields?: string[];
+  /** Edit stage only: fields the removal stage of the same deployment still has to remove. */
+  pendingRemoval?: string[];
 }> {
   const desired = validateNativeDmoDocument(value);
   const plan = await preflightNativeDmo(desired, client, requestScope, options);
   if (plan.operation === 'unchanged') return { operation: 'unchanged', document: plan.document };
-  const removed = plan.operation === 'update' ? (plan.removeFields ?? []) : [];
+  const planned = plan.operation === 'update' ? (plan.removeFields ?? []) : [];
   // Refuse before the PATCH when this client has no Metadata route for the planned removal.
-  if (removed.length > 0 && !client.removeFields)
+  if (planned.length > 0 && !client.removeFields)
     throw new NativeDmoError('DMO_FIELD_REMOVAL_UNAVAILABLE');
+  // The edit stage leaves every planned removal to the removal stage and confirms only the edit.
+  const removed = options.stage === 'edits' ? [] : planned;
+  const pending =
+    options.stage === 'edits' && planned.length > 0 ? { pendingRemoval: planned } : {};
+  if (plan.operation === 'update' && !plan.body && removed.length === 0)
+    return {
+      operation: 'unchanged',
+      document: await resolveTarget(plan.apiName, client, desired.identity.dataSpace),
+      ...pending,
+    };
+  if (options.stage === 'removal' && (plan.operation === 'create' || plan.body)) {
+    // The edit stage confirmed its PATCH; a difference seen now is never answered with a second one.
+    const error = new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED');
+    replaceExplanation(
+      error,
+      `Field removal stopped for ${plan.apiName}: the target definition no longer matches the file after the edit stage, and an edit is never sent twice.`,
+    );
+    throw error;
+  }
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)
@@ -433,6 +467,7 @@ export async function deployNativeDmo(
         operation: plan.operation,
         document,
         ...(removed.length > 0 ? { removedFields: removed } : {}),
+        ...pending,
       };
   }
   const lingering = last?.spec.fields.find((field) => removed.includes(field.name));

@@ -122,8 +122,7 @@ const steps = (scope, mappings, fields, perMapping) =>
       ),
       `In data360/dmo/${apiName}.dmo-meta.json remove the field(s) ${fields.join(', ')}.`,
     ].join(' '),
-    `sf data360 deploy${scope}${mappings.map((name) => ` -m mapping:${name}`).join('')}`,
-    `sf data360 deploy${scope} -m dmo:${apiName} --allow-field-removal`,
+    `sf data360 deploy${scope}${mappings.map((name) => ` -m mapping:${name}`).join('')} -m dmo:${apiName} --allow-field-removal`,
   ].join('\n');
 const unwritten = 'No write attempted; correct the reported check before another attempt.';
 
@@ -185,7 +184,7 @@ test('the executor names the mapping and the exact commands, and writes nothing'
     diagnostics: [
       {
         code: 'DMO_FIELD_REMOVAL_MAPPED',
-        message: `Field removal refused for ${apiName}: Note__c is mapped by ${first}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) first:\n${steps(' -o my-org', [first], ['Note__c'])}\n${unwritten}`,
+        message: `Field removal refused for ${apiName}: Note__c is mapped by ${first}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:\n${steps(' -o my-org', [first], ['Note__c'])}\n${unwritten}`,
         mappedFields: [{ field: 'Note__c', mappings: [first] }],
       },
     ],
@@ -197,7 +196,7 @@ test('the executor names the mapping and the exact commands, and writes nothing'
   const serialized = JSON.stringify({ message });
   assert.ok(!serialized.includes('\n'));
   assert.equal(JSON.parse(serialized).message, message);
-  assert.equal(message.split('\n').length, 6);
+  assert.equal(message.split('\n').length, 5);
 });
 
 test('several fields and mappings, no org and a data space are all reflected', async () => {
@@ -290,7 +289,7 @@ test('a field without an identified mapping is named beside the identified ones'
 });
 
 const generic = (reason, fields = 'Note__c', verb = 'is') =>
-  `Field removal refused for ${apiName}: ${fields} ${verb} mapped, and Salesforce would drop the mapping pair(s) together with the field(s). The mapping could not be identified (${reason}). Retrieve the mapping, remove the pair(s) whose targetFieldDeveloperName is ${fields} from its file and deploy it; then deploy this DMO again with --allow-field-removal. ${unwritten}`;
+  `Field removal refused for ${apiName}: ${fields} ${verb} mapped, and Salesforce would drop the mapping pair(s) together with the field(s). The mapping could not be identified (${reason}). Retrieve the mapping, remove the pair(s) whose targetFieldDeveloperName is ${fields} from its file, then deploy the mapping and this DMO in one command with --allow-field-removal. ${unwritten}`;
 
 test('a failed or empty lookup keeps the refusal and falls back to the generic instruction', async () => {
   const failed = 'the mapping lookup failed';
@@ -418,7 +417,7 @@ const clients = (maps) => {
   };
 };
 const expected = (scope, nextAction) =>
-  `Field removal refused for ${apiName}: Note__c is mapped by ${first}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) first:\n${steps(scope, [first], ['Note__c'])}\n${nextAction}`;
+  `Field removal refused for ${apiName}: Note__c is mapped by ${first}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:\n${steps(scope, [first], ['Note__c'])}\n${nextAction}`;
 const mappedFields = [{ field: 'Note__c', mappings: [first] }];
 
 for (const preview of [true, false])

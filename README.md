@@ -61,7 +61,7 @@ plugin features.
 
 | Resource                                   | Retrieve                                                                                                                                                                                                            | Create                                                                                                                            | Update                                                                                                                          | Delete                                                                                                                                                                      | Scope / limits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />                                                        | One native route, default/auto API68 (numeric pins from 61 kept): `data360/dmo/<ApiName>__dlm.dmo-meta.json`, all/type/exact retrieval, create or update by target name, exact-name delete. No local allowlists: category, field types, labels, descriptions and extra keys are sent as authored and Salesforce decides. Observed at API68 on empty, unmapped custom DMOs in the default data space: categories Profile, Engagement and Other; ten field data types; update of object label and description, existing field labels and added fields. Refused before any write: changing a field's data type or the primary key, removing a field without `--allow-field-removal`, and any write to standard, namespaced or generated DMOs. With `--allow-field-removal`, custom fields missing from the file are removed by a Metadata API destructive change for `CustomField`; the primary key and generated fields are never removed. Polled reads confirm writes; batches order DLO, DMO, mapping. Used by `--include-dependencies` and `--changed-since`. Mapped or data-bearing DMOs and fields, non-default data spaces, relationships and other API versions are not verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />                                                        | One native route, default/auto API68 (numeric pins from 61 kept): `data360/dmo/<ApiName>__dlm.dmo-meta.json`, all/type/exact retrieval, create or update by target name, exact-name delete. No local allowlists: category, field types, labels, descriptions and extra keys are sent as authored and Salesforce decides. Observed at API68 on empty, unmapped custom DMOs in the default data space: categories Profile, Engagement and Other; ten field data types; update of object label and description, existing field labels and added fields. Refused before any write: changing a field's data type or the primary key, removing a field without `--allow-field-removal`, and any write to standard, namespaced or generated DMOs. With `--allow-field-removal`, custom fields missing from the file are removed by a Metadata API destructive change for `CustomField`; the primary key and generated fields are never removed. A mapped field is removed only when the same command also deploys every mapping holding its pair, with the pair taken out of the mapping file; the removal then runs after those mappings. Polled reads confirm writes; batches order DLO, DMO, mapping. Used by `--include-dependencies` and `--changed-since`. Mapped or data-bearing DMOs and fields, non-default data spaces, relationships and other API versions are not verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Data Lake Objects (DLOs), `dlo`            | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" />                                                                                             | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" />  | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" />                                                      | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Qualified desired-state pair reconciliation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded unmap-first non-last deletion" />                                                   | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, canonical retrieval, one additive pair, JSON Text removal with batch addition, both Text retarget directions and zero-write previews/repeats. Guarded API61..68/default68 deletion (62..67 assumed compatible) unmaps qualified authored identity Text/Number pairs before protected-only deletion, with an independently qualified other-source survivor. Installed API61/68 two-Text-pair deletion and zero-write last-for-DMO preview/execution guards passed; installed Number removal is not qualified. Empty custom fixture scope only; the API61 deletion fixtures were provisioned at API68. Separate installed API61 create/read/single-add acceptance with omitted scope passed. Desired-state removal/retargeting remain API68-only. Installed API68 cross-org acceptance additionally covers exact source retrieval, target-local DLO/DMO rebinding, create, one additive Text pair, GET-only repeat and guarded selected deletion with an unchanged survivor; final owned source/target mappings and parents remain under the accepted last-mapping limitation. Not general cross-org schemas, populated objects or released-package qualification. |
 | DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Unavailable                                                                                                                     | Unavailable                                                                                                                                                                 | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -636,11 +636,26 @@ is set. With the flag:
   version in use;
 - the PATCH for label, description and field edits or additions runs first. It is
   skipped when removals are the only change;
+- when the same command also selects mappings that target the DMO, the DMO deploys in
+  two stages around them: the PATCH in the DMO position, then the selected mappings,
+  then the removal and its readback right after the last selected mapping that
+  targets the DMO has settled. This is how a mapped field is removed with one
+  command:
+
+  ```sh
+  sf data360 deploy -o target -m mapping:<MappingApiName> -m dmo:Example__dlm --allow-field-removal
+  ```
+
+  The DMO file omits the field and the mapping file omits its pair. The mapping
+  deployment removes the pair (and adds pairs for fields the PATCH created), and the
+  removal stage reads the DMO again before it removes anything;
 - the primary key is never removed: a file without the target's primary-key field is
   refused with `UNSUPPORTED_DMO_FIELD_CHANGE`;
 - `--preview` lists the planned removals in `removeFields` and in a
   `DMO_FIELD_REMOVAL_PLANNED` diagnostic, and writes nothing. An executed item lists
-  them in `removedFields`;
+  them in `removedFields`. For a two-stage DMO the preview diagnostic names the
+  selected mappings the removal waits for, and the one DMO item is `updated` with
+  `removedFields` only when both stages succeeded;
 - if Salesforce does not report every field as deleted, the item fails with
   `DMO_FIELD_REMOVAL_FAILED` and the reported problem text. Nothing is retried, and
   an earlier PATCH is not rolled back.
@@ -661,7 +676,7 @@ repeated. If the reads do not confirm it, the command fails with
 | Changing an existing field's data type or moving the primary key. The API answers 200 and silently ignores it. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
 | Omitting a custom field that exists in the target, without `--allow-field-removal`. The native DMO API has no route to remove a field; the flag removes it with a Metadata API destructive change for `CustomField`. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
 | Omitting the target's primary-key field, with or without `--allow-field-removal`. The primary key is never removed. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
-| Removing a field that is currently mapped, with `--allow-field-removal`. Salesforce would drop its mapping pair together with the field; remove the pair from the mapping first. The message names every mapped field, the mappings that hold its pair and the exact commands to run. | `DMO_FIELD_REMOVAL_MAPPED` |
+| Removing a field that is currently mapped, with `--allow-field-removal`, unless every mapping holding its pair is part of the same selection and its file omits the pair. Salesforce would drop the mapping pair together with the field. The whole batch is refused before its first write. The message names every mapped field, the mappings that hold its pair, the file edits and the single command to run. | `DMO_FIELD_REMOVAL_MAPPED` |
 | Adding a generated field or a second primary key. | `UNSUPPORTED_DMO_FIELD_ADDITION` |
 | Deploy, delete or delete preview of a standard, namespaced (for example `ssot__Individual__dlm`) or platform-generated DMO (`creationType` not `Custom`). Mappings to such targets are refused as well. Retrieving these DMOs is allowed. | `UNSUPPORTED_DMO_TARGET` |
 
@@ -720,14 +735,17 @@ acceptance have not been verified.
   for `CustomField`. It is observed at API 68 on empty custom DMOs in two orgs,
   including a removal combined with a label change and an unchanged cross-org deploy
   of the reduced definition. The primary key and generated fields are never removed.
-- A mapped field is not removed: Salesforce itself would remove it without objection
-  and silently drop its pair from the mapping, so the plugin refuses with
-  `DMO_FIELD_REMOVAL_MAPPED`. Deploy the mapping without that pair first, then remove
-  the field. An unmapped field on a mapped DMO is removed normally. The refusal reads
-  the mappings that target the DMO (one read-only list request), names every mapped
-  field with the mappings holding its pair, and prints this sequence with the real
-  names, the target org as passed (`-o` is left out when none was passed) and
-  `--dataspace` when one was passed:
+- A mapped field is never removed while its pair exists: Salesforce itself would
+  remove it without objection and silently drop its pair from the mapping. Before the
+  first write of an all-native selection the plugin reads the mappings that target
+  the DMO (one read-only list request). The removal is admitted only when every
+  mapping holding a pair for the field is reconciled by a selected mapping file (same
+  source and target object) that keeps no pair for that field. Otherwise, and when
+  the list request fails, the whole batch is refused with `DMO_FIELD_REMOVAL_MAPPED`
+  and nothing is written. An unmapped field on a mapped DMO is removed normally. The
+  refusal names every mapped field with the mappings holding its pair, and prints
+  these steps with the real names, the target org as passed (`-o` is left out when
+  none was passed) and `--dataspace` when one was passed:
 
   ```
   sf data360 retrieve -o <org> -m mapping:<MappingApiName> -m dmo:<Dmo__dlm> --overwrite
@@ -738,14 +756,29 @@ acceptance have not been verified.
   generated ones. In `data360/dmo/<Dmo__dlm>.dmo-meta.json` remove the field. Then:
 
   ```
-  sf data360 deploy -o <org> -m mapping:<MappingApiName>
-  sf data360 deploy -o <org> -m dmo:<Dmo__dlm> --allow-field-removal
+  sf data360 deploy -o <org> -m mapping:<MappingApiName> -m dmo:<Dmo__dlm> --allow-field-removal
   ```
 
   With `--json` the diagnostic also carries
   `mappedFields: [{"field": "<Field__c>", "mappings": ["<MappingApiName>"]}]`. When the
   mapping cannot be read or no mapping lists the field, the refusal is unchanged, the
   message says that the mapping could not be identified and `mappings` is empty.
+- The removal stage of a two-stage DMO reads the DMO again. A field that is still
+  mapped then (the pair came back, or another mapping gained one) is not removed: the
+  DMO item ends with `DMO_FIELD_REMOVAL_MAPPED` and the batch stops. The item is
+  `failed` with mutation `confirmed-updated` when its PATCH was written, otherwise
+  `blocked` with `not-attempted`; the mapping items keep their own outcomes. A
+  definition that no longer matches the file at that point is not patched a second
+  time (`DMO_PERSISTENCE_UNCONFIRMED`). A batch that stops between the stages leaves
+  the DMO item with its PATCH outcome and a `DMO_FIELD_REMOVAL_PENDING` diagnostic
+  naming the fields that were not removed.
+- The mapping protections are unchanged by the single command: a pair that the
+  mapping deployment cannot remove (generated or key pairs, a target field shared
+  with another mapping, API versions other than 68) blocks the mapping item, and the
+  field stays. The mixed route beside Segment, calculated insight, Data Graph or
+  Identity Resolution inputs cannot contain mappings and refuses a mapped field.
+- The two-stage order is covered by synthetic tests only; it has not been run against
+  an org.
 - Removing a field that holds data or is referenced by a segment, calculated insight,
   relationship or other component is not verified; if Salesforce rejects it, the
   deploy fails with `DMO_FIELD_REMOVAL_FAILED` and its message.
@@ -753,7 +786,7 @@ acceptance have not been verified.
   but belongs to the mapping: it is never sent, compared or required, so the same
   file deploys unchanged to an org where the DMO is not mapped.
 - A PATCH and a field removal of the same deploy are two separate writes. If the
-  removal fails, the PATCH stays in place.
+  removal fails, the PATCH and any mapping change deployed between them stay in place.
 
 ## Metadata examples: prerequisites and qualification
 
@@ -864,8 +897,9 @@ adding a generated field or a second primary key
 (`UNSUPPORTED_DMO_FIELD_ADDITION`). A custom target field missing from the file is
 refused with the same `UNSUPPORTED_DMO_FIELD_CHANGE` unless `--allow-field-removal`
 is set; then one Metadata API destructive change for `CustomField` removes those
-fields after the PATCH. The primary key and generated fields are never removed. A
-changed category is sent and Salesforce rejects it. A PATCH response can still
+fields after the PATCH, and after the selected mappings that target the DMO when
+the same command deploys them. The primary key and generated fields are never
+removed. A changed category is sent and Salesforce rejects it. A PATCH response can still
 contain the old state, so the plugin polls reads (up to 6, 5 seconds apart) to
 confirm the requested definition and the absence of removed fields; a write is
 never repeated.
@@ -1231,6 +1265,16 @@ so its identity, schema, key and other required definition properties are checke
 not an invented DMO `ACTIVE` status. If preview depends on parents only planned in
 the same selection, it reports `planned-dependencies`, target unknown and no absence
 proof (`MAPPING_DEPENDENCIES_PLANNED`), not confirmed create readiness.
+
+With `--allow-field-removal`, a selected DMO that has custom fields to remove and a
+selected mapping targeting it deploys in two stages: its PATCH in the DMO position,
+then the mappings, then its field removal right after the last selected mapping that
+targets it has settled. The result still has one item per file in DLO, DMO, mapping
+order. Removing a mapped DMO field therefore takes one command: omit the field in the
+DMO file and its pair in the mapping file, and select both. Every selected DMO is
+checked read-only before the first write; a mapped field whose pair is not removed by
+a selected mapping file refuses the whole batch with `DMO_FIELD_REMOVAL_MAPPED`. See
+[Create and update](#create-and-update).
 
 Creation resolves the exact DLO/DMO pair in the target and uses the target-generated
 mapping name, not the source artifact name. An existing logically identical mapping
@@ -2614,7 +2658,9 @@ configured default org and explicit override; `--api-version` defaults to `auto`
 (`--data-space` alias) has no CLI default, with family-specific capability checks.
 `--allow-field-removal` (default off) applies to native DMO inputs only: custom target
 fields missing from the file are removed with a Metadata API destructive change, and
-preview lists them in `removeFields`. Native delete also requires exact selectors;
+preview lists them in `removeFields`. A mapped field is removed only when the same
+command deploys every mapping holding its pair without that pair; the removal then
+follows those mappings. Native delete also requires exact selectors;
 no omitted, bare-type or wildcard write selection is admitted.
 
 The normal core JSON wrapper contains `sf-data360-deploy` contract version 1.0.0,
@@ -2630,7 +2676,11 @@ or bounded updates. Batches containing Segment, calculated insight, Data Graph o
 Identity Resolution inputs preflight the whole selection before the first write, so a
 known blocker prevents all writes. Native batches instead
 order DLO, DMO, mapping and admit/settle each item independently before dependent writes;
-a later blocker can follow an earlier successful mutation. Native preview with only
+a later blocker can follow an earlier successful mutation. With
+`--allow-field-removal`, a DMO with fields to remove and a selected mapping on it
+keeps its PATCH in the DMO position and runs its removal after those mappings; a
+mapped field that no selected mapping file releases refuses the batch before its
+first write. Native preview with only
 planned parents reports `planned-dependencies`, target unknown and no absence proof,
 not executable readiness. Each executor repeats fresh checks; unchanged items do not
 write. Execution stops on the first blocked, failed or unknown-mutation item.

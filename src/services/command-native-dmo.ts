@@ -19,7 +19,32 @@ export type MappedFieldGuide = {
   dataspace?: string;
 };
 
-export type DmoCommandOptions = NativeDmoDeployOptions & { mappedFieldGuide?: MappedFieldGuide };
+export type DmoCommandOptions = NativeDmoDeployOptions & {
+  mappedFieldGuide?: MappedFieldGuide;
+  /** Selected mappings deployed before the removal stage; the preview names them. */
+  afterMappings?: string[];
+};
+
+/** A selected mapping file, reduced to what decides whether its deployment takes a pair away. */
+export type SelectedMapping = {
+  /** Source DLO of the binding the mapping deployment reconciles. */
+  source: string;
+  /** Target DMO of the binding the mapping deployment reconciles. */
+  target: string;
+  /** Target fields the file keeps a pair for. */
+  targetFields: string[];
+};
+
+/** Whether a DMO deploys in two stages around the selected mappings, and which mapped fields that covers. */
+export type DmoRemovalAdmission = { staged: boolean; coveredMappedFields: string[] };
+
+type MappingInventory = {
+  mapped: MappedField[];
+  /** Source object of every target mapping holding a pair for the field, named or not. */
+  sources: Map<string, unknown[]>;
+};
+
+const unwritten = 'No write attempted; correct the reported check before another attempt.';
 
 export type DmoPreview = {
   family: 'dmo';
@@ -57,43 +82,45 @@ function argument(value: string): string {
  * @param {string} apiName Exact DMO full name.
  * @param {string[]} fields Mapped fields the file omits.
  * @param {MappedFieldGuide} guide Mapping inventory source.
- * @returns {Promise<MappedField[]>} Each field with its mapping names in inventory order.
+ * @returns {Promise<MappingInventory>} Each field with its mapping names in inventory order, and the source of every holder.
  */
 async function findMappings(
   apiName: string,
   fields: string[],
   guide: MappedFieldGuide,
-): Promise<MappedField[]> {
+): Promise<MappingInventory> {
   const response = (await guide.mappings().list(apiName)) as {
     objectSourceTargetMaps?: unknown;
   } | null;
   const maps = response?.objectSourceTargetMaps;
   if (!Array.isArray(maps)) throw new TypeError('Mapping inventory was not returned.');
-  const found = fields.map((field) => ({ field, mappings: [] as string[] }));
+  const mapped = fields.map((field) => ({ field, mappings: [] as string[] }));
+  const sources = new Map(fields.map((field) => [field, [] as unknown[]]));
   for (const entry of maps as Array<Record<string, unknown> | null>) {
-    // Names are echoed into commands, so anything outside the mapping-name grammar is skipped.
-    if (
-      typeof entry?.developerName !== 'string' ||
-      !nativeMappingName.test(entry.developerName) ||
-      entry.targetEntityDeveloperName !== apiName ||
-      !Array.isArray(entry.fieldMappings)
-    )
+    if (entry?.targetEntityDeveloperName !== apiName || !Array.isArray(entry.fieldMappings))
       continue;
     const targets = new Set(
       (entry.fieldMappings as Array<Record<string, unknown> | null>).map(
         (pair) => pair?.targetFieldDeveloperName,
       ),
     );
-    for (const item of found)
-      if (targets.has(item.field) && !item.mappings.includes(entry.developerName))
-        item.mappings.push(entry.developerName);
+    // Names are echoed into commands, so anything outside the mapping-name grammar is not named.
+    const name =
+      typeof entry.developerName === 'string' && nativeMappingName.test(entry.developerName)
+        ? entry.developerName
+        : undefined;
+    for (const item of mapped) {
+      if (!targets.has(item.field)) continue;
+      sources.get(item.field)!.push(entry.sourceEntityDeveloperName);
+      if (name && !item.mappings.includes(name)) item.mappings.push(name);
+    }
   }
-  return found;
+  return { mapped, sources };
 }
 
 /**
- * Word the refusal: fields, mappings and the exact manual command sequence, or the generic
- * instruction when no mapping could be identified.
+ * Word the refusal: fields, mappings, the file edits and the single command that deploys the
+ * mappings and the DMO together, or the generic instruction when no mapping could be identified.
  * @param {string} apiName Exact DMO full name.
  * @param {MappedField[]} mapped Mapped fields with their identified mappings.
  * @param {boolean} lookupFailed Whether the mapping inventory could not be read.
@@ -110,7 +137,7 @@ function mappedRemovalMessage(
   const names = [...new Set(mapped.flatMap(({ mappings }) => mappings))];
   const lead = `Field removal refused for ${apiName}: `;
   if (names.length === 0)
-    return `${lead}${fields} ${mapped.length === 1 ? 'is' : 'are'} mapped, and Salesforce would drop the mapping pair(s) together with the field(s). The mapping could not be identified (${lookupFailed ? 'the mapping lookup failed' : 'no mapping targeting this DMO lists a pair for the field(s)'}). Retrieve the mapping, remove the pair(s) whose targetFieldDeveloperName is ${fields} from its file and deploy it; then deploy this DMO again with --allow-field-removal.`;
+    return `${lead}${fields} ${mapped.length === 1 ? 'is' : 'are'} mapped, and Salesforce would drop the mapping pair(s) together with the field(s). The mapping could not be identified (${lookupFailed ? 'the mapping lookup failed' : 'no mapping targeting this DMO lists a pair for the field(s)'}). Retrieve the mapping, remove the pair(s) whose targetFieldDeveloperName is ${fields} from its file, then deploy the mapping and this DMO in one command with --allow-field-removal.`;
   const scope =
     (guide?.targetOrg === undefined ? '' : ` -o ${argument(guide.targetOrg)}`) +
     (guide?.dataspace === undefined ? '' : ` --dataspace ${argument(guide.dataspace)}`);
@@ -141,11 +168,10 @@ function mappedRemovalMessage(
       : []),
   ];
   return [
-    `${lead}${summary}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) first:`,
+    `${lead}${summary}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:`,
     `sf data360 retrieve${scope}${selectors} -m dmo:${apiName} --overwrite`,
     edits.join(' '),
-    `sf data360 deploy${scope}${selectors}`,
-    `sf data360 deploy${scope} -m dmo:${apiName} --allow-field-removal`,
+    `sf data360 deploy${scope}${selectors} -m dmo:${apiName} --allow-field-removal`,
     '',
   ].join('\n');
 }
@@ -163,19 +189,122 @@ async function explainMappedRemoval(
 ): Promise<MappedField[] | undefined> {
   const refused = mappedFieldRemoval(error);
   if (!refused || !(error instanceof Error)) return undefined;
-  let mapped = refused.fields.map((field) => ({ field, mappings: [] as string[] }));
-  let lookupFailed = true;
+  let inventory: MappingInventory | undefined;
   try {
-    if (guide) {
-      mapped = await findMappings(refused.apiName, refused.fields, guide);
-      lookupFailed = false;
-    }
+    if (guide) inventory = await findMappings(refused.apiName, refused.fields, guide);
   } catch {
     /* The refusal stands; only the mapping names are missing from its explanation. */
   }
-  replaceExplanation(error, mappedRemovalMessage(refused.apiName, mapped, lookupFailed, guide));
+  return recordMappedRemoval(error, refused, inventory, guide);
+}
+
+/**
+ * Attach the worded refusal and its mapped fields to the error.
+ * @param {Error} error Refusal raised by the preflight.
+ * @param {{apiName: string, fields: string[]}} refused DMO and mapped fields it names.
+ * @param {string} refused.apiName Exact DMO full name.
+ * @param {string[]} refused.fields Mapped fields the file omits.
+ * @param {MappingInventory} [inventory] Mapping inventory; absent when the lookup failed.
+ * @param {MappedFieldGuide} [guide] Target org and data space as passed.
+ * @returns {MappedField[]} Mapped fields with their mappings.
+ */
+function recordMappedRemoval(
+  error: Error,
+  refused: { apiName: string; fields: string[] },
+  inventory?: MappingInventory,
+  guide?: MappedFieldGuide,
+): MappedField[] {
+  const mapped =
+    inventory?.mapped ?? refused.fields.map((field) => ({ field, mappings: [] as string[] }));
+  replaceExplanation(
+    error,
+    mappedRemovalMessage(refused.apiName, mapped, inventory === undefined, guide),
+  );
   identified.set(error, mapped);
   return mapped;
+}
+
+/**
+ * Report a refusal raised before any write as a blocked item.
+ * @param {unknown} error Caught refusal.
+ * @returns {object} Payload-free blocked outcome with the mapped fields of a removal refusal.
+ */
+export function refusedDmo(error: unknown) {
+  const mappedFields = mappedFieldMappings(error);
+  return {
+    outcome: 'blocked' as const,
+    mutation: 'not-attempted' as const,
+    diagnostics: [
+      {
+        code: error instanceof NativeDmoError ? error.code : 'DMO_REQUEST_UNCONFIRMED',
+        message: operationDiagnostic(error, unwritten),
+        ...(mappedFields ? { mappedFields } : {}),
+      },
+    ],
+  };
+}
+
+/**
+ * Decide, read-only and before any write of the batch, how a DMO with planned field removals
+ * deploys beside the selected mappings. A mapped field is covered when every target mapping that
+ * holds a pair for it is reconciled by a selected mapping file (same source and target object)
+ * that keeps no pair for the field. All covered: the DMO deploys in two stages around the
+ * mappings. Anything else, including a failed lookup, is the DMO_FIELD_REMOVAL_MAPPED refusal.
+ * @param {unknown} value Portable definition.
+ * @param {DmoClient} client Target client; only read.
+ * @param {string | undefined} requestScope Optional explicit data space.
+ * @param {MappedFieldGuide | undefined} guide Mapping inventory source and command context.
+ * @param {SelectedMapping[]} selected Mapping files of the same selection.
+ * @returns {Promise<DmoRemovalAdmission>} Staging decision; any other refusal is left to the item's own preflight.
+ */
+export async function admitDmoFieldRemoval(
+  value: unknown,
+  client: DmoClient,
+  requestScope: string | undefined,
+  guide: MappedFieldGuide | undefined,
+  selected: SelectedMapping[],
+): Promise<DmoRemovalAdmission> {
+  try {
+    const plan = await preflightNativeDmo(value, client, requestScope, { allowFieldRemoval: true });
+    const apiName = plan.apiName;
+    return {
+      // Without a selected mapping on this DMO there is nothing to wait for between the stages.
+      staged:
+        plan.operation === 'update' &&
+        plan.removeFields !== undefined &&
+        selected.some((mapping) => mapping.target === apiName),
+      coveredMappedFields: [],
+    };
+  } catch (error) {
+    const refused = mappedFieldRemoval(error);
+    if (!refused || !(error instanceof Error)) return { staged: false, coveredMappedFields: [] };
+    let inventory: MappingInventory | undefined;
+    try {
+      if (guide) inventory = await findMappings(refused.apiName, refused.fields, guide);
+    } catch {
+      /* An unread inventory covers nothing. */
+    }
+    const sources = inventory?.sources;
+    const covered =
+      sources !== undefined &&
+      refused.fields.every((field) => {
+        const holders = sources.get(field)!;
+        return (
+          holders.length > 0 &&
+          holders.every((source) =>
+            selected.some(
+              (mapping) =>
+                mapping.target === refused.apiName &&
+                mapping.source === source &&
+                !mapping.targetFields.includes(field),
+            ),
+          )
+        );
+      });
+    if (covered) return { staged: true, coveredMappedFields: refused.fields };
+    recordMappedRemoval(error, refused, inventory, guide);
+    throw error;
+  }
 }
 
 /**
@@ -192,7 +321,7 @@ export async function preflightDmo(
   requestScope?: string,
   options: DmoCommandOptions = {},
 ): Promise<DmoPreview> {
-  const { mappedFieldGuide, ...deployOptions } = options;
+  const { mappedFieldGuide, afterMappings, ...deployOptions } = options;
   let plan: Awaited<ReturnType<typeof preflightNativeDmo>>;
   try {
     plan = await preflightNativeDmo(value, client, requestScope, deployOptions);
@@ -212,7 +341,7 @@ export async function preflightDmo(
       ? [
           {
             code: 'DMO_FIELD_REMOVAL_PLANNED',
-            message: `Fields missing from the file are removed with one Metadata API destructive change: ${removeFields.join(', ')}.`,
+            message: `Fields missing from the file are removed with one Metadata API destructive change${afterMappings?.length ? `, after the selected mapping(s) ${afterMappings.join(', ')} are deployed` : ''}: ${removeFields.join(', ')}.`,
           },
         ]
       : [],
@@ -220,7 +349,8 @@ export async function preflightDmo(
 }
 /**
  * Execute at most one PATCH and one field removal with conservative dispatch evidence and
- * independent readback.
+ * independent readback. With a stage, only that half runs: 'edits' reports the fields left for
+ * the removal stage in pendingRemoval, 'removal' re-reads the target and removes them once.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
  * @param {string} [requestScope] Optional explicit data space.
@@ -257,10 +387,12 @@ export async function executeDmo(
   };
   try {
     const result = await deployNativeDmo(value, guarded, requestScope, undefined, deployOptions);
+    const pending = result.pendingRemoval ? { pendingRemoval: result.pendingRemoval } : {};
     if (result.operation === 'unchanged')
       return {
         outcome: 'unchanged' as const,
         mutation: 'not-attempted' as const,
+        ...pending,
         diagnostics: [],
       };
     return {
@@ -270,6 +402,7 @@ export async function executeDmo(
           ? ('confirmed-created' as const)
           : ('confirmed-updated' as const),
       ...(result.removedFields ? { removedFields: result.removedFields } : {}),
+      ...pending,
       diagnostics: [],
     };
   } catch (error) {
@@ -285,7 +418,9 @@ export async function executeDmo(
             error,
             dispatched
               ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
-              : 'No write attempted; correct the reported check before another attempt.',
+              : deployOptions.stage === 'removal'
+                ? 'No field was removed, and earlier writes of this deployment stay in place; correct the reported check before another attempt.'
+                : unwritten,
           ),
           ...(mappedFields ? { mappedFields } : {}),
         },
