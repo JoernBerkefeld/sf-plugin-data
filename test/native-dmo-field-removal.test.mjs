@@ -209,9 +209,10 @@ test('a mapped field is never removed, and the mapped marker is not treated as a
   ]);
 });
 
-test('the custom-only target guard applies before any planned removal', async () => {
+test('the target guard applies before any planned removal', async () => {
   for (const raw of [
-    { ...native(), creationType: 'Standard' },
+    { ...native(), creationType: 'Adg' },
+    { ...native(), creationType: undefined },
     { ...native(), name: 'ssot__Example__dlm' },
   ]) {
     const saved = authored(['Note__c']);

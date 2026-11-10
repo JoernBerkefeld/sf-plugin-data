@@ -609,23 +609,26 @@ test('native DMO create refuses a namespaced name before any write', async () =>
   );
 });
 
-test('native DMO writes and deletes are refused for standard, namespaced and generated targets', async () => {
+test('native DMO deletes are refused for standard, namespaced and generated targets, writes for namespaced and generated ones', async () => {
   for (const raw of [
     { ...native(), creationType: 'Standard' },
     { ...native(), creationType: 'Adg' },
+    { ...native(), creationType: 'Bridge' },
     { ...native(), creationType: undefined },
     { ...native(), name: 'ssot__Individual__dlm' },
   ]) {
     const name = raw.name;
     const saved = normalizeNativeDmo(raw);
     saved.spec.label = 'Changed';
-    await assert.rejects(
-      deployNativeDmo(saved, {
-        get: async () => raw,
-        update: async () => assert.fail('guarded target must not PATCH'),
-      }),
-      /UNSUPPORTED_DMO_TARGET/,
-    );
+    // A standard DMO takes field, label and description writes: native-dmo-standard.test.mjs.
+    if (raw.creationType !== 'Standard')
+      await assert.rejects(
+        deployNativeDmo(saved, {
+          get: async () => raw,
+          update: async () => assert.fail('guarded target must not PATCH'),
+        }),
+        /UNSUPPORTED_DMO_TARGET/,
+      );
     await assert.rejects(
       deleteNativeDmo(name, {
         get: async () => raw,

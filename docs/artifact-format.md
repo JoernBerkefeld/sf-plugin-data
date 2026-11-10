@@ -146,6 +146,16 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 - An update sends the object label, a changed description, a changed category
   (Salesforce rejects category changes), changed extra `spec` keys, and the edited
   and added fields.
+- A standard DMO (`creationType` `Standard` in the target, for example
+  `ssot__Brand__dlm`) uses the same file. An update sends only the edited and added
+  custom fields, the label when it differs, a changed description and changed extra
+  `spec` keys. `spec.category` is required by the file shape but ignored: it is
+  never sent or compared. Standard and system fields may be left out of
+  `spec.fields`; one that is listed must equal the target (`isMapped` and
+  `keyQualifierName` are not compared), otherwise the deploy is refused with
+  `UNSUPPORTED_DMO_FIELD_CHANGE`. A new field must be a plain custom field: no double
+  underscore before `__c` and no `creationType` other than `Custom`
+  (`UNSUPPORTED_DMO_FIELD_ADDITION`).
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one
@@ -171,11 +181,15 @@ Refused before any write: changing an existing field's `dataType` or
 `isPrimaryKey`, omitting a custom field that exists in the target without
 `--allow-field-removal`, omitting the target's primary-key field
 (`UNSUPPORTED_DMO_FIELD_CHANGE`), adding a generated field or a second primary key
-(`UNSUPPORTED_DMO_FIELD_ADDITION`), and any deploy or delete of a standard,
-namespaced or platform-generated DMO (`UNSUPPORTED_DMO_TARGET`).
+(`UNSUPPORTED_DMO_FIELD_ADDITION`), any deploy or delete of a platform-generated
+DMO or of a custom DMO under a namespaced name, creating a namespaced DMO, and
+deleting a standard DMO (`UNSUPPORTED_DMO_TARGET`).
 
-Field removal is observed on empty, unmapped custom DMOs. Removing a mapped or
-data-bearing field is not verified.
+Field removal is observed on empty, unmapped custom DMOs and on one unused standard
+DMO. Removing a mapped or data-bearing field is not verified. Standard DMO writes
+are observed at API 68 on one unused standard DMO (add, relabel and remove a custom
+field; object label and description changed and reverted); a category change,
+standard DMOs in active use and platform-generated DMOs are not tested.
 
 The values Salesforce accepted in live verification at API 68 (categories, field
 data types, label length and key rules) are listed in the README's Public DMO

@@ -13,7 +13,7 @@ import type { NativeMappingDocument } from '../artifacts/native-mapping-document
 import {
   defaultNativeDmoSettle,
   isGeneratedDmoField,
-  previewDeleteNativeDmo,
+  previewFieldDeleteNativeDmo,
   retrieveNativeDmo,
 } from './native-dmo.js';
 import type { NativeDmoSettle } from './native-dmo.js';
@@ -101,7 +101,7 @@ function mappedRefusal(apiName: string, fields: string[], reason: string): Nativ
 }
 
 /**
- * Admit a field-level delete with reads only: the custom-only DMO guard, every named field
+ * Admit a field-level delete with reads only: a custom or standard DMO, every named field
  * present, custom, not the primary key and not generated, and every mapping pair that targets a
  * named field identified by its observed selector on an ACTIVE mapping.
  * @param {string} apiName Exact DMO full name.
@@ -116,8 +116,9 @@ export async function planDmoFieldDelete(
   clients: DmoFieldDeleteClients,
   requestScope?: string,
 ): Promise<DmoFieldDeletePlan> {
-  // Standard, namespaced and platform-generated DMOs are refused here (UNSUPPORTED_DMO_TARGET).
-  const target = await previewDeleteNativeDmo(apiName, clients.dmo, requestScope);
+  // Platform-generated DMOs and namespaced custom DMOs are refused here (UNSUPPORTED_DMO_TARGET).
+  const admitted = await previewFieldDeleteNativeDmo(apiName, clients.dmo, requestScope);
+  const target = admitted.document;
   const known = new Map(target.spec.fields.map((field) => [field.name, field]));
   const missing = fields.filter((name) => !known.has(name));
   if (missing.length > 0)
@@ -130,11 +131,14 @@ export async function planDmoFieldDelete(
     if (
       field.isPrimaryKey ||
       isGeneratedDmoField(field) ||
-      (field.creationType !== undefined && field.creationType !== 'Custom')
+      // On a standard DMO only a field marked custom is removed; an unmarked one is not.
+      (admitted.scope === 'standard'
+        ? field.creationType !== 'Custom'
+        : field.creationType !== undefined && field.creationType !== 'Custom')
     )
       throw explained(
         new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE'),
-        `Field delete refused for ${apiName}: ${name} is ${field.isPrimaryKey ? 'the primary-key field' : 'a generated or system field'} and is never removed.`,
+        `Field delete refused for ${apiName}: ${name} is ${field.isPrimaryKey ? 'the primary-key field' : 'a standard, generated or system field'} and is never removed.`,
       );
   }
   if (!clients.remover.removeFields) throw new NativeDmoError('DMO_FIELD_REMOVAL_UNAVAILABLE');
@@ -261,7 +265,8 @@ export async function executeDmoFieldDelete(
     }
   }
   progress.step = 'recheck';
-  const current = await previewDeleteNativeDmo(plan.apiName, clients.dmo, requestScope);
+  const recheck = await previewFieldDeleteNativeDmo(plan.apiName, clients.dmo, requestScope);
+  const current = recheck.document;
   const fresh = new Map(current.spec.fields.map((field) => [field.name, field]));
   const gone = plan.fields.filter((name) => !fresh.has(name));
   if (gone.length > 0)

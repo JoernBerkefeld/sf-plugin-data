@@ -470,11 +470,53 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   at version 65.
 
 A category change is sent, and Salesforce rejects it ("Data Object Category cannot
-be updated").
+be updated"). On a standard DMO the category is ignored.
 
-Safety guard: deploy, delete and delete preview refuse standard, namespaced (for
-example `ssot__Individual__dlm`) and platform-generated DMOs (`creationType` not
-`Custom`) with `UNSUPPORTED_DMO_TARGET`. Mappings to such targets are refused.
+Write scope, decided from the raw read of the existing target
+(`nativeDmoWriteScope`):
+
+- `creationType` `Custom` and a name without a double underscore before `__dlm`:
+  everything above, whole-DMO delete and field-level delete.
+- `creationType` `Standard` (for example `ssot__Brand__dlm`): deploy writes custom
+  fields (add, relabel, remove with `--allow-field-removal` under the same rules),
+  the object label (sent only when it differs) and the object description (absent is
+  not managed, an empty string clears it). Field-level delete removes custom fields.
+  The DMO is never created and never deleted.
+- Anything else, that is a platform-generated DMO (`Adg`, `Bridge`, `Derived`,
+  `Segment_Membership` or any other `creationType`), a read without `creationType`
+  or a custom `creationType` under a namespaced name: deploy, delete, delete preview
+  and field-level delete are refused with `UNSUPPORTED_DMO_TARGET`.
+
+Standard DMO rules:
+
+- Standard and system fields (field `creationType` other than `Custom`) are never
+  sent and never removed, and may be absent from the file. One that the file lists
+  and that differs from the target in a comparable property is refused with
+  `UNSUPPORTED_DMO_FIELD_CHANGE`, naming field and property. `isMapped` and
+  `keyQualifierName` are not compared on these fields.
+- A new field must be a plain custom field: no double underscore before `__c` and no
+  `creationType` other than `Custom`. Otherwise `UNSUPPORTED_DMO_FIELD_ADDITION`.
+- The category is neither sent nor compared nor required at readback. Mapping a
+  standard DMO for the first time changes its category from `UNASSIGNED` to `OTHER`,
+  enables it, adds the system field `KQ_Id__c` and sets `keyQualifierName` on the
+  standard primary key; none of this causes a write or a refusal, so a retrieved file
+  deploys back `unchanged`, also to an org where the DMO is not mapped yet.
+- PATCH body for one added custom field: `{"fields":[{"name","label","dataType",
+  "isPrimaryKey"}]}`; for a label change: `{"label"}`; `dataSpaceName` only with
+  `--dataspace`.
+- Readback confirms the label, a managed description, the custom fields of the file
+  and the absence of removed fields.
+- [x] Observed at API 68 on one unused standard DMO: add, relabel and remove a custom
+      field; object label changed and reverted; object description set and cleared;
+      Salesforce rejects an edit of a standard field ("Data model fields cannot start
+      with ssot__").
+- [ ] Not tested: a category change on a standard DMO, standard DMOs in active use
+      (mapped, data-bearing, referenced), deleting a standard DMO, anything on
+      platform-generated DMOs. Field-level delete on a standard DMO and removal of a
+      mapped custom field are covered by synthetic tests only.
+
+Mappings whose target is not a custom DMO, standard DMOs included, are refused with
+`MAPPING_TARGET_UNSUPPORTED`.
 
 Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read
 or written. Salesforce may cascade to the DMO's mapping. Deletion resolves the exact
@@ -490,9 +532,10 @@ Field-level delete,
 - `--field` is repeatable and needs exactly one `dmo:` selector. Any other selector,
   `--source-dir`, `--delete-dlo`, `--transform-target-id`, or `--output-dir` without
   `--field` is refused with `INVALID_FIELD_DELETE_SELECTION` before any org call.
-- Admission is read-only: custom DMO (`UNSUPPORTED_DMO_TARGET`); each field exists
-  (`DMO_FIELD_NOT_FOUND`), is custom, not the primary key and not generated
-  (`UNSUPPORTED_DMO_FIELD_CHANGE`); the mappings targeting the DMO are listed and
+- Admission is read-only: custom or standard DMO (`UNSUPPORTED_DMO_TARGET`
+  otherwise); each field exists (`DMO_FIELD_NOT_FOUND`), is custom, not the primary
+  key and not generated (`UNSUPPORTED_DMO_FIELD_CHANGE`; on a standard DMO the field
+  must be marked `creationType` `Custom`); the mappings targeting the DMO are listed and
   every pair targeting a named field is collected. A mapped field without an
   identified pair, including a failed list request, is refused with
   `DMO_FIELD_REMOVAL_MAPPED`. Pair removal needs an ACTIVE mapping and API 61 to 68.

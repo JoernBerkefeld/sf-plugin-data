@@ -163,6 +163,24 @@ async function run(org, flags, overrides = {}, json = true) {
   }
 }
 
+/**
+ * Turn the synthetic DMO into a standard one: a standard key and field beside the custom fields,
+ * and one field without a creationType.
+ * @param {object} org Synthetic org.
+ * @returns {object} The same org.
+ */
+function asStandard(org) {
+  org.dmo.creationType = 'Standard';
+  org.dmo.fields[0].isPrimaryKey = false;
+  const base = { label: 'Standard', type: 'Text', isPrimaryKey: false };
+  org.dmo.fields.push(
+    { ...base, name: 'ssot__Id__c', isPrimaryKey: true, creationType: 'Standard' },
+    { ...base, name: 'ssot__Name__c', creationType: 'Standard' },
+    { ...base, name: 'Unmarked__c' },
+  );
+  return org;
+}
+
 const temporaryRoot = async () => mkdtemp(path.join(os.tmpdir(), 'dmo-field-delete-'));
 const writes = (org) =>
   org.calls.filter((call) => call.startsWith('deleteField') || call.startsWith('removeFields'));
@@ -227,13 +245,21 @@ test('field delete without --confirm-delete is blocked before any org call; prev
 
 test('field delete admission refuses unsupported targets and fields with reads only', async () => {
   const cases = [
-    {
+    ...['Adg', 'Bridge', undefined].map((creationType) => ({
       code: 'UNSUPPORTED_DMO_TARGET',
       field: 'Note__c',
       prepare: (org) => {
-        org.dmo.creationType = 'Standard';
+        org.dmo.creationType = creationType;
       },
-    },
+    })),
+    // On a standard DMO only a field marked custom is removed.
+    ...['ssot__Name__c', 'ssot__Id__c', 'Unmarked__c', 'DataSource__c'].map((field) => ({
+      code: 'UNSUPPORTED_DMO_FIELD_CHANGE',
+      field,
+      message:
+        field === 'ssot__Id__c' ? /primary-key field/u : /standard, generated or system field/u,
+      prepare: (org) => asStandard(org),
+    })),
     { code: 'UNSUPPORTED_DMO_FIELD_CHANGE', field: 'Id__c', message: /primary-key field/u },
     {
       code: 'UNSUPPORTED_DMO_FIELD_CHANGE',
@@ -311,6 +337,44 @@ test('field delete admission refuses unsupported targets and fields with reads o
     assert.deepEqual(writes(org), [], code);
     assert.equal(exitCode, 1);
   }
+});
+
+test('a custom field of a standard DMO is unmapped and removed like one of a custom DMO', async () => {
+  const org = asStandard(createOrg(twoMappings()));
+  const preview = await run(org, { field: ['Note__c'], preview: true });
+  assert.equal(preview.result.status, 'success');
+  assert.deepEqual(writes(org), []);
+  org.calls.length = 0;
+  const { result, exitCode } = await run(org, {
+    field: ['Note__c'],
+    'confirm-delete': true,
+    'output-dir': await temporaryRoot(),
+  });
+  assert.equal(result.status, 'success');
+  assert.equal(exitCode, undefined);
+  assert.deepEqual(org.calls, [
+    'resolveTarget',
+    'dmo.get',
+    // The mapped-field lookup is the read-only list by DMO name.
+    `mapping.list:${dmoName}`,
+    'mapping.get:MapA',
+    'mapping.get:MapB',
+    'deleteField:MapA:MapA_Note__c',
+    'mapping.get:MapA',
+    'deleteField:MapB:MapB_Note__c',
+    'mapping.get:MapB',
+    'dmo.get',
+    `removeFields:${dmoName}:Note__c`,
+    'dmo.get',
+  ]);
+  const [item] = result.result.items;
+  assert.equal(item.mutation, 'confirmed-deleted');
+  assert.deepEqual(item.removedFields, ['Note__c']);
+  // The standard fields, the standard key and the unmarked field are untouched.
+  assert.deepEqual(
+    org.dmo.fields.map((entry) => entry.name),
+    ['Id__c', 'Extra__c', 'DataSource__c', 'ssot__Id__c', 'ssot__Name__c', 'Unmarked__c'],
+  );
 });
 
 test('a failed mapping lookup does not block a field that is not mapped', async () => {

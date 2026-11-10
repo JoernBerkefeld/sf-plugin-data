@@ -30,16 +30,36 @@ export function sameDmoCategory(left: string, right: string): boolean {
 }
 
 /**
- * Only customer-created DMOs with an unprefixed name may be written or deleted.
+ * What may be written on an existing DMO, decided from its raw read alone.
+ * 'custom': everything this plugin writes, including deleting the DMO.
+ * 'standard': custom fields, the object label and the object description only.
+ * 'refused': nothing.
+ */
+export type NativeDmoWriteScope = 'custom' | 'standard' | 'refused';
+
+/**
+ * Classify an existing DMO for writes. A customer-created DMO with an unprefixed name is
+ * 'custom', a Salesforce standard DMO is 'standard', and everything else is 'refused':
+ * platform-generated DMOs (any other creationType), a read without a creationType and a
+ * custom creationType under a namespaced name.
+ * @param {Record<string, unknown>} raw Direct native read.
+ * @returns {NativeDmoWriteScope} Write scope of the target.
+ */
+export function nativeDmoWriteScope(raw: Record<string, unknown>): NativeDmoWriteScope {
+  if (typeof raw.name !== 'string') return 'refused';
+  if (raw.creationType === 'Standard') return 'standard';
+  return raw.creationType === 'Custom' && !raw.name.slice(0, -'__dlm'.length).includes('__')
+    ? 'custom'
+    : 'refused';
+}
+
+/**
+ * Only customer-created DMOs with an unprefixed name are mapping targets or deletable.
  * @param {Record<string, unknown>} raw Direct native read.
  * @returns {boolean} Whether the target is a custom, non-namespaced DMO.
  */
 export function isCustomNativeDmo(raw: Record<string, unknown>): boolean {
-  return (
-    raw.creationType === 'Custom' &&
-    typeof raw.name === 'string' &&
-    !raw.name.slice(0, -'__dlm'.length).includes('__')
-  );
+  return nativeDmoWriteScope(raw) === 'custom';
 }
 
 /** Payload-free refusal for the isolated native DMO boundary. */
