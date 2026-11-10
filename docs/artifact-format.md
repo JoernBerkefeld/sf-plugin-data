@@ -152,7 +152,9 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   Metadata API destructive change for `CustomField`
   `<ObjectName>__dlm.<FieldName>__c`, after the PATCH for other changes. The
   primary-key field must stay in the file. A field that is currently mapped is
-  refused with `DMO_FIELD_REMOVAL_MAPPED`.
+  refused with `DMO_FIELD_REMOVAL_MAPPED`; the refusal names the
+  `data360/mapping/<MappingApiName>.mapping-meta.json` files whose pair with that
+  `targetFieldDeveloperName` has to be removed and deployed first.
 - The `isMapped` marker on a field is saved as retrieved but describes the mapping,
   not the DMO: it is never sent, compared or required.
 

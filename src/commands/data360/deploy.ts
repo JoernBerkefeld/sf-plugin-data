@@ -33,7 +33,12 @@ import { createDataStreamClient } from '../../transport/data-stream-rest.js';
 import { preflightMapping, executeMapping } from '../../services/command-native-mapping.js';
 import { createMappingClient } from '../../transport/mapping-rest.js';
 import { NativeMappingError } from '../../artifacts/native-mapping-document.js';
-import { preflightDmo, executeDmo } from '../../services/command-native-dmo.js';
+import {
+  preflightDmo,
+  executeDmo,
+  mappedFieldMappings,
+} from '../../services/command-native-dmo.js';
+import type { DmoCommandOptions, MappedField } from '../../services/command-native-dmo.js';
 import { nativeDmoConfirmed } from '../../services/native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { isNativeDmoInput } from '../../artifacts/read-deploy-input.js';
@@ -200,7 +205,13 @@ export type DeployEnvelope = {
   };
   diagnostics: {
     warnings: string[];
-    errors: Array<{ code: string; message: string; retryable: false }>;
+    errors: Array<{
+      code: string;
+      message: string;
+      retryable: false;
+      /** Mapped fields a refused removal names, each with the mappings holding its pair. */
+      mappedFields?: MappedField[];
+    }>;
   };
   provenance: {
     producer: string;
@@ -564,8 +575,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     const requestScope = flags.dataspace;
     const effectiveScope = requestScope ?? 'default';
     // Passed to the native DMO services only when the removal was explicitly allowed.
-    const fieldRemoval: [] | [{ allowFieldRemoval: true }] =
-      flags['allow-field-removal'] === true ? [{ allowFieldRemoval: true }] : [];
+    // A refused removal of a mapped field names its mappings through this read-only inventory and
+    // repeats the target org and data space exactly as they were passed.
+    const passedOrg = flags['target-org'] as unknown;
+    const fieldRemoval = (
+      mappings: () => Pick<ReturnType<typeof createMappingClient>, 'list'>,
+    ): [] | [DmoCommandOptions] =>
+      flags['allow-field-removal'] === true
+        ? [
+            {
+              allowFieldRemoval: true,
+              mappedFieldGuide: {
+                mappings,
+                ...(typeof passedOrg === 'string' ? { targetOrg: passedOrg } : {}),
+                ...(requestScope === undefined ? {} : { dataspace: requestScope }),
+              },
+            },
+          ]
+        : [];
     const cwd = process.cwd();
     const plugin = {
       name: packageMetadata.name,
@@ -609,7 +636,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       error?: unknown,
     ): DeployEnvelope => {
       envelope.status = status;
-      if (code)
+      if (code) {
+        const mappedFields = mappedFieldMappings(error);
         envelope.diagnostics.errors.push({
           code,
           message: operationDiagnostic(
@@ -619,7 +647,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
           ),
           retryable: false,
+          ...(mappedFields ? { mappedFields } : {}),
         });
+      }
       if (status !== 'success') process.exitCode = 1;
       if (!this.jsonEnabled()) {
         this.log(
@@ -1214,7 +1244,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       input.document,
                       dmo,
                       requestScope,
-                      ...fieldRemoval,
+                      ...fieldRemoval(mapping),
                     );
             await verify();
             envelope.result.items.push({
@@ -1247,7 +1277,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     input.document,
                     dmo,
                     requestScope,
-                    ...fieldRemoval,
+                    ...fieldRemoval(mapping),
                   );
           const { serverProcessing, ...execution } = result as typeof result & {
             serverProcessing?: true;
@@ -1843,13 +1873,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (!username) throw new Error('TARGET_ORG_REQUIRED');
         return (this.createDmoClient ?? createDmoClient)(username, nativeDmoVersion);
       };
+      // Read-only mapping inventory for a refused mapped-field removal; built only on refusal.
+      const dmoMappings = (): ReturnType<typeof createMappingClient> => {
+        const username = org.getUsername();
+        if (!username) throw new Error('TARGET_ORG_REQUIRED');
+        return (this.createMappingClient ?? createMappingClient)(
+          username,
+          nativeDmoVersion,
+          undefined,
+          requestScope,
+        );
+      };
       const previewNativeDmo = async (input: NativeDmoDeployInput): Promise<NativeDmoPreview> => {
         try {
           return await (this.preflightNativeDmo ?? preflightDmo)(
             input.document,
             dmoClient(),
             requestScope,
-            ...fieldRemoval,
+            ...fieldRemoval(dmoMappings),
           );
         } catch (error) {
           const implicit =
@@ -2073,6 +2114,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   error,
                   'Target preview failed; no deployment was executed.',
                 ),
+                ...(mappedFieldMappings(error) ? { mappedFields: mappedFieldMappings(error) } : {}),
               },
             ],
           });
@@ -2315,7 +2357,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                                 (input as NativeDmoDeployInput).document,
                                 dmoClient(),
                                 requestScope,
-                                ...fieldRemoval,
+                                ...fieldRemoval(dmoMappings),
                               );
               const { serverProcessing, ...execution } = result as typeof result & {
                 serverProcessing?: true;

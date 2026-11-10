@@ -661,7 +661,7 @@ repeated. If the reads do not confirm it, the command fails with
 | Changing an existing field's data type or moving the primary key. The API answers 200 and silently ignores it. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
 | Omitting a custom field that exists in the target, without `--allow-field-removal`. The native DMO API has no route to remove a field; the flag removes it with a Metadata API destructive change for `CustomField`. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
 | Omitting the target's primary-key field, with or without `--allow-field-removal`. The primary key is never removed. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
-| Removing a field that is currently mapped, with `--allow-field-removal`. Salesforce would drop its mapping pair together with the field; remove the pair from the mapping first. | `DMO_FIELD_REMOVAL_MAPPED` |
+| Removing a field that is currently mapped, with `--allow-field-removal`. Salesforce would drop its mapping pair together with the field; remove the pair from the mapping first. The message names every mapped field, the mappings that hold its pair and the exact commands to run. | `DMO_FIELD_REMOVAL_MAPPED` |
 | Adding a generated field or a second primary key. | `UNSUPPORTED_DMO_FIELD_ADDITION` |
 | Deploy, delete or delete preview of a standard, namespaced (for example `ssot__Individual__dlm`) or platform-generated DMO (`creationType` not `Custom`). Mappings to such targets are refused as well. Retrieving these DMOs is allowed. | `UNSUPPORTED_DMO_TARGET` |
 
@@ -723,7 +723,29 @@ acceptance have not been verified.
 - A mapped field is not removed: Salesforce itself would remove it without objection
   and silently drop its pair from the mapping, so the plugin refuses with
   `DMO_FIELD_REMOVAL_MAPPED`. Deploy the mapping without that pair first, then remove
-  the field. An unmapped field on a mapped DMO is removed normally.
+  the field. An unmapped field on a mapped DMO is removed normally. The refusal reads
+  the mappings that target the DMO (one read-only list request), names every mapped
+  field with the mappings holding its pair, and prints this sequence with the real
+  names, the target org as passed (`-o` is left out when none was passed) and
+  `--dataspace` when one was passed:
+
+  ```
+  sf data360 retrieve -o <org> -m mapping:<MappingApiName> -m dmo:<Dmo__dlm> --overwrite
+  ```
+
+  In `data360/mapping/<MappingApiName>.mapping-meta.json` remove the pair whose
+  `targetFieldDeveloperName` is the field and keep all other pairs, including the
+  generated ones. In `data360/dmo/<Dmo__dlm>.dmo-meta.json` remove the field. Then:
+
+  ```
+  sf data360 deploy -o <org> -m mapping:<MappingApiName>
+  sf data360 deploy -o <org> -m dmo:<Dmo__dlm> --allow-field-removal
+  ```
+
+  With `--json` the diagnostic also carries
+  `mappedFields: [{"field": "<Field__c>", "mappings": ["<MappingApiName>"]}]`. When the
+  mapping cannot be read or no mapping lists the field, the refusal is unchanged, the
+  message says that the mapping could not be identified and `mappings` is empty.
 - Removing a field that holds data or is referenced by a segment, calculated insight,
   relationship or other component is not verified; if Salesforce rejects it, the
   deploy fails with `DMO_FIELD_REMOVAL_FAILED` and its message.

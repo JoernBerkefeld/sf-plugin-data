@@ -63,6 +63,18 @@ const immutableFieldKeys = new Set(['dataType', 'isPrimaryKey']);
 // so it is never sent, compared or confirmed here.
 const observedFieldKeys = new Set(['isMapped']);
 const handledSpecKeys = new Set(['label', 'category', 'description', 'fields']);
+const mappedRemovals = new WeakMap<Error, { apiName: string; fields: string[] }>();
+
+/**
+ * Name the DMO and every mapped field a DMO_FIELD_REMOVAL_MAPPED refusal was raised for.
+ * @param {unknown} error Caught error.
+ * @returns {{apiName: string, fields: string[]} | undefined} Refused removal, or nothing for any other error.
+ */
+export function mappedFieldRemoval(
+  error: unknown,
+): { apiName: string; fields: string[] } | undefined {
+  return error instanceof Error ? mappedRemovals.get(error) : undefined;
+}
 
 /**
  * Identify generated fields without borrowing DLO SourceVersion assumptions.
@@ -232,6 +244,7 @@ export async function preflightNativeDmo(
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
   const edited: NativeDmoField[] = [];
   const removed: string[] = [];
+  const mapped: string[] = [];
   for (const [name, field] of existing) {
     const authored = incoming.get(name);
     // Generated fields may be left out of an authored definition and are never removed.
@@ -241,17 +254,9 @@ export async function preflightNativeDmo(
       if (options.allowFieldRemoval === true && !field.isPrimaryKey) {
         // Salesforce removes a mapped field without objection and silently drops its mapping
         // pair with it (live API 68), so the pair has to be taken out of the mapping first.
-        if (field.isMapped === true)
-          throw explainMismatch(
-            new NativeDmoError('DMO_FIELD_REMOVAL_MAPPED'),
-            'field removal',
-            apiName,
-            false,
-            true,
-            `fields.${name}.isMapped`,
-            'This field is mapped. Remove its pair from the mapping first, then remove the field.',
-          );
-        removed.push(name);
+        // Every such field is collected so the refusal names all of them at once.
+        if (field.isMapped === true) mapped.push(name);
+        else removed.push(name);
         continue;
       }
       throw explainMismatch(
@@ -278,6 +283,21 @@ export async function preflightNativeDmo(
         `fields.${name}.${change.blocked}`,
       );
     if (change === 'edit') edited.push(authored);
+  }
+  if (mapped.length > 0) {
+    const error = explainMismatch(
+      new NativeDmoError('DMO_FIELD_REMOVAL_MAPPED'),
+      'field removal',
+      apiName,
+      false,
+      true,
+      `fields.${mapped[0]}.isMapped`,
+      mapped.length === 1
+        ? 'This field is mapped. Remove its pair from the mapping first, then remove the field.'
+        : `These fields are mapped: ${mapped.join(', ')}. Remove their pairs from the mapping first, then remove the fields.`,
+    );
+    mappedRemovals.set(error, { apiName, fields: mapped });
+    throw error;
   }
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))

@@ -433,7 +433,10 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   to be absent. No write is retried.
 - The primary key and generated fields are never removed.
 - A mapped field is refused with `DMO_FIELD_REMOVAL_MAPPED`: Salesforce would remove
-  it and silently drop its mapping pair. Remove the pair from the mapping first. An
+  it and silently drop its mapping pair. Remove the pair from the mapping first. The
+  refusal lists the mappings that target the DMO read-only, names every mapped field
+  with its mappings (`mappedFields` in JSON) and prints the retrieve, edit and deploy
+  commands; without an identifiable mapping it keeps the generic instruction. An
   unmapped field on a mapped DMO is removed normally. The `isMapped` marker on fields
   is never sent, compared or required.
 - Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold

@@ -160,6 +160,16 @@ export function explainMismatch<T extends Error>(
 }
 
 /**
+ * Replace the explanation of an already refused operation with complete plugin-built
+ * instructions. A text ending in a line break keeps the next action on its own line.
+ * @param {Error} error Existing typed refusal; its code and outcome are untouched.
+ * @param {string} message Bounded text built only from validated identifiers.
+ */
+export function replaceExplanation(error: Error, message: string): void {
+  details.set(error, message);
+}
+
+/**
  * Reuse existing diagnostic messages while distinguishing local verification from API rejection.
  * Arbitrary exception messages, bodies and stack traces are never forwarded.
  * @param {unknown} error Caught error.
@@ -189,7 +199,10 @@ export function operationDiagnostic(error: unknown, nextAction: string): string 
   const problems = getMetadataProblems(error);
   if (problems)
     return `Salesforce Metadata API did not confirm the destructive deployment${problems.length > 0 ? `: ${problems.join('; ')}` : '; no problem text is disclosed'}. ${nextAction}`;
-  if (error instanceof Error && details.has(error)) return `${details.get(error)!} ${nextAction}`;
+  if (error instanceof Error && details.has(error)) {
+    const detail = details.get(error)!;
+    return `${detail}${detail.endsWith('\n') ? '' : ' '}${nextAction}`;
+  }
   const status =
     connect?.statusCode ??
     diagnosticDataProperty(error, 'status') ??
