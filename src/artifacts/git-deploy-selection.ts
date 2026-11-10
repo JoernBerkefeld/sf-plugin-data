@@ -5,7 +5,8 @@ import type { DataGraphDeployInput } from './read-deploy-input.js';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { readDeployInputs } from './read-deploy-input.js';
+import { isNativeDmoInput, readDeployInputs } from './read-deploy-input.js';
+import { nativeDmoName } from './native-dmo-document.js';
 import { identityResolutionName } from './identity-resolution-document.js';
 import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
 import { segmentSourceRoot } from './write-segment.js';
@@ -79,9 +80,10 @@ const graphMember = (file: string): boolean => /\.dataGraph\.json$/iu.test(file)
 const irMember = (file: string): boolean => /\.identityResolution\.json$/iu.test(file);
 const ciMember = (file: string): boolean =>
   /\.(?:mktCalcInsightObjectDef-meta\.xml|calculatedInsight\.json)$/iu.test(file);
+const dmoMember = (file: string): boolean => /\.dmo-meta\.json$/iu.test(file);
+// The replaced legacy DMO location stays relevant so a change there blocks instead of being skipped.
 const relevant = (file: string): boolean =>
-  (file.startsWith('data360/dmo/') && file.endsWith('.dmo-meta.json')) ||
-  (file.startsWith('data360/dmo/') && file.endsWith('.dmo-meta.json')) ||
+  dmoMember(file) ||
   (file.startsWith('data360/default/dmo/') && file.endsWith('.json')) ||
   segmentMember(file) ||
   ciMember(file) ||
@@ -255,13 +257,16 @@ export async function selectGitDeployInputs(options: {
           throw new GitSelectionError('INVALID_GIT_SELECTION');
         return `segment:${name}`;
       }
-      if (file.startsWith('data360/dmo/')) throw new GitSelectionError('INVALID_GIT_SELECTION');
-      if (/^data360\/dmo\/.+\.dmo-meta\.json$/u.test(file))
+      // Only the native DMO artifact is selectable; the legacy location is refused, not skipped.
+      if (!dmoMember(file)) throw new GitSelectionError('INVALID_GIT_SELECTION');
+      const name = path.posix.basename(file).slice(0, -'.dmo-meta.json'.length);
+      const expected = path.join(repositoryRoot, 'data360', 'dmo', `${name}.dmo-meta.json`);
+      if (
+        !nativeDmoName.test(name) ||
+        file !== path.relative(repositoryRoot, expected).split(path.sep).join('/')
+      )
         throw new GitSelectionError('INVALID_GIT_SELECTION');
-      const match =
-        /^data360\/default\/dmo\/([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*__dlm)\.json$/u.exec(file);
-      if (!match) throw new GitSelectionError('INVALID_GIT_SELECTION');
-      return `dmo:${match[1]}`;
+      return `dmo:${name}`;
     });
     // Existing admission checks canonical filename, document identity and no-link regular files.
     const inputs =
@@ -277,6 +282,9 @@ export async function selectGitDeployInputs(options: {
       (input): input is CalculatedInsightDeployInput =>
         input.document.kind === 'calculated-insight',
     );
+    // The selector reader falls back to a legacy file; a Git selection admits native DMOs only.
+    if (inputs.some((input) => input.document.kind === 'dmo' && !isNativeDmoInput(input)))
+      throw new GitSelectionError('INVALID_GIT_SELECTION');
     const dlos = inputs.filter((input): input is DloDeployInput => input.document.kind === 'dlo');
     const dataGraphs = inputs.filter(
       (input): input is DataGraphDeployInput => input.document.kind === 'data-graph',

@@ -382,7 +382,8 @@ const retrieve = (overrides = {}) => {
     return { path: 'synthetic', outcome: 'retrieved' };
   };
   command.writeDataGraph = writer;
-  command.writeDocument = writer;
+  command.writeDocument = () => assert.fail('no legacy DMO output');
+  command.writeNativeDmo = writer;
   return { command, calls };
 };
 

@@ -6,8 +6,8 @@ import { validateCalculatedInsightDocument } from './calculated-insight-document
 import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 import { validateIdentityResolutionDocument } from './identity-resolution-document.js';
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
-import type { DmoDocument } from './dmo-document.js';
-import { validateDmoDocument } from './dmo-document.js';
+import type { NativeDmoDocument } from './native-dmo-document.js';
+import { validateNativeDmoDocument } from './native-dmo-document.js';
 import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
@@ -52,12 +52,12 @@ export function dependencyKey(identity: DependencyIdentity): string {
 
 /**
  * Extract only admitted family structures; unknown closure must not become an empty leaf.
- * @param {DmoDocument | SegmentDocument | IdentityResolutionDocument} value Authored component.
+ * @param {NativeDmoDocument | SegmentDocument | IdentityResolutionDocument} value Authored component.
  * @returns {DependencyNode} Exact component and dependencies.
  */
 export function documentDependencyNode(
   value:
-    | DmoDocument
+    | NativeDmoDocument
     | SegmentDocument
     | IdentityResolutionDocument
     | CalculatedInsightDocument
@@ -110,8 +110,13 @@ export function documentDependencyNode(
     };
   }
   if (value.kind !== 'dmo') throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');
-  const document = validateDmoDocument(value);
-  // The authored DMO contract rejects relationships/generated resources rather than hiding them.
+  let document: NativeDmoDocument;
+  try {
+    document = validateNativeDmoDocument(value);
+  } catch {
+    throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');
+  }
+  // A native DMO definition names no other component; it is always a leaf.
   return { identity: { kind: 'dmo', ...document.identity }, dependencies: [] };
 }
 

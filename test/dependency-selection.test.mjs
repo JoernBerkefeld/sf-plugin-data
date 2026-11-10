@@ -43,8 +43,8 @@ const segment = (apiName = 'Audience') => ({
 });
 const fixture = async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-dependencies-'));
-  await mkdir(path.join(cwd, 'data360/default/dmo'), { recursive: true });
-  const file = path.join(cwd, 'data360/default/dmo/Person__dlm.json');
+  await mkdir(path.join(cwd, 'data360/dmo'), { recursive: true });
+  const file = path.join(cwd, 'data360/dmo/Person__dlm.dmo-meta.json');
   await writeFile(file, JSON.stringify(dmo()));
   const document = segment();
   await writeSegmentDocument(document, cwd, false);

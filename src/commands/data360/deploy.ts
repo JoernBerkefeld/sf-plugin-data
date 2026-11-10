@@ -37,6 +37,7 @@ import { preflightDmo, executeDmo } from '../../services/command-native-dmo.js';
 import { nativeDmoConfirmed } from '../../services/native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { isNativeDmoInput } from '../../artifacts/read-deploy-input.js';
+import type { NativeDmoDeployInput } from '../../artifacts/read-deploy-input.js';
 import { NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { preflightDloDeploy, executeDloDeploy } from '../../services/command-dlo.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
@@ -157,6 +158,10 @@ const resolveTargetOrg = async (
   }
 };
 
+type NativeDmoPreview = Omit<Awaited<ReturnType<typeof preflightDmo>>, 'diagnostics'> & {
+  diagnostics: Array<{ code: string; message: string }>;
+};
+
 type ExecutionItem = Omit<DmoDeployExecution, 'outcome'> & {
   family?:
     | SegmentDeployExecution['family']
@@ -241,7 +246,7 @@ export type DeployEnvelope = {
           | CalculatedInsightPreview
           | DataGraphDeployPreview
           | Awaited<ReturnType<typeof preflightDataStream>>
-          | Awaited<ReturnType<typeof preflightDmo>>
+          | NativeDmoPreview
           | Awaited<ReturnType<typeof preflightMapping>>
           | {
               family: 'mapping';
@@ -268,7 +273,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git/dependency expansion or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Native Git and dependency expansion remain blocked. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Native Graph Git, mixed-family selections and dependency expansion are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Legacy IR documents must be explicitly migrated by retrieval. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. Mixed IR/legacy selections require auto. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git/dependency expansion or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation, Git and dependency expansion are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping, independently settling parents before mapping dependency checks. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; API68/default desired-state updates remove qualified identity Text/Number pairs individually before one names-only Text additions batch, including qualified Text retargets. Generated/key pairs and retained selectors are protected. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Explicit all-native selections block dependency expansion, and mapping stays outside Git selection. A native DMO changed since a Git reference, selected beside Segment/CI/Graph/IR inputs or added by --include-dependencies from data360/dmo/ApiName.dmo-meta.json joins the ordered batch on the native route; a standard or generated DMO added only as a prerequisite is reported and never written. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory and dependency expansion are unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Native Graph Git, mixed-family selections and dependency expansion are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting, reverse/settings changes and dependency expansion are blocked. Calculated insights retain API65/auto existing ACTIVE qualified forward expression updates. Explicit API68/default supports paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion, arbitrary SQL/schema/label/schedule changes and dependency expansion are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Legacy execution preflights the whole legacy selection; native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Qualified legacy DMO labels or existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Legacy IR documents must be explicitly migrated by retrieval. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. Mixed IR/legacy selections require auto. IR dependency expansion is not supported. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -1116,10 +1121,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input.document.kind === 'mapping' ||
           input.document.kind === 'dlo',
       );
+      // A native DMO selected by Git, or beside Segment/CI/Graph/IR inputs, joins the ordered
+      // dependency batch below; mappings and all-native explicit selections stay on this route.
       if (
-        nativeInputs.some(
-          (input) => isNativeDmoInput(input) || input.document.kind === 'mapping',
-        ) ||
+        nativeInputs.some((input) => input.document.kind === 'mapping') ||
         (nativeInputs.length === resolvedInputs.length && changedSince === undefined)
       ) {
         if (nativeInputs.length !== resolvedInputs.length || changedSince !== undefined)
@@ -1332,24 +1337,23 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input,
         ): input is Exclude<
           DeployInput,
-          | import('../../artifacts/read-deploy-input.js').NativeDmoDeployInput
           | import('../../artifacts/read-deploy-input.js').MappingDeployInput
           | DataStreamDeployInput
           | NativeDataGraphDeployInput
           | import('../../artifacts/read-deploy-input.js').DataTransformDeployInput
-        > =>
-          !isNativeDmoInput(input) &&
-          input.document.kind !== 'mapping' &&
-          input.document.kind !== 'data-stream',
+        > => input.document.kind !== 'mapping' && input.document.kind !== 'data-stream',
       );
+      // Native DMO items keep the native version rule (auto is 68.0), not the legacy family pin.
+      const admitVersion = (input: (typeof admitted)[number]): void => {
+        if (isNativeDmoInput(input)) nativeApiVersion(flags['api-version']);
+        else if (input.document.kind === 'identity-resolution')
+          operationApiVersion(flags['api-version'], 'identity-resolution');
+        else operationApiVersion(flags['api-version'], input.document.kind);
+      };
       const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
       if (hasDlos) {
         try {
-          for (const input of admitted) {
-            if (input.document.kind === 'identity-resolution')
-              operationApiVersion(flags['api-version'], 'identity-resolution');
-            else operationApiVersion(flags['api-version'], input.document.kind);
-          }
+          for (const input of admitted) admitVersion(input);
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1381,11 +1385,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const hasDataGraphs = admitted.some((input) => input.document.kind === 'data-graph');
       if (hasDataGraphs) {
         try {
-          for (const input of admitted) {
-            if (input.document.kind === 'identity-resolution')
-              operationApiVersion(flags['api-version'], 'identity-resolution');
-            else operationApiVersion(flags['api-version'], input.document.kind);
-          }
+          for (const input of admitted) admitVersion(input);
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1424,11 +1424,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       );
       if (hasCalculatedInsights) {
         try {
-          for (const input of admitted) {
-            if (input.document.kind === 'identity-resolution')
-              operationApiVersion(flags['api-version'], 'identity-resolution');
-            else operationApiVersion(flags['api-version'], input.document.kind);
-          }
+          for (const input of admitted) admitVersion(input);
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
@@ -1501,9 +1497,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       ? 'dlo'
                       : 'dmo';
           try {
-            if (family === 'identity-resolution')
-              operationApiVersion(flags['api-version'], 'identity-resolution');
-            else operationApiVersion(flags['api-version'], family);
+            admitVersion(input);
           } catch {
             return finish('blocked', 'INVALID_SCOPE');
           }
@@ -1560,6 +1554,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           return { identity, reason: expanded.reasons.get(dependencyKey(identity))! };
         });
       }
+      const hasNativeDmos = inputs.some((input) => isNativeDmoInput(input));
+      let nativeDmoVersion = '68.0';
+      try {
+        if (hasNativeDmos) nativeDmoVersion = nativeApiVersion(flags['api-version']);
+      } catch {
+        return finish('blocked', 'INVALID_SCOPE');
+      }
+      // Standard, namespaced or generated DMOs pulled in only as prerequisites are never written.
+      const dmoPrerequisites = new Set<string>();
       const hasSegments = inputs.some((input) => input.document.kind === 'segment');
       if (
         hasSegments ||
@@ -1614,7 +1617,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }
       // Preserve original Segment JSON snapshots and bind mixed-batch DMO bytes before target reads.
       const captured =
-        hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDataGraphs || hasDlos
+        hasSegments ||
+        hasIdentityResolutions ||
+        hasCalculatedInsights ||
+        hasDataGraphs ||
+        hasDlos ||
+        hasNativeDmos
           ? await Promise.all(
               inputs.map(async (input) => ({
                 input,
@@ -1655,7 +1663,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             ? Object.freeze({ requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' })
             : input.document.kind === 'data-graph'
               ? Object.freeze({ requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' })
-              : selection;
+              : isNativeDmoInput(input)
+                ? Object.freeze({
+                    requested: nativeDmoVersion,
+                    restSelector: `v${nativeDmoVersion}`,
+                    soapNumeric: nativeDmoVersion,
+                  })
+                : selection;
       const routes = (input: DeployInput): ExecutionItem['routes'] =>
         input.document.kind === 'segment'
           ? [
@@ -1754,15 +1768,23 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                         transport: 'metadata',
                       },
                     ]
-                  : flags['api-version'] === 'auto'
+                  : isNativeDmoInput(input)
                     ? [
                         {
-                          operation: `${input.document.kind ?? 'dmo'}.deploy`,
-                          apiVersion: '65.0',
+                          operation: 'dmo.deploy',
+                          apiVersion: nativeDmoVersion,
                           transport: 'native',
                         },
                       ]
-                    : undefined;
+                    : flags['api-version'] === 'auto'
+                      ? [
+                          {
+                            operation: `${input.document.kind ?? 'dmo'}.deploy`,
+                            apiVersion: '65.0',
+                            transport: 'native',
+                          },
+                        ]
+                      : undefined;
       const injectedOrg = flags['target-org'] as unknown;
       const org =
         injectedOrg && typeof injectedOrg === 'object'
@@ -1785,7 +1807,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       try {
         selection = await resolveApiVersion(
           flags['api-version'] === 'auto'
-            ? inputs.every((input) => input.document.kind === 'segment')
+            ? inputs.every((input) => input.document.kind === 'segment' || isNativeDmoInput(input))
               ? '68.0'
               : '65.0'
             : flags['api-version'],
@@ -1819,6 +1841,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (
           inputs.some(
             (input) =>
+              !isNativeDmoInput(input) &&
               input.document.kind !== 'identity-resolution' &&
               input.document.kind !== 'data-graph' &&
               input.document.kind !== 'calculated-insight' &&
@@ -1858,6 +1881,44 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         const username = org.getUsername();
         if (!username) throw new Error('TARGET_ORG_REQUIRED');
         return this.createDloClient(username, '68.0');
+      };
+      const dmoClient = (): ReturnType<typeof createDmoClient> => {
+        const username = org.getUsername();
+        if (!username) throw new Error('TARGET_ORG_REQUIRED');
+        return (this.createDmoClient ?? createDmoClient)(username, nativeDmoVersion);
+      };
+      const previewNativeDmo = async (input: NativeDmoDeployInput): Promise<NativeDmoPreview> => {
+        try {
+          return await (this.preflightNativeDmo ?? preflightDmo)(
+            input.document,
+            dmoClient(),
+            requestScope,
+          );
+        } catch (error) {
+          const implicit =
+            expanded?.reasons.get(dependencyKey({ kind: 'dmo', ...input.document.identity }))
+              ?.explicit === false;
+          if (
+            !implicit ||
+            !(error instanceof NativeDmoError) ||
+            error.code !== 'UNSUPPORTED_DMO_TARGET'
+          )
+            throw error;
+          dmoPrerequisites.add(input.path);
+          return {
+            family: 'dmo',
+            outcome: 'unchanged',
+            target: 'existing',
+            absenceProof: 'none',
+            diagnostics: [
+              {
+                code: 'DMO_PREREQUISITE_NOT_DEPLOYED',
+                message:
+                  'This standard or generated DMO was selected only as a prerequisite and already exists in the target; it is never written.',
+              },
+            ],
+          };
+        }
       };
       this.graphConfigurations = new Map();
       const graphBindings = new Map<string, string>();
@@ -1952,13 +2013,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                           familySelection(input),
                           effectiveScope,
                         )
-                      : await this.preflight(
-                          input.document,
-                          connection,
-                          selection,
-                          effectiveScope,
-                          true,
-                        );
+                      : isNativeDmoInput(input)
+                        ? await previewNativeDmo(input)
+                        : await this.preflight(
+                            input.document as DmoDocument,
+                            connection,
+                            selection,
+                            effectiveScope,
+                            true,
+                          );
           if (input.document.kind === 'dlo') await this.verifyDloInput(input as DloDeployInput);
           if (input.document.kind === 'data-graph') {
             await this.verifyDataGraphInput(input as DataGraphDeployInput);
@@ -2055,7 +2118,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             absenceProof: 'none',
             diagnostics: [
               {
-                code: 'PREFLIGHT_FAILED',
+                // A native DMO refusal names its own reason (for example a standard target).
+                code: error instanceof NativeDmoError ? error.code : 'PREFLIGHT_FAILED',
                 message: operationDiagnostic(
                   error,
                   'Target preview failed; no deployment was executed.',
@@ -2292,12 +2356,24 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                                 verifyInput: verifyInputs,
                               },
                             )
-                          : await this.execute(
-                              input.document as DmoDocument,
-                              connection,
-                              selection,
-                              effectiveScope,
-                            );
+                          : isNativeDmoInput(input)
+                            ? dmoPrerequisites.has(input.path)
+                              ? {
+                                  outcome: 'unchanged' as const,
+                                  mutation: 'not-attempted' as const,
+                                  diagnostics: [],
+                                }
+                              : await (this.executeNativeDmo ?? executeDmo)(
+                                  input.document,
+                                  dmoClient(),
+                                  requestScope,
+                                )
+                            : await this.execute(
+                                input.document as DmoDocument,
+                                connection,
+                                selection,
+                                effectiveScope,
+                              );
               const { serverProcessing, ...execution } = result as typeof result & {
                 serverProcessing?: true;
               };

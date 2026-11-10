@@ -34,7 +34,7 @@ const segment = async (cwd) => {
 };
 
 const execute = promisify(execFile);
-const relative = (name) => `data360/default/dmo/${name}__dlm.json`;
+const relative = (name) => `data360/dmo/${name}__dlm.dmo-meta.json`;
 const document = (name, dataSpace = 'default') => ({
   schemaVersion: 1,
   kind: 'dmo',
@@ -289,6 +289,18 @@ test('modified unrelated tracked pathname D is not a deletion status', async () 
   assert.deepEqual(result.paths, [path.join(cwd, relative('Added'))]);
 });
 
+test('Git selection admits a namespaced native DMO and never falls back to a legacy file', async () => {
+  const cwd = await fixture();
+  const standard = 'data360/dmo/ssot__Individual__dlm.dmo-meta.json';
+  await put(cwd, standard, {
+    ...document('Individual'),
+    identity: { dataSpace: 'default', apiName: 'ssot__Individual__dlm' },
+  });
+  const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(selected.paths, [path.join(cwd, ...standard.split('/'))]);
+  assert.equal(selected.paths[0].endsWith('.dmo-meta.json'), true);
+});
+
 test('genuine unrelated tracked deletion still blocks an untracked DMO addition', async () => {
   const cwd = await fixture();
   await put(cwd, 'unrelated.txt', 'before');
@@ -339,9 +351,15 @@ for (const phase of ['committed', 'index', 'worktree']) {
 
 for (const [file, value] of [
   [relative('Expected'), document('Different')],
-  [relative('Expected'), document('Expected', 'other')],
-  ['data360/default/dmo/nested/Expected__dlm.json', document('Expected')],
-  ['data360/default/dmo/invalid space ü.json', document('Expected')],
+  [
+    relative('Expected'),
+    { ...document('Expected'), spec: { label: 'Expected', category: 'Other' } },
+  ],
+  ['data360/dmo/nested/Expected__dlm.dmo-meta.json', document('Expected')],
+  ['data360/dmo/invalid space ü.dmo-meta.json', document('Expected')],
+  ['force-app/data360/dmo/Expected__dlm.dmo-meta.json', document('Expected')],
+  // The replaced legacy location is refused instead of being skipped or deployed.
+  ['data360/default/dmo/Expected__dlm.json', document('Expected')],
   [relative('Expected'), '{"kind":"dmo","kind":"dmo"}'],
 ]) {
   test(`Git selector refuses noncanonical or invalid authored input ${file} ${JSON.stringify(value)}`, async () => {
@@ -358,9 +376,9 @@ test('Git selector refuses tracked directory link replacement before deployment'
   const cwd = await fixture();
   await put(cwd, relative('Linked'), document('Linked'));
   await commit(cwd, relative('Linked'));
-  await rename(path.join(cwd, 'data360', 'default', 'dmo'), path.join(cwd, 'linked'));
-  await symlink(path.join(cwd, 'linked'), path.join(cwd, 'data360', 'default', 'dmo'), 'junction');
-  await put(cwd, 'linked/Linked__dlm.json', {
+  await rename(path.join(cwd, 'data360', 'dmo'), path.join(cwd, 'linked'));
+  await symlink(path.join(cwd, 'linked'), path.join(cwd, 'data360', 'dmo'), 'junction');
+  await put(cwd, 'linked/Linked__dlm.dmo-meta.json', {
     ...document('Linked'),
     spec: { ...document('Linked').spec, label: 'Changed' },
   });

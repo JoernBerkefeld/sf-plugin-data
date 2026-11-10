@@ -5,13 +5,18 @@ import type {
   SegmentDeployInput,
   IdentityResolutionDeployInput,
   DataGraphDeployInput,
+  NativeDmoDeployInput,
 } from '../artifacts/read-deploy-input.js';
 
 import { segmentSourceRoot } from '../artifacts/write-segment.js';
 
-type DependencyDeployInput =
-  SupportedDeployInput | IdentityResolutionDeployInput | DataGraphDeployInput;
+export type DependencyDeployInput =
+  | SupportedDeployInput
+  | NativeDmoDeployInput
+  | IdentityResolutionDeployInput
+  | DataGraphDeployInput;
 import {
+  isNativeDmoInput,
   isSupportedDeployInput,
   readDeployInputs,
   captureDeployInputDigest,
@@ -24,7 +29,23 @@ import {
   documentDependencyNode,
   orderDependencyNodes,
 } from '../artifacts/dependency-selection.js';
-import type { DependencyIdentity, SelectionReason } from '../artifacts/dependency-selection.js';
+import type {
+  DependencyIdentity,
+  DependencyNode,
+  SelectionReason,
+} from '../artifacts/dependency-selection.js';
+
+/**
+ * Resolve one admitted input to its graph node. An explicitly selected legacy DMO file was
+ * already validated by its own reader and is a leaf; every other input uses the family contract.
+ * @param {DependencyDeployInput} input Admitted local input.
+ * @returns {DependencyNode} Exact identity and dependencies.
+ */
+function inputNode(input: DependencyDeployInput): DependencyNode {
+  if (input.document.kind === 'dmo' && !isNativeDmoInput(input))
+    return { identity: { kind: 'dmo', ...input.document.identity }, dependencies: [] };
+  return documentDependencyNode(input.document as Parameters<typeof documentDependencyNode>[0]);
+}
 
 export type DeployDependencySelection = {
   inputs: DependencyDeployInput[];
@@ -33,7 +54,8 @@ export type DeployDependencySelection = {
 };
 
 /**
- * Expand exact admitted local DMO or IR owner artifacts; missing prerequisites remain external bindings.
+ * Expand exact admitted local native DMO or IR owner artifacts; missing prerequisites remain external
+ * bindings. A namespaced (standard) DMO is always an existing target prerequisite, never an input.
  * Original inputs (including Git pair digests) are retained, never reconstructed or replaced.
  * @param {DependencyDeployInput[]} roots Independently admitted explicit or Git roots.
  * @param {string} cwd Project root for exact conventional local dependencies.
@@ -45,12 +67,12 @@ export async function selectDeployDependencies(
 ): Promise<DeployDependencySelection> {
   const inputs = new Map<string, DependencyDeployInput>();
   const reasons = new Map<string, SelectionReason>();
-  const nodes = new Map<string, ReturnType<typeof documentDependencyNode>>();
+  const nodes = new Map<string, DependencyNode>();
   const pending: Array<{ input: DependencyDeployInput; chain: DependencyIdentity[] }> = [];
   const external = new Set<string>();
   let acquisitions = 0;
   for (const input of roots) {
-    const node = documentDependencyNode(input.document);
+    const node = inputNode(input);
     const key = dependencyKey(node.identity);
     const prior = inputs.get(key);
     if (prior && prior.path !== input.path)
@@ -64,7 +86,7 @@ export async function selectDeployDependencies(
     const { input, chain } = pending[index];
     if (chain.length > dependencyLimits.depth || inputs.size > dependencyLimits.nodes)
       throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
-    const node = documentDependencyNode(input.document);
+    const node = inputNode(input);
     nodes.set(dependencyKey(node.identity), node);
     for (const dependency of node.dependencies) {
       const key = dependencyKey(dependency);
@@ -79,6 +101,14 @@ export async function selectDeployDependencies(
       if (external.has(key)) continue;
       if (dependency.kind !== 'dmo' && dependency.kind !== 'identity-resolution')
         throw new DependencySelectionError('DEPENDENCY_FAMILY_UNSUPPORTED');
+      // Namespaced DMOs cannot be written; their saved definitions are reference only.
+      if (
+        dependency.kind === 'dmo' &&
+        dependency.apiName.slice(0, -'__dlm'.length).includes('__')
+      ) {
+        external.add(key);
+        continue;
+      }
       if (++acquisitions > dependencyLimits.acquisitions)
         throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
       const file =
@@ -89,7 +119,7 @@ export async function selectDeployDependencies(
               'identityResolution',
               `${dependency.apiName}.identityResolution.json`,
             )
-          : path.join(cwd, 'data360', 'default', 'dmo', `${dependency.apiName}.json`);
+          : path.join(cwd, 'data360', 'dmo', `${dependency.apiName}.dmo-meta.json`);
       try {
         await lstat(file);
       } catch (error: unknown) {
@@ -103,13 +133,15 @@ export async function selectDeployDependencies(
       });
       const added = admitted.filter(
         (input): input is DependencyDeployInput =>
+          isNativeDmoInput(input) ||
           isSupportedDeployInput(input) ||
           input.document.kind === 'identity-resolution' ||
           input.document.kind === 'data-graph',
       );
       if (
         added.length !== 1 ||
-        dependencyKey(documentDependencyNode(added[0].document).identity) !== key
+        (dependency.kind === 'dmo' && !isNativeDmoInput(added[0])) ||
+        dependencyKey(inputNode(added[0]).identity) !== key
       )
         throw new DependencySelectionError('DEPENDENCY_IDENTITY_UNSUPPORTED');
       inputs.set(key, added[0]);
@@ -125,8 +157,15 @@ export async function selectDeployDependencies(
     for (const { input, digest } of digests) {
       if (input.document.kind === 'segment')
         await verifySegmentInputDigest(input as SegmentDeployInput);
-      if ((await captureDeployInputDigest(input)) !== digest)
-        throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
+      let current: string;
+      try {
+        current = await captureDeployInputDigest(input);
+      } catch (error: unknown) {
+        // The native reader refuses changed bytes itself; keep the selection's own drift code.
+        if (isNativeDmoInput(input)) throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
+        throw error;
+      }
+      if (current !== digest) throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
     }
   };
   await verify();

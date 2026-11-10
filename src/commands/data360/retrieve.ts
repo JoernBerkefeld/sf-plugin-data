@@ -159,7 +159,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory, mixed-family selections and dependency expansion are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory, mixed-family selections and dependency expansion are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Dependency expansion is unsupported for DLO and mapping selections; DMOs retrieved beside or as prerequisites of other families use the same native JSON, and a standard or generated DMO needed only as a prerequisite blocks publication. Only DMO-only explicit numeric and experimental latest selections retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -784,7 +784,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         );
       }
     }
-    // Inventory and dependency expansion intentionally retain the legacy metadata adapter.
+    // Only an explicit numeric or latest DMO-only selection still uses the legacy metadata adapter.
     const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
     const relationshipSelectors = selectors.filter((value) => value.startsWith('relationship:'));
@@ -940,6 +940,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         error instanceof RetrieveDependencyError ||
         error instanceof DmoWriteError ||
         error instanceof DmoRetrieveError ||
+        error instanceof NativeDmoError ||
         error instanceof ConnectError
       )
         code = error.code;
@@ -948,6 +949,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (
         code === 'IDENTITY_RESOLUTION_ACQUISITION_FAILED' ||
         code === 'OUTPUT_FAILED' ||
+        code === 'PARTIAL_DMO_OUTPUT' ||
         code === 'PARTIAL_SEGMENT_OUTPUT' ||
         code === 'SEGMENT_ACQUISITION_FAILED' ||
         code === 'DEPENDENCY_ACQUISITION_FAILED' ||
@@ -1148,9 +1150,31 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
-      const names = hasDmos
-        ? await this.selectDocuments(connection, dmoSelectors, selection, effectiveScope)
-        : [];
+      // Mixed, automatic and dependency selections read and publish DMOs in the native format.
+      const nativeDmos =
+        segmentSelectors.length > 0 ||
+        ciSelectors.length > 0 ||
+        flags['include-dependencies'] === true ||
+        irSelectors.length > 0 ||
+        graphSelectors.length > 0 ||
+        flags['api-version'] === 'auto';
+      // The family pin of this path does not apply to native DMO reads (auto is 68.0).
+      const nativeDmoVersion = nativeApiVersion(
+        flags['api-version'] === 'latest' ? selection.soapNumeric : flags['api-version'],
+      );
+      let names: string[] = [];
+      if (hasDmos && nativeDmos) {
+        names = dmoSelectors
+          .filter((selector) => selector !== 'dmo')
+          .map((selector) => selector.slice(4));
+        if (dmoSelectors.length === 0 || dmoSelectors.includes('dmo'))
+          names.push(
+            ...(await this.listNativeNames(connection, nativeDmoVersion, 'dmo', effectiveScope)),
+          );
+        names = [...new Set(names)];
+        names.sort();
+      } else if (hasDmos)
+        names = await this.selectDocuments(connection, dmoSelectors, selection, effectiveScope);
       if (hasDmos) outputTypes.add('dmo');
       for (const selector of selectors) outputTypes.add(selector.split(':')[0]);
       // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
@@ -1162,14 +1186,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         ...names.map((name) => `dmo:${name}`),
         ...segments.map((name) => `segment:${name}`),
       ];
-      if (
-        segments.length > 0 ||
-        ciSelectors.length > 0 ||
-        flags['include-dependencies'] ||
-        irSelectors.length > 0 ||
-        graphSelectors.length > 0 ||
-        flags['api-version'] === 'auto'
-      ) {
+      if (nativeDmos) {
         // Acquire and resolve the complete bounded selection before publishing any files.
         const selected =
           names.length > 0 || segments.length > 0
@@ -1189,6 +1206,15 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 connection,
                 selection,
                 flags['include-dependencies'] ?? false,
+                {
+                  dmo: async (apiName: string): Promise<unknown> => {
+                    const target = flags['target-org'] ?? connection.getUsername();
+                    if (!target) throw new NativeDmoError('TARGET_ORG_REQUIRED');
+                    return (this.createDmoClient ?? createDmoClient)(target, nativeDmoVersion).get(
+                      apiName,
+                    );
+                  },
+                },
               )
             : {
                 entries: [] as RetrieveDependencyEntry[],
@@ -1471,7 +1497,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                           flags['output-dir'] ?? process.cwd(),
                           flags.overwrite,
                         )
-                      : await this.writeDocument(
+                      : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
                           document,
                           flags['output-dir'] ?? process.cwd(),
                           flags.overwrite,
@@ -1557,6 +1583,18 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                                   ]
                                 : []),
                             ],
+                  }
+                : {}),
+              // A DMO here is always one native read; this replaces the legacy route evidence above.
+              ...(document.kind === 'dmo'
+                ? {
+                    routes: [
+                      {
+                        operation: 'dmo.get',
+                        apiVersion: nativeDmoVersion,
+                        transport: 'native' as const,
+                      },
+                    ],
                   }
                 : {}),
               operation: 'retrieve',

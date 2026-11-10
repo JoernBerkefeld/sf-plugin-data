@@ -132,7 +132,8 @@ const invocation = (overrides = {}) => {
     return { path: `${value.identity.apiName}.json`, outcome: 'unchanged' };
   };
   command.writeIdentityResolution = writer;
-  command.writeDocument = writer;
+  command.writeDocument = () => assert.fail('no legacy DMO output');
+  command.writeNativeDmo = writer;
   command.writeSegment = writer;
   return { command, calls };
 };
@@ -230,7 +231,7 @@ test('auto mixed DMO/Segment/IR acquires every family before first publication',
   assert.ok(calls.indexOf('ir:Individual_A1b2') < calls.indexOf('write:Sample__dlm'));
   assert.deepEqual(
     result.result.items.map((item) => item.routes.map((route) => route.apiVersion)),
-    [['65.0', '65.0'], ['65.0'], ['68.0']],
+    [['68.0'], ['65.0'], ['68.0']],
   );
 });
 
