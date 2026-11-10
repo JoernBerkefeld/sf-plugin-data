@@ -56,6 +56,7 @@ function invocation(overrides = {}) {
     };
   };
   command.createDloClient =
+    command.createDloNativeDeleteClient =
     command.createDmoClient =
     command.createMappingClient =
       () => assert.fail('No other family fallback');

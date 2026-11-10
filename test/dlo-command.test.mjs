@@ -32,13 +32,28 @@ const document = {
   spec: { label: 'Example', category: 'Other', fields: wire.fields },
 };
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-native-command-'));
-const client = (changes = {}) => ({
-  get: async () => structuredClone(wire),
-  create: async () => structuredClone(wire),
-  update: async () => structuredClone(wire),
-  delete: async () => {},
-  ...changes,
-});
+// Like Salesforce, a DLO reads as HTTP 404 once its DELETE has been acknowledged.
+const client = (changes = {}) => {
+  const base = {
+    get: async () => structuredClone(wire),
+    create: async () => structuredClone(wire),
+    update: async () => structuredClone(wire),
+    delete: async () => {},
+    ...changes,
+  };
+  let deleted = false;
+  return {
+    ...base,
+    get: async (...arguments_) => {
+      if (deleted) throw new DloError('DLO_HTTP_ERROR', 404);
+      return base.get(...arguments_);
+    },
+    delete: async (...arguments_) => {
+      await base.delete(...arguments_);
+      deleted = true;
+    },
+  };
+};
 const run = async (command) => {
   const before = process.exitCode;
   try {
@@ -66,6 +81,8 @@ const invocation = (Type, flags) => {
   if (Type === Delete) {
     command.retrieveDlo = retrieveNativeDlo;
     command.deleteDlo = deleteNativeDlo;
+    // DLO delete uses its own bound-connection seam; tests keep overriding createDloClient.
+    command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
   }
   if (Type === Deploy) {
     command.preflightDlo = preflightDloDeploy;

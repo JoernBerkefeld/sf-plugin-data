@@ -44,6 +44,7 @@ import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesforce/core';
 import { DloError, dloName } from '../../artifacts/dlo-document.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
+import { createNativeDloDeleteClient } from '../../transport/dlo-native-rest.js';
 import { deleteNativeDlo, retrieveNativeDlo } from '../../services/native-dlo.js';
 import { plugin } from '../../plugin.js';
 import { nativeMappingName, NativeMappingError } from '../../artifacts/native-mapping-document.js';
@@ -219,6 +220,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected retrieveDmo = retrieveNativeDmo;
   protected deleteDmo = deleteNativeDmo;
   protected createDloClient = createDloClient;
+  protected createDloNativeDeleteClient = createNativeDloDeleteClient;
   protected retrieveDlo = retrieveNativeDlo;
   protected deleteDlo = deleteNativeDlo;
   protected resolveTarget = async (alias?: string): Promise<string> => {
@@ -276,7 +278,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                       ? 'Unconfirmed'
                       : 'Blocked';
           if (
-            ['identity-resolution', 'segment'].includes(
+            ['identity-resolution', 'segment', 'dlo'].includes(
               selectorsByItem.get(item)?.split(':')[0] ?? '',
             ) &&
             ['deleted', 'deletion-processing'].includes(item.outcome)
@@ -298,8 +300,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               );
         }
         for (const diagnostic of envelope.diagnostics.errors)
-          if (diagnostic.message.startsWith('Connect API'))
-            this.log(`${diagnostic.code}: ${diagnostic.message}`);
+          this.log(`${diagnostic.code}: ${diagnostic.message}`);
       }
       return envelope;
     };
@@ -881,7 +882,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             )
           : native
             ? (this.createDmoClient ?? createDmoClient)(target, version)
-            : this.createDloClient(target, version);
+            : this.createDloNativeDeleteClient(target, version);
         let dispatched = false;
         const client = {
           ...baseClient,
@@ -942,6 +943,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, requestScope)
                 : this.deleteDlo(apiName, definitionClient, requestScope));
               item.identity.dataSpace = receipt.dataSpace;
+              if ('processing' in receipt && receipt.processing) {
+                // DLO read back in a DELETING state: acknowledged, server still processing.
+                item.outcome = 'deletion-processing';
+                item.mutation = 'acknowledged-processing';
+                continue;
+              }
             }
           }
           item.outcome = flags.preview ? 'delete' : 'deleted';
@@ -958,6 +965,27 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           ) {
             item.outcome = 'unchanged';
             continue;
+          }
+          if (
+            dispatched &&
+            error instanceof DloError &&
+            error.code === 'DLO_DELETE_NOT_CONFIRMED'
+          ) {
+            item.outcome = 'deletion-unconfirmed';
+            item.mutation = 'acknowledged';
+            envelope.status = 'failed';
+            envelope.diagnostics.errors.push({
+              code: error.code,
+              message:
+                error.status === 200
+                  ? 'Salesforce acknowledged the DELETE, but the DLO was still readable afterwards. Do not replay; read the DLO again before any further action.'
+                  : operationDiagnostic(
+                      error,
+                      'Salesforce acknowledged the DELETE, but its absence could not be confirmed. Do not replay; read the DLO again before any further action.',
+                    ),
+              retryable: false,
+            });
+            return finish();
           }
           item.outcome = dispatched ? 'failed' : 'blocked';
           item.mutation = dispatched ? 'unknown' : 'not-attempted';

@@ -47,6 +47,8 @@ const invocation = (Type, overrides = {}) => {
     },
   });
   command.jsonEnabled = () => true;
+  // DLO delete uses its own bound-connection seam; tests keep overriding createDloClient.
+  command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
   return command;
 };
 const run = async (command) => {

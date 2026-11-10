@@ -916,9 +916,17 @@ sf data360 delete --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS -
 selected target and deletes that target ID only; no cascade, stream/source/DMO
 cleanup or local-file deletion is performed. Already absent is unchanged. Failed
 or ambiguous mutation outcomes stop without retry or rollback; inspect the target
-before another attempt. HTTP204 acceptance can precede a brief `DELETING` state;
-independently confirm exact-target absence with bounded read-only checks before
-calling deletion terminally complete.
+before another attempt. DLO delete reads and the DELETE use the bound
+authenticated connection directly (no child `sf api request rest`, no token
+refresh, no HTTP retry, redirects refused), so each request is sent at most once.
+After HTTP204 one read by name settles the item: 404 reports
+`confirmed-deleted`; the same target in a `DELETING` state reports
+`deletion-processing` (server still processing); a still-readable DLO or a failed
+read reports `deletion-unconfirmed` (exit code 1, `DLO_DELETE_NOT_CONFIRMED`).
+Nothing is replayed; confirm final absence with a later read-only check. Preview
+uses the same bound read. Without token refresh an expired session stops the
+command (HTTP 401) before any write; log in again and rerun. Human output prints
+the diagnostic code and message for every blocked or failed delete.
 
 Installed API68/default standalone Other/default cross-org acceptance now covers
 source retrieval followed by target creation from that exact portable file, different

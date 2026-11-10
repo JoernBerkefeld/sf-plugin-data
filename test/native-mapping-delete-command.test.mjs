@@ -17,6 +17,8 @@ const invocation = (flags = {}) => {
   command.jsonEnabled = () => true;
   command.resolveTarget = async () => 'target';
   command.createDloClient = command.createDmoClient = () => ({ get: async () => ({}) });
+  // DLO delete uses its own bound-connection seam; tests keep overriding createDloClient.
+  command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
   return command;
 };
 const run = async (command) => {
@@ -208,7 +210,12 @@ test('human deletion prints one identified action for each item and stops at fai
     assert.deepEqual(
       lines.slice(1),
       failure
-        ? ['deleted dlo First__dll', 'Failed: dmo:Second__dlm; mutation: unknown.']
+        ? [
+            'deleted dlo First__dll',
+            'Failed: dmo:Second__dlm; mutation: unknown.',
+            // Human output names the stop reason, not only rate-limit diagnostics.
+            'DELETE_FAILED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+          ]
         : ['deleted dlo First__dll', 'deleted dmo Second__dlm', 'deleted dlo Third__dll'],
     );
   }

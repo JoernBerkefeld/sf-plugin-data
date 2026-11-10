@@ -8,6 +8,7 @@ import {
 } from '../artifacts/dlo-document.js';
 import type { DloDocument, DloField } from '../artifacts/dlo-document.js';
 import type { DloClient } from '../transport/dlo-rest.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 export type DloDeployPlan =
   | {
@@ -74,13 +75,13 @@ export async function resolveNativeDloTarget(
 /**
  * Retrieve a portable definition by its full API name, never saving the source ID.
  * @param {string} apiName Exact name ending in __dll.
- * @param {DloClient} client Authenticated target client.
+ * @param {Pick<DloClient, 'get'>} client Authenticated target client.
  * @param {string} [requestScope] Optional expected data space, never a URL query.
  * @returns {Promise<DloDocument>} Portable definition.
  */
 export async function retrieveNativeDlo(
   apiName: string,
-  client: DloClient,
+  client: Pick<DloClient, 'get'>,
   requestScope?: string,
 ): Promise<DloDocument> {
   const target = await resolveNativeDloTarget(apiName, client, requestScope);
@@ -212,17 +213,45 @@ export async function deployNativeDlo(
 /**
  * Delete only a freshly resolved exact target ID, without cascade or retry.
  * The command executes by default; its preview path never invokes this operation.
+ * One name read after the DELETE settles the result: 404 confirms deletion; the same target
+ * in a DELETING state is acknowledged-processing; anything else (still readable, or the read
+ * failed) is acknowledged but unconfirmed (DLO_DELETE_NOT_CONFIRMED). Nothing is replayed.
  * @param {string} apiName Confirmed full API name.
- * @param {DloClient} client Authenticated target client.
+ * @param {Pick<DloClient, 'get' | 'delete'>} client Authenticated target client.
  * @param {string} [requestScope] Optional expected data space, never a URL query.
- * @returns {Promise<{apiName: string, targetId: string, dataSpace: string}>} Exact deleted target identity.
+ * @returns {Promise<{apiName: string, targetId: string, dataSpace: string, processing?: true}>} Exact deleted target identity.
  */
 export async function deleteNativeDlo(
   apiName: string,
-  client: DloClient,
+  client: Pick<DloClient, 'get' | 'delete'>,
   requestScope?: string,
-): Promise<{ apiName: string; targetId: string; dataSpace: string }> {
+): Promise<{ apiName: string; targetId: string; dataSpace: string; processing?: true }> {
   const { targetId, document } = await resolveNativeDloTarget(apiName, client, requestScope);
   await client.delete(targetId);
-  return { apiName, targetId, dataSpace: document.identity.dataSpace };
+  const deleted = { apiName, targetId, dataSpace: document.identity.dataSpace };
+  let readback: unknown;
+  try {
+    readback = await client.get(apiName);
+  } catch (error) {
+    if (error instanceof DloError && error.code === 'DLO_HTTP_ERROR' && error.status === 404)
+      return deleted;
+    // Keep the read failure's API detail (status, Retry-After) for the printed diagnostic.
+    throw retainConnectDiagnostic(
+      new DloError('DLO_DELETE_NOT_CONFIRMED'),
+      getConnectDiagnostic(error),
+    );
+  }
+  let observed: Record<string, unknown> | undefined;
+  try {
+    observed = unwrapDlo(readback);
+  } catch {
+    observed = undefined;
+  }
+  if (
+    observed?.id === targetId &&
+    typeof observed.status === 'string' &&
+    observed.status.startsWith('DELETING')
+  )
+    return { ...deleted, processing: true };
+  throw new DloError('DLO_DELETE_NOT_CONFIRMED', 200);
 }

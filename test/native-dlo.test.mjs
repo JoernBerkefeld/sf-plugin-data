@@ -297,9 +297,11 @@ test('update uses target ID, label and ordinary additions only; mutation/removal
 
 test('retrieve/deploy/delete bind exact names and fresh IDs with one write and no retry', async () => {
   const calls = [];
+  let deleted = false;
   const client = {
     get: async (name) => {
       calls.push(['get', name]);
+      if (deleted) throw new DloError('DLO_HTTP_ERROR', 404);
       return { dataLakeObjects: [native()] };
     },
     update: async (id, body) => {
@@ -308,6 +310,7 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
     },
     delete: async (id) => {
       calls.push(['delete', id]);
+      deleted = true;
     },
   };
   assert.deepEqual(await retrieveNativeDlo(apiName, client), document());
@@ -322,7 +325,7 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
   });
   assert.deepEqual(
     calls.map((c) => c[0]),
-    ['get', 'get', 'update', 'get', 'delete'],
+    ['get', 'get', 'update', 'get', 'delete', 'get'],
   );
   assert.equal(calls[2][1], targetId);
   await assert.rejects(
@@ -330,6 +333,7 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
     /IDENTITY/,
   );
   let writes = 0;
+  deleted = false;
   await assert.rejects(
     deleteNativeDlo(apiName, {
       ...client,
