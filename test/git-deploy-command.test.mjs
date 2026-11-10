@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Deploy from '../lib/commands/data360/deploy.js';
 import { GitSelectionError } from '../lib/artifacts/git-deploy-selection.js';
-import { DeployInputError } from '../lib/artifacts/read-deploy-input.js';
 
 const selectedPath = 'data360/dmo/Selected__dlm.dmo-meta.json';
 
@@ -229,25 +228,6 @@ for (const other of [{ metadata: ['dmo:Selected__dlm'] }, { 'source-dir': ['expl
     assert.equal(result.diagnostics.errors[0].code, 'INVALID_SELECTION');
   });
 }
-test('Git-selected legacy DMO artifact is refused with its own remediation before services', async () => {
-  for (const preview of [true, false]) {
-    const { command, calls } = invocation({ preview });
-    command.selectGitInputs = async () => {
-      throw new DeployInputError('LEGACY_DMO_ARTIFACT_UNSUPPORTED');
-    };
-    const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exitCode, 1);
-    assert.deepEqual(calls, []);
-    assert.deepEqual(result.result.items, []);
-    assert.equal(result.diagnostics.errors.length, 1);
-    assert.equal(result.diagnostics.errors[0].code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
-    assert.match(
-      result.diagnostics.errors[0].message,
-      /sf data360 retrieve -m dmo:<ApiName>__dlm.*<ApiName>__dlm\.dmo-meta\.json/u,
-    );
-  }
-});
 for (const code of ['INVALID_GIT_SELECTION', 'BLOCKED_GIT_LIFECYCLE']) {
   test(`Git error ${code} becomes actionable blocked envelope before services`, async () => {
     const { command, calls } = invocation();

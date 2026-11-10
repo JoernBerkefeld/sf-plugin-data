@@ -269,46 +269,7 @@ for (const operation of ['retrieve', 'deploy']) {
     process.exitCode = previous;
   }
 }
-const { default: Deploy } = await import(
-  pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', 'deploy.js')).href
-);
 const { mkdirSync, writeFileSync } = await import('node:fs');
-// A DMO file in the removed saved-project format is refused locally, before auth or any org call.
-{
-  const legacyDirectory = path.join(root, 'legacy-project', 'data360', 'default', 'dmo');
-  mkdirSync(legacyDirectory, { recursive: true });
-  const legacyFile = path.join(legacyDirectory, 'Installed_Legacy__dlm.json');
-  writeFileSync(legacyFile, JSON.stringify({ schemaVersion: 1, kind: 'dmo' }));
-  for (const preview of [true, false]) {
-    const command = Object.create(Deploy.prototype);
-    command.parse = async () => ({
-      flags: { preview, 'source-dir': [legacyFile], 'api-version': 'auto' },
-    });
-    command.jsonEnabled = () => true;
-    command.resolveInputs = new Deploy([], {}).resolveInputs;
-    command.resolveTargetOrg =
-      command.createDmoClient =
-      command.preflightNativeDmo =
-      command.executeNativeDmo =
-        () => assert.fail('A removed-format DMO file must be refused before auth or any service.');
-    const previous = process.exitCode;
-    process.exitCode = undefined;
-    try {
-      const envelope = await command.run();
-      assert.equal(envelope.status, 'blocked');
-      assert.equal(process.exitCode, 1);
-      assert.equal(envelope.diagnostics.errors.length, 1);
-      assert.equal(envelope.diagnostics.errors[0].code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
-      assert.match(
-        envelope.diagnostics.errors[0].message,
-        /sf data360 retrieve -m dmo:<ApiName>__dlm/u,
-      );
-      assert.deepEqual(envelope.result.items, []);
-    } finally {
-      process.exitCode = previous;
-    }
-  }
-}
 // Installed native Graph commands exercise public routing without auth or live writes.
 const graphProject = path.join(root, 'graph-project');
 mkdirSync(path.join(graphProject, 'force-app', 'main', 'default'), { recursive: true });

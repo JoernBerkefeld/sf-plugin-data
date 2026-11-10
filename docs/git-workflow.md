@@ -82,9 +82,7 @@ calculated insight, Graph or Identity Resolution inputs. Native mappings are not
 selected by Git. The other families selected by `--changed-since` are described in
 the sections above.
 
-A changed file in the removed `data360/default/dmo/Name.json` format is refused
-with `LEGACY_DMO_ARTIFACT_UNSUPPORTED` before any org call. Retrieve the DMO again
-with `sf data360 retrieve -m dmo:ApiName__dlm` and commit the new file.
+DMOs use only `data360/dmo/<ApiName>__dlm.dmo-meta.json`.
 
 Relevant renames and deletions block the whole selection. Explicit Git rename
 detection is enabled regardless of repository configuration and inspects both

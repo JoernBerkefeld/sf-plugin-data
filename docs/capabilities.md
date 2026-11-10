@@ -373,11 +373,8 @@ marks DLO `dataSource` and atomic `dataModelObjectConfig` inputs as API67-only.
 
 The plugin has one DMO route, the native one. Default/`auto` uses API 68; numeric
 pins from 61 are kept. The artifact is `data360/dmo/<ApiName>__dlm.dmo-meta.json`;
-its format is described in [artifact formats](artifact-format.md). The earlier
-API 65 saved-project adapter and its `data360/default/dmo/<Name>.json` artifact
-were removed. Such a file is refused before any org call with
-`LEGACY_DMO_ARTIFACT_UNSUPPORTED`; the fix is
-`sf data360 retrieve -m dmo:<ApiName>__dlm`.
+its format is described in [artifact formats](artifact-format.md). DMOs use only
+this file location.
 
 The plugin keeps no local allowlists. Category, field data types, label length,
 object and field descriptions and extra keys are sent as authored; Salesforce
@@ -525,8 +522,7 @@ have distinct boundaries; neither closes general lifecycle or cross-org support.
 `deploy --changed-since <ref>` is exclusive with metadata/source-dir. For DMOs it
 selects current native `data360/dmo/<ApiName>__dlm.dmo-meta.json` files, admitted
 through the existing input resolver; a selected native DMO joins the ordered batch
-on the native route. A changed file in the removed `data360/default/dmo` format is
-refused with `LEGACY_DMO_ARTIFACT_UNSUPPORTED`. The other selectable families are
+on the native route. The other selectable families are
 described in the [Git workflow](git-workflow.md). Repository-root resolution, unique
 merge-base/HEAD changes, index, worktree and untracked selection are local. Relevant
 rename/delete blocks the whole selection, regardless of diff.renames configuration.
@@ -550,7 +546,7 @@ This does not change API-version discovery or the separate Metadata/SOAP guard.
       Broader resource contracts remain pending.
 - [x] Native DMO route as described in the dmo section above. The items formerly
       listed here for the API 65 DMO adapter (deploy preflight, common projector,
-      `default/dmo` writer, DMO pagination, relationship acquisition, field join
+      file writer, DMO pagination, relationship acquisition, field join
       and request mappers) were removed together with that adapter.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.

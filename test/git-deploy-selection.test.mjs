@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { GitSelectionError, selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
-import { DeployInputError, verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
+import { verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
 
 const segment = async (cwd) => {
   const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
@@ -370,31 +370,17 @@ for (const [file, value] of [
   });
 }
 
-test('Git selector refuses a changed legacy DMO artifact with its own remediation', async () => {
-  // Alone or beside a valid native change, the removed location blocks instead of being skipped.
-  for (const withNative of [false, true]) {
-    const cwd = await fixture();
-    await put(cwd, 'data360/default/dmo/Expected__dlm.json', document('Expected'));
-    if (withNative) await put(cwd, relative('Other'), document('Other'));
-    await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }), (error) => {
-      assert.ok(error instanceof DeployInputError);
-      assert.equal(error.code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
-      assert.match(error.message, /sf data360 retrieve -m dmo:<ApiName>__dlm/u);
-      return true;
-    });
-  }
-});
-
-test('Git selector lets a deleted legacy DMO file through so migration can complete', async () => {
+test('Git selector ignores a changed JSON file in the former default/dmo folder', async () => {
   const cwd = await fixture();
-  const legacy = 'data360/default/dmo/Expected__dlm.json';
-  await put(cwd, legacy, document('Expected'));
-  await commit(cwd, legacy);
-  // Migration: the old file is removed and the native file added in the same change.
-  await unlink(path.join(cwd, legacy));
-  await put(cwd, relative('Expected'), document('Expected'));
+  const former = 'data360/default/dmo/Expected__dlm.json';
+  await put(cwd, former, document('Expected'));
+  const untracked = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(untracked.paths, []);
+  await commit(cwd, former);
+  await put(cwd, former, { ...document('Expected'), changed: true });
+  await put(cwd, relative('Other'), document('Other'));
   const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
-  assert.deepEqual(selected.paths, [path.join(cwd, relative('Expected'))]);
+  assert.deepEqual(selected.paths, [path.join(cwd, relative('Other'))]);
 });
 
 test('Git selector refuses tracked directory link replacement before deployment', async () => {

@@ -28,26 +28,6 @@ import {
 } from './calculated-insight-document.js';
 import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 
-/** Remediation for a DMO file saved in the removed data360/default/dmo format. */
-export const legacyDmoArtifactMessage =
-  'This DMO file uses the removed data360/default/dmo/<Name>.json format and cannot be deployed. Retrieve the DMO again in the native format with "sf data360 retrieve -m dmo:<ApiName>__dlm", which writes data360/dmo/<ApiName>__dlm.dmo-meta.json, then deploy that file. No org call was made.';
-
-/**
- * Recognize the removed legacy DMO artifact location by its exact directory shape.
- * @param {string} file Absolute candidate path.
- * @returns {boolean} Whether the file sits directly in data360/default/dmo.
- */
-function isLegacyDmoArtifact(file: string): boolean {
-  const directory = path.dirname(file);
-  const scope = path.dirname(directory);
-  return (
-    path.extname(file) === '.json' &&
-    path.basename(directory) === 'dmo' &&
-    path.basename(scope) === 'default' &&
-    path.basename(path.dirname(scope)) === 'data360'
-  );
-}
-
 /** Payload-free local selection refusal. */
 export class DeployInputError extends Error {
   public constructor(
@@ -56,15 +36,12 @@ export class DeployInputError extends Error {
       | 'UNSAFE_SOURCE'
       | 'INVALID_SOURCE'
       | 'DUPLICATE_IDENTITY'
-      | 'UNSUPPORTED_SEGMENT_XML'
-      | 'LEGACY_DMO_ARTIFACT_UNSUPPORTED',
+      | 'UNSUPPORTED_SEGMENT_XML',
   ) {
     super(
       code === 'UNSUPPORTED_SEGMENT_XML'
         ? 'Select the single .segment.json artifact; legacy Segment XML is not supported.'
-        : code === 'LEGACY_DMO_ARTIFACT_UNSUPPORTED'
-          ? legacyDmoArtifactMessage
-          : 'Select explicit, bounded, authored-only sources without links or conflicting identities.',
+        : 'Select explicit, bounded, authored-only sources without links or conflicting identities.',
     );
     this.name = 'DeployInputError';
   }
@@ -916,23 +893,6 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   )
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
-  // A selector that resolves only to the removed legacy location is refused, never read.
-  for (const selector of selectors ?? []) {
-    if (selector.kind !== 'dmo') continue;
-    try {
-      await lstat(path.join(flags.cwd, 'data360', 'dmo', `${selector.name}.dmo-meta.json`));
-      continue;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    let legacy = true;
-    try {
-      await lstat(path.join(flags.cwd, 'data360', 'default', 'dmo', `${selector.name}.json`));
-    } catch {
-      legacy = false;
-    }
-    if (legacy) throw new DeployInputError('LEGACY_DMO_ARTIFACT_UNSUPPORTED');
-  }
   const nativeGraphs = new Set<string>();
   for (const selector of selectors ?? []) {
     if (selector.kind !== 'data-graph') continue;
@@ -1203,10 +1163,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         inputs.push(paired);
         continue;
       }
-      // Any other JSON is not a deployable artifact; the removed DMO format names its remedy.
-      throw new DeployInputError(
-        isLegacyDmoArtifact(file) ? 'LEGACY_DMO_ARTIFACT_UNSUPPORTED' : 'INVALID_SOURCE',
-      );
+      throw new DeployInputError('INVALID_SOURCE');
     }
     return inputs;
   } catch (error: unknown) {

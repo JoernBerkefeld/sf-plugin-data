@@ -157,11 +157,4 @@ workflow. That verification used empty, unmapped custom DMOs in the default data
 space. Mapped or data-bearing DMOs, non-default data spaces, other API versions,
 relationships and SQL/flex DMOs are not qualified.
 
-## Removed legacy DMO format
-
-Earlier versions saved DMOs as `data360/default/dmo/<Name>.json` through an API 65
-adapter. That adapter, its file format and its internal projection, request-mapping
-and relationship helpers were removed. A file in the old location is refused with
-`LEGACY_DMO_ARTIFACT_UNSUPPORTED` before any org call. To migrate, retrieve the DMO
-again with `sf data360 retrieve -m dmo:<ApiName>__dlm`, which writes the native
-file described above.
+DMOs use only `data360/dmo/<ApiName>__dlm.dmo-meta.json`.

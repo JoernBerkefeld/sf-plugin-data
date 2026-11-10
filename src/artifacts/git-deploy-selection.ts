@@ -5,7 +5,7 @@ import type { DataGraphDeployInput } from './read-deploy-input.js';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { DeployInputError, readDeployInputs } from './read-deploy-input.js';
+import { readDeployInputs } from './read-deploy-input.js';
 import { nativeDmoName } from './native-dmo-document.js';
 import { identityResolutionName } from './identity-resolution-document.js';
 import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
@@ -81,12 +81,8 @@ const irMember = (file: string): boolean => /\.identityResolution\.json$/iu.test
 const ciMember = (file: string): boolean =>
   /\.(?:mktCalcInsightObjectDef-meta\.xml|calculatedInsight\.json)$/iu.test(file);
 const dmoMember = (file: string): boolean => /\.dmo-meta\.json$/iu.test(file);
-// The removed legacy DMO location stays relevant so a change there blocks instead of being skipped.
-const legacyDmoMember = (file: string): boolean =>
-  file.startsWith('data360/default/dmo/') && file.endsWith('.json');
 const relevant = (file: string): boolean =>
   dmoMember(file) ||
-  legacyDmoMember(file) ||
   segmentMember(file) ||
   ciMember(file) ||
   graphMember(file) ||
@@ -110,9 +106,6 @@ function collect(output: string, paths: Set<string>): boolean {
     const second = /^[RC]/u.test(status) ? values[index++] : undefined;
     if (!first || (/^[RC]/u.test(status) && !second))
       throw new GitSelectionError('INVALID_GIT_SELECTION');
-    // Deleting an old-format DMO file is the migration step, not a lifecycle change to block,
-    // and it is not counted as a possible rename source for untracked files either.
-    if (status === 'D' && legacyDmoMember(first)) continue;
     if (status === 'D') hasDeletion = true;
     if (!relevant(first) && !(second && relevant(second))) continue;
     if (/^[DRCU]/u.test(status)) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
@@ -262,8 +255,6 @@ export async function selectGitDeployInputs(options: {
           throw new GitSelectionError('INVALID_GIT_SELECTION');
         return `segment:${name}`;
       }
-      // Only the native DMO artifact is selectable; the removed location names its own remedy.
-      if (legacyDmoMember(file)) throw new DeployInputError('LEGACY_DMO_ARTIFACT_UNSUPPORTED');
       if (!dmoMember(file)) throw new GitSelectionError('INVALID_GIT_SELECTION');
       const name = path.posix.basename(file).slice(0, -'.dmo-meta.json'.length);
       const expected = path.join(repositoryRoot, 'data360', 'dmo', `${name}.dmo-meta.json`);
@@ -312,11 +303,7 @@ export async function selectGitDeployInputs(options: {
       },
     };
   } catch (error: unknown) {
-    if (
-      error instanceof GitSelectionError ||
-      (error instanceof DeployInputError && error.code === 'LEGACY_DMO_ARTIFACT_UNSUPPORTED')
-    )
-      throw error;
+    if (error instanceof GitSelectionError) throw error;
     throw new GitSelectionError('INVALID_GIT_SELECTION');
   }
 }

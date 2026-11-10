@@ -247,55 +247,22 @@ test('repeated exact metadata selectors resolve only conventional project files'
   );
 });
 
-const legacyRemedy = (error) =>
-  error instanceof DeployInputError &&
-  error.code === 'LEGACY_DMO_ARTIFACT_UNSUPPORTED' &&
-  /sf data360 retrieve -m dmo:<ApiName>__dlm/u.test(error.message) &&
-  /data360\/dmo\/<ApiName>__dlm\.dmo-meta\.json/u.test(error.message);
-
-test('a legacy DMO artifact selected by file or directory is refused with its remediation', async () => {
+test('a JSON file in the former default/dmo folder is refused like any unrecognised JSON', async () => {
   const cwd = await root();
-  const file = await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
-  const before = await readFile(file);
-  for (const selected of [
-    [file],
-    ['data360/default/dmo/Preview_Item__dlm.json'],
-    ['data360/default/dmo'],
-    ['data360'],
-    [cwd],
-  ])
-    await assert.rejects(readDeployInputs({ cwd, sourceDir: selected }), legacyRemedy);
-  // A valid native file beside it never makes the stale legacy file deployable or ignorable.
-  await put(cwd, native());
-  await assert.rejects(readDeployInputs({ cwd, sourceDir: ['data360'] }), legacyRemedy);
-  // Content is not consulted: an unreadable legacy file names the same remedy.
-  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json', '{invalid');
-  await assert.rejects(readDeployInputs({ cwd, sourceDir: [file] }), legacyRemedy);
-  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
-  assert.deepEqual(await readFile(file), before);
-  // The native file itself stays selectable.
-  const selected = await readDeployInputs({ cwd, sourceDir: ['data360/dmo'] });
-  assert.equal(selected.length, 1);
-});
-
-test('a dmo selector resolving only to a legacy artifact is refused; a native file wins', async () => {
-  const cwd = await root();
-  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
-  for (const metadata of [
-    ['dmo:Preview_Item__dlm'],
-    ['dmo:Preview_Item__dlm', 'dmo:Preview_Item__dlm'],
-  ])
-    await assert.rejects(readDeployInputs({ cwd, metadata }), legacyRemedy);
-  // Neither format present stays the ordinary missing-source refusal.
+  const former = await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
+  const other = await put(cwd, 'data360/other/Preview_Item__dlm.json');
+  for (const file of [former, other])
+    await assert.rejects(
+      readDeployInputs({ cwd, sourceDir: [file] }),
+      (error) =>
+        error instanceof DeployInputError &&
+        error.code === 'INVALID_SOURCE' &&
+        error.message === new DeployInputError('INVALID_SOURCE').message,
+    );
+  // A selector never looks there: without a native file it is the ordinary missing-source refusal.
   await assert.rejects(
-    readDeployInputs({ cwd, metadata: ['dmo:Missing__dlm'] }),
+    readDeployInputs({ cwd, metadata: ['dmo:Preview_Item__dlm'] }),
     refusal('UNSAFE_SOURCE'),
-  );
-  const file = await put(cwd, native());
-  const selected = await readDeployInputs({ cwd, metadata: ['dmo:Preview_Item__dlm'] });
-  assert.deepEqual(
-    selected.map((input) => input.path),
-    [file],
   );
 });
 

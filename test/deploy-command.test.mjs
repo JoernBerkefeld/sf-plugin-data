@@ -597,50 +597,6 @@ test('real resolver plus injected read-only preflight leaves authored files and 
   assert.equal(await readFile(file, 'utf8'), bytes);
 });
 
-for (const mode of ['source-dir file', 'source-dir directory', 'metadata selector'])
-  test(`legacy DMO artifact selected by ${mode} is refused before any org call`, async () => {
-    const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-legacy-command-'));
-    const directory = path.join(cwd, 'data360', 'default', 'dmo');
-    await mkdir(directory, { recursive: true });
-    const file = path.join(directory, 'Preview__dlm.json');
-    const bytes = JSON.stringify(authored());
-    await writeFile(file, bytes);
-    for (const preview of [true, false]) {
-      const { command, calls } = invocation({
-        preview,
-        'changed-since': undefined,
-        ...(mode === 'metadata selector'
-          ? { metadata: ['dmo:Preview__dlm'] }
-          : { 'source-dir': [mode === 'source-dir file' ? file : path.join(cwd, 'data360')] }),
-      });
-      // The command reads its own working directory; bind the real reader to the fixture root.
-      command.resolveInputs = (options) => readDeployInputs({ ...options, cwd });
-      command.resolveTargetOrg =
-        command.createDmoClient =
-        command.preflightNativeDmo =
-        command.executeNativeDmo =
-          () => assert.fail('A legacy DMO artifact must be refused before auth or services.');
-      const lines = [];
-      command.jsonEnabled = () => false;
-      command.log = (line) => lines.push(line);
-      const { result, exitCode } = await run(command);
-      assert.equal(result.status, 'blocked');
-      assert.equal(exitCode, 1);
-      assert.deepEqual(calls, []);
-      assert.deepEqual(result.result.items, []);
-      // eslint-disable-next-line unicorn/no-null -- The public JSON contract represents unresolved target identity as null.
-      assert.equal(result.provenance.targetOrgId, null);
-      assert.equal(result.diagnostics.errors.length, 1);
-      const [diagnostic] = result.diagnostics.errors;
-      assert.equal(diagnostic.code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
-      assert.equal(diagnostic.retryable, false);
-      assert.match(diagnostic.message, /sf data360 retrieve -m dmo:<ApiName>__dlm/u);
-      assert.match(diagnostic.message, /<ApiName>__dlm[.]dmo-meta[.]json/u);
-      assert.ok(lines.some((line) => line.startsWith('LEGACY_DMO_ARTIFACT_UNSUPPORTED: ')));
-      assert.equal(await readFile(file, 'utf8'), bytes);
-    }
-  });
-
 test('human summary states preview only, never actual deployment', async () => {
   const { command } = invocation();
   const logs = [];

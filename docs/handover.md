@@ -44,7 +44,10 @@ Fixed: `spec` can no longer carry `name`, `dataSpaceName` or runtime keys, and e
 dependency retrieve selection still requires auto/65.0 for the selection, because
 changing it alters the version used for co-selected Segment, Graph and IR reads.
 Verification after the fixes: zero-warning lint, build, full unit suite and smoke, plus
-a read-only unchanged redeploy of the three retained fixtures in both orgs.
+a read-only unchanged redeploy of the three retained fixtures in both orgs. The
+dedicated refusal for old-format files (`LEGACY_DMO_ARTIFACT_UNSUPPORTED`) and the
+migration notes were removed again afterwards at the owner's request: the plugin has
+no active users.
 
 # Public native Data Graph CRD closeout — 2026-11-05
 
