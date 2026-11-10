@@ -227,7 +227,11 @@ not inferred from this fresh success.
 For exact stream deletion, preview first. The default preserves the DLO;
 `--delete-dlo` explicitly requests cascade removal of the linked DLO too. Fresh
 identity, binding and dependency checks must pass, and completion is verified by
-independent reads, not HTTP success alone. The fresh cross-org run covered cascade
+independent reads, not HTTP success alone. The stream DELETE (including the
+`--delete-dlo` cascade request) is sent once on the same bound authenticated
+connection as the reads: no child `sf api request rest`, no token refresh, no HTTP
+retry, redirects refused. An expired session stops with HTTP 401; log in again and
+rerun. The fresh cross-org run covered cascade
 mode; it does not requalify preserve mode across orgs. `DataStreamDefinition`
 Metadata XML examples below remain separate from this native JSON workflow.
 
@@ -740,6 +744,16 @@ expansion remain blocked; legacy saved-project adapters remain separate.
 Delete executes by default without prompting and addresses only the freshly
 resolved full DMO name. `--preview` is strictly read-only. Already absent is
 unchanged; no cascade, local deletion, write retry or rollback is performed.
+DMO delete reads and the DELETE use the bound authenticated connection directly
+(no child `sf api request rest`, no token refresh, no HTTP retry, redirects
+refused), so each request is sent at most once. After HTTP204 one read by name
+settles the item: 404 reports `confirmed-deleted`; a still-readable DMO or a
+failed read reports `deletion-unconfirmed` (exit code 1, `DMO_DELETE_NOT_CONFIRMED`).
+The same name in a `DELETING` state reports `deletion-processing`; this DMO state is
+assumed by analogy with DLO and is not yet verified by documentation or a live run,
+so an asynchronous DMO delete may report `deletion-unconfirmed` instead. Nothing is
+replayed; confirm final absence with a later read-only check. Without token
+refresh an expired session stops the command (HTTP 401); log in again and rerun.
 This bounded definition workflow does not qualify ingestion or cross-org migration.
 
 `__dlm` identifies a Data Model Object. Standard retrieval writes the object and
@@ -1160,6 +1174,15 @@ remaining mappings and retained selectors. Only the expected authored target's
 preserve the complete pre-final schema. Survivor content is checked even while
 `CREATING`, then must settle `ACTIVE`. Typed selected-mapping 404 and exact remaining
 inventory are required, not merely an accepted DELETE response.
+
+During `sf data360 delete`, every mapping read (detail, list), field unmap and final
+mapping DELETE, plus the DLO/DMO parent reads, is sent on a bound authenticated
+connection instead of a child `sf api request rest`: no
+token refresh, no HTTP retry, redirects refused, so each request is sent at most once.
+A DELETE is accepted with HTTP `200` or `204`; deletion is only confirmed by the
+later typed-404 reads. An expired session stops the command with HTTP
+401 instead of refreshing; log in again and rerun after a read-only check. Mapping
+deploy writes are unchanged.
 
 Direct non-last native DELETE HTTP `204` previously removed DMO `Count__c`/`Gamma__c`
 fields and triggered `MAPPING_PARENT_CHANGED`; survivor coverage alone was insufficient.

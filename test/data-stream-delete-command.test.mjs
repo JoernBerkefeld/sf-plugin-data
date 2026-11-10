@@ -58,7 +58,9 @@ function invocation(overrides = {}) {
   command.createDloClient =
     command.createDloNativeDeleteClient =
     command.createDmoClient =
+    command.createDmoNativeDeleteClient =
     command.createMappingClient =
+    command.createMappingSender =
       () => assert.fail('No other family fallback');
   return { command, flags, calls, lines };
 }

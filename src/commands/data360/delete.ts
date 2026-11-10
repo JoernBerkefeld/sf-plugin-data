@@ -39,6 +39,9 @@ import type { CalculatedInsightObservation } from '../../services/execute-calcul
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
+import { createNativeDmoDeleteClient } from '../../transport/dmo-native-rest.js';
+import { openBoundSsot } from '../../transport/bound-ssot.js';
+import type { BoundSsot } from '../../transport/bound-ssot.js';
 import { deleteNativeDmo, retrieveNativeDmo } from '../../services/native-dmo.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesforce/core';
@@ -199,7 +202,14 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     });
     const reader = new ConnectClient(connection, version);
     return {
-      streams: createDataStreamClient(target, reader, version),
+      // DELETE (including the DLO cascade) is sent once on this same bound Connection.
+      streams: createDataStreamClient(
+        target,
+        reader,
+        version,
+        undefined,
+        openBoundSsot(target, version, async () => connection),
+      ),
       facade: new McpExecuteClient(connection, {
         requested: '67.0',
         restSelector: 'v67.0',
@@ -214,9 +224,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     };
   };
   protected createMappingClient = createMappingClient;
+  // Mapping delete GET/DELETE share one bound Connection per selector; tests replace this seam.
+  protected createMappingSender = (target: string, version: string): BoundSsot =>
+    openBoundSsot(target, version);
   protected preflightDeleteMapping = preflightDeleteNativeMapping;
   protected deleteMapping = deleteNativeMapping;
   protected createDmoClient = createDmoClient;
+  protected createDmoNativeDeleteClient = createNativeDmoDeleteClient;
   protected retrieveDmo = retrieveNativeDmo;
   protected deleteDmo = deleteNativeDmo;
   protected createDloClient = createDloClient;
@@ -278,7 +292,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                       ? 'Unconfirmed'
                       : 'Blocked';
           if (
-            ['identity-resolution', 'segment', 'dlo'].includes(
+            ['identity-resolution', 'segment', 'dlo', 'dmo'].includes(
               selectorsByItem.get(item)?.split(':')[0] ?? '',
             ) &&
             ['deleted', 'deletion-processing'].includes(item.outcome)
@@ -879,9 +893,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               version,
               undefined,
               requestScope,
+              this.createMappingSender(target, version),
             )
           : native
-            ? (this.createDmoClient ?? createDmoClient)(target, version)
+            ? this.createDmoNativeDeleteClient(target, version)
             : this.createDloNativeDeleteClient(target, version);
         let dispatched = false;
         const client = {
@@ -910,8 +925,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               },
             } as ReturnType<typeof createMappingClient>;
             const dependencies = {
-              source: (this.createDloClient ?? createDloClient)(target, version),
-              target: (this.createDmoClient ?? createDmoClient)(target, version),
+              // Parent reads use the bound single-attempt DLO/DMO GET clients.
+              source: this.createDloNativeDeleteClient(target, version),
+              target: this.createDmoNativeDeleteClient(target, version),
             };
             if (flags.preview) {
               const plan = await (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
@@ -944,7 +960,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 : this.deleteDlo(apiName, definitionClient, requestScope));
               item.identity.dataSpace = receipt.dataSpace;
               if ('processing' in receipt && receipt.processing) {
-                // DLO read back in a DELETING state: acknowledged, server still processing.
+                // DLO/DMO read back in a DELETING state: acknowledged, server still processing.
                 item.outcome = 'deletion-processing';
                 item.mutation = 'acknowledged-processing';
                 continue;
@@ -968,9 +984,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           }
           if (
             dispatched &&
-            error instanceof DloError &&
-            error.code === 'DLO_DELETE_NOT_CONFIRMED'
+            ((error instanceof DloError && error.code === 'DLO_DELETE_NOT_CONFIRMED') ||
+              (error instanceof NativeDmoError && error.code === 'DMO_DELETE_NOT_CONFIRMED'))
           ) {
+            const noun = native ? 'DMO' : 'DLO';
             item.outcome = 'deletion-unconfirmed';
             item.mutation = 'acknowledged';
             envelope.status = 'failed';
@@ -978,10 +995,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               code: error.code,
               message:
                 error.status === 200
-                  ? 'Salesforce acknowledged the DELETE, but the DLO was still readable afterwards. Do not replay; read the DLO again before any further action.'
+                  ? `Salesforce acknowledged the DELETE, but the ${noun} was still readable afterwards. Do not replay; read the ${noun} again before any further action.`
                   : operationDiagnostic(
                       error,
-                      'Salesforce acknowledged the DELETE, but its absence could not be confirmed. Do not replay; read the DLO again before any further action.',
+                      `Salesforce acknowledged the DELETE, but its absence could not be confirmed. Do not replay; read the ${noun} again before any further action.`,
                     ),
               retryable: false,
             });

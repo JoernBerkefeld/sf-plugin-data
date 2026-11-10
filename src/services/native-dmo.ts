@@ -4,10 +4,12 @@ import {
   NativeDmoError,
   nativeDmoName,
   normalizeNativeDmo,
+  unwrapNativeDmo,
   validateNativeDmoDocument,
 } from '../artifacts/native-dmo-document.js';
 import type { NativeDmoDocument, NativeDmoField } from '../artifacts/native-dmo-document.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 export type NativeDmoDeployPlan =
   | {
@@ -77,13 +79,13 @@ function fieldInput(field: NativeDmoField): Record<string, unknown> {
 /**
  * Resolve and verify the exact full name and observed data space, never inspecting its ID.
  * @param {string} apiName Requested full name.
- * @param {DmoClient} client Target client.
+ * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @returns {Promise<NativeDmoDocument>} Verified target definition.
  */
 async function resolveTarget(
   apiName: string,
-  client: DmoClient,
+  client: Pick<DmoClient, 'get'>,
   requestScope?: string,
 ): Promise<NativeDmoDocument> {
   if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
@@ -96,13 +98,13 @@ async function resolveTarget(
 /**
  * Retrieve an exact portable definition including all generated fields.
  * @param {string} apiName Full name ending in __dlm.
- * @param {DmoClient} client Authenticated client.
+ * @param {Pick<DmoClient, 'get'>} client Authenticated client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @returns {Promise<NativeDmoDocument>} Portable definition, without runtime observations.
  */
 export async function retrieveNativeDmo(
   apiName: string,
-  client: DmoClient,
+  client: Pick<DmoClient, 'get'>,
   requestScope?: string,
 ): Promise<NativeDmoDocument> {
   return resolveTarget(apiName, client, requestScope);
@@ -260,18 +262,47 @@ export async function deployNativeDmo(
 
 /**
  * Delete only the freshly resolved exact full name, without cascade or local deletion.
+ * One read after the DELETE confirms it: 404 is deleted, the same name in a DELETING state is
+ * still processing, and anything else (including a failed read) is never reported as deleted.
  * @param {string} apiName Requested full name.
- * @param {DmoClient} client Target client.
+ * @param {Pick<DmoClient, 'get' | 'delete'>} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
- * @returns {Promise<{apiName: string, targetApiName: string, dataSpace: string}>} Exact deleted target identity.
+ * @returns {Promise<{apiName: string, targetApiName: string, dataSpace: string, processing?: true}>} Exact deleted target identity.
  */
 export async function deleteNativeDmo(
   apiName: string,
-  client: DmoClient,
+  client: Pick<DmoClient, 'get' | 'delete'>,
   requestScope?: string,
-): Promise<{ apiName: string; targetApiName: string; dataSpace: string }> {
+): Promise<{ apiName: string; targetApiName: string; dataSpace: string; processing?: true }> {
   const target = await resolveTarget(apiName, client, requestScope);
   const targetApiName = target.identity.apiName;
   await client.delete(targetApiName);
-  return { apiName, targetApiName, dataSpace: target.identity.dataSpace };
+  const deleted = { apiName, targetApiName, dataSpace: target.identity.dataSpace };
+  let readback: unknown;
+  try {
+    readback = await client.get(targetApiName);
+  } catch (error) {
+    if (error instanceof NativeDmoError && error.code === 'DMO_HTTP_ERROR' && error.status === 404)
+      return deleted;
+    // Keep the read failure's API detail (status, Retry-After) for the printed diagnostic.
+    throw retainConnectDiagnostic(
+      new NativeDmoError('DMO_DELETE_NOT_CONFIRMED'),
+      getConnectDiagnostic(error),
+    );
+  }
+  let observed: Record<string, unknown> | undefined;
+  try {
+    // Not normalizeNativeDmo: it strips the runtime status this check needs.
+    observed = unwrapNativeDmo(readback);
+  } catch {
+    observed = undefined;
+  }
+  // DMO DELETING is assumed by analogy with DLO; no docs or live evidence confirm it yet.
+  if (
+    observed?.name === targetApiName &&
+    typeof observed.status === 'string' &&
+    observed.status.startsWith('DELETING')
+  )
+    return { ...deleted, processing: true };
+  throw new NativeDmoError('DMO_DELETE_NOT_CONFIRMED', 200);
 }

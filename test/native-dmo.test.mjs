@@ -549,6 +549,7 @@ test('native DMO create independently confirms GET, exact retrieve/delete ignore
     await deleteNativeDmo(apiName, {
       get: async (name) => {
         calls.push(['get', name]);
+        if (calls.length > 1) return absent();
         return native();
       },
       delete: async (name) => {
@@ -560,6 +561,7 @@ test('native DMO create independently confirms GET, exact retrieve/delete ignore
   assert.deepEqual(calls, [
     ['get', apiName],
     ['delete', apiName],
+    ['get', apiName],
   ]);
   let writes = 0;
   for (const raw of [

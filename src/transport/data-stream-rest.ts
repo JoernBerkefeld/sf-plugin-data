@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { apiReceiptDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import {
+  apiReceiptDiagnostic,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from './connect-diagnostic.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +14,7 @@ import {
 } from '../artifacts/data-stream-document.js';
 import { dataStreamApiVersion } from './api-version.js';
 import { ConnectClient, ConnectError } from './connect-client.js';
+import type { BoundSsot } from './bound-ssot.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
 
@@ -40,6 +45,7 @@ export class DataStreamHttpError extends DataStreamError {
  * @param {ConnectClient} reader Authenticated native GET transport.
  * @param {string} apiVersion Initial qualified pin only.
  * @param {MetadataRunner} runner Installed CLI runner with real --include receipts.
+ * @param {BoundSsot} [deleteSender] Bound single-attempt sender; when given, DELETE never uses the runner.
  * @returns {DataStreamClient} Internal operations; no command wiring.
  */
 export function createDataStreamClient(
@@ -47,6 +53,7 @@ export function createDataStreamClient(
   reader: Pick<ConnectClient, 'get'>,
   apiVersion = 'auto',
   runner: MetadataRunner = runProjectMetadata,
+  deleteSender?: BoundSsot,
 ): DataStreamClient {
   const version = dataStreamApiVersion(apiVersion);
   const endpoint = `/services/data/v${version}/ssot/data-streams`;
@@ -248,7 +255,27 @@ export function createDataStreamClient(
     delete: async (recordId, deleteDlo) => {
       if (!id.test(recordId) || typeof deleteDlo !== 'boolean')
         throw new DataStreamError('INVALID_STREAM_TARGET_ID');
-      await send('DELETE', `/${recordId}?shouldDeleteDataLakeObject=${String(deleteDlo)}`);
+      const suffix = `/${recordId}?shouldDeleteDataLakeObject=${String(deleteDlo)}`;
+      if (!deleteSender) {
+        await send('DELETE', suffix);
+        return;
+      }
+      const noContent = Symbol('stream-deleted');
+      let response: unknown;
+      try {
+        response = await deleteSender.request('DELETE', endpoint + suffix, noContent);
+      } catch (error) {
+        if (!(error instanceof ConnectError)) throw error;
+        const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;
+        throw retainConnectDiagnostic(
+          new DataStreamHttpError(
+            status === undefined ? 'STREAM_REQUEST_UNCONFIRMED' : 'STREAM_HTTP_ERROR',
+            status,
+          ),
+          getConnectDiagnostic(error),
+        );
+      }
+      if (response !== noContent) throw new DataStreamHttpError('STREAM_DELETE_UNCONFIRMED');
     },
   };
 }

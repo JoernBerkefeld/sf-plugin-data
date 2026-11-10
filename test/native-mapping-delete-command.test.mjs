@@ -17,8 +17,13 @@ const invocation = (flags = {}) => {
   command.jsonEnabled = () => true;
   command.resolveTarget = async () => 'target';
   command.createDloClient = command.createDmoClient = () => ({ get: async () => ({}) });
-  // DLO delete uses its own bound-connection seam; tests keep overriding createDloClient.
+  // DLO/DMO delete use their own bound-connection seams; tests keep overriding the old factories.
   command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
+  command.createDmoNativeDeleteClient = (...arguments_) => command.createDmoClient(...arguments_);
+  // Mapping GET/DELETE get a bound sender; the fake mapping clients below never use it.
+  command.createMappingSender = () => ({
+    request: async () => assert.fail('fake mapping clients must not reach the bound sender'),
+  });
   return command;
 };
 const run = async (command) => {

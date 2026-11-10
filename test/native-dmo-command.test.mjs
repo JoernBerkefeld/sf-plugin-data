@@ -47,8 +47,9 @@ const invocation = (Type, overrides = {}) => {
     },
   });
   command.jsonEnabled = () => true;
-  // DLO delete uses its own bound-connection seam; tests keep overriding createDloClient.
+  // DLO/DMO delete use their own bound-connection seams; tests keep overriding the old factories.
   command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
+  command.createDmoNativeDeleteClient = (...arguments_) => command.createDmoClient(...arguments_);
   return command;
 };
 const run = async (command) => {
@@ -200,6 +201,11 @@ for (const preview of [false, true]) {
     command.resolveTarget = async () => 'target';
     command.createDmoClient = () =>
       client({
+        // The post-DELETE read must observe absence before the delete is confirmed.
+        get: async () => {
+          if (writes) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+          return structuredClone(wire);
+        },
         delete: async (target) => {
           assert.equal(target, name);
           writes++;
@@ -313,7 +319,10 @@ for (const scope of [undefined, 'Team'])
       remove.resolveTarget = async () => 'target';
       remove.createDmoClient = () =>
         client({
-          get: async () => actual,
+          get: async () => {
+            if (deletes) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+            return actual;
+          },
           delete: async () => {
             deletes++;
           },
@@ -324,7 +333,13 @@ for (const scope of [undefined, 'Team'])
       assert.equal(deletes, preview ? 0 : 1);
       const mismatch = invocation(Delete, { dataspace: 'Other', preview: false });
       mismatch.resolveTarget = async () => 'target';
-      mismatch.createDmoClient = remove.createDmoClient;
+      mismatch.createDmoClient = () =>
+        client({
+          get: async () => actual,
+          delete: async () => {
+            deletes++;
+          },
+        });
       const refused = await run(mismatch);
       assert.equal(refused.status, 'blocked');
       assert.equal(deletes, preview ? 0 : 1);
@@ -342,6 +357,7 @@ for (const preview of [true, false])
         return client({
           get: async (...arguments_) => {
             reads.push(arguments_);
+            if (writes.length > 0) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
             return { ...wire, dataSpaceName: 'Team' };
           },
           delete: async (...arguments_) => {
@@ -350,7 +366,8 @@ for (const preview of [true, false])
         });
       };
       const result = await run(command);
-      assert.deepEqual(reads, [[name]]);
+      // A confirmed delete reads once more after the DELETE.
+      assert.deepEqual(reads, preview || dataspace ? [[name]] : [[name], [name]]);
       assert.deepEqual(writes, preview || dataspace ? [] : [[name]]);
       assert.equal(result.status, dataspace ? 'blocked' : 'success');
       assert.deepEqual(result.result.items[0], {
