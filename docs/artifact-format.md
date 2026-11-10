@@ -158,6 +158,12 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   the removal then runs after those mappings. Otherwise the deploy is refused with
   `DMO_FIELD_REMOVAL_MAPPED` before any write, naming those files and the single
   command.
+- `sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete` removes
+  named custom fields and their mapping pairs in the org, then overwrites this file
+  and the `data360/mapping/<MappingApiName>.mapping-meta.json` file of every mapping
+  that lost a pair with the current definition. Only files that already exist under
+  `--output-dir` (default: current directory) are refreshed; none is created or
+  deleted. It is the one delete operation that writes project files.
 - The `isMapped` marker on a field is saved as retrieved but describes the mapping,
   not the DMO: it is never sent, compared or required.
 

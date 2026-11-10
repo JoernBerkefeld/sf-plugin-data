@@ -37,7 +37,28 @@ import { deleteCalculatedInsight } from '../../services/delete-calculated-insigh
 import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
-import { nativeDmoName, NativeDmoError } from '../../artifacts/native-dmo-document.js';
+import {
+  nativeDmoFieldName,
+  nativeDmoName,
+  NativeDmoError,
+} from '../../artifacts/native-dmo-document.js';
+import { writeNativeDmoDocument } from '../../artifacts/write-native-dmo.js';
+import { writeNativeMappingDocument } from '../../artifacts/write-native-mapping.js';
+import {
+  dmoFieldLocalFiles,
+  executeDmoFieldDelete,
+  localFileExists,
+  planDmoFieldDelete,
+  refreshDmoFieldFiles,
+} from '../../services/delete-dmo-field.js';
+import type {
+  DmoFieldDeleteClients,
+  DmoFieldDeletePlan,
+  DmoFieldDeleteProgress,
+  DmoFieldPair,
+} from '../../services/delete-dmo-field.js';
+import type { NativeDmoSettle } from '../../services/native-dmo.js';
+import path from 'node:path';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { createNativeDmoDeleteClient } from '../../transport/dmo-native-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
@@ -83,8 +104,26 @@ export type DeleteEnvelope = {
   result: {
     items: Array<{
       identity: { dataSpace: string; apiName: string };
-      operation: 'preview' | 'delete';
+      operation: 'preview' | 'delete' | 'delete-field';
       deleteDlo?: boolean;
+      /** Field-level delete: the DMO fields named with --field. */
+      fields?: string[];
+      /** Field-level delete: fields whose absence a read confirmed. */
+      removedFields?: string[];
+      /** Field-level delete: mapping pairs whose removal a read confirmed. */
+      unmappedPairs?: Array<{
+        mapping: string;
+        sourceFieldDeveloperName: string;
+        targetFieldDeveloperName: string;
+      }>;
+      /** Field-level delete: project files and what happened to each. */
+      refreshedFiles?: Array<{
+        path: string;
+        outcome: 'refreshed' | 'unchanged' | 'not-present' | 'failed';
+        code?: string;
+      }>;
+      /** Field-level delete preview: project files an execution would refresh. */
+      localFiles?: Array<{ path: string; exists: boolean }>;
       targetApiName?: string;
       targetDloName?: string;
       routes?: Array<{
@@ -105,11 +144,13 @@ export type DeleteEnvelope = {
         | 'confirmed-deleted'
         | 'acknowledged-processing'
         | 'acknowledged'
+        | 'partially-applied'
         | 'unknown';
       prerequisitesPreserved?: true;
       plan?: Array<{
-        operation: 'unmap' | 'delete';
+        operation: 'unmap' | 'delete' | 'delete-field';
         apiName: string;
+        fieldName?: string;
         sourceFieldDeveloperName?: string;
         targetFieldDeveloperName?: string;
         developerName?: string;
@@ -117,13 +158,119 @@ export type DeleteEnvelope = {
     }>;
   };
 };
+type DeleteItem = DeleteEnvelope['result']['items'][number];
+
+type FieldDeleteFlags = {
+  metadata?: string[];
+  field?: string[];
+  preview: boolean;
+  'target-org'?: string;
+  'api-version'?: string;
+  dataspace?: string;
+  'output-dir'?: string;
+  'source-dir'?: string;
+  'confirm-delete'?: boolean;
+  'transform-target-id'?: string;
+  'delete-dlo'?: boolean;
+};
+
+/**
+ * Reduce a pair to the names reported in the result; the selector stays internal.
+ * @param {DmoFieldPair} pair Planned or removed pair.
+ * @returns {{mapping: string, sourceFieldDeveloperName: string, targetFieldDeveloperName: string}} Reported pair.
+ */
+function reportedPair(pair: DmoFieldPair): NonNullable<DeleteItem['unmappedPairs']>[number] {
+  return {
+    mapping: pair.mapping,
+    sourceFieldDeveloperName: pair.sourceFieldDeveloperName,
+    targetFieldDeveloperName: pair.targetFieldDeveloperName,
+  };
+}
+
+/**
+ * Say what a stopped field-level delete had already written and what it had not.
+ * @param {DmoFieldDeleteProgress} progress State at the failure.
+ * @param {DmoFieldDeletePlan} plan Admitted plan.
+ * @returns {string} Next action built only from validated identifiers.
+ */
+function fieldDeleteStop(progress: DmoFieldDeleteProgress, plan: DmoFieldDeletePlan): string {
+  const fields = plan.fields.join(', ');
+  const done =
+    progress.unmappedPairs.length > 0
+      ? `Mapping pair(s) already removed and confirmed: ${progress.unmappedPairs
+          .map(
+            (pair) =>
+              `${pair.sourceFieldDeveloperName} -> ${pair.targetFieldDeveloperName} in ${pair.mapping}`,
+          )
+          .join('; ')}.`
+      : 'No mapping pair was removed.';
+  const pending = progress.pendingPair;
+  const stop = pending
+    ? `The removal of pair ${pending.sourceFieldDeveloperName} -> ${pending.targetFieldDeveloperName} from mapping ${pending.mapping} was sent once and is not confirmed; read that mapping before another attempt. No field was removed.`
+    : progress.step === 'recheck'
+      ? 'No field was removed.'
+      : progress.step === 'remove'
+        ? `The Metadata API destructive change for ${fields} was sent once and is not confirmed; read the DMO before another attempt.`
+        : `The Metadata API destructive change for ${fields} was acknowledged, but the absence of the field(s) is not confirmed; read the DMO before another attempt.`;
+  return `${done} ${stop} No local file was refreshed. No retry or rollback.`;
+}
+
+/**
+ * Word the human output of one field-level delete item.
+ * @param {DeleteItem} item Item carrying `fields`.
+ * @returns {string[]} Lines in the order the work ran.
+ */
+function fieldDeleteLines(item: DeleteItem): string[] {
+  const name = item.identity.apiName;
+  const fields = (item.fields ?? []).join(', ');
+  const lines: string[] = [];
+  if (item.operation === 'preview') {
+    if (item.outcome !== 'delete')
+      lines.push(`Blocked: dmo:${name} field ${fields}; mutation: ${item.mutation}.`);
+    for (const step of item.plan ?? [])
+      lines.push(
+        step.operation === 'unmap'
+          ? `Planned field unmap: ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName} in mapping ${step.apiName}.`
+          : `Planned field delete: ${step.fieldName} from dmo ${name}.`,
+      );
+    for (const file of item.localFiles ?? [])
+      lines.push(
+        file.exists
+          ? `Planned file refresh: ${file.path}`
+          : `Not present locally, not created: ${file.path}`,
+      );
+    return lines;
+  }
+  for (const pair of item.unmappedPairs ?? [])
+    lines.push(
+      `unmapped ${pair.sourceFieldDeveloperName} -> ${pair.targetFieldDeveloperName} in mapping ${pair.mapping}`,
+    );
+  if (item.removedFields?.length)
+    lines.push(`deleted field ${item.removedFields.join(', ')} from dmo ${name}`);
+  else
+    lines.push(
+      `${item.outcome === 'blocked' ? 'Blocked' : item.outcome === 'deletion-unconfirmed' ? 'Unconfirmed' : 'Failed'}: dmo:${name} field ${fields}; mutation: ${item.mutation}.`,
+    );
+  for (const file of item.refreshedFiles ?? [])
+    lines.push(
+      file.outcome === 'refreshed'
+        ? `refreshed ${file.path}`
+        : file.outcome === 'unchanged'
+          ? `unchanged ${file.path}`
+          : file.outcome === 'not-present'
+            ? `not present locally, not created: ${file.path}`
+            : `refresh failed (${file.code}): ${file.path}`,
+    );
+  return lines;
+}
+
 /** Delete exact native DLO definitions, or preview without mutation. */
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
   public static readonly summary =
-    'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs or qualified non-last mappings.';
+    'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or qualified non-last mappings.';
   public static readonly description =
-    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
+    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom DMO only; every field must exist, be custom, not the primary key and not generated; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then, each write once and never retried: one DELETE per collected pair with a mapping readback (API61..68), a fresh DMO read that must show the fields unmapped, one Metadata API destructive change for all fields, and a polled readback that they are absent. The first failure stops and reports what was already written; nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -135,7 +282,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multipleNonGreedy: true,
       required: true,
       summary:
-        'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName.',
+        'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm (alone with --field) or mapping:ApiName.',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
@@ -152,7 +299,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     'confirm-delete': Flags.boolean({
       default: false,
       summary:
-        'Transform, Segment, IR, CI or native Graph: explicitly acknowledge destructive deletion.',
+        'Transform, Segment, IR, CI, native Graph or --field: explicitly acknowledge destructive deletion.',
     }),
     'transform-target-id': Flags.string({
       summary: 'Transform-only exact native dataTransformId to delete (required).',
@@ -161,6 +308,17 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       default: false,
       summary:
         'Stream-only acknowledgement: delete the exclusively linked DLO; otherwise preserve it.',
+    }),
+    field: Flags.string({
+      multiple: true,
+      multipleNonGreedy: true,
+      summary:
+        'Field-level delete: exact custom field Name__c to remove from the one selected dmo:Name__dlm, together with its mapping pairs; repeatable. Requires --confirm-delete.',
+    }),
+    'output-dir': Flags.directory({
+      exists: false,
+      summary:
+        'With --field only: project root whose existing DMO and mapping files are refreshed; defaults to the current directory.',
     }),
   };
   protected deleteDataTransform = deleteDataTransform;
@@ -229,7 +387,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     openBoundSsot(target, version);
   protected preflightDeleteMapping = preflightDeleteNativeMapping;
   protected deleteMapping = deleteNativeMapping;
+  // Field-level delete: the only DMO client with the Metadata API route for removeFields.
   protected createDmoClient = createDmoClient;
+  protected writeNativeDmo = writeNativeDmoDocument;
+  protected writeNativeMapping = writeNativeMappingDocument;
+  // Field-level delete readback attempts and spacing; tests replace it to avoid waiting.
+  protected fieldRemovalSettle: NativeDmoSettle | undefined;
   protected createDmoNativeDeleteClient = createNativeDmoDeleteClient;
   protected retrieveDmo = previewDeleteNativeDmo;
   protected deleteDmo = deleteNativeDmo;
@@ -251,6 +414,180 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     if (!username) throw new DloError('TARGET_ORG_REQUIRED');
     return username;
   };
+  /**
+   * Field-level delete: remove the named custom fields from one DMO, their mapping pairs first,
+   * then refresh the project files that already exist. Never throws; the envelope is completed.
+   * @param {FieldDeleteFlags} flags Parsed flags.
+   * @param {DeleteEnvelope} envelope Envelope to complete.
+   * @returns {Promise<void>} Resolves when the envelope is final.
+   */
+  private async deleteDmoFields(flags: FieldDeleteFlags, envelope: DeleteEnvelope): Promise<void> {
+    const refuse = (code: string, message: string): void => {
+      envelope.diagnostics.errors.push({ code, message, retryable: false });
+    };
+    const selector = flags.metadata?.[0] ?? '';
+    if (
+      !flags.field?.length ||
+      flags.metadata?.length !== 1 ||
+      !selector.startsWith('dmo:') ||
+      !nativeDmoName.test(selector.slice(4)) ||
+      flags['source-dir'] !== undefined ||
+      flags['delete-dlo'] ||
+      flags['transform-target-id'] !== undefined
+    )
+      return refuse(
+        'INVALID_FIELD_DELETE_SELECTION',
+        '--field removes fields from exactly one -m dmo:<Name__dlm> and cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id; --output-dir is valid only with --field. No org call was made.',
+      );
+    if (flags.field.some((name) => !nativeDmoFieldName.test(name)))
+      return refuse(
+        'INVALID_DMO_FIELD',
+        '--field takes exact custom field API names ending in __c. No org call was made.',
+      );
+    let version: string;
+    try {
+      version = nativeApiVersion(flags['api-version']);
+    } catch {
+      return refuse(
+        'INVALID_SCOPE',
+        '--api-version must be auto or a numeric version from 61.0. No org call was made.',
+      );
+    }
+    envelope.metadata.apiVersion = version;
+    const apiName = selector.slice(4);
+    const fields = [...new Set(flags.field)];
+    const requestScope = flags.dataspace;
+    const root = path.resolve(flags['output-dir'] ?? process.cwd());
+    const item: DeleteItem = {
+      identity: { dataSpace: requestScope ?? 'default', apiName },
+      operation: flags.preview ? 'preview' : 'delete-field',
+      fields,
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+      routes: [
+        { operation: 'dmo.get', transport: 'native', apiVersion: version },
+        { operation: 'mapping.list', transport: 'native', apiVersion: version },
+        { operation: 'mapping.get', transport: 'native', apiVersion: version },
+        { operation: 'mapping.field-mapping.delete', transport: 'native', apiVersion: version },
+        { operation: 'dmo.field.delete', transport: 'metadata', apiVersion: version },
+      ],
+    };
+    envelope.result.items.push(item);
+    if (!flags.preview && flags['confirm-delete'] !== true)
+      return refuse(
+        'DMO_FIELD_DELETE_CONFIRMATION_REQUIRED',
+        'Pass --confirm-delete to delete the field(s) together with their mapping pairs; nothing was changed.',
+      );
+    const fieldError = (error: unknown, nextAction: string): void =>
+      refuse(
+        error instanceof DloError ||
+          error instanceof NativeDmoError ||
+          error instanceof NativeMappingError
+          ? error.code
+          : 'DELETE_FAILED',
+        operationDiagnostic(error, nextAction),
+      );
+    let clients: DmoFieldDeleteClients;
+    let plan: DmoFieldDeletePlan;
+    try {
+      const target = await this.resolveTarget(flags['target-org']);
+      clients = {
+        dmo: this.createDmoNativeDeleteClient(target, version),
+        remover: (this.createDmoClient ?? createDmoClient)(target, version),
+        mappings: (this.createMappingClient ?? createMappingClient)(
+          target,
+          version,
+          undefined,
+          requestScope,
+          this.createMappingSender(target, version),
+        ),
+      };
+      plan = await planDmoFieldDelete(apiName, fields, clients, requestScope);
+      item.identity.dataSpace = plan.dataSpace;
+      if (flags.preview) {
+        const files = dmoFieldLocalFiles(plan, root);
+        const present = await Promise.all(files.map(async (file) => localFileExists(file.path)));
+        item.plan = [
+          ...plan.mappings.flatMap(({ pairs }) =>
+            pairs.map((pair) => ({
+              operation: 'unmap' as const,
+              apiName: pair.mapping,
+              sourceFieldDeveloperName: pair.sourceFieldDeveloperName,
+              targetFieldDeveloperName: pair.targetFieldDeveloperName,
+              developerName: pair.developerName,
+            })),
+          ),
+          ...fields.map((fieldName) => ({
+            operation: 'delete-field' as const,
+            apiName,
+            fieldName,
+          })),
+        ];
+        item.localFiles = files.map((file, index) => ({
+          path: file.path,
+          exists: present[index],
+        }));
+        item.outcome = 'delete';
+        envelope.status = 'success';
+        return;
+      }
+    } catch (error) {
+      return fieldError(
+        error,
+        'No write attempted; correct the reported check before another attempt.',
+      );
+    }
+    const progress: DmoFieldDeleteProgress = {
+      step: 'unmap',
+      unmappedPairs: [],
+      removalSent: false,
+    };
+    try {
+      await executeDmoFieldDelete(plan, clients, progress, requestScope, this.fieldRemovalSettle);
+    } catch (error) {
+      const written = progress.unmappedPairs.length > 0 || progress.pendingPair !== undefined;
+      item.unmappedPairs = progress.unmappedPairs.map((pair) => reportedPair(pair));
+      item.removedFields = [];
+      if (progress.step === 'readback') {
+        item.outcome = 'deletion-unconfirmed';
+        item.mutation = 'acknowledged';
+      } else if (progress.removalSent || progress.pendingPair) {
+        item.outcome = 'failed';
+        item.mutation = 'unknown';
+      } else if (written) {
+        item.outcome = 'failed';
+        item.mutation = 'partially-applied';
+      }
+      envelope.status = item.outcome === 'blocked' ? 'blocked' : 'failed';
+      return fieldError(error, fieldDeleteStop(progress, plan));
+    }
+    item.outcome = 'deleted';
+    item.mutation = 'confirmed-deleted';
+    item.removedFields = fields;
+    item.unmappedPairs = progress.unmappedPairs.map((pair) => reportedPair(pair));
+    // Only now, after every org step is confirmed, are existing project files refreshed.
+    item.refreshedFiles = await refreshDmoFieldFiles(
+      plan,
+      root,
+      clients,
+      {
+        dmo: this.writeNativeDmo ?? writeNativeDmoDocument,
+        mapping: this.writeNativeMapping ?? writeNativeMappingDocument,
+      },
+      requestScope,
+    );
+    const failed = item.refreshedFiles.filter((file) => file.outcome === 'failed');
+    if (failed.length === 0) {
+      envelope.status = 'success';
+      return;
+    }
+    envelope.status = 'failed';
+    refuse(
+      'LOCAL_REFRESH_FAILED',
+      `The field(s) ${fields.join(', ')} were deleted from ${apiName} in the org, but ${failed.length === 1 ? 'this project file was' : 'these project files were'} not refreshed: ${failed.map((file) => `${file.path} (${file.code})`).join('; ')}. Do not repeat the delete; refresh with sf data360 retrieve and --overwrite.`,
+    );
+  }
+
   /**
    * Execute exact selection sequentially, stopping on the first error.
    * @returns {Promise<DeleteEnvelope>} Payload-free deletion evidence.
@@ -279,6 +616,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
         for (const item of envelope.result.items) {
+          if (item.fields) {
+            for (const line of fieldDeleteLines(item)) this.log(line);
+            continue;
+          }
           const action =
             item.operation === 'preview'
               ? `Planned ${item.outcome}`
@@ -319,6 +660,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return envelope;
     };
     try {
+      if (flags.field?.length || flags['output-dir'] !== undefined) {
+        await this.deleteDmoFields(flags, envelope);
+        return finish();
+      }
       if (
         flags.metadata?.some(
           (selector) => selector === 'data-transform' || selector.startsWith('data-transform:'),

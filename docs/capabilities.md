@@ -455,7 +455,7 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   written PATCH, otherwise `blocked`) and the batch stops. It never sends a second
   PATCH. A batch that stops between the stages reports `DMO_FIELD_REMOVAL_PENDING`
   on the DMO item.
-- The two-stage order is covered by synthetic tests only.
+- The two-stage order is observed at API 68 on one mapped custom DMO with one mapping.
 - Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold
   data or are referenced by a segment, calculated insight, relationship or other
   component.
@@ -476,9 +476,43 @@ Safety guard: deploy, delete and delete preview refuse standard, namespaced (for
 example `ssot__Individual__dlm`) and platform-generated DMOs (`creationType` not
 `Custom`) with `UNSUPPORTED_DMO_TARGET`. Mappings to such targets are refused.
 
-Delete is unchanged in scope: exact name, no dependency preflight, no prompt.
-Salesforce may cascade to the DMO's mapping. Deletion resolves the exact target
-through `deleteNativeDmo` and uses `DmoClient.delete`.
+Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read
+or written. Salesforce may cascade to the DMO's mapping. Deletion resolves the exact
+target through `deleteNativeDmo` and uses `DmoClient.delete`.
+
+Field-level delete,
+`sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete`:
+
+- Removes named custom fields from one DMO together with their mapping pairs. It is
+  the one delete operation that writes project files, and it changes mappings the
+  command line does not name; execution requires `--confirm-delete`
+  (`DMO_FIELD_DELETE_CONFIRMATION_REQUIRED` before any org call).
+- `--field` is repeatable and needs exactly one `dmo:` selector. Any other selector,
+  `--source-dir`, `--delete-dlo`, `--transform-target-id`, or `--output-dir` without
+  `--field` is refused with `INVALID_FIELD_DELETE_SELECTION` before any org call.
+- Admission is read-only: custom DMO (`UNSUPPORTED_DMO_TARGET`); each field exists
+  (`DMO_FIELD_NOT_FOUND`), is custom, not the primary key and not generated
+  (`UNSUPPORTED_DMO_FIELD_CHANGE`); the mappings targeting the DMO are listed and
+  every pair targeting a named field is collected. A mapped field without an
+  identified pair, including a failed list request, is refused with
+  `DMO_FIELD_REMOVAL_MAPPED`. Pair removal needs an ACTIVE mapping and API 61 to 68.
+- Writes, each once and never retried: one DELETE per pair with a mapping readback;
+  a fresh DMO read that must show the fields unmapped; one Metadata API destructive
+  change for all fields; polled readback that the fields are absent. The first
+  failure stops; the item reports the confirmed `unmappedPairs` and the diagnostic
+  names the unconfirmed write. Nothing is rolled back.
+- After success the existing `data360/dmo/<Name__dlm>.dmo-meta.json` and
+  `data360/mapping/<MappingApiName>.mapping-meta.json` files under `--output-dir`
+  (default: current directory) are overwritten with fresh reads. Absent files are
+  not created (`not-present`); no file is deleted. A failed refresh keeps outcome
+  `deleted`, reports the file as `failed` and `LOCAL_REFRESH_FAILED`, and exits
+  nonzero.
+- `--preview` writes nothing and reports the `unmap` and `delete-field` steps and
+  `localFiles` with `exists`.
+- Result item: operation `delete-field`, `removedFields`, `unmappedPairs`,
+  `refreshedFiles`. A repeat after success is refused with `DMO_FIELD_NOT_FOUND`.
+- Observed at API 68: a mapped field with one mapping, and unmapped fields in a second
+  org. Fields mapped by several mappings are covered by synthetic tests only.
 
 Dependency expansion (`--include-dependencies`) and Git selection
 (`--changed-since`) use the native DMO file. A native DMO changed since a Git
@@ -493,6 +527,7 @@ Not qualified:
 
 - [ ] Mapped or data-bearing DMOs.
 - [ ] Field removal of data-bearing or otherwise referenced fields.
+- [ ] Field-level delete (`delete --field`) against an org.
 - [ ] Non-default data spaces.
 - [ ] API versions other than 68 for the behaviour listed above.
 - [ ] Relationships and SQL/flex DMOs.

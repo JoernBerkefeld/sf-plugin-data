@@ -321,7 +321,8 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
     'api-version': '68.0',
     metadata: [`data-graph:InstalledGraph`],
     'source-dir': operation === 'delete' ? graphReceipt.path : undefined,
-    'output-dir': graphProject,
+    // Delete admits --output-dir only together with --field.
+    'output-dir': operation === 'delete' ? undefined : graphProject,
     overwrite: true,
     preview: false,
     'allow-processing': true,

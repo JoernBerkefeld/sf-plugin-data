@@ -57,7 +57,7 @@ export type NativeDmoSettle = {
   sleep: (milliseconds: number) => Promise<void>;
 };
 
-const defaultSettle: NativeDmoSettle = {
+export const defaultNativeDmoSettle: NativeDmoSettle = {
   attempts: 6,
   delayMs: 5000,
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -92,7 +92,7 @@ export function mappedFieldRemoval(
  * @param {NativeDmoField} field Portable field.
  * @returns {boolean} Whether writes must omit the field.
  */
-function generated(field: NativeDmoField): boolean {
+export function isGeneratedDmoField(field: NativeDmoField): boolean {
   return (
     systemFields.has(field.name) || field.name.startsWith('KQ_') || field.creationType === 'System'
   );
@@ -132,7 +132,7 @@ function fieldChange(
     if (observedFieldKeys.has(key) || isDeepStrictEqual(before, after)) continue;
     if (writeOnlyFieldKeys.has(key) && before === undefined) continue;
     if (readOnlyFieldKeys.has(key) && after === undefined) continue;
-    if (readOnlyFieldKeys.has(key) || immutableFieldKeys.has(key) || generated(target))
+    if (readOnlyFieldKeys.has(key) || immutableFieldKeys.has(key) || isGeneratedDmoField(target))
       return { blocked: key };
     change = 'edit';
   }
@@ -246,7 +246,7 @@ export async function preflightNativeDmo(
           : { description: desired.spec.description }),
         ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
         fields: desired.spec.fields
-          .filter((field) => !generated(field))
+          .filter((field) => !isGeneratedDmoField(field))
           .map((field) => fieldInput(field)),
       },
     };
@@ -261,7 +261,7 @@ export async function preflightNativeDmo(
   for (const [name, field] of existing) {
     const authored = incoming.get(name);
     // Generated fields may be left out of an authored definition and are never removed.
-    if (!authored && generated(field)) continue;
+    if (!authored && isGeneratedDmoField(field)) continue;
     if (!authored) {
       // The native DMO API has no route to remove a field; the Metadata API does, on request.
       if (options.allowFieldRemoval === true && !field.isPrimaryKey) {
@@ -313,7 +313,7 @@ export async function preflightNativeDmo(
     throw error;
   }
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
-  if (added.some((field) => generated(field) || field.isPrimaryKey))
+  if (added.some((field) => isGeneratedDmoField(field) || field.isPrimaryKey))
     throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_ADDITION');
   const fields = [...edited, ...added].map((field) => fieldInput(field));
   // An absent description is not managed; an explicit empty string clears it.
@@ -409,7 +409,7 @@ export async function deployNativeDmo(
   value: unknown,
   client: DmoClient,
   requestScope?: string,
-  settle: NativeDmoSettle = defaultSettle,
+  settle: NativeDmoSettle = defaultNativeDmoSettle,
   options: NativeDmoDeployOptions = {},
 ): Promise<{
   operation: 'create' | 'update' | 'unchanged';

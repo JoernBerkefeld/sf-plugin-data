@@ -1839,7 +1839,8 @@ test('Graph command diagnostics render JSON and human failures including before 
             'api-version': '68.0',
             metadata: [`data-graph:${name}`],
             'source-dir': Class === Delete ? receipt.path : [receipt.path],
-            'output-dir': cwd,
+            // Delete admits --output-dir only together with --field.
+            ...(Class === Delete ? {} : { 'output-dir': cwd }),
             preview: false,
             'allow-processing': true,
             'confirm-delete': true,

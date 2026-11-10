@@ -1,3 +1,32 @@
+# Three ways to remove a mapped DMO field — 2026-11-10
+
+A mapped field is never removed on its own, because Salesforce would silently drop
+its mapping pair. Three paths now exist. Version stays 0.1.0; nothing pushed.
+
+1. The refusal (`DMO_FIELD_REMOVAL_MAPPED`) looks up the mappings that hold the pair
+   and prints the retrieve command, the file edits and the deploy command with the
+   real names (commit `00d8347`).
+2. One deploy with the mapping and the DMO files and `--allow-field-removal`: the DMO
+   deploys in two stages around the mapping, after an admission check that every
+   holder of the pair is selected and omits it (commit `f641b21`).
+3. `sf data360 delete -m dmo:<Name> --field <Field__c> --confirm-delete` removes the
+   pairs, then the field, then refreshes the existing local DMO and mapping files.
+   This is the one delete operation that writes project files.
+
+Live results through the source-tree CLI at API 68. Source org, on an owned DLO, DMO
+and mapping: path 1 named both mapped fields and the mapping with correct commands;
+path 2 was refused while the mapping file still listed the pair, then removed the
+pair and the field in one command (about six minutes, most of it the mapping step)
+and reported unchanged on repeat; path 3 required confirmation, previewed the plan,
+removed pair and field in about thirty seconds, refreshed both files, refused a
+repeat with `DMO_FIELD_NOT_FOUND`, and a deploy of the refreshed files reported
+unchanged. Target org: path 3 removed two unmapped fields from a fresh DMO, refused
+the primary key, and the refreshed file deployed unchanged.
+
+Not covered live: a field mapped by more than one mapping, data-bearing or otherwise
+referenced fields, non-default data spaces. `sf data360 delete` still never removes
+local files for any family.
+
 # DMO field removal through the Metadata API — 2026-11-10
 
 `sf data360 deploy --allow-field-removal` removes custom DMO fields that exist in the
