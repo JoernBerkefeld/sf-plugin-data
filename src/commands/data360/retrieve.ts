@@ -789,6 +789,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           throw new IdentityResolutionError('IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED');
       }
       if (segmentSelectors.length > 0) operationApiVersion(flags['api-version'], 'segment');
+      // Known limit: a DMO in a mixed or dependency selection still pins the shared connection
+      // to auto/65.0 here, although the DMO itself is read natively. Changing it alters the
+      // version used for co-selected Segment, Graph and IR reads.
       if (hasDmos) operationApiVersion(flags['api-version'], 'dmo');
       effectiveVersion =
         dloSelectors.length === selectors.length && dloSelectors.length > 0

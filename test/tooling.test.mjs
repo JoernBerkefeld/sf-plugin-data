@@ -110,7 +110,7 @@ test('capability checklist accurately distinguishes bounded DMO retrieval from g
     assert.ok(
       checklist.includes(
         family === 'dmo'
-          ? '## dmo: general support unimplemented; bounded explicit retrieval available'
+          ? '## dmo: native route, bounded live verification'
           : family === 'data-graph'
             ? '## data-graph: bounded existing-owner support above; broader scope pending'
             : `## ${family}: unimplemented`,

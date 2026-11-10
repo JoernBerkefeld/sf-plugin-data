@@ -385,6 +385,18 @@ test('Git selector refuses a changed legacy DMO artifact with its own remediatio
   }
 });
 
+test('Git selector lets a deleted legacy DMO file through so migration can complete', async () => {
+  const cwd = await fixture();
+  const legacy = 'data360/default/dmo/Expected__dlm.json';
+  await put(cwd, legacy, document('Expected'));
+  await commit(cwd, legacy);
+  // Migration: the old file is removed and the native file added in the same change.
+  await unlink(path.join(cwd, legacy));
+  await put(cwd, relative('Expected'), document('Expected'));
+  const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(selected.paths, [path.join(cwd, relative('Expected'))]);
+});
+
 test('Git selector refuses tracked directory link replacement before deployment', async () => {
   const cwd = await fixture();
   await put(cwd, relative('Linked'), document('Linked'));

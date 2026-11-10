@@ -97,12 +97,16 @@ populated-object, lower-version, inventory-completeness or released-package proo
 
 ## Native standalone DMO unchanged deployment — 2026-11-04
 
-Exact native `dmo:Name__dlm` deployment compares the existing target only after
-all scope, key and field-preservation checks. Equal labels with no additions return
+Historical record of the 2026-11-04 scope. Its limits (Other category, Text fields,
+label and additive Text updates only) no longer apply; current behaviour is in the
+[dmo section](#dmo-native-route-bounded-live-verification) below.
+
+Exact native `dmo:Name__dlm` deployment compared the existing target only after
+all scope, key and field-preservation checks. Equal labels with no additions returned
 `unchanged` / `not-attempted`, without POST or PATCH. Field order is immaterial;
 the deliberate omission of ordinary generated System `KQ_Id__c` from saved JSON
-is not a removal. Other field edits/removals remain blocked. Label changes and
-ordinary nonprimary Text additions retain independent post-write GET confirmation.
+is not a removal. At that time other field edits were blocked, and label changes and
+ordinary nonprimary Text additions used independent post-write GET confirmation.
 
 Fresh isolated-installed API68 acceptance transported an exact source-retrieved
 portable Other/default empty Text DMO into the target with a different local ID.
@@ -324,23 +328,13 @@ mutations. The installed target-bound run consumed 8m52.853s including pack/inst
 zero. Child/auth HTTP traffic remains unknown, not a global wire-count claim.
 Unchanged-source cross-org and successful-computation acceptance remain separate gates.
 
-General seven-family support is **unimplemented**; explicit bounded DMO retrieval
-is available through current service-owned capability checks, not a permanent
-fixture-specific architecture. No endpoint or writable variant is
-claimed verified. Historical API observations are not implemented contracts.
+General seven-family support is **unimplemented**. Each family section below
+states its own bounded scope; verified behaviour is named there and nothing beyond
+it is claimed. Historical API observations are not implemented contracts.
 Every family must complete all gates below before support can be declared.
 
-Explicit `--api-version latest` is experimental and read-only (retrieve or deploy
-`--preview`); numeric `65.0` remains the default. Commands discover advertised
-versions once with authenticated `/services/data`, without cache/fallback/retry,
-retain literal REST `/latest/ssot/`, and pin SOAP to the numeric maximum. Auth
-initialization uses explicit numeric bootstrap `65.0` so core cannot perform an
-earlier unguarded cached/network version discovery (including optional target auth). Existing
-DMO capability evidence must still be `65.0`; any newer evidence, including `68.0`,
-blocks before DMO calls. No API 68 or actual REST-version qualification is claimed.
-Direct latest deployment is refused before preflight/mutation; exported execution
-and transport guards remain. Envelope `apiVersion` reports the request, optional
-`soapApiVersion` reports numeric SOAP evidence only. Failed discovery is payload-free.
+`--api-version latest` is not accepted. Default/`auto` and explicit numeric pins
+select the family-specific routes described in each section.
 
 ## dlo: unimplemented
 
@@ -375,69 +369,84 @@ marks DLO `dataSource` and atomic `dataModelObjectConfig` inputs as API67-only.
 - [ ] Classify writable/read-only/unknown fields and connector prerequisites.
 - [ ] Prove configuration-only create/update/no-op without starting ingestion.
 
-## dmo: general support unimplemented; bounded explicit retrieval available
+## dmo: native route, bounded live verification
 
-`sf data360 retrieve -m dmo:ApiName` delegates capability checks to the existing
-service, then writes authored-only canonical JSON through the existing writer.
-No command-level category/field-count restriction is added. Current service
-supports API 65.0/default through the common DMO projector with recognized generated
-recipe, exact semantics and arbitrary nonempty authored counts/types. Only projected,
-blocker-free, validated candidates reach the independently common-mapped writer.
-Incomplete or unknown variants diagnose without publication. Repeatable exact selectors,
-`-m dmo`, and omitted selectors (all currently implemented families: DMO only) now
-resolve deduplicated sorted selection. Type/all reads complete inventory before
-writing and filters the explicit default space; exact-only does not list. Each
-unsupported or failed object has an identity-bearing diagnostic, retained successful
-receipts, and a nonzero aggregate. Empty inventory succeeds without files. API 65.0/default
-and selection validation precede authentication. General deployment remains unimplemented.
-Internal `readDeployInputs` now resolves explicit files/directories or exact project
-DMO members with bounded no-link authored-only JSON admission. Repeated identical
-inputs coalesce; conflicting identities block. Public `deploy --preview` now wires
-this resolver and per-item target preflight with core org/API/default scope flags.
-Preview returns advisory create/update/unchanged/blocked-changes/blocked results without writes.
-Shared execution preflight rejects authored categories other than Other and primary
-keys that are non-Text or dynamic before target reads: these cannot qualify through
-the current generated-recipe readback contract. Offline mapping remains broader;
-no authored field-count or unrelated field-type restriction is introduced.
-Without preview the command preflights the whole selection before sequential executor
-calls, stopping on first blocked/failure/unknown mutation and retaining completed and
-explicitly unattempted item receipts. Each executor still preflights independently. Internal `executeDmoCreate` now adds a fixed-endpoint
-API65/default guarded POST following fresh complete-inventory absence proof. No-op
-and blocked differences never POST. Independent common retrieval must qualify
-identity, generated/qualifier integrity, relationships and authored meaning before
-confirmed-created; missing/mismatched qualification or POST errors retain unknown
-possible mutation with no retry/rollback. Public bounded execution is wired; artifact/report
-writes and new live acceptance are not introduced. The common mapper remains more
-permissive than the demonstrated projector; unqualified recipes never verify.
+The plugin has one DMO route, the native one. Default/`auto` uses API 68; numeric
+pins from 61 are kept. The artifact is `data360/dmo/<ApiName>__dlm.dmo-meta.json`;
+its format is described in [artifact formats](artifact-format.md). The earlier
+API 65 saved-project adapter and its `data360/default/dmo/<Name>.json` artifact
+were removed. Such a file is refused before any org call with
+`LEGACY_DMO_ARTIFACT_UNSUPPORTED`; the fix is
+`sf data360 retrieve -m dmo:<ApiName>__dlm`.
 
-The pure offline `buildDmoUpdateDelta` helper constructs an allowlisted candidate
-PATCH/expected overlay without authorizing updates. API 65 PATCH uses the exact
-qualified DMO name; its documented response can contain old state. Separate GET
-qualification is mandatory for future execution. Retained synthetic PATCH2 evidence
-now qualifies the full expected overlay offline, including effective field-label
-override with distinct unchanged Metadata base/master labels and complete raw
-expectations. This single checkpoint does not prove general omission/new-field
-preservation. Only the bounded label subset below is enabled publicly. Candidate tests alone
-are not server evidence.
+The plugin keeps no local allowlists. Category, field data types, label length,
+object and field descriptions and extra keys are sent as authored; Salesforce
+decides and its error is reported. Retrieval supports exact names, the bare type
+and omitted selectors; standard, namespaced and generated DMOs can be retrieved. A
+definition may omit generated and system fields. Keys only returned by reads
+(`creationType`, `isDistinct`, `usageTag`, `keyQualifierName`) are kept in
+retrieved files and never sent. After a write the plugin polls reads (up to 6,
+5 seconds apart) to confirm; the write is never repeated.
 
-Public CLI label execution is now available through `executeDmoDeploy`; the command
-admits the whole selection before writes and the service freshly qualifies each target/delta.
-Preview explicitly opts into label deltas. Only object and existing non-primary
-field labels within qualified Other/default/API 65 scope execute. New fields,
-descriptions, primary-key labels and other unproven mixed changes block before writes.
-Independent full readback verifies authored overlay plus raw runtime preservation;
-HTTP 200 alone never confirms success. Ambiguity stops without retry or rollback.
-Recorded Other evidence does not establish other categories or general updates.
+Live-verified at API 68 on two orgs with empty, unmapped custom DMOs in the default
+data space (API probes and plugin acceptance, 2026-11-10):
 
-- [ ] Record official endpoints, versions, pagination and writable contracts.
-- [ ] Preserve keys, qualifiers, attributes, relationships, category and data space.
-- [ ] Distinguish standalone custom versus standard/system/generated variants.
-- [ ] Prove export-to-target create, nondestructive update and unchanged replay.
+- [x] Create with the categories Profile, Engagement and Other. Segment_Membership
+      is internal-only; the other ten schema values are rejected. Input spelling is
+      case-insensitive, reads return upper case, the plugin saves
+      `Profile`/`Engagement`/`Other`. Engagement needs no event date key;
+      `eventDateTimeFieldName` is rejected as unknown input.
+- [x] Ten field data types: Number, Text, Date, DateTime, Url, Phone, Email,
+      Percent, Boolean, Currency. ArrayOfFloats and ArrayOfTexts are rejected by the
+      API. A Currency field adds the generated system field
+      `cdp_sys_record_currency__c`.
+- [x] Salesforce limits object and field labels to 40 characters, requires exactly
+      one primary key (any accepted type), generates the key qualifier
+      (`KQ_<key>__c`, `keyQualifierName`) and rejects input keys outside its schema.
+- [x] Object `description` round-trips. Field `description` and `isDynamicLookup`
+      are accepted but never returned by reads: the plugin sends them when a field
+      is created or otherwise edited, and cannot detect or confirm a change to them
+      alone.
+- [x] Update by PATCH: change the object label, set or clear the object description
+      (absent `spec.description` is not managed; an empty string clears it), change
+      existing field labels, add fields of any accepted type.
 
-The unused internal API65 DMO DELETE transport has been removed. Current native
-DMO deletion still resolves the exact target through `deleteNativeDmo` and uses
-`DmoClient.delete`; its qualified public command and guards are unchanged. Removing
-the disconnected transport does not establish any new deletion qualification.
+Refused by the plugin before any write, because Salesforce cannot do it:
+
+- Changing an existing field's data type or moving the primary key (the API answers
+  200 and silently ignores it), and removing a field (no API route; the Data Model
+  UI offers no field deletion either): `UNSUPPORTED_DMO_FIELD_CHANGE`. Omitting a
+  custom field that exists in the target counts as a removal.
+- Adding a generated field or a second primary key:
+  `UNSUPPORTED_DMO_FIELD_ADDITION`.
+
+A category change is sent, and Salesforce rejects it ("Data Object Category cannot
+be updated").
+
+Safety guard: deploy, delete and delete preview refuse standard, namespaced (for
+example `ssot__Individual__dlm`) and platform-generated DMOs (`creationType` not
+`Custom`) with `UNSUPPORTED_DMO_TARGET`. Mappings to such targets are refused.
+
+Delete is unchanged in scope: exact name, no dependency preflight, no prompt.
+Salesforce may cascade to the DMO's mapping. Deletion resolves the exact target
+through `deleteNativeDmo` and uses `DmoClient.delete`.
+
+Dependency expansion (`--include-dependencies`) and Git selection
+(`--changed-since`) use the native DMO file. A native DMO changed since a Git
+reference, or selected beside Segment/CI/Graph/IR inputs, joins the ordered batch.
+A standard or generated DMO pulled in only as a deploy prerequisite is reported
+(`DMO_PREREQUISITE_NOT_DEPLOYED`) and never written; on retrieve such a
+prerequisite still blocks publication (`UNSUPPORTED_DMO_TARGET`). An all-native
+explicit selection with `--include-dependencies` is still blocked
+(`DMO_DEPENDENCY_EXPANSION_UNSUPPORTED`).
+
+Not qualified:
+
+- [ ] Mapped or data-bearing DMOs.
+- [ ] Non-default data spaces.
+- [ ] API versions other than 68 for the behaviour listed above.
+- [ ] Relationships and SQL/flex DMOs.
+- [ ] Released-package acceptance.
 
 ## relationship: exact definition-only export
 
@@ -513,18 +522,21 @@ have distinct boundaries; neither closes general lifecycle or cross-org support.
 
 ## Bounded Git deployment selection
 
-`deploy --changed-since <ref>` is exclusive with metadata/source-dir and supports
-only current canonical default-space DMO JSON, admitted through the existing input
-resolver. Repository-root resolution, unique merge-base/HEAD changes, index,
-worktree and untracked selection are local. Relevant rename/delete blocks the
-whole selection, regardless of diff.renames configuration. Git inference is not
-historical rename-intent proof. A relevant untracked DMO addition plus any tracked
-worktree deletion blocks conservatively; staging intended changes permits Git
-rename inference, not unsupported lifecycle deployment. Empty selection succeeds
-before downstream target inspection/services, without changing core parse-time auth.
-Optional Git provenance records commits, not file-byte hashes or executable plans.
-API65 preflight/execution guards are unchanged. Reports, CI delivery, exact-byte
-binding and SQL companion selection remain unimplemented; roadmap chunk 6 is partial.
+`deploy --changed-since <ref>` is exclusive with metadata/source-dir. For DMOs it
+selects current native `data360/dmo/<ApiName>__dlm.dmo-meta.json` files, admitted
+through the existing input resolver; a selected native DMO joins the ordered batch
+on the native route. A changed file in the removed `data360/default/dmo` format is
+refused with `LEGACY_DMO_ARTIFACT_UNSUPPORTED`. The other selectable families are
+described in the [Git workflow](git-workflow.md). Repository-root resolution, unique
+merge-base/HEAD changes, index, worktree and untracked selection are local. Relevant
+rename/delete blocks the whole selection, regardless of diff.renames configuration.
+Git inference is not historical rename-intent proof. A relevant untracked DMO
+addition plus any tracked worktree deletion blocks conservatively; staging intended
+changes permits Git rename inference, not unsupported lifecycle deployment. Empty
+selection succeeds before downstream target inspection/services, without changing
+core parse-time auth. Optional Git provenance records commits, not file-byte hashes
+or executable plans. Reports, CI delivery, exact-byte binding and
+SQL companion selection remain unimplemented; roadmap chunk 6 is partial.
 
 ## Shared gates
 
@@ -534,107 +546,15 @@ Repair authentication before a new explicit invocation. Retry and redirect refus
 remain in place; the caller's connection and unrelated consumers are unchanged.
 This does not change API-version discovery or the separate Metadata/SOAP guard.
 
-- [x] Internal single-authored-DMO read-only deploy preflight independently maps
-      source, proves absence through complete scoped inventory, and retrieves
-      existing target through full common semantics. Identity-keyed field comparison
-      ignores reorder only; differences are blocked with static reasons until PATCH
-      is proven. Unknown target semantics and acquisition failures fail closed.
-      No CLI preview wiring, filesystem discovery, mutation or live acceptance.
-
-- [x] Common offline object projector composes the shared field join with exact
-      custom identity/default scope, category/taxonomy classification, explicit
-      DateTime references and complete retained relationships. Recognized Other
-      generated defaults project with varied authored counts/types; unproven
-      recipes/storage/taxonomy remain blockers. Missing Engagement event is a
-      specific diagnostic; nonempty relationships are unsupported. Actual retrieval
-      now uses this common path; no broader live acceptance is implied.
-
-- [x] Internal common DMO/default authored-document writer with canonical JSON,
-      independent persisted-candidate mapping validation, exact `default/dmo` path,
-      unchanged-byte no-op, explicit overwrite and link/directory refusal tests.
-      OS-temp flushed staging uses atomic publication on the same volume; cross-volume
-      output fails closed. Concurrent filesystem replacement is not fully guarded.
-      Exact/type/all retrieve selection now delegates here; each object still qualifies independently.
-
 - [x] Read-only authenticated Connect REST transport, structured errors and redaction.
-      Explicit DMO CLI integration is implemented; broader resource contracts remain pending.
-- [x] DMO-only offset pagination, duplicate/loop and ceiling detection, synthetic tests.
-      Official list endpoint is available from API 61.0: `limit` (default 50),
-      `offset` (maximum 2000), `orderBy`; response array is `dataModelObject`.
-      Internal helper requires `name` and `dataSpaceName`, returns raw entries,
-      and requires a short terminal page. Non-null next URLs/tokens are rejected,
-      never followed. No snapshot consistency under concurrent changes is claimed.
-      [Official endpoint reference](https://developer.salesforce.com/docs/data/connectapi/references/spec)
-      checked 2026-10-25; endpoint-specific text, not search-result synthesis.
-      Other resource pagination and live API/version acceptance remain pending.
-- [x] Internal incoming/outgoing raw relationship acquisition with synthetic tests.
-      API 64.0 endpoint: `GET /ssot/data-model-objects/{dataModelObjectName}/relationships`.
-      Explicit `dataspace`, unfiltered status/creation type, offset/limit pagination;
-      totalSize must prove completion; count, when present, must match page length.
-      API 65.0 read-only acceptance confirmed HTTP 204 for empty initial results
-      and 142 relationships across eight pages for a standard DMO. Records use
-      sourceObject/targetObject; qualifier objects remain raw, never guessed.
-      Unknown envelopes and inconsistencies block; all entry metadata survives.
-      Continuation links are never followed. Local offset budget is 2000.
-      Qualified portable projection and replay remain blocked: the prior synthetic
-      Engagement DMO detail omits eventDateTimeFieldName, despite a DateTime field.
-      No inference or portable export is permitted from that response.
-- [x] Common offline field join, independent of the compatibility projector.
-      All 12 authored types, varied counts, exact one-to-one identity joins,
-      authoritative primary/dynamic semantics and explicit multi-qualifier joins.
-      Generated fields are excluded from authored candidates, not silently accepted:
-      generated/qualifier/length/required/distinct replay remains diagnostic.
-      Common object taxonomy/designations and complete relationships are now joined
-      at the service boundary; incomplete projections never reach publication.
-- [x] Offline strict Connect/Metadata projection for one relationship-free Other shape.
-      Exact object/field joins, explicit qualifier binding and Metadata-authoritative
-      primary/dynamic semantics; two authored fields and complete generated/readback
-      expectations. Independently authored synthetic refusals cover unsupported variants.
-      A separate experiment proved semantic equivalence only for one Other fixture.
-      Autonomous create identity is verified only for this exact local profile:
-      remove one terminal case-sensitive __dlm from the validated non-namespaced
-      custom name. Result is offline projected with no identity blocker, retaining
-      qualified readback identity and case; invalid names are rejected, not repaired.
-      A pure bounded Other request mapper revalidates the complete projection,
-      preserves proven authored __c names and excludes generated/read-only fields.
-      Source and explicit target must both be default; arbitrary space acceptance
-      is unproven. No public wiring, writable Metadata projection or transport
-      mutation. Profile and Engagement remain pending; dmo family gates remain open.
-- [x] Internal common read-only DMO retrieval at explicit API 65.0/default scope.
-      Existing core Connection supplies Connect GET and Metadata CustomObject read;
-      Metadata uses an operation-local connection/transport receiver that refuses
-      all redirects without changing the caller or global defaults. Installed
-      core/Metadata/SOAP/HTTP stack regressions cover same/cross-origin redirects,
-      no second request, payload-free errors and retained core SOAP parsing;
-      exact identity/cardinality, complete relationships, strict joined projection
-      and offline mapper are required before returning full expectations. Synthetic
-      acquisition/failure tests plus injected CLI/file boundary tests; no write transport added.
-- [x] Separate offline authored-document Other/default request mapping.
-      Approved Git shape is schemaVersion/kind/identity/spec only; runtime source
-      expectations remain internal. Standalone JSON validates without a projection:
-      exactly one Text primary and one DateTime nonprimary, dynamic lookup false,
-      no field description/category or event/modified references. Names, labels,
-      order and optional object description survive; unknown/runtime keys reject.
-      Existing strict projection mapper and forged-profile refusals remain intact.
-      Deploy still needs independent authored-file validation and target readback;
-      no CLI, filesystem or transport write is implemented by this mapper.
-- [x] Common offline authored DMO request mapper alongside unchanged narrow helpers.
-      All 12 types, three categories, varied nonempty field counts, optional field
-      category/description, true/false dynamic flags and exact DateTime references
-      map individually into fresh allowlisted output. Source/explicit target default
-      only. Unknown/runtime JSON rejects. Schema mapping is not selected-version live
-      acceptance. Common projection/service/writer integration is synthetic-tested;
-      deployment remains pending.
+      Broader resource contracts remain pending.
+- [x] Native DMO route as described in the dmo section above. The items formerly
+      listed here for the API 65 DMO adapter (deploy preflight, common projector,
+      `default/dmo` writer, DMO pagination, relationship acquisition, field join
+      and request mappers) were removed together with that adapter.
 - [ ] Qualified logical references and verified data-space binding.
 - [ ] Versioned deterministic artifacts, safe paths and unknown-field blocking.
-      Partial internal DMO-only contract: qualified identity, all 12 nested input
-      field types, dynamic lookup, field category, deterministic JSON and strict
-      unknown-field validation are synthetic-tested. Raw field projection retains
-      qualifiers/distinctness/usage and generated fields separately; every result
-      is explicitly incomplete until separate relationships are acquired. Generated
-      field/qualifier replay is unverified. No published schema, safe paths,
-      filesystem discovery or live portable round trip yet.
-      See [current contract and official evidence](artifact-format.md).
+      See [artifact formats](artifact-format.md) for the current documents.
 - [ ] Whole-selection dependency/diff preflight and input/target drift guards.
 - [ ] Read-back verification and partial/uncertain failure handling.
 - [ ] Bounded opt-in live acceptance with explicit fixture ownership ledger.

@@ -61,7 +61,7 @@ plugin features.
 
 | Resource                                   | Retrieve                                                                                                                                                                                                            | Create                                                                                                                            | Update                                                                                                                          | Delete                                                                                                                                                                      | Scope / limits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />                                                        | Native default/auto API68: canonical JSON, all/type/exact retrieval, target-name POST/PATCH, label/additive Text updates and exact-name delete. Explicit numeric pins are preserved. Independent GET confirms writes; explicit native batches order DLO, DMO, mapping. Native Git and dependency expansion remain blocked; legacy adapters are separate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />                                                        | One native route, default/auto API68 (numeric pins from 61 kept): `data360/dmo/<ApiName>__dlm.dmo-meta.json`, all/type/exact retrieval, create or update by target name, exact-name delete. No local allowlists: category, field types, labels, descriptions and extra keys are sent as authored and Salesforce decides. Live-verified at API68 on empty, unmapped custom DMOs in the default data space: categories Profile, Engagement and Other; ten field data types; update of object label and description, existing field labels and added fields. Refused before any write: changing a field's data type or the primary key, removing a field, and any write to standard, namespaced or generated DMOs. Polled reads confirm writes; batches order DLO, DMO, mapping. Used by `--include-dependencies` and `--changed-since`. Mapped or data-bearing DMOs, non-default data spaces, relationships and other API versions are not qualified. Old `data360/default/dmo/*.json` files are refused; see [migration](#migrating-old-dmo-files).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Data Lake Objects (DLOs), `dlo`            | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" />                                                                                             | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" />  | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" />                                                      | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Qualified desired-state pair reconciliation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded unmap-first non-last deletion" />                                                   | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, canonical retrieval, one additive pair, JSON Text removal with batch addition, both Text retarget directions and zero-write previews/repeats. Guarded API61..68/default68 deletion (62..67 assumed compatible) unmaps qualified authored identity Text/Number pairs before protected-only deletion, with an independently qualified other-source survivor. Installed API61/68 two-Text-pair deletion and zero-write last-for-DMO preview/execution guards passed; installed Number removal is not qualified. Empty custom fixture scope only; the API61 deletion fixtures were provisioned at API68. Separate installed API61 create/read/single-add acceptance with omitted scope passed. Desired-state removal/retargeting remain API68-only. Installed API68 cross-org acceptance additionally covers exact source retrieval, target-local DLO/DMO rebinding, create, one additive Text pair, GET-only repeat and guarded selected deletion with an unchanged survivor; final owned source/target mappings and parents remain under the accepted last-mapping limitation. Not general cross-org schemas, populated objects or released-package qualification. |
 | DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Unavailable                                                                                                                     | Unavailable                                                                                                                                                                 | Exact API65/default standard XML export only; no inventory, dependency expansion or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -114,12 +114,24 @@ Current plugin limits:
   version; native mapping deletion admits 61.0 through 68.0 (62..67 assumed compatible). Legacy routes remain family-specific
   (API65 legacy families; API67 Graph/Ingestion and historical IR adapters), not the latest API.
   Public IR retrieval/deployment uses native API68 for default/`auto` or explicit `68.0`.
-- Native DLO/DMO creation and bounded updates, mapping creation and qualified API68/default
+  `--api-version latest` is not accepted.
+- DMOs have one route, the native one, with the artifact
+  `data360/dmo/<ApiName>__dlm.dmo-meta.json`. The plugin applies no local allowlist for
+  category, field data types, label length, descriptions or extra keys; Salesforce
+  decides and its error is reported. The plugin refuses, before any write, what
+  Salesforce cannot do (changing an existing field's data type, moving the primary
+  key, removing a field) and any write to a standard, namespaced or generated DMO.
+  Live verification covers API68 with empty, unmapped custom DMOs in the default data
+  space only; see [Public DMO workflow](#public-dmo-workflow). Mapped or data-bearing
+  DMOs, non-default data spaces, other API versions, relationships and SQL/flex DMOs
+  are not qualified. The earlier `data360/default/dmo/<Name>.json` format was removed;
+  see [Migrating old DMO files](#migrating-old-dmo-files).
+- Native DLO/DMO creation and updates, mapping creation and qualified API68/default
   desired-state pair reconciliation, native API68 Segment DBT absent-target creation,
   label/description or qualified forward empty-audience predicate updates, CI predicate updates,
   native API68 IR full-settings create/update and Graph
   projection updates are separate bounded profiles. Explicit native batches settle DLOs, then
-  DMOs, then mappings. General schema edits and unqualified mapping changes are not enabled.
+  DMOs, then mappings. General DLO schema edits and unqualified mapping changes are not enabled.
   IR provisioning is limited to the qualified Individual profile described below. Graph
   creation/deletion is a separate narrow native API68 profile, not facade provisioning.
   Use `--preview` before deployment.
@@ -524,123 +536,170 @@ this README describe separate API research, not additional plugin capabilities.
 
 ## Public DMO workflow
 
-**Native DMO retrieval, strictly read-only deployment preview, guarded creation,
-label/additive Text updates and exact deletion are available.** Native default/auto
-uses API68 and preserves explicit numeric pins; see the
-[native plugin workflow](#native-plugin-workflow). This is not a general migration
-tool. Installed API68 acceptance covers an unchanged source-retrieved Other/default
-empty Text DMO artifact creating a target with a different local ID, a label plus
-nonprimary Text addition, and a GET-only repeat returning `unchanged` /
-`not-attempted`. Create, update and exact-owned delete previews are read-only.
-This does not qualify arbitrary schemas, populated objects, ingestion, mixed-family
-dependency migration, lower versions or the released package.
-
-The older saved-project common-service adapter below is a separate API65 profile,
-not the native default or the mapping workflow:
+`sf data360 retrieve`, `deploy` and `delete` handle Data Model Objects (DMOs) through
+one route, the native DMO API. Default/`auto` uses API `68.0`; explicit numeric pins
+from `61.0` are kept as given, and `--api-version latest` is not accepted. Each DMO is
+one file, `data360/dmo/<ApiName>__dlm.dmo-meta.json`, beneath the project root. This
+is not a general migration tool; the verified scope is listed below.
 
 ```sh
-sf data360 retrieve -o source --api-version 65.0 --data-space default -m dmo:Example__dlm -d ./project --json
-sf data360 retrieve -o source -m dmo:Example__dlm -d ./project -x
+sf data360 retrieve -o source -m dmo:Example__dlm -d ./project --json
+sf data360 deploy -o target -m dmo:Example__dlm --preview --json
+sf data360 deploy -o target -m dmo:Example__dlm --json
+sf data360 delete -o target -m dmo:Example__dlm --preview --json
 ```
 
-`-m/--metadata` is repeatable/non-greedy: exact `dmo:ApiName` selectors coalesce
+`-m/--metadata` is repeatable/non-greedy: exact `dmo:ApiName__dlm` selectors coalesce
 and sort without an inventory request. `-m dmo` retrieves all DMOs in the selected
-space using complete inventory; omitting selectors now retrieves all implemented
-native families (DLO, DMO and mapping). There is no `--all` flag. Mixed type/exact selections
-coalesce. Empty inventory succeeds with no files. Unsupported objects are not
-silently skipped: diagnostics identify each object and precise capability/error
-code, successful file receipts are retained, and the aggregate exits nonzero. `-o/--target-org` overrides the configured default org. `-d/--output-dir`
-is a project root, default cwd; output is `data360/default/dmo/<api-name>.json`.
-`-x/--overwrite` permits differing file replacement; identical bytes are unchanged.
-Selectors and numeric API 65.0/default scope are validated before core org resolution or
-resource reads; the common service remains the per-object capability boundary.
+space using complete inventory; omitting selectors retrieves all implemented
+native families (DLO, DMO and mapping). There is no `--all` flag. Mixed type/exact
+selections coalesce. Empty inventory succeeds with no files. A failed object is not
+silently skipped: diagnostics identify each object and its error code, successful
+file receipts are retained, and the aggregate exits nonzero. `-o/--target-org`
+overrides the configured default org. `-d/--output-dir` is a project root, default
+cwd. `-x/--overwrite` permits replacing a differing file; identical bytes are
+unchanged. Deploy and delete require exact selectors or explicit files; there is no
+bare-type or deploy-all write selection.
 
-For the legacy adapter, `--api-version latest` is an explicit experimental read-only
-option for retrieval and deployment `--preview`; its qualified SOAP route stays
-`65.0`. Native default/auto uses `68.0` and does not use this legacy discovery path. Each invocation performs one
-fresh authenticated `GET /services/data`, without cache, fallback, retry or redirect,
-to discover numeric SOAP evidence. REST retains literal `/services/data/latest/ssot/`;
-SOAP alone is pinned numerically. Authentication initializes a command-owned core
-connection at numeric bootstrap `65.0`, preventing core's implicit cached/network
-version discovery before the guarded request. The capability boundary still requires SOAP
-`65.0`: discovery of `68.0` (or any other version) blocks before DMO resource calls
-and advises explicit `--api-version 65.0`. This is not API 68 support or live
-qualification of the REST alias. Direct deployment with `latest` is refused before
-preflight or mutation. `metadata.apiVersion` is the requested selector and optional
-`metadata.soapApiVersion` is discovered/pinned numeric SOAP evidence, **not** the
-actual version served by REST. Discovery errors omit remote payloads.
 `--json` uses Salesforce CLI's normal outer result wrapper containing a versioned
-`sf-data360-retrieve` envelope with status, metadata, diagnostics, provenance and
-result. Both retrieve and deploy resolve `metadata.plugin.version` and
-`provenance.pluginVersion` from this plugin's own package metadata, not the host
-Salesforce CLI version. Blocked/failed work exits 1, success exits 0. Parser/auth flag failures use
-core CLI diagnostics; runtime errors never include remote payloads. No org mutation.
+`sf-data360-retrieve` (or `sf-data360-deploy`) envelope with status, metadata,
+diagnostics, provenance and result. Both commands resolve `metadata.plugin.version`
+and `provenance.pluginVersion` from this plugin's own package metadata, not the host
+Salesforce CLI version. Blocked/failed work exits 1, success exits 0. Parser/auth
+flag failures use core CLI diagnostics.
 
-A common offline `joinDmoConnectMetadataFields` helper now joins arbitrary
-nonempty field counts and all 12 authored types with exact identity, primary,
-dynamic and explicit qualifier semantics. Generated fields stay outside authored
-fields; unqualified replay semantics remain blockers. The common object projector
-now qualifies complete acquired inputs before the service/command publishes an
-authored candidate; no fixed authored count or fixture-specific command rule applies.
+### What the plugin checks and what Salesforce decides
 
-Internal `preflightDmoDeploy` now performs read-only target-aware comparison for
-one explicitly supplied authored DMO and API 65.0/default connection. Complete
-inventory alone proves absence; existing targets must pass common full retrieval.
-Field reordering alone is unchanged. Public preview opts into qualified object and
-existing non-primary field label updates; unsupported differences and unknown target semantics fail closed. Its preview
-contains static diagnostics, never requests, raw org IDs or remote payloads.
-`sf data360 deploy --preview` now uses this service for every explicitly selected
-local authored input. API 65.0/default scope remains service-owned. Execution
-admission requires Other category with a nondynamic Text primary key; other
-portable offline schemas are blocked before target reads because current readback
-cannot qualify them. Authored counts and other field types remain unrestricted.
-Internal `executeDmoCreate` now performs fresh preflight, a single guarded create only
-on proven absence, and independent qualified readback. Existing equality is a no-op;
-existing differences remain blocked. HTTP success alone is not verified creation;
-ambiguous failures retain `mutation: unknown` and require target inspection, never
-automatic retry or rollback. Public CLI creation delegates to this service through `executeDmoDeploy`;
-qualification remains synthetic only, not broader deployment or live acceptance.
-Metadata SOAP reads refuse same-origin and cross-origin redirects through an
-operation-local transport guard; core still owns credentials and SOAP parsing,
-and the caller connection/global transport defaults are unchanged.
+The plugin checks only the shape of the file: `schemaVersion`, `kind`, `identity`
+(API name ending `__dlm`, data space) and `spec` with a label, a category, an
+optional description and at least one field. Each field needs a unique name ending
+`__c`, a label, a `dataType` and a boolean `isPrimaryKey`; runtime keys such as `id`
+or `status` are rejected. There is no local allowlist beyond that. Category, field
+data types, label length, object and field descriptions and any extra keys are sent
+as authored. Salesforce decides, and its error is reported.
 
-Internal offline `buildDmoUpdateDelta` constructs a minimal candidate PATCH and a
-nondestructive expected overlay, or returns blockers only. It preserves target-only
-fields and omitted descriptions; no removal/tombstone syntax exists. This is not
-itself mutation authorization. Public preview and `executeDmoDeploy` now admit only object and existing
-non-primary field label changes within the qualified Other/default/API 65 scope.
-The selection is fully admitted before writes, then freshly qualified per item;
-independent readback must match the overlay and preserve full runtime state. New
-fields, descriptions, primary-key labels and other unproven changes block atomically.
-Results distinguish `confirmed-updated`, `not-attempted` and `unknown`; ambiguity
-stops the public selection without retry or rollback.
-API 65 PATCH
-routing is documented. Retained synthetic PATCH evidence now qualifies the observed
-existing-field display override and complete authored overlay offline; the common
-projector reconciles Connect labels with Metadata field overrides while preserving
-base/master observations. This is one recorded checkpoint, not general update or
-new-field preservation acceptance. HTTP 200 can contain old state, so
-execution independently GETs and qualifies readback.
+### Live-verified behaviour at API 68
 
-Deploy also accepts `--changed-since <ref>`, exclusive with `--metadata` and
-`--source-dir`, for current canonical DMO files selected from the unique Git merge
-base, staged/unstaged changes and relevant untracked files. It resolves the
-repository root even from nested directories. Relevant renames/deletions block;
-a relevant untracked DMO addition plus **any tracked worktree deletion** also
-blocks conservatively. Stage intended changes to permit Git-inferred rename
-detection; unsupported lifecycle changes still block. A valid empty selection
-succeeds without downstream target/resource/service work, but existing parse-time
-core authentication remains. Optional Git provenance records resolved commits,
-not exact-byte binding. See [Git workflow](docs/git-workflow.md) for scope and
-limitations; report files, CI delivery and SQL companions remain deferred.
+Verified on 2026-11-10 with API probes and plugin acceptance runs on two orgs, using
+empty, unmapped custom DMOs in the default data space:
 
-An internal read-only `readDeployInputs` resolver now admits explicit authored JSON
-files/directories or repeated exact `dmo:ApiName` project selectors. Identical paths
-coalesce; different files claiming the same identity fail. No selection, bare types,
-mixed modes, malformed JSON, duplicate JSON keys, runtime projections and linked
-paths fail closed. Directory mode is bounded and strict: every descendant file must
-be authored DMO JSON; unrelated files are not silently ignored. This input-only
-resolver is wired to preview and execution; input admission alone never authorizes writes.
+- **Categories.** Create accepts only `Profile`, `Engagement` and `Other`.
+  `Segment_Membership` is internal-only and the other ten schema values are
+  rejected. Input spelling is case-insensitive; reads return upper case; the plugin
+  saves `Profile`, `Engagement` or `Other`.
+- **Engagement.** No event date key is needed; `eventDateTimeFieldName` is rejected
+  as unknown input.
+- **Field data types.** Ten types work: `Number`, `Text`, `Date`, `DateTime`, `Url`,
+  `Phone`, `Email`, `Percent`, `Boolean`, `Currency`. `ArrayOfFloats` and
+  `ArrayOfTexts` are rejected by the API. A `Currency` field adds a generated system
+  field `cdp_sys_record_currency__c`.
+- **Limits set by Salesforce.** Object and field labels are limited to 40
+  characters. Exactly one primary key is required; it can have any accepted type.
+  Salesforce generates the key qualifier (`KQ_<key>__c`, referenced by
+  `keyQualifierName`) and rejects input keys outside its schema.
+- **Descriptions.** The object `description` round-trips. Field `description` and
+  `isDynamicLookup` are accepted but never returned by reads. The plugin sends them
+  when a field is created or otherwise edited, but cannot detect or confirm a change
+  to them alone.
+- **Read-only keys.** `creationType`, `isDistinct`, `usageTag` and `keyQualifierName`
+  are returned by reads only. They are kept in retrieved files and never sent.
+
+### Create and update
+
+Deploy looks up the exact target name. A confirmed HTTP 404 leads to a create; any
+other lookup failure stops. An existing target is compared and, if different,
+updated with one PATCH. An update can:
+
+- change the object label;
+- set or clear the object description. An absent `spec.description` means "not
+  managed" and leaves the target value as is; an explicit empty string clears it;
+- change the labels of existing fields;
+- add fields of any accepted type.
+
+A changed category is sent, and Salesforce rejects it ("Data Object Category cannot
+be updated"). A definition may omit generated and system fields. Omitting a custom
+field that exists in the target counts as a removal and is refused.
+
+After a write the plugin polls reads (up to 6, 5 seconds apart) until the requested
+definition is confirmed. The write itself is never repeated. If the reads do not
+confirm it, the command fails with `DMO_PERSISTENCE_UNCONFIRMED`; inspect the target
+before another attempt. `--preview` performs reads only.
+
+### Refused before any write
+
+| Situation | Code |
+| --- | --- |
+| Changing an existing field's data type or moving the primary key. The API answers 200 and silently ignores it. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
+| Removing a field. There is no API route, and the Data Model UI offers no field deletion either. | `UNSUPPORTED_DMO_FIELD_CHANGE` |
+| Adding a generated field or a second primary key. | `UNSUPPORTED_DMO_FIELD_ADDITION` |
+| Deploy, delete or delete preview of a standard, namespaced (for example `ssot__Individual__dlm`) or platform-generated DMO (`creationType` not `Custom`). Mappings to such targets are refused as well. Retrieving these DMOs is allowed. | `UNSUPPORTED_DMO_TARGET` |
+
+### Delete
+
+Delete addresses the exact name only. It has no dependency preflight and no prompt;
+`--preview` is read-only. Salesforce may cascade the deletion to the DMO's mapping.
+See [Native plugin workflow](#native-plugin-workflow) for the confirmation states.
+
+### Dependencies and Git selection
+
+`--include-dependencies` and `--changed-since <ref>` use the native DMO file.
+
+- A native DMO changed since a Git reference, or selected beside Segment, calculated
+  insight, Data Graph or Identity Resolution inputs, joins the ordered batch.
+- A standard or generated DMO pulled in only as a deploy prerequisite is reported
+  with `DMO_PREREQUISITE_NOT_DEPLOYED` and never written. On retrieve, such a
+  prerequisite still blocks publication with `UNSUPPORTED_DMO_TARGET`.
+- An explicit selection of only native DLO, DMO and mapping files combined with
+  `--include-dependencies` is blocked with `DMO_DEPENDENCY_EXPANSION_UNSUPPORTED`.
+
+`--changed-since <ref>` is exclusive with `--metadata` and `--source-dir`. It selects
+from the unique Git merge base, staged/unstaged changes and relevant untracked
+files, and resolves the repository root even from nested directories. Relevant
+renames/deletions block; a relevant untracked DMO addition plus **any tracked
+worktree deletion** also blocks conservatively. Stage intended changes to permit
+Git-inferred rename detection; unsupported lifecycle changes still block. A valid
+empty selection succeeds without downstream target work, but existing parse-time
+core authentication remains. Optional Git provenance records resolved commits, not
+exact-byte binding. See [Git workflow](docs/git-workflow.md) for scope and
+limitations.
+
+### Migrating old DMO files
+
+Earlier versions saved DMOs as `data360/default/dmo/<Name>.json` through an API 65
+adapter. That adapter and its file format were removed. Such a file is refused with
+`LEGACY_DMO_ARTIFACT_UNSUPPORTED` before any org call, whether it is selected by
+path, by `-m dmo:` (when no native file exists) or through `--changed-since`.
+
+Old files are not converted. To migrate, retrieve the DMO again:
+
+```sh
+sf data360 retrieve -o source -m dmo:<ApiName>__dlm -d ./project
+```
+
+This writes `data360/dmo/<ApiName>__dlm.dmo-meta.json`. Then delete the old file.
+With `--changed-since`, a deleted `data360/default/dmo/*.json` file is ignored, so
+removing it together with adding the native file does not block the selection.
+
+### Not qualified and known limits
+
+Mapped or data-bearing DMOs, non-default data spaces, API versions other than 68 for
+the behaviour listed above, relationships, SQL/flex DMOs and released-package
+acceptance have not been verified.
+
+- Retrieve: a DMO selected beside another family (for example a Segment), or with
+  `--include-dependencies`, still requires `--api-version auto` or `65.0` for the
+  selection as a whole, although the DMO itself is read on the native route. A
+  DMO-only selection without `--include-dependencies` accepts any version from 61.
+- Retrieve with `--include-dependencies` stops when a selected component depends on
+  a standard or platform-generated DMO (`UNSUPPORTED_DMO_TARGET`).
+- A change to only a field's `description` or `isDynamicLookup` is reported as
+  `unchanged`: Salesforce does not return these values, so the plugin cannot detect
+  the difference. They are sent when the field is created or otherwise edited.
+- `spec` must not contain `name`, `dataSpaceName` or runtime keys such as `id`; the
+  object identity comes from `identity` only. Other extra `spec` keys are sent on
+  create, and on update only when Salesforce returns the same key with another value.
+- A new DMO whose name contains a double underscore before `__dlm` (a namespaced
+  name) is refused with `UNSUPPORTED_DMO_TARGET` before any write.
 
 ## Metadata examples: prerequisites and qualification
 
@@ -649,8 +708,8 @@ and separately bounded mapping deployment, owned-DMO deletion and custom relatio
 lifecycle qualified at API `65.0` on 2026-10-27. These `sf project` commands are provided by
 Salesforce CLI, not additional `sf data360` plugin commands. Successful retrieval
 proves a source export, **not full CRUD, cross-org portability or safe replay**.
-The plugin's separately bounded DMO JSON retrieval, creation and label-update
-capabilities remain as described above and under [Read-only deploy preview](#read-only-deploy-preview).
+The plugin's own native DMO retrieval, creation, update and deletion are described
+under [Public DMO workflow](#public-dmo-workflow) and [Read-only deploy preview](#read-only-deploy-preview).
 
 **Intended user workflow (not yet implemented across these families):** retrieve
 or deploy one or multiple selected components in one command, without hand-authored
@@ -716,34 +775,52 @@ lifecycle qualification; the Partial support ratings and existing API/version,
 processing, parent, survivor and destructive-operation limits remain unchanged.
 
 ```sh
-sf data360 retrieve -m dmo:Customer__dlm -o SOURCE_ALIAS --api-version 65.0 --output-dir ./project --json
-sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --preview --json
-sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --json
-sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --preview --json
-sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --api-version 65.0 --json
+sf data360 retrieve -m dmo:Customer__dlm -o SOURCE_ALIAS --output-dir ./project --json
+sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --preview --json
+sf data360 deploy -m dmo:Customer__dlm -o TARGET_ALIAS --json
+sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --preview --json
+sf data360 delete -m dmo:Customer__dlm -o TARGET_ALIAS --json
 ```
+
+This is the only DMO route of the plugin. Default/`auto` selects API `68.0`;
+explicit numeric pins from `61.0` are preserved, not upgraded, and
+`--api-version latest` is not accepted. The behaviour below was live-verified at
+API 68 only, with empty, unmapped custom DMOs in the default data space. The full
+list of verified categories, field data types, limits and refusals is under
+[Public DMO workflow](#public-dmo-workflow).
 
 Exact native retrieval saves `data360/dmo/Customer__dlm.dmo-meta.json` with
 `schemaVersion`, `kind`, logical `identity` and `spec`. It preserves field
-definitions and key-qualifier references except the confirmed system-generated
-`KQ_Id__c` definition; source record IDs and runtime observations are excluded. Differing files require `--overwrite`;
-identical bytes are unchanged. Native default/`auto` selects `68.0`; explicit numeric
-pins (including the API65 examples above) are preserved, not upgraded. All/type/exact
-native retrieval is separate from legacy saved-project/dependency adapters.
+definitions, including generated and system fields and key-qualifier references,
+except the confirmed system-generated `KQ_Id__c` definition. Source record IDs and
+runtime observations are excluded. Keys that only reads return (`creationType`,
+`isDistinct`, `usageTag`, `keyQualifierName`) stay in the file and are never sent.
+Differing files require `--overwrite`; identical bytes are unchanged. Standard,
+namespaced and generated DMOs can be retrieved, but not deployed or deleted.
 
 Deployment resolves the full target API name. Only confirmed HTTP404 permits
-creation; other lookup failures stop. Creation sends qualified authored Text
-fields and the intended primary key, not generated fields. Existing targets use
-name-based PATCH for object labels and ordinary nonprimary Text additions; field
-removal, existing-field changes and key changes are blocked. An independent bounded
-GET must confirm persistence: a PATCH response can still contain the old fields.
+creation; other lookup failures stop. Creation sends the authored category, fields
+(any data type), labels, descriptions and extra keys as written, without generated
+fields; Salesforce decides and its error is reported. Existing targets use
+name-based PATCH for the object label, the object description (absent
+`spec.description` leaves it as is; an empty string clears it), existing field
+labels and added fields. Changing an existing field's data type, moving the primary
+key or removing a field is refused before any write (`UNSUPPORTED_DMO_FIELD_CHANGE`),
+as is adding a generated field or a second primary key
+(`UNSUPPORTED_DMO_FIELD_ADDITION`). A changed category is sent and Salesforce
+rejects it. A PATCH response can still contain the old state, so the plugin polls
+reads (up to 6, 5 seconds apart) to confirm; the write is never repeated.
 Explicit native batches support DLO, DMO and mapping in that dependency order, with
-independent parent settlement. Canonical native Git deployment and dependency
-expansion remain blocked; legacy saved-project adapters remain separate.
+independent parent settlement. `--include-dependencies` and `--changed-since` use
+the same native file; see
+[Dependencies and Git selection](#dependencies-and-git-selection).
 
 Delete executes by default without prompting and addresses only the freshly
-resolved full DMO name. `--preview` is strictly read-only. Already absent is
-unchanged; no cascade, local deletion, write retry or rollback is performed.
+resolved full DMO name. There is no dependency preflight. `--preview` is strictly
+read-only. Deploy, delete and delete preview refuse standard, namespaced and
+platform-generated DMOs with `UNSUPPORTED_DMO_TARGET`. Already absent is
+unchanged; the plugin performs no further deletion, local deletion, write retry or
+rollback, but Salesforce may cascade the deletion to the DMO's mapping.
 DMO delete reads and the DELETE use the bound authenticated connection directly
 (no child `sf api request rest`, no token refresh, no HTTP retry, redirects
 refused), so each request is sent at most once. After HTTP204 one read by name
@@ -783,13 +860,15 @@ Standard Metadata API creation is **not yet verified**. The combined target
 check-only test of the custom DLO, DMO and mapping failed with primary-key,
 key-qualifier and mapping internal errors. Provisional component successes in a
 failed dry-run are not persisted objects. No runnable standard create example is
-qualified; this does not negate the plugin's separately bounded guarded create.
+qualified. The plugin does not use this route: it creates DMOs through the native
+API as described under [Native plugin workflow](#native-plugin-workflow).
 
 #### Update
 
-Standard Metadata API update is **not yet verified**. The plugin's existing
-object/existing non-primary field label-update subset is separate from Metadata
-XML deployment and does not establish general schema updates.
+Standard Metadata API update is **not yet verified**. The plugin's native update
+(object label and description, existing field labels, added fields) is separate
+from Metadata XML deployment. Changing a field's data type, moving the primary key
+and removing a field are not possible through the native API and are refused.
 
 #### Delete
 
@@ -2440,7 +2519,7 @@ this is not registry-release or general cross-org acceptance.
 ### Read-only deploy preview
 
 ```sh
-sf data360 deploy --preview -o target -d ./project/data360/default/dmo --json
+sf data360 deploy --preview -o target -d ./project/data360/dmo --json
 sf data360 deploy --preview -o target -d ./authored.json -d ./more-authored.json
 sf data360 deploy --preview -o target -m dmo:Example__dlm -m dmo:Another__dlm --json
 ```
@@ -2457,15 +2536,16 @@ no omitted, bare-type or wildcard write selection is admitted.
 
 The normal core JSON wrapper contains `sf-data360-deploy` contract version 1.0.0,
 status/metadata/diagnostics/provenance/result and one advisory `preview` item per
-input. Legacy `create` means complete-inventory absence; native `create` uses a
-confirmed exact-target/pair absence lookup, neither an executed create.
+input. Native `create` means a confirmed exact-target/pair absence lookup, not an
+executed create.
 `update` means an admitted family-specific delta, not an executed update;
 `unchanged` means qualified no-op. `blocked-changes` and `blocked` make aggregate
 status blocked/exit 1; unexpected failures make status failed/exit 1. Mixed results
 remain visible. Preview writes no local artifact/report and performs no mutations.
 Without `--preview`, the same explicit selection performs supported guarded creation
-or bounded updates. Legacy saved-project batches preflight the whole selection before
-any executor call, so a known legacy blocker prevents all writes. Native batches instead
+or bounded updates. Batches containing Segment, calculated insight, Data Graph or
+Identity Resolution inputs preflight the whole selection before the first write, so a
+known blocker prevents all writes. Native batches instead
 order DLO, DMO, mapping and admit/settle each item independently before dependent writes;
 a later blocker can follow an earlier successful mutation. Native preview with only
 planned parents reports `planned-dependencies`, target unknown and no absence proof,
@@ -2477,90 +2557,30 @@ Execution items use `operation: execute`, `outcome: created|updated|unchanged|bl
 Prior completed receipts remain visible; remaining items are explicitly not-attempted.
 Only all-created/updated/unchanged results yield aggregate success/exit 0; blocked/failed
 execution exits 1 even after prior mutations. Unknown mutation means creation or update may have
-occurred: inspect target before another attempt. No retry or rollback. Legacy additions,
-descriptions, primary-key labels and other unproven changes block before writes;
-native DLO/DMO additive fields and API68/default mapping desired-state reconciliation
-use their separate bounded profiles. Mapping removal/retargeting outside the qualified
+occurred: inspect target before another attempt. No retry or rollback. Native DLO additive
+fields, native DMO updates and API68/default mapping desired-state reconciliation
+use their separate profiles. DMO files in the removed `data360/default/dmo` format
+are refused with `LEGACY_DMO_ARTIFACT_UNSUPPORTED` before any org call. Mapping removal/retargeting outside the qualified
 empty-custom-definition scope remains blocked.
 Parser/auth flag errors retain core formatting. No public plan or saved-plan infrastructure.
 
 ## Scope and safety
 
-`projectCommonDmoConnectMetadata` now composes the shared offline field join and
-object semantics in one common implementation used by actual retrieval. Recognized Other generated defaults retain a successful projection across
-varied authored counts/types; unproven generated recipes, taxonomy, storage or
-execution semantics remain explicit blockers. Explicit date references resolve
-exactly to authored DateTime fields; missing Engagement event designation is a
-specific blocker, never inferred. Complete nonempty relationships are retained
-but unsupported. Incomplete status, blockers or absent candidates prevent publication;
-no new live replay acceptance is claimed.
+Seven planned families are tracked in [capabilities](docs/capabilities.md). DMO
+support uses the native route described under
+[Public DMO workflow](#public-dmo-workflow). The earlier API 65 DMO adapter and its
+`data360/default/dmo` writer were removed; see
+[Migrating old DMO files](#migrating-old-dmo-files).
 
-Seven planned families are tracked in [capabilities](docs/capabilities.md).
-An internal read-only Salesforce-core transport now accepts an explicit API
-selection and only same-origin `/services/data/v<version>/ssot/` or experimental
-literal `/services/data/latest/ssot/` reads; latest never permits writes. It rejects
-redirects and emits payload-free structured errors. Explicit DMO retrieval is now wired to the CLI;
-no resource-family support is implied. Internal DMO list pagination now uses the
-official offset contract, rejects malformed/overlapping pages and unexpected next
-links, and fails closed at the documented offset ceiling rather than returning a
-partial inventory. It does not provide a consistent snapshot during concurrent
-org changes. An internal portable DMO validator/serializer now covers a narrow,
-offline custom schema with all 12 nested input field types, dynamic lookup and
-field category, strict unknown-field rejection and ordered-field preservation.
-Raw projection produces an explicitly incomplete diagnostic candidate, retaining
-qualifiers, semantic metadata and generated fields in separate configuration.
-A separate internal relationship helper now acquires incoming/outgoing raw metadata
-in an explicit data space, requiring total-size consistency and bounded offset
-completion. API 65.0 live inspection confirmed HTTP 204 for an empty initial list,
-optional count metadata, and sourceObject/targetObject endpoint records. Unknown envelopes block; raw entry fields are preserved. It is not yet
-bound to field projection: candidates still carry RELATIONSHIPS_NOT_ACQUIRED and
-must never be exported alone from that incomplete helper. Qualified
-relationship replay and broader generated-field replay remain unimplemented;
-qualified authored filesystem publication is available below. A second offline helper joins exact Connect/Metadata identities for
-one proven relationship-free Other shape, binds qualifiers by explicit metadata
-reference, and uses authoritative primary/dynamic flags. It retains full readback
-expectations and now verifies the autonomous create identity for that exact local
-profile: remove one terminal case-sensitive `__dlm` from a validated non-namespaced
-custom name, preserving case and internal single underscores. It returns an offline
-`projected` result with no identity blocker, not a deployable artifact or request.
-A pure internal Other create-request mapper now rechecks the complete joined
-projection and explicitly binds only evidenced source/target `default` space.
-It preserves authored `__c` field names and excludes generated fields, org IDs
-and read-only metadata. It performs no transport. An internal read-only
-`retrieveDmo` service now acquires detail, Metadata CustomObject and complete
-relationships using an existing Salesforce core connection, explicitly at API
-65.0/default only. It validates both projection and mapper, returning the full
-projection/expectations rather than a detached candidate. Missing/ambiguous
-Metadata or incomplete relationships fail without partial results. The retrieve
-command delegates to this service and passes only its candidate to the writer. The approved Git artifact contains only
-`schemaVersion`, `kind`, `identity` and `spec`; runtime source expectations remain
-internal. A separate `buildOtherDmoCreateRequestFromDocument` mapper accepts this
-standalone authored JSON with explicit default target binding, validates it and
-maps only Other with one Text primary and one DateTime nonprimary field, both
-without dynamic lookup. It preserves exact names, labels, field order and optional
-object description; unsupported semantics and runtime keys reject. This offline
-mapping is not deploy acceptance: deployment must separately validate the authored
-file and later verify target readback. Profile and Engagement remain
-pending; no writable Metadata projection is provided. Public creation uses the guarded common executor, not this narrow mapper alone. See the exact subset and evidence in the artifact document.
-The separate common `buildDmoCreateRequestFromDocument` offline mapper accepts
-all 12 documented field types, Profile/Other/Engagement, any nonempty authored
-field count, boolean dynamic lookup, optional field category/description and
-explicit exact DateTime event/record-modified references. It constructs a fresh
-allowlisted request from authored JSON; source and explicit target remain default.
-Actual retrieval now uses the common projector and mapper; unknown or incomplete
-semantic variants return specific blockers and no file. Profile/Engagement generated
-replay remains unqualified, not a separate category implementation. No general
-export/deployment or new live API acceptance is claimed.
-
-An internal `writeDmoDocument(candidate, projectRoot, overwrite)` validates
-standalone DMO/default authored JSON independently through the common mapper, serializes canonically and
-writes `data360/default/dmo/<api-name>.json` beneath the project root. Identical
-bytes are unchanged; differing regular files require overwrite. Linked ancestors,
+The native DMO writer validates the document shape and writes
+`data360/dmo/<ApiName>__dlm.dmo-meta.json` beneath the project root. Identical
+bytes are unchanged; differing regular files require overwrite, and a file saved
+for a different data space is not replaced even with overwrite. Linked ancestors,
 linked destinations and directory/file collisions reject. Complete flushed staging
 uses OS temp and atomic rename/exclusive hard-link publication; cross-volume
 publication fails closed, with no copy fallback. There is a residual concurrent
 filesystem replacement race between path validation and publication; this is not
-a hostile-process filesystem sandbox. The command now delegates output here unchanged.
+a hostile-process filesystem sandbox.
 No org was contacted or changed by synthetic tests. Smoke tests retain isolated
 state in newly allocated OS-temp roots; they never delete recursively. Windows
 contributors on this workspace machine must use `F:/Temp` for TEMP, TMP (when set),

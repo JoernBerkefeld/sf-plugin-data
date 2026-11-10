@@ -83,6 +83,7 @@ const planBody = async (...arguments_) => {
 };
 const described = () => ({ ...native(), description: 'Existing' });
 const getDescribed = async () => described();
+const readable = () => ({ ...native(), futureKey: 'current' });
 // Readback spacing is injected so exhausted-readback cases do not wait.
 const fast = { attempts: 3, delayMs: 0, sleep: async () => {} };
 
@@ -570,6 +571,42 @@ test('native DMO description is unmanaged when absent, set or cleared when autho
     label: 'Example',
     category: 'Profile',
   });
+});
+
+test('native DMO spec cannot carry identity or runtime keys; extra keys are compared with the raw read', async () => {
+  for (const key of ['name', 'dataSpaceName', 'id', 'isEnabled', 'status']) {
+    const saved = document();
+    saved.spec[key] = 'Other';
+    assert.throws(() => validateNativeDmoDocument(saved), NativeDmoError);
+  }
+  // A key the API does not return cannot be compared: sent on create, never forces a PATCH.
+  const unreadable = document();
+  unreadable.spec.futureKey = 'kept';
+  assert.equal(await planOperation(unreadable, { get: async () => native() }), 'unchanged');
+  const created = await planBody(unreadable, { get: absent });
+  assert.equal(created.futureKey, 'kept');
+  // A key the API does return is compared with the raw read.
+  const same = document();
+  same.spec.futureKey = 'current';
+  assert.equal(await planOperation(same, { get: async () => readable() }), 'unchanged');
+  const changed = document();
+  changed.spec.futureKey = 'next';
+  assert.deepEqual(await planBody(changed, { get: async () => readable() }), {
+    futureKey: 'next',
+    label: 'Example',
+  });
+});
+
+test('native DMO create refuses a namespaced name before any write', async () => {
+  const saved = document();
+  saved.identity.apiName = 'ssot__Thing__dlm';
+  await assert.rejects(
+    deployNativeDmo(saved, {
+      get: absent,
+      create: async () => assert.fail('namespaced name must not POST'),
+    }),
+    /UNSUPPORTED_DMO_TARGET/,
+  );
 });
 
 test('native DMO writes and deletes are refused for standard, namespaced and generated targets', async () => {

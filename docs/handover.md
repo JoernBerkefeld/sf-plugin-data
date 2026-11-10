@@ -1,3 +1,51 @@
+# Native DMO create/update breadth and legacy DMO route removal — 2026-11-10
+
+Native DMO deploy no longer keeps local allowlists: category, field data types, label
+length, descriptions and extra keys are sent as authored and Salesforce decides. The
+API65 legacy DMO adapter and its `data360/default/dmo/<Name>.json` format are removed;
+dependency expansion and Git selection use the native DMO file. Commits `cee83e3`,
+`8d82813`, `9aed92d` plus the review-fix and documentation commit that carries this
+entry. Version stays 0.1.0; next version remains unassigned. Nothing pushed.
+
+Live API68 probes on the source org (empty, unmapped custom DMOs, default data space)
+established: only Profile, Engagement and Other can be created; ten field data types
+work and the two array types are rejected; labels are limited to 40 characters by
+Salesforce; exactly one primary key of any accepted type; key qualifiers are generated;
+unknown input keys are rejected; object description round-trips while field
+description and isDynamicLookup are accepted but never returned; PATCH edits object
+label and description, existing field labels and adds fields; category cannot be
+updated; a data type change or primary key move answers 200 and is ignored; no field
+removal route exists, and the project owner confirmed the Data Model UI offers no
+field deletion either. Findings are recorded in the verification database entry
+`data360:dmo.native-create-update-breadth.api68`.
+
+Plugin acceptance through the source-tree CLI at commit `9aed92d`, source then
+target org: preview and create of one Profile, one Engagement and one Other DMO with
+nine non-key field types and descriptions (confirmed-created), unchanged repeat with
+no write, update of label, description, one field label and two added fields
+(confirmed-updated, then unchanged), Salesforce rejection of an array-typed field
+surfaced as DMO_HTTP_ERROR, source retrieve, unchanged cross-org deploy to the target
+org with unchanged repeat, and target retrieve whose three files were byte-identical
+to the source files. Delete preview of a standard DMO was refused with
+UNSUPPORTED_DMO_TARGET in both orgs without any DELETE. An earlier identical run at
+commit `cee83e3` also covered description clearing, the category-change rejection,
+the blocked type change and field removal, and plugin deletion in both orgs
+(confirmed-deleted, repeat unchanged).
+
+Not covered: mapped or data-bearing DMOs, non-default data spaces, other API
+versions for the new breadth, relationships, SQL/flex DMOs, a live positive
+`--include-dependencies` run (every segment in the source org depends on a generated
+DMO, which blocks dependency retrieve as before), installed-package acceptance.
+
+Review: one read-only review of the three commits returned three must-fix items.
+Fixed: `spec` can no longer carry `name`, `dataSpaceName` or runtime keys, and extra
+`spec` keys are compared with the raw read; a deleted legacy DMO file no longer blocks
+`--changed-since`. Not fixed and documented as a known limit: a DMO in a mixed or
+dependency retrieve selection still requires auto/65.0 for the selection, because
+changing it alters the version used for co-selected Segment, Graph and IR reads.
+Verification after the fixes: zero-warning lint, build, full unit suite and smoke, plus
+a read-only unchanged redeploy of the three retained fixtures in both orgs.
+
 # Public native Data Graph CRD closeout — 2026-11-05
 
 Gate4 iteration2 returned zero must-fix/optional findings; Gate5 reconciles README,

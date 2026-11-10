@@ -107,6 +107,10 @@ export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
     typeof spec.category !== 'string' ||
     !spec.category.trim() ||
     (spec.description !== undefined && typeof spec.description !== 'string') ||
+    // Identity lives in `identity`; runtime observations are never authored input.
+    Object.keys(spec).some(
+      (key) => key === 'name' || key === 'dataSpaceName' || runtimeKeys.has(key),
+    ) ||
     !Array.isArray(spec.fields) ||
     spec.fields.length === 0
   )

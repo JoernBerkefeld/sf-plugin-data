@@ -168,9 +168,11 @@ export async function preflightNativeDmo(
     Object.entries(desired.spec).filter(([key]) => !handledSpecKeys.has(key)),
   );
   let target: NativeDmoDocument;
+  let raw: Record<string, unknown>;
   try {
     const read = await readTarget(apiName, client, requestScope);
     target = read.document;
+    raw = read.raw;
     if (target.identity.dataSpace !== desired.identity.dataSpace)
       throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
     // Standard, namespaced and platform-generated DMOs are never written.
@@ -184,6 +186,8 @@ export async function preflightNativeDmo(
       throw error;
     if (requestScope === undefined && desired.identity.dataSpace !== 'default')
       throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
+    // The same custom-only rule as for existing targets: never create a namespaced name.
+    if (apiName.slice(0, -5).includes('__')) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
     return {
       operation: 'create',
       apiName,
@@ -246,8 +250,12 @@ export async function preflightNativeDmo(
   const category = sameDmoCategory(desired.spec.category, target.spec.category)
     ? {}
     : { category: desired.spec.category };
+  // Extra keys are compared with the raw read. One the API does not return cannot be compared,
+  // so like write-only field keys it is sent on create only and never forces a PATCH.
   const changedExtras = Object.fromEntries(
-    Object.entries(extras).filter(([key, entry]) => !isDeepStrictEqual(entry, target.spec[key])),
+    Object.entries(extras).filter(
+      ([key, entry]) => raw[key] !== undefined && !isDeepStrictEqual(entry, raw[key]),
+    ),
   );
   if (
     fields.length === 0 &&

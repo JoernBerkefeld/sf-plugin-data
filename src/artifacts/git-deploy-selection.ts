@@ -110,6 +110,9 @@ function collect(output: string, paths: Set<string>): boolean {
     const second = /^[RC]/u.test(status) ? values[index++] : undefined;
     if (!first || (/^[RC]/u.test(status) && !second))
       throw new GitSelectionError('INVALID_GIT_SELECTION');
+    // Deleting an old-format DMO file is the migration step, not a lifecycle change to block,
+    // and it is not counted as a possible rename source for untracked files either.
+    if (status === 'D' && legacyDmoMember(first)) continue;
     if (status === 'D') hasDeletion = true;
     if (!relevant(first) && !(second && relevant(second))) continue;
     if (/^[DRCU]/u.test(status)) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');

@@ -57,9 +57,9 @@ existing `v0.1.0` tag at `8bcbe63`. It does not authorize a commit, push,
 publication or further tag change. Release finalization is paused while npm
 trusted-publisher configuration is updated for the renamed repository.
 
-The repository implements bounded DMO retrieval, read-only deployment preview,
-guarded creation and qualified object/existing non-primary field label updates.
-Broader DMO deployment and other resource families remain unsupported. Offline CI
+The repository implements native DMO retrieval, read-only deployment preview,
+creation, update and exact-name deletion, with the scope and limits described in
+the README's Public DMO workflow. Offline CI
 builds, lints, tests and inspects the package allowlist. It does not authenticate
 to Salesforce. No workflow deploys or provisions org resources.
 
@@ -69,13 +69,22 @@ deploy that approved commit with fresh whole-selection preflight. Preview is
 advisory, not an executable saved plan or a promise of identical future actions.
 Never expose org credentials to untrusted pull-request code.
 
-`sf data360 deploy --changed-since <ref> --preview --api-version 65.0` selects
-current canonical `data360/default/dmo/ApiName.json` files relative to the Git
-repository root, even from a nested working directory. It is exclusive with
+## Native DMO file selection
+
+`sf data360 deploy --changed-since <ref> --preview` selects current native DMO
+files, `data360/dmo/ApiName__dlm.dmo-meta.json`, relative to the Git repository
+root, even from a nested working directory. It is exclusive with
 `--metadata` and `--source-dir`. Selection includes changes from the unique merge
 base to HEAD, staged/unstaged edits and relevant untracked files. Each file's
-default-space document identity must exactly match its filename. Other resource
-families and SQL companion pairs are not selected.
+document identity must exactly match its filename. A selected native DMO joins the
+ordered batch on the native route (default/auto API 68), also beside Segment,
+calculated insight, Graph or Identity Resolution inputs. Native mappings are not
+selected by Git. The other families selected by `--changed-since` are described in
+the sections above.
+
+A changed file in the removed `data360/default/dmo/Name.json` format is refused
+with `LEGACY_DMO_ARTIFACT_UNSUPPORTED` before any org call. Retrieve the DMO again
+with `sf data360 retrieve -m dmo:ApiName__dlm` and commit the new file.
 
 Relevant renames and deletions block the whole selection. Explicit Git rename
 detection is enabled regardless of repository configuration and inspects both
@@ -90,8 +99,8 @@ or execution. Existing Salesforce core parse-time authentication behavior remain
 this is not an authentication-free invocation guarantee. Selection failures return
 blocked diagnostics. Optional `provenance.git` records repository root, requested
 ref and resolved reference/HEAD/merge-base commits; it is not exact-byte binding.
-Nonempty selections use the existing whole-selection preflight and guarded API65
-execution unchanged. Preview remains advisory.
+Nonempty selections use the same preflight and execution as explicit selections
+of the same families. Preview remains advisory.
 
 Deployment jobs, report files, exact-byte/approved-commit binding and approval-bound execution
 remain deferred. This implements only the Git-selection portion of roadmap chunk 6. No repository, branch protection, remote or npm publisher is
