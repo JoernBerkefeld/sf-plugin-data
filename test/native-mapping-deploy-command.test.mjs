@@ -45,6 +45,7 @@ const wire = (kind) => ({
   name: kind === 'dlo' ? 'Example__dll' : 'Example__dlm',
   label: 'Example',
   category: 'Other',
+  creationType: 'Custom',
   ...(kind === 'dlo'
     ? { status: 'ACTIVE', dataSpaceInfo: [{ name: 'default' }], fields }
     : {

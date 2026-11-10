@@ -203,6 +203,7 @@ const raw = (name) => ({
 const rawDmo = (name) => ({
   ...raw(name),
   dataSpaceName: 'default',
+  creationType: 'Custom',
   fields: fields.map((field) => ({ ...field, type: field.dataType })),
 });
 const document = (kind, name) => ({

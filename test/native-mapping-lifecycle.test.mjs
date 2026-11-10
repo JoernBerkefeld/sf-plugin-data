@@ -61,6 +61,7 @@ const target = () => ({
   name: 'Example__dlm',
   label: 'Example',
   category: 'OTHER',
+  creationType: 'Custom',
   dataSpaceName: 'default',
   fields: names.map((name) => ({
     name,

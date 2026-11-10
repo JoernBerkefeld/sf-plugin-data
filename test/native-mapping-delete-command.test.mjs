@@ -100,6 +100,7 @@ const mappingFixture = (command) => {
     name: 'Target__dlm',
     label: 'Target',
     category: 'OTHER',
+    creationType: 'Custom',
     dataSpaceName: 'default',
     fields: names.map((name, index) => ({
       name,

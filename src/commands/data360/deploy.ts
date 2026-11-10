@@ -34,6 +34,7 @@ import { preflightMapping, executeMapping } from '../../services/command-native-
 import { createMappingClient } from '../../transport/mapping-rest.js';
 import { NativeMappingError } from '../../artifacts/native-mapping-document.js';
 import { preflightDmo, executeDmo } from '../../services/command-native-dmo.js';
+import { nativeDmoConfirmed } from '../../services/native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { isNativeDmoInput } from '../../artifacts/read-deploy-input.js';
 import { NativeDmoError } from '../../artifacts/native-dmo-document.js';
@@ -1275,22 +1276,28 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   .spec as import('../../artifacts/dlo-document.js').DloDocument['spec'];
                 const fields = new Map(actual.spec.fields.map((field) => [field.name, field]));
                 if (
-                  (kind !== 'dlo' || raw.status === 'ACTIVE') &&
-                  actual.spec.label === desired.label &&
-                  actual.spec.category === desired.category &&
-                  desired.fields.every((field) => {
-                    const found = fields.get(field.name);
-                    return (
-                      found &&
-                      Object.entries(field).every(
-                        ([key, value]) =>
-                          (key === 'isDynamicLookup' &&
-                            value === false &&
-                            found[key] === undefined) ||
-                          isDeepStrictEqual(found[key], value),
+                  kind === 'dmo'
+                    ? // Same comparison the DMO executor used: category case and write-only keys.
+                      nativeDmoConfirmed(
+                        input.document as import('../../artifacts/native-dmo-document.js').NativeDmoDocument,
+                        actual as import('../../artifacts/native-dmo-document.js').NativeDmoDocument,
                       )
-                    );
-                  })
+                    : raw.status === 'ACTIVE' &&
+                      actual.spec.label === desired.label &&
+                      actual.spec.category === desired.category &&
+                      desired.fields.every((field) => {
+                        const found = fields.get(field.name);
+                        return (
+                          found &&
+                          Object.entries(field).every(
+                            ([key, value]) =>
+                              (key === 'isDynamicLookup' &&
+                                value === false &&
+                                found[key] === undefined) ||
+                              isDeepStrictEqual(found[key], value),
+                          )
+                        );
+                      })
                 ) {
                   settled = true;
                   processingDlos.delete(input.path);

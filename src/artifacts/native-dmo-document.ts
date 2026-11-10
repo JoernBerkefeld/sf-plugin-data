@@ -10,8 +10,37 @@ export type NativeDmoDocument = {
   schemaVersion: 1;
   kind: 'dmo';
   identity: { apiName: string; dataSpace: string };
-  spec: { label: string; category: 'Other'; fields: NativeDmoField[] };
+  spec: {
+    label: string;
+    category: string;
+    description?: string;
+    fields: NativeDmoField[];
+    [key: string]: unknown;
+  };
 };
+
+/**
+ * Compare categories the way the API does: input is case-insensitive, reads are upper case.
+ * @param {string} left One category spelling.
+ * @param {string} right Another category spelling.
+ * @returns {boolean} Whether both name the same category.
+ */
+export function sameDmoCategory(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+/**
+ * Only customer-created DMOs with an unprefixed name may be written or deleted.
+ * @param {Record<string, unknown>} raw Direct native read.
+ * @returns {boolean} Whether the target is a custom, non-namespaced DMO.
+ */
+export function isCustomNativeDmo(raw: Record<string, unknown>): boolean {
+  return (
+    raw.creationType === 'Custom' &&
+    typeof raw.name === 'string' &&
+    !raw.name.slice(0, -'__dlm'.length).includes('__')
+  );
+}
 
 /** Payload-free refusal for the isolated native DMO boundary. */
 export class NativeDmoError extends Error {
@@ -50,7 +79,8 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Validate the canonical concrete-scope document, retaining field definitions.
+ * Validate only the document shape, retaining field definitions and any extra spec keys.
+ * Category, data types, label length and key rules are left to the API.
  * @param {unknown} value Portable input.
  * @returns {NativeDmoDocument} Checked independent copy.
  */
@@ -62,7 +92,6 @@ export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
     Object.keys(document).length !== 4 ||
     !['identity', 'kind', 'schemaVersion', 'spec'].every((key) => Object.hasOwn(document, key)) ||
     Object.keys(identity).length !== 2 ||
-    Object.keys(spec).length !== 3 ||
     document.schemaVersion !== 1 ||
     document.kind !== 'dmo' ||
     typeof identity.apiName !== 'string' ||
@@ -75,8 +104,9 @@ export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
     ) ||
     typeof spec.label !== 'string' ||
     !spec.label.trim() ||
-    spec.label.length > 40 ||
-    spec.category !== 'Other' ||
+    typeof spec.category !== 'string' ||
+    !spec.category.trim() ||
+    (spec.description !== undefined && typeof spec.description !== 'string') ||
     !Array.isArray(spec.fields) ||
     spec.fields.length === 0
   )
@@ -98,8 +128,6 @@ export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
       throw new NativeDmoError('INVALID_DMO_FIELD');
     names.add(field.name.toLowerCase());
   }
-  if (spec.fields.filter((field) => record(field).isPrimaryKey === true).length !== 1)
-    throw new NativeDmoError('INVALID_DMO_PRIMARY_KEY');
   return structuredClone(value) as NativeDmoDocument;
 }
 
@@ -131,7 +159,17 @@ export function normalizeNativeDmo(value: unknown, dataSpace?: string): NativeDm
     identity: { apiName: object.name, dataSpace: object.dataSpaceName },
     spec: {
       label: object.label,
-      category: object.category === 'OTHER' ? 'Other' : object.category,
+      // Reads are upper case (OTHER, SEGMENT_MEMBERSHIP); save the documented input spelling.
+      category:
+        typeof object.category === 'string'
+          ? object.category
+              .split('_')
+              .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+              .join('_')
+          : object.category,
+      ...(typeof object.description === 'string' && object.description
+        ? { description: object.description }
+        : {}),
       fields: (object.fields as unknown[]).map((value) => {
         const field = record(value);
         if (

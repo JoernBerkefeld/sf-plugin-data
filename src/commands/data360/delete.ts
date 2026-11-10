@@ -42,7 +42,7 @@ import { createDmoClient } from '../../transport/dmo-rest.js';
 import { createNativeDmoDeleteClient } from '../../transport/dmo-native-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../transport/bound-ssot.js';
-import { deleteNativeDmo, retrieveNativeDmo } from '../../services/native-dmo.js';
+import { deleteNativeDmo, previewDeleteNativeDmo } from '../../services/native-dmo.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesforce/core';
 import { DloError, dloName } from '../../artifacts/dlo-document.js';
@@ -231,7 +231,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected deleteMapping = deleteNativeMapping;
   protected createDmoClient = createDmoClient;
   protected createDmoNativeDeleteClient = createNativeDmoDeleteClient;
-  protected retrieveDmo = retrieveNativeDmo;
+  protected retrieveDmo = previewDeleteNativeDmo;
   protected deleteDmo = deleteNativeDmo;
   protected createDloClient = createDloClient;
   protected createDloNativeDeleteClient = createNativeDloDeleteClient;
@@ -951,7 +951,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             const definitionClient = client as ReturnType<typeof createDloClient>;
             if (flags.preview) {
               const document = await (native
-                ? (this.retrieveDmo ?? retrieveNativeDmo)(apiName, definitionClient, requestScope)
+                ? (this.retrieveDmo ?? previewDeleteNativeDmo)(
+                    apiName,
+                    definitionClient,
+                    requestScope,
+                  )
                 : this.retrieveDlo(apiName, definitionClient, requestScope));
               item.identity = document.identity;
             } else {

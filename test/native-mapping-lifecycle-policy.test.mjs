@@ -46,6 +46,7 @@ const dependencies = (fields = names) => ({
       name: 'Test__dlm',
       label: 'Test',
       category: 'OTHER',
+      creationType: 'Custom',
       dataSpaceName: 'default',
       fields: fields.map((name) => ({
         name,

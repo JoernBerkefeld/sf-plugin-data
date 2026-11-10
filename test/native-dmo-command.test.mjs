@@ -18,6 +18,7 @@ const wire = {
   name,
   label: 'Example',
   category: 'Other',
+  creationType: 'Custom',
   dataSpaceName: 'default',
   fields: fields.map(({ dataType, ...field }) => ({ ...field, type: dataType })),
 };

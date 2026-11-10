@@ -9,7 +9,11 @@ import {
   validateNativeMappingDocument,
 } from '../artifacts/native-mapping-document.js';
 import { normalizeDlo } from '../artifacts/dlo-document.js';
-import { normalizeNativeDmo } from '../artifacts/native-dmo-document.js';
+import {
+  isCustomNativeDmo,
+  normalizeNativeDmo,
+  unwrapNativeDmo,
+} from '../artifacts/native-dmo-document.js';
 import type {
   NativeMappingDocument,
   NativeMappingField,
@@ -128,10 +132,12 @@ async function validateDependencies(
     await dependencies.source.get(desired.spec.sourceEntityDeveloperName),
     desired.identity.dataSpace,
   );
-  const target = normalizeNativeDmo(
+  const rawTarget = unwrapNativeDmo(
     await dependencies.target.get(desired.spec.targetEntityDeveloperName),
-    desired.identity.dataSpace,
   );
+  // Mappings to standard, namespaced or platform-generated DMOs are not qualified.
+  if (!isCustomNativeDmo(rawTarget)) throw new NativeMappingError('MAPPING_TARGET_UNSUPPORTED');
+  const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace);
   if (
     source.identity.dataSpace !== desired.identity.dataSpace ||
     target.identity.dataSpace !== desired.identity.dataSpace ||

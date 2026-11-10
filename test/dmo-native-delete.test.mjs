@@ -115,6 +115,7 @@ const runtime = {
   name,
   label: 'Example',
   category: 'Other',
+  creationType: 'Custom',
   dataSpaceName: 'default',
   fields: [{ name: 'Id__c', label: 'Id', type: 'Text', isPrimaryKey: true }],
 };
