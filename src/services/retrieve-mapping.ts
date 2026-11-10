@@ -3,7 +3,7 @@ import { MappingError, mappingName, projectMapping } from '../artifacts/mapping-
 import type { MappingDocument } from '../artifacts/mapping-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { retrieveMappingSourceMetadata } from '../transport/project-metadata.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 
 type ReadConnection = Pick<
   Connection,

@@ -13,6 +13,7 @@ import { retrieveNativeDlo, deleteNativeDlo } from '../lib/services/native-dlo.j
 import { preflightDloDeploy, executeDloDeploy } from '../lib/services/command-dlo.js';
 import { captureDeployInputDigest } from '../lib/artifacts/read-deploy-input.js';
 import { writeDloDocument } from '../lib/artifacts/write-dlo.js';
+import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { readDeployInputs, verifyDloInputDigest } from '../lib/artifacts/read-deploy-input.js';
 import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
 const name = 'Example__dll';
@@ -403,38 +404,57 @@ for (const preview of [true, false])
       );
       if (!preview) assert.equal(writes[0][0], existing ? 'PATCH' : 'POST');
     });
-test('mixed auto DLO and DMO preserve distinct native68 and legacy65 routes', async () => {
+test('mixed auto DLO and DMO deploy together on their native68 routes, DLO first', async () => {
   const cwd = await scratch();
   const receipt = await writeDloDocument(document, cwd, false);
-  const inputs = await readDeployInputs({ cwd, sourceDir: [receipt.path] });
-  inputs.push({
-    path: 'synthetic.json',
-    document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Legacy__dlm' } },
-  });
+  const dmoReceipt = await writeNativeDmoDocument(
+    {
+      schemaVersion: 1,
+      kind: 'dmo',
+      identity: { dataSpace: 'default', apiName: 'Synthetic__dlm' },
+      spec: {
+        label: 'Synthetic',
+        category: 'Other',
+        fields: [{ name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true }],
+      },
+    },
+    cwd,
+    false,
+  );
+  const inputs = await readDeployInputs({ cwd, sourceDir: [dmoReceipt.path, receipt.path] });
+  const versions = [];
   const command = invocation(Deploy, {
     'api-version': 'auto',
+    metadata: undefined,
+    'source-dir': [dmoReceipt.path, receipt.path],
     preview: true,
     'target-org': {
       getOrgId: () => 'target',
       getUsername: () => 'target',
-      getConnection: (version) => {
-        assert.equal(version, '65.0');
-        return {};
-      },
+      getConnection: () => assert.fail('Native routes own their connection'),
     },
   });
   command.resolveInputs = async () => inputs;
-  command.captureInput = async () => 'digest';
-  command.verifyDloInput = async () => {};
-  command.createDloClient = () => client();
-  command.preflight = async (_document, _connection, version) => {
-    assert.equal(version.soapNumeric, '65.0');
-    return { outcome: 'unchanged', target: 'existing', absenceProof: 'none', diagnostics: [] };
+  command.createDloClient = (_target, version) => {
+    versions.push(`dlo:${version}`);
+    return client();
   };
+  command.createDmoClient = (_target, version) => {
+    versions.push(`dmo:${version}`);
+    return {};
+  };
+  command.preflightNativeDmo = async () => ({
+    family: 'dmo',
+    outcome: 'unchanged',
+    target: 'existing',
+    absenceProof: 'none',
+    diagnostics: [],
+  });
   const result = await run(command);
   assert.equal(result.status, 'success', JSON.stringify(result));
-  assert.deepEqual(result.result.items.map((item) => item.routes[0].apiVersion).toSorted(), [
-    '65.0',
-    '68.0',
-  ]);
+  assert.deepEqual(versions, ['dlo:68.0', 'dmo:68.0']);
+  assert.deepEqual(
+    result.result.items.map((item) => item.family),
+    ['dlo', 'dmo'],
+  );
 });

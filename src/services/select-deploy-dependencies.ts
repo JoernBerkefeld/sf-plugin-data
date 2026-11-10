@@ -36,14 +36,11 @@ import type {
 } from '../artifacts/dependency-selection.js';
 
 /**
- * Resolve one admitted input to its graph node. An explicitly selected legacy DMO file was
- * already validated by its own reader and is a leaf; every other input uses the family contract.
+ * Resolve one admitted input to its graph node through the family contract.
  * @param {DependencyDeployInput} input Admitted local input.
  * @returns {DependencyNode} Exact identity and dependencies.
  */
 function inputNode(input: DependencyDeployInput): DependencyNode {
-  if (input.document.kind === 'dmo' && !isNativeDmoInput(input))
-    return { identity: { kind: 'dmo', ...input.document.identity }, dependencies: [] };
   return documentDependencyNode(input.document as Parameters<typeof documentDependencyNode>[0]);
 }
 

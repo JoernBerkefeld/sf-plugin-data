@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Deploy from '../lib/commands/data360/deploy.js';
 import { GitSelectionError } from '../lib/artifacts/git-deploy-selection.js';
+import { DeployInputError } from '../lib/artifacts/read-deploy-input.js';
+
+const selectedPath = 'data360/dmo/Selected__dlm.dmo-meta.json';
 
 const provenance = {
   repositoryRoot: process.cwd(),
@@ -11,7 +14,7 @@ const provenance = {
   headCommit: 'b'.repeat(40),
   mergeBase: 'c'.repeat(40),
 };
-const invocation = (overrides = {}, paths = ['selected.json']) => {
+const invocation = (overrides = {}, paths = [selectedPath]) => {
   const calls = [];
   const flags = {
     'changed-since': 'main',
@@ -23,6 +26,7 @@ const invocation = (overrides = {}, paths = ['selected.json']) => {
         calls.push('org');
         return 'synthetic';
       },
+      getUsername: () => 'synthetic@example.invalid',
       getConnection: (version) => {
         assert.equal(version, '65.0');
         calls.push('connection');
@@ -45,18 +49,30 @@ const invocation = (overrides = {}, paths = ['selected.json']) => {
     return [
       {
         path: paths[0],
-        document: { identity: { dataSpace: 'default', apiName: 'Selected__dlm' } },
+        document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Selected__dlm' } },
       },
     ];
   };
-  command.preflight = async (document, connection, selection, space) => {
+  command.captureInput = async () => 'synthetic-dmo-digest';
+  const client = {};
+  command.createDmoClient = (target, version) => {
+    assert.equal(target, 'synthetic@example.invalid');
+    assert.equal(version, '65.0');
+    return client;
+  };
+  command.preflightNativeDmo = async (document, actual) => {
     calls.push('preflight');
     assert.equal(document.identity.apiName, 'Selected__dlm');
-    assert.deepEqual(selection, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
-    assert.equal(space, 'default');
-    return { outcome: 'unchanged', target: 'present', absenceProof: 'none', diagnostics: [] };
+    assert.equal(actual, client);
+    return {
+      family: 'dmo',
+      outcome: 'unchanged',
+      target: 'existing',
+      absenceProof: 'none',
+      diagnostics: [],
+    };
   };
-  command.execute = async () => {
+  command.executeNativeDmo = async () => {
     calls.push('execute');
     return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
   };
@@ -73,7 +89,7 @@ const run = async (command) => {
 };
 
 for (const preview of [true, false]) {
-  test(`Git selected paths delegate through unchanged API65 pipeline preview=${preview}`, async () => {
+  test(`Git selected native DMO delegates through the batch pipeline at its pin preview=${preview}`, async () => {
     const { command, calls } = invocation({ preview });
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'success');
@@ -130,7 +146,7 @@ for (const preview of [true, false]) {
     };
     const resolve = command.resolveInputs;
     command.selectGitInputs = async () => ({
-      paths: ['selected.json'],
+      paths: [selectedPath],
       provenance,
       segments: [segment],
     });
@@ -139,7 +155,6 @@ for (const preview of [true, false]) {
       assert.equal(input, segment);
       calls.push('digest');
     };
-    command.captureInput = async () => 'synthetic-dmo-digest';
     command.preflightSegment = async () => {
       calls.push('segment');
       return {
@@ -177,7 +192,7 @@ for (const drift of ['digest', 'missing', 'companion', 'verification']) {
       document: { kind: 'segment' },
     };
     command.selectGitInputs = async () => ({
-      paths: ['selected.json'],
+      paths: [selectedPath],
       provenance,
       segments: [captured],
     });
@@ -214,6 +229,25 @@ for (const other of [{ metadata: ['dmo:Selected__dlm'] }, { 'source-dir': ['expl
     assert.equal(result.diagnostics.errors[0].code, 'INVALID_SELECTION');
   });
 }
+test('Git-selected legacy DMO artifact is refused with its own remediation before services', async () => {
+  for (const preview of [true, false]) {
+    const { command, calls } = invocation({ preview });
+    command.selectGitInputs = async () => {
+      throw new DeployInputError('LEGACY_DMO_ARTIFACT_UNSUPPORTED');
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(exitCode, 1);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(result.result.items, []);
+    assert.equal(result.diagnostics.errors.length, 1);
+    assert.equal(result.diagnostics.errors[0].code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
+    assert.match(
+      result.diagnostics.errors[0].message,
+      /sf data360 retrieve -m dmo:<ApiName>__dlm.*<ApiName>__dlm\.dmo-meta\.json/u,
+    );
+  }
+});
 for (const code of ['INVALID_GIT_SELECTION', 'BLOCKED_GIT_LIFECYCLE']) {
   test(`Git error ${code} becomes actionable blocked envelope before services`, async () => {
     const { command, calls } = invocation();

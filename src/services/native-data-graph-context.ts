@@ -8,7 +8,7 @@ import {
 import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { ConnectError } from '../transport/connect-client.js';
 import { dataGraphName, graphRequire } from '../artifacts/data-graph-document.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 import type { NativeGraphContext, NativeGraphRead } from './native-data-graph-crd.js';
 
 type TransportResponse = { statusCode?: unknown; body?: unknown; headers?: unknown };

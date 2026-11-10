@@ -278,23 +278,51 @@ test('DLO processing evidence is private and cleared only by existing parent set
     }
 });
 
-test('mixed legacy deployment carries DLO processing without changing JSON', async () => {
+test('mixed batch deployment carries DLO processing without changing JSON', async () => {
   const { command, inputs } = await fixture({ version: 'auto' });
   command.resolveInputs = async () => [
     inputs.find((input) => input.document.kind === 'dlo'),
     {
-      path: 'legacy.json',
-      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Legacy__dlm' } },
+      path: 'Audience.segment.json',
+      inputDigest: 'b'.repeat(64),
+      document: {
+        schemaVersion: 1,
+        kind: 'segment',
+        identity: { dataSpace: 'default', apiName: 'Audience' },
+        spec: {
+          displayName: 'Audience',
+          description: 'Description',
+          segmentType: 'DBT',
+          segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+          models: [
+            { name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' },
+          ],
+          dependencies: [
+            { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
+          ],
+          publishInterval: 'NO_REFRESH',
+          lookbackPeriod: 'P90D',
+        },
+      },
     },
   ];
   command.resolveTargetOrg = async () => ({ ...org, getConnection: () => ({}) });
   command.captureInput = async () => 'unchanged';
   command.createDloClient = () => ({});
   command.verifyDloInput = async () => {};
-  command.preflight = command.preflightDlo = async () => ({
+  command.preflightDlo = async () => ({
     outcome: 'create',
     target: 'absent',
     absenceProof: 'confirmed-404',
+    diagnostics: [],
+  });
+  command.verifySegmentInput = async () => {};
+  command.preflightSegment = async () => ({
+    family: 'segment',
+    outcome: 'unchanged',
+    target: 'present',
+    absenceProof: 'none',
+    requiredEffects: [],
     diagnostics: [],
   });
   command.executeDlo = async () => ({
@@ -303,9 +331,11 @@ test('mixed legacy deployment carries DLO processing without changing JSON', asy
     serverProcessing: true,
     diagnostics: [],
   });
-  command.execute = async () => ({
-    outcome: 'created',
-    mutation: 'confirmed-created',
+  command.executeSegment = async () => ({
+    family: 'segment',
+    route: { apiVersion: '68.0', method: 'PATCH', resource: 'segments' },
+    outcome: 'unchanged',
+    mutation: 'not-attempted',
     diagnostics: [],
   });
   const lines = [];
@@ -314,7 +344,7 @@ test('mixed legacy deployment carries DLO processing without changing JSON', asy
   const result = await run(command);
   assert.equal(result.status, 'success', JSON.stringify(result));
   assert.ok(lines.includes('created dlo Example__dll (server is still processing)'));
-  assert.ok(lines.includes('created dmo Legacy__dlm'));
+  assert.ok(lines.includes('Unchanged: segment:Audience; mutation: not-attempted.'));
   assert.ok(!JSON.stringify(result).includes('serverProcessing'));
 });
 

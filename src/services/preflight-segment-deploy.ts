@@ -9,9 +9,9 @@ import {
 import { retrieveSegment } from './retrieve-segment.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
-import type { DmoDeployPreview } from './preflight-dmo-deploy.js';
+import type { DeployPreviewResult } from './deploy-result.js';
 
-export type SegmentDeployPreview = DmoDeployPreview & {
+export type SegmentDeployPreview = DeployPreviewResult & {
   family: 'segment';
   route: { apiVersion: string; method: 'GET'; resource: 'segments' };
   requiredEffects: Array<'processing'>;

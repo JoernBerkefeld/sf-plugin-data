@@ -2,8 +2,10 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
-import { DmoWriteError } from '../lib/artifacts/write-other-dmo.js';
-import { DmoRetrieveError, selectDmos } from '../lib/services/retrieve-other-dmo.js';
+import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
+import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
+import { SegmentError } from '../lib/artifacts/segment-document.js';
+import { MetadataReadError } from '../lib/services/read-metadata.js';
 
 import { RelationshipDefinitionError } from '../lib/artifacts/write-relationship-definition.js';
 
@@ -148,7 +150,7 @@ test('non-DMO output failure uses document kind and excludes failure from human 
       reasons: new Map(),
     });
     command.writeSegment = async () => {
-      throw new DmoWriteError('OUTPUT_FAILED');
+      throw new SegmentError('OUTPUT_FAILED');
     };
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'failed');
@@ -187,7 +189,7 @@ for (const version of ['65.0', 'auto']) {
       metadata: ['mapping:Zulu', 'mapping:Alpha', 'mapping:Zulu'],
       'api-version': version,
     });
-    command.selectDocuments = () => assert.fail('no DMO inventory');
+    command.listNativeNames = () => assert.fail('no DMO inventory');
     const reads = [];
     command.acquireNativeMapping = async (name) => {
       reads.push(name);
@@ -330,61 +332,30 @@ const invocation = (overrides = {}) => {
     if (!flags['target-org']) throw new Error('no org');
     return { getOrgId: () => 'synthetic-org', getConnection: () => connection };
   };
-  command.selectDocuments = async () => ['Sample__dlm'];
-  command.listNativeNames = async (_connection, version, family) =>
-    family === 'dmo'
-      ? command.selectDocuments(
-          _connection,
-          flags.metadata ?? [],
-          { requested: version, restSelector: `v${version}`, soapNumeric: version },
-          flags.dataspace,
-        )
-      : [];
+  command.listNativeNames = async (_connection, _version, family) =>
+    family === 'dmo' ? ['Sample__dlm'] : [];
   command.listNativeMappingNames = async () => [];
-  command.createMappingInventoryReader =
-    command.createMappingClient =
-    command.createDmoClient =
-      () => ({});
+  command.createMappingInventoryReader = command.createMappingClient = () => ({});
   command.acquireNativeMapping = async (name) => ({
     kind: 'mapping',
     identity: { dataSpace: 'default', apiName: name },
   });
   command.writeNativeMapping = async (document, ...arguments_) =>
     command.writeMapping(document.identity.apiName, '<opaque/>', ...arguments_);
-  command.acquireNativeDmo = async (name) => {
-    const projection = await command.acquire(
-      connection,
-      name,
-      { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
-      flags.dataspace,
-    );
-    if (
-      projection.status !== 'projected' ||
-      projection.blockers.length > 0 ||
-      !projection.candidate
-    )
-      throw new DmoRetrieveError(projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
-    return projection.candidate;
+  const client = {};
+  command.createDmoClient = (target, version) => {
+    assert.equal(target, 'synthetic');
+    assert.equal(version, flags['api-version'] === 'auto' ? '68.0' : flags['api-version']);
+    return client;
   };
-  command.writeNativeDmo = (...arguments_) => command.writeDocument(...arguments_);
   command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
-  command.acquire = async (...arguments_) => {
-    assert.deepEqual(arguments_, [
-      connection,
-      'Sample__dlm',
-      { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
-      flags.dataspace,
-    ]);
-    return {
-      status: 'projected',
-      blockers: [],
-      candidate,
-      expectations: { secret: 'never persisted' },
-    };
+  command.acquireNativeDmo = async (...arguments_) => {
+    assert.deepEqual(arguments_, ['Sample__dlm', client, flags.dataspace]);
+    return candidate;
   };
-  command.writeDocument = async (...arguments_) => {
+  command.writeNativeDmo = async (...arguments_) => {
     assert.deepEqual(arguments_, [
       candidate,
       flags['output-dir'] ?? process.cwd(),
@@ -395,97 +366,77 @@ const invocation = (overrides = {}) => {
   return command;
 };
 
-test('latest discovers once, pins numeric SOAP and retains literal REST through selection and acquisition', async () => {
-  const command = invocation({ metadata: ['dmo'], 'api-version': 'latest' });
-  const requests = [];
-  const pins = [];
-  let version = '64.0';
-  let selection;
-  const actualConnection = {
-    instanceUrl: 'https://synthetic.example',
-    _refreshDelegate: () => assert.fail('discovery must not refresh/replay'),
-    getApiVersion: () => version,
-    request: async function (request, options) {
-      requests.push(request);
-      if (request.url === '/services/data') {
-        assert.equal(this._refreshDelegate, undefined);
-        assert.equal(options.retry.maxRetries, 0);
-        assert.throws(options.followRedirect);
-        return [{ version: '64.0' }, { version: '65.0' }];
-      }
-      assert.match(request.url, /\/services\/data\/latest\/ssot\//u);
-      return { dataModelObject: [{ name: 'Sample__dlm', dataSpaceName: 'default' }] };
-    },
-  };
-  command.resolveOrg = async () => ({
-    getOrgId: () => 'synthetic-org',
-    getConnection: (numeric) => {
-      pins.push(numeric);
-      if (numeric) version = numeric;
-      return actualConnection;
-    },
-  });
-  command.selectDocuments = async (...arguments_) => {
-    selection = arguments_[2];
-    assert.ok(Object.isFrozen(selection));
-    return selectDmos(...arguments_);
-  };
-  command.acquire = async (conn, name, actualSelection) => {
-    assert.equal(conn.getApiVersion(), '65.0');
-    assert.equal(actualSelection, selection);
-    assert.equal(name, 'Sample__dlm');
-    return { status: 'projected', blockers: [], candidate };
-  };
-  const { result } = await run(command);
-  assert.equal(result.status, 'success');
-  assert.equal(result.metadata.apiVersion, 'latest');
-  assert.equal(result.metadata.soapApiVersion, '65.0');
-  assert.deepEqual(pins, [undefined, '65.0']);
-  assert.equal(requests.filter((request) => request.url === '/services/data').length, 1);
-  assert.equal(requests.length, 2);
-  assert.equal(typeof actualConnection._refreshDelegate, 'function');
-});
-
-test('latest malformed, failed and newer discovery blocks before every DMO or file call', async () => {
-  for (const advertised of [
-    [],
-    {},
-    [{ version: 'invalid-secret' }],
-    new Error('private-token'),
-    [{ version: '68.0' }],
+test('latest is refused for every DMO selection before authentication or discovery', async () => {
+  for (const overrides of [
+    { metadata: undefined },
+    { metadata: ['dmo'] },
+    { metadata: ['dmo:Sample__dlm'] },
+    { metadata: ['dmo:Sample__dlm'], 'include-dependencies': true },
+    { metadata: ['dmo:Sample__dlm', 'relationship:Link'] },
+    { metadata: ['dmo', 'segment:Audience'] },
   ]) {
-    const command = invocation({ 'api-version': 'latest', metadata: ['dmo'] });
-    let discoveries = 0;
-    command.resolveOrg = async () => ({
-      getOrgId: () => 'synthetic-org',
-      getConnection: (version) => {
-        assert.equal(version, undefined, 'unsupported discovery must not repin');
-        return {
-          request: async () => {
-            discoveries++;
-            if (advertised instanceof Error) throw advertised;
-            return advertised;
-          },
-        };
-      },
-    });
-    command.selectDocuments =
-      command.acquire =
-      command.writeDocument =
+    const command = invocation({ ...overrides, 'api-version': 'latest' });
+    command.resolveOrg = () => assert.fail('latest must be refused before authentication');
+    command.listNativeNames =
+      command.acquireNativeDmo =
+      command.writeNativeDmo =
         () => assert.fail('no DMO or file work');
     const { result, exitCode } = await run(command);
-    assert.equal(discoveries, 1);
     assert.equal(exitCode, 1);
     assert.equal(result.status, 'blocked');
-    assert.equal(
-      result.diagnostics.errors[0].code,
-      Array.isArray(advertised) && advertised[0]?.version === '68.0'
-        ? 'INVALID_SCOPE'
-        : 'API_VERSION_DISCOVERY_FAILED',
-    );
-    assert.doesNotMatch(JSON.stringify(result), /private-token|invalid-secret/u);
-    assert.match(result.diagnostics.errors[0].message, /--api-version 65\.0/u);
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
+    assert.deepEqual(result.result.items, []);
   }
+});
+
+test('explicit numeric DMO beside a relationship now reads and writes the native format', async () => {
+  for (const metadata of [
+    ['relationship:Link', 'dmo:Sample__dlm'],
+    ['relationship:Link', 'dmo'],
+  ]) {
+    const command = invocation({ metadata, 'api-version': '65.0', 'output-dir': 'project' });
+    command.acquireRelationshipXml = async () => '<opaque/>';
+    command.writeRelationship = async (name) => ({ path: `${name}.xml`, outcome: 'retrieved' });
+    const inventories = [];
+    command.listNativeNames = async (actualConnection, version, family, scope) => {
+      assert.equal(actualConnection, connection);
+      inventories.push([version, family, scope]);
+      return ['Sample__dlm'];
+    };
+    const selections = [];
+    command.selectDependencies = async (identities, actualConnection, selection, include) => {
+      assert.equal(actualConnection, connection);
+      assert.deepEqual(selection, {
+        requested: '65.0',
+        restSelector: 'v65.0',
+        soapNumeric: '65.0',
+      });
+      assert.equal(include, false);
+      selections.push(identities);
+      return { entries: [{ document: candidate }], reasons: new Map() };
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(exitCode, undefined);
+    assert.deepEqual(inventories, metadata.includes('dmo') ? [['65.0', 'dmo', 'default']] : []);
+    assert.deepEqual(selections, [[{ kind: 'dmo', dataSpace: 'default', apiName: 'Sample__dlm' }]]);
+    assert.deepEqual(result.result.selection, ['relationship:Link', 'dmo:Sample__dlm']);
+    const item = result.result.items.find((entry) => entry.identity.apiName === 'Sample__dlm');
+    assert.equal(item.path, 'synthetic-output.json');
+    assert.deepEqual(item.routes, [
+      { operation: 'dmo.get', apiVersion: '65.0', transport: 'native' },
+    ]);
+    // The API65 metadata adapter route evidence must not reappear.
+    assert.ok(!JSON.stringify(result).includes('dmo.metadata'));
+  }
+});
+
+test('the removed API65 DMO adapter seams are absent from the retrieve command', () => {
+  const defaults = new Retrieve([], {});
+  for (const seam of ['acquire', 'selectDocuments', 'writeDocument'])
+    assert.equal(seam in defaults, false, seam);
+  assert.equal(typeof defaults.acquireNativeDmo, 'function');
+  assert.equal(typeof defaults.writeNativeDmo, 'function');
 });
 
 for (const apiVersion of ['65.0', '68.0', 'auto']) {
@@ -495,7 +446,7 @@ for (const apiVersion of ['65.0', '68.0', 'auto']) {
       'api-version': apiVersion,
       'output-dir': 'custom-root',
     });
-    command.selectDocuments = () => assert.fail('Segment exact must not list DMOs');
+    command.listNativeNames = () => assert.fail('Segment exact must not list DMOs');
     const acquired = [];
     command.selectDependencies = async (roots, conn, version) => {
       const entries = [];
@@ -560,7 +511,7 @@ test('Segment bare inventory/latest/invalid identity refuse before auth', async 
 test('blocked Segment dependency selection prevents complete-selection publication', async () => {
   const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
   command.selectDependencies = async () => {
-    throw new DmoRetrieveError('UNKNOWN_SEGMENT_CONFIGURATION');
+    throw new MetadataReadError('UNKNOWN_SEGMENT_CONFIGURATION');
   };
   command.writeSegment = () => assert.fail('must not publish');
   const { result } = await run(command);
@@ -600,7 +551,7 @@ test('output root and changed-only overwrite flow unchanged to the writer', asyn
     'output-dir': 'project',
     overwrite: true,
   });
-  command.writeDocument = async (value, root, overwrite) => {
+  command.writeNativeDmo = async (value, root, overwrite) => {
     assert.equal(value, candidate);
     assert.equal(root, 'project');
     assert.equal(overwrite, true);
@@ -621,8 +572,8 @@ test('invalid selectors refuse before authentication, acquisition or filesystem 
   ]) {
     const command = invocation({ metadata });
     command.resolveOrg = () => assert.fail('must not authenticate');
-    command.acquire = () => assert.fail('must not acquire');
-    command.writeDocument = () => assert.fail('must not write');
+    command.acquireNativeDmo = () => assert.fail('must not acquire');
+    command.writeNativeDmo = () => assert.fail('must not write');
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'blocked');
     assert.equal(result.diagnostics.errors[0].code, 'INVALID_SELECTION');
@@ -639,31 +590,20 @@ test('real selector expansion writes each exact/type/all member once in sorted o
   ]) {
     const command = invocation({ metadata, 'output-dir': 'project', overwrite: true });
     let inventories = 0;
-    const actualConnection = {
-      instanceUrl: 'https://synthetic.example',
-      getApiVersion: () => '65.0',
-      request: async () => {
-        inventories++;
-        return {
-          dataModelObject: ['Zeta__dlm', 'Alpha__dlm'].map((name) => ({
-            name,
-            dataSpaceName: 'default',
-          })),
-        };
-      },
+    command.listNativeNames = async (actualConnection, version, family, scope) => {
+      assert.equal(actualConnection, connection);
+      assert.equal(version, '65.0');
+      assert.equal(scope, 'default');
+      if (family !== 'dmo') return [];
+      inventories++;
+      return ['Zeta__dlm', 'Alpha__dlm'];
     };
-    command.resolveOrg = async () => ({
-      getOrgId: () => 'synthetic-org',
-      getConnection: () => actualConnection,
-    });
-    command.selectDocuments = selectDmos;
-    command.acquire = async (_, name) => ({
-      status: 'projected',
-      blockers: [],
-      candidate: { ...candidate, identity: { dataSpace: 'default', apiName: name } },
+    command.acquireNativeDmo = async (name) => ({
+      ...candidate,
+      identity: { dataSpace: 'default', apiName: name },
     });
     const written = [];
-    command.writeDocument = async (document, root, overwrite) => {
+    command.writeNativeDmo = async (document, root, overwrite) => {
       assert.equal(root, 'project');
       assert.equal(overwrite, true);
       written.push(document.identity.apiName);
@@ -682,38 +622,32 @@ test('human output includes per-object diagnostic identity and code', async () =
   command.jsonEnabled = () => false;
   const lines = [];
   command.log = (line) => lines.push(line);
-  command.acquire = async () => {
-    throw new DmoRetrieveError('ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE');
+  command.acquireNativeDmo = async () => {
+    throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
   };
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'blocked');
+  assert.equal(result.status, 'failed');
   assert.equal(exitCode, 1);
-  assert.match(lines.join('\n'), /dmo:Sample__dlm: ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE/u);
+  assert.match(lines.join('\n'), /dmo:Sample__dlm: UNSUPPORTED_DMO_TARGET/u);
 });
 
 test('type, omitted and repeated selectors reach selection and retain per-object partial outcomes', async () => {
   for (const metadata of [undefined, [], ['dmo'], ['dmo', 'dmo:Sample__dlm', 'dmo:Sample__dlm']]) {
     const command = invocation({ metadata });
-    command.selectDocuments = async (actualConnection, selectors, version, space) => {
+    command.listNativeNames = async (actualConnection, version, family, space) => {
       assert.equal(actualConnection, connection);
-      assert.deepEqual(selectors, metadata ?? []);
-      assert.deepEqual(version, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
+      assert.equal(version, '65.0');
       assert.equal(space, 'default');
-      return ['Alpha__dlm', 'Broken__dlm', 'Unsupported__dlm', 'Zeta__dlm'];
+      return family === 'dmo' ? ['Alpha__dlm', 'Broken__dlm', 'Unsupported__dlm', 'Zeta__dlm'] : [];
     };
     const acquired = [];
-    command.acquire = async (_, name) => {
+    command.acquireNativeDmo = async (name) => {
       acquired.push(name);
       if (name === 'Broken__dlm') throw new Error('private remote body');
-      if (name === 'Unsupported__dlm')
-        throw new DmoRetrieveError('ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE');
-      return {
-        status: 'projected',
-        blockers: [],
-        candidate: { ...candidate, identity: { dataSpace: 'default', apiName: name } },
-      };
+      if (name === 'Unsupported__dlm') throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
+      return { ...candidate, identity: { dataSpace: 'default', apiName: name } };
     };
-    command.writeDocument = async (document) => ({
+    command.writeNativeDmo = async (document) => ({
       path: `${document.identity.apiName}.json`,
       outcome: 'retrieved',
     });
@@ -736,7 +670,7 @@ test('type, omitted and repeated selectors reach selection and retain per-object
       result.diagnostics.errors.map((error) => [error.identity.apiName, error.code]),
       [
         ['Broken__dlm', 'NATIVE_RETRIEVE_FAILED'],
-        ['Unsupported__dlm', 'ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE'],
+        ['Unsupported__dlm', 'UNSUPPORTED_DMO_TARGET'],
       ],
     );
     assert.ok(!JSON.stringify(result).includes('private remote body'));
@@ -745,20 +679,20 @@ test('type, omitted and repeated selectors reach selection and retain per-object
 
 test('empty inventory succeeds with no files; incomplete inventory blocks before writes', async () => {
   const command = invocation({ metadata: [] });
-  command.acquire = () => assert.fail('must not acquire');
-  command.writeDocument = () => assert.fail('must not write');
-  command.selectDocuments = async () => [];
+  command.acquireNativeDmo = () => assert.fail('must not acquire');
+  command.writeNativeDmo = () => assert.fail('must not write');
+  command.listNativeNames = async () => [];
   const empty = await run(command);
   assert.equal(empty.result.status, 'success');
   assert.deepEqual(empty.result.result.items, []);
   assert.deepEqual(empty.result.result.selection, []);
-  command.selectDocuments = async () => {
-    throw new DmoRetrieveError('INVALID_INVENTORY');
+  command.listNativeNames = async () => {
+    throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
   };
   const incomplete = await run(command);
   assert.equal(incomplete.exitCode, 1);
   assert.equal(incomplete.result.status, 'blocked');
-  assert.equal(incomplete.result.diagnostics.errors[0].code, 'INVALID_INVENTORY');
+  assert.equal(incomplete.result.diagnostics.errors[0].code, 'NATIVE_INVENTORY_UNCONFIRMED');
 });
 
 test('unsupported scope validates before authentication', async () => {
@@ -777,38 +711,21 @@ test('missing default org is an explicit blocked envelope', async () => {
 });
 
 test('service refusals and remote failures never publish candidates or leak error payloads', async () => {
-  for (const error of [new DmoRetrieveError('INVALID_SCOPE'), new Error('private remote body')]) {
+  for (const error of [new NativeDmoError('INVALID_SCOPE'), new Error('private remote body')]) {
     const command = invocation();
-    command.acquire = async () => {
+    command.acquireNativeDmo = async () => {
       throw error;
     };
-    command.writeDocument = () => assert.fail('must not write');
+    command.writeNativeDmo = () => assert.fail('must not write');
     const { result, exitCode } = await run(command);
     assert.equal(exitCode, 1);
     assert.ok(!JSON.stringify(result).includes('private remote body'));
     assert.deepEqual(result.result.items, []);
-    assert.equal(result.status, error instanceof DmoRetrieveError ? 'blocked' : 'failed');
-  }
-});
-
-test('incomplete or absent service candidates never reach publication', async () => {
-  for (const projection of [
-    { status: 'incomplete', blockers: ['GENERATED_RECIPE_REPLAY_UNVERIFIED'], candidate },
-    { status: 'projected', blockers: ['RELATIONSHIP_REPLAY_UNSUPPORTED'], candidate },
-    { status: 'projected', blockers: [] },
-    { status: 'incomplete', blockers: ['ENGAGEMENT_EVENT_DESIGNATION_UNAVAILABLE'] },
-  ]) {
-    const command = invocation();
-    command.acquire = async () => projection;
-    command.writeDocument = () => assert.fail('must not publish');
-    const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'failed');
     assert.equal(
       result.diagnostics.errors[0].code,
-      projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION',
+      error instanceof NativeDmoError ? 'INVALID_SCOPE' : 'NATIVE_RETRIEVE_FAILED',
     );
-    assert.deepEqual(result.result.items, []);
   }
 });
 
@@ -818,7 +735,7 @@ for (const version of ['65.0', 'auto']) {
       metadata: ['relationship:Zulu', 'relationship:Alpha', 'relationship:Zulu'],
       'api-version': version,
     });
-    command.selectDocuments = () => assert.fail('relationship must not select DMOs');
+    command.listNativeNames = () => assert.fail('relationship must not select DMOs');
     const reads = [];
     command.acquireRelationshipXml = async (org, name) => {
       assert.equal(org, 'synthetic');
@@ -947,8 +864,8 @@ test('auto mixed Graph and relationship preserves Graph67 and Metadata65 routes'
 test('writer refusal and ambiguous publication failure return nonzero without silent success', async () => {
   for (const code of ['UNSAFE_PATH', 'OVERWRITE_REQUIRED', 'OUTPUT_FAILED']) {
     const command = invocation();
-    command.writeDocument = async () => {
-      throw new DmoWriteError(code);
+    command.writeNativeDmo = async () => {
+      throw new NativeDmoError(code);
     };
     const { result, exitCode } = await run(command);
     assert.equal(result.status, code === 'OUTPUT_FAILED' ? 'failed' : 'blocked');

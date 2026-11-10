@@ -31,6 +31,7 @@ const fixture = (apiName = 'Preview_Item__dlm') => ({
     ],
   },
 });
+const native = (apiName = 'Preview_Item__dlm') => `data360/dmo/${apiName}.dmo-meta.json`;
 const root = () => mkdtemp(path.join(os.tmpdir(), 'data360-input-test-'));
 const put = async (cwd, relative, value = fixture()) => {
   const file = path.join(cwd, relative);
@@ -199,20 +200,27 @@ test('directory depth, file count and non-JSON directory members are bounded', a
 });
 test('explicit file and repeated paths coalesce without modifying files or adding reports', async () => {
   const cwd = await root();
-  const file = await put(cwd, 'item.json');
+  const file = await put(cwd, native());
   const before = await readFile(file);
-  const selected = await readDeployInputs({ cwd, sourceDir: ['item.json', file] });
+  const selected = await readDeployInputs({ cwd, sourceDir: [native(), file] });
   assert.equal(selected.length, 1);
-  assert.deepEqual(selected[0], { path: file, document: fixture() });
+  assert.equal(selected[0].path, file);
+  assert.deepEqual(selected[0].document, fixture());
+  assert.match(selected[0].inputDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(await captureDeployInputDigest(selected[0]), selected[0].inputDigest);
   assert.deepEqual(await readFile(file), before);
-  assert.deepEqual(await readdir(cwd), ['item.json']);
+  assert.deepEqual(await readdir(cwd), ['data360']);
+  assert.deepEqual(await readdir(path.dirname(file)), [path.basename(file)]);
 });
 
 test('explicit directories recurse deterministically and overlapping selections coalesce', async () => {
   const cwd = await root();
-  await put(cwd, 'selected/z.json', fixture('Zulu__dlm'));
-  await put(cwd, 'selected/nested/a.json', fixture('Alpha__dlm'));
-  const selected = await readDeployInputs({ cwd, sourceDir: ['selected', 'selected/z.json'] });
+  await put(cwd, `selected/z/${native('Zulu__dlm')}`, fixture('Zulu__dlm'));
+  await put(cwd, `selected/a/nested/${native('Alpha__dlm')}`, fixture('Alpha__dlm'));
+  const selected = await readDeployInputs({
+    cwd,
+    sourceDir: ['selected', `selected/z/${native('Zulu__dlm')}`],
+  });
   assert.deepEqual(
     selected.map((item) => item.document.identity.apiName),
     ['Alpha__dlm', 'Zulu__dlm'],
@@ -221,7 +229,7 @@ test('explicit directories recurse deterministically and overlapping selections 
 
 test('repeated exact metadata selectors resolve only conventional project files', async () => {
   const cwd = await root();
-  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
+  await put(cwd, native());
   await put(cwd, 'unselected.json', '{invalid');
   const selected = await readDeployInputs({
     cwd,
@@ -232,11 +240,71 @@ test('repeated exact metadata selectors resolve only conventional project files'
     readDeployInputs({ cwd, metadata: ['dmo:Missing__dlm'] }),
     refusal('UNSAFE_SOURCE'),
   );
-  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json', fixture('Different__dlm'));
+  await put(cwd, native(), fixture('Different__dlm'));
   await assert.rejects(
     readDeployInputs({ cwd, metadata: ['dmo:Preview_Item__dlm'] }),
-    refusal('INVALID_SELECTION'),
+    refusal('INVALID_SOURCE'),
   );
+});
+
+const legacyRemedy = (error) =>
+  error instanceof DeployInputError &&
+  error.code === 'LEGACY_DMO_ARTIFACT_UNSUPPORTED' &&
+  /sf data360 retrieve -m dmo:<ApiName>__dlm/u.test(error.message) &&
+  /data360\/dmo\/<ApiName>__dlm\.dmo-meta\.json/u.test(error.message);
+
+test('a legacy DMO artifact selected by file or directory is refused with its remediation', async () => {
+  const cwd = await root();
+  const file = await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
+  const before = await readFile(file);
+  for (const selected of [
+    [file],
+    ['data360/default/dmo/Preview_Item__dlm.json'],
+    ['data360/default/dmo'],
+    ['data360'],
+    [cwd],
+  ])
+    await assert.rejects(readDeployInputs({ cwd, sourceDir: selected }), legacyRemedy);
+  // A valid native file beside it never makes the stale legacy file deployable or ignorable.
+  await put(cwd, native());
+  await assert.rejects(readDeployInputs({ cwd, sourceDir: ['data360'] }), legacyRemedy);
+  // Content is not consulted: an unreadable legacy file names the same remedy.
+  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json', '{invalid');
+  await assert.rejects(readDeployInputs({ cwd, sourceDir: [file] }), legacyRemedy);
+  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
+  assert.deepEqual(await readFile(file), before);
+  // The native file itself stays selectable.
+  const selected = await readDeployInputs({ cwd, sourceDir: ['data360/dmo'] });
+  assert.equal(selected.length, 1);
+});
+
+test('a dmo selector resolving only to a legacy artifact is refused; a native file wins', async () => {
+  const cwd = await root();
+  await put(cwd, 'data360/default/dmo/Preview_Item__dlm.json');
+  for (const metadata of [
+    ['dmo:Preview_Item__dlm'],
+    ['dmo:Preview_Item__dlm', 'dmo:Preview_Item__dlm'],
+  ])
+    await assert.rejects(readDeployInputs({ cwd, metadata }), legacyRemedy);
+  // Neither format present stays the ordinary missing-source refusal.
+  await assert.rejects(
+    readDeployInputs({ cwd, metadata: ['dmo:Missing__dlm'] }),
+    refusal('UNSAFE_SOURCE'),
+  );
+  const file = await put(cwd, native());
+  const selected = await readDeployInputs({ cwd, metadata: ['dmo:Preview_Item__dlm'] });
+  assert.deepEqual(
+    selected.map((input) => input.path),
+    [file],
+  );
+});
+
+test('JSON outside every artifact convention is not interpreted as a DMO', async () => {
+  const cwd = await root();
+  for (const relative of ['item.json', 'data360/default/Preview_Item__dlm.json', 'dmo/item.json']) {
+    const file = await put(cwd, relative);
+    await assert.rejects(readDeployInputs({ cwd, sourceDir: [file] }), refusal('INVALID_SOURCE'));
+  }
 });
 
 test('no implicit deploy-all, bare type, mixed modes, malformed selectors or path escapes', async () => {
@@ -267,27 +335,24 @@ test('strict authored JSON rejects raw projections, unknown keys, duplicate keys
     `\uFEFF${json}`,
     JSON.stringify({
       ...fixture(),
-      identity: { dataSpace: 'other', apiName: 'Preview_Item__dlm' },
+      identity: { dataSpace: 'default', apiName: 'Different__dlm' },
     }),
   ]) {
-    await put(cwd, 'item.json', value);
+    await put(cwd, native(), value);
     await assert.rejects(
-      readDeployInputs({ cwd, sourceDir: ['item.json'] }),
+      readDeployInputs({ cwd, sourceDir: [native()] }),
       refusal('INVALID_SOURCE'),
     );
   }
-  await writeFile(path.join(cwd, 'item.json'), Buffer.from([0xff]));
-  await assert.rejects(
-    readDeployInputs({ cwd, sourceDir: ['item.json'] }),
-    refusal('UNSAFE_SOURCE'),
-  );
+  await writeFile(path.join(cwd, native()), Buffer.from([0xff]));
+  await assert.rejects(readDeployInputs({ cwd, sourceDir: [native()] }), refusal('INVALID_SOURCE'));
 });
 
 test('different files with duplicate or case-conflicting identities are rejected', async () => {
-  const cwd = await root();
-  await put(cwd, 'a.json');
   for (const name of ['Preview_Item__dlm', 'preview_Item__dlm']) {
-    await put(cwd, 'b.json', fixture(name));
+    const cwd = await root();
+    await put(cwd, `a/${native()}`);
+    await put(cwd, `b/${native(name)}`, fixture(name));
     await assert.rejects(
       readDeployInputs({ cwd, sourceDir: [cwd] }),
       refusal('DUPLICATE_IDENTITY'),

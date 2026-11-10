@@ -13,7 +13,7 @@ import {
 import type { CalculatedInsightProjection } from '../artifacts/calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
-import { readCalculatedInsightMetadata, readDmoMetadata } from './retrieve-other-dmo.js';
+import { readCalculatedInsightMetadata, readDmoMetadata } from './read-metadata.js';
 
 export type CalculatedInsightConnection = Pick<
   Connection,

@@ -92,7 +92,7 @@ function invocation(flags = {}) {
     assert.equal(overwrite, false);
     return { path: `${value.definition.name}.json`, outcome: 'retrieved' };
   };
-  command.acquire = command.listNativeNames = () => assert.fail('no inventory/legacy fallback');
+  command.listNativeNames = () => assert.fail('no inventory fallback');
   return { command, calls, lines };
 }
 

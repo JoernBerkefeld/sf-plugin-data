@@ -322,13 +322,9 @@ test('dependency wrappers retain Segment and DMO evidence into human and JSON di
           getOrgId: () => 'synthetic',
           getConnection: () => ({ getUsername: () => 'synthetic' }),
         });
-        command.selectDocuments = () => assert.fail('no legacy DMO selection');
         command.selectDependencies = (roots, conn, selection, include) =>
           selectRetrieveDependencies(roots, conn, selection, include, services);
-        command.writeSegment =
-          command.writeDocument =
-          command.writeNativeDmo =
-            () => assert.fail('no publication');
+        command.writeSegment = command.writeNativeDmo = () => assert.fail('no publication');
         const logs = [];
         command.log = (message) => logs.push(message);
         const result = await command.run();
@@ -361,7 +357,7 @@ test('unexpected acquisition failure is sanitized and prevents every output', as
     command.selectDependencies = (roots, conn, version, include) =>
       selectRetrieveDependencies(roots, conn, version, include, services);
     command.writeSegment = () => assert.fail('no output');
-    command.writeDocument = () => assert.fail('no output');
+    command.writeNativeDmo = () => assert.fail('no output');
     const result = await command.run();
     assert.equal(result.status, 'failed');
     assert.equal(result.diagnostics.errors[0].code, 'DEPENDENCY_ACQUISITION_FAILED');
@@ -387,11 +383,10 @@ test('command opt-in emits reasons; prerequisite output failure prevents Segment
       command.parse = async () => ({ flags });
       command.jsonEnabled = () => true;
       command.resolveOrg = async () => ({ getOrgId: () => 'synthetic', getConnection: () => ({}) });
-      command.selectDocuments = () => assert.fail('no inventory');
+      command.listNativeNames = () => assert.fail('no inventory');
       command.selectDependencies = (roots, conn, version, include) =>
         selectRetrieveDependencies(roots, conn, version, include, fixtures().services);
       const written = [];
-      command.writeDocument = () => assert.fail('no legacy DMO output');
       command.writeNativeDmo = async (document_, root, overwrite) => {
         assert.equal(document_.kind, 'dmo');
         assert.equal(root, 'synthetic-root');
@@ -445,7 +440,7 @@ test('command reads prerequisite DMOs on the native route and publishes native a
         getOrgId: () => 'synthetic',
         getConnection: () => ({ getUsername: () => 'synthetic-user' }),
       });
-      command.selectDocuments = command.listNativeNames = () => assert.fail('no inventory');
+      command.listNativeNames = () => assert.fail('no inventory');
       const clients = [];
       command.createDmoClient = (target, version) => {
         clients.push([target, version]);
@@ -460,7 +455,6 @@ test('command reads prerequisite DMOs on the native route and publishes native a
         });
       };
       const written = [];
-      command.writeDocument = () => assert.fail('no legacy DMO output');
       command.writeNativeDmo = async (value, root, overwrite) => {
         assert.equal(root, 'synthetic-root');
         assert.equal(overwrite, false);
@@ -500,7 +494,6 @@ test('command DMO inventory with dependency expansion uses the native listing', 
       getOrgId: () => 'synthetic',
       getConnection: () => connection,
     });
-    command.selectDocuments = () => assert.fail('no legacy DMO inventory');
     command.listNativeNames = async (conn, version, family, scope) => {
       assert.equal(conn, connection);
       assert.deepEqual([version, family, scope], ['68.0', 'dmo', 'default']);

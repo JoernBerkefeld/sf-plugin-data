@@ -50,7 +50,7 @@ function invocation(flags = {}) {
     calls.push({ root, overwrite });
     return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
   };
-  command.acquire = command.listNativeNames = () => assert.fail('no legacy or inventory fallback');
+  command.listNativeNames = () => assert.fail('no inventory fallback');
   return { command, calls, lines };
 }
 

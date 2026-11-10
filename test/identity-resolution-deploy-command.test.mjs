@@ -130,8 +130,13 @@ const ir = (name = 'Individual_A1b2') => {
   };
 };
 const dmo = {
-  path: 'dmo.json',
+  path: 'Example__dlm.dmo-meta.json',
   document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } },
+};
+// A facade Graph keeps its numeric67 pin, so it is the family that cannot join an explicit 68.0 batch.
+const graph = {
+  path: 'Synthetic.dataGraph.json',
+  document: { kind: 'data-graph', identity: { dataSpace: 'default', apiName: 'Synthetic' } },
 };
 const preview = (family, outcome = 'update') => ({
   ...(family === 'identity-resolution'
@@ -163,6 +168,7 @@ const setup = (overrides = {}, selected = [ir()]) => {
       calls.push('org');
       return 'synthetic';
     },
+    getUsername: () => 'synthetic@example.invalid',
     getConnection: () => connection,
   };
   command.parse = async () => ({ flags });
@@ -184,11 +190,12 @@ const setup = (overrides = {}, selected = [ir()]) => {
     calls.push(`preview:${document.identity.apiName}`);
     return preview('identity-resolution');
   };
-  command.preflight = async () => {
+  command.createDmoClient = () => ({});
+  command.preflightNativeDmo = async () => {
     calls.push('dmo-preview');
-    return preview('dmo');
+    return { ...preview('dmo'), family: 'dmo', target: 'existing' };
   };
-  command.execute = async () => {
+  command.executeNativeDmo = async () => {
     calls.push('dmo-write');
     return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
   };
@@ -230,7 +237,7 @@ test('IR auto mixed preview is read-only and reports operation versions and publ
   assert.ok(!calls.some((call) => call.includes('write')));
 });
 
-test('auto mixed IR/Segment68 and DMO65 retains isolated routes and whole-selection effects checks', async () => {
+test('auto mixed IR/Segment68 and native DMO retains isolated routes and whole-selection effects checks', async () => {
   const segment = {
     path: 'audience.segment.json',
     inputDigest: 'b'.repeat(64),
@@ -290,7 +297,7 @@ test('IR numeric65/latest/unsupported mixed numeric67 and dependency expansion b
     [{ 'api-version': 'latest' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '67.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '69.0' }, [ir()], 'INVALID_SCOPE'],
-    [{ 'api-version': '68.0' }, [ir(), dmo], 'INVALID_SCOPE'],
+    [{ 'api-version': '68.0' }, [ir(), graph], 'INVALID_SCOPE'],
     [{ dataspace: 'other' }, [ir()], 'INVALID_SCOPE'],
     [
       { 'include-dependencies': true },

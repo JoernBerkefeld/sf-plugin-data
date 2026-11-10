@@ -17,8 +17,6 @@ import { createHash } from 'node:crypto';
 import { segmentName, validateSegmentDocument } from './segment-document.js';
 import type { SegmentDocument } from './segment-document.js';
 import { segmentSourceRoot } from './write-segment.js';
-import { buildDmoCreateRequestFromDocument, validateDmoDocument } from './dmo-document.js';
-import type { DmoDocument } from './dmo-document.js';
 import {
   identityResolutionName,
   validateIdentityResolutionDocument,
@@ -30,6 +28,26 @@ import {
 } from './calculated-insight-document.js';
 import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 
+/** Remediation for a DMO file saved in the removed data360/default/dmo format. */
+export const legacyDmoArtifactMessage =
+  'This DMO file uses the removed data360/default/dmo/<Name>.json format and cannot be deployed. Retrieve the DMO again in the native format with "sf data360 retrieve -m dmo:<ApiName>__dlm", which writes data360/dmo/<ApiName>__dlm.dmo-meta.json, then deploy that file. No org call was made.';
+
+/**
+ * Recognize the removed legacy DMO artifact location by its exact directory shape.
+ * @param {string} file Absolute candidate path.
+ * @returns {boolean} Whether the file sits directly in data360/default/dmo.
+ */
+function isLegacyDmoArtifact(file: string): boolean {
+  const directory = path.dirname(file);
+  const scope = path.dirname(directory);
+  return (
+    path.extname(file) === '.json' &&
+    path.basename(directory) === 'dmo' &&
+    path.basename(scope) === 'default' &&
+    path.basename(path.dirname(scope)) === 'data360'
+  );
+}
+
 /** Payload-free local selection refusal. */
 export class DeployInputError extends Error {
   public constructor(
@@ -38,12 +56,15 @@ export class DeployInputError extends Error {
       | 'UNSAFE_SOURCE'
       | 'INVALID_SOURCE'
       | 'DUPLICATE_IDENTITY'
-      | 'UNSUPPORTED_SEGMENT_XML',
+      | 'UNSUPPORTED_SEGMENT_XML'
+      | 'LEGACY_DMO_ARTIFACT_UNSUPPORTED',
   ) {
     super(
       code === 'UNSUPPORTED_SEGMENT_XML'
         ? 'Select the single .segment.json artifact; legacy Segment XML is not supported.'
-        : 'Select explicit, bounded, authored-only sources without links or conflicting identities.',
+        : code === 'LEGACY_DMO_ARTIFACT_UNSUPPORTED'
+          ? legacyDmoArtifactMessage
+          : 'Select explicit, bounded, authored-only sources without links or conflicting identities.',
     );
     this.name = 'DeployInputError';
   }
@@ -54,7 +75,7 @@ export type SegmentDeployInput = {
   document: SegmentDocument;
   inputDigest: string;
 };
-export type SupportedDeployInput = { path: string; document: DmoDocument } | SegmentDeployInput;
+export type SupportedDeployInput = SegmentDeployInput;
 export type IdentityResolutionDeployInput = {
   path: string;
   document: IdentityResolutionDocument;
@@ -83,7 +104,7 @@ export type NativeDmoDeployInput = {
 };
 
 /**
- * Identify the canonical native path rather than interpreting legacy DMO fields.
+ * Identify a native DMO input by its canonical path.
  * @param {object} input Captured input.
  * @param {string} input.path Selected path.
  * @returns {boolean} Native canonical path.
@@ -425,11 +446,7 @@ export async function verifyDloInputDigest(input: DloDeployInput): Promise<void>
 export function isSupportedDeployInput(
   input: DeployInput,
 ): input is SupportedDeployInput | CalculatedInsightDeployInput {
-  return (
-    input.document.kind === 'dmo' ||
-    input.document.kind === 'segment' ||
-    input.document.kind === 'calculated-insight'
-  );
+  return input.document.kind === 'segment' || input.document.kind === 'calculated-insight';
 }
 
 /**
@@ -847,16 +864,8 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
     await verifyCalculatedInsightInputDigest(input as CalculatedInsightDeployInput);
     return (input as CalculatedInsightDeployInput).inputDigest;
   }
-  if (input.document.kind === 'segment') {
-    await verifySegmentInputDigest(input as SegmentDeployInput);
-    return (input as SegmentDeployInput).inputDigest;
-  }
-  const bytes = await memberBytes(input.path);
-  const document = validateDmoDocument(strictJson(decode(bytes)));
-  buildDmoCreateRequestFromDocument(document, 'default');
-  if (JSON.stringify(document) !== JSON.stringify(input.document))
-    throw new DeployInputError('UNSAFE_SOURCE');
-  return createHash('sha256').update(bytes).digest('hex');
+  await verifySegmentInputDigest(input as SegmentDeployInput);
+  return (input as SegmentDeployInput).inputDigest;
 }
 
 /**
@@ -907,16 +916,22 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   )
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
-  // Explicit legacy adapter for inventories/dependency consumers and existing saved projects.
-  const legacyDmos = new Set<string>();
+  // A selector that resolves only to the removed legacy location is refused, never read.
   for (const selector of selectors ?? []) {
     if (selector.kind !== 'dmo') continue;
     try {
       await lstat(path.join(flags.cwd, 'data360', 'dmo', `${selector.name}.dmo-meta.json`));
+      continue;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      legacyDmos.add(selector.name);
     }
+    let legacy = true;
+    try {
+      await lstat(path.join(flags.cwd, 'data360', 'default', 'dmo', `${selector.name}.json`));
+    } catch {
+      legacy = false;
+    }
+    if (legacy) throw new DeployInputError('LEGACY_DMO_ARTIFACT_UNSUPPORTED');
   }
   const nativeGraphs = new Set<string>();
   for (const selector of selectors ?? []) {
@@ -935,9 +950,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         kind === 'data-transform'
           ? path.join(flags.cwd, 'data360', 'dataTransforms', `${name}.dataTransform.json`)
           : kind === 'dmo'
-            ? legacyDmos.has(name)
-              ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
-              : path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
+            ? path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
             : kind === 'data-stream'
               ? path.join(flags.cwd, 'data360', 'data-stream', `${name}.data-stream-meta.json`)
               : kind === 'mapping'
@@ -1190,60 +1203,10 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         inputs.push(paired);
         continue;
       }
-      const before = await inspect(file);
-      const handle = await open(file, 'r');
-      let text: string;
-      try {
-        const opened = await handle.stat();
-        if (
-          !opened.isFile() ||
-          opened.nlink !== 1 ||
-          opened.dev !== before.dev ||
-          opened.ino !== before.ino ||
-          opened.size !== before.size
-        )
-          refuse();
-        const buffer = Buffer.alloc(1_048_577);
-        let length = 0;
-        while (length < buffer.length) {
-          const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
-          if (bytesRead === 0) break;
-          length += bytesRead;
-        }
-        const after = await handle.stat();
-        if (
-          length > 1_048_576 ||
-          after.size !== before.size ||
-          after.mtimeMs !== before.mtimeMs ||
-          after.ctimeMs !== before.ctimeMs
-        )
-          refuse();
-        await inspect(file);
-        text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
-          buffer.subarray(0, length),
-        );
-      } finally {
-        await handle.close();
-      }
-      let document: DmoDocument;
-      try {
-        const parsed = strictJson(text);
-        buildDmoCreateRequestFromDocument(parsed, 'default');
-        document = validateDmoDocument(parsed);
-      } catch {
-        throw new DeployInputError('INVALID_SOURCE');
-      }
-      if (
-        selectors &&
-        !selectors.some((item) => item.kind === 'dmo' && item.name === document.identity.apiName)
-      )
-        throw new DeployInputError('INVALID_SELECTION');
-      if (selectors && path.basename(file) !== `${document.identity.apiName}.json`)
-        throw new DeployInputError('INVALID_SELECTION');
-      const identity = `${document.identity.dataSpace}:${document.identity.apiName}`.toLowerCase();
-      if (identities.has(identity)) throw new DeployInputError('DUPLICATE_IDENTITY');
-      identities.add(identity);
-      inputs.push({ path: file, document });
+      // Any other JSON is not a deployable artifact; the removed DMO format names its remedy.
+      throw new DeployInputError(
+        isLegacyDmoArtifact(file) ? 'LEGACY_DMO_ARTIFACT_UNSUPPORTED' : 'INVALID_SOURCE',
+      );
     }
     return inputs;
   } catch (error: unknown) {

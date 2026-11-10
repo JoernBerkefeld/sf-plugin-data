@@ -95,7 +95,7 @@ const invocation = (overrides = {}) => {
       },
     };
   };
-  command.selectDocuments = async () => {
+  command.listNativeNames = async () => {
     calls.push('dmos');
     return ['Sample__dlm'];
   };
@@ -132,7 +132,6 @@ const invocation = (overrides = {}) => {
     return { path: `${value.identity.apiName}.json`, outcome: 'unchanged' };
   };
   command.writeIdentityResolution = writer;
-  command.writeDocument = () => assert.fail('no legacy DMO output');
   command.writeNativeDmo = writer;
   command.writeSegment = writer;
   return { command, calls };
@@ -146,10 +145,9 @@ const run = async (command) => {
   }
 };
 
-test('fixed per-family auto routes never discover or reinterpret numeric/latest pins', () => {
+test('fixed per-family auto routes never reinterpret numeric pins and refuse latest', () => {
   for (const family of ['dmo', 'segment', 'identity-resolution'])
     assert.equal(operationApiVersion('auto', family), family === 'dmo' ? '65.0' : '68.0');
-  assert.equal(operationApiVersion('latest', 'dmo'), 'latest');
   assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
   assert.equal(operationApiVersion('67.0', 'data-graph'), '67.0');
   assert.throws(() => operationApiVersion('68.0', 'data-graph'), /INVALID_SCOPE/u);
@@ -158,6 +156,7 @@ test('fixed per-family auto routes never discover or reinterpret numeric/latest 
     ['65.0', 'identity-resolution'],
     ['latest', 'identity-resolution'],
     ['latest', 'segment'],
+    ['latest', 'dmo'],
     ['68.0', 'dmo'],
     ['67.0', 'segment'],
     ['67.0', 'identity-resolution'],

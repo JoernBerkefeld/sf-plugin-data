@@ -14,7 +14,7 @@ import {
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 import { dataGraphScope, graphCanonicalObject } from './retrieve-data-graph.js';
 import type { DataGraphConnection } from './retrieve-data-graph.js';
 

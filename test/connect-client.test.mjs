@@ -10,6 +10,25 @@ const origin = 'https://synthetic.my.salesforce.com';
 const path = '/services/data/v65.0/ssot/data-model-objects';
 
 const latest = { requested: 'latest', restSelector: 'latest', soapNumeric: '65.0' };
+// Guarded writes are exercised through the Segment routes; their payload contract is tested elsewhere.
+const segmentRoute = '/services/data/v65.0/ssot/segments/Audience';
+const segment = {
+  schemaVersion: 1,
+  kind: 'segment',
+  identity: { dataSpace: 'default', apiName: 'Audience' },
+  spec: {
+    displayName: 'Audience',
+    description: 'Description',
+    segmentType: 'DBT',
+    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
+    dependencies: [
+      { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
+    ],
+    publishInterval: 'NO_REFRESH',
+    lookbackPeriod: 'P90D',
+  },
+};
 
 test('latest detail uses literal REST alias while preserving numeric SOAP evidence', async () => {
   const calls = [];
@@ -70,8 +89,8 @@ test('latest rejects POST and PATCH without requests even with numeric API65 evi
     },
     latest,
   );
-  await assert.rejects(client.createDataModelObject({}), ConnectError);
-  await assert.rejects(client.patchDataModelObject('Synthetic__dlm', {}), ConnectError);
+  await assert.rejects(client.createSegment(segment), ConnectError);
+  await assert.rejects(client.patchSegment(segment), ConnectError);
   assert.equal(calls, 0);
 });
 
@@ -207,28 +226,7 @@ test('factory delegates org authentication and version to Salesforce core withou
   assert.ok((await ConnectClient.create('synthetic-alias', '65.0')) instanceof ConnectClient);
 });
 
-const authored = {
-  schemaVersion: 1,
-  kind: 'dmo',
-  identity: { dataSpace: 'default', apiName: 'Synthetic__dlm' },
-  spec: {
-    label: 'Synthetic',
-    category: 'Other',
-    fields: [
-      { name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true, isDynamicLookup: false },
-    ],
-  },
-};
-
-test('guarded create refuses invalid payload/version before any request', async () => {
-  const connection = { instanceUrl: origin, request: async () => assert.fail('no request') };
-  await assert.rejects(new ConnectClient(connection, '66.0').createDataModelObject(authored), {
-    code: 'INVALID_REQUEST',
-  });
-  await assert.rejects(new ConnectClient(connection, '65.0').createDataModelObject({}));
-});
-
-for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
+for (const [method, statusCode, route = segmentRoute] of [
   ['POST', 401],
   ['PATCH', 401],
   ['PATCH', 503],
@@ -301,8 +299,8 @@ for (const [method, statusCode, route = `${path}/Synthetic__dlm`] of [
       method === 'GET'
         ? client.get(route)
         : method === 'POST'
-          ? client.createDataModelObject(authored)
-          : client.patchDataModelObject('Synthetic__dlm', { label: 'Updated' });
+          ? new ConnectClient(connection, '68.0').createSegment(segment)
+          : client.patchSegment(segment);
     if (statusCode === 204) {
       assert.equal(await operation, undefined);
     } else if (statusCode === 200) {
@@ -412,73 +410,19 @@ for (const method of ['GET'])
     }
   });
 
-test('unused internal DMO delete transport is absent', () => {
-  assert.equal(Object.hasOwn(ConnectClient.prototype, 'deleteDataModelObject'), false);
-});
-
-test('guarded PATCH preserves exact qualified route, method, body and untrusted response', async () => {
-  const patch = { label: 'Updated', fields: [{ name: 'Id__c', label: 'Key', dataType: 'Text' }] };
-  const response = { label: 'Old state' };
-  const refresh = {};
-  const connection = {
-    instanceUrl: origin,
-    _refreshDelegate: refresh,
-    request: async function (request, options) {
-      assert.notEqual(this, connection);
-      assert.equal(this._refreshDelegate, undefined);
-      assert.deepEqual(request, {
-        method: 'PATCH',
-        url: `${origin}${path}/Synthetic__dlm`,
-        body: JSON.stringify(patch),
-        headers: { 'content-type': 'application/json' },
-      });
-      assert.equal(options.retry.maxRetries, 0);
-      return response;
-    },
-  };
-  assert.equal(
-    await new ConnectClient(connection, '65.0').patchDataModelObject('Synthetic__dlm', patch),
-    response,
-  );
-  assert.equal(connection._refreshDelegate, refresh);
-  assert.deepEqual(patch, {
-    label: 'Updated',
-    fields: [{ name: 'Id__c', label: 'Key', dataType: 'Text' }],
-  });
-});
-
-test('guarded PATCH rejects version and route injection before any request', async () => {
-  let calls = 0;
-  const connection = {
-    instanceUrl: origin,
-    request: async () => {
-      calls++;
-    },
-  };
-  for (const name of [
-    '',
-    'Synthetic',
-    '../Synthetic__dlm',
-    'Synthetic__dlm/other',
-    'Synthetic__dlm?secret',
-    'Synthetic__dlm#secret',
-    'Synthetic%2f__dlm',
-    String.raw`Synthetic\\__dlm`,
-    'Synthetic__dlm\n',
-    `${origin}${path}/Synthetic__dlm`,
+test('removed API65 DMO adapter transport methods are absent', () => {
+  for (const method of [
+    'createDataModelObject',
+    'patchDataModelObject',
+    'deleteDataModelObject',
+    'listDataModelObjects',
+    'listDataModelObjectRelationships',
   ])
-    await assert.rejects(new ConnectClient(connection, '65.0').patchDataModelObject(name, {}), {
-      code: 'INVALID_REQUEST',
-    });
-  await assert.rejects(
-    new ConnectClient(connection, '66.0').patchDataModelObject('Synthetic__dlm', {}),
-    { code: 'INVALID_REQUEST' },
-  );
-  assert.equal(calls, 0);
+    assert.equal(method in ConnectClient.prototype, false, method);
 });
 
 test('guarded PATCH refuses same-origin and cross-origin redirects', async () => {
-  for (const redirect of [`${origin}${path}/Other__dlm`, `https://other.test${path}`]) {
+  for (const redirect of [`${origin}${segmentRoute}Other`, `https://other.test${segmentRoute}`]) {
     let calls = 0;
     const client = new ConnectClient(
       {
@@ -491,9 +435,7 @@ test('guarded PATCH refuses same-origin and cross-origin redirects', async () =>
       },
       '65.0',
     );
-    await assert.rejects(client.patchDataModelObject('Synthetic__dlm', { label: 'secret' }), {
-      code: 'INVALID_REQUEST',
-    });
+    await assert.rejects(client.patchSegment(segment), { code: 'INVALID_REQUEST' });
     assert.equal(calls, 1);
   }
 });
@@ -530,7 +472,7 @@ test('guarded PATCH errors discard request payload, credentials, response and ca
       '65.0',
     );
     await assert.rejects(
-      client.patchDataModelObject('Synthetic__dlm', { label: 'secret' }),
+      client.patchSegment({ ...segment, spec: { ...segment.spec, description: 'secret' } }),
       (error) => {
         assert.equal(error.code, code);
         assert.equal(error.statusCode, statusCode);
@@ -542,23 +484,6 @@ test('guarded PATCH errors discard request payload, credentials, response and ca
     );
     assert.equal(calls, 1);
   }
-});
-
-test('guarded PATCH serialization errors are payload-free and never request', async () => {
-  const patch = {
-    toJSON() {
-      throw new Error('secret');
-    },
-  };
-  const client = new ConnectClient(
-    { instanceUrl: origin, request: async () => assert.fail('no request') },
-    '65.0',
-  );
-  await assert.rejects(client.patchDataModelObject('Synthetic__dlm', patch), (error) => {
-    assert.equal(error.code, 'INVALID_REQUEST');
-    assert.ok(!inspect(error).includes('secret'));
-    return true;
-  });
 });
 
 test('transport omits the retired internal DLO evidence inventory method', () => {

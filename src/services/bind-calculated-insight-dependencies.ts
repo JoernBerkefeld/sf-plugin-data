@@ -6,7 +6,7 @@ import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { calculatedInsightScope } from './retrieve-calculated-insight.js';
 import type { CalculatedInsightConnection } from './retrieve-calculated-insight.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 
 type Acquisition = { detail: unknown; metadata: unknown };
 export type CalculatedInsightBinding = {

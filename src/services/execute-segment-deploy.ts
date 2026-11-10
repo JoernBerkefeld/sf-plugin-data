@@ -12,7 +12,7 @@ import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { preflightSegmentDeploy } from './preflight-segment-deploy.js';
 import { projectSegment, retrieveSegment } from './retrieve-segment.js';
-import type { DmoDeployExecution } from './execute-dmo-deploy.js';
+import type { DeployExecutionResult } from './deploy-result.js';
 
 export const segmentPollBudget = Object.freeze({ reads: 12, intervalMs: 1000, timeoutMs: 120_000 });
 export type SegmentExecutionOptions = {
@@ -26,7 +26,7 @@ export type SegmentExecutionOptions = {
   now?: () => number;
   delay?: (milliseconds: number) => Promise<void>;
 };
-export type SegmentDeployExecution = DmoDeployExecution & {
+export type SegmentDeployExecution = DeployExecutionResult & {
   family: 'segment';
   serverProcessing?: true;
   route: { apiVersion: string; method: 'POST' | 'PATCH'; resource: 'segments' };
@@ -117,8 +117,8 @@ export async function executeSegmentDeploy(
   const version = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   let creating = false;
   const result = (
-    outcome: DmoDeployExecution['outcome'],
-    mutation: DmoDeployExecution['mutation'],
+    outcome: DeployExecutionResult['outcome'],
+    mutation: DeployExecutionResult['mutation'],
     code?: string,
     evidence?: unknown,
   ): SegmentDeployExecution =>

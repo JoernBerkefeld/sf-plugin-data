@@ -48,24 +48,27 @@ const sources = readdirSync(sourceRoot, { recursive: true, withFileTypes: true }
       `src/${path.relative(sourceRoot, path.join(entry.parentPath, entry.name)).split(path.sep).join('/')}`,
   );
 verifyPackageInventory(sources, artifact);
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-deploy.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-update-delta.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-update-delta.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-create.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/execute-dmo-create.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/preflight-dmo-deploy.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/preflight-dmo-deploy.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/write-other-dmo.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/write-other-dmo.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/retrieve-other-dmo.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/retrieve-other-dmo.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-document.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/dmo-document.d.ts'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/read-metadata.js'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/read-metadata.d.ts'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/deploy-result.js'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/deploy-result.d.ts'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/native-dmo.js'));
+assert.ok(artifact.files.some((file) => file.path === 'lib/services/native-dmo.d.ts'));
+// The API65 saved-project DMO adapter is removed and must not be published.
+for (const member of [
+  'artifacts/dmo-document',
+  'artifacts/dmo-update-delta',
+  'artifacts/write-other-dmo',
+  'services/preflight-dmo-deploy',
+  'services/execute-dmo-create',
+  'services/execute-dmo-deploy',
+  'services/retrieve-other-dmo',
+])
+  assert.ok(!artifact.files.some((file) => file.path.startsWith(`lib/${member}.`)));
 for (const member of [
   'commands/data360/publish',
   'services/publish-calculated-insight',
@@ -242,12 +245,12 @@ for (const operation of ['retrieve', 'deploy']) {
   });
   command.jsonEnabled = () => true;
   command.resolveInputs = async () => [];
-  command.resolveOrg = command.selectDocuments = () =>
+  command.resolveOrg = command.resolveTargetOrg = () =>
     assert.fail('Must validate before auth or inventory.');
-  command.acquire =
-    command.writeDocument =
-    command.preflight =
-    command.execute =
+  command.acquireNativeDmo =
+    command.writeNativeDmo =
+    command.preflightNativeDmo =
+    command.executeNativeDmo =
       () => assert.fail('Offline installed provenance check must not reach any service.');
   const previous = process.exitCode;
   try {
@@ -269,83 +272,44 @@ for (const operation of ['retrieve', 'deploy']) {
 const { default: Deploy } = await import(
   pathToFileURL(path.join(packageRoot, 'lib', 'commands', 'data360', 'deploy.js')).href
 );
-const { executeDmoDeploy } = await import(
-  pathToFileURL(path.join(packageRoot, 'lib', 'services', 'execute-dmo-deploy.js')).href
-);
-assert.equal(new Deploy([], {}).execute, executeDmoDeploy);
-for (const scenario of ['preview-update', 'updated-noop', 'blocked-mixed', 'unknown']) {
-  const command = Object.create(Deploy.prototype);
-  const preview = scenario === 'preview-update';
-  const inputs = ['First__dlm', 'Second__dlm', 'Third__dlm'].map((apiName) => ({
-    path: `${apiName}.json`,
-    document: { kind: 'dmo', identity: { apiName, dataSpace: 'default' } },
-  }));
-  const connection = {};
-  command.parse = async () => ({
-    flags: {
-      preview,
-      'source-dir': ['synthetic.json'],
-      'api-version': '65.0',
-      'data-space': 'default',
-      'target-org': { getOrgId: () => 'synthetic-target', getConnection: () => connection },
-    },
-  });
-  command.jsonEnabled = () => true;
-  command.resolveInputs = async () => inputs;
-  let admissions = 0;
-  let executions = 0;
-  command.preflight = async (_document, target, api, space, allowLabelUpdates) => {
-    assert.equal(target, connection);
-    assert.deepEqual(api, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
-    assert.equal(space, 'default');
-    assert.equal(allowLabelUpdates, true);
-    return {
-      outcome: scenario === 'blocked-mixed' && ++admissions === 2 ? 'blocked-changes' : 'update',
-      target: 'present',
-      absenceProof: 'none',
-      diagnostics: [],
-    };
-  };
-  command.execute = async () => {
-    assert.equal(preview, false);
-    executions++;
-    if (scenario === 'unknown') throw new Error('private-update-response');
-    return executions === 1
-      ? { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] }
-      : { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
-  };
-  const previous = process.exitCode;
-  process.exitCode = undefined;
-  try {
-    const envelope = await command.run();
-    const blocked = scenario === 'blocked-mixed';
-    const unknown = scenario === 'unknown';
-    assert.equal(envelope.status, blocked ? 'blocked' : unknown ? 'failed' : 'success');
-    assert.equal(process.exitCode, blocked || unknown ? 1 : undefined);
-    assert.equal(executions, preview || blocked ? 0 : unknown ? 1 : 3);
-    assert.equal(
-      envelope.result.items[0].outcome,
-      preview ? 'update' : blocked ? 'not-attempted' : unknown ? 'failed' : 'updated',
-    );
-    if (!preview) {
-      assert.equal(
-        envelope.result.items[0].mutation,
-        blocked ? 'not-attempted' : unknown ? 'unknown' : 'confirmed-updated',
+const { mkdirSync, writeFileSync } = await import('node:fs');
+// A DMO file in the removed saved-project format is refused locally, before auth or any org call.
+{
+  const legacyDirectory = path.join(root, 'legacy-project', 'data360', 'default', 'dmo');
+  mkdirSync(legacyDirectory, { recursive: true });
+  const legacyFile = path.join(legacyDirectory, 'Installed_Legacy__dlm.json');
+  writeFileSync(legacyFile, JSON.stringify({ schemaVersion: 1, kind: 'dmo' }));
+  for (const preview of [true, false]) {
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: { preview, 'source-dir': [legacyFile], 'api-version': 'auto' },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveInputs = new Deploy([], {}).resolveInputs;
+    command.resolveTargetOrg =
+      command.createDmoClient =
+      command.preflightNativeDmo =
+      command.executeNativeDmo =
+        () => assert.fail('A removed-format DMO file must be refused before auth or any service.');
+    const previous = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      const envelope = await command.run();
+      assert.equal(envelope.status, 'blocked');
+      assert.equal(process.exitCode, 1);
+      assert.equal(envelope.diagnostics.errors.length, 1);
+      assert.equal(envelope.diagnostics.errors[0].code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
+      assert.match(
+        envelope.diagnostics.errors[0].message,
+        /sf data360 retrieve -m dmo:<ApiName>__dlm/u,
       );
-      assert.equal(
-        envelope.result.items[2].outcome,
-        blocked || unknown ? 'not-attempted' : 'unchanged',
-      );
+      assert.deepEqual(envelope.result.items, []);
+    } finally {
+      process.exitCode = previous;
     }
-    if (unknown)
-      assert.match(envelope.diagnostics.errors[0].message, /Mutation may have occurred/u);
-    assert.ok(!JSON.stringify(envelope).includes('private-update-response'));
-  } finally {
-    process.exitCode = previous;
   }
 }
 // Installed native Graph commands exercise public routing without auth or live writes.
-const { mkdirSync, writeFileSync } = await import('node:fs');
 const graphProject = path.join(root, 'graph-project');
 mkdirSync(path.join(graphProject, 'force-app', 'main', 'default'), { recursive: true });
 writeFileSync(

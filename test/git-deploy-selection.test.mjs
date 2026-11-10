@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { GitSelectionError, selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
-import { verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
+import { DeployInputError, verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
 
 const segment = async (cwd) => {
   const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
@@ -358,8 +358,6 @@ for (const [file, value] of [
   ['data360/dmo/nested/Expected__dlm.dmo-meta.json', document('Expected')],
   ['data360/dmo/invalid space ü.dmo-meta.json', document('Expected')],
   ['force-app/data360/dmo/Expected__dlm.dmo-meta.json', document('Expected')],
-  // The replaced legacy location is refused instead of being skipped or deployed.
-  ['data360/default/dmo/Expected__dlm.json', document('Expected')],
   [relative('Expected'), '{"kind":"dmo","kind":"dmo"}'],
 ]) {
   test(`Git selector refuses noncanonical or invalid authored input ${file} ${JSON.stringify(value)}`, async () => {
@@ -371,6 +369,21 @@ for (const [file, value] of [
     );
   });
 }
+
+test('Git selector refuses a changed legacy DMO artifact with its own remediation', async () => {
+  // Alone or beside a valid native change, the removed location blocks instead of being skipped.
+  for (const withNative of [false, true]) {
+    const cwd = await fixture();
+    await put(cwd, 'data360/default/dmo/Expected__dlm.json', document('Expected'));
+    if (withNative) await put(cwd, relative('Other'), document('Other'));
+    await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }), (error) => {
+      assert.ok(error instanceof DeployInputError);
+      assert.equal(error.code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
+      assert.match(error.message, /sf data360 retrieve -m dmo:<ApiName>__dlm/u);
+      return true;
+    });
+  }
+});
 
 test('Git selector refuses tracked directory link replacement before deployment', async () => {
   const cwd = await fixture();

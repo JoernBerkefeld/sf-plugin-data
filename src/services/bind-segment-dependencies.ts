@@ -4,7 +4,7 @@ import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 
 export type SegmentDependencyBinding = {
   identity: SegmentDocument['spec']['segmentOn'];

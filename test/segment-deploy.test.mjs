@@ -447,21 +447,27 @@ const commandSetup = (inputs, preview, version = '65.0') => {
       'source-dir': ['synthetic'],
       'api-version': version,
       'data-space': 'default',
-      'target-org': { getOrgId: () => 'synthetic', getConnection: () => connection },
+      'target-org': {
+        getOrgId: () => 'synthetic',
+        getUsername: () => 'synthetic@example.invalid',
+        getConnection: () => connection,
+      },
     },
   });
   command.jsonEnabled = () => true;
   command.resolveInputs = async () => inputs;
   command.verifySegmentInput = verifySegmentInputDigest;
-  command.preflight = async () => ({
+  command.createDmoClient = () => ({});
+  command.preflightNativeDmo = async () => ({
+    family: 'dmo',
     outcome: 'create',
     target: 'absent',
-    absenceProof: 'complete-inventory',
+    absenceProof: 'confirmed-404',
     diagnostics: [],
   });
   command.preflightSegment = (value, conn, api, space) =>
     preflightSegmentDeploy(value, conn, api, space, acquire);
-  command.execute = () => assert.fail('Entire selection must block before any DMO writes');
+  command.executeNativeDmo = () => assert.fail('Entire selection must block before any DMO writes');
   return command;
 };
 const run = async (command) => {
@@ -572,7 +578,7 @@ test('mixed DMO plus Segment update without acknowledgement blocks whole selecti
   const command = commandSetup(
     [
       {
-        path: 'dmo.json',
+        path: 'First__dlm.dmo-meta.json',
         document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
       },
       ...inputs,
@@ -650,7 +656,7 @@ test('reverse mixed selection orders prerequisites first and retains partial/unk
     const p = await pair();
     const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     const dmo = {
-      path: 'synthetic-dmo',
+      path: 'synthetic.dmo-meta.json',
       document: { kind: 'dmo', identity: { ...segment.document.spec.segmentOn } },
     };
     const later = {
@@ -675,7 +681,7 @@ test('reverse mixed selection orders prerequisites first and retains partial/unk
       requiredEffects: ['processing'],
     });
     const calls = [];
-    command.execute = async () => {
+    command.executeNativeDmo = async () => {
       calls.push('dmo');
       return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
     };
@@ -724,7 +730,7 @@ test('fresh dependency or late pair admission blocks before DMO dispatch and ret
     const p = await pair();
     const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     const dmo = {
-      path: 'synthetic-dmo',
+      path: 'synthetic.dmo-meta.json',
       document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
     };
     const command = commandSetup([dmo, segment], false);
@@ -777,7 +783,7 @@ test('late pair or prerequisite drift preserves earlier completed DMO and unatte
     const p = await pair();
     const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     const dmo = {
-      path: 'synthetic-dmo',
+      path: 'synthetic.dmo-meta.json',
       document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
     };
     const tail = {
@@ -795,7 +801,7 @@ test('late pair or prerequisite drift preserves earlier completed DMO and unatte
       diagnostics: [],
       requiredEffects: [],
     });
-    command.execute = async () => {
+    command.executeNativeDmo = async () => {
       completed = true;
       if (drift === 'pair') await writeFile(p.path, `${await readFile(p.path, 'utf8')}\n`);
       return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };

@@ -62,7 +62,7 @@ export type OperationalFamily =
  * The caller retains the original requested mode separately from this effective selection.
  * @param {string} requested User-requested mode or numeric version.
  * @param {OperationalFamily} family Exact selected family.
- * @returns {string} Effective numeric version or unchanged legacy latest selector.
+ * @returns {string} Effective numeric version.
  */
 export function operationApiVersion(requested: string, family: OperationalFamily): string {
   switch (family) {
@@ -96,7 +96,7 @@ export function operationApiVersion(requested: string, family: OperationalFamily
     }
     default: {
       if (requested === 'auto') return '65.0';
-      if (requested === '65.0' || (family === 'dmo' && requested === 'latest')) return requested;
+      if (requested === '65.0') return requested;
     }
   }
   throw new Error('INVALID_SCOPE');

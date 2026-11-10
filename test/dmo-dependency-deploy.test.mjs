@@ -97,7 +97,6 @@ const deploy = async (cwd, flags, services = {}) => {
     calls.push(`execute:${document.identity.apiName}`);
     return { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
   };
-  command.preflight = command.execute = () => assert.fail('no legacy DMO route');
   command.preflightSegment = async (document, connection, selection) => {
     calls.push(`segment-preflight:${selection.soapNumeric}`);
     return {
@@ -276,7 +275,7 @@ test('namespaced and legacy-only DMO prerequisites stay external target bindings
   assert.deepEqual(unexpanded.inputs, legacyRoots);
 });
 
-test('an explicitly selected legacy DMO file remains a valid leaf root', async () => {
+test('an explicitly selected legacy DMO file is refused with its own remediation', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-dmo-dependency-root-'));
   await mkdir(path.join(cwd, 'data360', 'default', 'dmo'), { recursive: true });
   await writeFile(
@@ -289,8 +288,14 @@ test('an explicitly selected legacy DMO file remains a valid leaf root', async (
       },
     }),
   );
+  await assert.rejects(readDeployInputs({ cwd, metadata: ['dmo:Person__dlm'] }), {
+    code: 'LEGACY_DMO_ARTIFACT_UNSUPPORTED',
+    message: /sf data360 retrieve -m dmo:<ApiName>__dlm/u,
+  });
+  // Once the DMO is retrieved again, the native file wins and the stale legacy file is ignored.
+  await writeNativeDmoDocument(dmo('Person__dlm'), cwd, false);
   const roots = await readDeployInputs({ cwd, metadata: ['dmo:Person__dlm'] });
-  assert.ok(roots[0].path.endsWith(path.join('default', 'dmo', 'Person__dlm.json')));
+  assert.ok(roots[0].path.endsWith(path.join('data360', 'dmo', 'Person__dlm.dmo-meta.json')));
   const selected = await selectDeployDependencies(roots, cwd);
   assert.deepEqual(selected.inputs, roots);
   assert.equal(selected.reasons.get('dmo:default:Person__dlm').explicit, true);

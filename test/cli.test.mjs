@@ -271,16 +271,15 @@ test('delete help discloses guarded unmap-first deletion and bounded qualificati
   assert.ok(!Delete.description.includes('No cascade'));
 });
 
-test('API flags opt into exact latest while preserving core numeric validation and defaults', async () => {
+test('API flags admit auto and core numeric versions only; latest is no longer accepted', async () => {
   const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   for (const command of [Retrieve, Deploy]) {
     const flag = command.flags['api-version'];
     assert.equal(flag.default, 'auto');
-    assert.equal(await flag.parse('latest', {}, {}), 'latest');
     assert.equal(await flag.parse('auto', {}, {}), 'auto');
     assert.equal(await flag.parse('65.0', {}, {}), '65.0');
-    for (const invalid of ['Latest', 'v65.0', '65', 'latest ', '20.0'])
+    for (const invalid of ['latest', 'Latest', 'v65.0', '65', 'latest ', '20.0'])
       await assert.rejects(flag.parse(invalid, {}, {}));
   }
 });
@@ -309,7 +308,7 @@ test('dataspace parser has no default, accepts the compatibility alias and refus
   }
 });
 
-test('actual core initialization never discovers or saves cached versions before guarded command discovery', () => {
+test('actual core initialization and fixed command routes never discover or save cached versions', () => {
   const result = spawnSync(
     process.execPath,
     [
@@ -336,21 +335,14 @@ test('actual core initialization never discovers or saves cached versions before
     };
     Connection.prototype.isResolvable = () => assert.fail('no initialization DNS');
     const requests = [];
-    Connection.prototype.request = async function(request, options) {
+    Connection.prototype.request = async function(request) {
       requests.push(request);
-      assert.deepEqual(request, { method: 'GET', url: '/services/data' });
-      assert.equal(this.getApiVersion(), '65.0');
-      assert.equal(this._refreshDelegate, undefined);
-      assert.equal(options.retry.maxRetries, 0);
-      assert.throws(options.followRedirect);
-      if (fields.failDiscovery) throw new Error('private-discovery-token');
-      return [{ version: '65.0' }];
+      assert.fail('Fixed routes must not request version discovery.');
     };
     for (const cached of [false, true]) {
-      for (const requested of ['65.0', 'latest']) {
+      for (const requested of ['65.0', 'auto']) {
         for (const kind of ['retrieve', 'deploy']) {
-          for (const failDiscovery of [false, true]) {
-            fields = { orgId: '00Dsynthetic', failDiscovery, ...(cached ? {
+            fields = { orgId: '00Dsynthetic', ...(cached ? {
               instanceApiVersion: '68.0', instanceApiVersionLastRetrieved: '2000-01-01',
             } : {}) };
             const before = requests.length;
@@ -369,22 +361,31 @@ test('actual core initialization never discovers or saves cached versions before
               'target-org': org, metadata: ['dmo'], preview: true,
             } });
             command.jsonEnabled = () => true;
-            command.selectDocuments = async (connection) => {
-              assert.equal(connection.getApiVersion(), '65.0');
-              return [];
-            };
             command.listNativeNames = async () => [];
             command.listNativeMappingNames = async () => [];
-            command.resolveInputs = async () => [{ path: 'synthetic.json', document: {} }];
-            command.preflight = async () => ({ outcome: 'unchanged', diagnostics: [] });
+            command.resolveInputs = async () => [{
+              path: 'Synthetic.segment.json',
+              document: {
+                schemaVersion: 1, kind: 'segment',
+                identity: { dataSpace: 'default', apiName: 'Synthetic' },
+                spec: {
+                  displayName: 'Synthetic', description: '', segmentType: 'DBT',
+                  segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+                  models: [{ name: 'Synthetic', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
+                  dependencies: [{ kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] }],
+                  publishInterval: 'NO_REFRESH', lookbackPeriod: 'P90D',
+                },
+              },
+            }];
+            command.verifySegmentInput = async () => {};
+            command.preflightSegment = async () => ({
+              family: 'segment', outcome: 'unchanged', target: 'present', absenceProof: 'none',
+              requiredEffects: [], diagnostics: [],
+            });
             const envelope = await command.run();
-            assert.equal(requests.length - before, requested === 'latest' ? 1 : 0);
-            assert.equal(envelope.status, requested === 'latest' && failDiscovery ? 'blocked' : 'success', JSON.stringify(envelope));
-            assert.ok(!JSON.stringify(envelope).includes('private-discovery-token'));
-            if (requested === 'latest' && failDiscovery)
-              assert.equal(envelope.diagnostics.errors[0].code, 'API_VERSION_DISCOVERY_FAILED');
+            assert.equal(requests.length, before, 'commands must not discover versions');
+            assert.equal(envelope.status, 'success', JSON.stringify(envelope));
             process.exitCode = undefined;
-          }
         }
       }
     }
@@ -660,10 +661,10 @@ test('oclif discovers sixteen IDs backed by exactly four canonical implementatio
       command.jsonEnabled = () => true;
       command.resolveInputs = async () => [];
       command.resolveOrg =
-        command.selectDocuments =
-        command.acquire =
-        command.preflight =
-        command.execute =
+        command.resolveTargetOrg =
+        command.acquireNativeDmo =
+        command.preflightNativeDmo =
+        command.executeNativeDmo =
           () => assert.fail('Invalid alias input must not reach org resolution or services.');
       const previous = process.exitCode;
       try {

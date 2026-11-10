@@ -1,25 +1,27 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, readdir, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
+import { DeployInputError, readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import Deploy from '../lib/commands/data360/deploy.js';
-import { preflightDmoDeploy } from '../lib/services/preflight-dmo-deploy.js';
-import { DeployInputError } from '../lib/artifacts/read-deploy-input.js';
+import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 
+// A DMO-only selection joins the whole-selection batch route when Git selected it; explicit
+// all-native selections use the per-item native route covered by the native DMO command tests.
 const input = (name = 'Preview__dlm') => ({
-  path: `${name}.json`,
-  document: { identity: { dataSpace: 'default', apiName: name } },
+  path: `data360/dmo/${name}.dmo-meta.json`,
+  document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: name } },
 });
 const invocation = (overrides = {}) => {
   const command = Object.create(Deploy.prototype);
   const calls = [];
   const connection = {};
+  const client = {};
   const flags = {
     preview: true,
-    'source-dir': ['authored.json'],
+    'changed-since': 'main',
     'api-version': '65.0',
     dataspace: 'default',
     'target-org': {
@@ -27,6 +29,7 @@ const invocation = (overrides = {}) => {
         calls.push('org');
         return 'synthetic-target';
       },
+      getUsername: () => 'synthetic@example.invalid',
       getConnection: (version) => {
         calls.push('connection');
         assert.equal(version, flags['api-version']);
@@ -38,37 +41,42 @@ const invocation = (overrides = {}) => {
   command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
+  command.selectGitInputs = async () => ({
+    paths: ['authored.dmo-meta.json'],
+    provenance: { requestedRef: 'main' },
+  });
   command.resolveInputs = async (options) => {
     calls.push('inputs');
     assert.deepEqual(options, {
       cwd: process.cwd(),
-      sourceDir: flags['source-dir'],
+      sourceDir: flags['source-dir'] ?? (flags.metadata ? undefined : ['authored.dmo-meta.json']),
       metadata: flags.metadata,
     });
     return [input()];
   };
-  command.preflight = async (...arguments_) => {
+  command.captureInput = async () => 'synthetic-digest';
+  command.createDmoClient = (target, version) => {
+    assert.equal(target, 'synthetic@example.invalid');
+    assert.equal(version, flags['api-version']);
+    return client;
+  };
+  command.preflightNativeDmo = async (...arguments_) => {
     calls.push('preflight');
-    assert.deepEqual(arguments_, [
-      input().document,
-      connection,
-      { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' },
-      flags.dataspace,
-      true,
-    ]);
+    assert.deepEqual(arguments_, [input().document, client, flags.dataspace]);
     return {
+      family: 'dmo',
       outcome: 'create',
       target: 'absent',
-      absenceProof: 'complete-inventory',
+      absenceProof: 'confirmed-404',
       diagnostics: [],
     };
   };
-  command.execute = async () => {
+  command.executeNativeDmo = async () => {
     calls.push('execute');
     assert.equal(flags.preview, false, 'preview must never invoke the executor');
     return { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
   };
-  return { command, calls };
+  return { command, calls, client };
 };
 const run = async (command) => {
   const previous = process.exitCode;
@@ -97,31 +105,36 @@ test('CI dependency expansion blocks public mixed selection before target work',
   assert.deepEqual(calls, []);
 });
 
-test('auto deploy uses fixed API65 without discovery and refuses malformed IR', async () => {
+test('auto deploy pins a native DMO batch to API68 without discovery and refuses malformed IR', async () => {
   const { command, calls } = invocation({ 'api-version': 'auto' });
   command.parse = async () => ({
     flags: {
       preview: true,
       'api-version': 'auto',
       dataspace: 'default',
-      'source-dir': ['authored.json'],
+      'changed-since': 'main',
       'target-org': {
         getOrgId: () => 'synthetic',
+        getUsername: () => 'synthetic@example.invalid',
         getConnection: (version) => {
-          assert.equal(version, '65.0');
-          return {};
+          assert.equal(version, '68.0');
+          return { request: () => assert.fail('no version discovery') };
         },
       },
     },
   });
-  command.preflight = async (_, __, selection) => {
-    assert.deepEqual(selection, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
-    return { outcome: 'unchanged', diagnostics: [] };
+  command.createDmoClient = (_target, version) => {
+    assert.equal(version, '68.0');
+    return {};
   };
+  command.preflightNativeDmo = async () => previewResult('unchanged');
   const { result } = await run(command);
   assert.equal(result.status, 'success');
   assert.equal(result.metadata.apiVersion, 'auto');
-  assert.equal(result.metadata.soapApiVersion, '65.0');
+  assert.equal(result.metadata.soapApiVersion, '68.0');
+  assert.deepEqual(result.result.items[0].routes, [
+    { operation: 'dmo.deploy', apiVersion: '68.0', transport: 'native' },
+  ]);
   command.resolveInputs = async () => [
     {
       path: 'owner.json',
@@ -131,7 +144,8 @@ test('auto deploy uses fixed API65 without discovery and refuses malformed IR', 
       },
     },
   ];
-  command.preflight = command.execute = () => assert.fail('IR must never dispatch DMO');
+  command.preflightNativeDmo = command.executeNativeDmo = () =>
+    assert.fail('IR must never dispatch DMO');
   const blocked = await run(command);
   assert.equal(blocked.result.status, 'blocked');
   assert.equal(blocked.result.diagnostics.errors[0].code, 'INVALID_SOURCE');
@@ -153,93 +167,24 @@ test('processing acknowledgement parses only the exact boolean flag and defaults
   ])
     await assert.rejects(Parser.parse(arguments_, { flags }));
 });
-test('latest preview resolves once and passes immutable selection unchanged to preflight', async () => {
-  let discoveries = 0;
-  const pins = [];
-  let version = '64.0';
-  const connection = {
-    request: async function (request, options) {
-      assert.equal(request.url, '/services/data');
-      assert.equal(request.method, 'GET');
-      assert.equal(this._refreshDelegate, undefined);
-      assert.equal(options.retry.maxRetries, 0);
-      assert.throws(options.followRedirect);
-      discoveries++;
-      return [{ version: '65.0' }];
-    },
-    getApiVersion: () => version,
-  };
-  const { command } = invocation({
-    'api-version': 'latest',
-    'target-org': {
-      getOrgId: () => 'synthetic-target',
-      getConnection: (numeric) => {
-        pins.push(numeric);
-        if (numeric) version = numeric;
-        return connection;
-      },
-    },
-  });
-  command.resolveInputs = async () => [input('A__dlm'), input('B__dlm')];
-  let selection;
-  command.preflight = async (document, conn, actualSelection) => {
-    assert.equal(conn.getApiVersion(), '65.0');
-    assert.deepEqual(actualSelection, {
-      requested: 'latest',
-      restSelector: 'latest',
-      soapNumeric: '65.0',
-    });
-    assert.ok(Object.isFrozen(actualSelection));
-    if (selection) assert.equal(actualSelection, selection);
-    selection = actualSelection;
-    return previewResult();
-  };
-  command.execute = () => assert.fail('latest never executes');
-  const { result } = await run(command);
-  assert.equal(result.status, 'success');
-  assert.equal(result.metadata.apiVersion, 'latest');
-  assert.equal(result.metadata.soapApiVersion, '65.0');
-  assert.equal(discoveries, 1);
-  assert.deepEqual(pins, [undefined, '65.0']);
-});
 
-test('latest deploy fails closed on malformed/failed/newer discovery and refuses direct execution', async () => {
-  for (const advertised of [
-    [],
-    {},
-    [{ version: 'secret-invalid' }],
-    new Error('private-token'),
-    [{ version: '68.0' }],
-    'direct',
-  ]) {
-    let requests = 0;
-    const { command } = invocation({
-      'api-version': 'latest',
-      preview: advertised !== 'direct',
-      'target-org': {
-        getOrgId: () => 'synthetic-target',
-        getConnection: (version) => {
-          assert.equal(version, undefined);
-          return {
-            request: async () => {
-              requests++;
-              if (advertised instanceof Error) throw advertised;
-              return advertised;
-            },
-          };
-        },
-      },
-    });
-    command.preflight = command.execute = () => assert.fail('no DMO reads, POST or PATCH');
-    const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exitCode, 1);
-    assert.equal(requests, advertised === 'direct' ? 0 : 1);
-    assert.doesNotMatch(JSON.stringify(result), /secret-invalid|private-token/u);
-    assert.match(result.diagnostics.errors[0].message, /--api-version 65\.0/u);
-    if (advertised === 'direct')
-      assert.equal(result.diagnostics.errors[0].code, 'LATEST_READ_ONLY');
-  }
+test('latest is refused on every route before target inspection, discovery or services', async () => {
+  for (const preview of [true, false])
+    for (const git of [true, false]) {
+      const { command, calls } = invocation({
+        preview,
+        'api-version': 'latest',
+        ...(git ? {} : { 'changed-since': undefined, 'source-dir': ['authored.dmo-meta.json'] }),
+      });
+      command.preflightNativeDmo = command.executeNativeDmo = () =>
+        assert.fail('no DMO reads, POST or PATCH');
+      const { result, exitCode } = await run(command);
+      assert.equal(result.status, 'blocked');
+      assert.equal(exitCode, 1);
+      assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
+      assert.deepEqual(calls, ['inputs']);
+      assert.deepEqual(result.result.items, []);
+    }
 });
 
 test('preview resolves local input before org inspection and returns advisory versioned envelope', async () => {
@@ -261,7 +206,7 @@ test('preview resolves local input before org inspection and returns advisory ve
   assert.ok(Number.isFinite(Date.parse(result.provenance.generatedAt)));
   assert.equal(result.result.items[0].operation, 'preview');
   assert.equal(result.result.items[0].outcome, 'create');
-  assert.equal(result.result.items[0].absenceProof, 'complete-inventory');
+  assert.equal(result.result.items[0].absenceProof, 'confirmed-404');
   assert.ok(!JSON.stringify(result).includes('deployed'));
 });
 
@@ -279,15 +224,16 @@ test('nonpreview runs executor after selection preflight and returns mutation en
 });
 
 const previewResult = (outcome = 'create') => ({
+  family: 'dmo',
   outcome,
-  target: outcome === 'create' ? 'absent' : 'present',
-  absenceProof: outcome === 'create' ? 'complete-inventory' : 'none',
+  target: outcome === 'create' ? 'absent' : 'existing',
+  absenceProof: outcome === 'create' ? 'confirmed-404' : 'none',
   diagnostics: [],
 });
 const batchInvocation = () => {
   const setup = invocation({ preview: false });
   setup.command.resolveInputs = async () => [input('A__dlm'), input('B__dlm'), input('C__dlm')];
-  setup.command.preflight = async () => {
+  setup.command.preflightNativeDmo = async () => {
     setup.calls.push('preflight');
     return previewResult();
   };
@@ -295,21 +241,18 @@ const batchInvocation = () => {
 };
 
 test('whole selection preflight finishes before execution; unchanged stays no-op', async () => {
-  const { command, calls } = batchInvocation();
-  command.execute = async (...arguments_) => {
+  const { command, calls, client } = batchInvocation();
+  command.executeNativeDmo = async (...arguments_) => {
     calls.push('execute');
     assert.equal(calls.filter((call) => call === 'preflight').length, 3);
-    assert.deepEqual(arguments_[2], {
-      requested: '65.0',
-      restSelector: 'v65.0',
-      soapNumeric: '65.0',
-    });
-    assert.equal(arguments_[3], 'default');
+    assert.equal(arguments_[1], client);
+    assert.equal(arguments_[2], 'default');
     return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
   };
   const { result, exitCode } = await run(command);
   assert.equal(result.status, 'success');
   assert.equal(exitCode, undefined);
+  assert.equal(calls.filter((call) => call === 'execute').length, 3);
   assert.ok(
     result.result.items.every(
       (item) => item.outcome === 'unchanged' && item.mutation === 'not-attempted',
@@ -321,7 +264,7 @@ test('known later blocker or preflight error prevents all execution', async () =
   for (const failure of ['blocked', 'blocked-changes', 'throw']) {
     const { command, calls } = batchInvocation();
     let count = 0;
-    command.preflight = async () => {
+    command.preflightNativeDmo = async () => {
       if (++count !== 2) return previewResult();
       if (failure === 'throw') throw new Error('private-response');
       return previewResult(failure);
@@ -344,74 +287,27 @@ test('known later blocker or preflight error prevents all execution', async () =
   }
 });
 
-test('real batch preflight blocks later unsupported schemas before any earlier writes', async () => {
-  for (const variant of ['Profile', 'Engagement', 'Number', 'dynamic']) {
-    const { command, calls } = invocation({ preview: false });
-    // eslint-disable-next-line unicorn/consistent-function-scoping -- Fixture is local to this admission regression.
-    const document = (name) => ({
-      schemaVersion: 1,
-      kind: 'dmo',
-      identity: { dataSpace: 'default', apiName: name },
-      spec: {
-        label: 'Synthetic',
-        category: 'Other',
-        fields: [
-          {
-            name: 'Key__c',
-            label: 'Key',
-            dataType: 'Text',
-            isPrimaryKey: true,
-            isDynamicLookup: false,
-          },
-          {
-            name: 'Event__c',
-            label: 'Event',
-            dataType: 'DateTime',
-            isPrimaryKey: false,
-            isDynamicLookup: false,
-          },
-        ],
-      },
-    });
-    const first = document('First__dlm');
-    const later = document('Later__dlm');
-    if (variant === 'Profile' || variant === 'Engagement') {
-      later.spec.category = variant;
-      if (variant === 'Engagement') later.spec.eventDateTimeFieldName = 'Event__c';
-    } else if (variant === 'Number') later.spec.fields[0].dataType = variant;
-    else later.spec.fields[0].isDynamicLookup = true;
-    command.resolveInputs = async () =>
-      [first, later].map((value) => ({ path: 'synthetic.json', document: value }));
-    let reads = 0;
-    const connection = {
-      instanceUrl: 'https://synthetic.example',
-      getApiVersion: () => '65.0',
-      request: async (request) => {
-        assert.equal(request.method, 'GET');
-        reads++;
-        return { dataModelObject: [] };
-      },
-    };
-    command.preflight = (value, _connection, api, space) =>
-      preflightDmoDeploy(value, connection, api, space);
-    const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exitCode, 1);
-    assert.equal(reads, 1);
-    assert.equal(
-      result.result.items[1].preflight.diagnostics[0].code,
-      'SOURCE_EXECUTION_UNSUPPORTED',
-    );
-    assert.ok(!calls.includes('execute'));
-    assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
-  }
+test('a later native DMO refusal names its own reason and prevents all earlier writes', async () => {
+  const { command, calls } = batchInvocation();
+  let count = 0;
+  command.preflightNativeDmo = async () => {
+    if (++count === 2) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
+    return previewResult();
+  };
+  const { result, exitCode } = await run(command);
+  assert.equal(count, 3);
+  assert.equal(result.status, 'failed');
+  assert.equal(exitCode, 1);
+  assert.equal(result.result.items[1].preflight.diagnostics[0].code, 'UNSUPPORTED_DMO_TARGET');
+  assert.ok(!calls.includes('execute'));
+  assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
 });
 
 test('sequential execution retains prior creation, stops and distinguishes remaining unattempted', async () => {
   for (const stop of ['blocked', 'failed', 'unknown', 'throw']) {
     const { command } = batchInvocation();
     let count = 0;
-    command.execute = async () => {
+    command.executeNativeDmo = async () => {
       if (++count === 1)
         return { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
       if (stop === 'throw') throw new Error('token-and-remote-payload');
@@ -437,22 +333,23 @@ test('sequential execution retains prior creation, stops and distinguishes remai
   }
 });
 
-test('label update preview and execution retain update, noop and unknown evidence', async () => {
-  const { executeDmoDeploy } = await import('../lib/services/execute-dmo-deploy.js');
-  assert.equal(new Deploy([], {}).execute, executeDmoDeploy);
+test('update preview and execution retain update, noop and unknown evidence', async () => {
+  const { executeDmo } = await import('../lib/services/command-native-dmo.js');
+  const defaults = new Deploy([], {});
+  assert.equal(defaults.executeNativeDmo, executeDmo);
+  // The removed API65 adapter seams must not reappear on the command.
+  assert.equal('execute' in defaults, false);
+  assert.equal('preflight' in defaults, false);
   const preview = invocation();
-  preview.command.preflight = async (...arguments_) => {
-    assert.equal(arguments_[4], true);
-    return previewResult('update');
-  };
+  preview.command.preflightNativeDmo = async () => previewResult('update');
   const advisory = await run(preview.command);
   assert.equal(advisory.result.result.items[0].outcome, 'update');
   assert.ok(!preview.calls.includes('execute'));
   for (const unknown of [false, true]) {
     const { command } = batchInvocation();
-    command.preflight = async () => previewResult('update');
+    command.preflightNativeDmo = async () => previewResult('update');
     let executions = 0;
-    command.execute = async () => {
+    command.executeNativeDmo = async () => {
       executions++;
       return executions === 1
         ? { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] }
@@ -474,13 +371,11 @@ test('label update preview and execution retain update, noop and unknown evidenc
   }
 });
 
-test('supported label update plus mixed unsupported tail blocks whole selection without writes', async () => {
+test('supported update plus mixed unsupported tail blocks whole selection without writes', async () => {
   const { command, calls } = batchInvocation();
   let admissions = 0;
-  command.preflight = async (...arguments_) => {
-    assert.equal(arguments_[4], true);
-    return previewResult(++admissions === 2 ? 'blocked-changes' : 'update');
-  };
+  command.preflightNativeDmo = async () =>
+    previewResult(++admissions === 2 ? 'blocked-changes' : 'update');
   const { result, exitCode } = await run(command);
   assert.equal(admissions, 3);
   assert.equal(result.status, 'blocked');
@@ -497,7 +392,7 @@ test('human successful DMO actions are lowercase and never infer processing from
     const lines = [];
     command.jsonEnabled = () => false;
     command.log = (line) => lines.push(line);
-    command.execute = async () => ({
+    command.executeNativeDmo = async () => ({
       outcome,
       mutation:
         outcome === 'created'
@@ -523,7 +418,11 @@ test('human execution output reports unknown mutation and never aggregate succes
   const logs = [];
   command.jsonEnabled = () => false;
   command.log = (message) => logs.push(message);
-  command.execute = async () => ({ outcome: 'failed', mutation: 'unknown', diagnostics: [] });
+  command.executeNativeDmo = async () => ({
+    outcome: 'failed',
+    mutation: 'unknown',
+    diagnostics: [],
+  });
   const { exitCode } = await run(command);
   assert.equal(exitCode, 1);
   assert.match(logs.join('\n'), /Deploy execution: failed/u);
@@ -537,8 +436,27 @@ test('repeated source and metadata flags plus API/scope override pass unchanged 
     { 'source-dir': ['one.json', 'directory'] },
     { 'source-dir': undefined, metadata: ['dmo:A__dlm', 'dmo:B__dlm'] },
   ]) {
-    const { command } = invocation({ ...overrides, 'api-version': '66.0', dataspace: 'other' });
+    const { command, calls } = invocation({
+      'changed-since': undefined,
+      ...overrides,
+      'api-version': '66.0',
+      dataspace: 'other',
+    });
+    const resolve = command.resolveInputs;
+    // A Segment keeps this selection on the batch route, whose families require default space.
+    command.resolveInputs = async (options) => {
+      await resolve(options);
+      return [
+        {
+          path: 'Audience.segment.json',
+          document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+        },
+      ];
+    };
     const { result } = await run(command);
+    assert.deepEqual(calls, ['inputs']);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
     assert.equal(result.metadata.apiVersion, '66.0');
     assert.equal(result.result.scope.dataSpace, 'other');
   }
@@ -583,12 +501,10 @@ test('all four preflight outcomes preserve service proof and aggregate blocked n
     const { command } = invocation();
     command.resolveInputs = async () => [input('First__dlm'), input('Second__dlm')];
     let count = 0;
-    command.preflight = async () => {
+    command.preflightNativeDmo = async () => {
       count++;
       return {
-        outcome,
-        target: outcome === 'create' ? 'absent' : 'present',
-        absenceProof: outcome === 'create' ? 'complete-inventory' : 'none',
+        ...previewResult(outcome),
         diagnostics: outcome.startsWith('blocked')
           ? [{ code: 'UPDATE_UNSUPPORTED', message: 'Updates blocked.' }]
           : [],
@@ -607,9 +523,9 @@ test('unexpected per-item failure is redacted, retains all item outcomes and dom
   const { command } = invocation();
   command.resolveInputs = async () => [input('First__dlm'), input('Second__dlm')];
   let count = 0;
-  command.preflight = async () => {
+  command.preflightNativeDmo = async () => {
     if (++count === 1) throw new Error('secret-remote-payload');
-    return { outcome: 'unchanged', target: 'present', absenceProof: 'none', diagnostics: [] };
+    return previewResult('unchanged');
   };
   const { result, exitCode } = await run(command);
   assert.equal(result.status, 'failed');
@@ -643,40 +559,87 @@ test('org and resolver unexpected failures are redacted with nonzero exit', asyn
   }
 });
 
+const authored = () => ({
+  schemaVersion: 1,
+  kind: 'dmo',
+  identity: { dataSpace: 'default', apiName: 'Preview__dlm' },
+  spec: {
+    label: 'Preview',
+    category: 'Other',
+    fields: [
+      {
+        name: 'Key__c',
+        label: 'Key',
+        dataType: 'Text',
+        isPrimaryKey: true,
+        isDynamicLookup: false,
+      },
+    ],
+  },
+});
+
 test('real resolver plus injected read-only preflight leaves authored files and directory unchanged', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-preview-command-'));
-  const file = path.join(cwd, 'authored.json');
-  const document = {
-    schemaVersion: 1,
-    kind: 'dmo',
-    identity: { dataSpace: 'default', apiName: 'Preview__dlm' },
-    spec: {
-      label: 'Preview',
-      category: 'Other',
-      fields: [
-        {
-          name: 'Key__c',
-          label: 'Key',
-          dataType: 'Text',
-          isPrimaryKey: true,
-          isDynamicLookup: false,
-        },
-      ],
-    },
-  };
-  const bytes = JSON.stringify(document);
+  const directory = path.join(cwd, 'data360', 'dmo');
+  await mkdir(directory, { recursive: true });
+  const file = path.join(directory, 'Preview__dlm.dmo-meta.json');
+  const bytes = JSON.stringify(authored());
   await writeFile(file, bytes);
-  const { command } = invocation({ 'source-dir': [file] });
+  const { command } = invocation({ 'changed-since': undefined, 'source-dir': [file] });
   command.resolveInputs = readDeployInputs;
-  command.preflight = async (value) => {
-    assert.deepEqual(value, document);
-    return { outcome: 'unchanged', target: 'present', absenceProof: 'none', diagnostics: [] };
+  command.preflightNativeDmo = async (value) => {
+    assert.deepEqual(value, authored());
+    return previewResult('unchanged');
   };
   const { result } = await run(command);
-  assert.equal(result.status, 'success');
-  assert.deepEqual(await readdir(cwd), ['authored.json']);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(await readdir(directory), ['Preview__dlm.dmo-meta.json']);
   assert.equal(await readFile(file, 'utf8'), bytes);
 });
+
+for (const mode of ['source-dir file', 'source-dir directory', 'metadata selector'])
+  test(`legacy DMO artifact selected by ${mode} is refused before any org call`, async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-legacy-command-'));
+    const directory = path.join(cwd, 'data360', 'default', 'dmo');
+    await mkdir(directory, { recursive: true });
+    const file = path.join(directory, 'Preview__dlm.json');
+    const bytes = JSON.stringify(authored());
+    await writeFile(file, bytes);
+    for (const preview of [true, false]) {
+      const { command, calls } = invocation({
+        preview,
+        'changed-since': undefined,
+        ...(mode === 'metadata selector'
+          ? { metadata: ['dmo:Preview__dlm'] }
+          : { 'source-dir': [mode === 'source-dir file' ? file : path.join(cwd, 'data360')] }),
+      });
+      // The command reads its own working directory; bind the real reader to the fixture root.
+      command.resolveInputs = (options) => readDeployInputs({ ...options, cwd });
+      command.resolveTargetOrg =
+        command.createDmoClient =
+        command.preflightNativeDmo =
+        command.executeNativeDmo =
+          () => assert.fail('A legacy DMO artifact must be refused before auth or services.');
+      const lines = [];
+      command.jsonEnabled = () => false;
+      command.log = (line) => lines.push(line);
+      const { result, exitCode } = await run(command);
+      assert.equal(result.status, 'blocked');
+      assert.equal(exitCode, 1);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(result.result.items, []);
+      // eslint-disable-next-line unicorn/no-null -- The public JSON contract represents unresolved target identity as null.
+      assert.equal(result.provenance.targetOrgId, null);
+      assert.equal(result.diagnostics.errors.length, 1);
+      const [diagnostic] = result.diagnostics.errors;
+      assert.equal(diagnostic.code, 'LEGACY_DMO_ARTIFACT_UNSUPPORTED');
+      assert.equal(diagnostic.retryable, false);
+      assert.match(diagnostic.message, /sf data360 retrieve -m dmo:<ApiName>__dlm/u);
+      assert.match(diagnostic.message, /<ApiName>__dlm[.]dmo-meta[.]json/u);
+      assert.ok(lines.some((line) => line.startsWith('LEGACY_DMO_ARTIFACT_UNSUPPORTED: ')));
+      assert.equal(await readFile(file, 'utf8'), bytes);
+    }
+  });
 
 test('human summary states preview only, never actual deployment', async () => {
   const { command } = invocation();

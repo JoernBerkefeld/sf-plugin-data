@@ -14,17 +14,10 @@ import {
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
 import type { Connection } from '@salesforce/core';
-import { buildDmoCreateRequestFromDocument } from '../artifacts/dmo-document.js';
-import type { DmoUpdatePatch } from '../artifacts/dmo-update-delta.js';
 import { validateSegmentDocument } from '../artifacts/segment-document.js';
 import type { ApiVersionSelection } from './api-version.js';
 
-export type TransportErrorCode =
-  | 'INVALID_REQUEST'
-  | 'AUTHENTICATION_FAILED'
-  | 'REQUEST_FAILED'
-  | 'INVALID_PAGE'
-  | 'INCOMPLETE_LIST';
+export type TransportErrorCode = 'INVALID_REQUEST' | 'AUTHENTICATION_FAILED' | 'REQUEST_FAILED';
 
 /** An intentionally payload-free diagnostic safe for JSON and console output. */
 export class ConnectError extends Error {
@@ -127,59 +120,6 @@ export class ConnectClient {
    */
   public async get<T = unknown>(path: string): Promise<T> {
     return this.read<T>(path);
-  }
-
-  /**
-   * Create one validated authored DMO at the fixed API65 endpoint, without retry or redirect.
-   * A per-call receiver masks JSforce's refresh delegate (which otherwise replays POST on 401).
-   * Never mutates the supplied connection or exposes a generic write route.
-   * @param {unknown} document Independently validated authored-only default-space document.
-   * @returns {Promise<unknown>} Untrusted response, never proof of successful creation.
-   */
-  public async createDataModelObject(document: unknown): Promise<unknown> {
-    if (this.selection.requested !== '65.0') throw new ConnectError('INVALID_REQUEST');
-    const body = JSON.stringify(buildDmoCreateRequestFromDocument(document, 'default'));
-    return this.send(
-      {
-        method: 'POST',
-        url: this.safeUrl(`${this.prefix}data-model-objects`),
-        body,
-        headers: { 'content-type': 'application/json' },
-      },
-      this.noRefreshReceiver(),
-    );
-  }
-
-  /**
-   * Send one PATCH to an exact API65 DMO route without refresh, retry or redirect.
-   * Callers must qualify the patch and authorize execution independently; this is transport only.
-   * @param {string} dataModelObjectName Exact qualified DMO API name.
-   * @param {DmoUpdatePatch} patch Caller-qualified update payload, not validated here.
-   * @returns {Promise<unknown>} Untrusted response, never proof of a successful update.
-   */
-  public async patchDataModelObject(
-    dataModelObjectName: string,
-    patch: DmoUpdatePatch,
-  ): Promise<unknown> {
-    if (
-      this.selection.requested !== '65.0' ||
-      !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName)
-    )
-      throw new ConnectError('INVALID_REQUEST');
-    try {
-      return await this.send(
-        {
-          method: 'PATCH',
-          url: this.safeUrl(`${this.prefix}data-model-objects/${dataModelObjectName}`),
-          body: JSON.stringify(patch),
-          headers: { 'content-type': 'application/json' },
-        },
-        this.noRefreshReceiver(),
-      );
-    } catch (error: unknown) {
-      if (error instanceof ConnectError) throw error;
-      throw new ConnectError('INVALID_REQUEST');
-    }
   }
 
   /**
@@ -442,161 +382,6 @@ export class ConnectClient {
           connectDiagnostic(statusCode),
       );
     }
-  }
-
-  /**
-   * Read the offset-paginated DMO inventory, without projecting resource fields.
-   * A short page terminates the list; unsupported continuation shapes fail closed.
-   * @returns {Promise<Array<Record<string, unknown>>>} Complete raw DMO entries or an error, never a partial list.
-   */
-  public async listDataModelObjects(): Promise<Array<Record<string, unknown>>> {
-    const result: Array<Record<string, unknown>> = [];
-    const identities = new Set<string>();
-    const limit = 50;
-    // The official endpoint caps SOQL offsets at 2000. Never probe beyond it.
-    for (let offset = 0; offset <= 2000; offset += limit) {
-      const page = await this.get<unknown>(
-        `${this.prefix}data-model-objects?limit=${limit}&offset=${offset}&orderBy=ASC`,
-      );
-      if (!page || typeof page !== 'object' || Array.isArray(page)) {
-        throw new ConnectError('INVALID_PAGE');
-      }
-      const envelope = page as Record<string, unknown>;
-      if (
-        !Array.isArray(envelope.dataModelObject) ||
-        envelope.dataModelObject.length > limit ||
-        // DMO pagination has no documented server-provided continuation URL/token.
-        ['nextPageUrl', 'nextPageToken'].some((key) => envelope[key] != undefined)
-      ) {
-        throw new ConnectError('INVALID_PAGE');
-      }
-      for (const entry of envelope.dataModelObject as unknown[]) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-          throw new ConnectError('INVALID_PAGE');
-        }
-        const item = entry as Record<string, unknown>;
-        if (
-          typeof item.name !== 'string' ||
-          !item.name.trim() ||
-          typeof item.dataSpaceName !== 'string' ||
-          !item.dataSpaceName.trim()
-        ) {
-          throw new ConnectError('INVALID_PAGE');
-        }
-        const identity = JSON.stringify([item.dataSpaceName, item.name]);
-        if (identities.has(identity)) throw new ConnectError('INCOMPLETE_LIST');
-        identities.add(identity);
-        result.push(item);
-      }
-      if (envelope.dataModelObject.length < limit) return result;
-    }
-    // A full final permitted page cannot prove exhaustion, even if exactly full.
-    throw new ConnectError('INCOMPLETE_LIST');
-  }
-
-  /**
-   * Acquire raw incoming and outgoing relationships in one explicit data space.
-   * Pagination metadata must prove exhaustion; raw records are not portable artifacts.
-   * @param {string} dataModelObjectName Exact DMO API name, including any namespace.
-   * @param {string} dataSpace Exact server data-space name; never silently defaults.
-   * @returns {Promise<Array<Record<string, unknown>>>} Complete raw relationships or an error.
-   */
-  public async listDataModelObjectRelationships(
-    dataModelObjectName: string,
-    dataSpace: string,
-  ): Promise<Array<Record<string, unknown>>> {
-    if (
-      Number(this.selection.soapNumeric) < 64 ||
-      !/^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(dataModelObjectName) ||
-      !/^[A-Za-z][A-Za-z0-9_]*$/u.test(dataSpace)
-    )
-      throw new ConnectError('INVALID_REQUEST');
-    const result: Array<Record<string, unknown>> = [];
-    const identities = new Set<string>();
-    const limit = 20;
-    let total: number | undefined;
-    const envelopeKeys = new Set([
-      'relationships',
-      'count',
-      'totalSize',
-      'sortBy',
-      'currentPageToken',
-      'currentPageUrl',
-      'nextPageToken',
-      'nextPageUrl',
-      'previousPageToken',
-      'previousPageUrl',
-    ]);
-    // Local safety budget, not a claim about this endpoint's server offset ceiling.
-    for (let offset = 0; offset <= 2000; offset += limit) {
-      // JSforce substitutes this private sentinel only for HTTP 204, not malformed JSON.
-      const emptyResponse = Symbol('relationship-no-content');
-      const page = await this.read<unknown>(
-        `${this.prefix}data-model-objects/${dataModelObjectName}/relationships?dataspace=${dataSpace}&limit=${limit}&offset=${offset}&orderBy=ASC&sortBy=DeveloperName`,
-        emptyResponse,
-      );
-      if (page === emptyResponse) {
-        if (offset === 0) return [];
-        throw new ConnectError('INCOMPLETE_LIST');
-      }
-      if (!page || typeof page !== 'object' || Array.isArray(page))
-        throw new ConnectError('INVALID_PAGE');
-      const envelope = page as Record<string, unknown>;
-      if (
-        Object.keys(envelope).some((key) => !envelopeKeys.has(key)) ||
-        !Array.isArray(envelope.relationships) ||
-        envelope.relationships.length > limit ||
-        (envelope.count !== undefined && envelope.count !== envelope.relationships.length) ||
-        !Number.isSafeInteger(envelope.totalSize) ||
-        (envelope.totalSize as number) < 0 ||
-        (envelope.sortBy != undefined && envelope.sortBy !== 'DeveloperName') ||
-        [...envelopeKeys].some(
-          (key) =>
-            (key.endsWith('Url') || key.endsWith('Token')) &&
-            envelope[key] != undefined &&
-            typeof envelope[key] !== 'string',
-        )
-      )
-        throw new ConnectError('INVALID_PAGE');
-      if (total !== undefined && total !== envelope.totalSize)
-        throw new ConnectError('INCOMPLETE_LIST');
-      total = envelope.totalSize as number;
-      for (const entry of envelope.relationships as unknown[]) {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry))
-          throw new ConnectError('INVALID_PAGE');
-        const item = entry as Record<string, unknown>;
-        const entities = [item.sourceObject, item.targetObject];
-        if (
-          typeof item.name !== 'string' ||
-          !item.name.trim() ||
-          entities.some(
-            (entity) =>
-              !entity ||
-              typeof entity !== 'object' ||
-              Array.isArray(entity) ||
-              typeof (entity as Record<string, unknown>).name !== 'string' ||
-              !(entity as Record<string, unknown>).name,
-          ) ||
-          !entities.some(
-            (entity) => (entity as Record<string, unknown>).name === dataModelObjectName,
-          )
-        )
-          throw new ConnectError('INVALID_PAGE');
-        if (identities.has(item.name)) throw new ConnectError('INCOMPLETE_LIST');
-        identities.add(item.name);
-        // Preserve every field, including unfamiliar semantics, for later strict projection.
-        result.push(item);
-      }
-      if (result.length > total) throw new ConnectError('INVALID_PAGE');
-      if (result.length === total) {
-        if (envelope.nextPageUrl || envelope.nextPageToken)
-          throw new ConnectError('INCOMPLETE_LIST');
-        return result;
-      }
-      if (envelope.relationships.length !== limit) throw new ConnectError('INCOMPLETE_LIST');
-      // Response URLs can reference legacy routes/versions. Never follow them.
-    }
-    throw new ConnectError('INCOMPLETE_LIST');
   }
 
   protected safeUrl(path: string): string {

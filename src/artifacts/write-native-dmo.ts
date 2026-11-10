@@ -76,7 +76,7 @@ async function existing(file: string): Promise<Buffer | undefined> {
   }
 }
 /**
- * Publish complete native DMO definitions independently of the legacy projection writer.
+ * Publish complete native DMO definitions.
  * @param {unknown} value Portable definition including generated fields.
  * @param {string} projectRoot Explicit project root.
  * @param {boolean} overwrite Permit replacing differing bytes.

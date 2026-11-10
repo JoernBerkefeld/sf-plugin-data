@@ -18,7 +18,7 @@ import type { NativeDmoDocument } from '../artifacts/native-dmo-document.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import type { SegmentAcquisition } from './retrieve-segment.js';
 import { retrieveSegment } from './retrieve-segment.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 import { retrieveNativeDmo } from './native-dmo.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { ConnectClient } from '../transport/connect-client.js';

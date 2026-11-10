@@ -275,6 +275,7 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
   const connection = { getApiVersion: () => '65.0' };
   flags['target-org'] = {
     getOrgId: () => 'synthetic',
+    getUsername: () => 'synthetic@example.invalid',
     getConnection: (pin) => {
       assert.equal(pin, '65.0');
       return connection;
@@ -789,8 +790,8 @@ test('native68 mixed unqualified family and draft unrelated family reject before
     h.command.resolveInputs = async () => [
       ...h.inputs,
       {
-        path: 'synthetic-dmo.json',
-        document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: table } },
+        path: 'Synthetic.dataGraph.json',
+        document: { kind: 'data-graph', identity: { dataSpace: 'default', apiName: 'Synthetic' } },
       },
     ];
     h.flags['target-org'].getOrgId = () => assert.fail('auth');
@@ -808,14 +809,13 @@ test('later CI pair mismatch prevents ALL mixed selected outputs', async () => {
   const { command, calls } = retrieve({
     metadata: ['dmo:Example__dlm', 'calculated-insight:SyntheticInsight__cio'],
   });
-  command.selectDocuments = async () => ['Example__dlm'];
   command.selectDependencies = async () => ({
     entries: [
       { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
     ],
     reasons: new Map(),
   });
-  command.writeDocument = async () => assert.fail('DMO publication before CI admission');
+  command.writeNativeDmo = async () => assert.fail('DMO publication before CI admission');
   command.acquireCalculatedInsightXml = async () => xml().replace('Synthetic insight', 'different');
   const result = await run(command);
   assert.equal(result.status, 'blocked');
@@ -955,20 +955,22 @@ test('CI captured Git selection proceeds through public preview with unchanged a
 test('mixed CI/DMO ordering checks later CI binding before the earlier prerequisite dispatch', async () => {
   const { command, calls, inputs } = await deploy({ preview: false, 'allow-processing': true });
   const dmo = {
-    path: 'synthetic-dmo.json',
+    path: 'synthetic.dmo-meta.json',
     document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: table } },
   };
   command.resolveInputs = async () => [inputs[0], dmo];
   const capture = command.captureInput;
   command.captureInput = async (input) =>
     input.document.kind === 'dmo' ? 'stable' : capture(input);
-  command.preflight = async () => ({
+  command.createDmoClient = () => ({});
+  command.preflightNativeDmo = async () => ({
+    family: 'dmo',
     outcome: 'unchanged',
-    target: 'present',
+    target: 'existing',
     absenceProof: 'none',
     diagnostics: [],
   });
-  command.execute = async () => {
+  command.executeNativeDmo = async () => {
     calls.push('execute:dmo');
     return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
   };

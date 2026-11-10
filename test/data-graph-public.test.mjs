@@ -356,7 +356,6 @@ const retrieve = (overrides = {}) => {
     calls.push('org');
     return { getOrgId: () => 'synthetic', getConnection: () => connection };
   };
-  command.selectDocuments = async () => ['Example__dlm'];
   command.selectDependencies = async () => ({
     entries: [
       { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
@@ -382,7 +381,6 @@ const retrieve = (overrides = {}) => {
     return { path: 'synthetic', outcome: 'retrieved' };
   };
   command.writeDataGraph = writer;
-  command.writeDocument = () => assert.fail('no legacy DMO output');
   command.writeNativeDmo = writer;
   return { command, calls };
 };
@@ -511,7 +509,7 @@ const deploy = (overrides = {}, mixed = false) => {
     ...(mixed
       ? [
           {
-            path: 'dmo.json',
+            path: 'Example__dlm.dmo-meta.json',
             document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } },
           },
         ]
@@ -530,6 +528,7 @@ const deploy = (overrides = {}, mixed = false) => {
         calls.push('org');
         return 'synthetic';
       },
+      getUsername: () => 'synthetic@example.invalid',
       getConnection: () => connection,
     },
   };
@@ -551,11 +550,18 @@ const deploy = (overrides = {}, mixed = false) => {
     calls.push('graph-preview');
     return preview();
   };
-  command.preflight = async () => {
+  command.createDmoClient = () => ({});
+  command.preflightNativeDmo = async () => {
     calls.push('dmo-preview');
-    return { outcome: 'update', target: 'present', absenceProof: 'none', diagnostics: [] };
+    return {
+      family: 'dmo',
+      outcome: 'update',
+      target: 'existing',
+      absenceProof: 'none',
+      diagnostics: [],
+    };
   };
-  command.execute = async () => {
+  command.executeNativeDmo = async () => {
     calls.push('dmo-write');
     return { outcome: 'updated', mutation: 'confirmed-updated', diagnostics: [] };
   };
@@ -709,7 +715,7 @@ test('Graph mixed preview remains read-only; execution keeps private observation
   assert.equal(d.command.dataGraphObservations.get('graph.json')[0].body.private, 'not-public');
 });
 
-test('Graph all-pending fresh admission blocks earlier legacy mutation on target/input drift', async () => {
+test('Graph all-pending fresh admission blocks earlier DMO mutation on target/input drift', async () => {
   for (const drift of ['binding', 'preview', 'input']) {
     const { command, calls, selected } = deploy({}, true);
     selected[1].document.identity.apiName = 'UnifiedssotIndividualMkt__dlm';

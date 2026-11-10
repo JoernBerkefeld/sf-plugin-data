@@ -13,7 +13,7 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
 import type { IdentityResolutionOutputBinding } from './execute-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
-import { readDmoMetadata } from './retrieve-other-dmo.js';
+import { readDmoMetadata } from './read-metadata.js';
 import {
   retrieveIdentityResolution,
   retrieveLegacyIdentityResolution,

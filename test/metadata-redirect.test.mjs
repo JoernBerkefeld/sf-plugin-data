@@ -5,7 +5,11 @@ import { once } from 'node:events';
 import { inspect } from 'node:util';
 import test from 'node:test';
 import { Connection } from '@salesforce/core';
-import { readDmoMetadata } from '../lib/services/retrieve-other-dmo.js';
+import {
+  MetadataReadError,
+  readCalculatedInsightMetadata,
+  readDmoMetadata,
+} from '../lib/services/read-metadata.js';
 import { getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
@@ -149,4 +153,49 @@ test('guarded actual Metadata SOAP preserves successful core parsing and caller 
   } finally {
     await close(local.server);
   }
+});
+
+test('calculated insight Metadata read admits only a qualified name on API65 and uses the fixed type', async () => {
+  const reads = [];
+  const connection = coreConnection('http://127.0.0.1');
+  connection.metadata.read = async (type, fullNames) => {
+    reads.push([type, fullNames]);
+    return [{ fullName: fullNames[0] }];
+  };
+  assert.deepEqual(await readCalculatedInsightMetadata(connection, 'Synthetic_Insight'), [
+    { fullName: 'Synthetic_Insight' },
+  ]);
+  assert.deepEqual(reads, [['MktCalcInsightObjectDef', ['Synthetic_Insight']]]);
+  const pinned68 = Object.create(connection);
+  pinned68.getApiVersion = () => '68.0';
+  for (const [receiver, fullName] of [
+    [connection, ''],
+    [connection, '../Synthetic'],
+    [connection, 'Synthetic Insight'],
+    [connection, '1Synthetic'],
+    [pinned68, 'Synthetic_Insight'],
+  ])
+    await assert.rejects(readCalculatedInsightMetadata(receiver, fullName), (error) => {
+      assert.ok(error instanceof MetadataReadError);
+      assert.equal(error.name, 'MetadataReadError');
+      assert.equal(error.code, 'INVALID_SCOPE');
+      return true;
+    });
+  assert.equal(reads.length, 1);
+});
+
+test('Metadata read without an observable transport fails closed before any read', async () => {
+  const connection = {
+    getApiVersion: () => '65.0',
+    metadata: { read: () => assert.fail('no unguarded read') },
+  };
+  for (const read of [
+    () => readDmoMetadata(connection, 'Fixture__dlm'),
+    () => readCalculatedInsightMetadata(connection, 'Synthetic_Insight'),
+  ])
+    await assert.rejects(read(), (error) => {
+      assert.ok(error instanceof MetadataReadError);
+      assert.equal(error.code, 'ACQUISITION_FAILED');
+      return true;
+    });
 });

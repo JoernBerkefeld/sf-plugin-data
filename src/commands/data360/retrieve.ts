@@ -73,14 +73,7 @@ import { retrieveIdentityResolution } from '../../services/retrieve-identity-res
 import { writeIdentityResolutionDocument } from '../../artifacts/write-identity-resolution.js';
 import type { IdentityResolutionDocument } from '../../artifacts/identity-resolution-document.js';
 import type { RetrieveDependencyEntry } from '../../services/select-retrieve-dependencies.js';
-import { DmoDocumentError } from '../../artifacts/dmo-document.js';
-import { DmoWriteError, writeDmoDocument } from '../../artifacts/write-other-dmo.js';
-import {
-  DmoRetrieveError,
-  retrieveDmo,
-  selectDmos,
-  validateDmoSelection,
-} from '../../services/retrieve-other-dmo.js';
+import { MetadataReadError } from '../../services/read-metadata.js';
 import { ConnectClient, ConnectError } from '../../transport/connect-client.js';
 import { plugin as packageMetadata } from '../../plugin.js';
 import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
@@ -159,7 +152,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory, mixed-family selections and dependency expansion are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Dependency expansion is unsupported for DLO and mapping selections; DMOs retrieved beside or as prerequisites of other families use the same native JSON, and a standard or generated DMO needed only as a prerequisite blocks publication. Only DMO-only explicit numeric and experimental latest selections retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory, mixed-family selections and dependency expansion are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Dependency expansion is unsupported for DLO and mapping selections; DMOs retrieved beside or as prerequisites of other families use the same native JSON, and a standard or generated DMO needed only as a prerequisite blocks publication. Every DMO selection uses this native route; the earlier data360/default/dmo JSON format is no longer written, and --api-version latest is not accepted. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -168,16 +161,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     'api-version': Flags.orgApiVersion({
       default: 'auto',
       summary:
-        'Native default/auto 68.0, explicit numeric pin (native minimum 61.0), or experimental DMO-only latest.',
+        'Native default/auto 68.0 or an explicit numeric pin (native minimum 61.0); other families keep their qualified versions.',
       parse: async (value, context, options) =>
-        value === 'latest' || value === 'auto'
-          ? value
-          : Flags.orgApiVersion().parse(value, context, options),
+        value === 'auto' ? value : Flags.orgApiVersion().parse(value, context, options),
     }),
     dataspace: Flags.string({
       aliases: ['data-space'],
       summary:
-        'Optional native data space; --data-space is a compatibility alias. Legacy families require default.',
+        'Optional native data space; --data-space is a compatibility alias. Other families require default.',
     }),
     metadata: Flags.string({
       char: 'm',
@@ -267,8 +258,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected acquireSegment = retrieveSegment;
   protected selectDependencies = selectRetrieveDependencies;
   protected writeSegment = writeSegmentDocument;
-  protected acquire = retrieveDmo;
-  protected selectDocuments = selectDmos;
   protected resolveOrg = async (
     aliasOrUsername?: string,
   ): Promise<Pick<Org, 'getConnection' | 'getOrgId'>> => {
@@ -289,7 +278,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       },
     };
   };
-  protected writeDocument = writeDmoDocument;
   /**
    * Acquire the complete runtime projection, then publish only its authored candidate.
    * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
@@ -569,7 +557,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
     if (
       !flags['include-dependencies'] &&
-      flags['api-version'] !== 'latest' &&
       selectors.every((value) =>
         nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
       )
@@ -643,9 +630,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       } catch (error) {
         return finish(
           'blocked',
-          error instanceof NativeMappingError || error instanceof DmoRetrieveError
-            ? error.code
-            : 'NATIVE_INVENTORY_FAILED',
+          error instanceof NativeMappingError ? error.code : 'NATIVE_INVENTORY_FAILED',
           error,
         );
       }
@@ -701,16 +686,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             const code =
               error instanceof NativeMappingError ||
               error instanceof NativeDmoError ||
-              error instanceof DmoRetrieveError ||
-              error instanceof DmoWriteError ||
               error instanceof MappingDefinitionError ||
               error instanceof DloError
                 ? error.code
                 : 'NATIVE_RETRIEVE_FAILED';
-            if (
-              !(error instanceof DmoRetrieveError) &&
-              !['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code)
-            )
+            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
               failed = true;
             envelope.diagnostics.errors.push({
               code,
@@ -731,60 +711,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       );
     }
     if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-    const nativeSelectors = selectors.filter((value) => value.startsWith('dmo:'));
-    if (
-      nativeSelectors.length === selectors.length &&
-      nativeSelectors.length > 0 &&
-      !flags['include-dependencies']
-    ) {
-      if (
-        nativeSelectors.length !== selectors.length ||
-        nativeSelectors.some((value) => !nativeDmoName.test(value.slice(4)))
-      )
-        return finish('blocked', 'INVALID_SELECTION');
-      if (!['65.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
-        return finish('blocked', 'INVALID_SCOPE');
-      try {
-        let org;
-        try {
-          org = await this.resolveOrg(flags['target-org']);
-        } catch {
-          return finish('blocked', 'TARGET_ORG_REQUIRED');
-        }
-        const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
-        if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
-        envelope.provenance.sourceOrgId = org.getOrgId();
-        envelope.metadata.soapApiVersion = '65.0';
-        const names = [...new Set(nativeSelectors.map((value) => value.slice(4)))];
-        names.sort();
-        envelope.result.selection = names.map((name) => `dmo:${name}`);
-        for (const apiName of names) {
-          const document = await (this.acquireNativeDmo ?? retrieveNativeDmo)(
-            apiName,
-            (this.createDmoClient ?? createDmoClient)(target, '65.0'),
-          );
-          const receipt = await (this.writeNativeDmo ?? writeNativeDmoDocument)(
-            document,
-            flags['output-dir'] ?? process.cwd(),
-            flags.overwrite,
-          );
-          envelope.result.items.push({
-            identity: document.identity,
-            operation: 'retrieve',
-            routes: [{ operation: 'dmo.get', apiVersion: '65.0', transport: 'native' }],
-            ...receipt,
-          });
-        }
-        return finish('success');
-      } catch (error) {
-        return finish(
-          'blocked',
-          error instanceof NativeDmoError ? error.code : 'DMO_RETRIEVE_FAILED',
-          error,
-        );
-      }
-    }
-    // Only an explicit numeric or latest DMO-only selection still uses the legacy metadata adapter.
     const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
     const relationshipSelectors = selectors.filter((value) => value.startsWith('relationship:'));
@@ -906,20 +832,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         (!['65.0', '68.0'].includes(effectiveVersion) || effectiveScope !== 'default')
       )
         throw new SegmentError('INVALID_SCOPE');
-      // Validate syntax/scope before auth; latest capability evidence arrives after discovery.
-      if (hasDmos)
-        validateDmoSelection(
-          dmoSelectors,
-          effectiveVersion === 'latest' ? '65.0' : effectiveVersion,
-          effectiveScope,
-        );
+      // Validate DMO selector syntax before auth; unknown families land here and are refused.
+      if (
+        dmoSelectors.some(
+          (value) =>
+            value !== 'dmo' && !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))),
+        )
+      )
+        return finish('blocked', 'INVALID_SELECTION');
     } catch (error: unknown) {
-      return finish(
-        'blocked',
-        error instanceof DmoRetrieveError || error instanceof SegmentError
-          ? error.code
-          : 'INVALID_SELECTION',
-      );
+      return finish('blocked', error instanceof SegmentError ? error.code : 'INVALID_SELECTION');
     }
     let org: Pick<Org, 'getConnection' | 'getOrgId'>;
     try {
@@ -938,13 +860,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         error instanceof SegmentError ||
         error instanceof DependencySelectionError ||
         error instanceof RetrieveDependencyError ||
-        error instanceof DmoWriteError ||
-        error instanceof DmoRetrieveError ||
+        error instanceof MetadataReadError ||
         error instanceof NativeDmoError ||
         error instanceof ConnectError
       )
         code = error.code;
-      else if (error instanceof DmoDocumentError) code = 'UNSUPPORTED_DMO_DOCUMENT';
       else failed = true;
       if (
         code === 'IDENTITY_RESOLUTION_ACQUISITION_FAILED' ||
@@ -980,40 +900,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
     try {
       envelope.provenance.sourceOrgId = org.getOrgId();
-      let selection;
-      try {
-        selection = await resolveApiVersion(effectiveVersion, async () => {
-          // This command owns the initialized connection; suppress refresh replay and redirects.
-          const receiver = Object.create(org.getConnection()) as Connection;
-          Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
-          return receiver.request({ method: 'GET', url: '/services/data' }, {
-            retry: { maxRetries: 0 },
-            followRedirect: () => {
-              throw new Error('Discovery redirect refused.');
-            },
-          } as unknown as Parameters<Connection['request']>[1]);
-        });
-      } catch {
-        envelope.diagnostics.errors.push({
-          code: 'API_VERSION_DISCOVERY_FAILED',
-          message:
-            'Version discovery failed or returned invalid data. Check org access or use --api-version 65.0.',
-          retryable: false,
-        });
-        return finish('blocked');
-      }
+      // Every remaining route is a fixed numeric pin; nothing is discovered from the org.
+      const selection = await resolveApiVersion(effectiveVersion, async () => {
+        throw new Error('Fixed route must not discover.');
+      });
       envelope.metadata.soapApiVersion = selection.soapNumeric;
-      try {
-        if (hasDmos) validateDmoSelection(dmoSelectors, selection, effectiveScope);
-      } catch {
-        envelope.diagnostics.errors.push({
-          code: 'INVALID_SCOPE',
-          message:
-            'DMO support requires numeric SOAP evidence 65.0. Use --api-version 65.0; newer API versions are not qualified.',
-          retryable: false,
-        });
-        return finish('blocked');
-      }
       // Definition-only members are independent; retain successes across read/output failures.
 
       const dlos = [...new Set(dloSelectors.map((value) => value.slice(4)))];
@@ -1150,20 +1041,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
-      // Mixed, automatic and dependency selections read and publish DMOs in the native format.
-      const nativeDmos =
-        segmentSelectors.length > 0 ||
-        ciSelectors.length > 0 ||
-        flags['include-dependencies'] === true ||
-        irSelectors.length > 0 ||
-        graphSelectors.length > 0 ||
-        flags['api-version'] === 'auto';
       // The family pin of this path does not apply to native DMO reads (auto is 68.0).
-      const nativeDmoVersion = nativeApiVersion(
-        flags['api-version'] === 'latest' ? selection.soapNumeric : flags['api-version'],
-      );
+      const nativeDmoVersion = nativeApiVersion(flags['api-version']);
       let names: string[] = [];
-      if (hasDmos && nativeDmos) {
+      if (hasDmos) {
         names = dmoSelectors
           .filter((selector) => selector !== 'dmo')
           .map((selector) => selector.slice(4));
@@ -1173,8 +1054,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           );
         names = [...new Set(names)];
         names.sort();
-      } else if (hasDmos)
-        names = await this.selectDocuments(connection, dmoSelectors, selection, effectiveScope);
+      }
       if (hasDmos) outputTypes.add('dmo');
       for (const selector of selectors) outputTypes.add(selector.split(':')[0]);
       // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
@@ -1186,468 +1066,415 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         ...names.map((name) => `dmo:${name}`),
         ...segments.map((name) => `segment:${name}`),
       ];
-      if (nativeDmos) {
-        // Acquire and resolve the complete bounded selection before publishing any files.
-        const selected =
-          names.length > 0 || segments.length > 0
-            ? await (this.selectDependencies ?? selectRetrieveDependencies)(
-                [
-                  ...names.map((apiName) => ({
-                    kind: 'dmo' as const,
-                    dataSpace: effectiveScope,
+      // Acquire and resolve the complete bounded selection before publishing any files.
+      const selected =
+        names.length > 0 || segments.length > 0
+          ? await (this.selectDependencies ?? selectRetrieveDependencies)(
+              [
+                ...names.map((apiName) => ({
+                  kind: 'dmo' as const,
+                  dataSpace: effectiveScope,
+                  apiName,
+                })),
+                ...segments.map((apiName) => ({
+                  kind: 'segment' as const,
+                  dataSpace: effectiveScope,
+                  apiName,
+                })),
+              ],
+              connection,
+              selection,
+              flags['include-dependencies'] ?? false,
+              {
+                dmo: async (apiName: string): Promise<unknown> => {
+                  const target = flags['target-org'] ?? connection.getUsername();
+                  if (!target) throw new NativeDmoError('TARGET_ORG_REQUIRED');
+                  return (this.createDmoClient ?? createDmoClient)(target, nativeDmoVersion).get(
                     apiName,
-                  })),
-                  ...segments.map((apiName) => ({
-                    kind: 'segment' as const,
-                    dataSpace: effectiveScope,
-                    apiName,
-                  })),
-                ],
-                connection,
-                selection,
-                flags['include-dependencies'] ?? false,
-                {
-                  dmo: async (apiName: string): Promise<unknown> => {
-                    const target = flags['target-org'] ?? connection.getUsername();
-                    if (!target) throw new NativeDmoError('TARGET_ORG_REQUIRED');
-                    return (this.createDmoClient ?? createDmoClient)(target, nativeDmoVersion).get(
-                      apiName,
-                    );
-                  },
-                },
-              )
-            : {
-                entries: [] as RetrieveDependencyEntry[],
-                reasons: new Map<string, SelectionReason>(),
-              };
-        const calculatedInsights: Array<{
-          document: CalculatedInsightDocument;
-          definitionXml: string;
-        }> = [];
-        // Complete every CI admission before any selected output and before IR repins the receiver.
-        const ciApiVersion =
-          ciSelectors.length > 0
-            ? operationApiVersion(flags['api-version'], 'calculated-insight')
-            : '65.0';
-        const ciVersion = Object.freeze({
-          requested: ciApiVersion,
-          restSelector: `v${ciApiVersion}`,
-          soapNumeric: ciApiVersion,
-        });
-        // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
-        for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
-          const ciConnection = org.getConnection(ciApiVersion);
-          const context =
-            ciApiVersion === '68.0'
-              ? this.calculatedInsightContext(ciConnection, effectiveScope)
-              : undefined;
-          const acquired = context
-            ? await (async () => {
-                const exact = await this.acquireExactCalculatedInsight(context, apiName);
-                if (exact.state !== 'present' || exact.status !== 'ACTIVE')
-                  throw retainConnectDiagnostic(
-                    new CalculatedInsightError('CI_ACQUISITION_FAILED'),
-                    getConnectDiagnostic(exact),
                   );
-                return {
-                  identity: exact.document.identity,
-                  candidate: exact.document,
-                  blockers: [],
-                };
-              })()
-            : await this.acquireCalculatedInsight(ciConnection, apiName, ciVersion, effectiveScope);
-          if (!acquired.candidate || acquired.blockers.length > 0)
-            throw retainConnectDiagnostic(
-              new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED'),
-              getConnectDiagnostic(acquired),
-            );
-          if (
-            acquired.identity.apiName !== apiName ||
-            acquired.identity.dataSpace !== 'default' ||
-            acquired.candidate.identity.apiName !== apiName
-          )
-            throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-          await (context
-            ? context.bind(acquired.candidate)
-            : this.bindCalculatedInsight(
-                acquired.candidate,
-                ciConnection,
-                ciVersion,
-                effectiveScope,
-              ));
-          const target = flags['target-org'] ?? ciConnection.getUsername();
-          if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
-          const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
-          const document = validateCalculatedInsightPair(
-            acquired.candidate,
-            definitionXml,
-            apiName.slice(0, -5),
+                },
+              },
+            )
+          : {
+              entries: [] as RetrieveDependencyEntry[],
+              reasons: new Map<string, SelectionReason>(),
+            };
+      const calculatedInsights: Array<{
+        document: CalculatedInsightDocument;
+        definitionXml: string;
+      }> = [];
+      // Complete every CI admission before any selected output and before IR repins the receiver.
+      const ciApiVersion =
+        ciSelectors.length > 0
+          ? operationApiVersion(flags['api-version'], 'calculated-insight')
+          : '65.0';
+      const ciVersion = Object.freeze({
+        requested: ciApiVersion,
+        restSelector: `v${ciApiVersion}`,
+        soapNumeric: ciApiVersion,
+      });
+      // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
+      for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
+        const ciConnection = org.getConnection(ciApiVersion);
+        const context =
+          ciApiVersion === '68.0'
+            ? this.calculatedInsightContext(ciConnection, effectiveScope)
+            : undefined;
+        const acquired = context
+          ? await (async () => {
+              const exact = await this.acquireExactCalculatedInsight(context, apiName);
+              if (exact.state !== 'present' || exact.status !== 'ACTIVE')
+                throw retainConnectDiagnostic(
+                  new CalculatedInsightError('CI_ACQUISITION_FAILED'),
+                  getConnectDiagnostic(exact),
+                );
+              return {
+                identity: exact.document.identity,
+                candidate: exact.document,
+                blockers: [],
+              };
+            })()
+          : await this.acquireCalculatedInsight(ciConnection, apiName, ciVersion, effectiveScope);
+        if (!acquired.candidate || acquired.blockers.length > 0)
+          throw retainConnectDiagnostic(
+            new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED'),
+            getConnectDiagnostic(acquired),
           );
-          context?.check();
-          calculatedInsights.push({ document, definitionXml });
-        }
-        const discoveredOwners = new Set<string>();
-        const sourceGraphGuards: Array<() => Promise<void>> = [];
-        const dataGraphs: Array<{ document: DataGraphDocument }> = [];
-        if (graphSelectors.length > 0) {
-          const graphVersion = await resolveApiVersion('67.0', async () => {
-            throw new Error('Fixed route must not discover.');
-          });
-          const graphConnection = Object.create(connection) as Connection;
-          Object.defineProperty(graphConnection, 'version', { value: '67.0' });
-          Object.defineProperty(graphConnection, 'getApiVersion', { value: () => '67.0' });
-          Object.defineProperty(graphConnection, '_refreshDelegate', { value: undefined });
+        if (
+          acquired.identity.apiName !== apiName ||
+          acquired.identity.dataSpace !== 'default' ||
+          acquired.candidate.identity.apiName !== apiName
+        )
+          throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+        await (context
+          ? context.bind(acquired.candidate)
+          : this.bindCalculatedInsight(
+              acquired.candidate,
+              ciConnection,
+              ciVersion,
+              effectiveScope,
+            ));
+        const target = flags['target-org'] ?? ciConnection.getUsername();
+        if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
+        const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
+        const document = validateCalculatedInsightPair(
+          acquired.candidate,
+          definitionXml,
+          apiName.slice(0, -5),
+        );
+        context?.check();
+        calculatedInsights.push({ document, definitionXml });
+      }
+      const discoveredOwners = new Set<string>();
+      const sourceGraphGuards: Array<() => Promise<void>> = [];
+      const dataGraphs: Array<{ document: DataGraphDocument }> = [];
+      if (graphSelectors.length > 0) {
+        const graphVersion = await resolveApiVersion('67.0', async () => {
+          throw new Error('Fixed route must not discover.');
+        });
+        const graphConnection = Object.create(connection) as Connection;
+        Object.defineProperty(graphConnection, 'version', { value: '67.0' });
+        Object.defineProperty(graphConnection, 'getApiVersion', { value: () => '67.0' });
+        Object.defineProperty(graphConnection, '_refreshDelegate', { value: undefined });
 
-          for (const apiName of [
-            ...new Set(graphSelectors.map((value) => value.slice(11))),
-            // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh array within the existing TypeScript library target.
-          ].sort()) {
-            let acquired = await this.acquireDataGraph(
+        for (const apiName of [
+          ...new Set(graphSelectors.map((value) => value.slice(11))),
+          // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh array within the existing TypeScript library target.
+        ].sort()) {
+          let acquired = await this.acquireDataGraph(
+            graphConnection,
+            apiName,
+            graphVersion,
+            effectiveScope,
+          );
+          if (!acquired.candidate || acquired.blockers.length > 0) {
+            let binding;
+            try {
+              const raw = await this.readRawDataGraph(graphConnection, apiName, graphVersion);
+              binding = await this.discoverDataGraphOwner(
+                raw,
+                apiName,
+                graphConnection,
+                graphVersion,
+                effectiveScope,
+              );
+            } catch {
+              throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
+            }
+            if (!binding?.root) throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
+            acquired = await this.acquireDataGraph(
               graphConnection,
               apiName,
               graphVersion,
               effectiveScope,
+              { dependencyBinding: binding },
             );
-            if (!acquired.candidate || acquired.blockers.length > 0) {
-              let binding;
-              try {
-                const raw = await this.readRawDataGraph(graphConnection, apiName, graphVersion);
-                binding = await this.discoverDataGraphOwner(
-                  raw,
-                  apiName,
+            const ownerName = binding.root.identity.owner.apiName;
+            if (irSelectors.length > 0 && !irSelectors.includes(`identity-resolution:${ownerName}`))
+              throw new DataGraphError('DATA_GRAPH_SELECTED_OWNER_MISMATCH');
+            if (flags['include-dependencies']) discoveredOwners.add(ownerName);
+            if (acquired.candidate) {
+              const document = acquired.candidate;
+              sourceGraphGuards.push(async () => {
+                const fresh = await this.bindDataGraph(
+                  document,
                   graphConnection,
                   graphVersion,
                   effectiveScope,
                 );
-              } catch {
-                throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
-              }
-              if (!binding?.root) throw new DataGraphError('DATA_GRAPH_OWNER_DISCOVERY_FAILED');
-              acquired = await this.acquireDataGraph(
-                graphConnection,
-                apiName,
-                graphVersion,
-                effectiveScope,
-                { dependencyBinding: binding },
-              );
-              const ownerName = binding.root.identity.owner.apiName;
-              if (
-                irSelectors.length > 0 &&
-                !irSelectors.includes(`identity-resolution:${ownerName}`)
-              )
-                throw new DataGraphError('DATA_GRAPH_SELECTED_OWNER_MISMATCH');
-              if (flags['include-dependencies']) discoveredOwners.add(ownerName);
-              if (acquired.candidate) {
-                const document = acquired.candidate;
-                sourceGraphGuards.push(async () => {
-                  const fresh = await this.bindDataGraph(
-                    document,
-                    graphConnection,
-                    graphVersion,
-                    effectiveScope,
-                  );
-                  if (!isDeepStrictEqual(fresh, binding))
-                    throw new DataGraphError('DATA_GRAPH_SOURCE_BINDING_CHANGED');
-                  const current = await this.acquireDataGraph(
-                    graphConnection,
-                    apiName,
-                    graphVersion,
-                    effectiveScope,
-                    { dependencyBinding: fresh },
-                  );
-                  if (!isDeepStrictEqual(current, acquired))
-                    throw new DataGraphError('DATA_GRAPH_SOURCE_CONFIGURATION_CHANGED');
-                });
-              }
-            }
-            if (!acquired.candidate || acquired.blockers.length > 0)
-              throw retainConnectDiagnostic(
-                new DataGraphError(acquired.blockers[0] ?? 'DATA_GRAPH_ACQUISITION_FAILED'),
-                getConnectDiagnostic(acquired),
-              );
-            const document = validateDataGraphDocument(acquired.candidate);
-            if (
-              flags['include-dependencies'] &&
-              typeof document.spec.primaryObjectName === 'string'
-            )
-              throw new DataGraphError('DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
-            if (
-              acquired.identity.apiName !== apiName ||
-              acquired.identity.dataSpace !== 'default' ||
-              document.identity.apiName !== apiName
-            )
-              throw new DataGraphError('DATA_GRAPH_IDENTITY_CHANGED');
-            await this.bindDataGraph(document, graphConnection, graphVersion, effectiveScope);
-            dataGraphs.push({ document });
-          }
-        }
-        const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
-        if (irSelectors.length > 0 || discoveredOwners.size > 0) {
-          const irVersion = await resolveApiVersion('68.0', async () => {
-            throw new Error('Fixed route must not discover.');
-          });
-          const irConnection = org.getConnection('68.0');
-
-          for (const apiName of [
-            ...new Set([...irSelectors.map((value) => value.slice(20)), ...discoveredOwners]),
-            // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
-          ].sort()) {
-            const acquired = await this.acquireIdentityResolution(
-              irConnection,
-              apiName,
-              irVersion,
-              effectiveScope,
-            );
-            if (acquired.blockers.length > 0 || !acquired.candidate)
-              throw retainConnectDiagnostic(
-                new IdentityResolutionError(
-                  acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
-                ),
-                getConnectDiagnostic(acquired),
-              );
-            const document = validateIdentityResolutionDocument(acquired.candidate);
-            if (
-              acquired.identity.apiName !== apiName ||
-              acquired.identity.dataSpace !== effectiveScope ||
-              document.identity.apiName !== apiName ||
-              document.identity.dataSpace !== effectiveScope
-            )
-              throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
-            identityResolutions.push({ document });
-            if (graphSelectors.length > 0)
-              sourceGraphGuards.push(async () => {
-                const fresh = await this.acquireIdentityResolution(
-                  irConnection,
+                if (!isDeepStrictEqual(fresh, binding))
+                  throw new DataGraphError('DATA_GRAPH_SOURCE_BINDING_CHANGED');
+                const current = await this.acquireDataGraph(
+                  graphConnection,
                   apiName,
-                  irVersion,
+                  graphVersion,
                   effectiveScope,
+                  { dependencyBinding: fresh },
                 );
-                if (!isDeepStrictEqual(fresh, acquired))
-                  throw new IdentityResolutionError('IDENTITY_RESOLUTION_SOURCE_CHANGED');
+                if (!isDeepStrictEqual(current, acquired))
+                  throw new DataGraphError('DATA_GRAPH_SOURCE_CONFIGURATION_CHANGED');
               });
+            }
           }
+          if (!acquired.candidate || acquired.blockers.length > 0)
+            throw retainConnectDiagnostic(
+              new DataGraphError(acquired.blockers[0] ?? 'DATA_GRAPH_ACQUISITION_FAILED'),
+              getConnectDiagnostic(acquired),
+            );
+          const document = validateDataGraphDocument(acquired.candidate);
+          if (flags['include-dependencies'] && typeof document.spec.primaryObjectName === 'string')
+            throw new DataGraphError('DATA_GRAPH_DEPENDENCY_EXPANSION_UNSUPPORTED');
+          if (
+            acquired.identity.apiName !== apiName ||
+            acquired.identity.dataSpace !== 'default' ||
+            document.identity.apiName !== apiName
+          )
+            throw new DataGraphError('DATA_GRAPH_IDENTITY_CHANGED');
+          await this.bindDataGraph(document, graphConnection, graphVersion, effectiveScope);
+          dataGraphs.push({ document });
         }
-        if (flags['include-dependencies']) {
-          for (const { document } of dataGraphs) {
-            const identity = { kind: 'data-graph' as const, ...document.identity };
-            selected.reasons.set(`data-graph:default:${identity.apiName}`, {
-              explicit: true,
-              chains: [[identity]],
+      }
+      const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
+      if (irSelectors.length > 0 || discoveredOwners.size > 0) {
+        const irVersion = await resolveApiVersion('68.0', async () => {
+          throw new Error('Fixed route must not discover.');
+        });
+        const irConnection = org.getConnection('68.0');
+
+        for (const apiName of [
+          ...new Set([...irSelectors.map((value) => value.slice(20)), ...discoveredOwners]),
+          // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
+        ].sort()) {
+          const acquired = await this.acquireIdentityResolution(
+            irConnection,
+            apiName,
+            irVersion,
+            effectiveScope,
+          );
+          if (acquired.blockers.length > 0 || !acquired.candidate)
+            throw retainConnectDiagnostic(
+              new IdentityResolutionError(acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION'),
+              getConnectDiagnostic(acquired),
+            );
+          const document = validateIdentityResolutionDocument(acquired.candidate);
+          if (
+            acquired.identity.apiName !== apiName ||
+            acquired.identity.dataSpace !== effectiveScope ||
+            document.identity.apiName !== apiName ||
+            document.identity.dataSpace !== effectiveScope
+          )
+            throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
+          identityResolutions.push({ document });
+          if (graphSelectors.length > 0)
+            sourceGraphGuards.push(async () => {
+              const fresh = await this.acquireIdentityResolution(
+                irConnection,
+                apiName,
+                irVersion,
+                effectiveScope,
+              );
+              if (!isDeepStrictEqual(fresh, acquired))
+                throw new IdentityResolutionError('IDENTITY_RESOLUTION_SOURCE_CHANGED');
             });
-            const root = document.spec.primaryObjectName;
-            if (typeof root === 'string') continue;
-            const key = `identity-resolution:default:${root.owner.apiName}`;
-            const prior = selected.reasons.get(key);
-            const chain = [identity, root.owner];
-            if (prior) prior.chains.push(chain);
-            else
-              selected.reasons.set(key, {
-                explicit: irSelectors.includes(`identity-resolution:${root.owner.apiName}`),
-                chains: [chain],
-              });
-          }
         }
-        if (flags['include-dependencies'])
-          envelope.result.dependencies = [...selected.reasons].map(([key, reason]) => {
-            const [kind, dataSpace, apiName] = key.split(':');
-            return {
-              identity: { kind: kind as DependencyIdentity['kind'], dataSpace, apiName },
-              reason,
-            };
+      }
+      if (flags['include-dependencies']) {
+        for (const { document } of dataGraphs) {
+          const identity = { kind: 'data-graph' as const, ...document.identity };
+          selected.reasons.set(`data-graph:default:${identity.apiName}`, {
+            explicit: true,
+            chains: [[identity]],
           });
-        for (const verify of sourceGraphGuards) await verify();
-        const entries = [
-          ...selected.entries,
-          ...calculatedInsights,
-          ...identityResolutions,
-          ...dataGraphs,
-        ];
-        envelope.result.selection = [
-          ...dlos.map((name) => `dlo:${name}`),
-          ...mappings.map((name) => `mapping:${name}`),
-          ...relationships.map((name) => `relationship:${name}`),
-          ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
-        ];
-        for (const entry of entries) {
-          const { document } = entry;
-          try {
-            const receipt =
-              document.kind === 'data-graph'
-                ? await this.writeDataGraph(
+          const root = document.spec.primaryObjectName;
+          if (typeof root === 'string') continue;
+          const key = `identity-resolution:default:${root.owner.apiName}`;
+          const prior = selected.reasons.get(key);
+          const chain = [identity, root.owner];
+          if (prior) prior.chains.push(chain);
+          else
+            selected.reasons.set(key, {
+              explicit: irSelectors.includes(`identity-resolution:${root.owner.apiName}`),
+              chains: [chain],
+            });
+        }
+      }
+      if (flags['include-dependencies'])
+        envelope.result.dependencies = [...selected.reasons].map(([key, reason]) => {
+          const [kind, dataSpace, apiName] = key.split(':');
+          return {
+            identity: { kind: kind as DependencyIdentity['kind'], dataSpace, apiName },
+            reason,
+          };
+        });
+      for (const verify of sourceGraphGuards) await verify();
+      const entries = [
+        ...selected.entries,
+        ...calculatedInsights,
+        ...identityResolutions,
+        ...dataGraphs,
+      ];
+      envelope.result.selection = [
+        ...dlos.map((name) => `dlo:${name}`),
+        ...mappings.map((name) => `mapping:${name}`),
+        ...relationships.map((name) => `relationship:${name}`),
+        ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
+      ];
+      for (const entry of entries) {
+        const { document } = entry;
+        try {
+          const receipt =
+            document.kind === 'data-graph'
+              ? await this.writeDataGraph(
+                  document,
+                  flags['output-dir'] ?? process.cwd(),
+                  flags.overwrite,
+                )
+              : document.kind === 'calculated-insight'
+                ? await this.writeCalculatedInsight(
                     document,
+                    'definitionXml' in entry ? entry.definitionXml : '',
                     flags['output-dir'] ?? process.cwd(),
                     flags.overwrite,
                   )
-                : document.kind === 'calculated-insight'
-                  ? await this.writeCalculatedInsight(
+                : document.kind === 'identity-resolution'
+                  ? await this.writeIdentityResolution(
                       document,
-                      'definitionXml' in entry ? entry.definitionXml : '',
                       flags['output-dir'] ?? process.cwd(),
                       flags.overwrite,
                     )
-                  : document.kind === 'identity-resolution'
-                    ? await this.writeIdentityResolution(
+                  : document.kind === 'segment'
+                    ? await this.writeSegment(
                         document,
                         flags['output-dir'] ?? process.cwd(),
                         flags.overwrite,
                       )
-                    : document.kind === 'segment'
-                      ? await this.writeSegment(
-                          document,
-                          flags['output-dir'] ?? process.cwd(),
-                          flags.overwrite,
-                        )
-                      : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
-                          document,
-                          flags['output-dir'] ?? process.cwd(),
-                          flags.overwrite,
-                        );
-            envelope.result.items.push({
-              identity: { ...document.identity },
-              ...(document.kind === 'segment' ||
-              document.kind === 'identity-resolution' ||
-              document.kind === 'calculated-insight' ||
-              document.kind === 'data-graph'
-                ? { family: document.kind }
-                : {}),
-              ...(flags['api-version'] === 'auto' ||
-              document.kind === 'segment' ||
-              document.kind === 'identity-resolution' ||
-              document.kind === 'calculated-insight' ||
-              document.kind === 'data-graph'
-                ? {
-                    routes:
-                      document.kind === 'data-graph'
+                    : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
+                        document,
+                        flags['output-dir'] ?? process.cwd(),
+                        flags.overwrite,
+                      );
+          envelope.result.items.push({
+            identity: { ...document.identity },
+            ...(document.kind === 'segment' ||
+            document.kind === 'identity-resolution' ||
+            document.kind === 'calculated-insight' ||
+            document.kind === 'data-graph'
+              ? { family: document.kind }
+              : {}),
+            ...(flags['api-version'] === 'auto' ||
+            document.kind === 'segment' ||
+            document.kind === 'identity-resolution' ||
+            document.kind === 'calculated-insight' ||
+            document.kind === 'data-graph'
+              ? {
+                  routes:
+                    document.kind === 'data-graph'
+                      ? [
+                          {
+                            operation: 'd360_data_graph_get',
+                            apiVersion: '67.0',
+                            transport: 'facade' as const,
+                          },
+                          {
+                            operation: 'd360_transform_get',
+                            apiVersion: '67.0',
+                            transport: 'facade' as const,
+                          },
+                          {
+                            operation: 'dependency.metadata',
+                            apiVersion: '65.0',
+                            transport: 'metadata' as const,
+                          },
+                        ]
+                      : document.kind === 'identity-resolution'
                         ? [
                             {
-                              operation: 'd360_data_graph_get',
-                              apiVersion: '67.0',
-                              transport: 'facade' as const,
-                            },
-                            {
-                              operation: 'd360_transform_get',
-                              apiVersion: '67.0',
-                              transport: 'facade' as const,
-                            },
-                            {
-                              operation: 'dependency.metadata',
-                              apiVersion: '65.0',
-                              transport: 'metadata' as const,
+                              operation: 'identity-resolutions.get',
+                              apiVersion: '68.0',
+                              transport: 'native' as const,
                             },
                           ]
-                        : document.kind === 'identity-resolution'
-                          ? [
-                              {
-                                operation: 'identity-resolutions.get',
-                                apiVersion: '68.0',
-                                transport: 'native' as const,
-                              },
-                            ]
-                          : [
-                              {
-                                operation: `${document.kind}.get`,
-                                apiVersion:
-                                  document.kind === 'calculated-insight'
-                                    ? ciApiVersion
-                                    : document.kind === 'segment'
-                                      ? selection.soapNumeric
-                                      : '65.0',
-                                transport: 'native' as const,
-                              },
-                              ...(document.kind === 'segment'
-                                ? []
-                                : [
-                                    {
-                                      operation: `${document.kind}.metadata`,
-                                      apiVersion: '65.0',
-                                      transport: 'metadata' as const,
-                                    },
-                                  ]),
-                              ...(document.kind === 'calculated-insight' && ciApiVersion === '68.0'
-                                ? [
-                                    {
-                                      operation: 'calculated-insight.source',
-                                      apiVersion: '65.0',
-                                      transport: 'metadata' as const,
-                                    },
-                                    {
-                                      operation: 'dependency.get',
-                                      apiVersion: '65.0',
-                                      transport: 'native' as const,
-                                    },
-                                    {
-                                      operation: 'dependency.metadata',
-                                      apiVersion: '65.0',
-                                      transport: 'metadata' as const,
-                                    },
-                                  ]
-                                : []),
-                            ],
-                  }
-                : {}),
-              // A DMO here is always one native read; this replaces the legacy route evidence above.
-              ...(document.kind === 'dmo'
-                ? {
-                    routes: [
-                      {
-                        operation: 'dmo.get',
-                        apiVersion: nativeDmoVersion,
-                        transport: 'native' as const,
-                      },
-                    ],
-                  }
-                : {}),
-              operation: 'retrieve',
-              ...receipt,
-            });
-          } catch (error: unknown) {
-            diagnose(error, document.identity.apiName, document.kind);
-            // Do not publish dependents after an ambiguous prerequisite output failure.
-            break;
-          }
-        }
-        return finish(
-          envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
-        );
-      }
-      for (const apiName of names) {
-        try {
-          const projection = await this.acquire(connection, apiName, selection, effectiveScope);
-          if (
-            projection.status !== 'projected' ||
-            projection.blockers.length > 0 ||
-            !projection.candidate
-          )
-            throw new DmoRetrieveError(projection.blockers[0] ?? 'INCOMPLETE_DMO_PROJECTION');
-          if (
-            projection.candidate.identity.apiName !== apiName ||
-            projection.candidate.identity.dataSpace !== effectiveScope
-          )
-            throw new DmoRetrieveError('INVALID_METADATA');
-          const receipt = await this.writeDocument(
-            projection.candidate,
-            flags['output-dir'] ?? process.cwd(),
-            flags.overwrite,
-          );
-          envelope.result.items.push({
-            identity: { ...projection.candidate.identity },
-            operation: 'retrieve',
-            ...(flags['api-version'] === 'auto'
+                        : [
+                            {
+                              operation: `${document.kind}.get`,
+                              apiVersion:
+                                document.kind === 'calculated-insight'
+                                  ? ciApiVersion
+                                  : document.kind === 'segment'
+                                    ? selection.soapNumeric
+                                    : '65.0',
+                              transport: 'native' as const,
+                            },
+                            ...(document.kind === 'segment'
+                              ? []
+                              : [
+                                  {
+                                    operation: `${document.kind}.metadata`,
+                                    apiVersion: '65.0',
+                                    transport: 'metadata' as const,
+                                  },
+                                ]),
+                            ...(document.kind === 'calculated-insight' && ciApiVersion === '68.0'
+                              ? [
+                                  {
+                                    operation: 'calculated-insight.source',
+                                    apiVersion: '65.0',
+                                    transport: 'metadata' as const,
+                                  },
+                                  {
+                                    operation: 'dependency.get',
+                                    apiVersion: '65.0',
+                                    transport: 'native' as const,
+                                  },
+                                  {
+                                    operation: 'dependency.metadata',
+                                    apiVersion: '65.0',
+                                    transport: 'metadata' as const,
+                                  },
+                                ]
+                              : []),
+                          ],
+                }
+              : {}),
+            // A DMO here is always one native read.
+            ...(document.kind === 'dmo'
               ? {
                   routes: [
-                    { operation: 'dmo.get', apiVersion: '65.0', transport: 'native' as const },
                     {
-                      operation: 'dmo.metadata',
-                      apiVersion: '65.0',
-                      transport: 'metadata' as const,
+                      operation: 'dmo.get',
+                      apiVersion: nativeDmoVersion,
+                      transport: 'native' as const,
                     },
                   ],
                 }
               : {}),
+            operation: 'retrieve',
             ...receipt,
           });
         } catch (error: unknown) {
-          diagnose(error, apiName);
+          diagnose(error, document.identity.apiName, document.kind);
+          // Do not publish dependents after an ambiguous prerequisite output failure.
+          break;
         }
       }
     } catch (error: unknown) {
