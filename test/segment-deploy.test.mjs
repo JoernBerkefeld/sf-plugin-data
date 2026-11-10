@@ -726,7 +726,7 @@ test('reverse mixed selection orders prerequisites first and retains partial/unk
   }
 });
 test('fresh dependency or late pair admission blocks before DMO dispatch and retains unattempted tail', async () => {
-  for (const drift of ['prerequisite', 'pair', 'git', 'expanded']) {
+  for (const drift of ['prerequisite', 'pair', 'git']) {
     const p = await pair();
     const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     const dmo = {
@@ -763,15 +763,6 @@ test('fresh dependency or late pair admission blocks before DMO dispatch and ret
         segments: [segment],
         provenance: { requestedRef: 'main' },
       });
-    }
-    if (drift === 'expanded') {
-      command.resolveInputs = async () => [segment];
-      const parse = command.parse;
-      command.parse = async () => {
-        const parsed = await parse();
-        parsed.flags['include-dependencies'] = true;
-        return parsed;
-      };
     }
     const result = await run(command);
     assert.notEqual(result.status, 'success');

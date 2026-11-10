@@ -46,7 +46,7 @@ not a persisted approved plan or a guarantee of historical rename intent.
 CI preview is read-only. Deployment preserves complete-selection preflight, explicit
 processing acknowledgement, all-pending target binding/effects re-admission before
 mixed writes, bounded independent settlement and stop-on-unknown/no-replay behavior.
-CI creation and dependency expansion remain unsupported. Hosted offline tests do not
+CI creation remains unsupported. Hosted offline tests do not
 perform Salesforce acceptance; fresh live zero-write evidence remains separately scoped.
 
 Current npm identity and local directory are `sf-plugin-data`; the repository is

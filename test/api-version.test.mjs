@@ -8,12 +8,15 @@ test('Segment defaults to API68 retaining only explicit65 compatibility without 
     );
   for (const requested of ['latest', '66.0', '67.0', '69.0'])
     assert.throws(() => operationApiVersion(requested, 'segment'));
-  assert.equal(operationApiVersion('auto', 'dmo'), '65.0');
+  // A DMO is no operational family: it always uses the native version rule.
+  assert.throws(() => operationApiVersion('auto', 'dmo'), /INVALID_SCOPE/u);
+  assert.equal(nativeApiVersion('auto'), '68.0');
   assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
 });
 import test from 'node:test';
 import { inspect } from 'node:util';
 import {
+  nativeApiVersion,
   operationApiVersion,
   resolveApiVersion,
   legacyIdentityResolutionApiVersion,
@@ -24,8 +27,7 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
   assert.equal(operationApiVersion('68.0', 'dlo'), '68.0');
   for (const pin of ['65.0', '66.0', '67.0', 'latest'])
     assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
-  for (const family of ['dmo', 'calculated-insight'])
-    assert.equal(operationApiVersion('auto', family), '65.0');
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
   assert.equal(operationApiVersion('auto', 'identity-resolution'), '68.0');
   for (const requested of ['auto', '67.0'])
     assert.equal(legacyIdentityResolutionApiVersion(requested), '67.0');

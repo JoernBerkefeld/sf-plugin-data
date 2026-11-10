@@ -12,7 +12,7 @@ creation automatically generates supporting resources and defaults to daily full
 refresh with incremental refresh disabled, despite omitting schedule input. Identical deploy is
 zero-write unchanged; a different existing definition blocks because native UPDATE
 is not implemented. GUI UPDATE evidence is not native REST/plugin support.
-Preview is read-only. Native Git selection, mixed families, dependency expansion,
+Preview is read-only. Native Git selection, mixed families,
 other roots/graphs and cascade are unsupported.
 
 Delete needs an exact selector, matching local native artifact, --confirm-delete
@@ -162,7 +162,7 @@ binding; exact retrieval and byte-stable repeated JSON/XML retrieval; unchanged 
 with empty requiredEffects; unchanged deploy WITHOUT --allow-processing returning
 unchanged/not-attempted with empty requiredEffects; independent final full preservation.
 This qualifies installed source-only existing-owner behavior, not cross-org, CREATE,
-two-selection, dependency expansion, meaningful DBT-definition updates or computation.
+two-selection, meaningful DBT-definition updates or computation.
 The original unknown update remains historical; no PATCH was replayed.
 
 Whole run9m58.020s including owned snapshot build/prepack/install/final audit:39/100
@@ -180,7 +180,7 @@ bound to132 frozen inputs and118 installed files; exact provenance is in the han
 Exact `ingestion-dlo:Name__dll` selectors, canonical JSON files and Git-selected
 members support retrieve/preview/deploy at fixed API67/default space (`auto` or
 numeric67; mixed API65 families require auto). No inventory, creation, deletion,
-connector provisioning or dependency expansion. Acquisition binds exact returned
+connector provisioning. Acquisition binds exact returned
 DLO/stream/connection identities through complete inventories and a single schema
 event; never parses generated names. Shared sources, multi-event schemas, unknown
 meaningful properties, additional pending fields and unsupported variants block.
@@ -205,7 +205,7 @@ installed/live public and cross-org acceptance remain pending independent gates.
 Exact repeatable `data-graph:ApiName` selectors support public retrieve, preview,
 guarded deploy and canonical file/Git selection. Use `--api-version auto` or numeric
 67.0, default space; mixed Graph/API65 families require auto. Numeric65, latest,
-inventory and dependency expansion block before service reads or writes.
+inventory block before service reads or writes.
 The admitted scope is the qualified root-only NONE configuration: unified Individual
 logical root, ordered Text Id key/FirstName and the single forward non-key LastName
 append, seven-day refresh and incremental disabled. Create/delete, nesting,
@@ -303,7 +303,7 @@ exact `SYSTEM_MANAGED` or `NOT_SCHEDULED` schedule with null schedule bounds.
 Desired and target schedules must match; no schedule adaptation is performed. Only
 the forward false-predicate plus DeviceId IS NOT NULL expression edit is writable;
 complete equality is unchanged. Creation, shell conversion,
-label/schedule/reverse/arbitrary SQL and dependency expansion block.
+label/schedule/reverse and arbitrary SQL changes block.
 
 The target-bound workflow starts from the target's retrieved correlated XML/JSON
 pair, then edits only the qualified expression in both members. Two-profile
@@ -514,14 +514,11 @@ Field-level delete,
 - Observed at API 68: a mapped field with one mapping, and unmapped fields in a second
   org. Fields mapped by several mappings are covered by synthetic tests only.
 
-Dependency expansion (`--include-dependencies`) and Git selection
-(`--changed-since`) use the native DMO file. A native DMO changed since a Git
-reference, or selected beside Segment/CI/Graph/IR inputs, joins the ordered batch.
-A standard or generated DMO pulled in only as a deploy prerequisite is reported
-(`DMO_PREREQUISITE_NOT_DEPLOYED`) and never written; on retrieve such a
-prerequisite still blocks publication (`UNSUPPORTED_DMO_TARGET`). An all-native
-explicit selection with `--include-dependencies` is still blocked
-(`DMO_DEPENDENCY_EXPANSION_UNSUPPORTED`).
+Git selection (`--changed-since`) uses the native DMO file. A native DMO changed
+since a Git reference, or selected beside Segment/CI/Graph/IR inputs, joins the
+ordered batch. Prerequisites are checked, not pulled in: each must be selected
+explicitly or already exist in the target. On retrieve, a DMO beside other families
+is read at the native version while each other family keeps its own version rule.
 
 Not qualified:
 
@@ -542,7 +539,7 @@ Not qualified:
 - [x] Report `family: relationship`, `definitionOnly: true`, `deployable: false` and the
       actual Metadata route. This excludes this plugin's operational deploy, not standard
       Metadata deployment elsewhere. Retain successful members after independent failures.
-- [x] Reject inventory, dependency expansion and operational file/Git deploy input admission.
+- [x] Reject inventory and operational file/Git deploy input admission.
       Synthetic tests cover output safety, version/mixed-family routing and zero-mutation rejection.
 - [x] Isolated installed source-only definition export on mcnext-sdo, October 29, 2026:
       exact independent standard XML comparison, configured root, unchanged repeat,

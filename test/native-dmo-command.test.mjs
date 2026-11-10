@@ -331,41 +331,38 @@ for (const preview of [true, false])
       assert.equal(calls.length, 2);
     });
 
-test('native deploy permission failure and dependency expansion never write', async () => {
+test('native deploy permission failure never writes', async () => {
   const cwd = await scratch();
   await writeNativeDmoDocument(document, cwd, false);
   const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
-  for (const dependency of [false, true]) {
-    let writes = 0;
-    let auth = 0;
-    const command = invocation(Deploy, {
-      'target-org': 'target',
-      'include-dependencies': dependency,
+  let writes = 0;
+  let auth = 0;
+  const command = invocation(Deploy, {
+    'target-org': 'target',
+  });
+  command.resolveInputs = async () => inputs;
+  command.resolveTargetOrg = async () => {
+    auth++;
+    return org;
+  };
+  command.createDmoClient = () =>
+    client({
+      get: async () => {
+        throw new NativeDmoError('DMO_HTTP_ERROR', 403);
+      },
+      create: async () => {
+        writes++;
+        return wire;
+      },
+      update: async () => {
+        writes++;
+        return wire;
+      },
     });
-    command.resolveInputs = async () => inputs;
-    command.resolveTargetOrg = async () => {
-      auth++;
-      return org;
-    };
-    command.createDmoClient = () =>
-      client({
-        get: async () => {
-          throw new NativeDmoError('DMO_HTTP_ERROR', 403);
-        },
-        create: async () => {
-          writes++;
-          return wire;
-        },
-        update: async () => {
-          writes++;
-          return wire;
-        },
-      });
-    const result = await run(command);
-    assert.notEqual(result.status, 'success');
-    assert.equal(writes, 0);
-    assert.equal(auth, dependency ? 0 : 1);
-  }
+  const result = await run(command);
+  assert.notEqual(result.status, 'success');
+  assert.equal(writes, 0);
+  assert.equal(auth, 1);
 });
 for (const scope of [undefined, 'Team'])
   for (const preview of [true, false])

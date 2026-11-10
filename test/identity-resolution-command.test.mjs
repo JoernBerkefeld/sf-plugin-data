@@ -99,20 +99,18 @@ const invocation = (overrides = {}) => {
     calls.push('dmos');
     return ['Sample__dlm'];
   };
-  command.selectDependencies = async (roots, conn, version) => {
+  command.acquireSelection = async (roots, conn, version) => {
     assert.equal(conn, connection);
-    assert.deepEqual(version, { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' });
-    calls.push('legacy-admit');
-    return {
-      entries: roots.map((identity) => ({
-        document: {
-          kind: identity.kind,
-          identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
-        },
-        ...(identity.kind === 'segment' ? { definitionXml: '<independent/>' } : {}),
-      })),
-      reasons: new Map(),
-    };
+    // The co-selected families decide the shared version; a DMO never pins it.
+    assert.deepEqual(version, { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' });
+    calls.push('selection-admit');
+    return roots.map((identity) => ({
+      document: {
+        kind: identity.kind,
+        identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
+      },
+      ...(identity.kind === 'segment' ? { definitionXml: '<independent/>' } : {}),
+    }));
   };
   command.acquireIdentityResolution = async (conn, apiName, version, space) => {
     assert.equal(conn, connection);
@@ -146,8 +144,8 @@ const run = async (command) => {
 };
 
 test('fixed per-family auto routes never reinterpret numeric pins and refuse latest', () => {
-  for (const family of ['dmo', 'segment', 'identity-resolution'])
-    assert.equal(operationApiVersion('auto', family), family === 'dmo' ? '65.0' : '68.0');
+  for (const family of ['segment', 'identity-resolution'])
+    assert.equal(operationApiVersion('auto', family), '68.0');
   assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
   assert.equal(operationApiVersion('67.0', 'data-graph'), '67.0');
   assert.throws(() => operationApiVersion('68.0', 'data-graph'), /INVALID_SCOPE/u);
@@ -156,15 +154,15 @@ test('fixed per-family auto routes never reinterpret numeric pins and refuse lat
     ['65.0', 'identity-resolution'],
     ['latest', 'identity-resolution'],
     ['latest', 'segment'],
-    ['latest', 'dmo'],
-    ['68.0', 'dmo'],
+    ['auto', 'dmo'],
+    ['65.0', 'dmo'],
     ['67.0', 'segment'],
     ['67.0', 'identity-resolution'],
   ])
     assert.throws(() => operationApiVersion(requested, family), /INVALID_SCOPE/u);
 });
 
-test('IR explicit65/latest, unsupported numeric mixed routes and expansion block before org/output', async () => {
+test('IR explicit65/latest and unsupported numeric mixed routes block before org/output', async () => {
   for (const overrides of [
     { 'api-version': '65.0' },
     { 'api-version': 'latest' },
@@ -172,8 +170,7 @@ test('IR explicit65/latest, unsupported numeric mixed routes and expansion block
     { metadata: ['identity-resolution'] },
     { metadata: ['identity-resolution:../unsafe'] },
     { dataspace: 'other' },
-    { 'include-dependencies': true },
-    { 'api-version': '68.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
+    { 'api-version': '65.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
     {
       'api-version': '67.0',
       metadata: ['identity-resolution:Individual_A1b2', 'segment:Audience'],
@@ -226,11 +223,27 @@ test('auto mixed DMO/Segment/IR acquires every family before first publication',
   });
   const result = await run(command);
   assert.equal(result.status, 'success');
-  assert.ok(calls.indexOf('legacy-admit') < calls.indexOf('write:Sample__dlm'));
+  assert.ok(calls.indexOf('selection-admit') < calls.indexOf('write:Sample__dlm'));
   assert.ok(calls.indexOf('ir:Individual_A1b2') < calls.indexOf('write:Sample__dlm'));
   assert.deepEqual(
     result.result.items.map((item) => item.routes.map((route) => route.apiVersion)),
-    [['68.0'], ['65.0'], ['68.0']],
+    [['68.0'], ['68.0'], ['68.0']],
+  );
+});
+
+test('explicit 68.0 serves an IR owner beside a DMO, each on its own route', async () => {
+  const { command } = invocation({
+    'api-version': '68.0',
+    metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'],
+  });
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.deepEqual(
+    result.result.items.map((item) => [item.identity.apiName, item.routes[0].apiVersion]),
+    [
+      ['Sample__dlm', '68.0'],
+      ['Individual_A1b2', '68.0'],
+    ],
   );
 });
 

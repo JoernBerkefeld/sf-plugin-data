@@ -49,7 +49,6 @@ export function legacyIdentityResolutionApiVersion(requested: string): string {
 }
 
 export type OperationalFamily =
-  | 'dmo'
   | 'segment'
   | 'identity-resolution'
   | 'calculated-insight'
@@ -94,10 +93,7 @@ export function operationApiVersion(requested: string, family: OperationalFamily
 
       break;
     }
-    default: {
-      if (requested === 'auto') return '65.0';
-      if (requested === '65.0') return requested;
-    }
+    // No default
   }
   throw new Error('INVALID_SCOPE');
 }

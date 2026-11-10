@@ -92,15 +92,12 @@ test('mixed DLO acquisition failure stays in its human group without changing JS
       throw new Error('private-token');
     };
     command.writeDlo = () => assert.fail('failed acquisition must not write');
-    command.selectDependencies = async () => ({
-      entries: [
-        {
-          document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
-          definitionXml: '<xml/>',
-        },
-      ],
-      reasons: new Map(),
-    });
+    command.acquireSelection = async () => [
+      {
+        document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+        definitionXml: '<xml/>',
+      },
+    ];
     command.writeSegment = async () => ({ path: 'Audience.xml', outcome: 'retrieved' });
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'failed');
@@ -139,16 +136,13 @@ test('non-DMO output failure uses document kind and excludes failure from human 
     const lines = [];
     command.jsonEnabled = () => json;
     command.log = (line) => lines.push(line);
-    command.selectDependencies = async () => ({
-      entries: [
-        { document: candidate },
-        {
-          document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
-          definitionXml: '<xml/>',
-        },
-      ],
-      reasons: new Map(),
-    });
+    command.acquireSelection = async () => [
+      { document: candidate },
+      {
+        document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+        definitionXml: '<xml/>',
+      },
+    ];
     command.writeSegment = async () => {
       throw new SegmentError('OUTPUT_FAILED');
     };
@@ -224,7 +218,6 @@ for (const override of [
   { 'api-version': '59.0' },
   { metadata: ['mapping:../escape'] },
   { metadata: ['mapping:'] },
-  { 'include-dependencies': true },
   { metadata: ['mapping:Alpha', 'data-graph:Graph'], 'api-version': '65.0' },
 ])
   test(`mapping refusal before auth ${JSON.stringify(override)}`, async () => {
@@ -271,16 +264,14 @@ test('mixed mapping relationship and DMO auto preserves routes and outputs', asy
     path: `${name}.xml`,
     outcome: 'retrieved',
   });
-  command.selectDependencies = async (identities, conn, selection) => {
-    assert.equal(selection.soapNumeric, '65.0');
+  command.acquireSelection = async (identities, conn, selection) => {
+    // No other family pins the batch, so the DMO's native version applies.
+    assert.equal(selection.soapNumeric, '68.0');
     assert.deepEqual(
       identities.map((x) => x.kind),
       ['dmo'],
     );
-    return {
-      entries: [{ document: candidate, reason: { explicit: true, chains: [] } }],
-      reasons: new Map(),
-    };
+    return [{ document: candidate }];
   };
   const { result } = await run(command);
   assert.equal(result.status, 'success');
@@ -371,7 +362,6 @@ test('latest is refused for every DMO selection before authentication or discove
     { metadata: undefined },
     { metadata: ['dmo'] },
     { metadata: ['dmo:Sample__dlm'] },
-    { metadata: ['dmo:Sample__dlm'], 'include-dependencies': true },
     { metadata: ['dmo:Sample__dlm', 'relationship:Link'] },
     { metadata: ['dmo', 'segment:Audience'] },
   ]) {
@@ -404,16 +394,15 @@ test('explicit numeric DMO beside a relationship now reads and writes the native
       return ['Sample__dlm'];
     };
     const selections = [];
-    command.selectDependencies = async (identities, actualConnection, selection, include) => {
+    command.acquireSelection = async (identities, actualConnection, selection) => {
       assert.equal(actualConnection, connection);
       assert.deepEqual(selection, {
         requested: '65.0',
         restSelector: 'v65.0',
         soapNumeric: '65.0',
       });
-      assert.equal(include, false);
       selections.push(identities);
-      return { entries: [{ document: candidate }], reasons: new Map() };
+      return [{ document: candidate }];
     };
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'success', JSON.stringify(result));
@@ -448,13 +437,13 @@ for (const apiVersion of ['65.0', '68.0', 'auto']) {
     });
     command.listNativeNames = () => assert.fail('Segment exact must not list DMOs');
     const acquired = [];
-    command.selectDependencies = async (roots, conn, version) => {
+    command.acquireSelection = async (roots, conn, version) => {
       const entries = [];
       for (const root of roots) {
         const acquired = await command.acquireSegment(conn, root.apiName, version, root.dataSpace);
         entries.push({ document: acquired.candidate });
       }
-      return { entries, reasons: new Map() };
+      return entries;
     };
     command.acquireSegment = async (conn, name, version, space) => {
       assert.equal(conn, connection);
@@ -510,7 +499,7 @@ test('Segment bare inventory/latest/invalid identity refuse before auth', async 
 });
 test('blocked Segment dependency selection prevents complete-selection publication', async () => {
   const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
-  command.selectDependencies = async () => {
+  command.acquireSelection = async () => {
     throw new MetadataReadError('UNKNOWN_SEGMENT_CONFIGURATION');
   };
   command.writeSegment = () => assert.fail('must not publish');
@@ -769,7 +758,6 @@ for (const override of [
   { dataspace: 'other' },
   { metadata: ['relationship:../escape'] },
   { metadata: ['relationship'] },
-  { 'include-dependencies': true },
   { metadata: ['relationship:Alpha', 'data-graph:Graph'], 'api-version': '65.0' },
 ]) {
   test(`relationship selection refuses before auth ${JSON.stringify(override)}`, async () => {
@@ -819,16 +807,14 @@ test('auto mixed relationship and DMO selection preserves DMO route and both out
   });
   command.acquireRelationshipXml = async () => '<xml/>';
   command.writeRelationship = async () => ({ path: 'Alpha.xml', outcome: 'retrieved' });
-  command.selectDependencies = async (identities, conn, selection) => {
-    assert.equal(selection.soapNumeric, '65.0');
+  command.acquireSelection = async (identities, conn, selection) => {
+    // No other family pins the batch, so the DMO's native version applies.
+    assert.equal(selection.soapNumeric, '68.0');
     assert.deepEqual(
       identities.map((identity) => identity.kind),
       ['dmo'],
     );
-    return {
-      entries: [{ document: candidate, reason: { explicit: true, chains: [] } }],
-      reasons: new Map(),
-    };
+    return [{ document: candidate }];
   };
   const { result } = await run(command);
   assert.equal(result.status, 'success');

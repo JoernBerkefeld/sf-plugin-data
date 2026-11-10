@@ -125,7 +125,6 @@ function publicItem(receipt, profile, artifact, name) {
       ? [`segment:${profile.segment}`]
       : { sourceDir: [], metadata: [`segment:${profile.segment}`] },
   );
-  if (envelope.result.dependencies !== undefined) fail('unexpected public dependencies');
   if (!Array.isArray(envelope.result.items) || envelope.result.items.length !== 1)
     fail('exactly one public item required');
   const item = envelope.result.items[0];

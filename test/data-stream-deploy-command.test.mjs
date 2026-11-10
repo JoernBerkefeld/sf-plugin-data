@@ -156,7 +156,6 @@ for (const preview of [true, false])
 
 for (const flags of [
   { dataspace: 'other' },
-  { 'include-dependencies': true },
   ...['latest', '61.0', '67.0', '69.0'].map((version) => ({ 'api-version': version })),
 ])
   test(`stream unsupported options block before auth ${JSON.stringify(flags)}`, async () => {

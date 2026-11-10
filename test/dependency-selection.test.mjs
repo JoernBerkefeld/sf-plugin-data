@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -9,7 +9,6 @@ import {
   documentDependencyNode,
   orderDependencyNodes,
 } from '../lib/artifacts/dependency-selection.js';
-import { selectDeployDependencies } from '../lib/services/select-deploy-dependencies.js';
 import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import Deploy from '../lib/commands/data360/deploy.js';
@@ -48,7 +47,7 @@ const fixture = async () => {
   await writeFile(file, JSON.stringify(dmo()));
   const document = segment();
   await writeSegmentDocument(document, cwd, false);
-  return { cwd, file };
+  return { cwd };
 };
 test('ready-node tie-break retains reverse-order, same-family edges and isolated roots', () => {
   const a = identity('segment', 'A');
@@ -114,88 +113,44 @@ test('cycles, duplicate identities, unknown family/closure and finite node/edge 
     { code: 'DEPENDENCY_LIMIT_EXCEEDED' },
   );
 });
-test('local opt-in expands once, keeps immutable Git pair roots and exact byte guards', async () => {
-  const { cwd, file } = await fixture();
-  const roots = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
-  const root = roots[0];
-  const selected = await selectDeployDependencies([...roots, ...roots], cwd);
-  assert.deepEqual(
-    selected.inputs.map((input) => input.document.kind),
-    ['dmo', 'segment'],
-  );
-  assert.equal(selected.inputs[1], root);
-  assert.equal(selected.inputs[1].inputDigest, root.inputDigest);
-  assert.equal(selected.reasons.get('segment:default:Audience').explicit, true);
-  assert.deepEqual(selected.reasons.get('dmo:default:Person__dlm'), {
-    explicit: false,
-    chains: [[identity('segment', 'Audience'), identity('dmo', 'Person__dlm')]],
-  });
-  await selected.verify();
-  await writeFile(file, `${await readFile(file, 'utf8')} `);
-  await assert.rejects(selected.verify(), { code: 'DEPENDENCY_INPUT_CHANGED' });
-});
-test('explicit prerequisite dedupes independent of selector order and preserves isolated roots', async () => {
-  const { cwd } = await fixture();
-  const roots = await readDeployInputs({ cwd, metadata: ['segment:Audience', 'dmo:Person__dlm'] });
-  for (const ordered of [roots, roots.toReversed()]) {
-    const selected = await selectDeployDependencies(ordered, cwd);
-    assert.equal(selected.inputs.length, 2);
-    assert.equal(selected.inputs[0].document.kind, 'dmo');
-    assert.equal(selected.reasons.get('dmo:default:Person__dlm').explicit, true);
-  }
-});
-test('missing local prerequisites stay external; malformed existing artifact never falls back', async () => {
-  const { cwd, file } = await fixture();
-  const roots = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
-  const empty = await mkdtemp(path.join(os.tmpdir(), 'data360-dependencies-empty-'));
-  const selected = await selectDeployDependencies(roots, empty);
-  assert.deepEqual(selected.inputs, roots);
-  await writeFile(file, '{"kind":"profile-name-only"}');
-  await assert.rejects(selectDeployDependencies(roots, cwd), { code: 'INVALID_SOURCE' });
-});
-test('opt-in command retains Git root provenance; default never expands; missing acknowledgement blocks writes', async () => {
+test('a Git-selected Segment keeps its provenance, is never expanded and blocks without acknowledgement', async () => {
   const { cwd } = await fixture();
   const roots = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
   const previousExit = process.exitCode;
   try {
-    for (const include of [false, true]) {
-      const command = Object.create(Deploy.prototype);
-      command.parse = async () => ({
-        flags: {
-          'include-dependencies': include,
-          'changed-since': 'main',
-          'api-version': '65.0',
-          'data-space': 'default',
-          preview: false,
-          'target-org': { getOrgId: () => 'synthetic', getConnection: () => ({}) },
-        },
-      });
-      command.jsonEnabled = () => true;
-      command.selectGitInputs = async () => ({
-        paths: [roots[0].path],
-        segments: roots,
-        provenance: { requestedRef: 'main' },
-      });
-      command.resolveInputs = async () => roots;
-      command.verifySegmentInput = async () => {};
-      command.preflightSegment = async () => ({
-        outcome: 'update',
-        requiredEffects: ['processing'],
-        target: 'present',
-        absenceProof: 'none',
-        diagnostics: [],
-      });
-      command.execute = async () => assert.fail('Segment selection must block writes');
-      const result = await command.run();
-      assert.equal(result.status, 'blocked');
-      assert.equal(result.provenance.git.requestedRef, 'main');
-      assert.equal(result.result.items.length, 1);
-      assert.equal(
-        result.result.selection.dependencies?.[0].reason.explicit,
-        include ? true : undefined,
-      );
-      process.exitCode = undefined;
-    }
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: {
+        'changed-since': 'main',
+        'api-version': '65.0',
+        'data-space': 'default',
+        preview: false,
+        'target-org': { getOrgId: () => 'synthetic', getConnection: () => ({}) },
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.selectGitInputs = async () => ({
+      paths: [roots[0].path],
+      segments: roots,
+      provenance: { requestedRef: 'main' },
+    });
+    command.resolveInputs = async () => roots;
+    command.verifySegmentInput = async () => {};
+    command.preflightNativeDmo = () =>
+      assert.fail('the local DMO file is not part of the selection');
+    command.preflightSegment = async () => ({
+      outcome: 'update',
+      requiredEffects: ['processing'],
+      target: 'present',
+      absenceProof: 'none',
+      diagnostics: [],
+    });
+    command.execute = async () => assert.fail('Segment selection must block writes');
+    const result = await command.run();
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.provenance.git.requestedRef, 'main');
+    assert.equal(result.result.items.length, 1);
+    assert.equal('dependencies' in result.result.selection, false);
   } finally {
     process.exitCode = previousExit;
   }

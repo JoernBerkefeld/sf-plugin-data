@@ -16,16 +16,13 @@ export type DependencyIdentity = {
   dataSpace: string;
   apiName: string;
 };
-export type SelectionReason = { explicit: boolean; chains: DependencyIdentity[][] };
 export type DependencyNode = { identity: DependencyIdentity; dependencies: DependencyIdentity[] };
 export const dependencyLimits = Object.freeze({
   nodes: 256,
   edges: 512,
-  depth: 16,
-  acquisitions: 256,
 });
 
-/** Payload-free complete-selection refusal. */
+/** Payload-free selection refusal. */
 export class DependencySelectionError extends Error {
   public constructor(public readonly code: string) {
     super('Dependency selection is incomplete or unsupported; no deployment was executed.');
@@ -66,7 +63,7 @@ export function documentDependencyNode(
 ): DependencyNode {
   if (value.kind === 'dlo') {
     const document = validateDloDocument(value);
-    // Source ownership is freshly admitted by its family service, never expanded/provisioned.
+    // Source ownership is freshly admitted by its family service, never provisioned.
     return { identity: { kind: 'dlo', ...document.identity }, dependencies: [] };
   }
   if (value.kind === 'data-graph') {

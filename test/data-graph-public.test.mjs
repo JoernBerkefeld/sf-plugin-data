@@ -26,7 +26,10 @@ import {
 } from '../lib/artifacts/read-deploy-input.js';
 import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
 import { operationApiVersion } from '../lib/transport/api-version.js';
-import { selectDeployDependencies } from '../lib/services/select-deploy-dependencies.js';
+import {
+  documentDependencyNode,
+  orderDependencyNodes,
+} from '../lib/artifacts/dependency-selection.js';
 import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { writeIdentityResolutionDocument } from '../lib/artifacts/write-identity-resolution.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
@@ -124,7 +127,7 @@ const root = async () => {
   await writeFile(path.join(cwd, 'ownership'), randomUUID());
   return cwd;
 };
-test('local owned Graph selection expands exact IR owner, orders reversed roots and guards every byte', async () => {
+test('an explicitly selected IR owner is ordered before its Graph in either selector order', async () => {
   for (const configured of [false, true]) {
     const cwd = await root();
     if (configured)
@@ -139,49 +142,24 @@ test('local owned Graph selection expands exact IR owner, orders reversed roots 
     graph.spec.primaryObjectName = structuredClone(identity);
     graph.spec.sourceObject.name = structuredClone(identity);
     graph.spec.sourceObject.devName = structuredClone(identity);
-    const graphReceipt = await writeDataGraphDocument(graph, cwd, false);
-    const roots = await readDeployInputs({ cwd, metadata: ['data-graph:SyntheticGraph'] });
-    const absent = await selectDeployDependencies(roots, cwd);
-    assert.deepEqual(absent.inputs, roots);
-    const ownerReceipt = await writeIdentityResolutionDocument(owner.candidate, cwd, false);
-    const expanded = await selectDeployDependencies(roots, cwd);
+    await writeDataGraphDocument(graph, cwd, false);
+    await writeIdentityResolutionDocument(owner.candidate, cwd, false);
+    // The Graph alone stays alone: the local owner file is never added to the selection.
+    const alone = await readDeployInputs({ cwd, metadata: ['data-graph:SyntheticGraph'] });
     assert.deepEqual(
-      expanded.inputs.map(({ document }) => document.kind),
-      ['identity-resolution', 'data-graph'],
-    );
-    assert.equal(expanded.inputs[1], roots[0]);
-    assert.equal(
-      expanded.reasons.get('identity-resolution:default:Individual_A1b2').explicit,
-      false,
+      alone.map((input) => input.document.kind),
+      ['data-graph'],
     );
     const explicit = await readDeployInputs({
       cwd,
       metadata: ['data-graph:SyntheticGraph', 'identity-resolution:Individual_A1b2'],
     });
-    for (const ordered of [explicit, explicit.toReversed()]) {
-      const selected = await selectDeployDependencies(ordered, cwd);
+    for (const ordered of [explicit, explicit.toReversed()])
       assert.deepEqual(
-        selected.inputs.map(({ document }) => document.kind),
-        ['identity-resolution', 'data-graph'],
+        orderDependencyNodes(ordered.map((input) => documentDependencyNode(input.document))),
+        ['identity-resolution:default:Individual_A1b2', 'data-graph:default:SyntheticGraph'],
       );
-      assert.equal(
-        selected.reasons.get('identity-resolution:default:Individual_A1b2').explicit,
-        true,
-      );
-      await selected.verify();
-    }
-    for (const receipt of [ownerReceipt, graphReceipt]) {
-      const bytes = await readFile(receipt.path, 'utf8');
-      await writeFile(receipt.path, `${bytes} `);
-      await assert.rejects(expanded.verify());
-      await writeFile(receipt.path, bytes);
-      await expanded.verify();
-    }
-    const unrelated = structuredClone(owner.candidate);
-    unrelated.identity.apiName = 'UnrelatedOwner';
-    await writeFile(ownerReceipt.path, JSON.stringify(unrelated));
-    await assert.rejects(selectDeployDependencies(roots, cwd), { code: 'INVALID_SOURCE' });
-    assert.equal(JSON.stringify(roots[0].document).includes(pair.facade.id), false);
+    assert.equal(JSON.stringify(alone[0].document).includes(pair.facade.id), false);
   }
 });
 
@@ -356,12 +334,9 @@ const retrieve = (overrides = {}) => {
     calls.push('org');
     return { getOrgId: () => 'synthetic', getConnection: () => connection };
   };
-  command.selectDependencies = async () => ({
-    entries: [
-      { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
-    ],
-    reasons: new Map(),
-  });
+  command.acquireSelection = async () => [
+    { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
+  ];
   command.acquireDataGraph = async (conn, apiName, selection) => {
     assert.equal(conn.getApiVersion(), '67.0');
     assert.equal(connection.getApiVersion(), '65.0');
@@ -385,7 +360,7 @@ const retrieve = (overrides = {}) => {
   return { command, calls };
 };
 
-test('Graph public retrieve refuses numeric65/latest/expansion/invalid exact selection before auth', async () => {
+test('Graph public retrieve refuses numeric65/latest/invalid exact selection before auth', async () => {
   assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
   for (const overrides of [
     { 'api-version': '65.0' },
@@ -393,7 +368,8 @@ test('Graph public retrieve refuses numeric65/latest/expansion/invalid exact sel
     { metadata: ['data-graph'] },
     { metadata: ['data-graph:../unsafe'] },
     { dataspace: 'other' },
-    { 'api-version': '67.0', metadata: ['data-graph:SyntheticGraph', 'dmo:Example__dlm'] },
+    { 'api-version': '65.0', metadata: ['data-graph:SyntheticGraph', 'dmo:Example__dlm'] },
+    { 'api-version': '68.0', metadata: ['data-graph:SyntheticGraph', 'dmo:Example__dlm'] },
   ]) {
     const { command, calls } = retrieve(overrides);
     const result = await run(command);
@@ -419,6 +395,16 @@ test('Graph public retrieve completes mixed admission before output with fixed r
     result.result.items.at(-1).routes.map((route) => route.apiVersion),
     ['67.0', '67.0', '65.0'],
   );
+  // A co-selected DMO never pins the Graph: numeric 67.0 serves both families.
+  const pinned = retrieve({
+    'api-version': '67.0',
+    metadata: ['data-graph:SyntheticGraph', 'dmo:Example__dlm'],
+  });
+  const pinnedResult = await run(pinned.command);
+  assert.equal(pinnedResult.status, 'success');
+  assert.deepEqual(pinnedResult.result.items[0].routes, [
+    { operation: 'dmo.get', apiVersion: '67.0', transport: 'native' },
+  ]);
   const blocked = retrieve({ metadata: ['dmo:Example__dlm', 'data-graph:SyntheticGraph'] });
   blocked.command.acquireDataGraph = async () => ({ blockers: ['UNQUALIFIED'] });
   const blockedResult = await run(blocked.command);
@@ -426,21 +412,20 @@ test('Graph public retrieve completes mixed admission before output with fixed r
   assert.ok(!blocked.calls.some((call) => call.startsWith('write:')));
 });
 
-test('public owned Graph retrieve qualifies explicit/reversed/expanded owners before any publication', async () => {
+test('public owned Graph retrieve qualifies explicit/reversed owners before any publication', async () => {
   const pair = irFixture();
   const owner = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
   const identity = owner.expectations.outputs[0].identity;
-  for (const mode of ['explicit', 'reversed', 'expanded', 'no-expansion', 'drift', 'wrong-owner']) {
+  for (const mode of ['explicit', 'reversed', 'graph-only', 'drift', 'wrong-owner']) {
     const selectors = ['identity-resolution:Individual_A1b2', 'data-graph:SyntheticGraph'];
     const { command, calls } = retrieve({
-      metadata: ['expanded', 'no-expansion', 'drift', 'wrong-owner'].includes(mode)
+      metadata: ['graph-only', 'drift', 'wrong-owner'].includes(mode)
         ? ['data-graph:SyntheticGraph']
         : mode === 'reversed'
           ? selectors.toReversed()
           : selectors,
-      'include-dependencies': mode === 'expanded',
     });
-    command.selectDependencies = async () => ({ entries: [], reasons: new Map() });
+    command.acquireSelection = async () => [];
     const graph = document();
     graph.spec.primaryObjectName = structuredClone(identity);
     graph.spec.sourceObject.name = structuredClone(identity);
@@ -482,7 +467,7 @@ test('public owned Graph retrieve qualifies explicit/reversed/expanded owners be
       assert.equal(result.status, 'success');
       assert.deepEqual(
         calls.filter((call) => call.startsWith('write:')),
-        mode === 'no-expansion'
+        mode === 'graph-only'
           ? ['write:SyntheticGraph']
           : ['write:Individual_A1b2', 'write:SyntheticGraph'],
       );
@@ -574,7 +559,7 @@ const deploy = (overrides = {}, mixed = false) => {
   return { command, calls, input, selected };
 };
 
-test('public owned Graph deploy orders selected owner, expands opt-in and rebinds only after confirmed settlement', async () => {
+test('public owned Graph deploy orders selected owner and rebinds only after confirmed settlement', async () => {
   const pair = irFixture();
   const owner = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
   owner.candidate.spec.trustedSources = [];
@@ -583,7 +568,6 @@ test('public owned Graph deploy orders selected owner, expands opt-in and rebind
   for (const mode of [
     'explicit',
     'reversed',
-    'expanded',
     'drift',
     'pending-byte',
     'unknown-owner',
@@ -604,33 +588,8 @@ test('public owned Graph deploy orders selected owner, expands opt-in and rebind
       graph.spec.sourceObject.name.owner.apiName = 'UnrelatedOwner';
       graph.spec.sourceObject.devName.owner.apiName = 'UnrelatedOwner';
     }
-    let expandedInputs;
-    if (mode === 'expanded') {
-      const cwd = await root();
-      await writeDataGraphDocument(graph, cwd, false);
-      await writeIdentityResolutionDocument(owner.candidate, cwd, false);
-      expandedInputs = await readDeployInputs({ cwd, metadata: ['data-graph:SyntheticGraph'] });
-      d.command.parse = async () => ({
-        flags: {
-          metadata: ['data-graph:SyntheticGraph'],
-          'include-dependencies': true,
-          'api-version': 'auto',
-          dataspace: 'default',
-          'allow-processing': true,
-          'target-org': {
-            getOrgId: () => 'synthetic',
-            getConnection: () => ({ getApiVersion: () => '65.0' }),
-          },
-        },
-      });
-      const previousCwd = process.cwd();
-      d.restore = () => process.chdir(previousCwd);
-      process.chdir(cwd);
-      d.command.resolveInputs = async () => expandedInputs;
-    } else {
-      d.command.resolveInputs = async () =>
-        mode === 'reversed' ? [d.input, ownerInput] : [ownerInput, d.input];
-    }
+    d.command.resolveInputs = async () =>
+      mode === 'reversed' ? [d.input, ownerInput] : [ownerInput, d.input];
     d.command.verifyIdentityResolutionInput = async () => {};
     let settled = false;
     let binds = 0;
@@ -660,22 +619,18 @@ test('public owned Graph deploy orders selected owner, expands opt-in and rebind
         diagnostics: [],
       };
     };
-    try {
-      const result = await run(d.command);
-      const writes = d.calls.filter((call) => call.includes('write'));
-      if (['drift', 'pending-byte', 'wrong-owner'].includes(mode)) {
-        assert.equal(result.status, 'blocked');
-        assert.deepEqual(writes, []);
-      } else if (mode === 'unknown-owner') {
-        assert.equal(result.status, 'failed');
-        assert.deepEqual(writes, ['owner-write']);
-      } else {
-        assert.equal(result.status, 'success');
-        assert.deepEqual(writes, ['owner-write', 'graph-write']);
-        assert.ok(binds >= 4);
-      }
-    } finally {
-      d.restore?.();
+    const result = await run(d.command);
+    const writes = d.calls.filter((call) => call.includes('write'));
+    if (['drift', 'pending-byte', 'wrong-owner'].includes(mode)) {
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(writes, []);
+    } else if (mode === 'unknown-owner') {
+      assert.equal(result.status, 'failed');
+      assert.deepEqual(writes, ['owner-write']);
+    } else {
+      assert.equal(result.status, 'success');
+      assert.deepEqual(writes, ['owner-write', 'graph-write']);
+      assert.ok(binds >= 4);
     }
   }
 });
@@ -690,8 +645,7 @@ test('Graph public deploy fixed API refusal and complete-selection acknowledgeme
     const result = await run(command);
     assert.equal(result.status, 'blocked');
     assert.ok(!calls.some((call) => call.includes('write')));
-    if (overrides['api-version'] || overrides['include-dependencies'])
-      assert.ok(!calls.includes('org'));
+    if (overrides['api-version']) assert.ok(!calls.includes('org'));
   }
 });
 

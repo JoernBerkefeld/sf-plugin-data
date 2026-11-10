@@ -291,7 +291,7 @@ test('auto mixed IR/Segment68 and native DMO retains isolated routes and whole-s
   }
 });
 
-test('IR numeric65/latest/unsupported mixed numeric67 and dependency expansion block all writes before target', async () => {
+test('IR numeric65/latest/unsupported mixed numeric67 block all writes before target', async () => {
   for (const [flags, selected, code] of [
     [{ 'api-version': '65.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': 'latest' }, [ir()], 'INVALID_SCOPE'],
@@ -299,11 +299,6 @@ test('IR numeric65/latest/unsupported mixed numeric67 and dependency expansion b
     [{ 'api-version': '69.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '68.0' }, [ir(), graph], 'INVALID_SCOPE'],
     [{ dataspace: 'other' }, [ir()], 'INVALID_SCOPE'],
-    [
-      { 'include-dependencies': true },
-      [ir()],
-      'IDENTITY_RESOLUTION_DEPENDENCY_EXPANSION_UNSUPPORTED',
-    ],
   ]) {
     const { command, calls } = setup(flags, selected);
     const result = await run(command);

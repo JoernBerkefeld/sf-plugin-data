@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Deploy from '../lib/commands/data360/deploy.js';
@@ -14,7 +14,6 @@ import {
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { executeDmo, preflightDmo } from '../lib/services/command-native-dmo.js';
-import { selectDeployDependencies } from '../lib/services/select-deploy-dependencies.js';
 
 const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
 const dmo = (apiName) => ({
@@ -129,44 +128,36 @@ const deploy = async (cwd, flags, services = {}) => {
   }
 };
 
-test('a Segment prerequisite DMO is read from the native artifact and deployed first on the native route', async () => {
+test('an explicitly selected DMO deploys before its Segment on the native route', async () => {
   const cwd = await project();
-  const { result, calls } = await deploy(cwd, {
-    metadata: ['segment:Audience'],
-    'include-dependencies': true,
-  });
-  assert.equal(result.status, 'success');
-  assert.deepEqual(
-    result.result.items.map((item) => [item.identity.apiName, item.outcome, item.mutation]),
-    [
-      ['Person__dlm', 'created', 'confirmed-created'],
-      ['Audience', 'created', 'confirmed-created'],
-    ],
-  );
-  assert.equal(
-    result.result.items[0].path,
-    path.join(cwd, 'data360', 'dmo', 'Person__dlm.dmo-meta.json'),
-  );
-  // Automatic selection uses the native DMO version, not the replaced API 65 pin.
-  assert.deepEqual(result.result.items[0].routes, [
-    { operation: 'dmo.deploy', apiVersion: '68.0', transport: 'native' },
-  ]);
-  assert.ok(calls.includes('client:target:68.0'));
-  assert.ok(calls.indexOf('execute:Person__dlm') < calls.indexOf('segment-execute'));
-  assert.ok(calls.includes('segment-preflight:68.0'));
-  assert.deepEqual(
-    result.result.selection.dependencies.map(({ identity: id, reason }) => [
-      id.kind,
-      reason.explicit,
-    ]),
-    [
-      ['dmo', false],
-      ['segment', true],
-    ],
-  );
+  for (const metadata of [
+    ['segment:Audience', 'dmo:Person__dlm'],
+    ['dmo:Person__dlm', 'segment:Audience'],
+  ]) {
+    const { result, calls } = await deploy(cwd, { metadata });
+    assert.equal(result.status, 'success');
+    assert.deepEqual(
+      result.result.items.map((item) => [item.identity.apiName, item.outcome, item.mutation]),
+      [
+        ['Person__dlm', 'created', 'confirmed-created'],
+        ['Audience', 'created', 'confirmed-created'],
+      ],
+    );
+    assert.equal(
+      result.result.items[0].path,
+      path.join(cwd, 'data360', 'dmo', 'Person__dlm.dmo-meta.json'),
+    );
+    // Each family keeps its own version: auto is 68.0 for the native DMO and the Segment.
+    assert.deepEqual(result.result.items[0].routes, [
+      { operation: 'dmo.deploy', apiVersion: '68.0', transport: 'native' },
+    ]);
+    assert.ok(calls.includes('client:target:68.0'));
+    assert.ok(calls.indexOf('execute:Person__dlm') < calls.indexOf('segment-execute'));
+    assert.ok(calls.includes('segment-preflight:68.0'));
+    assert.equal('dependencies' in result.result.selection, false);
+  }
   const preview = await deploy(cwd, {
-    metadata: ['segment:Audience'],
-    'include-dependencies': true,
+    metadata: ['segment:Audience', 'dmo:Person__dlm'],
     preview: true,
     'api-version': '65.0',
   });
@@ -187,93 +178,66 @@ test('a Segment prerequisite DMO is read from the native artifact and deployed f
   assert.ok(!preview.calls.some((call) => call.includes('execute')));
 });
 
-test('a standard or generated DMO pulled in only as a prerequisite is reported and never written', async () => {
-  const cwd = await project();
-  const refuse = {
-    preflightNativeDmo: async () => {
-      throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
-    },
-  };
-  const { result, calls } = await deploy(
-    cwd,
-    { metadata: ['segment:Audience'], 'include-dependencies': true },
-    refuse,
-  );
-  assert.equal(result.status, 'success');
-  assert.deepEqual(
-    result.result.items.map((item) => [item.identity.apiName, item.outcome, item.mutation]),
-    [
-      ['Person__dlm', 'unchanged', 'not-attempted'],
-      ['Audience', 'created', 'confirmed-created'],
-    ],
-  );
-  assert.equal(result.result.items[0].preflight.target, 'existing');
-  assert.equal(
-    result.result.items[0].preflight.diagnostics[0].code,
-    'DMO_PREREQUISITE_NOT_DEPLOYED',
-  );
-  assert.ok(!calls.includes('execute:Person__dlm'));
-  // The same refusal for an explicitly selected DMO still blocks the whole batch before writes.
-  const explicit = await deploy(
-    cwd,
-    { metadata: ['segment:Audience', 'dmo:Person__dlm'], 'include-dependencies': true },
-    refuse,
-  );
-  assert.notEqual(explicit.result.status, 'success');
-  assert.equal(
-    explicit.result.result.items[0].preflight.diagnostics[0].code,
-    'UNSUPPORTED_DMO_TARGET',
-  );
-  assert.ok(explicit.result.result.items.every((item) => item.mutation === 'not-attempted'));
-  assert.ok(!explicit.calls.some((call) => call.includes('execute')));
-  // Any other preflight refusal of a prerequisite blocks as well.
-  const other = await deploy(
-    cwd,
-    { metadata: ['segment:Audience'], 'include-dependencies': true },
-    {
-      preflightNativeDmo: async () => {
-        throw new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE');
-      },
-    },
-  );
-  assert.notEqual(other.result.status, 'success');
-  assert.ok(!other.calls.some((call) => call.includes('execute')));
+test('a Segment selected alone never pulls in its local DMO file', async () => {
+  for (const object of ['Person__dlm', 'ssot__Individual__dlm']) {
+    const cwd = await project(object);
+    const { result, calls } = await deploy(cwd, { metadata: ['segment:Audience'] });
+    assert.equal(result.status, 'success');
+    assert.deepEqual(
+      result.result.items.map((item) => item.identity.apiName),
+      ['Audience'],
+    );
+    assert.ok(!calls.some((call) => call.startsWith('preflight:') || call.startsWith('execute:')));
+    assert.equal('dependencies' in result.result.selection, false);
+  }
 });
 
-test('namespaced and legacy-only DMO prerequisites stay external target bindings', async () => {
-  const cwd = await project('ssot__Individual__dlm');
-  const roots = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
-  const selected = await selectDeployDependencies(roots, cwd);
-  // The saved standard definition exists but is never selected as a deployable input.
-  assert.deepEqual(selected.inputs, roots);
-  assert.equal(selected.reasons.has('dmo:default:ssot__Individual__dlm'), false);
-  const { result, calls } = await deploy(cwd, {
-    metadata: ['segment:Audience'],
-    'include-dependencies': true,
-  });
-  assert.equal(result.status, 'success');
-  assert.deepEqual(
-    result.result.items.map((item) => item.identity.apiName),
-    ['Audience'],
+test('a Segment whose prerequisite is missing in the target blocks before any write', async () => {
+  const cwd = await project();
+  const { result, calls } = await deploy(
+    cwd,
+    { metadata: ['segment:Audience'] },
+    {
+      preflightSegment: async () => ({
+        outcome: 'blocked',
+        requiredEffects: [],
+        target: 'unknown',
+        absenceProof: 'none',
+        diagnostics: [
+          {
+            code: 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING',
+            message: 'A referenced object is missing or incompatible in the target.',
+          },
+        ],
+      }),
+    },
   );
-  assert.ok(!calls.some((call) => call.startsWith('preflight:') || call.startsWith('execute:')));
+  assert.equal(result.status, 'blocked');
+  assert.equal(
+    result.result.items[0].preflight.diagnostics[0].code,
+    'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING',
+  );
+  assert.equal(result.result.items[0].mutation, 'not-attempted');
+  assert.ok(!calls.some((call) => call.includes('execute')));
+});
 
-  const legacy = await mkdtemp(path.join(os.tmpdir(), 'data360-dmo-dependency-legacy-'));
-  await writeSegmentDocument(segment(), legacy, false);
-  await mkdir(path.join(legacy, 'data360', 'default', 'dmo'), { recursive: true });
-  await writeFile(
-    path.join(legacy, 'data360', 'default', 'dmo', 'Person__dlm.json'),
-    JSON.stringify({
-      ...dmo('Person__dlm'),
-      spec: {
-        ...dmo('Person__dlm').spec,
-        fields: [{ ...dmo('Person__dlm').spec.fields[0], isDynamicLookup: false }],
+test('a refused explicitly selected DMO blocks the whole batch before writes', async () => {
+  const cwd = await project();
+  for (const code of ['UNSUPPORTED_DMO_TARGET', 'UNSUPPORTED_DMO_FIELD_CHANGE']) {
+    const { result, calls } = await deploy(
+      cwd,
+      { metadata: ['segment:Audience', 'dmo:Person__dlm'] },
+      {
+        preflightNativeDmo: async () => {
+          throw new NativeDmoError(code);
+        },
       },
-    }),
-  );
-  const legacyRoots = await readDeployInputs({ cwd: legacy, metadata: ['segment:Audience'] });
-  const unexpanded = await selectDeployDependencies(legacyRoots, legacy);
-  assert.deepEqual(unexpanded.inputs, legacyRoots);
+    );
+    assert.notEqual(result.status, 'success');
+    assert.equal(result.result.items[0].preflight.diagnostics[0].code, code);
+    assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+    assert.ok(!calls.some((call) => call.includes('execute')));
+  }
 });
 
 test('a native DMO changed since a Git reference joins the ordered batch with its Segment', async () => {
@@ -352,7 +316,7 @@ for (const preview of [true, false])
       preflightNativeDmo: preflightDmo,
       executeNativeDmo: executeDmo,
     };
-    const selection = { metadata: ['segment:Audience'], 'include-dependencies': true, preview };
+    const selection = { metadata: ['segment:Audience', 'dmo:Person__dlm'], preview };
     // Without the flag the missing field blocks the whole batch before any write.
     const refused = await deploy(cwd, selection, services);
     assert.notEqual(refused.result.status, 'success');

@@ -88,21 +88,9 @@ const run = async (command) => {
   }
 };
 
-test('CI dependency expansion blocks public mixed selection before target work', async () => {
-  const { command, calls } = invocation({ preview: false, 'include-dependencies': true });
-  command.resolveInputs = async () => [
-    input(),
-    {
-      path: 'ci.xml',
-      companionPath: 'ci.json',
-      inputDigest: 'synthetic',
-      document: { kind: 'calculated-insight' },
-    },
-  ];
-  const { result } = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.diagnostics.errors[0].code, 'CI_DEPENDENCY_EXPANSION_UNSUPPORTED');
-  assert.deepEqual(calls, []);
+test('deploy defines no dependency flag', () => {
+  assert.equal('include-dependencies' in Deploy.flags, false);
+  assert.doesNotMatch(Deploy.description, /include-dependencies|dependency expansion/iu);
 });
 
 test('auto deploy pins a native DMO batch to API68 without discovery and refuses malformed IR', async () => {

@@ -809,12 +809,9 @@ test('later CI pair mismatch prevents ALL mixed selected outputs', async () => {
   const { command, calls } = retrieve({
     metadata: ['dmo:Example__dlm', 'calculated-insight:SyntheticInsight__cio'],
   });
-  command.selectDependencies = async () => ({
-    entries: [
-      { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
-    ],
-    reasons: new Map(),
-  });
+  command.acquireSelection = async () => [
+    { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
+  ];
   command.writeNativeDmo = async () => assert.fail('DMO publication before CI admission');
   command.acquireCalculatedInsightXml = async () => xml().replace('Synthetic insight', 'different');
   const result = await run(command);
@@ -826,7 +823,6 @@ for (const overrides of [
   { 'api-version': '67.0' },
   { 'api-version': 'latest' },
   { dataspace: 'other' },
-  { 'include-dependencies': true },
   { metadata: ['calculated-insight'] },
   { metadata: ['calculated-insight:Invalid'] },
 ]) {

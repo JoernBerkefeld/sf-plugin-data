@@ -546,7 +546,7 @@ const mixed = async () => {
   await writeSegmentDocument(segment, cwd, false);
   return cwd;
 };
-const selection = { metadata: ['segment:Audience'], 'include-dependencies': true };
+const selection = { metadata: ['segment:Audience', `dmo:${apiName}`] };
 
 for (const preview of [true, false])
   for (const lookup of ['found', 'failed'])

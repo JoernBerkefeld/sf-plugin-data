@@ -118,7 +118,6 @@ for (const flags of [
   { metadata: ['data-stream:Alpha:Other'] },
   { metadata: ['data-stream:../Alpha'] },
   { metadata: ['data-stream:Alpha', 'dlo:Other__dll'] },
-  { 'include-dependencies': true },
   { dataspace: 'other' },
   ...['61.0', '65.0', '67.0', '69.0', 'latest'].map((version) => ({ 'api-version': version })),
 ])

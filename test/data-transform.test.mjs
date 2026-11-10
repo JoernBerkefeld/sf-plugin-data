@@ -485,7 +485,6 @@ for (const flags of [
   { 'api-version': 'latest' },
   { draft: true },
   { 'wait-timeout': 1 },
-  { 'include-dependencies': true },
   { 'changed-since': 'HEAD' },
   { metadata: ['data-transform:SyntheticTransform', 'data-transform:Other'] },
   { 'source-dir': ['data360/dataTransforms'] },
