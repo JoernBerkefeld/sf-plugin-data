@@ -1,3 +1,15 @@
+import { deleteDataTransform } from '../../services/delete-data-transform.js';
+import {
+  createDataTransformClient,
+  createDataTransformDloReader,
+} from '../../transport/data-transform-rest.js';
+import {
+  DataTransformError,
+  dataTransformId,
+  validateDataTransformDocument,
+} from '../../artifacts/data-transform-document.js';
+import { verifyDataTransformInputDigest } from '../../artifacts/read-deploy-input.js';
+import type { DataTransformDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteSegment } from '../../services/delete-segment.js';
 import { validateSegmentDocument } from '../../artifacts/segment-document.js';
 import { verifySegmentInputDigest } from '../../artifacts/read-deploy-input.js';
@@ -76,8 +88,21 @@ export type DeleteEnvelope = {
         transport: 'native' | 'facade' | 'metadata';
         apiVersion: string;
       }>;
-      outcome: 'delete' | 'deleted' | 'deletion-processing' | 'unchanged' | 'blocked' | 'failed';
-      mutation: 'not-attempted' | 'confirmed-deleted' | 'acknowledged-processing' | 'unknown';
+      outcome:
+        | 'delete'
+        | 'deleted'
+        | 'deletion-processing'
+        | 'deletion-unconfirmed'
+        | 'unchanged'
+        | 'blocked'
+        | 'failed';
+      mutation:
+        | 'not-attempted'
+        | 'confirmed-deleted'
+        | 'acknowledged-processing'
+        | 'acknowledged'
+        | 'unknown';
+      prerequisitesPreserved?: true;
       plan?: Array<{
         operation: 'unmap' | 'delete';
         apiName: string;
@@ -92,9 +117,9 @@ export type DeleteEnvelope = {
 export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly aliases = ['datacloud:delete', 'd360:delete', 'dc:delete'];
   public static readonly summary =
-    'Delete exact Data360 Segments, IR owners, streams, DLOs, DMOs or qualified non-last mappings.';
+    'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs or qualified non-last mappings.';
   public static readonly description =
-    'Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
+    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 (API62..67 assumed compatible): qualified authored identity Text/Number pairs are unmapped first, then the protected-only mapping is deleted. The last mapping for a DMO is blocked before any unmaps; another source must independently cover all five metadata-qualified protected pairs. Full parent schemas and survivor content are checked after each write. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the ordered plan. Any partial failure stops the batch; no local deletion, parent DELETE, retries or rollback.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -106,7 +131,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multipleNonGreedy: true,
       required: true,
       summary:
-        'Exact segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName.',
+        'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm or mapping:ApiName.',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68; mapping deletion admits61..68.',
@@ -118,11 +143,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'source-dir': Flags.string({
       char: 'd',
-      summary: 'Segment, IR, CI or native Graph: one exact local source expectation.',
+      summary: 'Transform, Segment, IR, CI or native Graph: one exact local source expectation.',
     }),
     'confirm-delete': Flags.boolean({
       default: false,
-      summary: 'Segment, IR, CI or native Graph: explicitly acknowledge destructive deletion.',
+      summary:
+        'Transform, Segment, IR, CI or native Graph: explicitly acknowledge destructive deletion.',
+    }),
+    'transform-target-id': Flags.string({
+      summary: 'Transform-only exact native dataTransformId to delete (required).',
     }),
     'delete-dlo': Flags.boolean({
       default: false,
@@ -130,6 +159,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         'Stream-only acknowledgement: delete the exclusively linked DLO; otherwise preserve it.',
     }),
   };
+  protected deleteDataTransform = deleteDataTransform;
+  protected createDataTransformClient = createDataTransformClient;
+  protected createDataTransformDloReader = createDataTransformDloReader;
+  protected verifyDataTransformInput = verifyDataTransformInputDigest;
   protected nativeGraphContext = nativeDataGraphReadContext;
   protected nativeGraphClient = createDataGraphClient;
   protected operateNativeGraph = operateNativeDataGraph;
@@ -239,7 +272,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   ? 'Unchanged'
                   : item.outcome === 'failed'
                     ? 'Failed'
-                    : 'Blocked';
+                    : item.outcome === 'deletion-unconfirmed'
+                      ? 'Unconfirmed'
+                      : 'Blocked';
           if (
             ['identity-resolution', 'segment'].includes(
               selectorsByItem.get(item)?.split(':')[0] ?? '',
@@ -269,6 +304,119 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return envelope;
     };
     try {
+      if (
+        flags.metadata?.some(
+          (selector) => selector === 'data-transform' || selector.startsWith('data-transform:'),
+        )
+      ) {
+        const targetId = flags['transform-target-id'];
+        if (
+          flags.metadata.length !== 1 ||
+          !/^data-transform:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(flags.metadata[0]) ||
+          flags['delete-dlo'] ||
+          typeof flags['source-dir'] !== 'string' ||
+          !flags['source-dir'].endsWith('.dataTransform.json') ||
+          typeof targetId !== 'string' ||
+          !dataTransformId.test(targetId)
+        )
+          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
+        if (
+          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
+          effectiveScope !== 'default'
+        )
+          throw new DataTransformError('INVALID_TRANSFORM_SCOPE');
+        const snapshot = JSON.stringify(flags);
+        const inputs = await this.resolveInputs({
+          cwd: process.cwd(),
+          sourceDir: [flags['source-dir']],
+        });
+        if (inputs.length !== 1 || inputs[0].document.kind !== 'data-transform')
+          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
+        const input = inputs[0] as DataTransformDeployInput;
+        const name = input.document.definition.name as string;
+        if (flags.metadata[0] !== `data-transform:${name}`)
+          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
+        const desired = validateDataTransformDocument(input.document);
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot)
+            throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
+          await this.verifyDataTransformInput(input);
+        };
+        await verifyInput();
+        const item: DeleteEnvelope['result']['items'][number] = {
+          identity: { dataSpace: 'default', apiName: name },
+          operation: flags.preview ? 'preview' : 'delete',
+          outcome: 'blocked',
+          mutation: 'not-attempted',
+          routes: flags.preview
+            ? [
+                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+                { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
+              ]
+            : [
+                { operation: 'data-transform.delete', apiVersion: '68.0', transport: 'native' },
+                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+                { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
+              ],
+        };
+        selectorsByItem.set(item, flags.metadata[0]);
+        envelope.result.items.push(item);
+        envelope.metadata.apiVersion = '68.0';
+        let dispatched = false;
+        try {
+          const connection = await this.resolveConnection(flags['target-org']);
+          const username = connection.getUsername();
+          if (!username) throw new DloError('TARGET_ORG_REQUIRED');
+          await verifyInput();
+          const base = this.createDataTransformClient(connection, '68.0', 'default');
+          const client = {
+            ...base,
+            delete: async (value: string): Promise<void> => {
+              dispatched = true;
+              await base.delete(value);
+            },
+          };
+          envelope.diagnostics.warnings.push(
+            'Transform definition deletion only. Settlement uses bounded visible inventory and preserved source/output DLOs; exhaustive external-consumer exclusion is not established. No DLO, run, schedule or data cleanup; no retry, atomic concurrency guarantee or fallback.',
+          );
+          const result = await this.deleteDataTransform(
+            desired,
+            client,
+            this.createDataTransformDloReader(connection),
+            {
+              targetId,
+              preview: flags.preview,
+              confirmDelete: flags['confirm-delete'] === true,
+              verifyInput,
+            },
+          );
+          item.outcome = result.outcome === 'preview' ? 'delete' : result.outcome;
+          item.mutation = result.mutation;
+          if (result.prerequisitesPreserved) item.prerequisitesPreserved = true;
+          if (result.outcome === 'deletion-unconfirmed') {
+            envelope.status = 'failed';
+            envelope.diagnostics.errors.push({
+              code: 'TRANSFORM_DELETE_UNCONFIRMED',
+              message:
+                'DELETE outcome is not confirmed. Do not replay; reconcile by reading the Transform inventory before any further action.',
+              retryable: false,
+            });
+          } else envelope.status = result.outcome === 'blocked' ? 'blocked' : 'success';
+          if (result.outcome === 'blocked')
+            envelope.diagnostics.errors.push({
+              code: 'TRANSFORM_DELETE_CONFIRMATION_REQUIRED',
+              message: 'Pass --confirm-delete to delete; nothing was changed.',
+              retryable: false,
+            });
+          return finish();
+        } catch (error) {
+          item.outcome = dispatched ? 'failed' : 'blocked';
+          item.mutation = dispatched ? 'unknown' : 'not-attempted';
+          envelope.status = dispatched ? 'failed' : 'blocked';
+          throw error;
+        }
+      }
+      if (flags['transform-target-id'] !== undefined) throw new DloError('INVALID_SELECTION');
       if (
         flags.metadata?.some(
           (selector) => selector === 'segment' || selector.startsWith('segment:'),
@@ -825,7 +973,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           error instanceof DloError ||
           error instanceof NativeDmoError ||
           error instanceof NativeMappingError ||
-          error instanceof DataStreamError
+          error instanceof DataStreamError ||
+          error instanceof DataTransformError
             ? error.code
             : 'DELETE_FAILED',
         message: operationDiagnostic(

@@ -391,7 +391,7 @@ export class ConnectClient {
         {
           ...(observer ? { transport: observer } : {}),
           noContentResponse,
-          retry: { maxRetries: 0 },
+          retry: { maxRetries: 0, methods: [] },
           followRedirect: () => {
             throw new ConnectError('INVALID_REQUEST');
           },

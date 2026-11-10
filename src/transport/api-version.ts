@@ -49,7 +49,13 @@ export function legacyIdentityResolutionApiVersion(requested: string): string {
 }
 
 export type OperationalFamily =
-  'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
+  | 'dmo'
+  | 'segment'
+  | 'identity-resolution'
+  | 'calculated-insight'
+  | 'data-graph'
+  | 'data-transform'
+  | 'dlo';
 
 /**
  * Select only fixed qualified family routes, never probe, upgrade a pin or fall back.
@@ -60,6 +66,7 @@ export type OperationalFamily =
  */
 export function operationApiVersion(requested: string, family: OperationalFamily): string {
   switch (family) {
+    case 'data-transform':
     case 'dlo': {
       if (requested === 'auto' || requested === '68.0') return '68.0';
 

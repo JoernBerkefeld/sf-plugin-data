@@ -359,7 +359,7 @@ test('mapping inventory reader is list-only, version-pinned and disables replay/
   const owner = connection(async function (request, options) {
     calls.push(request);
     assert.equal(this._refreshDelegate, undefined);
-    assert.deepEqual(options.retry, { maxRetries: 0 });
+    assert.deepEqual(options.retry, { maxRetries: 0, methods: [] });
     assert.throws(() => options.followRedirect(), { code: 'INVALID_REQUEST' });
     return { objectSourceTargetMaps: [] };
   });

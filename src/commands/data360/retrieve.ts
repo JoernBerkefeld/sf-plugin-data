@@ -1,3 +1,7 @@
+import { DataTransformError, dataTransformName } from '../../artifacts/data-transform-document.js';
+import { writeDataTransformDocument } from '../../artifacts/write-data-transform.js';
+import { retrieveDataTransform } from '../../services/retrieve-data-transform.js';
+import { createDataTransformClient } from '../../transport/data-transform-rest.js';
 import { nativeDataGraphReadContext } from '../../services/native-data-graph-context.js';
 import {
   getConnectDiagnostic,
@@ -133,6 +137,7 @@ export type RetrieveEnvelope = {
         | 'calculated-insight'
         | 'data-graph'
         | 'data-stream'
+        | 'data-transform'
         | 'dlo'
         | 'relationship'
         | 'mapping';
@@ -154,7 +159,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory, mixed-family selections and dependency expansion are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory, mixed-family selections and dependency expansion are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. Native dependency expansion is unsupported; DMO dependency selections and experimental latest retain the separate legacy adapter. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory/dependency expansion are unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory and dependency expansion are blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory and dependency expansion are blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory and dependency expansion are blocked except qualified historical Graph owner expansion. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -179,7 +184,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. Legacy relationship:ApiName XML, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName remain exact-only.',
+        'Exact data-transform:Name API68/default authored input; native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. Legacy relationship:ApiName XML, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName remain exact-only.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -198,6 +203,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     }),
   };
 
+  protected acquireDataTransform = retrieveDataTransform;
+  protected createDataTransformClient = createDataTransformClient;
+  protected writeDataTransform = writeDataTransformDocument;
   protected nativeGraphContext = nativeDataGraphReadContext;
   protected retrieveNativeGraph = retrieveNativeDataGraph;
   protected acquireDataStream = retrieveNativeDataStream;
@@ -373,6 +381,83 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return envelope;
     };
     const selectors = flags.metadata ?? [];
+    if (
+      selectors.some((value) => value === 'data-transform' || value.startsWith('data-transform:'))
+    ) {
+      if (
+        selectors.some(
+          (value) =>
+            !value.startsWith('data-transform:') || !dataTransformName.test(value.slice(15)),
+        )
+      )
+        return finish('blocked', 'INVALID_SELECTION');
+      if (flags['include-dependencies'])
+        return finish('blocked', 'TRANSFORM_DEPENDENCY_EXPANSION_UNSUPPORTED');
+      try {
+        operationApiVersion(flags['api-version'], 'data-transform');
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
+      } catch {
+        return finish('blocked', 'INVALID_SCOPE');
+      }
+      let org;
+      try {
+        org = await this.resolveOrg(flags['target-org']);
+      } catch {
+        return finish('blocked', 'TARGET_ORG_REQUIRED');
+      }
+      const connection = org.getConnection('68.0');
+      envelope.provenance.sourceOrgId = org.getOrgId();
+      envelope.metadata.soapApiVersion = '68.0';
+      const names = [...new Set(selectors.map((value) => value.slice(15)))];
+      names.sort();
+      envelope.result.selection = names.map((name) => `data-transform:${name}`);
+      outputTypes.add('data-transform');
+      let failed = false;
+      for (const apiName of names) {
+        try {
+          const observed = await this.acquireDataTransform(
+            apiName,
+            this.createDataTransformClient(connection, '68.0', effectiveScope),
+          );
+          if (observed.document.definition.name !== apiName)
+            throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
+          const receipt = await this.writeDataTransform(
+            observed.document,
+            path.resolve(flags['output-dir'] ?? process.cwd()),
+            flags.overwrite,
+          );
+          envelope.result.items.push({
+            identity: { dataSpace: effectiveScope, apiName },
+            operation: 'retrieve',
+            family: 'data-transform',
+            routes: [
+              { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+              { operation: 'data-transform.schedule.get', apiVersion: '68.0', transport: 'native' },
+            ],
+            ...receipt,
+          });
+        } catch (error) {
+          const code =
+            error instanceof DataTransformError ? error.code : 'TRANSFORM_RETRIEVE_FAILED';
+          if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
+            failed = true;
+          const diagnostic = {
+            code,
+            message: operationDiagnostic(
+              error,
+              'Transform retrieval did not complete; no org write attempted.',
+            ),
+            retryable: false as const,
+            identity: { dataSpace: effectiveScope, apiName },
+          };
+          envelope.diagnostics.errors.push(diagnostic);
+          errorTypes.set(diagnostic, 'data-transform');
+        }
+      }
+      return finish(
+        envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
+      );
+    }
     if (selectors.some((value) => value === 'data-stream' || value.startsWith('data-stream:'))) {
       if (selectors.some((value) => !/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
         return finish('blocked', 'INVALID_SELECTION');

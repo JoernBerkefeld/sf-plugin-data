@@ -55,11 +55,11 @@ function fieldInput(field: DloField): Record<string, unknown> {
  * @param {string} [requestScope] Optional expected data space, never a URL query.
  * @returns {Promise<{document: DloDocument, targetId: string}>} Definition and target identity.
  */
-async function resolveTarget(
+export async function resolveNativeDloTarget(
   apiName: string,
-  client: DloClient,
+  client: Pick<DloClient, 'get'>,
   requestScope?: string,
-): Promise<{ document: DloDocument; targetId: string }> {
+): Promise<{ document: DloDocument; targetId: string; runtime: Record<string, unknown> }> {
   const raw = unwrapDlo(await client.get(apiName));
   const document = normalizeDlo(raw, requestScope);
   if (
@@ -68,7 +68,7 @@ async function resolveTarget(
     !/^[A-Za-z0-9]{18}$/u.test(raw.id)
   )
     throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
-  return { document, targetId: raw.id };
+  return { document, targetId: raw.id, runtime: structuredClone(raw) };
 }
 
 /**
@@ -83,7 +83,7 @@ export async function retrieveNativeDlo(
   client: DloClient,
   requestScope?: string,
 ): Promise<DloDocument> {
-  const target = await resolveTarget(apiName, client, requestScope);
+  const target = await resolveNativeDloTarget(apiName, client, requestScope);
   return target.document;
 }
 
@@ -104,9 +104,9 @@ export async function preflightNativeDlo(
   const apiName = desired.identity.apiName;
   if (requestScope !== undefined && requestScope !== desired.identity.dataSpace)
     throw new DloError('DLO_DATASPACE_MISMATCH');
-  let target: Awaited<ReturnType<typeof resolveTarget>>;
+  let target: Awaited<ReturnType<typeof resolveNativeDloTarget>>;
   try {
-    target = await resolveTarget(apiName, client, requestScope);
+    target = await resolveNativeDloTarget(apiName, client, requestScope);
     if (target.document.identity.dataSpace !== desired.identity.dataSpace)
       throw new DloError('DLO_DATASPACE_MISMATCH');
   } catch (error) {
@@ -222,7 +222,7 @@ export async function deleteNativeDlo(
   client: DloClient,
   requestScope?: string,
 ): Promise<{ apiName: string; targetId: string; dataSpace: string }> {
-  const { targetId, document } = await resolveTarget(apiName, client, requestScope);
+  const { targetId, document } = await resolveNativeDloTarget(apiName, client, requestScope);
   await client.delete(targetId);
   return { apiName, targetId, dataSpace: document.identity.dataSpace };
 }

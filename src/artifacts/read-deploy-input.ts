@@ -1,3 +1,5 @@
+import { dataTransformName, validateDataTransformDocument } from './data-transform-document.js';
+import type { DataTransformDocument } from './data-transform-document.js';
 import { validateNativeDataGraphDocument } from './native-data-graph-document.js';
 import type { NativeDataGraphDocument } from './native-data-graph-document.js';
 import { validateDataStreamDocument } from './data-stream-document.js';
@@ -281,7 +283,73 @@ export async function verifyNativeDataGraphInputDigest(
     refuse();
 }
 
+export type DataTransformDeployInput = {
+  path: string;
+  document: DataTransformDocument;
+  inputDigest: string;
+};
+
+/**
+ * Admit only canonical input-shaped Transform JSON with exact name and byte binding.
+ * @param {string} file Absolute selected member.
+ * @returns {Promise<DataTransformDeployInput>} Immutable admitted input.
+ */
+async function readDataTransformInput(file: string): Promise<DataTransformDeployInput> {
+  const suffix = '.dataTransform.json';
+  const name = path.basename(file).slice(0, -suffix.length);
+  const directory = path.dirname(file);
+  if (
+    !file.endsWith(suffix) ||
+    !dataTransformName.test(name) ||
+    path.basename(directory) !== 'dataTransforms' ||
+    path.basename(path.dirname(directory)) !== 'data360'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: DataTransformDocument;
+  try {
+    document = validateDataTransformDocument(strictJson(decode(bytes)));
+    if (document.definition.name !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
+/**
+ * Re-admit exact Transform bytes and logical intent immediately before mutation.
+ * @param {DataTransformDeployInput} input Captured immutable admission.
+ * @returns {Promise<void>} Resolves only without local drift.
+ */
+export async function verifyDataTransformInputDigest(
+  input: DataTransformDeployInput,
+): Promise<void> {
+  try {
+    const current = await readDataTransformInput(input.path);
+    if (
+      current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+  } catch {
+    throw new DeployInputError('UNSAFE_SOURCE');
+  }
+}
+
 export type DeployInput =
+  | DataTransformDeployInput
   | NativeDataGraphDeployInput
   | DataStreamDeployInput
   | MappingDeployInput
@@ -733,6 +801,10 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
  * @returns {Promise<string>} Exact byte digest after identity/content re-admission.
  */
 export async function captureDeployInputDigest(input: DeployInput): Promise<string> {
+  if (input.document.kind === 'data-transform') {
+    await verifyDataTransformInputDigest(input as DataTransformDeployInput);
+    return (input as DataTransformDeployInput).inputDigest;
+  }
   if (input.document.kind === 'native-data-graph') {
     await verifyNativeDataGraphInputDigest(input as NativeDataGraphDeployInput);
     return (input as NativeDataGraphDeployInput).inputDigest;
@@ -805,6 +877,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('INVALID_SELECTION');
   if (!path.isAbsolute(flags.cwd)) throw new DeployInputError('INVALID_SELECTION');
   const selectors = metadata?.map((value) => {
+    if (value.startsWith('data-transform:') && dataTransformName.test(value.slice(15)))
+      return { kind: 'data-transform', name: value.slice(15) };
     if (/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value))
       return { kind: 'data-stream', name: value.slice(12) };
     if (value.startsWith('mapping:') && nativeMappingName.test(value.slice(8)))
@@ -828,7 +902,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       item.kind !== 'dmo' &&
       item.kind !== 'dlo' &&
       item.kind !== 'mapping' &&
-      item.kind !== 'data-stream',
+      item.kind !== 'data-stream' &&
+      item.kind !== 'data-transform',
   )
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
@@ -857,38 +932,40 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   }
   const roots = selectors
     ? selectors.map(({ kind, name }) =>
-        kind === 'dmo'
-          ? legacyDmos.has(name)
-            ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
-            : path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
-          : kind === 'data-stream'
-            ? path.join(flags.cwd, 'data360', 'data-stream', `${name}.data-stream-meta.json`)
-            : kind === 'mapping'
-              ? path.join(flags.cwd, 'data360', 'mapping', `${name}.mapping-meta.json`)
-              : kind === 'dlo'
-                ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
-                : kind === 'data-graph'
-                  ? path.join(
-                      base!,
-                      'data360',
-                      'dataGraphs',
-                      `${name}${nativeGraphs.has(name) ? '.native-dataGraph.json' : '.dataGraph.json'}`,
-                    )
-                  : kind === 'calculated-insight'
+        kind === 'data-transform'
+          ? path.join(flags.cwd, 'data360', 'dataTransforms', `${name}.dataTransform.json`)
+          : kind === 'dmo'
+            ? legacyDmos.has(name)
+              ? path.join(flags.cwd, 'data360', 'default', 'dmo', `${name}.json`)
+              : path.join(flags.cwd, 'data360', 'dmo', `${name}.dmo-meta.json`)
+            : kind === 'data-stream'
+              ? path.join(flags.cwd, 'data360', 'data-stream', `${name}.data-stream-meta.json`)
+              : kind === 'mapping'
+                ? path.join(flags.cwd, 'data360', 'mapping', `${name}.mapping-meta.json`)
+                : kind === 'dlo'
+                  ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
+                  : kind === 'data-graph'
                     ? path.join(
                         base!,
                         'data360',
-                        'calculatedInsights',
-                        `${name}.calculatedInsight.json`,
+                        'dataGraphs',
+                        `${name}${nativeGraphs.has(name) ? '.native-dataGraph.json' : '.dataGraph.json'}`,
                       )
-                    : kind === 'identity-resolution'
+                    : kind === 'calculated-insight'
                       ? path.join(
                           base!,
                           'data360',
-                          'identityResolution',
-                          `${name}.identityResolution.json`,
+                          'calculatedInsights',
+                          `${name}.calculatedInsight.json`,
                         )
-                      : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+                      : kind === 'identity-resolution'
+                        ? path.join(
+                            base!,
+                            'data360',
+                            'identityResolution',
+                            `${name}.identityResolution.json`,
+                          )
+                        : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -961,6 +1038,20 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
             (item) =>
               item.kind === 'calculated-insight' && item.name === input.document.identity.apiName,
           )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.dataTransform.json')) {
+        const input = await readDataTransformInput(file);
+        const name = input.document.definition.name;
+        const key = `data-transform:default:${name}`.toLowerCase();
+        if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
+        if (
+          selectors &&
+          !selectors.some((item) => item.kind === 'data-transform' && item.name === name)
         )
           throw new DeployInputError('INVALID_SELECTION');
         identities.add(key);

@@ -4,7 +4,14 @@ import { link, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { DeployInputError, readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
+import {
+  captureDeployInputDigest,
+  DeployInputError,
+  readDeployInputs,
+  verifyDataTransformInputDigest,
+} from '../lib/artifacts/read-deploy-input.js';
+import Deploy from '../lib/commands/data360/deploy.js';
+import { writeDataTransformDocument } from '../lib/artifacts/write-data-transform.js';
 
 const fixture = (apiName = 'Preview_Item__dlm') => ({
   schemaVersion: 1,
@@ -32,6 +39,143 @@ const put = async (cwd, relative, value = fixture()) => {
   return file;
 };
 const refusal = (code) => (error) => error instanceof DeployInputError && error.code === code;
+
+const transform = (name = 'SyntheticTransform') => ({
+  schemaVersion: 1,
+  kind: 'data-transform',
+  apiVersion: '68.0',
+  definition: {
+    name,
+    label: 'Synthetic transform',
+    description: 'Synthetic definition',
+    type: 'BATCH',
+    dataSpaceName: 'default',
+    definition: {
+      type: 'STL',
+      version: '56.0',
+      nodes: {
+        LOAD_DATASET0: {
+          action: 'load',
+          parameters: {
+            dataset: { name: 'Source__dll', type: 'dataLakeObject' },
+            fields: ['Id__c'],
+            sampleDetails: { sortBy: [], type: 'TopN' },
+          },
+          sources: [],
+        },
+        OUTPUT0: {
+          action: 'outputD360',
+          parameters: {
+            name: 'Output__dll',
+            type: 'dataLakeObject',
+            fieldsMappings: [{ sourceField: 'Id__c', targetField: 'Id__c' }],
+          },
+          sources: ['LOAD_DATASET0'],
+        },
+      },
+    },
+  },
+});
+
+test('Transform publisher roundtrips through exact metadata and source admission with frozen digest', async () => {
+  const cwd = await root();
+  const { path: file } = await writeDataTransformDocument(transform(), cwd, false);
+  const [input] = await readDeployInputs({
+    cwd,
+    metadata: ['data-transform:SyntheticTransform', 'data-transform:SyntheticTransform'],
+  });
+  assert.equal(input.path, file);
+  assert.deepEqual(input.document, transform());
+  assert.ok(Object.isFrozen(input));
+  assert.ok(
+    Object.isFrozen(input.document.definition.definition.nodes.LOAD_DATASET0.parameters.fields),
+  );
+  assert.match(input.inputDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(await captureDeployInputDigest(input), input.inputDigest);
+  assert.deepEqual(await readDeployInputs({ cwd, sourceDir: [file, path.dirname(file)] }), [input]);
+  await writeFile(file, `${await readFile(file, 'utf8')}\n`);
+  await assert.rejects(verifyDataTransformInputDigest(input), refusal('UNSAFE_SOURCE'));
+  await assert.rejects(captureDeployInputDigest(input), refusal('UNSAFE_SOURCE'));
+});
+
+test('Transform admission rejects wrong location, filename identity, raw runtime and duplicate keys', async () => {
+  const cwd = await root();
+  const canonical = 'data360/dataTransforms/SyntheticTransform.dataTransform.json';
+  for (const relative of [
+    'SyntheticTransform.dataTransform.json',
+    'data360/wrong/SyntheticTransform.dataTransform.json',
+  ]) {
+    const file = await put(cwd, relative, transform());
+    await assert.rejects(
+      readDeployInputs({ cwd, sourceDir: [file] }),
+      refusal('INVALID_SELECTION'),
+    );
+  }
+  const json = JSON.stringify(transform());
+  for (const value of [
+    transform('Different'),
+    { ...transform(), runtime: {} },
+    json.replace('"schemaVersion":1', '"schemaVersion":1,"schemaVersion":1'),
+    `\uFEFF${json}`,
+  ]) {
+    await put(cwd, canonical, value);
+    await assert.rejects(
+      readDeployInputs({ cwd, metadata: ['data-transform:SyntheticTransform'] }),
+      refusal('INVALID_SOURCE'),
+    );
+  }
+  for (const selector of [
+    'data-transform',
+    'data-transform:',
+    'data-transform:../SyntheticTransform',
+    'data-transform:SyntheticTransform:extra',
+  ])
+    await assert.rejects(
+      readDeployInputs({ cwd, metadata: [selector] }),
+      refusal('INVALID_SELECTION'),
+    );
+});
+
+test('Transform duplicate identities and hardlinked canonical files fail closed', async () => {
+  const cwd = await root();
+  const file = await put(
+    cwd,
+    'data360/dataTransforms/SyntheticTransform.dataTransform.json',
+    transform(),
+  );
+  await put(cwd, 'other/data360/dataTransforms/SyntheticTransform.dataTransform.json', transform());
+  await assert.rejects(readDeployInputs({ cwd, sourceDir: [cwd] }), refusal('DUPLICATE_IDENTITY'));
+  await link(file, path.join(cwd, 'linked.json'));
+  await assert.rejects(readDeployInputs({ cwd, sourceDir: [file] }), refusal('UNSAFE_SOURCE'));
+});
+
+test('Transform source admission requires explicit operation before authentication', async () => {
+  const cwd = await root();
+  await writeDataTransformDocument(transform(), cwd, false);
+  const inputs = await readDeployInputs({ cwd, metadata: ['data-transform:SyntheticTransform'] });
+  for (const preview of [true, false]) {
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: { metadata: ['data-transform:SyntheticTransform'], 'api-version': 'auto', preview },
+    });
+    command.jsonEnabled = () => true;
+    command.log = () => {};
+    command.resolveInputs = async () => inputs;
+    command.resolveTargetOrg = async () => {
+      assert.fail('Authentication must not occur');
+    };
+    const previousExitCode = process.exitCode;
+    let result;
+    try {
+      result = await command.run();
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_TRANSFORM_DEPLOY_SELECTION');
+    assert.deepEqual(result.result.items, []);
+  }
+});
 
 // All newly created OS-temp fixtures are retained; no recursive cleanup.
 test('directory depth, file count and non-JSON directory members are bounded', async () => {

@@ -188,13 +188,53 @@ test('README describes optional scope without promoting nondefault qualification
   const table = readme.split('| Resource ')[1].split('The scope notes summarize')[0];
   assert.equal(
     table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
-    14,
+    15,
   );
-  for (const resource of ['Data Model Objects', 'DLO-to-DMO mappings'])
+  for (const resource of ['Data Model Objects', 'DLO-to-DMO mappings', 'Data Transforms'])
     assert.match(
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,
     );
+});
+
+test('README separates bounded public Transform commands from native zero-row qualification', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const dlo = readme
+    .split('### Data Lake Object (DLO): native definition CRUD')[1]
+    .split('### Data Transforms:')[0];
+  const transform = readme
+    .split('### Data Transforms: bounded definition retrieve/deploy and native qualification')[1]
+    .split('### DLO-to-DMO mapping:')[0];
+  for (const raw of [dlo, transform]) {
+    const section = raw.replaceAll(/\s+/gu, ' ');
+    for (const text of [
+      'precreated transform output',
+      'without a DataStream for that output',
+      '`CUSTOM` / `BATCH`',
+      '`STL`',
+      '`SUCCESS` in 47 seconds',
+      'processing and writing zero rows',
+      'ordinary transform sources',
+      'ingested data',
+      'not proven mandatory',
+      'not tested',
+    ])
+      assert.ok(section.includes(text), text);
+  }
+  assert.ok(transform.includes('were removed after the experiment'));
+  assert.match(transform, /sf data360 deploy.*--transform-operation create/u);
+  assert.match(transform, /GET 404 never becomes create/u);
+  assert.match(transform, /server validation remains\s+pending/u);
+  assert.match(
+    transform,
+    /separate from live public Transform lifecycle acceptance, which has not been\s+performed/u,
+  );
+  assert.match(transform, /sf data360 delete -m data-transform:Name/u);
+  assert.doesNotMatch(
+    transform.replaceAll(/\s+/gu, ' '),
+    /(?:no [^.]*public delete[^.]*offered|public delete (?:is )?(?:not offered|unavailable|unsupported))/iu,
+  );
+  assert.match(transform, /deletion-unconfirmed/u);
 });
 
 test('README separates DLO field admission from live Text qualification', () => {
