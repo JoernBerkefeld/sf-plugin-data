@@ -15,16 +15,29 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 
 export type NativeDmoDeployPlan =
   | {
-      operation: 'create' | 'update';
+      operation: 'create';
       apiName: string;
-      targetApiName?: string;
       body: Record<string, unknown>;
+    }
+  | {
+      operation: 'update';
+      apiName: string;
+      targetApiName: string;
+      /** Absent when field removals are the only change, so no PATCH is sent. */
+      body?: Record<string, unknown>;
+      /** Custom target fields missing from the file; set only with allowFieldRemoval. */
+      removeFields?: string[];
     }
   | {
       operation: 'unchanged';
       apiName: string;
       document: NativeDmoDocument;
     };
+
+export type NativeDmoDeployOptions = {
+  /** Remove custom target fields missing from the file through the Metadata API. */
+  allowFieldRemoval?: boolean;
+};
 
 /** Bounded post-write readback; the single write is never repeated. */
 export type NativeDmoSettle = {
@@ -46,6 +59,9 @@ const readOnlyFieldKeys = new Set(['creationType', 'isDistinct', 'usageTag', 'ke
 const writeOnlyFieldKeys = new Set(['description', 'isDynamicLookup']);
 // The API answers 200 to these edits of an existing field and silently ignores them.
 const immutableFieldKeys = new Set(['dataType', 'isPrimaryKey']);
+// Mapping state reported on a field; it belongs to the mapping, not to the DMO definition,
+// so it is never sent, compared or confirmed here.
+const observedFieldKeys = new Set(['isMapped']);
 const handledSpecKeys = new Set(['label', 'category', 'description', 'fields']);
 
 /**
@@ -67,7 +83,11 @@ function generated(field: NativeDmoField): boolean {
  */
 function fieldInput(field: NativeDmoField): Record<string, unknown> {
   return {
-    ...Object.fromEntries(Object.entries(field).filter(([key]) => !readOnlyFieldKeys.has(key))),
+    ...Object.fromEntries(
+      Object.entries(field).filter(
+        ([key]) => !readOnlyFieldKeys.has(key) && !observedFieldKeys.has(key),
+      ),
+    ),
     name: field.name.slice(0, -3),
   };
 }
@@ -86,7 +106,7 @@ function fieldChange(
   for (const key of new Set([...Object.keys(target), ...Object.keys(incoming)])) {
     const before = target[key];
     const after = incoming[key];
-    if (isDeepStrictEqual(before, after)) continue;
+    if (observedFieldKeys.has(key) || isDeepStrictEqual(before, after)) continue;
     if (writeOnlyFieldKeys.has(key) && before === undefined) continue;
     if (readOnlyFieldKeys.has(key) && after === undefined) continue;
     if (readOnlyFieldKeys.has(key) || immutableFieldKeys.has(key) || generated(target))
@@ -153,12 +173,14 @@ export async function retrieveNativeDmo(
  * @param {unknown} value Portable document.
  * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
  * @returns {Promise<NativeDmoDeployPlan>} Fresh name-bound write plan.
  */
 export async function preflightNativeDmo(
   value: unknown,
   client: Pick<DmoClient, 'get'>,
   requestScope?: string,
+  options: NativeDmoDeployOptions = {},
 ): Promise<NativeDmoDeployPlan> {
   const desired = validateNativeDmoDocument(value);
   const apiName = desired.identity.apiName;
@@ -209,12 +231,29 @@ export async function preflightNativeDmo(
   const existing = new Map(target.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
   const edited: NativeDmoField[] = [];
+  const removed: string[] = [];
   for (const [name, field] of existing) {
     const authored = incoming.get(name);
-    // Generated fields may be left out of an authored definition; custom fields may not,
-    // because the API has no route to remove a field.
+    // Generated fields may be left out of an authored definition and are never removed.
     if (!authored && generated(field)) continue;
-    if (!authored)
+    if (!authored) {
+      // The native DMO API has no route to remove a field; the Metadata API does, on request.
+      if (options.allowFieldRemoval === true && !field.isPrimaryKey) {
+        // Salesforce removes a mapped field without objection and silently drops its mapping
+        // pair with it (live API 68), so the pair has to be taken out of the mapping first.
+        if (field.isMapped === true)
+          throw explainMismatch(
+            new NativeDmoError('DMO_FIELD_REMOVAL_MAPPED'),
+            'field removal',
+            apiName,
+            false,
+            true,
+            `fields.${name}.isMapped`,
+            'This field is mapped. Remove its pair from the mapping first, then remove the field.',
+          );
+        removed.push(name);
+        continue;
+      }
       throw explainMismatch(
         new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE'),
         'update field preservation',
@@ -222,7 +261,11 @@ export async function preflightNativeDmo(
         field,
         authored,
         `fields.${name}`,
+        field.isPrimaryKey
+          ? 'The primary-key field is never removed; keep it in the file.'
+          : 'A custom field missing from the file is removed only with --allow-field-removal.',
       );
+    }
     const change = fieldChange(field, authored);
     if (typeof change === 'object')
       // Name the one property that cannot change, not the first incidental difference.
@@ -257,24 +300,28 @@ export async function preflightNativeDmo(
       ([key, entry]) => raw[key] !== undefined && !isDeepStrictEqual(entry, raw[key]),
     ),
   );
-  if (
-    fields.length === 0 &&
-    desired.spec.label === target.spec.label &&
-    Object.keys({ ...description, ...category, ...changedExtras }).length === 0
-  )
-    return { operation: 'unchanged', apiName, document: target };
+  const patch =
+    fields.length > 0 ||
+    desired.spec.label !== target.spec.label ||
+    Object.keys({ ...description, ...category, ...changedExtras }).length > 0;
+  if (!patch && removed.length === 0) return { operation: 'unchanged', apiName, document: target };
   return {
     operation: 'update',
     apiName,
     targetApiName: target.identity.apiName,
-    body: {
-      ...changedExtras,
-      label: desired.spec.label,
-      ...description,
-      ...category,
-      ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
-      ...(fields.length > 0 ? { fields } : {}),
-    },
+    ...(patch
+      ? {
+          body: {
+            ...changedExtras,
+            label: desired.spec.label,
+            ...description,
+            ...category,
+            ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
+            ...(fields.length > 0 ? { fields } : {}),
+          },
+        }
+      : {}),
+    ...(removed.length > 0 ? { removeFields: removed } : {}),
   };
 }
 
@@ -283,10 +330,16 @@ export async function preflightNativeDmo(
  * Keys the API accepts but does not return cannot be confirmed and are not compared.
  * @param {NativeDmoDocument} desired Requested portable state.
  * @param {NativeDmoDocument} actual Independent GET state.
- * @returns {boolean} Whether every requested, readable property survived.
+ * @param {string[]} [removed] Fields whose removal was requested and must be absent.
+ * @returns {boolean} Whether every requested, readable property survived and every removal took effect.
  */
-export function nativeDmoConfirmed(desired: NativeDmoDocument, actual: NativeDmoDocument): boolean {
+export function nativeDmoConfirmed(
+  desired: NativeDmoDocument,
+  actual: NativeDmoDocument,
+  removed: string[] = [],
+): boolean {
   if (
+    actual.spec.fields.some((field) => removed.includes(field.name)) ||
     actual.spec.label !== desired.spec.label ||
     !sameDmoCategory(actual.spec.category, desired.spec.category) ||
     (desired.spec.description !== undefined &&
@@ -300,6 +353,7 @@ export function nativeDmoConfirmed(desired: NativeDmoDocument, actual: NativeDmo
       found &&
       Object.entries(field).every(
         ([key, entry]) =>
+          observedFieldKeys.has(key) ||
           (writeOnlyFieldKeys.has(key) && found[key] === undefined) ||
           isDeepStrictEqual(entry, found[key]),
       )
@@ -309,36 +363,68 @@ export function nativeDmoConfirmed(desired: NativeDmoDocument, actual: NativeDmo
 
 /**
  * Skip unchanged definitions, otherwise write once and require independent bounded GET confirmation.
+ * An update sends at most one PATCH, then at most one Metadata API field removal, each exactly once.
  * Stale PATCH bodies never establish persistence; failed readback never triggers another write.
  * @param {unknown} value Portable requested definition.
  * @param {DmoClient} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
- * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument}>} Observed or confirmed definition, not activation proof.
+ * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[]}>} Observed or confirmed definition, not activation proof.
  */
 export async function deployNativeDmo(
   value: unknown,
   client: DmoClient,
   requestScope?: string,
   settle: NativeDmoSettle = defaultSettle,
-): Promise<{ operation: 'create' | 'update' | 'unchanged'; document: NativeDmoDocument }> {
+  options: NativeDmoDeployOptions = {},
+): Promise<{
+  operation: 'create' | 'update' | 'unchanged';
+  document: NativeDmoDocument;
+  removedFields?: string[];
+}> {
   const desired = validateNativeDmoDocument(value);
-  const plan = await preflightNativeDmo(desired, client, requestScope);
+  const plan = await preflightNativeDmo(desired, client, requestScope, options);
   if (plan.operation === 'unchanged') return { operation: 'unchanged', document: plan.document };
+  const removed = plan.operation === 'update' ? (plan.removeFields ?? []) : [];
+  // Refuse before the PATCH when this client has no Metadata route for the planned removal.
+  if (removed.length > 0 && !client.removeFields)
+    throw new NativeDmoError('DMO_FIELD_REMOVAL_UNAVAILABLE');
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)
-      : await client.update(plan.targetApiName!, plan.body);
-  const accepted = normalizeNativeDmo(response, desired.identity.dataSpace);
-  if (accepted.identity.apiName !== plan.apiName)
-    throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+      : plan.body
+        ? await client.update(plan.targetApiName, plan.body)
+        : undefined;
+  if (plan.operation === 'create' || plan.body) {
+    const accepted = normalizeNativeDmo(response, desired.identity.dataSpace);
+    if (accepted.identity.apiName !== plan.apiName)
+      throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+  }
+  if (plan.operation === 'update' && removed.length > 0)
+    await client.removeFields!(plan.targetApiName, removed);
   let last: NativeDmoDocument | undefined;
   for (let attempt = 0; attempt < settle.attempts; attempt++) {
     if (attempt > 0) await settle.sleep(settle.delayMs);
     const document = await resolveTarget(plan.apiName, client, desired.identity.dataSpace);
     last = document;
-    if (nativeDmoConfirmed(desired, document)) return { operation: plan.operation, document };
+    if (nativeDmoConfirmed(desired, document, removed))
+      return {
+        operation: plan.operation,
+        document,
+        ...(removed.length > 0 ? { removedFields: removed } : {}),
+      };
   }
+  const lingering = last?.spec.fields.find((field) => removed.includes(field.name));
+  if (lingering)
+    throw explainMismatch(
+      new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED'),
+      'post-removal field absence readback',
+      plan.apiName,
+      undefined,
+      lingering,
+      `fields.${lingering.name}`,
+    );
   throw explainMismatch(
     new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED'),
     'post-write requested definition readback',

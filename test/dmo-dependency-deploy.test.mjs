@@ -13,6 +13,7 @@ import {
 } from '../lib/artifacts/read-deploy-input.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
+import { executeDmo, preflightDmo } from '../lib/services/command-native-dmo.js';
 import { selectDeployDependencies } from '../lib/services/select-deploy-dependencies.js';
 
 const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
@@ -320,3 +321,64 @@ test('a native DMO changed since a Git reference joins the ordered batch with it
     { operation: 'dmo.deploy', apiVersion: '68.0', transport: 'native' },
   ]);
 });
+
+for (const preview of [true, false])
+  test(`--allow-field-removal reaches a native DMO in the ordered batch preview=${preview}`, async () => {
+    const cwd = await project();
+    const writes = [];
+    let removed = false;
+    const read = () => ({
+      name: 'Person__dlm',
+      label: 'Person__dlm',
+      category: 'OTHER',
+      creationType: 'Custom',
+      dataSpaceName: 'default',
+      fields: [
+        { name: 'Id__c', label: 'Id', type: 'Text', isPrimaryKey: true },
+        ...(removed ? [] : [{ name: 'Note__c', label: 'Note', type: 'Text', isPrimaryKey: false }]),
+      ],
+    });
+    const services = {
+      createDmoClient: () => ({
+        get: async () => read(),
+        create: async () => assert.fail('no POST'),
+        update: async () => assert.fail('no PATCH'),
+        delete: async () => assert.fail('no DELETE'),
+        removeFields: async (target, names) => {
+          writes.push([target, names]);
+          removed = true;
+        },
+      }),
+      preflightNativeDmo: preflightDmo,
+      executeNativeDmo: executeDmo,
+    };
+    const selection = { metadata: ['segment:Audience'], 'include-dependencies': true, preview };
+    // Without the flag the missing field blocks the whole batch before any write.
+    const refused = await deploy(cwd, selection, services);
+    assert.notEqual(refused.result.status, 'success');
+    assert.ok(JSON.stringify(refused.result).includes('UNSUPPORTED_DMO_FIELD_CHANGE'));
+    assert.ok(!refused.calls.includes('segment-execute'));
+    assert.deepEqual(writes, []);
+    const { result, calls } = await deploy(
+      cwd,
+      { ...selection, 'allow-field-removal': true },
+      services,
+    );
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    const [item] = result.result.items;
+    assert.equal(item.identity.apiName, 'Person__dlm');
+    if (preview) {
+      assert.equal(item.outcome, 'update');
+      assert.deepEqual(item.removeFields, ['Note__c']);
+      assert.equal(item.diagnostics[0].code, 'DMO_FIELD_REMOVAL_PLANNED');
+      assert.deepEqual(writes, []);
+      return;
+    }
+    // Removal only: no PATCH, one removal, before the dependent Segment write.
+    assert.deepEqual(writes, [['Person__dlm', ['Note__c']]]);
+    assert.equal(item.outcome, 'updated');
+    assert.equal(item.mutation, 'confirmed-updated');
+    assert.deepEqual(item.removedFields, ['Note__c']);
+    assert.equal(item.preflight.diagnostics[0].code, 'DMO_FIELD_REMOVAL_PLANNED');
+    assert.ok(calls.includes('segment-execute'));
+  });

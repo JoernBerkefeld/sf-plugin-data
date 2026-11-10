@@ -383,7 +383,8 @@ and omitted selectors; standard, namespaced and generated DMOs can be retrieved.
 definition may omit generated and system fields. Keys only returned by reads
 (`creationType`, `isDistinct`, `usageTag`, `keyQualifierName`) are kept in
 retrieved files and never sent. After a write the plugin polls reads (up to 6,
-5 seconds apart) to confirm; the write is never repeated.
+5 seconds apart) to confirm the requested definition and the absence of removed
+fields; a write is never repeated.
 
 Live-verified at API 68 on two orgs with empty, unmapped custom DMOs in the default
 data space (API probes and plugin acceptance, 2026-11-10):
@@ -401,21 +402,51 @@ data space (API probes and plugin acceptance, 2026-11-10):
       one primary key (any accepted type), generates the key qualifier
       (`KQ_<key>__c`, `keyQualifierName`) and rejects input keys outside its schema.
 - [x] Object `description` round-trips. Field `description` and `isDynamicLookup`
-      are accepted but never returned by reads: the plugin sends them when a field
-      is created or otherwise edited, and cannot detect or confirm a change to them
+      are accepted but never returned by reads, and a field description does not
+      appear in the Data Model UI either: the plugin sends them when a field is
+      created or otherwise edited, and cannot detect or confirm a change to them
       alone.
 - [x] Update by PATCH: change the object label, set or clear the object description
       (absent `spec.description` is not managed; an empty string clears it), change
       existing field labels, add fields of any accepted type.
 
-Refused by the plugin before any write, because Salesforce cannot do it:
+Refused by the plugin before any write, because the native DMO API cannot do it:
 
 - Changing an existing field's data type or moving the primary key (the API answers
-  200 and silently ignores it), and removing a field (no API route; the Data Model
-  UI offers no field deletion either): `UNSUPPORTED_DMO_FIELD_CHANGE`. Omitting a
-  custom field that exists in the target counts as a removal.
+  200 and silently ignores it): `UNSUPPORTED_DMO_FIELD_CHANGE`.
+- Removing a field without `--allow-field-removal` (no native route):
+  `UNSUPPORTED_DMO_FIELD_CHANGE`. Omitting a custom field that exists in the target
+  counts as a removal. Omitting the target's primary-key field is refused with the
+  same code, with or without the flag.
 - Adding a generated field or a second primary key:
   `UNSUPPORTED_DMO_FIELD_ADDITION`.
+
+Field removal with `--allow-field-removal` (deploy only, native DMO inputs only):
+
+- Custom target fields missing from the file are removed with one Metadata API
+  destructive change per DMO: `sf project deploy start --metadata-dir` with an empty
+  `package.xml` and a `destructiveChanges.xml` listing `CustomField` members
+  `<ObjectName>__dlm.<FieldName>__c`. The manifest version is the native API version
+  in use. Names are validated before they are written into the manifest.
+- Order: the PATCH for other changes first (skipped when removals are the only
+  change), then the removal, then readback, which also requires every removed field
+  to be absent. No write is retried.
+- The primary key and generated fields are never removed.
+- A mapped field is refused with `DMO_FIELD_REMOVAL_MAPPED`: Salesforce would remove
+  it and silently drop its mapping pair. Remove the pair from the mapping first. An
+  unmapped field on a mapped DMO is removed normally. The `isMapped` marker on fields
+  is never sent, compared or required.
+- Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold
+  data or are referenced by a segment, calculated insight, relationship or other
+  component.
+- Preview reports the planned removals (`removeFields`,
+  `DMO_FIELD_REMOVAL_PLANNED`) and writes nothing. A removal-only deploy reports
+  `updated`; a repeat with the same file reports `unchanged`.
+- A deployment that does not report every member as deleted fails with
+  `DMO_FIELD_REMOVAL_FAILED` and Salesforce's problem text; the mutation is reported
+  as unknown.
+- The destructive change is observed on empty, unmapped custom DMOs with a manifest
+  at version 65.
 
 A category change is sent, and Salesforce rejects it ("Data Object Category cannot
 be updated").
@@ -440,6 +471,7 @@ explicit selection with `--include-dependencies` is still blocked
 Not qualified:
 
 - [ ] Mapped or data-bearing DMOs.
+- [ ] Field removal of data-bearing or otherwise referenced fields.
 - [ ] Non-default data spaces.
 - [ ] API versions other than 68 for the behaviour listed above.
 - [ ] Relationships and SQL/flex DMOs.

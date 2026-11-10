@@ -253,6 +253,84 @@ for (const preview of [false, true]) {
     }
   });
 }
+for (const preview of [true, false])
+  for (const allowed of [true, false])
+    test(`native deploy field removal preview=${preview} --allow-field-removal=${allowed}`, async () => {
+      const cwd = await scratch();
+      const desired = structuredClone(document);
+      desired.spec.label = 'Changed';
+      await writeNativeDmoDocument(desired, cwd, false);
+      const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
+      const calls = [];
+      const state = { label: wire.label, removed: [] };
+      const extra = ['Note__c', 'Link__c'].map((field) => ({
+        name: field,
+        label: field,
+        type: 'Text',
+        isPrimaryKey: false,
+      }));
+      const read = () => ({
+        ...structuredClone(wire),
+        label: state.label,
+        fields: [...wire.fields, ...extra.filter((field) => !state.removed.includes(field.name))],
+      });
+      const command = invocation(Deploy, {
+        preview,
+        'target-org': org,
+        'allow-field-removal': allowed,
+      });
+      command.resolveInputs = async () => inputs;
+      command.createDmoClient = () =>
+        client({
+          get: async () => read(),
+          create: async () => assert.fail('no POST'),
+          update: async (target, body) => {
+            calls.push(['update', target]);
+            state.label = body.label;
+            return read();
+          },
+          removeFields: async (target, names) => {
+            calls.push(['remove', target, names]);
+            state.removed = names;
+          },
+        });
+      const result = await run(command);
+      const [item] = result.result.items;
+      if (!allowed) {
+        assert.equal(result.status, 'blocked', JSON.stringify(result));
+        assert.deepEqual(calls, []);
+        const text = JSON.stringify(result);
+        assert.ok(text.includes('UNSUPPORTED_DMO_FIELD_CHANGE'));
+        assert.ok(text.includes('--allow-field-removal'));
+        return;
+      }
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      if (preview) {
+        assert.deepEqual(calls, []);
+        assert.equal(item.operation, 'preview');
+        assert.equal(item.outcome, 'update');
+        assert.deepEqual(item.removeFields, ['Note__c', 'Link__c']);
+        assert.deepEqual(
+          item.diagnostics.map(({ code }) => code),
+          ['DMO_FIELD_REMOVAL_PLANNED'],
+        );
+        return;
+      }
+      // One PATCH, then exactly one removal for both fields.
+      assert.deepEqual(calls, [
+        ['update', name],
+        ['remove', name, ['Note__c', 'Link__c']],
+      ]);
+      assert.equal(item.outcome, 'updated');
+      assert.equal(item.mutation, 'confirmed-updated');
+      assert.deepEqual(item.removedFields, ['Note__c', 'Link__c']);
+      // A repeat with the same file is unchanged and writes nothing.
+      const repeat = await run(command);
+      assert.equal(repeat.result.items[0].outcome, 'unchanged');
+      assert.equal(repeat.result.items[0].mutation, 'not-attempted');
+      assert.equal(calls.length, 2);
+    });
+
 test('native deploy permission failure and dependency expansion never write', async () => {
   const cwd = await scratch();
   await writeNativeDmoDocument(document, cwd, false);

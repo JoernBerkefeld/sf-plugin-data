@@ -228,7 +228,7 @@ test('DMO readback does not require omitted generated fields; generated fields c
       /FIELD_CHANGE/,
     );
   }
-  // A custom field missing from the definition would be a removal, which the API cannot do.
+  // A custom field missing from the definition is a removal, refused unless explicitly allowed.
   const removed = document();
   removed.spec.fields = removed.spec.fields.filter((f) => f.name !== 'Note__c');
   await assert.rejects(preflightNativeDmo(removed, { get: async () => native() }), /FIELD_CHANGE/);

@@ -1,34 +1,68 @@
 import { operationDiagnostic } from './operation-diagnostic.js';
 import { NativeDmoError } from '../artifacts/native-dmo-document.js';
 import { preflightNativeDmo, deployNativeDmo } from './native-dmo.js';
+import type { NativeDmoDeployOptions } from './native-dmo.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
+
+export type DmoPreview = {
+  family: 'dmo';
+  outcome: 'create' | 'update' | 'unchanged';
+  target: 'absent' | 'existing';
+  absenceProof: 'confirmed-404' | 'none';
+  /** Custom target fields a deploy with --allow-field-removal removes. */
+  removeFields?: string[];
+  diagnostics: Array<{ code: string; message: string }>;
+};
 
 /**
  * Compare an exact native DMO without mutation.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
  * @param {string} [requestScope] Optional explicit data space.
- * @returns {Promise<object>} Payload-free comparison.
+ * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
+ * @returns {Promise<DmoPreview>} Payload-free comparison naming any planned field removals.
  */
-export async function preflightDmo(value: unknown, client: DmoClient, requestScope?: string) {
-  const plan = await preflightNativeDmo(value, client, requestScope);
+export async function preflightDmo(
+  value: unknown,
+  client: DmoClient,
+  requestScope?: string,
+  options: NativeDmoDeployOptions = {},
+): Promise<DmoPreview> {
+  const plan = await preflightNativeDmo(value, client, requestScope, options);
+  const removeFields = plan.operation === 'update' ? plan.removeFields : undefined;
   return {
-    family: 'dmo' as const,
+    family: 'dmo',
     outcome: plan.operation,
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'confirmed-404' : 'none',
-    diagnostics: [],
+    ...(removeFields ? { removeFields } : {}),
+    diagnostics: removeFields
+      ? [
+          {
+            code: 'DMO_FIELD_REMOVAL_PLANNED',
+            message: `Fields missing from the file are removed with one Metadata API destructive change: ${removeFields.join(', ')}.`,
+          },
+        ]
+      : [],
   };
 }
 /**
- * Execute one write with conservative dispatch evidence and independent readback.
+ * Execute at most one PATCH and one field removal with conservative dispatch evidence and
+ * independent readback.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
  * @param {string} [requestScope] Optional explicit data space.
+ * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
  * @returns {Promise<object>} Payload-free outcome.
  */
-export async function executeDmo(value: unknown, client: DmoClient, requestScope?: string) {
+export async function executeDmo(
+  value: unknown,
+  client: DmoClient,
+  requestScope?: string,
+  options: NativeDmoDeployOptions = {},
+) {
   let dispatched = false;
+  const remove = client.removeFields;
   const guarded: DmoClient = {
     ...client,
     create: async (body) => {
@@ -39,9 +73,17 @@ export async function executeDmo(value: unknown, client: DmoClient, requestScope
       dispatched = true;
       return client.update(name, body);
     },
+    ...(remove
+      ? {
+          removeFields: async (name: string, fieldNames: string[]) => {
+            dispatched = true;
+            return remove(name, fieldNames);
+          },
+        }
+      : {}),
   };
   try {
-    const result = await deployNativeDmo(value, guarded, requestScope);
+    const result = await deployNativeDmo(value, guarded, requestScope, undefined, options);
     if (result.operation === 'unchanged')
       return {
         outcome: 'unchanged' as const,
@@ -54,6 +96,7 @@ export async function executeDmo(value: unknown, client: DmoClient, requestScope
         result.operation === 'create'
           ? ('confirmed-created' as const)
           : ('confirmed-updated' as const),
+      ...(result.removedFields ? { removedFields: result.removedFields } : {}),
       diagnostics: [],
     };
   } catch (error) {

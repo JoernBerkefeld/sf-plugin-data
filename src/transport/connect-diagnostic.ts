@@ -283,6 +283,35 @@ export function retainConnectDiagnostic<T extends object>(
   return target;
 }
 
+const metadataProblems = new WeakMap<object, readonly string[]>();
+
+/**
+ * Retain at most three Metadata API problem texts that pass the same display filter as REST errors.
+ * A text that does not pass is dropped, never truncated or echoed.
+ * @template {object} T
+ * @param {T} target Existing error.
+ * @param {unknown[]} problems Candidate problem texts from a Metadata deployment receipt.
+ * @returns {T} Unchanged target identity.
+ */
+export function retainMetadataProblems<T extends object>(target: T, problems: unknown[]): T {
+  const safe: string[] = [];
+  for (const problem of problems.slice(0, 20)) {
+    const message = safeMessage(problem);
+    if (message && !safe.includes(message) && safe.length < 3) safe.push(message);
+  }
+  metadataProblems.set(target, Object.freeze(safe));
+  return target;
+}
+
+/**
+ * Read retained Metadata API problem texts.
+ * @param {unknown} target Existing error.
+ * @returns {ReadonlyArray<string> | undefined} Safe texts (possibly none), or undefined when no Metadata deployment failed.
+ */
+export function getMetadataProblems(target: unknown): readonly string[] | undefined {
+  if (target && typeof target === 'object') return metadataProblems.get(target);
+}
+
 /**
  * Read transport evidence without disclosing raw remote bodies, headers or causes.
  * @param {unknown} target Existing error or native Graph read result.

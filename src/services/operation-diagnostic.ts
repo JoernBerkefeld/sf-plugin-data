@@ -1,5 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
-import { diagnosticDataProperty, getConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import {
+  diagnosticDataProperty,
+  getConnectDiagnostic,
+  getMetadataProblems,
+} from '../transport/connect-diagnostic.js';
 
 const details = new WeakMap<Error, string>();
 const visibleKeys = new Set([
@@ -136,6 +140,7 @@ function difference(expected: unknown, observed: unknown, path: string, depth = 
  * @param {unknown} expected Expected protected state (not retained).
  * @param {unknown} observed Observed protected state (not retained).
  * @param {string} [path] Logical comparison root.
+ * @param {string} [hint] Static sentence naming the way forward.
  * @returns {T} The original error with a bounded, safe human explanation.
  */
 export function explainMismatch<T extends Error>(
@@ -145,9 +150,10 @@ export function explainMismatch<T extends Error>(
   expected: unknown,
   observed: unknown,
   path = 'state',
+  hint?: string,
 ): T {
   const identity = safeValue(resource, 'apiName');
-  const message = `Plugin verification failed during ${check} for ${identity}: ${difference(expected, observed, path)}.`;
+  const message = `Plugin verification failed during ${check} for ${identity}: ${difference(expected, observed, path)}.${hint ? ` ${hint}` : ''}`;
   details.set(error, message);
   error.message = `${error.message} ${message}`;
   return error;
@@ -180,6 +186,9 @@ export function operationDiagnostic(error: unknown, nextAction: string): string 
       connect.retryAfter === undefined ? '' : ` Server Retry-After: ${connect.retryAfter}.`;
     return `${explanation} Reduce request frequency and try later; effective limits can vary with load and change.${wait}${remote} Inspect the target before rerunning a write whose outcome is unknown; no automatic replay was performed. ${nextAction}`;
   }
+  const problems = getMetadataProblems(error);
+  if (problems)
+    return `Salesforce Metadata API did not confirm the destructive deployment${problems.length > 0 ? `: ${problems.join('; ')}` : '; no problem text is disclosed'}. ${nextAction}`;
   if (error instanceof Error && details.has(error)) return `${details.get(error)!} ${nextAction}`;
   const status =
     connect?.statusCode ??

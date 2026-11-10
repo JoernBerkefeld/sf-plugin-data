@@ -54,7 +54,7 @@ export class NativeDmoError extends Error {
 }
 
 export const nativeDmoName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dlm$/u;
-const fieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
+export const nativeDmoFieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
 const runtimeKeys = new Set([
   'id',
   'recordId',
@@ -120,7 +120,7 @@ export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
     const field = record(value);
     if (
       typeof field.name !== 'string' ||
-      !fieldName.test(field.name) ||
+      !nativeDmoFieldName.test(field.name) ||
       names.has(field.name.toLowerCase()) ||
       typeof field.label !== 'string' ||
       !field.label.trim() ||

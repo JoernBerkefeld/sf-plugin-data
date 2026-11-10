@@ -1,3 +1,30 @@
+# DMO field removal through the Metadata API — 2026-11-10
+
+`sf data360 deploy --allow-field-removal` removes custom DMO fields that exist in the
+target but not in the file, with one Metadata API destructive change for `CustomField`
+members after the PATCH for other changes. The native DMO API has no removal route;
+the Data Model UI removes fields through an internal Lightning action
+(`DataModelingController` `deleteDMOField`), which the plugin does not use. Without the
+flag a missing custom field is still refused. The primary key and generated fields are
+never removed. Version stays 0.1.0; nothing pushed.
+
+Live results through the source-tree CLI, manifest version 68.0: source org refusal
+without the flag, preview listing the fields, removal of two fields in one change,
+unchanged repeats, a label change plus a removal in one deploy, refusal of a missing
+primary key; then the same reduced definitions deployed to the target org, with
+retrieved files byte-identical to the source afterwards.
+
+Mapped fields: on an owned DLO, DMO and mapping in the source org, an unmapped field
+on the mapped DMO was removed normally. Salesforce also removed a mapped field
+without objection and silently dropped its pair from the mapping, which stayed
+ACTIVE. The plugin now refuses that case with `DMO_FIELD_REMOVAL_MAPPED`; removing
+the pair through a mapping deploy first and then the field worked. The `isMapped`
+marker on fields is no longer sent, compared or required by DMO deploys.
+
+Not covered: fields that hold data or are referenced by segments, calculated
+insights or relationships; non-default data spaces; an installed released package.
+All test objects were deleted from both orgs afterwards.
+
 # Native DMO create/update breadth and legacy DMO route removal — 2026-11-10
 
 Native DMO deploy no longer keeps local allowlists: category, field data types, label

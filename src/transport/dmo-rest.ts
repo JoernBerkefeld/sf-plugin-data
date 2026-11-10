@@ -1,8 +1,16 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
-import { apiReceiptDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import {
+  apiReceiptDiagnostic,
+  retainConnectDiagnostic,
+  retainMetadataProblems,
+} from './connect-diagnostic.js';
 import os from 'node:os';
 import path from 'node:path';
-import { NativeDmoError, nativeDmoName } from '../artifacts/native-dmo-document.js';
+import {
+  NativeDmoError,
+  nativeDmoFieldName,
+  nativeDmoName,
+} from '../artifacts/native-dmo-document.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
 
@@ -11,9 +19,28 @@ export type DmoClient = {
   create: (body: Record<string, unknown>) => Promise<unknown>;
   update: (targetApiName: string, body: Record<string, unknown>) => Promise<unknown>;
   delete: (targetApiName: string) => Promise<void>;
+  /** One Metadata API destructive deployment; absent on clients without a Metadata route. */
+  removeFields?: (targetApiName: string, fieldNames: string[]) => Promise<void>;
 };
 
 import { nativeApiVersion } from './api-version.js';
+
+/**
+ * Render a Metadata API package manifest from already validated content lines.
+ * @param {string} version Numeric API version.
+ * @param {string[]} lines Indented type entries; empty for the required empty package.xml.
+ * @returns {string} Manifest XML ending with LF.
+ */
+function manifest(version: string, lines: string[]): string {
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+    ...lines,
+    `    <version>${version}</version>`,
+    '</Package>',
+    '',
+  ].join('\n');
+}
 
 /**
  * Build a single-attempt native client with receipt-proven HTTP status.
@@ -105,7 +132,93 @@ export function createDmoClient(
     }
   }
 
+  /**
+   * Remove custom fields with one Metadata API destructive deployment; never retried.
+   * @param {string} targetApiName Exact full DMO name.
+   * @param {string[]} fieldNames Exact field names ending in __c.
+   * @returns {Promise<void>} Resolves only when every member is reported deleted.
+   */
+  async function removeFields(targetApiName: string, fieldNames: string[]): Promise<void> {
+    if (!nativeDmoName.test(targetApiName)) throw new NativeDmoError('INVALID_DMO_NAME');
+    if (
+      fieldNames.length === 0 ||
+      new Set(fieldNames).size !== fieldNames.length ||
+      fieldNames.some((name) => typeof name !== 'string' || !nativeDmoFieldName.test(name))
+    )
+      throw new NativeDmoError('INVALID_DMO_FIELD');
+    // Only names that matched the identifier patterns above reach the XML.
+    const members = fieldNames.map((name) => `${targetApiName}.${name}`);
+    verifyTemporaryDirectory();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'data360-dmo-field-removal-'));
+    await writeFile(path.join(root, 'package.xml'), manifest(version, []), { flag: 'wx' });
+    await writeFile(
+      path.join(root, 'destructiveChanges.xml'),
+      manifest(version, [
+        '    <types>',
+        ...members.map((member) => `        <members>${member}</members>`),
+        '        <name>CustomField</name>',
+        '    </types>',
+      ]),
+      { flag: 'wx' },
+    );
+    const receipt = await runner(
+      [
+        'project',
+        'deploy',
+        'start',
+        '--metadata-dir',
+        root,
+        '--target-org',
+        targetOrg,
+        '--wait',
+        '10',
+        '--json',
+      ],
+      root,
+    );
+    let envelope: { status?: unknown; message?: unknown; result?: Record<string, unknown> } = {};
+    try {
+      const parsed = JSON.parse(receipt.stdout) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        envelope = parsed as typeof envelope;
+    } catch {
+      /* An unreadable receipt confirms nothing. */
+    }
+    const result =
+      envelope.result && typeof envelope.result === 'object' ? envelope.result : undefined;
+    const details =
+      result?.details && typeof result.details === 'object'
+        ? (result.details as Record<string, unknown>)
+        : {};
+    const list = (value: unknown): Array<Record<string, unknown>> =>
+      (Array.isArray(value) ? value : [value]).filter(
+        (entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object',
+      );
+    const successes = list(details.componentSuccesses);
+    if (
+      receipt.exitCode === 0 &&
+      envelope.status === 0 &&
+      result?.success === true &&
+      result.status === 'Succeeded' &&
+      members.every((member) =>
+        successes.some(
+          (entry) =>
+            entry.fullName === member &&
+            entry.componentType === 'CustomField' &&
+            entry.deleted === true,
+        ),
+      )
+    )
+      return;
+    throw retainMetadataProblems(new NativeDmoError('DMO_FIELD_REMOVAL_FAILED'), [
+      ...list(details.componentFailures).map((failure) => failure.problem),
+      result?.errorMessage,
+      envelope.message,
+    ]);
+  }
+
   return {
+    removeFields,
     get: async (apiName) => request('GET', nameSuffix(apiName)),
     create: async (body) => request('POST', '', body),
     update: async (targetApiName, body) => request('PATCH', nameSuffix(targetApiName), body),

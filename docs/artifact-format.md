@@ -135,21 +135,36 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 - `creationType`, `isDistinct`, `usageTag` and `keyQualifierName` are never sent.
 - Generated fields (`DataSource__c`, `DataSourceObject__c`,
   `InternalOrganization__c`, names starting with `KQ_`, or `creationType: System`)
-  are left out of a create. A definition may also omit them for an update.
+  are left out of a create. A definition may also omit them for an update; they
+  are never removed.
 - An absent `spec.description` is not managed: an update leaves the target value as
   is. An explicit empty string clears it.
 - Field `description` and `isDynamicLookup` are accepted by the API but never
-  returned by reads. They are sent when a field is created or otherwise edited; a
-  change to them alone cannot be detected or confirmed.
+  returned by reads, and a field description does not appear in the Data Model UI.
+  They are sent when a field is created or otherwise edited; a change to them alone
+  cannot be detected or confirmed.
 - An update sends the object label, a changed description, a changed category
   (Salesforce rejects category changes), changed extra `spec` keys, and the edited
   and added fields.
 
+- A custom field that exists in the target and is missing from the file is a
+  removal. `sf data360 deploy --allow-field-removal` removes such fields with one
+  Metadata API destructive change for `CustomField`
+  `<ObjectName>__dlm.<FieldName>__c`, after the PATCH for other changes. The
+  primary-key field must stay in the file. A field that is currently mapped is
+  refused with `DMO_FIELD_REMOVAL_MAPPED`.
+- The `isMapped` marker on a field is saved as retrieved but describes the mapping,
+  not the DMO: it is never sent, compared or required.
+
 Refused before any write: changing an existing field's `dataType` or
-`isPrimaryKey`, omitting a custom field that exists in the target
+`isPrimaryKey`, omitting a custom field that exists in the target without
+`--allow-field-removal`, omitting the target's primary-key field
 (`UNSUPPORTED_DMO_FIELD_CHANGE`), adding a generated field or a second primary key
 (`UNSUPPORTED_DMO_FIELD_ADDITION`), and any deploy or delete of a standard,
 namespaced or platform-generated DMO (`UNSUPPORTED_DMO_TARGET`).
+
+Field removal is observed on empty, unmapped custom DMOs. Removing a mapped or
+data-bearing field is not verified.
 
 The values Salesforce accepted in live verification at API 68 (categories, field
 data types, label length and key rules) are listed in the README's Public DMO
