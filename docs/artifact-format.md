@@ -163,11 +163,20 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   `DataSourceObject__c` to `ssot__DataSourceObjectId__c`, `InternalOrganization__c`
   to `ssot__InternalOrganizationId__c` and `KQ_Id__c` to `KQ_Id__c`; on a custom DMO
   the generated pairs are same-name. Generated pairs are saved by retrieve and never
-  sent by deploy. Creating the first mapping onto a standard DMO that is not yet
-  enabled activates it permanently; preview and create report
+  sent by deploy. A file with only the authored pairs can create a mapping; once the
+  mapping exists, a deploy requires the file to list the generated pairs as well
+  (`MAPPING_PROTECTED_PAIR_REQUIRED`), so retrieve the mapping and edit that file. A
+  pair onto a standard field cannot be removed, and a mapping that has such pairs
+  cannot be deleted; the last mapping of a DMO cannot be deleted either
+  (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`). Creating the first mapping onto a standard
+  DMO that is not yet enabled activates it permanently; preview and create report
   `MAPPING_ACTIVATES_STANDARD_DMO`. A pair may be removed from a mapping file even
-  when another mapping targets the same field. Both behaviours are observed at API 68
-  through the raw API and covered by synthetic tests in the plugin.
+  when another mapping targets the same field. Observed at API 68 through the plugin:
+  a mapping created onto an already active standard DMO from a file with two authored
+  pairs, the retrieved file deploying back unchanged, the activation notice in a
+  preview, and the removal of a field shared by two mappings of a custom DMO. A real
+  first mapping onto an inactive standard DMO through the plugin is not verified; the
+  activation itself is observed through the raw API.
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one
@@ -197,16 +206,18 @@ Refused before any write: changing an existing field's `dataType` or
 DMO or of a custom DMO under a namespaced name, creating a namespaced DMO, and
 deleting a standard DMO (`UNSUPPORTED_DMO_TARGET`).
 
-Field removal is observed on empty, unmapped custom DMOs and on one unused standard
-DMO. Removing a mapped or data-bearing field is not verified. Standard DMO writes
-are observed at API 68 on one unused standard DMO (add, relabel and remove a custom
-field; object label and description changed and reverted); a category change,
-standard DMOs in active use and platform-generated DMOs are not tested.
+Field removal is observed on empty custom DMOs, unmapped and mapped by one or two
+mappings, and on one standard DMO. Removing a data-bearing field is not verified.
+Standard DMO writes are observed at API 68 through the plugin on one standard DMO in
+two orgs, active in only one of them (add and relabel a custom field; remove it with
+`--allow-field-removal` and with `delete --field`; object description set and
+cleared); a category change, standard DMOs in active use and platform-generated DMOs
+are not tested.
 
 The values Salesforce accepted in live verification at API 68 (categories, field
 data types, label length and key rules) are listed in the README's Public DMO
 workflow. That verification used empty, unmapped custom DMOs in the default data
-space. Mapped or data-bearing DMOs, non-default data spaces, other API versions,
+space. Data-bearing DMOs, non-default data spaces, other API versions,
 relationships and SQL/flex DMOs are not qualified.
 
 DMOs use only `data360/dmo/<ApiName>__dlm.dmo-meta.json`.

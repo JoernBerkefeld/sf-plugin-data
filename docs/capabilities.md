@@ -386,8 +386,8 @@ retrieved files and never sent. After a write the plugin polls reads (up to 6,
 5 seconds apart) to confirm the requested definition and the absence of removed
 fields; a write is never repeated.
 
-Live-verified at API 68 on two orgs with empty, unmapped custom DMOs in the default
-data space (API probes and plugin acceptance, 2026-11-10):
+Observed at API 68 on two orgs with empty, unmapped custom DMOs in the default data
+space:
 
 - [x] Create with the categories Profile, Engagement and Other. Segment_Membership
       is internal-only; the other ten schema values are rejected. Input spelling is
@@ -455,9 +455,12 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   written PATCH, otherwise `blocked`) and the batch stops. It never sends a second
   PATCH. A batch that stops between the stages reports `DMO_FIELD_REMOVAL_PENDING`
   on the DMO item.
-- The two-stage order is observed at API 68 on one mapped custom DMO with one mapping.
-  A field held by several mappings needs every one of them selected without its
-  pair; that case and a standard DMO are covered by synthetic tests only.
+- The two-stage order is observed at API 68 on mapped custom DMOs with one mapping and
+  with two mappings sharing the field. A field held by several mappings needs every
+  one of them selected without its pair; one deploy of both mapping files plus the DMO
+  file removed both pairs and then the field (about 11 minutes, almost all in the
+  mapping deploys), and a repeat reported unchanged. A mapped custom field of a
+  standard DMO is covered by synthetic tests only.
 - Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold
   data or are referenced by a segment, calculated insight, relationship or other
   component.
@@ -508,14 +511,18 @@ Standard DMO rules:
   `--dataspace`.
 - Readback confirms the label, a managed description, the custom fields of the file
   and the absence of removed fields.
-- [x] Observed at API 68 on one unused standard DMO: add, relabel and remove a custom
-      field; object label changed and reverted; object description set and cleared;
+- [x] Observed at API 68 through the plugin on one standard DMO in two orgs, active in
+      only one of them: add and relabel a custom field; remove it with
+      `--allow-field-removal` and with `delete --field` (local file refreshed);
+      object description set and cleared; a changed standard field refused;
+      whole-object delete refused; a file retrieved in one org deploys unchanged to
+      the other.
+- [x] Observed at API 68 on one standard DMO: object label changed and reverted;
       Salesforce rejects an edit of a standard field ("Data model fields cannot start
       with ssot__").
 - [ ] Not tested: a category change on a standard DMO, standard DMOs in active use
-      (mapped, data-bearing, referenced), deleting a standard DMO, anything on
-      platform-generated DMOs. Field-level delete on a standard DMO and removal of a
-      mapped custom field are covered by synthetic tests only.
+      (data-bearing, referenced), anything on platform-generated DMOs. Removal of a
+      mapped custom field of a standard DMO is covered by synthetic tests only.
 
 Native mapping targets, decided from the same raw read:
 
@@ -531,7 +538,9 @@ Native mapping targets, decided from the same raw read:
   `InternalOrganization`. The key qualifier pair is `KQ_<Key>__c` on both sides for
   the source primary key `<Key>__c`; on a DMO that is not yet enabled its target
   field may still be absent. Generated pairs are never sent and, with the key pair,
-  never unmapped.
+  never unmapped. A file with only the authored pairs can create a mapping; once the
+  mapping exists, a deploy requires the file to list the generated pairs as well
+  (`MAPPING_PROTECTED_PAIR_REQUIRED`), so retrieve the mapping and edit that file.
 - Activation notice: when the raw target read of a standard DMO does not say
   `isEnabled: true`, the preview item and the created item carry
   `MAPPING_ACTIVATES_STANDARD_DMO`. The first mapping enables the object for good
@@ -542,19 +551,31 @@ Native mapping targets, decided from the same raw read:
   like on a custom DMO, which also makes the single deploy command for a mapped
   custom field work on a standard DMO. A pair onto a standard field is not unmapped
   (`MAPPING_UNMAP_FIELD_POLICY_UNPROVEN`), so a mapping holding such pairs is not
-  deleted; the last mapping of a DMO is never deleted.
+  deleted; the last mapping of a DMO is never deleted
+  (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`). For a custom DMO, deleting the DMO removes
+  its mapping.
 - Shared target field: a pair is removed even when another mapping of the same DMO
   targets the same field. The field must then keep `isMapped: true`; it loses the
   marker with the last such pair. An addition onto a field another mapping targets
   stays refused (`MAPPING_ADDITION_POLICY_UNPROVEN`).
-- [x] Observed at API 68 through the raw API: one mapping onto one unused standard DMO
-      (HTTP 201, two authored and four generated pairs, permanent activation, HTTP 500
-      on deleting the only mapping); per-pair removal on a field shared by two
-      mappings of a custom DMO (both stay ACTIVE with their other pairs, the field is
-      unmapped after the second removal).
-- [ ] Not run live through the plugin: mapping deploy, reconciliation and delete onto
-      a standard DMO, the activation notice, shared-field removal and the single
-      deploy command with two mappings. They are covered by synthetic tests.
+- [x] Observed at API 68 through the plugin: a mapping created onto one already active
+      standard DMO, together with its data lake object, from a hand-written file with
+      the pairs `Id__c` to `ssot__Id__c` and `Name__c` to `ssot__Name__c`; the four
+      generated pairs added by Salesforce; the retrieved mapping deploying back with
+      no change; the activation notice in a mapping preview against a second org where
+      the same standard DMO is not active, with nothing changed.
+- [x] Observed at API 68 through the plugin on a custom DMO field shared by two
+      mappings: `delete --field` removed the pair from both mappings and then the
+      field (about 30 seconds); one deploy of both mapping files plus the DMO file
+      with `--allow-field-removal` did the same (about 11 minutes) and a repeat
+      reported unchanged.
+- [x] Observed at API 68 through the raw API: activation by the first mapping onto one
+      unused standard DMO (HTTP 201, object enabled, category from Unassigned to
+      Other, `KQ_Id__c` added and referenced by the standard primary key, not undone
+      by deleting the mapping) and HTTP 500 on deleting the only mapping.
+- [ ] Not run live through the plugin: a real first mapping onto an inactive standard
+      DMO, and pair removal, reconciliation and mapping delete onto a standard DMO.
+      The latter are covered by synthetic tests.
 
 Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read
 or written. Salesforce may cascade to the DMO's mapping. Deletion resolves the exact
@@ -592,8 +613,9 @@ Field-level delete,
   `localFiles` with `exists`.
 - Result item: operation `delete-field`, `removedFields`, `unmappedPairs`,
   `refreshedFiles`. A repeat after success is refused with `DMO_FIELD_NOT_FOUND`.
-- Observed at API 68: a mapped field with one mapping, and unmapped fields in a second
-  org. Fields mapped by several mappings are covered by synthetic tests only.
+- Observed at API 68: a mapped field with one mapping, a field shared by two mappings
+  of a custom DMO (both pairs, then the field, in about 30 seconds), a custom field
+  of a standard DMO in two orgs, and unmapped fields in a second org.
 
 Git selection (`--changed-since`) uses the native DMO file. A native DMO changed
 since a Git reference, or selected beside Segment/CI/Graph/IR inputs, joins the
@@ -603,9 +625,9 @@ is read at the native version while each other family keeps its own version rule
 
 Not qualified:
 
-- [ ] Mapped or data-bearing DMOs.
+- [ ] Data-bearing DMOs and standard DMOs in active use.
+- [ ] A real first mapping onto an inactive standard DMO through the plugin.
 - [ ] Field removal of data-bearing or otherwise referenced fields.
-- [ ] Field-level delete (`delete --field`) against an org.
 - [ ] Non-default data spaces.
 - [ ] API versions other than 68 for the behaviour listed above.
 - [ ] Relationships and SQL/flex DMOs.
