@@ -1431,6 +1431,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     : raw.status === 'ACTIVE' &&
                       actual.spec.label === desired.label &&
                       actual.spec.category === desired.category &&
+                      (desired.eventDateTimeFieldName === undefined ||
+                        actual.spec.eventDateTimeFieldName === desired.eventDateTimeFieldName) &&
                       desired.fields.every((field) => {
                         const found = fields.get(field.name);
                         return (

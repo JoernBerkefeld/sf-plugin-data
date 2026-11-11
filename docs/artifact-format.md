@@ -190,11 +190,19 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 - A data lake object file (`data360/dlo/<FullApiName>__dll.dlo-meta.json`) for an
   existing data lake object may omit the fields Salesforce generated:
   `cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
-  `InternalOrganization__c` and the key qualifier of the primary key (`KQ_<Key>__c`,
-  for example `KQ_Id__c`). They stay as they are. Any other field of the target that
-  the file omits is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is
-  compared on the keys the file states: keys only the org's copy carries are ignored,
-  and a stated key that differs is refused with the same code.
+  `InternalOrganization__c`, `cdp_sys_PartitionDate__c` on Engagement data lake
+  objects and the key qualifier of the primary key (`KQ_<Key>__c`, for example
+  `KQ_Id__c`). They stay as they are. Any other field of the target that the file
+  omits is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on
+  the keys the file states: keys only the org's copy carries are ignored, and a
+  stated key that differs is refused with the same code.
+- The data lake object `spec` holds `label`, `category`, `fields` and, optionally,
+  `eventDateTimeFieldName`: the full name (with `__c`) of one of the listed fields
+  that dates each record. Engagement data lake objects need it; create sends it
+  without the suffix and retrieval saves it. The category is sent as written and
+  Salesforce decides. Neither the category nor the event field can change after
+  create: a changed value is refused with `UNSUPPORTED_DLO_CATEGORY_CHANGE` or
+  `UNSUPPORTED_DLO_EVENT_FIELD_CHANGE` before any write.
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one

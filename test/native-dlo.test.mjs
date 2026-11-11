@@ -656,3 +656,99 @@ test('REST never treats generic CLI errors or malformed success as absence', asy
     (error) => error.status === 404 && error.code === 'DLO_HTTP_ERROR',
   );
 });
+
+// Engagement DLOs carry an event field; Salesforce adds cdp_sys_PartitionDate__c with it.
+const engagement = () => {
+  const raw = native();
+  raw.category = 'Engagement';
+  raw.eventDateTimeFieldName = 'EventAt__c';
+  raw.dataLakeFieldInfoRepresentation.push(
+    { ...field('EventAt__c'), dataType: 'DateTime' },
+    { ...field('cdp_sys_PartitionDate__c'), dataType: 'DateTime' },
+  );
+  return raw;
+};
+
+test('create sends any category as authored, and the event field of an Engagement DLO', async () => {
+  for (const category of ['Profile', 'Insights', 'Content']) {
+    const file = document();
+    file.spec.category = category;
+    const plan = await preflightNativeDlo(file, { get: absent });
+    assert.equal(plan.body.category, category);
+    assert.equal(plan.body.eventDateTimeFieldName, undefined);
+  }
+  const file = normalizeDlo(engagement());
+  assert.equal(file.spec.eventDateTimeFieldName, 'EventAt__c');
+  const plan = await preflightNativeDlo(file, { get: absent });
+  assert.equal(plan.body.category, 'Engagement');
+  assert.equal(plan.body.eventDateTimeFieldName, 'EventAt');
+  // The generated partition field is never sent.
+  assert.deepEqual(
+    plan.body.dataLakeFieldInputRepresentations.map((entry) => entry.name),
+    ['Id', 'Note', 'EventAt'],
+  );
+});
+
+test('the event field must be a listed field and cannot change after create', async () => {
+  const file = normalizeDlo(engagement());
+  assert.throws(
+    () =>
+      validateDloDocument({
+        ...file,
+        spec: { ...file.spec, eventDateTimeFieldName: 'Missing__c' },
+      }),
+    /INVALID_DLO_DOCUMENT/u,
+  );
+  assert.throws(
+    () =>
+      validateDloDocument({ ...file, spec: { ...file.spec, eventDateTimeFieldName: 'bad name' } }),
+    /INVALID_DLO_DOCUMENT/u,
+  );
+  const target = { get: async () => engagement() };
+  // Unchanged, also when the file omits the generated partition field.
+  const omitted = structuredClone(file);
+  omitted.spec.fields = omitted.spec.fields.filter(
+    (entry) => entry.name !== 'cdp_sys_PartitionDate__c',
+  );
+  const unchanged = await preflightNativeDlo(omitted, target);
+  assert.equal(unchanged.operation, 'unchanged');
+  const moved = structuredClone(file);
+  moved.spec.fields.push({ ...field('OtherAt__c'), dataType: 'DateTime' });
+  moved.spec.eventDateTimeFieldName = 'OtherAt__c';
+  await assert.rejects(
+    preflightNativeDlo(moved, target),
+    (error) => error.code === 'UNSUPPORTED_DLO_EVENT_FIELD_CHANGE',
+  );
+});
+
+test('the event field matches a listed field exactly, round-trips through the writer, and is managed only when listed', async () => {
+  const file = normalizeDlo(engagement());
+  assert.throws(
+    () =>
+      validateDloDocument({
+        ...file,
+        spec: { ...file.spec, eventDateTimeFieldName: 'eventat__c' },
+      }),
+    /INVALID_DLO_DOCUMENT/u,
+  );
+  // The writer saves the key and the deploy reader admits it unchanged.
+  const root = await mkdtemp(path.join(os.tmpdir(), 'data360-dlo-event-'));
+  const saved = await writeDloDocument(normalizeDlo(engagement()), root, false);
+  const reread = JSON.parse(await readFile(saved.path, 'utf8'));
+  assert.equal(reread.spec.eventDateTimeFieldName, 'EventAt__c');
+  assert.deepEqual(validateDloDocument(reread), reread);
+  // A file without the key does not manage it: the target's event field stays as it is.
+  const unmanaged = structuredClone(file);
+  delete unmanaged.spec.eventDateTimeFieldName;
+  const plan = await preflightNativeDlo(unmanaged, { get: async () => engagement() });
+  assert.equal(plan.operation, 'unchanged');
+  // Create without the key sends none, whatever the category; with it, any category sends it.
+  const bare = structuredClone(unmanaged);
+  const create = await preflightNativeDlo(bare, { get: absent });
+  assert.equal(create.body.category, 'Engagement');
+  assert.equal(Object.hasOwn(create.body, 'eventDateTimeFieldName'), false);
+  const other = structuredClone(file);
+  other.spec.category = 'Other';
+  const sent = await preflightNativeDlo(other, { get: absent });
+  assert.equal(sent.body.eventDateTimeFieldName, 'EventAt');
+});

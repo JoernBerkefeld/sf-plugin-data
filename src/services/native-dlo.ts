@@ -26,6 +26,8 @@ export type DloDeployPlan =
 
 const systemFields = new Set([
   'cdp_sys_SourceVersion__c',
+  // Engagement DLOs: Salesforce adds it with the event field.
+  'cdp_sys_PartitionDate__c',
   'DataSource__c',
   'DataSourceObject__c',
   'InternalOrganization__c',
@@ -113,7 +115,6 @@ export async function preflightNativeDlo(
   } catch (error) {
     if (!(error instanceof DloError) || error.code !== 'DLO_HTTP_ERROR' || error.status !== 404)
       throw error;
-    if (desired.spec.category !== 'Other') throw new DloError('UNSUPPORTED_DLO_CREATE_CATEGORY');
     const fields = desired.spec.fields.filter((field) => !generated(field));
     if (fields.filter((field) => field.isPrimaryKey).length !== 1)
       throw new DloError('INVALID_DLO_PRIMARY_KEY');
@@ -123,14 +124,31 @@ export async function preflightNativeDlo(
       body: {
         name: apiName.slice(0, -5),
         label: desired.spec.label,
-        category: 'Other',
+        category: desired.spec.category,
+        ...(desired.spec.eventDateTimeFieldName === undefined
+          ? {}
+          : { eventDateTimeFieldName: desired.spec.eventDateTimeFieldName.slice(0, -3) }),
         dataspaceInfo: [{ name: desired.identity.dataSpace }],
         dataLakeFieldInputRepresentations: fields.map((field) => fieldInput(field)),
       },
     };
   }
+  // Neither can change after create: a PATCH naming them is rejected (HTTP 400, live API 68).
   if (desired.spec.category !== target.document.spec.category)
     throw new DloError('UNSUPPORTED_DLO_CATEGORY_CHANGE');
+  if (
+    desired.spec.eventDateTimeFieldName !== undefined &&
+    desired.spec.eventDateTimeFieldName !== target.document.spec.eventDateTimeFieldName
+  )
+    throw explainMismatch(
+      new DloError('UNSUPPORTED_DLO_EVENT_FIELD_CHANGE'),
+      'event field preservation',
+      apiName,
+      target.document.spec.eventDateTimeFieldName,
+      desired.spec.eventDateTimeFieldName,
+      'spec.eventDateTimeFieldName',
+      'The event field of a data lake object is set on create and cannot be changed.',
+    );
   const existing = new Map(target.document.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
   const keyQualifiers = new Set(
@@ -161,6 +179,7 @@ export async function preflightNativeDlo(
         field,
         incoming.get(name),
         `fields.${name}`,
+        'Salesforce only adds fields to an existing data lake object: a changed field is rejected (HTTP 400), and removing one is refused by the Metadata API ("setup object in use"); only external data lake objects have a field delete route.',
       );
   }
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));

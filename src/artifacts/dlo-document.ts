@@ -10,7 +10,13 @@ export type DloDocument = {
   schemaVersion: 1;
   kind: 'dlo';
   identity: { apiName: string; dataSpace: string };
-  spec: { label: string; category: string; fields: DloField[] };
+  spec: {
+    label: string;
+    category: string;
+    /** Engagement DLOs: the DateTime field that dates each record; fixed after create. */
+    eventDateTimeFieldName?: string;
+    fields: DloField[];
+  };
 };
 
 /** Payload-free native DLO refusal, with an authoritative HTTP status when available. */
@@ -53,8 +59,11 @@ export function validateDloDocument(value: unknown): DloDocument {
     !['identity', 'kind', 'schemaVersion', 'spec'].every((key) => Object.hasOwn(document, key)) ||
     Object.keys(identity).length !== 2 ||
     !['apiName', 'dataSpace'].every((key) => Object.hasOwn(identity, key)) ||
-    Object.keys(spec).length !== 3 ||
+    Object.keys(spec).length !== (Object.hasOwn(spec, 'eventDateTimeFieldName') ? 4 : 3) ||
     !['category', 'fields', 'label'].every((key) => Object.hasOwn(spec, key)) ||
+    (Object.hasOwn(spec, 'eventDateTimeFieldName') &&
+      (typeof spec.eventDateTimeFieldName !== 'string' ||
+        !fieldName.test(spec.eventDateTimeFieldName))) ||
     document.schemaVersion !== 1 ||
     document.kind !== 'dlo' ||
     typeof identity.apiName !== 'string' ||
@@ -93,6 +102,12 @@ export function validateDloDocument(value: unknown): DloDocument {
   }
   if (spec.fields.filter((field) => record(field).isPrimaryKey === true).length !== 1)
     throw new DloError('INVALID_DLO_PRIMARY_KEY');
+  // The event field has to name one of the listed fields exactly.
+  if (
+    spec.eventDateTimeFieldName !== undefined &&
+    !spec.fields.some((field) => record(field).name === spec.eventDateTimeFieldName)
+  )
+    throw new DloError('INVALID_DLO_DOCUMENT');
   return structuredClone(value) as DloDocument;
 }
 
@@ -135,6 +150,9 @@ export function normalizeDlo(value: unknown, dataSpace?: string): DloDocument {
     spec: {
       label: object.label,
       category: object.category,
+      ...(typeof object.eventDateTimeFieldName === 'string'
+        ? { eventDateTimeFieldName: object.eventDateTimeFieldName }
+        : {}),
       fields: fields.map((field) =>
         Object.fromEntries(
           Object.entries(record(field)).filter(([key]) => !runtimeFieldKeys.has(key)),

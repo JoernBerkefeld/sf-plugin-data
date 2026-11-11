@@ -272,12 +272,28 @@ test('README separates DLO field admission from live Text qualification', () => 
   for (const text of [
     'Local validation accepts nonempty `dataType` strings rather than a Text-only allowlist',
     'UPDATE admits label changes and ordinary nonprimary field additions',
-    'not live qualification of every field type',
-    'installed additive-field acceptance here covers Text',
-    'Field removal, existing-field changes and primary-key mutation remain blocked',
+    'Salesforce decides the type of a field',
+    'Create sends `spec.category` as the file states it and Salesforce decides',
+    'An Engagement DLO needs `spec.eventDateTimeFieldName`',
+    '`cdp_sys_PartitionDate__c`',
+    'a changed category is refused with `UNSUPPORTED_DLO_CATEGORY_CHANGE`',
+    'a changed event field with `UNSUPPORTED_DLO_EVENT_FIELD_CHANGE`',
+    'Field removal, existing-field changes and primary-key mutation are therefore refused with `UNSUPPORTED_DLO_FIELD_CHANGE`',
   ])
     assert.ok(dlo.includes(text), text);
   assert.ok(!dlo.includes('Update supports a label change and new nonprimary Text fields'));
+  assert.ok(!dlo.includes('Other-category CREATE'));
+  assert.ok(!dlo.includes('additive-field acceptance here covers Text'));
+});
+
+test('user docs no longer name the removed DLO create-category refusal', () => {
+  for (const path of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md'])
+    assert.ok(
+      !readFileSync(new URL(path, import.meta.url), 'utf8').includes(
+        'UNSUPPORTED_DLO_CREATE_CATEGORY',
+      ),
+      path,
+    );
 });
 
 test('delete help discloses whole-mapping deletion and bounded qualification', async () => {

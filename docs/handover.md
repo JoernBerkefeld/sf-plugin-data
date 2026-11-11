@@ -1,3 +1,42 @@
+# DLO categories and event field — 2026-11-11
+
+DLO create sends `spec.category` as the file states it and lets Salesforce decide;
+the local Other-only rule and `UNSUPPORTED_DLO_CREATE_CATEGORY` are gone. Salesforce's
+API lists Profile, Engagement, Other, Directory_Table, Observability_Table, Insights,
+Vector_Embedding and Content. Version stays 0.1.0; nothing pushed.
+
+- New optional `spec.eventDateTimeFieldName` in the DLO file: the full field name
+  with `__c`, one of the listed fields. Engagement DLOs need it. Create sends it
+  without `__c`; retrieve saves it.
+- Salesforce adds the DateTime field `cdp_sys_PartitionDate__c` to Engagement DLOs.
+  It counts as generated: never sent, and a file may leave it out.
+- Category and event field are fixed after create: a PATCH naming either is rejected
+  (HTTP 400, unrecognized field). A changed category is refused with
+  `UNSUPPORTED_DLO_CATEGORY_CHANGE`, a changed event field with
+  `UNSUPPORTED_DLO_EVENT_FIELD_CHANGE`, both before any write. A file without the key
+  is not compared.
+- Existing DLOs take field additions only, of any type Salesforce accepts. A changed
+  field is rejected by Salesforce (HTTP 400 "fields already exist"), removal is
+  refused by the Metadata API ("setup object in use") and the REST field DELETE works
+  only for external DLOs. `UNSUPPORTED_DLO_FIELD_CHANGE` now states that reason.
+
+Live evidence, API 68:
+
+1. Raw probes, `isolated-source`: create with category Profile 201 and Engagement 201
+   (with `eventDateTimeFieldName`); field label PATCH 400; category PATCH 400;
+   Metadata field removal "setup object in use"; REST field DELETE 400 "not an
+   external Data Lake Object".
+2. Raw probe, `isolated-target`: `eventDateTimeFieldName` PATCH 400 (unrecognized
+   field).
+3. Plugin, `isolated-target`: Profile and Engagement DLOs created (27 seconds for
+   both), redeploy unchanged (4 seconds), retrieve then redeploy of the retrieved
+   files unchanged (3 seconds), one field added to the Engagement DLO (14 seconds), a
+   changed event field refused with `UNSUPPORTED_DLO_EVENT_FIELD_CHANGE` and nothing
+   written. All fixtures deleted, 404 afterwards.
+
+Not verified: the other listed categories, data-bearing DLOs, non-default data
+spaces.
+
 # Mapping allowlists removed — 2026-11-11
 
 Mapping create and update send the pairs the file lists and let Salesforce decide.

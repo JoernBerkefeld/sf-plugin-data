@@ -127,8 +127,17 @@ for example `KQ_Id__c`); they stay as they are, so a hand-written file with only
 authored fields deploys onto its existing DLO. Any other omitted field is refused
 (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on the keys the file
 states; keys only the org's copy carries are ignored, and a differing stated key is
-refused with the same code. Label changes and ordinary nonprimary Text additions
-retain the existing update route.
+refused with the same code. On Engagement DLOs the file may also omit
+`cdp_sys_PartitionDate__c`, the DateTime field Salesforce adds with the event field.
+Label changes and nonprimary field additions of any type Salesforce accepts use the
+update route; changed or removed existing fields are refused with the same code.
+Create sends the category as the file states it, and for Engagement the event field
+`spec.eventDateTimeFieldName`; neither can change afterwards, so a changed category
+is refused with `UNSUPPORTED_DLO_CATEGORY_CHANGE` and a changed event field with
+`UNSUPPORTED_DLO_EVENT_FIELD_CHANGE`, before any write. Observed at API 68 through
+the plugin on 2026-11-11: a Profile and an Engagement DLO created, redeployed and
+round-tripped through retrieval unchanged, a field added to the Engagement DLO, and
+a changed event field refused with nothing written.
 
 Fresh isolated-installed API68 acceptance retrieved an empty standalone Other/default
 DLO from the source and deployed the exact saved file into the target, with differing
