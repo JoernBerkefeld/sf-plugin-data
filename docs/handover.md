@@ -1,3 +1,84 @@
+# Faster deploy reads and mapped-field removal in one destructive change — 2026-11-11
+
+Deploy reads go over one bound connection, settle reads are spaced explicitly, and a
+mapped DMO field is removed with a single Metadata API destructive change in both
+paths. Version stays 0.1.0; nothing pushed.
+
+- Reads during `sf data360 deploy`: DLOs, DMOs and mappings are read over one
+  authenticated connection per org and API version instead of one CLI process per
+  read. Writes (POST, PATCH, Metadata API deployments) still go through the
+  Salesforce CLI.
+- Settle spacing: settle reads after a DLO, DMO or mapping write take up to 6 reads, 3
+  seconds apart, and stop as soon as the state is confirmed. DMO readback after a DMO
+  write and field-removal readback take up to 6 reads, 5 seconds apart.
+- Field-removal shortcut: Salesforce drops a field's mapping pairs itself when the
+  field is removed through the Metadata API. Both `delete --field` and
+  `deploy --allow-field-removal` now remove a mapped field with that one destructive
+  change and no longer delete pairs one by one.
+- Checks around the write (both paths): admission is unchanged (field exists, is
+  custom, not the primary key, not generated; every pair identified on an ACTIVE
+  mapping whose detail read equals its list entry). Right before the write the DMO
+  and all its mappings are read again; for `delete --field` the pairs must still be
+  the planned ones (`MAPPING_UNMAP_PLAN_CHANGED`), and for deploy a pair held by an
+  unselected mapping or on an uncovered field stops with `DMO_FIELD_REMOVAL_MAPPED`.
+  When the deploy also sent a PATCH, it waits until the PATCH is readable. After the
+  write, polled reads must show the fields absent and every mapping equal to its
+  earlier state minus exactly the removed pairs, ACTIVE; anything else gives
+  `DMO_FIELD_REMOVAL_SIDE_EFFECT`. Not settled: `DMO_PERSISTENCE_UNCONFIRMED` or
+  `MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED`. Never retried, never rolled back.
+- Combined deploy: the DMO deploys in its normal position (DLO, DMO, mapping) with its
+  PATCH and then the destructive change, and reports `removedFields` and
+  `droppedPairs`. The selected mapping files deploy afterwards and find the pairs
+  gone. The two-stage order and `DMO_FIELD_REMOVAL_PENDING` are removed. The preview
+  diagnostic `DMO_FIELD_REMOVAL_PLANNED` says Salesforce drops the pairs with the
+  field. `delete --field` no longer has an API-version restriction for pairs; its
+  preview line reads "Planned pair drop (Salesforce removes it with the field)" and
+  its output "dropped pair S -> T in mapping M".
+
+Live evidence, API 68, `isolated-source`: a raw Metadata API removal of `Note__c`,
+mapped by two mappings, dropped exactly that field's pairs; every other pair kept its
+selector, both mappings stayed ACTIVE, DMO properties and other fields were
+unchanged. Recorded in the verification DB entry
+`data360:dmo.native-create-update-breadth.api68` (row 13).
+
+Timings on empty synthetic fixtures, before and after:
+
+| Operation                                                            | Before                                    | After |
+| -------------------------------------------------------------------- | ----------------------------------------- | ----- |
+| Create DLO + custom DMO + mapping                                    | about 107 s                               | 45 s  |
+| Unchanged redeploy (3 files before; 2 DLOs + DMO + 2 mappings after) | 62 s                                      | 9 s   |
+| Mapping deploy removing one pair                                     | 214–304 s (36 CLI processes for one pair) | 17 s  |
+| Two mapping deploys each adding one pair                             | not measured                              | 32 s  |
+| Mixed: field added to DLO and DMO, one pair added, one dropped       | 335 s                                     | 64 s  |
+| Combined removal of a mapped field (two mappings before)             | about 11 minutes                          | 29 s  |
+| `delete --field` on a field mapped by two mappings                   | about 30 s                                | 28 s  |
+| `delete -m mapping:<Name>` (non-last mapping of a custom DMO)        | 48 s                                      | 21 s  |
+| Delete of two custom DMOs                                            | not measured                              | 24 s  |
+| Combined deploy: DMO label change plus removal of a mapped field     | not measured                              | 39 s  |
+
+Incident: the first live run of the mixed row after switching to bound reads failed
+with `NATIVE_PARENT_SETTLEMENT_UNCONFIRMED`. The settle loops had relied on the CLI
+start-up time as their delay, and with fast reads they ran out of attempts before the
+parent settled. Fixed with explicit spacing (`readback-pace`) before the
+measurements above.
+
+Review: one read-only review of the change returned four must-fix items, all fixed
+before the commit: runtime keys (`lastModifiedDate`, `status` and the like) are left out
+of the before/after DMO comparison; the deploy refuses before the removal when the fresh
+snapshot holds a pair the admission did not cover; a PATCH is read back before the
+removal; stale help text rewritten. The PATCH-plus-removal path was then run live (label
+change and removal of a mapped field in one deploy, 39 s, mapping reported unchanged).
+All fixtures were deleted afterwards (DMOs and DLOs read 404).
+
+Tests: `test/native-dmo-staged-field-removal.test.mjs` renamed to
+`test/native-dmo-combined-field-removal.test.mjs`; new
+`test/bound-read-clients.test.mjs`, `test/readback-pace.test.mjs` and the helper
+`test/support/fast-readback.mjs`. README, `docs/capabilities.md` and
+`docs/artifact-format.md` describe the current behaviour and the timings.
+
+Not covered live: other orgs, API versions below 68, data-bearing objects,
+non-default data spaces.
+
 # Hand-written DLO and mapping files deploy onto existing targets — 2026-11-11
 
 A file with only the authored fields or pairs now deploys onto an existing data lake

@@ -8,6 +8,7 @@ import Retrieve from '../lib/commands/data360/retrieve.js';
 import Deploy from '../lib/commands/data360/deploy.js';
 import Delete from '../lib/commands/data360/delete.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
+import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { readDeployInputs, captureDeployInputDigest } from '../lib/artifacts/read-deploy-input.js';
 import { preflightDmo, executeDmo } from '../lib/services/command-native-dmo.js';
@@ -294,11 +295,23 @@ for (const preview of [true, false])
             state.removed = names;
           },
         });
+      // The checked removal reads the DMO's mappings around the write; it has none (typed 404).
+      command.createSsotSender = () => ({
+        request: async () => assert.fail('fake clients must not reach the bound sender'),
+      });
+      command.createMappingClient = () => ({
+        list: async (target) => {
+          calls.push(['mapping:list', target]);
+          throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        },
+        get: async () => assert.fail('no mapping to read'),
+      });
       const result = await run(command);
+      const writes = () => calls.filter(([kind]) => kind !== 'mapping:list');
       const [item] = result.result.items;
       if (!allowed) {
         assert.equal(result.status, 'blocked', JSON.stringify(result));
-        assert.deepEqual(calls, []);
+        assert.deepEqual(writes(), []);
         const text = JSON.stringify(result);
         assert.ok(text.includes('UNSUPPORTED_DMO_FIELD_CHANGE'));
         assert.ok(text.includes('--allow-field-removal'));
@@ -306,7 +319,7 @@ for (const preview of [true, false])
       }
       assert.equal(result.status, 'success', JSON.stringify(result));
       if (preview) {
-        assert.deepEqual(calls, []);
+        assert.deepEqual(writes(), []);
         assert.equal(item.operation, 'preview');
         assert.equal(item.outcome, 'update');
         assert.deepEqual(item.removeFields, ['Note__c', 'Link__c']);
@@ -316,19 +329,22 @@ for (const preview of [true, false])
         );
         return;
       }
-      // One PATCH, then exactly one removal for both fields.
+      // One PATCH, then exactly one removal for both fields, bracketed by mapping reads.
       assert.deepEqual(calls, [
         ['update', name],
+        ['mapping:list', name],
         ['remove', name, ['Note__c', 'Link__c']],
+        ['mapping:list', name],
       ]);
       assert.equal(item.outcome, 'updated');
       assert.equal(item.mutation, 'confirmed-updated');
       assert.deepEqual(item.removedFields, ['Note__c', 'Link__c']);
+      assert.equal(item.droppedPairs, undefined);
       // A repeat with the same file is unchanged and writes nothing.
       const repeat = await run(command);
       assert.equal(repeat.result.items[0].outcome, 'unchanged');
       assert.equal(repeat.result.items[0].mutation, 'not-attempted');
-      assert.equal(calls.length, 2);
+      assert.equal(writes().length, 2);
     });
 
 test('native deploy permission failure never writes', async () => {

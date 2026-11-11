@@ -13,6 +13,8 @@ import {
 } from '../artifacts/native-dmo-document.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
+import type { BoundSsot } from './bound-ssot.js';
+import { dmoFailure } from './dmo-native-rest.js';
 
 export type DmoClient = {
   get: (apiName: string) => Promise<unknown>;
@@ -47,12 +49,14 @@ export function manifest(version: string, lines: string[]): string {
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiVersion Numeric >=61 or default/auto 68; admission is not live qualification.
  * @param {MetadataRunner} runner Injectable installed CLI runner.
+ * @param {BoundSsot} [sender] Bound single-attempt sender for GET; writes stay on the runner.
  * @returns {DmoClient} Name-bound operations; all scratch is retained.
  */
 export function createDmoClient(
   targetOrg: string,
   apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
+  sender?: BoundSsot,
 ): DmoClient {
   const version = nativeApiVersion(apiVersion);
   const endpoint = `/services/data/v${version}/ssot/data-model-objects`;
@@ -130,6 +134,26 @@ export function createDmoClient(
     } catch {
       throw new NativeDmoError('INVALID_DMO_RESPONSE', status);
     }
+  }
+
+  /**
+   * Send one GET on the bound connection, with the same codes as the runner path.
+   * @param {BoundSsot} bound Bound sender.
+   * @param {string} suffix Validated exact name suffix.
+   * @returns {Promise<unknown>} Parsed non-array object.
+   */
+  async function boundGet(bound: BoundSsot, suffix: string): Promise<unknown> {
+    const noContent = Symbol('dmo-no-content');
+    let response: unknown;
+    try {
+      response = await bound.request('GET', endpoint + suffix, noContent);
+    } catch (error) {
+      throw dmoFailure(error);
+    }
+    if (response === noContent) throw new NativeDmoError('DMO_REQUEST_UNCONFIRMED', 204);
+    if (typeof response !== 'object' || response === null || Array.isArray(response))
+      throw new NativeDmoError('INVALID_DMO_RESPONSE');
+    return response;
   }
 
   /**
@@ -219,7 +243,8 @@ export function createDmoClient(
 
   return {
     removeFields,
-    get: async (apiName) => request('GET', nameSuffix(apiName)),
+    get: async (apiName) =>
+      sender ? boundGet(sender, nameSuffix(apiName)) : request('GET', nameSuffix(apiName)),
     create: async (body) => request('POST', '', body),
     update: async (targetApiName, body) => request('PATCH', nameSuffix(targetApiName), body),
     delete: async (targetApiName) => {

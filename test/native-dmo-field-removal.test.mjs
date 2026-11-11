@@ -259,13 +259,14 @@ test('edits travel in one PATCH before the single removal, and readback checks b
   const result = await deployNativeDmo(saved, client, undefined, fast, allow);
   assert.deepEqual(
     calls.map(([method]) => method),
-    ['get', 'update', 'remove', 'get'],
+    // The PATCH is read back before the removal, so the removal starts from the edited definition.
+    ['get', 'update', 'get', 'remove', 'get'],
   );
   assert.deepEqual(calls[1][2], { label: 'Changed' });
-  assert.deepEqual(calls[2], ['remove', apiName, ['Note__c', 'Link__c']]);
+  assert.deepEqual(calls[3], ['remove', apiName, ['Note__c', 'Link__c']]);
   assert.equal(result.document.spec.label, 'Changed');
   assert.deepEqual(result.removedFields, ['Note__c', 'Link__c']);
-  // A removed field alone does not confirm the deploy when the requested label is missing.
+  // A PATCH that never becomes readable stops the deploy before the removal is sent.
   const stale = recording({
     update: async (name, body) => {
       stale.calls.push(['update', name, body]);
@@ -276,7 +277,7 @@ test('edits travel in one PATCH before the single removal, and readback checks b
     deployNativeDmo(saved, stale.client, undefined, fast, allow),
     /DMO_PERSISTENCE_UNCONFIRMED/,
   );
-  assert.deepEqual(writes(stale.calls), ['update', 'remove']);
+  assert.deepEqual(writes(stale.calls), ['update']);
 });
 
 test('a removed field that is still present fails readback without another write', async () => {
@@ -500,11 +501,11 @@ test('an unconfirmed removal fails with DMO_FIELD_REMOVAL_FAILED, safe problem t
     assert.ok(!outcome.diagnostics[0].message.includes('secret'));
     assert.ok(outcome.diagnostics[0].message.length < 1500);
     assert.match(outcome.diagnostics[0].message, /No automatic retry/u);
-    // One PATCH, one removal attempt, and no readback after the failed removal.
+    // One PATCH, its readback, one removal attempt, and no readback after the failed removal.
     assert.equal(runs, 2);
     assert.deepEqual(
       calls.map(([method]) => method),
-      ['get', 'update'],
+      ['get', 'update', 'get'],
     );
   }
 });

@@ -432,43 +432,59 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
 - Order: the PATCH for other changes first (skipped when removals are the only
   change), then the removal, then readback, which also requires every removed field
   to be absent. No write is retried.
-- Beside selected mappings that target the DMO (all-native selection), the DMO deploys
-  in two stages: PATCH in the DMO position, then the mappings, then the removal and
-  readback right after the last selected mapping targeting the DMO has settled. One
-  result item per file; the DMO item is `updated` with `removedFields` only when both
-  stages succeeded.
+- The DMO deploys in its normal position (DLO, DMO, mapping), also beside selected
+  mappings that target it: PATCH, a wait until the PATCH is readable, then the
+  removal. One result item per file.
+- Salesforce drops a field's mapping pairs itself when the field is removed through
+  the Metadata API. Observed at API 68, also with the field mapped by two mappings:
+  exactly that field's pairs disappear, every other pair keeps its selector, both
+  mappings stay ACTIVE, and the DMO's properties and other fields are unchanged. The
+  plugin therefore removes a mapped field with the one destructive change and does
+  not delete pairs one by one.
 - The primary key and generated fields are never removed.
 - A mapped field is removed with one command,
   `sf data360 deploy -m mapping:<MappingApiName> -m dmo:<Dmo__dlm> --allow-field-removal`,
   when the DMO file omits the field and the mapping file omits its pair. Before the
   first write the plugin lists the mappings that target the DMO read-only; every
   mapping holding a pair for the field must be reconciled by a selected mapping file
-  (same source and target object) without that pair.
-- Otherwise the batch is refused with `DMO_FIELD_REMOVAL_MAPPED` before any write:
-  Salesforce would remove the field and silently drop its mapping pair. The refusal
-  names every mapped field with its mappings (`mappedFields` in JSON) and prints the
-  retrieve command, the file edits and the single deploy command; without an
-  identifiable mapping, or when the list request fails, it keeps the generic
+  (same source and target object) without that pair. A field held by several
+  mappings needs every one of them selected without its pair.
+- Otherwise the batch is refused with `DMO_FIELD_REMOVAL_MAPPED` before any write.
+  The refusal names every mapped field with its mappings (`mappedFields` in JSON) and
+  prints the retrieve command, the file edits and the single deploy command; without
+  an identifiable mapping, or when the list request fails, it keeps the generic
   instruction. An unmapped field on a mapped DMO is removed normally. The `isMapped`
   marker on fields is never sent, compared or required.
-- The removal stage reads the DMO again and removes nothing while a planned field is
-  still mapped: the DMO item ends with `DMO_FIELD_REMOVAL_MAPPED` (`failed` after a
-  written PATCH, otherwise `blocked`) and the batch stops. It never sends a second
-  PATCH. A batch that stops between the stages reports `DMO_FIELD_REMOVAL_PENDING`
-  on the DMO item.
-- The two-stage order is observed at API 68 on mapped custom DMOs with one mapping and
-  with two mappings sharing the field. A field held by several mappings needs every
-  one of them selected without its pair; one deploy of both mapping files plus the DMO
-  file removed both pairs and then the field (about 11 minutes, almost all in the
-  mapping deploys), and a repeat reported unchanged. A mapped custom field of a
+- Right before the destructive change the plugin reads the DMO and all of its
+  mappings again. A pair for a removed field held by a mapping that is not selected
+  with a file, or targeting a field the admission did not cover, stops the DMO item
+  with `DMO_FIELD_REMOVAL_MAPPED` before the destructive change; an earlier PATCH
+  stays in place.
+- After the destructive change: polled reads (up to 6, 5 seconds apart) until the
+  fields are absent and every mapping equals its earlier state minus exactly the
+  removed fields' pairs, ACTIVE. Any other change (another pair, field, DMO property,
+  mapping or status) stops with `DMO_FIELD_REMOVAL_SIDE_EFFECT`. Not settled in time:
+  `DMO_PERSISTENCE_UNCONFIRMED` (field still readable) or
+  `MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED` (a pair still listed). Never retried, never
+  rolled back; the DMO item is `failed` with mutation `unknown` and the batch stops.
+- The DMO item lists `removedFields` and `droppedPairs` (`mapping`,
+  `sourceFieldDeveloperName`, `targetFieldDeveloperName`). The selected mapping files
+  deploy afterwards and find those pairs already gone; a file whose only change was
+  dropping them reports `unchanged`. Deploying the mapping files first and the DMO
+  file in a second command works as well.
+- Observed at API 68 through the plugin on a custom DMO field mapped by two mappings:
+  one deploy of both mapping files plus the DMO file removed the field, Salesforce
+  dropped both pairs, and a repeat reported unchanged. A mapped custom field of a
   standard DMO is covered by synthetic tests only.
-- Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold
-  data or are referenced by a segment, calculated insight, relationship or other
+- Observed at API 68 on empty custom DMOs in two orgs; removal of mapped fields in one
+  org only. Not verified: other API versions, non-default data spaces, fields that
+  hold data or are referenced by a segment, calculated insight, relationship or other
   component.
 - Preview reports the planned removals (`removeFields`,
-  `DMO_FIELD_REMOVAL_PLANNED`, naming the selected mappings a two-stage removal
-  waits for) and writes nothing. A removal-only deploy reports
-  `updated`; a repeat with the same file reports `unchanged`.
+  `DMO_FIELD_REMOVAL_PLANNED`) and writes nothing. For a mapped field the diagnostic
+  says that Salesforce drops its pairs together with the field, so the selected
+  mapping files find them already gone. A removal-only deploy reports `updated`; a
+  repeat with the same file reports `unchanged`.
 - A deployment that does not report every member as deleted fails with
   `DMO_FIELD_REMOVAL_FAILED` and Salesforce's problem text; the mutation is reported
   as unknown.
@@ -508,7 +524,7 @@ Standard DMO rules:
   standard primary key; none of this causes a write or a refusal, so a retrieved file
   deploys back `unchanged`, also to an org where the DMO is not mapped yet.
 - PATCH body for one added custom field: `{"fields":[{"name","label","dataType",
-  "isPrimaryKey"}]}`; for a label change: `{"label"}`; `dataSpaceName` only with
+"isPrimaryKey"}]}`; for a label change: `{"label"}`; `dataSpaceName` only with
   `--dataspace`.
 - Readback confirms the label, a managed description, the custom fields of the file
   and the absence of removed fields.
@@ -558,8 +574,6 @@ Native mapping targets, decided from the same raw read:
   of a standard DMO (for example `Name__c` to `ssot__Name__c`), a pair whose source
   and target names differ, and types other than Text; Salesforce decides. The three
   system pairs, the key qualifier pair and the primary-key pair are never removed.
-  This also makes the single deploy command for a mapped custom field work on a
-  standard DMO.
 - Whole-mapping delete (`sf data360 delete -m mapping:<Name>`), API 61 to 68,
   default 68: one Metadata API destructive deployment, type
   `ObjectSourceTargetMap`, member the mapping developer name. No pair is unmapped
@@ -590,23 +604,21 @@ Native mapping targets, decided from the same raw read:
       no change; the activation notice in a mapping preview against a second org where
       the same standard DMO is not active, with nothing changed.
 - [x] Observed at API 68 through the plugin: a first mapping onto the inactive
-      standard DMO `ssot__Brand__dlm` (62 seconds, outcome created, with
+      standard DMO `ssot__Brand__dlm` (outcome created, with
       `MAPPING_ACTIVATES_STANDARD_DMO`; the DMO then enabled with category `OTHER` and
       `KQ_Id__c`).
 - [x] Observed at API 68 through the plugin: the pair onto the standard field
-      `ssot__Name__c` removed by deploying the retrieved mapping file without it (214
-      seconds; a mapping deploy sends each of its many verification reads through a
-      separate CLI process).
+      `ssot__Name__c` removed by deploying the retrieved mapping file without it.
 - [x] Observed at API 68 through the plugin, whole-mapping delete: a non-last mapping
-      of a custom DMO with two mappings (48 seconds; the other mapping and all 8 DMO
-      fields unchanged); the last mapping of the same DMO refused in 4 seconds with
-      nothing written; the only mapping of `ssot__Brand__dlm` deleted in two orgs (25
-      and 28 seconds), one of them still holding the pair onto `ssot__Name__c`.
-- [x] Observed at API 68 through the plugin on a custom DMO field shared by two
-      mappings: `delete --field` removed the pair from both mappings and then the
-      field (about 30 seconds); one deploy of both mapping files plus the DMO file
-      with `--allow-field-removal` did the same (about 11 minutes) and a repeat
-      reported unchanged.
+      of a custom DMO with two mappings (21 seconds; the other mapping and all 8 DMO
+      fields unchanged); the last mapping of the same DMO refused with nothing
+      written; the only mapping of `ssot__Brand__dlm` deleted in two orgs, one of them
+      still holding the pair onto `ssot__Name__c`.
+- [x] Observed at API 68 through the plugin on a custom DMO field mapped by two
+      mappings: `delete --field` removed the field with one destructive change and
+      Salesforce dropped both pairs (28 seconds); one deploy of both mapping files
+      plus the DMO file with `--allow-field-removal` did the same (29 seconds) and a
+      repeat reported unchanged. Both mappings stayed ACTIVE with their other pairs.
 - [x] Observed at API 68 through the raw API: activation by the first mapping onto one
       unused standard DMO (HTTP 201, object enabled, category from Unassigned to
       Other, `KQ_Id__c` added and referenced by the standard primary key, not undone
@@ -614,14 +626,25 @@ Native mapping targets, decided from the same raw read:
       a custom DMO.
 - [x] Observed at API 68 through the plugin in one org, hand-written files with
       authored fields and pairs only: a data lake object, a custom DMO and their
-      mapping created and deployed again, all three `unchanged` with no write (62
-      seconds); with one field added to the data lake object and to the DMO, one pair
-      added and one authored pair dropped in the mapping file, all three `updated`,
-      the mapping then holding the two kept authored pairs, the new pair, the key pair
-      and the four generated pairs (335 seconds; each verification read of a mapping
-      deploy goes through its own CLI process); a data lake object and a mapping onto
-      `ssot__Brand__dlm` with the pairs `Id__c` to `ssot__Id__c` and `Name__c` to
-      `ssot__Name__c` created and deployed again, `unchanged` (58 seconds).
+      mapping created (45 seconds) and deployed again, all three `unchanged` with no
+      write; with one field added to the data lake object and to the DMO, one pair
+      added and one authored pair dropped in the mapping file, all three `updated`
+      (64 seconds), the mapping then holding the two kept authored pairs, the new
+      pair, the key pair and the four generated pairs; a data lake object and a
+      mapping onto `ssot__Brand__dlm` with the pairs `Id__c` to `ssot__Id__c` and
+      `Name__c` to `ssot__Name__c` created and deployed again, `unchanged`.
+- [x] Measured at API 68 in one org on empty synthetic fixtures: create a data lake
+      object, a custom DMO and their mapping, 45 s; unchanged redeploy of 2 data lake
+      objects, a DMO and 2 mappings, 9 s; mapping deploy removing one pair, 17 s; two
+      mapping deploys each adding one pair, 32 s; one field added to data lake object
+      and DMO with one pair added and one dropped, 64 s; mapping file plus DMO file
+      with `--allow-field-removal` removing a mapped field, 29 s; `delete --field` on
+      a field mapped by two mappings, 28 s; delete of a non-last mapping of a custom
+      DMO, 21 s; delete of two custom DMOs, 24 s. During deploy, data lake object, DMO
+      and mapping reads use one authenticated connection per org and API version;
+      writes run through the Salesforce CLI. Settle reads after a data lake object,
+      DMO or mapping write: up to 6, 3 seconds apart; DMO readback after a DMO write
+      and field-removal readback: up to 6, 5 seconds apart.
 - [ ] Not run live through the plugin: removal of a pair for a custom field of a
       standard DMO (covered by synthetic tests), whole-mapping delete at API 61 to
       67, populated objects.
@@ -646,25 +669,38 @@ Field-level delete,
   must be marked `creationType` `Custom`); the mappings targeting the DMO are listed and
   every pair targeting a named field is collected. A mapped field without an
   identified pair, including a failed list request, is refused with
-  `DMO_FIELD_REMOVAL_MAPPED`. Pair removal needs an ACTIVE mapping and API 61 to 68.
-- Writes, each once and never retried: one DELETE per pair with a mapping readback;
-  a fresh DMO read that must show the fields unmapped; one Metadata API destructive
-  change for all fields; polled readback that the fields are absent. The first
-  failure stops; the item reports the confirmed `unmappedPairs` and the diagnostic
-  names the unconfirmed write. Nothing is rolled back.
+  `DMO_FIELD_REMOVAL_MAPPED`. Every collected pair must be identified on an ACTIVE
+  mapping whose detail read equals its list entry.
+- Right before the write the plugin reads the DMO and all of its mappings again; the
+  pairs must still be exactly the planned ones (`MAPPING_UNMAP_PLAN_CHANGED`
+  otherwise, nothing written).
+- Write, once and never retried: one Metadata API destructive change for all fields.
+  Salesforce drops the collected pairs with the fields; no request is sent per pair.
+- Readback: polled reads (up to 6, 5 seconds apart) until the fields are absent and
+  every mapping equals its earlier state minus exactly the collected pairs, ACTIVE.
+  Any other change stops with `DMO_FIELD_REMOVAL_SIDE_EFFECT`; not settled in time
+  stops with `DMO_PERSISTENCE_UNCONFIRMED` (field still readable) or
+  `MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED` (a pair still listed). Nothing is rolled
+  back. Outcomes: a stop before the write is `blocked`/`not-attempted`; a sent but
+  unconfirmed destructive change is `failed`/`unknown`; an unconfirmed readback is
+  `deletion-unconfirmed`/`acknowledged`.
 - After success the existing `data360/dmo/<Name__dlm>.dmo-meta.json` and
   `data360/mapping/<MappingApiName>.mapping-meta.json` files under `--output-dir`
   (default: current directory) are overwritten with fresh reads. Absent files are
   not created (`not-present`); no file is deleted. A failed refresh keeps outcome
   `deleted`, reports the file as `failed` and `LOCAL_REFRESH_FAILED`, and exits
   nonzero.
-- `--preview` writes nothing and reports the `unmap` and `delete-field` steps and
-  `localFiles` with `exists`.
-- Result item: operation `delete-field`, `removedFields`, `unmappedPairs`,
-  `refreshedFiles`. A repeat after success is refused with `DMO_FIELD_NOT_FOUND`.
-- Observed at API 68: a mapped field with one mapping, a field shared by two mappings
-  of a custom DMO (both pairs, then the field, in about 30 seconds), a custom field
-  of a standard DMO in two orgs, and unmapped fields in a second org.
+- `--preview` writes nothing and reports one `unmap` step per pair (the pair
+  Salesforce drops with the field), one `delete-field` step per field and
+  `localFiles` with `exists`. Human preview line per pair:
+  `Planned pair drop (Salesforce removes it with the field): ...`.
+- Result item: operation `delete-field`, `removedFields`, `unmappedPairs` (the pairs
+  Salesforce dropped), `refreshedFiles`. Human output per pair:
+  `dropped pair <Source> -> <Target> in mapping <Mapping>`. A repeat after success is
+  refused with `DMO_FIELD_NOT_FOUND`.
+- Observed at API 68: a field mapped by two mappings of a custom DMO (one destructive
+  change, both pairs dropped by Salesforce, 28 seconds), a custom field of a standard
+  DMO in two orgs, and unmapped fields in a second org.
 
 Git selection (`--changed-since`) uses the native DMO file. A native DMO changed
 since a Git reference, or selected beside Segment/CI/Graph/IR inputs, joins the

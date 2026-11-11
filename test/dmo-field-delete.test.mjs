@@ -79,35 +79,45 @@ function createOrg(mappings = []) {
     },
     delete: async () => assert.fail('a field-level delete never deletes the DMO'),
   };
+  // Like Salesforce, the destructive change drops the pairs of the removed fields itself; the
+  // drop shows up after `dropDelay` further mapping reads, or never when `dropPairs` is false.
+  org.dropPairs = true;
+  org.dropDelay = 0;
+  const settleDrop = () => {
+    if (!org.pendingDrop) return;
+    if (org.dropDelay > 0) {
+      org.dropDelay--;
+      return;
+    }
+    for (const entry of org.mappings)
+      entry.fieldMappings = entry.fieldMappings.filter(
+        (pair) => !org.pendingDrop.includes(pair.targetFieldDeveloperName),
+      );
+    org.pendingDrop = undefined;
+  };
   org.remover = {
     get: async () => assert.fail('reads use the bound reader'),
     removeFields: async (name, fields) => {
       org.calls.push(`removeFields:${name}:${fields.join(',')}`);
       org.dmo.fields = org.dmo.fields.filter((entry) => !fields.includes(entry.name));
+      if (org.dropPairs) org.pendingDrop = fields;
+      org.onRemove?.();
     },
   };
   org.mappingClient = {
-    apiVersion: '68.0',
     list: async (name) => {
       org.calls.push(`mapping.list:${name}`);
+      settleDrop();
       return { objectSourceTargetMaps: structuredClone(org.mappings) };
     },
     get: async (name) => {
       org.calls.push(`mapping.get:${name}`);
+      settleDrop();
       return structuredClone(org.mappings.find((entry) => entry.developerName === name));
     },
     deleteField: async (name, selector) => {
       org.calls.push(`deleteField:${name}:${selector}`);
-      const entry = org.mappings.find((candidate) => candidate.developerName === name);
-      const pair = entry.fieldMappings.find((candidate) => candidate.developerName === selector);
-      entry.fieldMappings = entry.fieldMappings.filter((candidate) => candidate !== pair);
-      const stillMapped = org.mappings.some((candidate) =>
-        candidate.fieldMappings.some(
-          (other) => other.targetFieldDeveloperName === pair.targetFieldDeveloperName,
-        ),
-      );
-      const target = org.dmo.fields.find((item) => item.name === pair.targetFieldDeveloperName);
-      if (!stillMapped && target) delete target.isMapped;
+      assert.fail('pairs are never removed one by one');
     },
     create: async () => assert.fail('no mapping create'),
     update: async () => assert.fail('no mapping update'),
@@ -289,12 +299,15 @@ test('field delete admission refuses unsupported targets and fields with reads o
       },
     },
     {
-      code: 'MAPPING_UNMAP_VERSION_UNQUALIFIED',
+      code: 'MAPPING_INVENTORY_UNCONFIRMED',
       field: 'Note__c',
-      flags: { 'api-version': '69.0' },
-      message: /API 61\.0 to 68\.0/u,
       prepare: (org) => {
-        org.mappingClient.apiVersion = '69.0';
+        const read = org.mappingClient.get;
+        org.mappingClient.get = async (name) => {
+          const detail = await read(name);
+          detail.fieldMappings[0].sourceFieldDeveloperName = 'Drifted__c';
+          return detail;
+        };
       },
     },
     {
@@ -339,7 +352,7 @@ test('field delete admission refuses unsupported targets and fields with reads o
   }
 });
 
-test('a custom field of a standard DMO is unmapped and removed like one of a custom DMO', async () => {
+test('a custom field of a standard DMO is removed with its pairs like one of a custom DMO', async () => {
   const org = asStandard(createOrg(twoMappings()));
   const preview = await run(org, { field: ['Note__c'], preview: true });
   assert.equal(preview.result.status, 'success');
@@ -359,16 +372,20 @@ test('a custom field of a standard DMO is unmapped and removed like one of a cus
     `mapping.list:${dmoName}`,
     'mapping.get:MapA',
     'mapping.get:MapB',
-    'deleteField:MapA:MapA_Note__c',
-    'mapping.get:MapA',
-    'deleteField:MapB:MapB_Note__c',
-    'mapping.get:MapB',
+    // Fresh pre-write snapshot.
     'dmo.get',
+    `mapping.list:${dmoName}`,
+    'mapping.get:MapA',
+    'mapping.get:MapB',
     `removeFields:${dmoName}:Note__c`,
+    // Readback, then the definition read back without the field.
+    'dmo.get',
+    `mapping.list:${dmoName}`,
     'dmo.get',
   ]);
   const [item] = result.result.items;
   assert.equal(item.mutation, 'confirmed-deleted');
+  assert.equal(item.unmappedPairs.length, 2);
   assert.deepEqual(item.removedFields, ['Note__c']);
   // The standard fields, the standard key and the unmarked field are untouched.
   assert.deepEqual(
@@ -379,9 +396,14 @@ test('a custom field of a standard DMO is unmapped and removed like one of a cus
 
 test('a failed mapping lookup does not block a field that is not mapped', async () => {
   const org = createOrg();
-  org.mappingClient.list = async () => {
-    org.calls.push('mapping.list');
-    throw new NativeMappingError('MAPPING_HTTP_ERROR', 503);
+  const list = org.mappingClient.list;
+  let failures = 1;
+  org.mappingClient.list = async (name) => {
+    if (failures-- > 0) {
+      org.calls.push('mapping.list');
+      throw new NativeMappingError('MAPPING_HTTP_ERROR', 503);
+    }
+    return list(name);
   };
   const { result } = await run(org, {
     field: ['Note__c'],
@@ -391,6 +413,17 @@ test('a failed mapping lookup does not block a field that is not mapped', async 
   assert.equal(result.status, 'success');
   assert.deepEqual(result.result.items[0].unmappedPairs, []);
   assert.deepEqual(writes(org), [`removeFields:${dmoName}:Note__c`]);
+  // The pre-write snapshot needs the mapping inventory: a lookup that keeps failing stops there.
+  const stuck = createOrg();
+  stuck.mappingClient.list = async () => {
+    throw new NativeMappingError('MAPPING_HTTP_ERROR', 503);
+  };
+  const stopped = await run(stuck, { field: ['Note__c'], 'confirm-delete': true });
+  assert.equal(stopped.result.status, 'blocked');
+  assert.equal(stopped.result.diagnostics.errors[0].code, 'MAPPING_HTTP_ERROR');
+  assert.match(stopped.result.diagnostics.errors[0].message, /Nothing was written/u);
+  assert.equal(stopped.result.result.items[0].mutation, 'not-attempted');
+  assert.deepEqual(writes(stuck), []);
 });
 
 test('field delete preview reports the plan and writes nothing to the org or to disk', async () => {
@@ -449,9 +482,9 @@ test('field delete preview reports the plan and writes nothing to the org or to 
   assert.deepEqual(await readdir(path.join(root, 'data360')), ['dmo']);
   assert.deepEqual(lines, [
     'Delete preview: success.',
-    'Planned field unmap: Note__c -> Note__c in mapping MapA.',
-    'Planned field unmap: Note__c -> Note__c in mapping MapB.',
-    'Planned field unmap: Extra__c -> Extra__c in mapping MapB.',
+    'Planned pair drop (Salesforce removes it with the field): Note__c -> Note__c in mapping MapA.',
+    'Planned pair drop (Salesforce removes it with the field): Note__c -> Note__c in mapping MapB.',
+    'Planned pair drop (Salesforce removes it with the field): Extra__c -> Extra__c in mapping MapB.',
     `Planned field delete: Note__c from dmo ${dmoName}.`,
     `Planned field delete: Extra__c from dmo ${dmoName}.`,
     `Planned file refresh: ${dmoFile(root)}`,
@@ -476,10 +509,16 @@ test('an unmapped field is removed with one destructive change and no mapping wr
     'dmo.get',
     `mapping.list:${dmoName}`,
     'dmo.get',
+    `mapping.list:${dmoName}`,
+    'mapping.get:MapA',
     `removeFields:${dmoName}:Note__c`,
     'dmo.get',
+    `mapping.list:${dmoName}`,
+    'dmo.get',
   ]);
-  // Mapping reads and pair removals share the scoped client with the bound sender.
+  // The mapping that keeps all its pairs is unchanged.
+  assert.deepEqual(org.mappings, [mapping('MapA', 'SourceA__dll', ['Id__c'])]);
+  // Mapping reads share the scoped client with the bound sender.
   assert.deepEqual(org.mappingArguments.slice(0, 4), ['target', '68.0', undefined, 'default']);
   assert.equal(typeof org.mappingArguments[4].request, 'function');
   const [item] = result.result.items;
@@ -497,7 +536,7 @@ test('an unmapped field is removed with one destructive change and no mapping wr
   ]);
 });
 
-test('a field mapped by two mappings is unmapped from both, removed, and existing files are refreshed', async () => {
+test('a field mapped by two mappings is removed once, its pairs drop from both, and existing files are refreshed', async () => {
   const root = await temporaryRoot();
   const org = createOrg(twoMappings());
   await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
@@ -516,12 +555,14 @@ test('a field mapped by two mappings is unmapped from both, removed, and existin
     `mapping.list:${dmoName}`,
     'mapping.get:MapA',
     'mapping.get:MapB',
-    'deleteField:MapA:MapA_Note__c',
-    'mapping.get:MapA',
-    'deleteField:MapB:MapB_Note__c',
-    'mapping.get:MapB',
     'dmo.get',
+    `mapping.list:${dmoName}`,
+    'mapping.get:MapA',
+    'mapping.get:MapB',
+    // One destructive change; no pair is removed one by one.
     `removeFields:${dmoName}:Note__c`,
+    'dmo.get',
+    `mapping.list:${dmoName}`,
     'dmo.get',
     // Local refresh: only files that already exist are read again and overwritten.
     'dmo.get',
@@ -556,10 +597,14 @@ test('a field mapped by two mappings is unmapped from both, removed, and existin
     org.mappings[1].fieldMappings.map((pair) => pair.targetFieldDeveloperName),
     ['Id__c', 'Extra__c'],
   );
+  assert.equal(
+    org.calls.some((call) => call.startsWith('deleteField')),
+    false,
+  );
   assert.deepEqual(lines, [
     'Delete: success.',
-    'unmapped Note__c -> Note__c in mapping MapA',
-    'unmapped Note__c -> Note__c in mapping MapB',
+    'dropped pair Note__c -> Note__c in mapping MapA',
+    'dropped pair Note__c -> Note__c in mapping MapB',
     `deleted field Note__c from dmo ${dmoName}`,
     `refreshed ${dmoFile(root)}`,
     `refreshed ${mappingFile(root, 'MapA')}`,
@@ -573,100 +618,184 @@ test('a field mapped by two mappings is unmapped from both, removed, and existin
   assert.deepEqual(org.calls, ['resolveTarget', 'dmo.get']);
 });
 
-test('a failed pair removal stops the delete and reports the pairs already removed', async () => {
+/**
+ * Run `change` right before the n-th DMO read, so the org moves between two steps.
+ * @param {object} org Synthetic org.
+ * @param {number} read 1-based DMO read before which the change happens.
+ * @param {Function} change Mutation of the org state.
+ */
+function beforeDmoRead(org, read, change) {
+  const get = org.reader.get;
+  let count = 0;
+  org.reader.get = async () => {
+    if (++count === read) change();
+    return get();
+  };
+}
+
+test('a mapping pair changed between the plan and the write stops before any write', async () => {
   const root = await temporaryRoot();
   const org = createOrg(twoMappings());
   await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
   const before = await readFile(dmoFile(root), 'utf8');
-  const removePair = org.mappingClient.deleteField;
-  org.mappingClient.deleteField = async (name, selector) => {
-    if (name === 'MapB') {
-      org.calls.push(`deleteField:${name}:${selector}`);
-      throw new NativeMappingError('MAPPING_HTTP_ERROR', 500);
-    }
-    return removePair(name, selector);
-  };
+  // The plan saw both pairs; the pre-write snapshot finds only the pair of MapA.
+  beforeDmoRead(org, 2, () => {
+    org.mappings[1].fieldMappings = org.mappings[1].fieldMappings.filter(
+      (pair) => pair.targetFieldDeveloperName !== 'Note__c',
+    );
+  });
   const { result, lines, exitCode } = await run(
     org,
     { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root },
     {},
     false,
   );
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'blocked');
   assert.equal(exitCode, 1);
   const [item] = result.result.items;
-  assert.equal(item.outcome, 'failed');
-  assert.equal(item.mutation, 'unknown');
+  assert.equal(item.outcome, 'blocked');
+  assert.equal(item.mutation, 'not-attempted');
   assert.deepEqual(item.removedFields, []);
-  assert.deepEqual(item.unmappedPairs, [
-    { mapping: 'MapA', sourceFieldDeveloperName: 'Note__c', targetFieldDeveloperName: 'Note__c' },
-  ]);
+  assert.deepEqual(item.unmappedPairs, []);
   assert.equal(item.refreshedFiles, undefined);
   const [diagnostic] = result.diagnostics.errors;
-  assert.equal(diagnostic.code, 'MAPPING_HTTP_ERROR');
-  assert.match(diagnostic.message, /HTTP 500/u);
-  assert.match(diagnostic.message, /already removed and confirmed: Note__c -> Note__c in MapA\./u);
-  assert.match(diagnostic.message, /from mapping MapB was sent once and is not confirmed/u);
-  assert.match(diagnostic.message, /No field was removed\. No local file was refreshed\./u);
-  assert.deepEqual(writes(org), ['deleteField:MapA:MapA_Note__c', 'deleteField:MapB:MapB_Note__c']);
+  assert.equal(diagnostic.code, 'MAPPING_UNMAP_PLAN_CHANGED');
+  assert.match(diagnostic.message, /Nothing was written; no field or mapping pair was removed\./u);
+  assert.match(diagnostic.message, /No local file was refreshed\. No retry or rollback\./u);
+  assert.deepEqual(writes(org), []);
   assert.equal(await readFile(dmoFile(root), 'utf8'), before);
-  assert.deepEqual(lines.slice(0, 3), [
-    'Delete: failed.',
-    'unmapped Note__c -> Note__c in mapping MapA',
-    `Failed: dmo:${dmoName} field Note__c; mutation: unknown.`,
+  assert.deepEqual(lines.slice(0, 2), [
+    'Delete: blocked.',
+    `Blocked: dmo:${dmoName} field Note__c; mutation: not-attempted.`,
   ]);
 });
 
-test('a pair still present after its DELETE is unconfirmed and stops before the next write', async () => {
+test('a pair still present after the destructive change is unconfirmed, never removed separately', async () => {
   const org = createOrg(twoMappings());
-  org.mappingClient.deleteField = async (name, selector) => {
-    org.calls.push(`deleteField:${name}:${selector}`);
-  };
-  const { result } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
-  assert.equal(result.status, 'failed');
-  assert.equal(result.diagnostics.errors[0].code, 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
-  assert.equal(result.result.items[0].mutation, 'unknown');
-  assert.deepEqual(result.result.items[0].unmappedPairs, []);
-  assert.deepEqual(writes(org), ['deleteField:MapA:MapA_Note__c']);
-});
-
-test('a mapping that leaves ACTIVE after the pair removal is not settled', async () => {
-  const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
-  const removePair = org.mappingClient.deleteField;
-  org.mappingClient.deleteField = async (name, selector) => {
-    await removePair(name, selector);
-    org.mappings[0].status = 'CREATING';
-  };
-  const creating = await run(org, { field: ['Note__c'], 'confirm-delete': true });
-  assert.equal(creating.result.diagnostics.errors[0].code, 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
-  assert.equal(org.calls.filter((call) => call === 'mapping.get:MapA').length, 4);
-  assert.deepEqual(writes(org), ['deleteField:MapA:MapA_Note__c']);
-});
-
-test('a field still shown as mapped after the pair removals is never removed', async () => {
-  const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
-  const removePair = org.mappingClient.deleteField;
-  org.mappingClient.deleteField = async (name, selector) => {
-    await removePair(name, selector);
-    org.dmo.fields.find((field) => field.name === 'Note__c').isMapped = true;
-  };
+  org.dropPairs = false;
   const { result, exitCode } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
   assert.equal(result.status, 'failed');
   assert.equal(exitCode, 1);
   const [item] = result.result.items;
-  assert.equal(item.outcome, 'failed');
-  assert.equal(item.mutation, 'partially-applied');
+  assert.equal(item.outcome, 'deletion-unconfirmed');
+  assert.equal(item.mutation, 'acknowledged');
+  assert.deepEqual(item.unmappedPairs, []);
   assert.deepEqual(item.removedFields, []);
-  assert.equal(item.unmappedPairs.length, 1);
   const [diagnostic] = result.diagnostics.errors;
-  assert.equal(diagnostic.code, 'DMO_FIELD_REMOVAL_MAPPED');
-  assert.match(diagnostic.message, /Note__c still shows as mapped/u);
-  assert.match(diagnostic.message, /already removed and confirmed: Note__c -> Note__c in MapA\./u);
-  assert.match(diagnostic.message, /No field was removed\./u);
-  assert.deepEqual(writes(org), ['deleteField:MapA:MapA_Note__c']);
+  assert.equal(diagnostic.code, 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
+  assert.match(diagnostic.message, /exactly their mapping pairs dropped/u);
+  assert.deepEqual(writes(org), [`removeFields:${dmoName}:Note__c`]);
+  assert.equal(org.calls.filter((call) => call === 'sleep').length, 2);
 });
 
-test('a failed destructive change is sent once and reported with the pairs already removed', async () => {
+test('pairs that Salesforce drops after a delay are waited for within the readback', async () => {
+  const org = createOrg(twoMappings());
+  org.dropDelay = 1;
+  const { result } = await run(org, {
+    field: ['Note__c'],
+    'confirm-delete': true,
+    'output-dir': await temporaryRoot(),
+  });
+  assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].unmappedPairs.length, 2);
+  assert.equal(org.calls.filter((call) => call === 'sleep').length, 1);
+  assert.deepEqual(writes(org), [`removeFields:${dmoName}:Note__c`]);
+});
+
+test('a mapping still CREATING after the removal is waited for; it must return to ACTIVE', async () => {
+  const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
+  let creatingReads = 0;
+  org.onRemove = () => {
+    org.mappings[0].status = 'CREATING';
+  };
+  const list = org.mappingClient.list;
+  org.mappingClient.list = async (name) => {
+    const answer = await list(name);
+    if (org.mappings[0].status === 'CREATING' && creatingReads-- <= 0)
+      org.mappings[0].status = 'ACTIVE';
+    return answer;
+  };
+  const settled = await run(org, {
+    field: ['Note__c'],
+    'confirm-delete': true,
+    'output-dir': await temporaryRoot(),
+  });
+  assert.equal(settled.result.status, 'success');
+  assert.equal(org.calls.filter((call) => call === 'sleep').length, 1);
+  // A mapping that never returns to ACTIVE leaves the removal unconfirmed.
+  const stuck = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
+  stuck.onRemove = () => {
+    stuck.mappings[0].status = 'CREATING';
+  };
+  const { result } = await run(stuck, { field: ['Note__c'], 'confirm-delete': true });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].outcome, 'deletion-unconfirmed');
+  assert.equal(result.result.items[0].mutation, 'acknowledged');
+  // The field is gone, so the open question is the mapping, not the field.
+  assert.equal(result.diagnostics.errors[0].code, 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
+  assert.equal(stuck.calls.filter((call) => call === `mapping.list:${dmoName}`).length, 5);
+  assert.deepEqual(writes(stuck), [`removeFields:${dmoName}:Note__c`]);
+});
+
+test('anything else Salesforce changes with the removal is a side effect, never retried', async () => {
+  const cases = {
+    'an unrelated pair dropped': (org) => {
+      org.mappings[1].fieldMappings = org.mappings[1].fieldMappings.filter(
+        (pair) => pair.targetFieldDeveloperName !== 'Extra__c',
+      );
+    },
+    'another field changed': (org) => {
+      org.dmo.fields.find((field) => field.name === 'Extra__c').label = 'Changed';
+    },
+    'a DMO property changed': (org) => {
+      org.dmo.label = 'Changed';
+    },
+    'a mapping no longer ACTIVE': (org) => {
+      org.mappings[0].status = 'ERROR';
+    },
+    'a mapping gone': (org) => {
+      org.mappings.pop();
+    },
+  };
+  for (const [name, change] of Object.entries(cases)) {
+    const org = createOrg(twoMappings());
+    org.onRemove = () => change(org);
+    const { result, exitCode } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
+    assert.equal(result.status, 'failed', name);
+    assert.equal(exitCode, 1);
+    const [item] = result.result.items;
+    assert.equal(item.outcome, 'deletion-unconfirmed', name);
+    assert.equal(item.mutation, 'acknowledged', name);
+    assert.deepEqual(item.unmappedPairs, [], name);
+    assert.equal(result.diagnostics.errors[0].code, 'DMO_FIELD_REMOVAL_SIDE_EFFECT', name);
+    assert.deepEqual(writes(org), [`removeFields:${dmoName}:Note__c`], name);
+    assert.equal(org.calls.filter((call) => call === 'sleep').length, 0, name);
+  }
+});
+
+test('a field still shown as mapped without a pair at the pre-write recheck is never removed', async () => {
+  const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
+  beforeDmoRead(org, 2, () => {
+    org.mappings[0].fieldMappings = org.mappings[0].fieldMappings.filter(
+      (pair) => pair.targetFieldDeveloperName !== 'Note__c',
+    );
+  });
+  const { result, exitCode } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
+  assert.equal(result.status, 'blocked');
+  assert.equal(exitCode, 1);
+  const [item] = result.result.items;
+  assert.equal(item.outcome, 'blocked');
+  assert.equal(item.mutation, 'not-attempted');
+  assert.deepEqual(item.removedFields, []);
+  assert.deepEqual(item.unmappedPairs, []);
+  const [diagnostic] = result.diagnostics.errors;
+  assert.equal(diagnostic.code, 'DMO_FIELD_REMOVAL_MAPPED');
+  assert.match(diagnostic.message, /no mapping targeting this DMO lists a pair/u);
+  assert.match(diagnostic.message, /Nothing was written/u);
+  assert.deepEqual(writes(org), []);
+});
+
+test('a failed destructive change is sent once and reported as unknown', async () => {
   const root = await temporaryRoot();
   const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
   await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
@@ -686,16 +815,12 @@ test('a failed destructive change is sent once and reported with the pairs alrea
   assert.equal(item.outcome, 'failed');
   assert.equal(item.mutation, 'unknown');
   assert.deepEqual(item.removedFields, []);
-  assert.equal(item.unmappedPairs.length, 1);
+  assert.deepEqual(item.unmappedPairs, []);
   assert.equal(item.refreshedFiles, undefined);
   const [diagnostic] = result.diagnostics.errors;
   assert.equal(diagnostic.code, 'DMO_FIELD_REMOVAL_FAILED');
   assert.match(diagnostic.message, /destructive change for Note__c was sent once/u);
-  assert.match(diagnostic.message, /already removed and confirmed/u);
-  assert.deepEqual(writes(org), [
-    'deleteField:MapA:MapA_Note__c',
-    `removeFields:${dmoName}:Note__c`,
-  ]);
+  assert.deepEqual(writes(org), [`removeFields:${dmoName}:Note__c`]);
   assert.equal(await readFile(dmoFile(root), 'utf8'), before);
 });
 
@@ -723,7 +848,7 @@ test('a field still readable after the destructive change is unconfirmed, never 
   assert.equal(diagnostic.code, 'DMO_PERSISTENCE_UNCONFIRMED');
   assert.match(
     diagnostic.message,
-    /acknowledged, but the absence of the field\(s\) is not confirmed/u,
+    /acknowledged, but the result was not confirmed: the field\(s\) gone/u,
   );
   assert.deepEqual(writes(org), [`removeFields:${dmoName}:Note__c`]);
   // Three bounded readbacks with injected spacing between them.
@@ -767,7 +892,7 @@ test('a failed local refresh never hides the confirmed org change', async () => 
   assert.equal(await readFile(dmoFile(root), 'utf8'), before);
   assert.deepEqual(lines.slice(0, 5), [
     'Delete: failed.',
-    'unmapped Note__c -> Note__c in mapping MapA',
+    'dropped pair Note__c -> Note__c in mapping MapA',
     `deleted field Note__c from dmo ${dmoName}`,
     `refresh failed (OUTPUT_CHANGED): ${dmoFile(root)}`,
     `refreshed ${mappingFile(root, 'MapA')}`,

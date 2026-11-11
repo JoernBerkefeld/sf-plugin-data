@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Deploy from '../lib/commands/data360/deploy.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
+import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import {
   captureDeployInputDigest,
   readDeployInputs,
@@ -76,6 +77,9 @@ const deploy = async (cwd, flags, services = {}) => {
   command.resolveInputs = readDeployInputs;
   command.captureInput = captureDeployInputDigest;
   command.verifySegmentInput = verifySegmentInputDigest;
+  command.createSsotSender = () => ({
+    request: async () => assert.fail('fake clients must not reach the bound sender'),
+  });
   command.createDmoClient = (target, version) => {
     calls.push(`client:${target}:${version}`);
     return { marker: 'dmo-client' };
@@ -290,6 +294,7 @@ for (const preview of [true, false])
   test(`--allow-field-removal reaches a native DMO in the ordered batch preview=${preview}`, async () => {
     const cwd = await project();
     const writes = [];
+    const lists = [];
     let removed = false;
     const read = () => ({
       name: 'Person__dlm',
@@ -312,6 +317,14 @@ for (const preview of [true, false])
           writes.push([target, names]);
           removed = true;
         },
+      }),
+      // The checked removal reads the DMO's mappings around the write; it has none (typed 404).
+      createMappingClient: () => ({
+        list: async (target) => {
+          lists.push(target);
+          throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        },
+        get: async () => assert.fail('no mapping to read'),
       }),
       preflightNativeDmo: preflightDmo,
       executeNativeDmo: executeDmo,
@@ -343,6 +356,9 @@ for (const preview of [true, false])
     assert.equal(item.outcome, 'updated');
     assert.equal(item.mutation, 'confirmed-updated');
     assert.deepEqual(item.removedFields, ['Note__c']);
+    assert.equal(item.droppedPairs, undefined);
+    // Mapping reads bracket the removal: one before, one after.
+    assert.deepEqual(lists, ['Person__dlm', 'Person__dlm']);
     assert.equal(item.preflight.diagnostics[0].code, 'DMO_FIELD_REMOVAL_PLANNED');
     assert.ok(calls.includes('segment-execute'));
   });

@@ -34,7 +34,7 @@ class DloTransport extends ConnectClient {
  * @param {unknown} error Transport failure.
  * @returns {unknown} DloError with retained diagnostic, or the original error.
  */
-function dloFailure(error: unknown): unknown {
+export function dloFailure(error: unknown): unknown {
   if (!(error instanceof ConnectError)) return error;
   const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;
   return retainConnectDiagnostic(

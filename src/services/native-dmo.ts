@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { explainMismatch, replaceExplanation } from './operation-diagnostic.js';
+import { explainMismatch } from './operation-diagnostic.js';
 import {
   NativeDmoError,
   nativeDmoName,
@@ -40,16 +40,29 @@ export type NativeDmoDeployOptions = {
   /** Remove custom target fields missing from the file through the Metadata API. */
   allowFieldRemoval?: boolean;
   /**
-   * Mapped fields whose pairs the same deployment removes from their mappings before the removal
-   * stage. They are planned for removal instead of refused; the removal stage never accepts them.
+   * Mapped fields whose pairs the selected mapping files of the same deployment drop. They are
+   * removed instead of refused; Salesforce drops their pairs together with the fields.
    */
   coveredMappedFields?: string[];
+  /** Source DLOs of the selected mapping files that target this DMO. */
+  coveredMappingSources?: string[];
   /**
-   * Split an update around the mapping deployments of the same batch. 'edits' sends only the
-   * PATCH and reports the removals as pending; 'removal' re-reads the target, refuses a field that
-   * is still mapped, never sends a PATCH and removes the fields once.
+   * Wraps the single field removal in reads before and after it, and returns the mapping pairs
+   * Salesforce dropped with the fields. Without it the removal is sent unwrapped.
    */
-  stage?: 'edits' | 'removal';
+  removeChecked?: (
+    targetApiName: string,
+    fields: string[],
+    remove: () => Promise<void>,
+    coverage: { fields: string[]; sources: string[] },
+  ) => Promise<DroppedPair[]>;
+};
+
+/** A mapping pair Salesforce dropped together with its removed target field. */
+export type DroppedPair = {
+  mapping: string;
+  sourceFieldDeveloperName: string;
+  targetFieldDeveloperName: string;
 };
 
 /** Bounded post-write readback; the single write is never repeated. */
@@ -302,8 +315,8 @@ export async function preflightNativeDmo(
   const edited: NativeDmoField[] = [];
   const removed: string[] = [];
   const mapped: string[] = [];
-  // Only the edit stage of a staged deployment may plan a mapped field for a later removal.
-  const covered = new Set(options.stage === 'removal' ? [] : (options.coveredMappedFields ?? []));
+  // A mapped field is removed only when the selected mapping files drop all of its pairs.
+  const covered = new Set(options.coveredMappedFields);
   for (const [name, field] of existing) {
     const authored = incoming.get(name);
     if (standard && field.creationType !== 'Custom') {
@@ -327,9 +340,9 @@ export async function preflightNativeDmo(
     if (!authored) {
       // The native DMO API has no route to remove a field; the Metadata API does, on request.
       if (options.allowFieldRemoval === true && !field.isPrimaryKey) {
-        // Salesforce removes a mapped field without objection and silently drops its mapping
-        // pair with it (live API 68), so the pair has to be taken out of the mapping first.
-        // Every such field is collected so the refusal names all of them at once.
+        // Salesforce removes a mapped field without objection and drops its mapping pairs with
+        // it (live API 68), so a mapped field is removed only when the selected mapping files
+        // drop those pairs too. Every other one is collected so the refusal names them all.
         if (field.isMapped === true && !covered.has(name)) mapped.push(name);
         else removed.push(name);
         continue;
@@ -478,6 +491,37 @@ export function nativeDmoConfirmed(
 }
 
 /**
+ * Wait until the PATCH of the same deployment is readable, so the reads that bracket the field
+ * removal start from the edited definition. The fields still present are not compared.
+ * @param {NativeDmoDocument} desired Requested definition without the removed fields.
+ * @param {string} apiName Exact DMO full name.
+ * @param {DmoClient} client Target client.
+ * @param {boolean} standard Standard DMO: only custom fields, label and description are compared.
+ * @param {NativeDmoSettle} settle Readback attempts and spacing.
+ */
+async function confirmEditBeforeRemoval(
+  desired: NativeDmoDocument,
+  apiName: string,
+  client: DmoClient,
+  standard: boolean,
+  settle: NativeDmoSettle,
+): Promise<void> {
+  let last: NativeDmoDocument | undefined;
+  for (let attempt = 0; attempt < settle.attempts; attempt++) {
+    if (attempt > 0) await settle.sleep(settle.delayMs);
+    last = await resolveTarget(apiName, client, desired.identity.dataSpace);
+    if (nativeDmoConfirmed(desired, last, [], standard)) return;
+  }
+  throw explainMismatch(
+    new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED'),
+    'edit readback before the field removal',
+    apiName,
+    desired,
+    last,
+  );
+}
+
+/**
  * Skip unchanged definitions, otherwise write once and require independent bounded GET confirmation.
  * An update sends at most one PATCH, then at most one Metadata API field removal, each exactly once.
  * Stale PATCH bodies never establish persistence; failed readback never triggers another write.
@@ -486,7 +530,7 @@ export function nativeDmoConfirmed(
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
- * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[], pendingRemoval?: string[]}>} Observed or confirmed definition, not activation proof.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[], droppedPairs?: DroppedPair[]}>} Observed or confirmed definition, not activation proof.
  */
 export async function deployNativeDmo(
   value: unknown,
@@ -498,8 +542,8 @@ export async function deployNativeDmo(
   operation: 'create' | 'update' | 'unchanged';
   document: NativeDmoDocument;
   removedFields?: string[];
-  /** Edit stage only: fields the removal stage of the same deployment still has to remove. */
-  pendingRemoval?: string[];
+  /** Mapping pairs Salesforce dropped together with the removed fields. */
+  droppedPairs?: DroppedPair[];
 }> {
   const desired = validateNativeDmoDocument(value);
   const plan = await preflightNativeDmo(desired, client, requestScope, options);
@@ -509,25 +553,12 @@ export async function deployNativeDmo(
   // Refuse before the PATCH when this client has no Metadata route for the planned removal.
   if (planned.length > 0 && !client.removeFields)
     throw new NativeDmoError('DMO_FIELD_REMOVAL_UNAVAILABLE');
-  // The edit stage leaves every planned removal to the removal stage and confirms only the edit.
-  const removed = options.stage === 'edits' ? [] : planned;
-  const pending =
-    options.stage === 'edits' && planned.length > 0 ? { pendingRemoval: planned } : {};
+  const removed = planned;
   if (plan.operation === 'update' && !plan.body && removed.length === 0)
     return {
       operation: 'unchanged',
       document: await resolveTarget(plan.apiName, client, desired.identity.dataSpace),
-      ...pending,
     };
-  if (options.stage === 'removal' && (plan.operation === 'create' || plan.body)) {
-    // The edit stage confirmed its PATCH; a difference seen now is never answered with a second one.
-    const error = new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED');
-    replaceExplanation(
-      error,
-      `Field removal stopped for ${plan.apiName}: the target definition no longer matches the file after the edit stage, and an edit is never sent twice.`,
-    );
-    throw error;
-  }
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)
@@ -539,8 +570,18 @@ export async function deployNativeDmo(
     if (accepted.identity.apiName !== plan.apiName)
       throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
   }
-  if (plan.operation === 'update' && removed.length > 0)
-    await client.removeFields!(plan.targetApiName, removed);
+  let droppedPairs: DroppedPair[] = [];
+  if (plan.operation === 'update' && removed.length > 0) {
+    if (plan.body) await confirmEditBeforeRemoval(desired, plan.apiName, client, standard, settle);
+    const targetApiName = plan.targetApiName;
+    const remove = async (): Promise<void> => client.removeFields!(targetApiName, removed);
+    if (options.removeChecked)
+      droppedPairs = await options.removeChecked(targetApiName, removed, remove, {
+        fields: options.coveredMappedFields ?? [],
+        sources: options.coveredMappingSources ?? [],
+      });
+    else await remove();
+  }
   let last: NativeDmoDocument | undefined;
   for (let attempt = 0; attempt < settle.attempts; attempt++) {
     if (attempt > 0) await settle.sleep(settle.delayMs);
@@ -551,7 +592,7 @@ export async function deployNativeDmo(
         operation: plan.operation,
         document,
         ...(removed.length > 0 ? { removedFields: removed } : {}),
-        ...pending,
+        ...(droppedPairs.length > 0 ? { droppedPairs } : {}),
       };
   }
   const lingering = last?.spec.fields.find((field) => removed.includes(field.name));

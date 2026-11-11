@@ -1,6 +1,6 @@
 import { operationDiagnostic, replaceExplanation } from './operation-diagnostic.js';
 import { NativeDmoError } from '../artifacts/native-dmo-document.js';
-import { nativeMappingName } from '../artifacts/native-mapping-document.js';
+import { NativeMappingError, nativeMappingName } from '../artifacts/native-mapping-document.js';
 import { preflightNativeDmo, deployNativeDmo, mappedFieldRemoval } from './native-dmo.js';
 import type { NativeDmoDeployOptions } from './native-dmo.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
@@ -21,8 +21,6 @@ export type MappedFieldGuide = {
 
 export type DmoCommandOptions = NativeDmoDeployOptions & {
   mappedFieldGuide?: MappedFieldGuide;
-  /** Selected mappings deployed before the removal stage; the preview names them. */
-  afterMappings?: string[];
 };
 
 /** A selected mapping file, reduced to what decides whether its deployment takes a pair away. */
@@ -35,8 +33,8 @@ export type SelectedMapping = {
   targetFields: string[];
 };
 
-/** Whether a DMO deploys in two stages around the selected mappings, and which mapped fields that covers. */
-export type DmoRemovalAdmission = { staged: boolean; coveredMappedFields: string[] };
+/** Mapped fields the DMO may remove because the selected mapping files drop all their pairs. */
+export type DmoRemovalAdmission = { coveredMappedFields: string[] };
 
 type MappingInventory = {
   mapped: MappedField[];
@@ -236,7 +234,10 @@ export function refusedDmo(error: unknown) {
     mutation: 'not-attempted' as const,
     diagnostics: [
       {
-        code: error instanceof NativeDmoError ? error.code : 'DMO_REQUEST_UNCONFIRMED',
+        code:
+          error instanceof NativeDmoError || error instanceof NativeMappingError
+            ? error.code
+            : 'DMO_REQUEST_UNCONFIRMED',
         message: operationDiagnostic(error, unwritten),
         ...(mappedFields ? { mappedFields } : {}),
       },
@@ -245,17 +246,17 @@ export function refusedDmo(error: unknown) {
 }
 
 /**
- * Decide, read-only and before any write of the batch, how a DMO with planned field removals
- * deploys beside the selected mappings. A mapped field is covered when every target mapping that
- * holds a pair for it is reconciled by a selected mapping file (same source and target object)
- * that keeps no pair for the field. All covered: the DMO deploys in two stages around the
- * mappings. Anything else, including a failed lookup, is the DMO_FIELD_REMOVAL_MAPPED refusal.
+ * Decide, read-only and before any write of the batch, which mapped fields a DMO may remove. A
+ * mapped field is covered when every target mapping that holds a pair for it is reconciled by a
+ * selected mapping file (same source and target object) that keeps no pair for the field.
+ * Salesforce then drops those pairs together with the field. Anything not covered, including a
+ * failed lookup, is the DMO_FIELD_REMOVAL_MAPPED refusal.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client; only read.
  * @param {string | undefined} requestScope Optional explicit data space.
  * @param {MappedFieldGuide | undefined} guide Mapping inventory source and command context.
  * @param {SelectedMapping[]} selected Mapping files of the same selection.
- * @returns {Promise<DmoRemovalAdmission>} Staging decision; any other refusal is left to the item's own preflight.
+ * @returns {Promise<DmoRemovalAdmission>} Covered mapped fields; any other refusal is left to the item's own preflight.
  */
 export async function admitDmoFieldRemoval(
   value: unknown,
@@ -265,19 +266,11 @@ export async function admitDmoFieldRemoval(
   selected: SelectedMapping[],
 ): Promise<DmoRemovalAdmission> {
   try {
-    const plan = await preflightNativeDmo(value, client, requestScope, { allowFieldRemoval: true });
-    const apiName = plan.apiName;
-    return {
-      // Without a selected mapping on this DMO there is nothing to wait for between the stages.
-      staged:
-        plan.operation === 'update' &&
-        plan.removeFields !== undefined &&
-        selected.some((mapping) => mapping.target === apiName),
-      coveredMappedFields: [],
-    };
+    await preflightNativeDmo(value, client, requestScope, { allowFieldRemoval: true });
+    return { coveredMappedFields: [] };
   } catch (error) {
     const refused = mappedFieldRemoval(error);
-    if (!refused || !(error instanceof Error)) return { staged: false, coveredMappedFields: [] };
+    if (!refused || !(error instanceof Error)) return { coveredMappedFields: [] };
     let inventory: MappingInventory | undefined;
     try {
       if (guide) inventory = await findMappings(refused.apiName, refused.fields, guide);
@@ -301,7 +294,7 @@ export async function admitDmoFieldRemoval(
           )
         );
       });
-    if (covered) return { staged: true, coveredMappedFields: refused.fields };
+    if (covered) return { coveredMappedFields: refused.fields };
     recordMappedRemoval(error, refused, inventory, guide);
     throw error;
   }
@@ -321,7 +314,7 @@ export async function preflightDmo(
   requestScope?: string,
   options: DmoCommandOptions = {},
 ): Promise<DmoPreview> {
-  const { mappedFieldGuide, afterMappings, ...deployOptions } = options;
+  const { mappedFieldGuide, ...deployOptions } = options;
   let plan: Awaited<ReturnType<typeof preflightNativeDmo>>;
   try {
     plan = await preflightNativeDmo(value, client, requestScope, deployOptions);
@@ -341,7 +334,7 @@ export async function preflightDmo(
       ? [
           {
             code: 'DMO_FIELD_REMOVAL_PLANNED',
-            message: `Fields missing from the file are removed with one Metadata API destructive change${afterMappings?.length ? `, after the selected mapping(s) ${afterMappings.join(', ')} are deployed` : ''}: ${removeFields.join(', ')}.`,
+            message: `Fields missing from the file are removed with one Metadata API destructive change: ${removeFields.join(', ')}.${deployOptions.coveredMappedFields?.length ? ` Salesforce drops the mapping pairs of ${deployOptions.coveredMappedFields.join(', ')} together with the field(s), so the selected mapping files find them already gone.` : ''}`,
           },
         ]
       : [],
@@ -349,8 +342,7 @@ export async function preflightDmo(
 }
 /**
  * Execute at most one PATCH and one field removal with conservative dispatch evidence and
- * independent readback. With a stage, only that half runs: 'edits' reports the fields left for
- * the removal stage in pendingRemoval, 'removal' re-reads the target and removes them once.
+ * independent readback, reporting the mapping pairs Salesforce dropped with the fields.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
  * @param {string} [requestScope] Optional explicit data space.
@@ -387,12 +379,10 @@ export async function executeDmo(
   };
   try {
     const result = await deployNativeDmo(value, guarded, requestScope, undefined, deployOptions);
-    const pending = result.pendingRemoval ? { pendingRemoval: result.pendingRemoval } : {};
     if (result.operation === 'unchanged')
       return {
         outcome: 'unchanged' as const,
         mutation: 'not-attempted' as const,
-        ...pending,
         diagnostics: [],
       };
     return {
@@ -402,7 +392,7 @@ export async function executeDmo(
           ? ('confirmed-created' as const)
           : ('confirmed-updated' as const),
       ...(result.removedFields ? { removedFields: result.removedFields } : {}),
-      ...pending,
+      ...(result.droppedPairs ? { droppedPairs: result.droppedPairs } : {}),
       diagnostics: [],
     };
   } catch (error) {
@@ -413,14 +403,15 @@ export async function executeDmo(
       mutation: dispatched ? ('unknown' as const) : ('not-attempted' as const),
       diagnostics: [
         {
-          code: error instanceof NativeDmoError ? error.code : 'DMO_REQUEST_UNCONFIRMED',
+          code:
+            error instanceof NativeDmoError || error instanceof NativeMappingError
+              ? error.code
+              : 'DMO_REQUEST_UNCONFIRMED',
           message: operationDiagnostic(
             error,
             dispatched
               ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
-              : deployOptions.stage === 'removal'
-                ? 'No field was removed, and earlier writes of this deployment stay in place; correct the reported check before another attempt.'
-                : unwritten,
+              : unwritten,
           ),
           ...(mappedFields ? { mappedFields } : {}),
         },

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { paceReadback, readbackPace } from './readback-pace.js';
 import { explainMismatch, replaceExplanation } from './operation-diagnostic.js';
 import { isNativeMappingDeletionVersion } from '../transport/api-version.js';
 import {
@@ -540,7 +541,8 @@ export async function deployNativeMapping(
       }
     }
     let settledPairs: NativeMappingField[] | undefined;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
+      await paceReadback(attempt);
       const raw = (await client.get(plan.target!.identity.apiName)) as Record<string, unknown>;
       const document = normalizeNativeMapping(raw, requestScope);
       checkBinding(plan.desired, document);
@@ -586,7 +588,8 @@ export async function deployNativeMapping(
   const name = plan.target?.identity.apiName ?? accepted.identity.apiName;
   if (accepted.identity.apiName !== name)
     throw new NativeMappingError('MAPPING_TARGET_IDENTITY_MISMATCH');
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
+    await paceReadback(attempt);
     let document: NativeMappingDocument;
     try {
       const raw = await client.get(name);
@@ -839,7 +842,8 @@ export async function unmapNativeMappingFields(
     onDispatch();
     await client.deleteField(plan.selected.identity.apiName, pair.developerName!);
     let settled = false;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
+      await paceReadback(attempt);
       if (await checkUnmapSnapshot(plan, client, dependencies)) {
         settled = true;
         break;

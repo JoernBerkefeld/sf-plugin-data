@@ -198,12 +198,14 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   primary-key field must stay in the file. A field that is currently mapped is
   removed only when the same command also deploys every
   `data360/mapping/<MappingApiName>.mapping-meta.json` file whose mapping holds a
-  pair with that `targetFieldDeveloperName`, with the pair removed from the file;
-  the removal then runs after those mappings. Otherwise the deploy is refused with
-  `DMO_FIELD_REMOVAL_MAPPED` before any write, naming those files and the single
-  command.
+  pair with that `targetFieldDeveloperName`, with the pair removed from the file.
+  The removal runs in the DMO position; Salesforce drops the field's pairs with it,
+  and those mapping files deploy afterwards and find the pairs already gone.
+  Otherwise the deploy is refused with `DMO_FIELD_REMOVAL_MAPPED` before any write,
+  naming those files and the single command.
 - `sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete` removes
-  named custom fields and their mapping pairs in the org, then overwrites this file
+  named custom fields in the org with one destructive change (Salesforce drops their
+  mapping pairs with them), then overwrites this file
   and the `data360/mapping/<MappingApiName>.mapping-meta.json` file of every mapping
   that lost a pair with the current definition. Only files that already exist under
   `--output-dir` (default: current directory) are refreshed; none is created or
@@ -219,7 +221,7 @@ Refused before any write: changing an existing field's `dataType` or
 DMO or of a custom DMO under a namespaced name, creating a namespaced DMO, and
 deleting a standard DMO (`UNSUPPORTED_DMO_TARGET`).
 
-Field removal is observed on empty custom DMOs, unmapped and mapped by one or two
+Field removal is observed at API 68 on empty custom DMOs, unmapped and mapped by two
 mappings, and on one standard DMO. Removing a data-bearing field is not verified.
 Standard DMO writes are observed at API 68 through the plugin on one standard DMO in
 two orgs, active in only one of them (add and relabel a custom field; remove it with

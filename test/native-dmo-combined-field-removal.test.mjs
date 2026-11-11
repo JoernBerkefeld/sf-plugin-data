@@ -20,7 +20,7 @@ import {
   executeDmo,
   mappedFieldMappings,
 } from '../lib/services/command-native-dmo.js';
-import { executeMapping } from '../lib/services/command-native-mapping.js';
+import { removeFieldsChecked } from '../lib/services/delete-dmo-field.js';
 
 const system = ['DataSource__c', 'DataSourceObject__c', 'InternalOrganization__c', 'KQ_Id__c'];
 const custom = ['Id__c', 'Name__c', 'Note__c'];
@@ -40,8 +40,11 @@ const pair = (name) => ({
   developerName: `sel_${name}`,
 });
 const unwritten = 'No write attempted; correct the reported check before another attempt.';
-const unremoved =
-  'No field was removed, and earlier writes of this deployment stay in place; correct the reported check before another attempt.';
+const dropped = (mapping, name = 'Note__c') => ({
+  mapping,
+  sourceFieldDeveloperName: name,
+  targetFieldDeveloperName: name,
+});
 
 /**
  * Synthetic org: DMOs whose mapped marker follows the mappings, and an ordered event ledger.
@@ -105,10 +108,14 @@ function world(dmos, mappings) {
     },
     removeFields: async (name, names) => {
       events.push(`dmo:remove:${name}:${names.join(',')}`);
-      // Salesforce would silently drop the pair; the plugin must never get that far.
-      for (const entry of names) assert.equal(mapped(name, entry), false, `${entry} still mapped`);
       const found = state.dmos.get(name);
       found.fields = found.fields.filter((entry) => !names.includes(entry.name));
+      // Salesforce drops the mapping pairs of a removed field together with it (live API 68).
+      for (const entry of state.mappings)
+        if (entry.targetEntityDeveloperName === name)
+          entry.fieldMappings = entry.fieldMappings.filter(
+            (item) => !names.includes(item.targetFieldDeveloperName),
+          );
     },
   };
   const dlo = {
@@ -168,6 +175,17 @@ function world(dmos, mappings) {
   return {
     events,
     state,
+    /**
+     * Events between the removal of the named DMO and the next write.
+     * @param {string} name DMO full name.
+     * @returns {string[]} Reads that confirm the removal.
+     */
+    readsAfterRemoval: (name) => {
+      const start = events.findIndex((entry) => entry.startsWith(`dmo:remove:${name}`));
+      const rest = events.slice(start + 1);
+      const end = rest.findIndex((entry) => !/^(?:dmo:get|mapping:list):/u.test(entry));
+      return end === -1 ? rest : rest.slice(0, end);
+    },
     writes: () => events.filter((entry) => !/^(?:dmo:get|mapping:list):/u.test(entry)),
     services: {
       createDmoClient: () => dmo,
@@ -222,7 +240,7 @@ const org = { getOrgId: () => 'org', getUsername: () => 'user@example.com' };
  * @returns {Promise<object>} Result envelope.
  */
 async function deploy({ dmos = [], mappings = [], dlos = [], flags = {}, services, cwd }) {
-  const root = cwd ?? (await mkdtemp(path.join(os.tmpdir(), 'native-dmo-staged-removal-')));
+  const root = cwd ?? (await mkdtemp(path.join(os.tmpdir(), 'native-dmo-combined-removal-')));
   if (!cwd) {
     for (const document of dlos) await writeDloDocument(document, root, false);
     for (const document of dmos) await writeNativeDmoDocument(document, root, false);
@@ -268,7 +286,7 @@ const command = `sf data360 deploy -o my-org -m mapping:${M} -m dmo:${D} --allow
 const refusal = (nextAction) =>
   `Field removal refused for ${D}: Note__c is mapped by ${M}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:\nsf data360 retrieve -o my-org -m mapping:${M} -m dmo:${D} --overwrite\nIn data360/mapping/${M}.mapping-meta.json remove the pair(s) whose targetFieldDeveloperName is Note__c; keep all other pairs. In data360/dmo/${D}.dmo-meta.json remove the field(s) Note__c.\n${command}\n${nextAction}`;
 
-test('one command edits the DMO, reconciles the mapping, then removes the field', async () => {
+test('one command edits the DMO, removes the field with its pair, then deploys the mapping', async () => {
   const org1 = single();
   const selection = {
     dmos: [dmoFile(D, [...keep, 'Extra__c'], 'Changed')],
@@ -277,15 +295,17 @@ test('one command edits the DMO, reconciles the mapping, then removes the field'
   };
   const { result, cwd } = await deploy(selection);
   assert.equal(result.status, 'success', JSON.stringify(result));
+  // The DMO removes the field in its own position; Salesforce drops the pair with it, so the
+  // mapping only adds its new pair.
   assert.deepEqual(org1.writes(), [
     `dmo:patch:${D}`,
-    `mapping:unmap:${M}:Note__c`,
-    `mapping:add:${M}:Extra__c`,
     `dmo:remove:${D}:Note__c`,
+    `mapping:add:${M}:Extra__c`,
   ]);
-  // The removal is followed by the readback that confirms absence and definition.
-  assert.equal(org1.events.at(-1), `dmo:get:${D}`);
-  assert.ok(org1.events.lastIndexOf(`dmo:remove:${D}:Note__c`) < org1.events.length - 1);
+  // The removal is followed by the reads that confirm the DMO and its mappings.
+  const reads = org1.readsAfterRemoval(D);
+  assert.ok(reads.includes(`dmo:get:${D}`), JSON.stringify(reads));
+  assert.ok(reads.includes(`mapping:list:${D}`), JSON.stringify(reads));
   // One item per file, in DMO then mapping order.
   assert.deepEqual(
     result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
@@ -295,9 +315,15 @@ test('one command edits the DMO, reconciles the mapping, then removes the field'
     ],
   );
   assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
+  assert.deepEqual(result.result.items[0].droppedPairs, [dropped(M)]);
   assert.deepEqual(result.result.items[0].diagnostics, []);
   assert.ok(!('pendingRemoval' in result.result.items[0]));
   assert.ok(!org1.state.dmos.get(D).fields.some((entry) => entry.name === 'Note__c'));
+  assert.ok(
+    !org1.state.mappings[0].fieldMappings.some(
+      (item) => item.targetFieldDeveloperName === 'Note__c',
+    ),
+  );
   // The same command again changes nothing.
   const before = org1.writes().length;
   const repeat = await deploy({ ...selection, cwd });
@@ -342,21 +368,18 @@ test('a removal-only DMO sends no PATCH and a selected DLO still deploys first',
     },
   });
   assert.equal(result.status, 'success', JSON.stringify(result));
-  assert.deepEqual(org1.writes(), [
-    'dlo:execute',
-    `mapping:unmap:${M}:Note__c`,
-    `dmo:remove:${D}:Note__c`,
-  ]);
-  assert.equal(org1.events.at(-1), `dmo:get:${D}`);
+  assert.deepEqual(org1.writes(), ['dlo:execute', `dmo:remove:${D}:Note__c`]);
   assert.deepEqual(
     result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
     [
       ['dlo', 'unchanged', 'not-attempted'],
       ['dmo', 'updated', 'confirmed-updated'],
-      ['mapping', 'updated', 'confirmed-updated'],
+      // The pair is already gone, so the mapping whose only change was dropping it is unchanged.
+      ['mapping', 'unchanged', 'not-attempted'],
     ],
   );
   assert.deepEqual(result.result.items[1].removedFields, ['Note__c']);
+  assert.deepEqual(result.result.items[1].droppedPairs, [dropped(M)]);
   assert.deepEqual(result.result.items[1].diagnostics, []);
 });
 
@@ -441,37 +464,43 @@ for (const preview of [false, true])
     });
 
 for (const edited of [true, false])
-  test(`removal stage re-checks the mapped marker, edit stage wrote=${edited}`, async () => {
+  test(`a side effect of the removal fails the DMO item before the mappings, PATCH=${edited}`, async () => {
     const org1 = single();
+    const { dmo } = org1.clients;
     const { result } = await deploy({
       dmos: [dmoFile(D, keep, edited ? 'Changed' : 'Example')],
       mappings: [mappingFile(M, 'SrcA__dll', D, keep)],
       services: {
         ...org1.services,
-        // Another actor maps the field again right after the mapping deployment settled.
-        executeMapping: async (...arguments_) => {
-          const outcome = await executeMapping(...arguments_);
-          org1.state.mappings[0].fieldMappings.push(pair('Note__c'));
-          return outcome;
-        },
+        // Salesforce also drops a pair of a field that stays on the DMO.
+        createDmoClient: () => ({
+          ...dmo,
+          removeFields: async (name, names) => {
+            await dmo.removeFields(name, names);
+            org1.state.mappings[0].fieldMappings = org1.state.mappings[0].fieldMappings.filter(
+              (item) => item.targetFieldDeveloperName !== 'Name__c',
+            );
+          },
+        }),
       },
     });
-    assert.equal(result.status, edited ? 'failed' : 'blocked', JSON.stringify(result));
+    assert.equal(result.status, 'failed', JSON.stringify(result));
     assert.deepEqual(org1.writes(), [
       ...(edited ? [`dmo:patch:${D}`] : []),
-      `mapping:unmap:${M}:Note__c`,
+      `dmo:remove:${D}:Note__c`,
     ]);
-    const [item, mapping] = result.result.items;
+    // The batch stops at the DMO; no mapping is deployed over the unexpected state.
+    assert.equal(result.result.items.length, 1);
+    const [item] = result.result.items;
     assert.equal(item.family, 'dmo');
-    // The confirmed PATCH stays reported; no removal was dispatched.
-    assert.equal(item.outcome, edited ? 'failed' : 'blocked');
-    assert.equal(item.mutation, edited ? 'confirmed-updated' : 'not-attempted');
+    assert.equal(item.outcome, 'failed');
+    assert.equal(item.mutation, 'unknown');
     assert.equal(item.removedFields, undefined);
-    assert.equal(item.diagnostics.length, 1);
-    assert.equal(item.diagnostics[0].code, 'DMO_FIELD_REMOVAL_MAPPED');
-    assert.equal(item.diagnostics[0].message, refusal(unremoved));
-    assert.equal(mapping.outcome, 'updated');
-    assert.ok(org1.state.dmos.get(D).fields.some((entry) => entry.name === 'Note__c'));
+    assert.equal(item.droppedPairs, undefined);
+    assert.deepEqual(
+      item.diagnostics.map(({ code }) => code),
+      ['DMO_FIELD_REMOVAL_SIDE_EFFECT'],
+    );
   });
 
 test('a failed removal fails the one DMO item without another write', async () => {
@@ -492,11 +521,8 @@ test('a failed removal fails the one DMO item without another write', async () =
     },
   });
   assert.equal(result.status, 'failed', JSON.stringify(result));
-  assert.deepEqual(org1.writes(), [
-    `dmo:patch:${D}`,
-    `mapping:unmap:${M}:Note__c`,
-    `dmo:remove:${D}`,
-  ]);
+  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}`]);
+  assert.equal(result.result.items.length, 1);
   const [item] = result.result.items;
   assert.equal(item.outcome, 'failed');
   assert.equal(item.mutation, 'unknown');
@@ -507,7 +533,7 @@ test('a failed removal fails the one DMO item without another write', async () =
   );
 });
 
-test('a batch that stops at the mapping leaves the open removal named on the DMO item', async () => {
+test('a batch that stops at the mapping keeps the completed removal on the DMO item', async () => {
   const org1 = single();
   const { result } = await deploy({
     dmos: [dmoFile(D, keep, 'Changed')],
@@ -522,20 +548,17 @@ test('a batch that stops at the mapping leaves the open removal named on the DMO
     },
   });
   assert.equal(result.status, 'blocked', JSON.stringify(result));
-  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`]);
-  const [item] = result.result.items;
+  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
+  const [item, mapping] = result.result.items;
   assert.equal(item.outcome, 'updated');
   assert.equal(item.mutation, 'confirmed-updated');
-  assert.equal(item.removedFields, undefined);
-  assert.deepEqual(item.diagnostics, [
-    {
-      code: 'DMO_FIELD_REMOVAL_PENDING',
-      message: `Not removed: Note__c. The removal runs after the selected mapping(s) ${M} are deployed.`,
-    },
-  ]);
+  assert.deepEqual(item.removedFields, ['Note__c']);
+  assert.deepEqual(item.droppedPairs, [dropped(M)]);
+  assert.deepEqual(item.diagnostics, []);
+  assert.equal(mapping.outcome, 'blocked');
 });
 
-test('preview names the removal and its mappings and writes nothing', async () => {
+test('preview names the removal and its dropped pairs and writes nothing', async () => {
   const org1 = single();
   const { result } = await deploy({
     dmos: [dmoFile(D, keep, 'Changed')],
@@ -552,9 +575,11 @@ test('preview names the removal and its mappings and writes nothing', async () =
   assert.deepEqual(item.diagnostics, [
     {
       code: 'DMO_FIELD_REMOVAL_PLANNED',
-      message: `Fields missing from the file are removed with one Metadata API destructive change, after the selected mapping(s) ${M} are deployed: Note__c.`,
+      message:
+        'Fields missing from the file are removed with one Metadata API destructive change: Note__c. Salesforce drops the mapping pairs of Note__c together with the field(s), so the selected mapping files find them already gone.',
     },
   ]);
+  // Preview reads the target as it is now, where the pair still exists.
   assert.equal(mapping.family, 'mapping');
   assert.equal(mapping.outcome, 'update');
   assert.deepEqual(
@@ -563,14 +588,14 @@ test('preview names the removal and its mappings and writes nothing', async () =
   );
 });
 
-test('only the DMO with removals is staged; its removal follows its own last mapping', async () => {
+test('each DMO removes only its own fields in DMO position; the mappings follow', async () => {
   const A = 'ExampleA__dlm';
   const B = 'ExampleB__dlm';
   const org1 = world({ [A]: all, [B]: all }, [
     { name: 'SrcA_map_A', source: 'SrcA__dll', target: A, fields: all },
     { name: 'SrcB_map_B', source: 'SrcB__dll', target: B, fields: keep },
   ]);
-  const stages = [];
+  const calls = [];
   const { result } = await deploy({
     dmos: [dmoFile(A, keep), dmoFile(B, all, 'Changed')],
     mappings: [
@@ -580,40 +605,44 @@ test('only the DMO with removals is staged; its removal follows its own last map
     services: {
       ...org1.services,
       executeNativeDmo: async (document, client, scope, options) => {
-        stages.push([document.identity.apiName, options.stage, options.coveredMappedFields]);
+        calls.push([
+          document.identity.apiName,
+          options.coveredMappedFields,
+          typeof options.removeChecked,
+        ]);
         return executeDmo(document, client, scope, options);
       },
     },
   });
   assert.equal(result.status, 'success', JSON.stringify(result));
   assert.deepEqual(org1.writes(), [
-    `dmo:patch:${B}`,
-    'mapping:unmap:SrcA_map_A:Note__c',
     `dmo:remove:${A}:Note__c`,
+    `dmo:patch:${B}`,
     'mapping:add:SrcB_map_B:Note__c',
   ]);
-  assert.deepEqual(stages, [
-    [A, 'edits', ['Note__c']],
-    [B, undefined, undefined],
-    [A, 'removal', undefined],
+  assert.deepEqual(calls, [
+    [A, ['Note__c'], 'function'],
+    [B, [], 'function'],
   ]);
   assert.deepEqual(
     result.result.items.map((item) => [item.identity.apiName, item.outcome, item.mutation]),
     [
       [A, 'updated', 'confirmed-updated'],
       [B, 'updated', 'confirmed-updated'],
-      ['SrcA_map_A', 'updated', 'confirmed-updated'],
+      ['SrcA_map_A', 'unchanged', 'not-attempted'],
       ['SrcB_map_B', 'updated', 'confirmed-updated'],
     ],
   );
   assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
+  assert.deepEqual(result.result.items[0].droppedPairs, [dropped('SrcA_map_A')]);
   assert.equal(result.result.items[1].removedFields, undefined);
+  assert.equal(result.result.items[1].droppedPairs, undefined);
 });
 
-test('a DMO without planned removals keeps the single-stage DMO then mapping order', async () => {
+test('a DMO without planned removals keeps the DMO then mapping order', async () => {
   for (const allowed of [true, false]) {
     const org1 = world({ [D]: all }, [{ name: M, source: 'SrcA__dll', target: D, fields: keep }]);
-    const stages = [];
+    const covered = [];
     const { result } = await deploy({
       dmos: [dmoFile(D, all, 'Changed')],
       mappings: [mappingFile(M, 'SrcA__dll', D, all)],
@@ -621,14 +650,14 @@ test('a DMO without planned removals keeps the single-stage DMO then mapping ord
       services: {
         ...org1.services,
         executeNativeDmo: async (document, client, scope, options) => {
-          stages.push(options?.stage);
+          covered.push(options?.coveredMappedFields);
           return executeDmo(document, client, scope, options);
         },
       },
     });
     assert.equal(result.status, 'success', JSON.stringify(result));
     assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `mapping:add:${M}:Note__c`]);
-    assert.deepEqual(stages, [undefined]);
+    assert.deepEqual(covered, [allowed ? [] : undefined]);
     // Without the flag no admission read precedes the DMO item.
     if (!allowed) assert.equal(org1.events[0], `dmo:get:${D}`);
   }
@@ -645,26 +674,20 @@ test('a DMO without planned removals keeps the single-stage DMO then mapping ord
   assert.deepEqual(org1.writes(), []);
 });
 
-test('an unmapped removal without a selected mapping on the DMO stays single-stage', async () => {
+test('an unmapped removal on a DMO without mappings is checked and drops no pair', async () => {
   const org1 = world({ [D]: all }, []);
-  const stages = [];
   const { result } = await deploy({
     dmos: [dmoFile(D, keep, 'Changed')],
-    services: {
-      ...org1.services,
-      executeNativeDmo: async (document, client, scope, options) => {
-        stages.push(options.stage);
-        return executeDmo(document, client, scope, options);
-      },
-    },
+    services: org1.services,
   });
   assert.equal(result.status, 'success', JSON.stringify(result));
-  assert.deepEqual(stages, [undefined]);
   assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
+  assert.ok(org1.readsAfterRemoval(D).includes(`mapping:list:${D}`));
   assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
+  assert.equal(result.result.items[0].droppedPairs, undefined);
 });
 
-test('two mappings sharing the field each drop their pair, then the DMO removes the field', async () => {
+test('two mappings sharing the field both lose their pair with the one removal', async () => {
   const second = 'SrcB_map_Example_2';
   const org1 = world({ [D]: all }, [
     { name: M, source: 'SrcA__dll', target: D, fields: all },
@@ -677,22 +700,17 @@ test('two mappings sharing the field each drop their pair, then the DMO removes 
   };
   const { result, cwd } = await deploy(selection);
   assert.equal(result.status, 'success', JSON.stringify(result));
-  // The field stays mapped after the first mapping and is only removed once both let go of it.
-  assert.deepEqual(org1.writes(), [
-    `mapping:unmap:${M}:Note__c`,
-    `mapping:unmap:${second}:Note__c`,
-    `dmo:remove:${D}:Note__c`,
-  ]);
-  assert.equal(org1.events.at(-1), `dmo:get:${D}`);
+  assert.deepEqual(org1.writes(), [`dmo:remove:${D}:Note__c`]);
   assert.deepEqual(
     result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
     [
       ['dmo', 'updated', 'confirmed-updated'],
-      ['mapping', 'updated', 'confirmed-updated'],
-      ['mapping', 'updated', 'confirmed-updated'],
+      ['mapping', 'unchanged', 'not-attempted'],
+      ['mapping', 'unchanged', 'not-attempted'],
     ],
   );
   assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
+  assert.deepEqual(result.result.items[0].droppedPairs, [dropped(M), dropped(second)]);
   assert.deepEqual(result.result.items[0].diagnostics, []);
   for (const entry of org1.state.mappings) assert.equal(entry.fieldMappings.length, keep.length);
   assert.ok(!org1.state.dmos.get(D).fields.some((entry) => entry.name === 'Note__c'));
@@ -713,7 +731,6 @@ test('admission covers a field only when every holding mapping is selected witho
   const admit = (mappings, value = dmoFile(D, keep)) =>
     admitDmoFieldRemoval(value, clients.dmo, undefined, guide, mappings);
   assert.deepEqual(await admit([selected('SrcA__dll', keep), selected('SrcB__dll', [])]), {
-    staged: true,
     coveredMappedFields: ['Note__c'],
   });
   for (const mappings of [
@@ -743,7 +760,7 @@ test('admission covers a field only when every holding mapping is selected witho
     await admitDmoFieldRemoval(dmoFile(D, keep), unnamed.clients.dmo, undefined, unnamedGuide, [
       selected('SrcA__dll', keep),
     ]),
-    { staged: true, coveredMappedFields: ['Note__c'] },
+    { coveredMappedFields: ['Note__c'] },
   );
   // No guide, a mapped marker without any holder, and other refusals.
   await assert.rejects(
@@ -770,18 +787,18 @@ test('admission covers a field only when every holding mapping is selected witho
     ),
     (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
   );
-  // Unmapped removals stage only beside a selected mapping on the DMO; other refusals are left
+  // Unmapped removals cover nothing, with or without a selected mapping; other refusals are left
   // to the item's own preflight.
   const free = world({ [D]: all }, []);
   assert.deepEqual(
     await admitDmoFieldRemoval(dmoFile(D, keep), free.clients.dmo, undefined, undefined, []),
-    { staged: false, coveredMappedFields: [] },
+    { coveredMappedFields: [] },
   );
   assert.deepEqual(
     await admitDmoFieldRemoval(dmoFile(D, keep), free.clients.dmo, undefined, undefined, [
       selected('SrcA__dll', keep),
     ]),
-    { staged: true, coveredMappedFields: [] },
+    { coveredMappedFields: [] },
   );
   assert.deepEqual(
     await admitDmoFieldRemoval(
@@ -794,12 +811,12 @@ test('admission covers a field only when every holding mapping is selected witho
       undefined,
       [selected('SrcA__dll', keep)],
     ),
-    { staged: false, coveredMappedFields: [] },
+    { coveredMappedFields: [] },
   );
   assert.deepEqual(free.writes(), []);
 });
 
-test('the service stages keep the mapped guard and never send an edit twice', async () => {
+test('the service removes a covered field once through the checked removal and keeps the mapped guard', async () => {
   const org1 = single();
   const { dmo } = org1.clients;
   const file = dmoFile(D, keep, 'Changed');
@@ -814,55 +831,159 @@ test('the service stages keep the mapped guard and never send an edit twice', as
     preflightNativeDmo(file, dmo, undefined, { ...allow, coveredMappedFields: ['Name__c'] }),
     (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
   );
-  // The removal stage ignores the coverage and refuses the still mapped field before any write.
   await assert.rejects(
-    deployNativeDmo(file, dmo, undefined, fast, {
-      ...allow,
-      coveredMappedFields: ['Note__c'],
-      stage: 'removal',
-    }),
+    deployNativeDmo(file, dmo, undefined, fast, allow),
     (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
   );
   assert.deepEqual(org1.writes(), []);
-  // The edit stage sends the PATCH only and reports the removal as pending.
-  const edits = await deployNativeDmo(file, dmo, undefined, fast, {
+  // The PATCH lands first, then the one removal runs inside the checked wrapper.
+  const calls = [];
+  const removed = await deployNativeDmo(file, dmo, undefined, fast, {
     ...allow,
     coveredMappedFields: ['Note__c'],
-    stage: 'edits',
+    removeChecked: async (target, fields, remove) => {
+      calls.push([target, fields, [...org1.writes()]]);
+      await remove();
+      return [dropped(M)];
+    },
   });
-  assert.equal(edits.operation, 'update');
-  assert.deepEqual(edits.pendingRemoval, ['Note__c']);
-  assert.equal(edits.removedFields, undefined);
-  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`]);
-  // Without anything to PATCH the edit stage writes nothing and still reports the removal.
-  const idle = await deployNativeDmo(file, dmo, undefined, fast, {
-    ...allow,
-    coveredMappedFields: ['Note__c'],
-    stage: 'edits',
-  });
-  assert.equal(idle.operation, 'unchanged');
-  assert.deepEqual(idle.pendingRemoval, ['Note__c']);
-  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`]);
-  // A definition that differs again at the removal stage is not patched a second time.
-  org1.state.mappings[0].fieldMappings = org1.state.mappings[0].fieldMappings.filter(
-    (item) => item.targetFieldDeveloperName !== 'Note__c',
-  );
-  org1.state.dmos.get(D).label = 'Drifted';
-  const stale = await executeDmo(file, dmo, undefined, { ...allow, stage: 'removal' });
-  assert.equal(stale.outcome, 'blocked');
-  assert.equal(stale.mutation, 'not-attempted');
-  assert.equal(stale.diagnostics[0].code, 'DMO_PERSISTENCE_UNCONFIRMED');
-  assert.equal(
-    stale.diagnostics[0].message,
-    `Field removal stopped for ${D}: the target definition no longer matches the file after the edit stage, and an edit is never sent twice. ${unremoved}`,
-  );
-  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`]);
-  // With the definition in place the removal stage removes once and confirms absence.
-  org1.state.dmos.get(D).label = 'Changed';
-  const removed = await deployNativeDmo(file, dmo, undefined, fast, { ...allow, stage: 'removal' });
   assert.equal(removed.operation, 'update');
   assert.deepEqual(removed.removedFields, ['Note__c']);
+  assert.deepEqual(removed.droppedPairs, [dropped(M)]);
+  assert.deepEqual(calls, [[D, ['Note__c'], [`dmo:patch:${D}`]]]);
   assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
-  const again = await deployNativeDmo(file, dmo, undefined, fast, { ...allow, stage: 'removal' });
+  const again = await deployNativeDmo(file, dmo, undefined, fast, {
+    ...allow,
+    removeChecked: async () => assert.fail('nothing left to remove'),
+  });
   assert.equal(again.operation, 'unchanged');
+  assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
+  // Without the wrapper the removal is sent unwrapped and reports no pairs.
+  const free = world({ [D]: all }, []);
+  const plain = await deployNativeDmo(dmoFile(D, keep), free.clients.dmo, undefined, fast, allow);
+  assert.deepEqual(plain.removedFields, ['Note__c']);
+  assert.equal(plain.droppedPairs, undefined);
+  assert.deepEqual(free.writes(), [`dmo:remove:${D}:Note__c`]);
+  // A mapping failure inside the checked removal keeps its own code on the deploy item.
+  const third = single();
+  const failed = await executeDmo(dmoFile(D, keep), third.clients.dmo, undefined, {
+    ...allow,
+    coveredMappedFields: ['Note__c'],
+    removeChecked: async (_target, _fields, remove) => {
+      await remove();
+      throw new NativeMappingError('MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
+    },
+  });
+  assert.equal(failed.outcome, 'failed');
+  assert.equal(failed.mutation, 'unknown');
+  assert.equal(failed.diagnostics[0].code, 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED');
+});
+
+const readers = (org) => ({ dmo: org.clients.dmo, mappings: org.clients.mapping });
+// What the admission allowed: Note__c, held by the selected mapping from SrcA__dll.
+const cover = { fields: ['Note__c'], sources: ['SrcA__dll'] };
+test('the checked removal confirms dropped pairs and stops on whatever it cannot confirm', async () => {
+  // Salesforce drops the pair with the field.
+  const org1 = single();
+  assert.deepEqual(
+    await removeFieldsChecked(
+      D,
+      ['Note__c'],
+      readers(org1),
+      async () => org1.clients.dmo.removeFields(D, ['Note__c']),
+      cover,
+      undefined,
+      fast,
+    ),
+    [{ ...dropped(M), developerName: 'sel_Note__c' }],
+  );
+  // A pair that never goes away is unconfirmed after the bounded reads.
+  const org2 = single();
+  await assert.rejects(
+    removeFieldsChecked(
+      D,
+      ['Note__c'],
+      readers(org2),
+      async () => {
+        org2.events.push(`dmo:remove:${D}:Note__c`);
+        const found = org2.state.dmos.get(D);
+        found.fields = found.fields.filter((entry) => entry.name !== 'Note__c');
+      },
+      cover,
+      undefined,
+      fast,
+    ),
+    (error) => error.code === 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED',
+  );
+  // A field that never goes away is unconfirmed too.
+  const org3 = single();
+  await assert.rejects(
+    removeFieldsChecked(D, ['Note__c'], readers(org3), async () => {}, cover, undefined, fast),
+    (error) => error.code === 'DMO_PERSISTENCE_UNCONFIRMED',
+  );
+  // A DMO whose mapping list answers 404 has no mappings, so no pair is dropped.
+  const org4 = world({ [D]: all }, []);
+  const notFound = {
+    ...org4.clients.mapping,
+    list: async () => {
+      throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+    },
+  };
+  assert.deepEqual(
+    await removeFieldsChecked(
+      D,
+      ['Note__c'],
+      { dmo: org4.clients.dmo, mappings: notFound },
+      async () => org4.clients.dmo.removeFields(D, ['Note__c']),
+      cover,
+      undefined,
+      fast,
+    ),
+    [],
+  );
+  // A mapped field without an identified pair is refused before the write.
+  const org5 = world({ [D]: all }, []);
+  const marked = {
+    get: async (name) => {
+      const raw = await org5.clients.dmo.get(name);
+      for (const entry of raw.fields) if (entry.name === 'Note__c') entry.isMapped = true;
+      return raw;
+    },
+  };
+  await assert.rejects(
+    removeFieldsChecked(
+      D,
+      ['Note__c'],
+      { dmo: marked, mappings: org5.clients.mapping },
+      async () => assert.fail('no removal'),
+      cover,
+      undefined,
+      fast,
+    ),
+    (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
+  );
+});
+
+test('the checked removal refuses before the write when the snapshot disagrees with the admission', async () => {
+  for (const coverage of [
+    // The pair sits in a mapping whose file is not part of the selection.
+    { fields: ['Note__c'], sources: ['OtherSource__dll'] },
+    // The field was not mapped when the batch was admitted.
+    { fields: [], sources: ['SrcA__dll'] },
+  ]) {
+    const org = single();
+    await assert.rejects(
+      removeFieldsChecked(
+        D,
+        ['Note__c'],
+        readers(org),
+        async () => assert.fail('nothing may be removed'),
+        coverage,
+        undefined,
+        fast,
+      ),
+      (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
+    );
+    assert.deepEqual(org.writes(), []);
+  }
 });

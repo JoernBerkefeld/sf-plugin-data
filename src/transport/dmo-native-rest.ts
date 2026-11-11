@@ -14,7 +14,7 @@ export type DmoDeleteClient = Pick<DmoClient, 'get' | 'delete'>;
  * @param {unknown} error Transport failure.
  * @returns {unknown} NativeDmoError with retained diagnostic, or the original error.
  */
-function dmoFailure(error: unknown): unknown {
+export function dmoFailure(error: unknown): unknown {
   if (!(error instanceof ConnectError)) return error;
   const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;
   return retainConnectDiagnostic(

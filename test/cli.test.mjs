@@ -536,6 +536,47 @@ test('deploy wait-timeout parser requires positive integer seconds and help desc
   }
 });
 
+const flatDocument = (file) =>
+  readFileSync(new URL(file, import.meta.url), 'utf8').replaceAll(/\s+/gu, ' ');
+
+test('docs and deploy help describe mapped-field removal as one destructive change in the DMO position', async () => {
+  const readme = flatDocument('../README.md');
+  const capabilities = flatDocument('../docs/capabilities.md');
+  const artifact = flatDocument('../docs/artifact-format.md');
+  for (const text of [
+    "Salesforce drops the field's mapping pairs itself",
+    'The DMO deploys in its normal position (data lake objects, DMOs, mappings)',
+    'find the pairs already gone',
+    '`droppedPairs`',
+    'DMO_FIELD_REMOVAL_SIDE_EFFECT',
+    'MAPPING_UNMAP_PLAN_CHANGED',
+    'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED',
+    'Planned pair drop (Salesforce removes it with the field)',
+    '### Observed run times',
+    '`delete --field` on a field mapped by two mappings',
+  ])
+    assert.ok(readme.includes(text), `missing README field-removal contract: ${text}`);
+  for (const text of ['DMO_FIELD_REMOVAL_SIDE_EFFECT', 'does not delete pairs one by one'])
+    assert.ok(capabilities.includes(text), `missing capabilities contract: ${text}`);
+  assert.ok(artifact.includes("Salesforce drops the field's pairs with it"));
+  for (const document of [readme, capabilities, artifact])
+    for (const obsolete of [
+      'DMO_FIELD_REMOVAL_PENDING',
+      'two stages',
+      'two-stage DMO',
+      'removal stage',
+      'separate CLI process',
+      'its own CLI process',
+      'about 11 minutes',
+    ])
+      assert.ok(!document.includes(obsolete), `obsolete field-removal wording: ${obsolete}`);
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  assert.match(
+    Deploy.description,
+    /remove the field in the DMO position with one Metadata API destructive change\. Salesforce drops the .*DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise\), and the mappings deployed afterwards find the pairs already gone/u,
+  );
+});
+
 test('deploy parser admits repeated non-greedy explicit flags but blocks invalid selections before org work', () => {
   for (const arguments_ of [
     [],

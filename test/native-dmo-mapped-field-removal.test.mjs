@@ -365,6 +365,9 @@ const org = {
  * @param {boolean} [json] Whether JSON output is enabled.
  * @returns {Promise<{result: object, lines: string[]}>} Envelope and human output lines.
  */
+const sender = {
+  request: async () => assert.fail('fake clients must not reach the bound sender'),
+};
 const deploy = async (cwd, flags, services, json = true) => {
   const lines = [];
   const command = Object.create(Deploy.prototype);
@@ -383,6 +386,7 @@ const deploy = async (cwd, flags, services, json = true) => {
   command.captureInput = captureDeployInputDigest;
   command.verifySegmentInput = verifySegmentInputDigest;
   command.resolveTargetOrg = async () => org;
+  command.createSsotSender = () => sender;
   Object.assign(command, services);
   const previousCwd = process.cwd();
   const previousExit = process.exitCode;
@@ -455,7 +459,7 @@ for (const preview of [true, false])
         assert.equal(result.result.items[0].outcome, 'blocked');
         assert.equal(result.result.items[0].mutation, 'not-attempted');
       }
-      assert.deepEqual(created, [['user@example.com', '68.0', undefined, dataspace]]);
+      assert.deepEqual(created, [['user@example.com', '68.0', undefined, dataspace, sender]]);
       assert.deepEqual(lists, [[apiName]]);
       assert.deepEqual(writes, []);
       const serialized = JSON.stringify(result);
@@ -487,7 +491,7 @@ test('all-native route repeats the data space and prints commands on their own l
     false,
   );
   assert.equal(result.status, 'blocked');
-  assert.deepEqual(created, [['user@example.com', '68.0', undefined, 'Team']]);
+  assert.deepEqual(created, [['user@example.com', '68.0', undefined, 'Team', sender]]);
   assert.equal(
     result.result.items[0].diagnostics[0].message,
     expected(' -o my-org --dataspace Team', unwritten),
@@ -580,7 +584,7 @@ for (const preview of [true, false])
         assert.ok(diagnostic.message.endsWith(` ${nextAction}`));
         assert.ok(!diagnostic.message.includes('\n'));
       }
-      assert.deepEqual(created, [['user@example.com', '68.0', undefined, undefined]]);
+      assert.deepEqual(created, [['user@example.com', '68.0', undefined, undefined, sender]]);
       assert.deepEqual(lists, [[apiName]]);
       assert.deepEqual(writes, []);
       assert.ok(!calls.includes('segment-execute'));

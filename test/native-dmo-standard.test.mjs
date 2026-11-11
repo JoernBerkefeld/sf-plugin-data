@@ -319,37 +319,51 @@ test('standard DMO: a custom field missing from the file is removed only with th
   );
 });
 
-test('standard DMO: a mapped custom field follows the mapped-field and staged-removal rules', async () => {
+const mapped = () => {
+  const raw = activated();
+  raw.fields.find((entry) => entry.name === 'CliProbeB1__c').isMapped = true;
+  return raw;
+};
+test('standard DMO: a mapped custom field follows the mapped-field and combined-removal rules', async () => {
   const saved = document([]);
-  const mapped = () => {
-    const raw = activated();
-    raw.fields.find((entry) => entry.name === 'CliProbeB1__c').isMapped = true;
-    return raw;
-  };
+  // Not covered by a selected mapping file: refused before any write.
   await assert.rejects(
     deployNativeDmo(saved, readOnly(mapped()), undefined, fast, allow),
     /DMO_FIELD_REMOVAL_MAPPED/,
   );
-  // Edit stage: the covered field is left pending and nothing is removed.
-  const staged = { ...allow, coveredMappedFields: ['CliProbeB1__c'], stage: 'edits' };
-  const relabelled = document([]);
-  relabelled.spec.label = 'Changed';
-  const edits = recording(mapped());
-  const edited = await deployNativeDmo(relabelled, edits.client, undefined, fast, staged);
-  assert.deepEqual(edited.pendingRemoval, ['CliProbeB1__c']);
-  assert.deepEqual(writes(edits.calls), [['update', apiName, { label: 'Changed' }]]);
-  // Removal stage: still mapped is refused; unmapped is removed once without a PATCH.
   await assert.rejects(
-    deployNativeDmo(saved, readOnly(mapped()), undefined, fast, { ...allow, stage: 'removal' }),
+    deployNativeDmo(saved, readOnly(mapped()), undefined, fast, {
+      ...allow,
+      coveredMappedFields: ['Other__c'],
+    }),
     /DMO_FIELD_REMOVAL_MAPPED/,
   );
-  const removal = recording(activated());
-  const result = await deployNativeDmo(saved, removal.client, undefined, fast, {
+  // Covered: the label PATCH, then the one checked removal that reports the dropped pair.
+  const pair = {
+    mapping: 'Src_map_Standard',
+    sourceFieldDeveloperName: 'Probe__c',
+    targetFieldDeveloperName: 'CliProbeB1__c',
+  };
+  const relabelled = document([]);
+  relabelled.spec.label = 'Changed';
+  const { calls, client } = recording(mapped());
+  const checked = [];
+  const result = await deployNativeDmo(relabelled, client, undefined, fast, {
     ...allow,
-    stage: 'removal',
+    coveredMappedFields: ['CliProbeB1__c'],
+    removeChecked: async (target, fields, remove) => {
+      checked.push([target, fields]);
+      await remove();
+      return [pair];
+    },
   });
+  assert.deepEqual(checked, [[apiName, ['CliProbeB1__c']]]);
   assert.deepEqual(result.removedFields, ['CliProbeB1__c']);
-  assert.deepEqual(writes(removal.calls), [['remove', apiName, ['CliProbeB1__c']]]);
+  assert.deepEqual(result.droppedPairs, [pair]);
+  assert.deepEqual(writes(calls), [
+    ['update', apiName, { label: 'Changed' }],
+    ['remove', apiName, ['CliProbeB1__c']],
+  ]);
 });
 
 test('standard DMO: a label change sends the label alone', async () => {

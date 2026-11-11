@@ -144,7 +144,6 @@ export type DeleteEnvelope = {
         | 'confirmed-deleted'
         | 'acknowledged-processing'
         | 'acknowledged'
-        | 'partially-applied'
         | 'unknown';
       prerequisitesPreserved?: true;
       plan?: Array<{
@@ -195,24 +194,13 @@ function reportedPair(pair: DmoFieldPair): NonNullable<DeleteItem['unmappedPairs
  */
 function fieldDeleteStop(progress: DmoFieldDeleteProgress, plan: DmoFieldDeletePlan): string {
   const fields = plan.fields.join(', ');
-  const done =
-    progress.unmappedPairs.length > 0
-      ? `Mapping pair(s) already removed and confirmed: ${progress.unmappedPairs
-          .map(
-            (pair) =>
-              `${pair.sourceFieldDeveloperName} -> ${pair.targetFieldDeveloperName} in ${pair.mapping}`,
-          )
-          .join('; ')}.`
-      : 'No mapping pair was removed.';
-  const pending = progress.pendingPair;
-  const stop = pending
-    ? `The removal of pair ${pending.sourceFieldDeveloperName} -> ${pending.targetFieldDeveloperName} from mapping ${pending.mapping} was sent once and is not confirmed; read that mapping before another attempt. No field was removed.`
-    : progress.step === 'recheck'
-      ? 'No field was removed.'
+  const stop =
+    progress.step === 'recheck'
+      ? 'Nothing was written; no field or mapping pair was removed.'
       : progress.step === 'remove'
-        ? `The Metadata API destructive change for ${fields} was sent once and is not confirmed; read the DMO before another attempt.`
-        : `The Metadata API destructive change for ${fields} was acknowledged, but the absence of the field(s) is not confirmed; read the DMO before another attempt.`;
-  return `${done} ${stop} No local file was refreshed. No retry or rollback.`;
+        ? `The Metadata API destructive change for ${fields} was sent once and is not confirmed; read the DMO and its mappings before another attempt.`
+        : `The Metadata API destructive change for ${fields} was acknowledged, but the result was not confirmed: the field(s) gone, exactly their mapping pairs dropped, everything else unchanged. Read the DMO and its mappings before another attempt.`;
+  return `${stop} No local file was refreshed. No retry or rollback.`;
 }
 
 /**
@@ -230,7 +218,7 @@ function fieldDeleteLines(item: DeleteItem): string[] {
     for (const step of item.plan ?? [])
       lines.push(
         step.operation === 'unmap'
-          ? `Planned field unmap: ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName} in mapping ${step.apiName}.`
+          ? `Planned pair drop (Salesforce removes it with the field): ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName} in mapping ${step.apiName}.`
           : `Planned field delete: ${step.fieldName} from dmo ${name}.`,
       );
     for (const file of item.localFiles ?? [])
@@ -243,7 +231,7 @@ function fieldDeleteLines(item: DeleteItem): string[] {
   }
   for (const pair of item.unmappedPairs ?? [])
     lines.push(
-      `unmapped ${pair.sourceFieldDeveloperName} -> ${pair.targetFieldDeveloperName} in mapping ${pair.mapping}`,
+      `dropped pair ${pair.sourceFieldDeveloperName} -> ${pair.targetFieldDeveloperName} in mapping ${pair.mapping}`,
     );
   if (item.removedFields?.length)
     lines.push(`deleted field ${item.removedFields.join(', ')} from dmo ${name}`);
@@ -270,7 +258,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or mappings.';
   public static readonly description =
-    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no local deletion, retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then, each write once and never retried: one DELETE per collected pair with a mapping readback (API61..68), a fresh DMO read that must show the fields unmapped, one Metadata API destructive change for all fields, and a polled readback that they are absent. The first failure stops and reports what was already written; nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id.';
+    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion admits API61..68/default68 and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no local deletion, retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -468,7 +456,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         { operation: 'dmo.get', transport: 'native', apiVersion: version },
         { operation: 'mapping.list', transport: 'native', apiVersion: version },
         { operation: 'mapping.get', transport: 'native', apiVersion: version },
-        { operation: 'mapping.field-mapping.delete', transport: 'native', apiVersion: version },
         { operation: 'dmo.field.delete', transport: 'metadata', apiVersion: version },
       ],
     };
@@ -538,25 +525,21 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       );
     }
     const progress: DmoFieldDeleteProgress = {
-      step: 'unmap',
+      step: 'recheck',
       unmappedPairs: [],
       removalSent: false,
     };
     try {
       await executeDmoFieldDelete(plan, clients, progress, requestScope, this.fieldRemovalSettle);
     } catch (error) {
-      const written = progress.unmappedPairs.length > 0 || progress.pendingPair !== undefined;
-      item.unmappedPairs = progress.unmappedPairs.map((pair) => reportedPair(pair));
+      item.unmappedPairs = [];
       item.removedFields = [];
       if (progress.step === 'readback') {
         item.outcome = 'deletion-unconfirmed';
         item.mutation = 'acknowledged';
-      } else if (progress.removalSent || progress.pendingPair) {
+      } else if (progress.removalSent) {
         item.outcome = 'failed';
         item.mutation = 'unknown';
-      } else if (written) {
-        item.outcome = 'failed';
-        item.mutation = 'partially-applied';
       }
       envelope.status = item.outcome === 'blocked' ? 'blocked' : 'failed';
       return fieldError(error, fieldDeleteStop(progress, plan));

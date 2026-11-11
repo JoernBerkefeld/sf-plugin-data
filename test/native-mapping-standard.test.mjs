@@ -112,9 +112,13 @@ function world({
     delete: async () => assert.fail('a standard DMO is never deleted'),
     update: async () => assert.fail('no DMO PATCH expected'),
     removeFields: async (name, fields) => {
-      for (const entry of fields) assert.equal(mapped(entry), false, `${entry} still mapped`);
       writes.push(['dmo:remove', name, fields]);
       state.custom = state.custom.filter((entry) => !fields.includes(entry));
+      // Salesforce drops the mapping pairs of a removed field together with it (live API 68).
+      for (const entry of state.mappings)
+        entry.fieldMappings = entry.fieldMappings.filter(
+          (item) => !fields.includes(item.targetFieldDeveloperName),
+        );
     },
   };
   const dlo = {
@@ -545,7 +549,7 @@ test('standard target mapping delete keeps the other mapping and needs no pair q
   assert.deepEqual(drift.writes, [['mapping:remove', NAME]]);
 });
 
-test('one command drops the pair of a custom field on a standard DMO, then removes the field', async () => {
+test('one command removes a custom field of a standard DMO and Salesforce drops its pair', async () => {
   const org = world({ mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }] });
   const dmoFile = normalizeNativeDmo(org.readDmo());
   dmoFile.spec.fields = dmoFile.spec.fields
@@ -581,6 +585,9 @@ test('one command drops the pair of a custom field on a standard DMO, then remov
   command.createDmoClient = () => org.dmo;
   command.createDloClient = () => org.dlo;
   command.createMappingClient = () => org.mapping;
+  command.createSsotSender = () => ({
+    request: async () => assert.fail('fake clients must not reach the bound sender'),
+  });
   const previousCwd = process.cwd();
   const previousExit = process.exitCode;
   process.chdir(root);
@@ -592,17 +599,21 @@ test('one command drops the pair of a custom field on a standard DMO, then remov
     process.exitCode = previousExit;
   }
   assert.equal(result.status, 'success', JSON.stringify(result));
-  assert.deepEqual(org.writes, [
-    ['mapping:unmap', NAME, 'Note__c'],
-    ['dmo:remove', DMO, ['Note__c']],
-  ]);
+  // One removal in the DMO position; the mapping file then finds the pair already gone.
+  assert.deepEqual(org.writes, [['dmo:remove', DMO, ['Note__c']]]);
   assert.deepEqual(
     result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
     [
       ['dmo', 'updated', 'confirmed-updated'],
-      ['mapping', 'updated', 'confirmed-updated'],
+      ['mapping', 'unchanged', 'not-attempted'],
     ],
   );
   assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
+  assert.deepEqual(result.result.items[0].droppedPairs, [{ mapping: NAME, ...names(notePair) }]);
   assert.deepEqual(org.state.custom, []);
+  assert.ok(
+    !org.state.mappings[0].fieldMappings.some(
+      (item) => item.targetFieldDeveloperName === 'Note__c',
+    ),
+  );
 });

@@ -15,7 +15,12 @@ const environment = Object.fromEntries(
 
 const result = spawnSync(
   process.execPath,
-  ['--test', ...(process.argv.slice(2).length > 0 ? process.argv.slice(2) : ['test/*.test.mjs'])],
+  [
+    '--import',
+    new URL('../test/support/fast-readback.mjs', import.meta.url).href,
+    '--test',
+    ...(process.argv.slice(2).length > 0 ? process.argv.slice(2) : ['test/*.test.mjs']),
+  ],
   { env: environment, stdio: 'inherit', windowsHide: true },
 );
 if (result.error) throw result.error;

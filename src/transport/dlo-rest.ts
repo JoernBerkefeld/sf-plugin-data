@@ -5,6 +5,8 @@ import path from 'node:path';
 import { DloError, dloName } from '../artifacts/dlo-document.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
+import type { BoundSsot } from './bound-ssot.js';
+import { dloFailure } from './dlo-native-rest.js';
 
 export type DloClient = {
   get: (apiName: string) => Promise<unknown>;
@@ -22,12 +24,14 @@ import { nativeApiVersion } from './api-version.js';
  * @param {string} targetOrg Explicit authenticated org alias or username.
  * @param {string} apiVersion Numeric >=61 or default/auto 68; admission is not live qualification.
  * @param {MetadataRunner} runner Injectable installed CLI runner.
+ * @param {BoundSsot} [sender] Bound single-attempt sender for GET; writes stay on the runner.
  * @returns {DloClient} Four single-attempt operations; scratch request bodies are retained.
  */
 export function createDloClient(
   targetOrg: string,
   apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
+  sender?: BoundSsot,
 ): DloClient {
   const version = nativeApiVersion(apiVersion);
   const endpoint = `/services/data/v${version}/ssot/data-lake-objects`;
@@ -99,6 +103,26 @@ export function createDloClient(
   }
 
   /**
+   * Send one GET on the bound connection, with the same codes as the runner path.
+   * @param {BoundSsot} bound Bound sender.
+   * @param {string} suffix Validated exact name suffix.
+   * @returns {Promise<unknown>} Parsed non-array object.
+   */
+  async function boundGet(bound: BoundSsot, suffix: string): Promise<unknown> {
+    const noContent = Symbol('dlo-no-content');
+    let response: unknown;
+    try {
+      response = await bound.request('GET', endpoint + suffix, noContent);
+    } catch (error) {
+      throw dloFailure(error);
+    }
+    if (response === noContent) throw new DloError('DLO_REQUEST_UNCONFIRMED', 204);
+    if (typeof response !== 'object' || response === null || Array.isArray(response))
+      throw new DloError('INVALID_DLO_RESPONSE');
+    return response;
+  }
+
+  /**
    * Validate exact runtime target identity before mutating it.
    * @param {string} id Target-resolved record ID.
    * @returns {string} Safe URL suffix.
@@ -111,7 +135,7 @@ export function createDloClient(
   return {
     get: async (apiName) => {
       if (!dloName.test(apiName)) throw new DloError('INVALID_DLO_NAME');
-      return request('GET', `/${apiName}`);
+      return sender ? boundGet(sender, `/${apiName}`) : request('GET', `/${apiName}`);
     },
     create: async (body) => request('POST', '', body),
     update: async (id, body) => request('PATCH', idSuffix(id), body),
