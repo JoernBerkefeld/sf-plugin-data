@@ -19,7 +19,7 @@ import {
 } from '../artifacts/native-mapping-document.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
-import { isNativeMappingDeletionVersion, nativeApiVersion } from './api-version.js';
+import { nativeApiVersion } from './api-version.js';
 import type { BoundSsot } from './bound-ssot.js';
 
 export type MappingWriteBody = {
@@ -317,8 +317,6 @@ export function createMappingClient(
     apiVersion: version,
     remove,
     deleteField: async (name, observedSelector) => {
-      if (!isNativeMappingDeletionVersion(version))
-        throw new NativeMappingError('MAPPING_UNMAP_VERSION_UNQUALIFIED');
       // Validate the observed selector through the existing artifact grammar, never synthesize it.
       validateNativeMappingDocument({
         schemaVersion: 1,

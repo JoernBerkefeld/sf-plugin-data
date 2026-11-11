@@ -337,7 +337,7 @@ for (const selector of ['dlo:Source__dll', 'dmo:Target__dlm']) {
   }
 }
 
-test('public delete rejects type-wide, malformed selectors and unqualified mapping versions before auth', async () => {
+test('public delete rejects type-wide, malformed selectors and non-native versions before auth', async () => {
   for (const flags of [
     { metadata: ['mapping'] },
     { metadata: ['mapping:'] },
@@ -345,7 +345,6 @@ test('public delete rejects type-wide, malformed selectors and unqualified mappi
     { metadata: ['dlo'] },
     { metadata: ['dmo'] },
     { 'api-version': '60.0' },
-    { 'api-version': '69.0' },
     { 'api-version': '61.1' },
     { 'api-version': 'latest' },
   ]) {
@@ -358,6 +357,17 @@ test('public delete rejects type-wide, malformed selectors and unqualified mappi
     const result = await run(command);
     assert.equal(result.status, 'blocked');
     assert.equal(auth, 0);
+  }
+  // Mapping deletion has no own version gate any more: any native numeric pin reaches the org.
+  for (const version of ['61.0', '64.0', '69.0']) {
+    const command = invocation({ 'api-version': version });
+    let auth = 0;
+    command.resolveTarget = async () => {
+      auth++;
+      throw new Error('stop after auth');
+    };
+    await run(command);
+    assert.equal(auth, 1, version);
   }
 });
 

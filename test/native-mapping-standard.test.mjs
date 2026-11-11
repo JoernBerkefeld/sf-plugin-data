@@ -376,7 +376,7 @@ for (const systemType of ['Standard', 'System'])
     assert.equal(again.outcome, 'noop');
   });
 
-test('standard target keeps the protected-pair and create refusals', async () => {
+test('standard target keeps the protected-pair refusal and sends authored create pairs as written', async () => {
   const mappings = [{ name: NAME, source: DLO, pairs: [...complete, notePair] }];
   // The key pair cannot be left out of a reconciliation; an omitted generated pair is kept.
   for (const omitted of ['Id__c', 'DataSource__c', 'KQ_Id__c']) {
@@ -396,16 +396,19 @@ test('standard target keeps the protected-pair and create refusals', async () =>
     }
     assert.deepEqual(org.writes, []);
   }
-  // A system field of the DMO is never an authored create input.
+  // An authored pair onto a system field of the DMO is sent as written; Salesforce decides.
   const unknown = world({ systemType: 'System' });
-  await assert.rejects(
-    preflightNativeMapping(
-      file([...authoredPairs, ['Extra__c', 'ssot__DataSourceId__c']]),
-      unknown.mapping,
-      unknown.deps,
-    ),
-    (error) => error.code === 'MAPPING_CREATE_FIELD_POLICY_UNPROVEN',
+  const created = await preflightNativeMapping(
+    file([...authoredPairs, ['Extra__c', 'ssot__DataSourceId__c']]),
+    unknown.mapping,
+    unknown.deps,
   );
+  assert.equal(created.operation, 'create');
+  assert.deepEqual(created.writes[0].body.fieldMapping.at(-1), {
+    sourceFieldDeveloperName: 'Extra__c',
+    targetFieldDeveloperName: 'ssot__DataSourceId__c',
+  });
+  assert.deepEqual(unknown.writes, []);
   // The key qualifier pair is only expected ahead of activation.
   const active = world({ active: true });
   const read = active.dmo.get;

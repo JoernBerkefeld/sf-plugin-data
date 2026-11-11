@@ -64,12 +64,11 @@ bodies carried no scope field. Independent reads confirmed ACTIVE mapping settle
 all prior pairs/selectors, the full DLO and DMO field/key definitions; only the added
 Extra__c isMapped flag changed during update. Create/update previews were read-only.
 
-This closes the exercised API61 create/read/single-add omission path, not general
-CRUD or inventory pagination. API61 is the lowest live-tested success for these
-mapping operations in this record, not a universal introduction claim. API60 GET404
-is separate evidence, not POST/PATCH/DELETE rejection proof. API62–67 operation
-qualification remains open. Desired-state
-removal and retarget remain API68-only. No nondefault space, ingestion, populated data
+This covers the exercised API61 create, read and one-pair addition with omitted
+scope, not general CRUD or inventory pagination. API60 GET404 is separate evidence,
+not POST/PATCH/DELETE rejection proof. Pair removal (desired-state) is admitted at
+every native version the plugin accepts and is observed through the plugin at API 61,
+64 and 68. No nondefault space, ingestion, populated data
 or released-package qualification follows. The fresh sole mapping and both parents
 are deliberately retained under the accepted last-mapping limitation; no delete,
 parent cascade or terminal cleanup was attempted.
@@ -546,8 +545,18 @@ Native mapping targets, decided from the same raw read:
 - A mapping deploys onto a custom DMO or a standard DMO. Any other target
   (platform-generated, no `creationType`, custom under a namespaced name) is refused
   with `MAPPING_TARGET_UNSUPPORTED`.
-- Standard target, create: authored pairs may target standard and custom Text fields
-  and must include the primary-key pair (for example `Id__c` to `ssot__Id__c`). The
+- Create and update, custom and standard target alike: the plugin sends the pairs the
+  file lists and Salesforce decides. No local rule on field data types, source and
+  target names, `KQ_` names, one source field onto several targets or a target another
+  mapping of the DMO also holds. Pairs whose data types differ are sent; the preview
+  adds the non-blocking diagnostic `MAPPING_FIELD_TYPES_DIFFER`
+  (`Source (Type) -> Target (Type)`). A pair naming a missing field is refused with
+  `MAPPING_FIELD_NOT_FOUND`, naming the pair, the field and its object. A new mapping
+  without a pair joining the two primary keys is rejected by Salesforce (HTTP 400
+  `MISSING_ARGUMENT: Unable to find Primary Key of DLO in POST request of Mapping Creation`, reported as `MAPPING_HTTP_ERROR`). Pair removal and whole-mapping delete
+  are admitted at every native API version the plugin accepts (61 and up, default 68).
+- Standard target, create: authored pairs may target standard and custom fields; the
+  primary-key pair joins the two keys (for example `Id__c` to `ssot__Id__c`). The
   body carries the authored pairs only.
 - Standard target, generated pairs: a system pair is recognised when its target is
   the source's namesake or `ssot__<Name>Id__c` and the target read reports the field
@@ -572,9 +581,14 @@ Native mapping targets, decided from the same raw read:
 - Pair removal by deploy (a pair the file no longer lists), custom and standard
   target alike: any authored pair is removed, including a pair onto a standard field
   of a standard DMO (for example `Name__c` to `ssot__Name__c`), a pair whose source
-  and target names differ, and types other than Text; Salesforce decides. The three
-  system pairs, the key qualifier pair and the primary-key pair are never removed.
-- Whole-mapping delete (`sf data360 delete -m mapping:<Name>`), API 61 to 68,
+  and target names differ, and any data type; Salesforce decides. The three system
+  pairs, the key qualifier pair of the target's primary key and the key pair (source
+  primary key onto target primary key, any name and type, from the org's
+  `isPrimaryKey` flags) are never removed. A file that omits one is refused with
+  `MAPPING_PROTECTED_PAIR_REQUIRED`; when the key pair cannot be identified, removal
+  is refused with `MAPPING_PROTECTED_LAYOUT_UNPROVEN` before any write, and so is a dropped
+  pair onto a system or key-qualifier field not recognised as generated.
+- Whole-mapping delete (`sf data360 delete -m mapping:<Name>`), native API 61 and up,
   default 68: one Metadata API destructive deployment, type
   `ObjectSourceTargetMap`, member the mapping developer name. No pair is unmapped
   first and no native DELETE is sent. Any mapping is deleted this way, whatever pairs
@@ -595,8 +609,16 @@ Native mapping targets, decided from the same raw read:
     (`MAPPING_DELETE_SIDE_EFFECT` otherwise).
 - Shared target field: a pair is removed even when another mapping of the same DMO
   targets the same field. The field must then keep `isMapped: true`; it loses the
-  marker with the last such pair. An addition onto a field another mapping targets
-  stays refused (`MAPPING_ADDITION_POLICY_UNPROVEN`).
+  marker with the last such pair. A pair onto a field another mapping targets is sent
+  like any other addition.
+- [x] Observed through the plugin on empty synthetic fixtures in one org: a mapping
+      created with a Number pair, a renamed pair (`Note__c` to `Other__c`) and one
+      Number source onto a Number and a Text target, ACTIVE (66 seconds for two data
+      lake objects, the DMO and the mapping); its preview `noop` with
+      `MAPPING_FIELD_TYPES_DIFFER`, a repeat deploy and a deploy of the retrieved
+      file `unchanged` (5 seconds each); a pair removed at API 64 (16 seconds) and
+      API 61 (17 seconds); a file dropping the key pair refused with
+      `MAPPING_PROTECTED_PAIR_REQUIRED`, nothing written.
 - [x] Observed at API 68 through the plugin: a mapping created onto one already active
       standard DMO, together with its data lake object, from a hand-written file with
       the pairs `Id__c` to `ssot__Id__c` and `Name__c` to `ssot__Name__c`; the four

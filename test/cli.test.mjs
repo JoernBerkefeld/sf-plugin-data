@@ -121,8 +121,13 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'planned-dependencies',
     'the desired pair set',
     'one names-only, selector-free PATCH',
-    'installed public API68 Text reconciliation acceptance below',
-    'Installed API61 create/read/single-add acceptance with omitted scope',
+    'installed public API68 reconciliation acceptance below',
+    'Installed API61 create, read and one-pair addition with omitted scope',
+    'Create and update send the pairs the file lists; Salesforce decides.',
+    'the preview carries the non-blocking diagnostic `MAPPING_FIELD_TYPES_DIFFER`',
+    '`MAPPING_FIELD_NOT_FOUND`, which names the pair, the missing field and its object',
+    'HTTP 400 `MISSING_ARGUMENT: Unable to find Primary Key of DLO in POST request of Mapping Creation`',
+    'removal is refused with `MAPPING_PROTECTED_LAYOUT_UNPROVEN` before any write',
     'passed removal of A with batch addition of D/E',
     'B-to-C same-source/new-target retargeting and F-to-D new-source/same-target retargeting',
     'sequentially on the same empty fixture',
@@ -130,14 +135,14 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'Exact desired pairs, retained selectors, full DLO state and DMO schema/nonflag properties',
     'allowing only expected `isMapped` changes',
     'Full raw DMO preservation is therefore not claimed across reconciliation',
-    'does not qualify installed Number removal',
     'not populated-object, cross-org, arbitrary-schema or all-version qualification',
     'one Metadata API destructive deployment',
     'type `ObjectSourceTargetMap`',
     'It does not unmap pairs first and sends no native DELETE',
     'typed selected-mapping `404`',
-    'observed live at API 68 only',
-    'Desired-state removal/retarget remains API68-only',
+    'Deletion is admitted at every native API version from `61.0`',
+    'pair removal is observed through the plugin at API 61, 64 and 68',
+    'a pair removed at API 64 (16 seconds) and API 61 (17 seconds)',
     'zero-write repeat',
     'DMO GET has no status field',
     'The last mapping of a custom DMO is refused before any write',
@@ -165,9 +170,31 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'installed deletion acceptance remains separate',
     'mixed-family deployment remain blocked',
     'The whole\nselection is preflighted before any executor call',
+    'observed live at API 68 only',
+    'Desired-state removal/retarget remains API68-only',
+    'does not qualify installed Number removal',
+    '61.0 through 68.0',
+    'onto shared or occupied targets',
+    'only at create)',
   ])
     assert.ok(!readme.includes(obsolete), `obsolete README contract: ${obsolete}`);
   assert.match(readme, /Native batches instead\s+order DLO, DMO, mapping/u);
+});
+
+test('README and current docs do not mention removed mapping refusal codes', () => {
+  const removed = [
+    'MAPPING_FIELD_TYPE_MISMATCH',
+    'MAPPING_CREATE_FIELD_POLICY_UNPROVEN',
+    'MAPPING_PRIMARY_KEY_PAIR_REQUIRED',
+    'MAPPING_ADDITION_POLICY_UNPROVEN',
+    'MAPPING_UNMAP_VERSION_UNQUALIFIED',
+    'MAPPING_DELETE_VERSION_UNQUALIFIED',
+  ];
+  // The handover log keeps history; these files describe current behaviour only.
+  for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
+    const text = readFileSync(new URL(file, import.meta.url), 'utf8');
+    for (const code of removed) assert.ok(!text.includes(code), `${file} mentions ${code}`);
+  }
 });
 
 test('README describes optional scope without promoting nondefault qualification or changing CRUD ratings', () => {

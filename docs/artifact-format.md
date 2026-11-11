@@ -168,7 +168,12 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   org's copy and treated as part of the file. The authored primary-key pair must stay
   in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). A deploy removes every authored
   pair that the file no longer lists, including a pair onto a standard field; the
-  generated pairs and the primary-key pair stay in the mapping.
+  generated pairs and the key pair (source primary key onto target primary key, any
+  name and type) stay in the mapping. Pairs are sent as the file lists them, whatever
+  their data types and names, one source onto several targets and targets another
+  mapping also holds; Salesforce decides. Pairs whose data types differ get the
+  preview notice `MAPPING_FIELD_TYPES_DIFFER`. Salesforce requires a pair joining the
+  two primary keys when a mapping is created.
   `sf data360 delete -m mapping:<MappingApiName>` deletes a mapping whatever pairs it
   holds and never removes the file. Only the last mapping of a custom DMO is refused
   (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`); delete the DMO instead. Creating the first mapping onto a standard

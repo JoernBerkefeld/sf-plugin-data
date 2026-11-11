@@ -1,3 +1,54 @@
+# Mapping allowlists removed — 2026-11-11
+
+Mapping create and update send the pairs the file lists and let Salesforce decide.
+The local rules on field data types, Text-only targets, same-name pairs, `KQ_` names,
+one source onto several targets, targets shared with another mapping and a
+primary-key pair on create are gone, and with them `MAPPING_FIELD_TYPE_MISMATCH`,
+`MAPPING_CREATE_FIELD_POLICY_UNPROVEN`, `MAPPING_PRIMARY_KEY_PAIR_REQUIRED`,
+`MAPPING_ADDITION_POLICY_UNPROVEN`, `MAPPING_UNMAP_VERSION_UNQUALIFIED` and
+`MAPPING_DELETE_VERSION_UNQUALIFIED`. Version stays 0.1.0; nothing pushed.
+
+- Pairs whose source and target data types differ are sent; the preview adds the
+  non-blocking diagnostic `MAPPING_FIELD_TYPES_DIFFER`, naming
+  `Source (Type) -> Target (Type)`.
+- Pair removal (desired-state) and whole-mapping deletion work at every native API
+  version the plugin admits (61 and up, default 68).
+- `MAPPING_FIELD_NOT_FOUND` names the pair, the missing field and its object.
+- Protected pairs are never removed: the system pairs, the key qualifier pair of the
+  target's primary key and the key pair (source primary key onto target primary key,
+  any name and type, read from the org's `isPrimaryKey` flags). A file that omits one
+  is refused with `MAPPING_PROTECTED_PAIR_REQUIRED`; an unidentifiable key pair stops
+  removal with `MAPPING_PROTECTED_LAYOUT_UNPROVEN` before any write. A dropped pair
+  onto a system or key-qualifier field that is not recognised as generated (unknown
+  usage tag, or a qualifier that does not belong to the target key) is refused the same
+  way instead of being unmapped.
+- A new mapping without a primary-key pair is rejected by Salesforce: HTTP 400
+  `MISSING_ARGUMENT: Unable to find Primary Key of DLO in POST request of Mapping Creation`, surfaced as `MAPPING_HTTP_ERROR` with that detail. That clean 400 is
+  currently reported with mutation `unknown`, although nothing was written; to be
+  fixed in package 3.
+
+Live evidence, `isolated-source`, synthetic `Cli*A1_8c71` fixtures, deleted
+afterwards:
+
+1. Plugin create of a mapping with a Number pair, a renamed pair (`Note__c` to
+   `Other__c`) and one source on two targets (`Num__c` to `Num__c` and `Num__c` to
+   `NumT__c`, Number onto Text): created, ACTIVE, 66 seconds for two DLOs, the DMO and
+   the mapping.
+2. Preview of the same file: `noop` with `MAPPING_FIELD_TYPES_DIFFER`; deploy
+   `unchanged` (5 seconds).
+3. Retrieve of that mapping and deploy of the retrieved file: `unchanged` (5 seconds).
+4. Pair removal through the plugin at API 64 (16 seconds) and API 61 (17 seconds):
+   updated, confirmed.
+5. Raw probes the same day: create with Number and renamed pairs 201; Number source
+   onto Text target 200; pair add 200 and pair DELETE 204 at API 64.
+6. A file dropping the key pair: refused with `MAPPING_PROTECTED_PAIR_REQUIRED`,
+   nothing written.
+
+README, `docs/capabilities.md` and `docs/artifact-format.md` describe the behaviour.
+
+Not covered live: populated objects, non-default data spaces, whole-mapping deletion
+below API 68.
+
 # Faster deploy reads and mapped-field removal in one destructive change — 2026-11-11
 
 Deploy reads go over one bound connection, settle reads are spaced explicitly, and a

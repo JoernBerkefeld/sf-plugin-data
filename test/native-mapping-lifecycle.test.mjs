@@ -79,6 +79,8 @@ const dependencies = () => ({
   target: { get: async () => target() },
 });
 const missing = () => new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+const generatedNames = names.slice(3);
+const pairNames = (fields) => fields.map((field) => field.sourceFieldDeveloperName);
 /**
  * Build isolated in-memory transport state with a request ledger.
  * @param {object} initial Initial native detail.
@@ -324,7 +326,7 @@ test('mapping malformed, paginated, ambiguous or wrong-binding inventory never p
   await assert.rejects(preflightNativeMapping(desired(), client, dependencies()), /HTTP_ERROR/);
 });
 
-test('mapping source/target field, identity, dataspace and type validation fail before dispatch', async () => {
+test('mapping source/target field, identity and dataspace validation fail before dispatch', async () => {
   for (const change of [
     (d) => (d.source.get = async () => ({ ...source(), name: 'Other__dll' })),
     (d) => (d.target.get = async () => ({ ...target(), name: 'Other__dlm' })),
@@ -338,7 +340,7 @@ test('mapping source/target field, identity, dataspace and type validation fail 
     (d) =>
       (d.target.get = async () => ({
         ...target(),
-        fields: target().fields.map((f) => (f.name === 'Note__c' ? { ...f, type: 'Date' } : f)),
+        fields: target().fields.filter((f) => f.name !== 'Note__c'),
       })),
   ]) {
     const deps = dependencies();
@@ -347,9 +349,22 @@ test('mapping source/target field, identity, dataspace and type validation fail 
     await assert.rejects(preflightNativeMapping(desired(), client, deps));
     assert.equal(calls.length, 0);
   }
+  // A data type difference is not refused: Salesforce accepts it and the preview names it.
+  const deps = dependencies();
+  deps.target.get = async () => ({
+    ...target(),
+    fields: target().fields.map((f) => (f.name === 'Note__c' ? { ...f, type: 'Date' } : f)),
+  });
+  const { client, calls } = fixture();
+  const plan = await preflightNativeMapping(desired(), client, deps);
+  assert.equal(plan.operation, 'noop');
+  assert.deepEqual(plan.typeDifferences, [
+    { source: 'Note__c', target: 'Note__c', sourceType: 'Text', targetType: 'Date' },
+  ]);
+  assert.ok(calls.every(([kind]) => ['get', 'list'].includes(kind)));
 });
 
-test('mapping create fails closed for unknown generated policy and missing primary key without dropping user fields', async () => {
+test('mapping create leaves unknown system fields and a missing primary key to Salesforce without dropping user fields', async () => {
   const { client } = fixture();
   client.list = async () => ({ objectSourceTargetMaps: [] });
   const deps = dependencies();
@@ -357,11 +372,18 @@ test('mapping create fails closed for unknown generated policy and missing prima
     ...target(),
     fields: target().fields.map((f) => (f.name === 'KQ_Id__c' ? { ...f, usageTag: 'Unknown' } : f)),
   });
-  await assert.rejects(preflightNativeMapping(desired(), client, deps), /POLICY_UNPROVEN/);
-  await assert.rejects(
-    preflightNativeMapping(desired(['Name__c']), client, dependencies()),
-    /PRIMARY_KEY/,
-  );
+  // An unrecognised qualifier is no generated pair, so it is sent as authored.
+  const unknown = await preflightNativeMapping(desired(), client, deps);
+  assert.deepEqual(pairNames(unknown.writes[0].body.fieldMapping), [
+    'Id__c',
+    'Name__c',
+    'Note__c',
+    'KQ_Id__c',
+  ]);
+  const keyless = await preflightNativeMapping(desired(['Name__c']), client, dependencies());
+  assert.deepEqual(keyless.writes[0].body.fieldMapping, [
+    { sourceFieldDeveloperName: 'Name__c', targetFieldDeveloperName: 'Name__c' },
+  ]);
   const input = desired(['Id__c', 'Name__c', 'Note__c']);
   const plan = await preflightNativeMapping(input, client, dependencies());
   assert.equal(plan.writes[0].body.fieldMapping.length, 3);
@@ -570,34 +592,26 @@ test('mapping scoped desired-state removal threads context through unmap settlem
   assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
 });
 
-test('deletion and shared unmap reject unnormalized or outside versions before reads', async () => {
-  for (const version of ['60.0', '69.0', '61', 'v61.0', '61.1', 'auto', '', undefined]) {
+test('deletion and shared unmap carry no own version gate; the command admits native versions', async () => {
+  for (const version of ['61.0', '64.0', '69.0']) {
     const f = deleteFixture();
     f.client.apiVersion = version;
-    for (const operation of [preflightDeleteNativeMapping, deleteNativeMapping])
-      await assert.rejects(
-        operation(mappingName, f.client, f.deps),
-        (error) => error.code === 'MAPPING_DELETE_VERSION_UNQUALIFIED',
-      );
-    await assert.rejects(
-      preflightUnmapNativeMapping(
-        normalizeNativeMapping(f.selected),
-        f.client,
-        f.deps,
-        normalizeNativeMapping(f.selected).spec.fieldMappings,
-      ),
-      /VERSION_UNQUALIFIED/,
+    await preflightDeleteNativeMapping(mappingName, f.client, f.deps);
+    assert.deepEqual(writes(f.calls), [], version);
+    const plan = await preflightUnmapNativeMapping(
+      normalizeNativeMapping(f.selected),
+      f.client,
+      f.deps,
+      normalizeNativeMapping(f.selected).spec.fieldMappings,
     );
-    await assert.rejects(
-      unmapNativeMappingFields({}, f.client, f.deps, () => assert.fail()),
-      /VERSION_UNQUALIFIED/,
-    );
-    assert.deepEqual(f.calls, []);
+    assert.deepEqual(pairNames(plan.protectedPairs), ['Id__c', ...generatedNames], version);
+    assert.deepEqual(pairNames(plan.removals), ['Name__c', 'Note__c'], version);
+    assert.deepEqual(writes(f.calls), [], version);
   }
 });
 
-test('lower-version deletion admission never widens desired-state removals or Text retarget', async () => {
-  for (const version of ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0']) {
+test('desired-state removal and retarget work at lower native versions without a version refusal', async () => {
+  for (const version of ['61.0', '64.0', '67.0']) {
     for (const retarget of [false, true]) {
       const f = fixture(raw(names.filter((name) => name !== 'Note__c')));
       f.client.apiVersion = version;
@@ -607,8 +621,14 @@ test('lower-version deletion admission never widens desired-state removals or Te
           sourceFieldDeveloperName: 'Name__c',
           targetFieldDeveloperName: 'Note__c',
         });
-      await assert.rejects(deployNativeMapping(input, f.client, f.deps), /VERSION_UNQUALIFIED/);
-      assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+      const result = await deployNativeMapping(input, f.client, f.deps);
+      assert.equal(result.operation, 'update', version);
+      assert.deepEqual(
+        writes(f.calls).map(([kind]) => kind),
+        retarget ? ['unmap', 'update'] : ['unmap'],
+        version,
+      );
+      assert.equal(f.calls.find(([kind]) => kind === 'unmap')[2], 'target_Name__c', version);
     }
   }
 });
@@ -1051,13 +1071,23 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
     assert.deepEqual(f.calls, []);
     assert.equal(f.states.get('TargetGenerated_123').fieldMappings.length, 7);
   }
-  for (const mode of ['selector', 'version', 'retarget']) {
+  // A missing observed selector still blocks before any unmap.
+  const unselected = sharedFixture();
+  delete unselected.states.get('TargetGenerated_123').fieldMappings[2].developerName;
+  await assert.rejects(
+    deployNativeMapping(
+      desired(names.filter((name) => name !== 'Note__c')),
+      unselected.client,
+      unselected.deps,
+    ),
+    /SELECTOR_REQUIRED/,
+  );
+  assert.deepEqual(unselected.calls, []);
+  // A lower pin and a retarget onto a field another mapping targets are left to Salesforce.
+  for (const mode of ['version', 'retarget']) {
     const f = sharedFixture();
     const input = desired(names.filter((name) => name !== 'Note__c'));
-    if (mode === 'selector')
-      delete f.states.get('TargetGenerated_123').fieldMappings[2].developerName;
-    if (mode === 'version') f.client.apiVersion = '67.0';
-    // A retarget onto a field another mapping targets stays refused.
+    if (mode === 'version') f.client.apiVersion = '64.0';
     if (mode === 'retarget') {
       input.spec.fieldMappings = input.spec.fieldMappings.filter(
         (entry) => entry.sourceFieldDeveloperName !== 'Name__c',
@@ -1067,7 +1097,14 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
         targetFieldDeveloperName: 'Note__c',
       });
     }
-    await assert.rejects(deployNativeMapping(input, f.client, f.deps), mode);
+    const plan = await preflightNativeMapping(input, f.client, f.deps);
+    assert.equal(plan.operation, 'update', mode);
+    assert.deepEqual(
+      pairNames(plan.removals),
+      mode === 'retarget' ? ['Name__c', 'Note__c'] : ['Note__c'],
+      mode,
+    );
+    assert.equal(plan.writes.length, mode === 'retarget' ? 1 : 0, mode);
     assert.deepEqual(f.calls, [], mode);
   }
   // Salesforce clearing the marker while another mapping still targets the field is drift.
@@ -1091,23 +1128,28 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
   assert.equal(f.calls.length, 1);
 });
 
-test('guarded unmap refuses unknown metadata, missing selectors and nonqualified versions before writes', async () => {
+test('guarded unmap refuses an unidentified key pair, unknown metadata and missing selectors before writes', async () => {
   for (const [mode, expected] of [
-    ['version', /VERSION_UNQUALIFIED/],
+    // Without a source and target primary key nothing proves which pair must survive.
+    ['target-key', /PROTECTED_LAYOUT_UNPROVEN/],
     // A protected pair whose target field is not marked mapped is not the known layout.
     ['flag', /PROTECTED_LAYOUT_UNPROVEN/],
-    ['key', /PROTECTED_LAYOUT_UNPROVEN/],
-    ['type', /FIELD_TYPE_MISMATCH/],
+    ['source-key', /PROTECTED_LAYOUT_UNPROVEN/],
     ['selector', /SELECTOR_REQUIRED/],
-    ['qualifier', /PROTECTED_LAYOUT_UNPROVEN/],
   ]) {
     const f = unmapFixture();
-    if (mode === 'version') f.client.apiVersion = '69.0';
+    if (mode === 'target-key') f.schema.fields[0].isPrimaryKey = false;
     if (mode === 'flag') delete f.schema.fields[0].isMapped;
-    if (mode === 'key') f.schema.fields[0].keyQualifierName = 'Unknown';
-    if (mode === 'type') f.schema.fields[1].type = 'Date';
+    if (mode === 'source-key')
+      f.deps.source.get = async () => ({
+        ...source(),
+        // The source key feeds an ordinary target field, so no pair joins the two keys.
+        fields: source().fields.map((field) => ({
+          ...field,
+          isPrimaryKey: field.name === 'Name__c',
+        })),
+      });
     if (mode === 'selector') delete f.state.fieldMappings[1].developerName;
-    if (mode === 'qualifier') f.schema.fields[6].usageTag = 'Unknown';
     await assert.rejects(
       preflightUnmapNativeMapping(
         normalizeNativeMapping(f.state),
@@ -1285,8 +1327,6 @@ const handWritten = (fields) => {
   for (const field of document.spec.fieldMappings) delete field.developerName;
   return document;
 };
-const generatedNames = names.slice(3);
-const pairNames = (fields) => fields.map((field) => field.sourceFieldDeveloperName);
 
 test('hand-written mapping without generated pairs is a no-op against the existing mapping', async () => {
   const f = fixture(raw(['Id__c', 'Name__c', ...generatedNames]));
@@ -1414,17 +1454,19 @@ test('hand-written mapping without the key pair is refused; generated pairs are 
   assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
   assert.deepEqual(input, before);
   // A system-named pair onto a field the org does not report as System is not merged: the
-  // omission stays a removal, which the unmap layout check then refuses.
+  // omission stays an ordinary removal beside the protected key pair.
   const authored = fixture();
   authored.schema.fields.find((field) => field.name === 'DataSource__c').creationType = 'Custom';
-  await assert.rejects(
-    preflightNativeMapping(
-      handWritten(['Id__c', 'Name__c', 'Note__c']),
-      authored.client,
-      authored.deps,
-    ),
-    (error) => error.code === 'MAPPING_PROTECTED_LAYOUT_UNPROVEN',
+  const plan = await preflightNativeMapping(
+    handWritten(['Id__c', 'Name__c', 'Note__c']),
+    authored.client,
+    authored.deps,
   );
+  assert.deepEqual(plan.removals, [pair('DataSource__c')]);
+  assert.deepEqual(pairNames(plan.evidence.protectedPairs), [
+    'Id__c',
+    ...generatedNames.filter((name) => name !== 'DataSource__c'),
+  ]);
   assert.ok(authored.calls.every(([kind]) => ['get', 'list'].includes(kind)));
 });
 
@@ -1493,14 +1535,22 @@ test('desired-state batch additions and both qualified retarget directions use o
   }
 });
 
-test('desired-state protected omission and unsupported additions block before any unmap', async () => {
-  for (const mode of ['protected', 'version', 'type', 'occupied']) {
+test('desired-state protected omission blocks before any unmap; other additions are left to Salesforce', async () => {
+  const blocked = fixture();
+  await assert.rejects(
+    deployNativeMapping(
+      desired(names.filter((name) => name !== 'Id__c')),
+      blocked.client,
+      blocked.deps,
+    ),
+    /PROTECTED_PAIR_REQUIRED/,
+  );
+  assert.ok(blocked.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  for (const mode of ['version', 'key-target', 'occupied']) {
     const f = fixture();
-    const input = desired(
-      names.filter((name) => name !== (mode === 'protected' ? 'Id__c' : 'Name__c')),
-    );
+    const input = desired(names.filter((name) => name !== 'Name__c'));
     if (mode === 'version') f.client.apiVersion = '67.0';
-    if (mode === 'type')
+    if (mode === 'key-target')
       input.spec.fieldMappings.push({
         sourceFieldDeveloperName: 'Name__c',
         targetFieldDeveloperName: 'Id__c',
@@ -1510,7 +1560,10 @@ test('desired-state protected omission and unsupported additions block before an
         sourceFieldDeveloperName: 'Name__c',
         targetFieldDeveloperName: 'Note__c',
       });
-    await assert.rejects(deployNativeMapping(input, f.client, f.deps));
+    const plan = await preflightNativeMapping(input, f.client, f.deps);
+    assert.equal(plan.operation, 'update', mode);
+    assert.deepEqual(plan.removals, [pair('Name__c')], mode);
+    assert.equal(plan.writes.length, mode === 'version' ? 0 : 1, mode);
     assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
   }
 });
@@ -1524,50 +1577,59 @@ for (const mode of [
   'source-retarget-type',
   'target-retarget-type',
 ]) {
-  test(`desired-state ${mode} drift at evidence read blocks all writes even when subsequently stable`, async () => {
-    const f = fixture(raw(names.filter((name) => name !== 'Note__c')));
-    const input = desired(names.filter((name) => !['Name__c', 'Note__c'].includes(name)));
-    input.spec.fieldMappings.push({
-      sourceFieldDeveloperName: mode === 'source-retarget-type' ? 'Name__c' : 'Note__c',
-      targetFieldDeveloperName: mode === 'target-retarget-type' ? 'Name__c' : 'Note__c',
-    });
-    const readSource = f.deps.source.get;
-    const readTarget = f.deps.target.get;
-    let sourceReads = 0;
-    let targetReads = 0;
-    f.deps.source.get = async () => {
-      const definition = await readSource();
-      if (++sourceReads > 1 && ['source-type', 'both-types', 'target-retarget-type'].includes(mode))
-        definition.fields.find((field) => field.name === 'Note__c').dataType = 'Number';
-      return definition;
-    };
-    f.deps.target.get = async () => {
-      const definition = await readTarget();
-      if (++targetReads > 1) {
-        const field = definition.fields.find((field) => field.name === 'Note__c');
-        if (mode === 'occupied') field.isMapped = true;
-        if (mode === 'special-usage') field.usageTag = 'Email';
-        if (['target-type', 'both-types', 'source-retarget-type'].includes(mode))
-          field.type = 'Number';
+  test(`desired-state ${mode} drift after the evidence read blocks all writes; a stable state is left to Salesforce`, async () => {
+    // Read 1 admits the file, read 2 is the unmap evidence, read 3 the pre-dispatch recheck.
+    for (const driftFrom of [2, 3]) {
+      const f = fixture(raw(names.filter((name) => name !== 'Note__c')));
+      const input = desired(names.filter((name) => !['Name__c', 'Note__c'].includes(name)));
+      input.spec.fieldMappings.push({
+        sourceFieldDeveloperName: mode === 'source-retarget-type' ? 'Name__c' : 'Note__c',
+        targetFieldDeveloperName: mode === 'target-retarget-type' ? 'Name__c' : 'Note__c',
+      });
+      const readSource = f.deps.source.get;
+      const readTarget = f.deps.target.get;
+      let sourceReads = 0;
+      let targetReads = 0;
+      f.deps.source.get = async () => {
+        const definition = await readSource();
+        if (
+          ++sourceReads >= driftFrom &&
+          ['source-type', 'both-types', 'target-retarget-type'].includes(mode)
+        )
+          definition.fields.find((field) => field.name === 'Note__c').dataType = 'Number';
+        return definition;
+      };
+      f.deps.target.get = async () => {
+        const definition = await readTarget();
+        if (++targetReads >= driftFrom) {
+          const field = definition.fields.find((field) => field.name === 'Note__c');
+          if (mode === 'occupied') field.isMapped = true;
+          if (mode === 'special-usage') field.usageTag = 'Email';
+          if (['target-type', 'both-types', 'source-retarget-type'].includes(mode))
+            field.type = 'Number';
+        }
+        return definition;
+      };
+      const result = await executeMapping(input, f.client, f.deps);
+      const dispatched = f.calls.filter(([kind]) =>
+        ['unmap', 'update', 'create', 'delete'].includes(kind),
+      );
+      if (driftFrom === 2) {
+        // The evidence snapshot already holds the changed state and stays stable.
+        assert.equal(result.mutation, 'confirmed-updated', JSON.stringify(result));
+        assert.deepEqual(
+          dispatched.map(([kind]) => kind),
+          ['unmap', 'update'],
+        );
+        continue;
       }
-      return definition;
-    };
-    const result = await executeMapping(input, f.client, f.deps);
-    assert.equal(result.outcome, 'blocked');
-    assert.equal(result.mutation, 'not-attempted');
-    assert.match(
-      result.diagnostics[0].code,
-      /MAPPING_(?:ADDITION_POLICY_UNPROVEN|FIELD_TYPE_MISMATCH)/,
-    );
-    assert.ok(sourceReads >= 2);
-    assert.ok(targetReads >= 2);
-    assert.deepEqual(
-      f.calls.filter(([kind]) => ['unmap', 'update', 'create', 'delete'].includes(kind)),
-      [],
-    );
-    // Subsequent reads retain the evidence state, not the initially admitted definitions.
-    assert.deepEqual(await f.deps.source.get(), await f.deps.source.get());
-    assert.deepEqual(await f.deps.target.get(), await f.deps.target.get());
+      assert.equal(result.outcome, 'blocked', JSON.stringify(result));
+      assert.equal(result.mutation, 'not-attempted');
+      assert.equal(result.diagnostics[0].code, 'MAPPING_UNMAP_PLAN_CHANGED');
+      assert.ok(sourceReads >= 3);
+      assert.ok(targetReads >= 3);
+      assert.deepEqual(dispatched, []);
+    }
   });
 }
 

@@ -279,7 +279,7 @@ for (const [kind, name, execute] of [
   });
 }
 
-test('mapping dependency mismatch reports the exact paired field and types', async () => {
+test('mapping missing field reports the exact pair, field and object', async () => {
   const desired = {
     schemaVersion: 1,
     kind: 'mapping',
@@ -287,30 +287,31 @@ test('mapping dependency mismatch reports the exact paired field and types', asy
     spec: {
       sourceEntityDeveloperName: 'Probe__dll',
       targetEntityDeveloperName: 'Probe__dlm',
-      fieldMappings: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Id__c' }],
+      fieldMappings: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Code__c' }],
     },
   };
-  await assert.rejects(
-    preflightNativeMapping(
-      desired,
-      {},
-      {
-        source: { get: async () => ({ dataLakeObjects: [raw('Probe__dll')] }) },
-        target: {
-          get: async () => ({
-            ...rawDmo('Probe__dlm'),
-            fields: [{ ...fields[0], dataType: 'Number', type: 'Number' }],
-          }),
-        },
-      },
-    ),
-    (error) => {
-      assert.equal(error.code, 'MAPPING_FIELD_TYPE_MISMATCH');
-      assert.match(
-        operationDiagnostic(error, 'No write attempted.'),
-        /mapping source\/target type compatibility.*ProbeMapping.*Id__c.target.Id__c.dataType: expected "Text"; observed "Number"/u,
-      );
-      return true;
-    },
-  );
+  const dependencies = {
+    source: { get: async () => ({ dataLakeObjects: [raw('Probe__dll')] }) },
+    target: { get: async () => rawDmo('Probe__dlm') },
+  };
+  await assert.rejects(preflightNativeMapping(desired, {}, dependencies), (error) => {
+    assert.equal(error.code, 'MAPPING_FIELD_NOT_FOUND');
+    assert.match(
+      operationDiagnostic(error, 'No write attempted.'),
+      /The mapping pair Id__c -> Code__c names the field Code__c, which does not exist on Probe__dlm\..*No write attempted\./su,
+    );
+    return true;
+  });
+  desired.spec.fieldMappings[0] = {
+    sourceFieldDeveloperName: 'Gone__c',
+    targetFieldDeveloperName: 'Id__c',
+  };
+  await assert.rejects(preflightNativeMapping(desired, {}, dependencies), (error) => {
+    assert.equal(error.code, 'MAPPING_FIELD_NOT_FOUND');
+    assert.match(
+      operationDiagnostic(error, ''),
+      /names the field Gone__c, which does not exist on Probe__dll\./u,
+    );
+    return true;
+  });
 });

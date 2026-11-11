@@ -264,7 +264,7 @@ test('mapping transport encodes explicit dataspace on every operation without ch
   ]);
 });
 
-test('mapping field DELETE uses exact observed selector once and rejects unsafe or unqualified inputs', async () => {
+test('mapping field DELETE uses exact observed selector once and rejects unsafe inputs', async () => {
   const calls = [];
   const client = createMappingClient('target', '68.0', async (arguments_) => {
     calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
@@ -280,15 +280,14 @@ test('mapping field DELETE uses exact observed selector once and rejects unsafe 
   assert.deepEqual(calls[0].body, { mode: 'raw', raw: '' });
   for (const selector of ['', '../escape', 'a/b', 'a?dataspace=other', undefined])
     await assert.rejects(client.deleteField(mappingName, selector));
-  for (const version of ['69.0'])
-    await assert.rejects(
-      createMappingClient('target', version, async () => assert.fail()).deleteField(
-        mappingName,
-        'observed',
-      ),
-      /VERSION_UNQUALIFIED/,
-    );
   assert.equal(calls.length, 1);
+  // The client keeps a newer numeric pin as given; the field DELETE has no version gate.
+  await createMappingClient('target', '69.0', async (arguments_) => {
+    calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
+    return http(204);
+  }).deleteField(mappingName, 'observed');
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].url, /^\/services\/data\/v69\.0\//u);
   let attempts = 0;
   await assert.rejects(
     createMappingClient('target', '68.0', async () => {

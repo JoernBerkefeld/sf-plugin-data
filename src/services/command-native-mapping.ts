@@ -19,6 +19,25 @@ function activationNotice(dmo: string): MappingDiagnostic {
 }
 
 /**
+ * Information for pairs whose source and target data types differ; Salesforce accepts them.
+ * @param {Array<object>} differences Pairs with both data types.
+ * @returns {MappingDiagnostic} Non-blocking preview notice.
+ */
+function typeNotice(
+  differences: NonNullable<Awaited<ReturnType<typeof preflightNativeMapping>>['typeDifferences']>,
+): MappingDiagnostic {
+  return {
+    code: 'MAPPING_FIELD_TYPES_DIFFER',
+    message: `These pairs map fields of different data types; Salesforce accepts them: ${differences
+      .map(
+        ({ source, target, sourceType, targetType }) =>
+          `${source} (${sourceType}) -> ${target} (${targetType})`,
+      )
+      .join(', ')}.`,
+  };
+}
+
+/**
  * Compare a mapping without exposing payloads or replaying source identity.
  * @param {unknown} value Portable mapping.
  * @param {MappingClient} client Target mapping transport.
@@ -38,9 +57,12 @@ export async function preflightMapping(
     outcome: plan.operation,
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'confirmed-pair-lookup' : 'none',
-    diagnostics: (plan.activatesStandardDmo
-      ? [activationNotice(plan.desired.spec.targetEntityDeveloperName)]
-      : []) as MappingDiagnostic[],
+    diagnostics: [
+      ...(plan.activatesStandardDmo
+        ? [activationNotice(plan.desired.spec.targetEntityDeveloperName)]
+        : []),
+      ...(plan.typeDifferences?.length ? [typeNotice(plan.typeDifferences)] : []),
+    ] as MappingDiagnostic[],
     plan: [
       ...(plan.removals ?? []).map((pair) => ({
         operation: 'unmap' as const,
