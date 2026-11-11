@@ -3,7 +3,9 @@ import {
   apiReceiptDiagnostic,
   getConnectDiagnostic,
   retainConnectDiagnostic,
+  retainMetadataProblems,
 } from './connect-diagnostic.js';
+import { manifest } from './dmo-rest.js';
 import { ConnectClient, ConnectError } from './connect-client.js';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -33,6 +35,8 @@ export type MappingClient = {
   create: (body: MappingWriteBody) => Promise<unknown>;
   update: (mappingDeveloperName: string, body: MappingWriteBody) => Promise<unknown>;
   delete: (mappingDeveloperName: string) => Promise<void>;
+  /** One Metadata API destructive deployment of the whole mapping; never retried. */
+  remove: (mappingDeveloperName: string) => Promise<void>;
 };
 
 /**
@@ -236,8 +240,83 @@ export function createMappingClient(
     return response;
   }
 
+  /**
+   * Delete one mapping with one Metadata API destructive deployment; never retried.
+   * @param {string} name Exact native mapping developer name.
+   * @returns {Promise<void>} Resolves only when the member is reported deleted.
+   */
+  async function remove(name: string): Promise<void> {
+    // Only a name that matched the identifier pattern reaches the XML.
+    if (!nativeMappingName.test(name)) throw new NativeMappingError('INVALID_MAPPING_NAME');
+    verifyTemporaryDirectory();
+    const root = await mkdtemp(path.join(os.tmpdir(), 'data360-mapping-delete-'));
+    await writeFile(path.join(root, 'package.xml'), manifest(version, []), { flag: 'wx' });
+    await writeFile(
+      path.join(root, 'destructiveChanges.xml'),
+      manifest(version, [
+        '    <types>',
+        `        <members>${name}</members>`,
+        '        <name>ObjectSourceTargetMap</name>',
+        '    </types>',
+      ]),
+      { flag: 'wx' },
+    );
+    const receipt = await runner(
+      [
+        'project',
+        'deploy',
+        'start',
+        '--metadata-dir',
+        root,
+        '--target-org',
+        targetOrg,
+        '--wait',
+        '10',
+        '--json',
+      ],
+      root,
+    );
+    let envelope: { status?: unknown; message?: unknown; result?: Record<string, unknown> } = {};
+    try {
+      const parsed = JSON.parse(receipt.stdout) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+        envelope = parsed as typeof envelope;
+    } catch {
+      /* An unreadable receipt confirms nothing. */
+    }
+    const result =
+      envelope.result && typeof envelope.result === 'object' ? envelope.result : undefined;
+    const details =
+      result?.details && typeof result.details === 'object'
+        ? (result.details as Record<string, unknown>)
+        : {};
+    const list = (value: unknown): Array<Record<string, unknown>> =>
+      (Array.isArray(value) ? value : [value]).filter(
+        (entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object',
+      );
+    if (
+      receipt.exitCode === 0 &&
+      envelope.status === 0 &&
+      result?.success === true &&
+      result.status === 'Succeeded' &&
+      list(details.componentSuccesses).some(
+        (entry) =>
+          entry.fullName === name &&
+          entry.componentType === 'ObjectSourceTargetMap' &&
+          entry.deleted === true,
+      )
+    )
+      return;
+    throw retainMetadataProblems(new NativeMappingError('MAPPING_DELETE_FAILED'), [
+      ...list(details.componentFailures).map((failure) => failure.problem),
+      result?.errorMessage,
+      envelope.message,
+    ]);
+  }
+
   return {
     apiVersion: version,
+    remove,
     deleteField: async (name, observedSelector) => {
       if (!isNativeMappingDeletionVersion(version))
         throw new NativeMappingError('MAPPING_UNMAP_VERSION_UNQUALIFIED');

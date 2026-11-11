@@ -68,7 +68,7 @@ This closes the exercised API61 create/read/single-add omission path, not genera
 CRUD or inventory pagination. API61 is the lowest live-tested success for these
 mapping operations in this record, not a universal introduction claim. API60 GET404
 is separate evidence, not POST/PATCH/DELETE rejection proof. API62–67 operation
-qualification remains open; their deletion compatibility is still assumed. Desired-state
+qualification remains open. Desired-state
 removal and retarget remain API68-only. No nondefault space, ingestion, populated data
 or released-package qualification follows. The fresh sole mapping and both parents
 are deliberately retained under the accepted last-mapping limitation; no delete,
@@ -82,18 +82,14 @@ API68/default empty Other/Text fixtures passed exact source mapping retrieval,
 portable JSON transport changing only logical source-DLO/target-DMO bindings,
 target-local mapping creation and canonical retrieval. One additive Extra Text
 identity pair persisted; repeated preview/execution was GET-only and unchanged.
-Explicit create/update/delete previews were independently checked as nonmutating.
-Guarded selected deletion unmapped the two authored pairs before whole-mapping
-deletion. Independent name GET returned typed 404 NOT_FOUND; the other-source
-survivor remained identical and ACTIVE, with all parent schema/key definitions
-preserved. Only Extra/Note isMapped flags disappeared, as expected.
+Explicit create/update previews were independently checked as nonmutating.
 
-The original harness stopped on a failed independent fetch after the installed
-CLI had already confirmed deletion; recovery did not replay a write. Last-mapping
-preview/execution guards retain their no-write policy. The accepted platform
-limitation leaves exact owned source and target final mappings and their parents;
-DMO object deletion/cascade was not tested. This is not general schema portability,
-populated-object, lower-version, inventory-completeness or released-package proof.
+Whole-mapping deletion is specified under
+[Native mapping targets](#dmo-native-route-bounded-live-verification) below. The
+last mapping of a custom DMO is not deleted, so the exact owned source and target
+final mappings and their parents remain; DMO object deletion/cascade was not tested.
+This is not general schema portability, populated-object, lower-version,
+inventory-completeness or released-package proof.
 
 ## Native standalone DMO unchanged deployment — 2026-11-04
 
@@ -538,7 +534,7 @@ Native mapping targets, decided from the same raw read:
   `InternalOrganization`. The key qualifier pair is `KQ_<Key>__c` on both sides for
   the source primary key `<Key>__c`; on a DMO that is not yet enabled its target
   field may still be absent. Generated pairs are never sent and, with the key pair,
-  never unmapped. A file with only the authored pairs can create a mapping; once the
+  never unmapped by a deploy. A file with only the authored pairs can create a mapping; once the
   mapping exists, a deploy requires the file to list the generated pairs as well
   (`MAPPING_PROTECTED_PAIR_REQUIRED`), so retrieve the mapping and edit that file.
 - Activation notice: when the raw target read of a standard DMO does not say
@@ -547,13 +543,32 @@ Native mapping targets, decided from the same raw read:
   (category `OTHER`, system field `KQ_Id__c`, `keyQualifierName` on the primary key);
   deleting the mapping does not undo it. The notice changes neither outcome nor exit
   status.
-- Standard target, update and delete: a pair for a custom field is added and removed
-  like on a custom DMO, which also makes the single deploy command for a mapped
-  custom field work on a standard DMO. A pair onto a standard field is not unmapped
-  (`MAPPING_UNMAP_FIELD_POLICY_UNPROVEN`), so a mapping holding such pairs is not
-  deleted; the last mapping of a DMO is never deleted
-  (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`). For a custom DMO, deleting the DMO removes
-  its mapping.
+- Pair removal by deploy (a pair the file no longer lists), custom and standard
+  target alike: any authored pair is removed, including a pair onto a standard field
+  of a standard DMO (for example `Name__c` to `ssot__Name__c`), a pair whose source
+  and target names differ, and types other than Text; Salesforce decides. The three
+  system pairs, the key qualifier pair and the primary-key pair are never removed.
+  This also makes the single deploy command for a mapped custom field work on a
+  standard DMO.
+- Whole-mapping delete (`sf data360 delete -m mapping:<Name>`), API 61 to 68,
+  default 68: one Metadata API destructive deployment, type
+  `ObjectSourceTargetMap`, member the mapping developer name. No pair is unmapped
+  first and no native DELETE is sent. Any mapping is deleted this way, whatever pairs
+  it holds, on a custom or a standard DMO.
+  - Reads before the write: the mapping, all mappings of the target DMO, the DMO.
+  - Only refusal, without a write: the last mapping of a custom DMO
+    (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`). Salesforce does not delete it (Metadata
+    API: internal error; native DELETE: HTTP 500). The message names the DMO and the
+    way out, `sf data360 delete --metadata dmo:<Dmo__dlm>`, which removes the mapping
+    with the DMO. The last mapping of a standard DMO is deleted; the DMO stays
+    enabled with its generated `KQ_Id__c` field and no mapped fields.
+  - `--preview` is read-only and reports the single planned step `delete`.
+  - The deployment is sent once and never retried. Not confirmed by Salesforce:
+    `MAPPING_DELETE_FAILED` with Salesforce's problem text.
+  - Readback: up to 6 reads, 5 seconds apart, until the mapping reads 404
+    (`MAPPING_DELETION_UNCONFIRMED` otherwise); then the DMO's other mappings (pairs
+    and selectors) and the DMO's field names must be exactly what they were
+    (`MAPPING_DELETE_SIDE_EFFECT` otherwise).
 - Shared target field: a pair is removed even when another mapping of the same DMO
   targets the same field. The field must then keep `isMapped: true`; it loses the
   marker with the last such pair. An addition onto a field another mapping targets
@@ -564,6 +579,19 @@ Native mapping targets, decided from the same raw read:
       generated pairs added by Salesforce; the retrieved mapping deploying back with
       no change; the activation notice in a mapping preview against a second org where
       the same standard DMO is not active, with nothing changed.
+- [x] Observed at API 68 through the plugin: a first mapping onto the inactive
+      standard DMO `ssot__Brand__dlm` (62 seconds, outcome created, with
+      `MAPPING_ACTIVATES_STANDARD_DMO`; the DMO then enabled with category `OTHER` and
+      `KQ_Id__c`).
+- [x] Observed at API 68 through the plugin: the pair onto the standard field
+      `ssot__Name__c` removed by deploying the retrieved mapping file without it (214
+      seconds; a mapping deploy sends each of its many verification reads through a
+      separate CLI process).
+- [x] Observed at API 68 through the plugin, whole-mapping delete: a non-last mapping
+      of a custom DMO with two mappings (48 seconds; the other mapping and all 8 DMO
+      fields unchanged); the last mapping of the same DMO refused in 4 seconds with
+      nothing written; the only mapping of `ssot__Brand__dlm` deleted in two orgs (25
+      and 28 seconds), one of them still holding the pair onto `ssot__Name__c`.
 - [x] Observed at API 68 through the plugin on a custom DMO field shared by two
       mappings: `delete --field` removed the pair from both mappings and then the
       field (about 30 seconds); one deploy of both mapping files plus the DMO file
@@ -572,10 +600,11 @@ Native mapping targets, decided from the same raw read:
 - [x] Observed at API 68 through the raw API: activation by the first mapping onto one
       unused standard DMO (HTTP 201, object enabled, category from Unassigned to
       Other, `KQ_Id__c` added and referenced by the standard primary key, not undone
-      by deleting the mapping) and HTTP 500 on deleting the only mapping.
-- [ ] Not run live through the plugin: a real first mapping onto an inactive standard
-      DMO, and pair removal, reconciliation and mapping delete onto a standard DMO.
-      The latter are covered by synthetic tests.
+      by deleting the mapping) and HTTP 500 on a native DELETE of the only mapping of
+      a custom DMO.
+- [ ] Not run live through the plugin: removal of a pair for a custom field of a
+      standard DMO (covered by synthetic tests), whole-mapping delete at API 61 to
+      67, populated objects.
 
 Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read
 or written. Salesforce may cascade to the DMO's mapping. Deletion resolves the exact

@@ -31,7 +31,7 @@ import { nativeApiVersion } from './api-version.js';
  * @param {string[]} lines Indented type entries; empty for the required empty package.xml.
  * @returns {string} Manifest XML ending with LF.
  */
-function manifest(version: string, lines: string[]): string {
+export function manifest(version: string, lines: string[]): string {
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',

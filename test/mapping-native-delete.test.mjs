@@ -1,7 +1,11 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile, readdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { getMetadataProblems } from '../lib/transport/connect-diagnostic.js';
 import { createMappingClient } from '../lib/transport/mapping-rest.js';
 import { openBoundSsot } from '../lib/transport/bound-ssot.js';
 import Delete from '../lib/commands/data360/delete.js';
@@ -166,7 +170,7 @@ test('mapping delete command builds one bound sender per selector and bound pare
   command.preflightDeleteMapping = async (_name, _client, dependencies) => {
     assert.equal(dependencies.source, source);
     assert.equal(dependencies.target, target);
-    return { removals: [] };
+    return { selected: {}, others: [], targetFields: [] };
   };
   const before = process.exitCode;
   try {
@@ -176,4 +180,267 @@ test('mapping delete command builds one bound sender per selector and bound pare
     process.exitCode = before;
   }
   assert.deepEqual(calls, [['sender', 'target', '68.0']]);
+});
+
+const scratchPrefix = 'data360-mapping-delete-';
+const memberType = 'ObjectSourceTargetMap';
+/**
+ * Count the retained removal scratch directories under the OS temp directory.
+ * @returns {Promise<number>} Number of directories this transport has created so far.
+ */
+const scratchCount = async () => {
+  const entries = await readdir(os.tmpdir());
+  return entries.filter((entry) => entry.startsWith(scratchPrefix)).length;
+};
+/**
+ * Synthetic successful Metadata deployment receipt.
+ * @param {Array<object>|object} members Component successes besides the manifest entry.
+ * @param {object} [overrides] Result overrides.
+ * @returns {{exitCode: number, stdout: string}} Runner receipt.
+ */
+const deployed = (members, overrides = {}) => ({
+  exitCode: 0,
+  stdout: JSON.stringify({
+    status: 0,
+    result: {
+      success: true,
+      status: 'Succeeded',
+      details: {
+        componentSuccesses: Array.isArray(members)
+          ? [{ fullName: 'destructiveChanges.xml', componentType: '', deleted: false }, ...members]
+          : members,
+      },
+      ...overrides,
+    },
+  }),
+});
+const member = (fullName = name, extra = {}) => ({
+  fullName,
+  componentType: memberType,
+  deleted: true,
+  ...extra,
+});
+/**
+ * Synthetic failed Metadata deployment receipt.
+ * @param {unknown} componentFailures Failure entries as the CLI reports them.
+ * @param {object} [extra] Further result properties.
+ * @returns {{exitCode: number, stdout: string}} Runner receipt.
+ */
+const failure = (componentFailures, extra = {}) => ({
+  exitCode: 1,
+  stdout: JSON.stringify({
+    status: 1,
+    result: { success: false, status: 'Failed', details: { componentFailures }, ...extra },
+  }),
+});
+
+test('mapping removal transport sends one argument-array Metadata destructive deployment', async () => {
+  const runs = [];
+  // A bound sender is present in the command; the removal still goes through the CLI runner only.
+  const sender = { request: async () => assert.fail('removal must not use the bound sender') };
+  const client = createMappingClient(
+    'target',
+    '68.0',
+    async (arguments_, cwd) => {
+      runs.push({ arguments_, cwd });
+      return deployed([member()]);
+    },
+    undefined,
+    sender,
+  );
+  assert.equal(await client.remove(name), undefined);
+  assert.equal(runs.length, 1);
+  const [{ arguments_, cwd }] = runs;
+  assert.equal(path.dirname(cwd).toLowerCase(), String.raw`f:\temp`);
+  assert.ok(path.basename(cwd).startsWith(scratchPrefix));
+  assert.deepEqual(arguments_, [
+    'project',
+    'deploy',
+    'start',
+    '--metadata-dir',
+    cwd,
+    '--target-org',
+    'target',
+    '--wait',
+    '10',
+    '--json',
+  ]);
+  // The scratch directory is retained and holds exactly the two manifests.
+  const retained = await readdir(cwd);
+  assert.deepEqual(retained.toSorted(), ['destructiveChanges.xml', 'package.xml']);
+  assert.equal(
+    await readFile(path.join(cwd, 'package.xml'), 'utf8'),
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+      '    <version>68.0</version>',
+      '</Package>',
+      '',
+    ].join('\n'),
+  );
+  assert.equal(
+    await readFile(path.join(cwd, 'destructiveChanges.xml'), 'utf8'),
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Package xmlns="http://soap.sforce.com/2006/04/metadata">',
+      '    <types>',
+      '        <members>Generated_123</members>',
+      '        <name>ObjectSourceTargetMap</name>',
+      '    </types>',
+      '    <version>68.0</version>',
+      '</Package>',
+      '',
+    ].join('\n'),
+  );
+  // The manifest version follows the client's native API version; a lone success entry may
+  // arrive as an object instead of an array.
+  const pinned = [];
+  await createMappingClient('target', '65.0', async (_arguments, root) => {
+    pinned.push(root);
+    return deployed(member());
+  }).remove(name);
+  for (const manifest of ['package.xml', 'destructiveChanges.xml'])
+    assert.match(
+      await readFile(path.join(pinned[0], manifest), 'utf8'),
+      /<version>65\.0<\/version>/u,
+    );
+});
+
+test('mapping removal transport rejects invalid names before any file or CLI call', async () => {
+  let runs = 0;
+  const client = createMappingClient('target', '68.0', async () => {
+    runs++;
+    return deployed([member()]);
+  });
+  const before = await scratchCount();
+  for (const invalid of [
+    '',
+    '*',
+    '../escape',
+    '1Generated',
+    'Generated 123',
+    'Generated-123',
+    'Example__dlm.Generated_123',
+    'Generated_123</members><members>Other_456',
+    `G${'a'.repeat(240)}`,
+    5,
+  ])
+    await assert.rejects(
+      client.remove(invalid),
+      (error) => error instanceof NativeMappingError && error.code === 'INVALID_MAPPING_NAME',
+      String(invalid),
+    );
+  assert.equal(runs, 0);
+  assert.equal(await scratchCount(), before);
+});
+
+test('an unconfirmed mapping removal fails with MAPPING_DELETE_FAILED, safe problem texts and no retry', async () => {
+  const problem = 'This mapping is referenced elsewhere in Salesforce. Remove the usage first.';
+  for (const [receipt, expected] of [
+    [failure([{ fullName: name, componentType: memberType, problem }]), [problem]],
+    // A single failure may arrive as an object instead of an array.
+    [failure({ fullName: name, problem }), [problem]],
+    // Deployment-level and envelope-level messages are retained too, without duplicates.
+    [failure([{ problem }], { errorMessage: problem }), [problem]],
+    [{ exitCode: 1, stdout: JSON.stringify({ status: 1, message: problem }) }, [problem]],
+    // Text that fails the display filter is never retained.
+    [failure([{ fullName: name, problem: 'Value "secret" at <tag>' }]), []],
+    // Reported success that does not list this mapping as a deleted member confirms nothing.
+    [deployed([]), []],
+    [deployed([member('Other_456')]), []],
+    [deployed([member(name.toLowerCase())]), []],
+    [deployed([member(name, { componentType: 'CustomField' })]), []],
+    [deployed([member(name, { deleted: false })]), []],
+    [deployed([member(name, { deleted: 'true' })]), []],
+    [deployed([member()], { status: 'SucceededPartial' }), []],
+    [deployed([member()], { success: false }), []],
+    [{ ...deployed([member()]), exitCode: 1 }, []],
+    [{ exitCode: 0, stdout: JSON.stringify({ status: 1, result: {} }) }, []],
+    [{ exitCode: 0, stdout: 'not JSON' }, []],
+    [{ exitCode: 0, stdout: 'null' }, []],
+    [{ exitCode: 0, stdout: '[]' }, []],
+  ]) {
+    let runs = 0;
+    const transport = createMappingClient('target', '68.0', async () => {
+      runs++;
+      return receipt;
+    });
+    await assert.rejects(
+      transport.remove(name),
+      (error) => {
+        assert.ok(error instanceof NativeMappingError, receipt.stdout);
+        assert.equal(error.code, 'MAPPING_DELETE_FAILED', receipt.stdout);
+        assert.deepEqual([...getMetadataProblems(error)], expected, receipt.stdout);
+        return true;
+      },
+      receipt.stdout,
+    );
+    assert.equal(runs, 1);
+  }
+});
+
+test('mapping delete command reports a failed removal once, as unknown, with the Metadata problem', async () => {
+  const problem = 'This mapping is referenced elsewhere in Salesforce. Remove the usage first.';
+  const pairs = ['Id__c', 'Name__c'].map((field) => ({
+    sourceFieldDeveloperName: field,
+    targetFieldDeveloperName: field,
+    developerName: `observed_${field}`,
+  }));
+  const selected = {
+    developerName: name,
+    sourceEntityDeveloperName: 'Source__dll',
+    targetEntityDeveloperName: 'Target__dlm',
+    status: 'ACTIVE',
+    fieldMappings: pairs,
+  };
+  const other = { ...selected, developerName: 'Other_456', sourceEntityDeveloperName: 'O__dll' };
+  let runs = 0;
+  let reads = 0;
+  const command = Object.create(Delete.prototype);
+  command.parse = async () => ({
+    flags: { metadata: [`mapping:${name}`], 'data-space': 'default', preview: false },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveTarget = async () => 'target';
+  command.createMappingSender = () => ({ request: async () => assert.fail('fake reads only') });
+  command.createMappingClient = (target, version) => ({
+    apiVersion: version,
+    list: async () => ({ objectSourceTargetMaps: structuredClone([selected, other]) }),
+    get: async (mapping) => {
+      reads++;
+      return structuredClone(mapping === name ? selected : other);
+    },
+    delete: async () => assert.fail('no REST DELETE'),
+    deleteField: async () => assert.fail('no unmap'),
+    remove: createMappingClient(target, version, async () => {
+      runs++;
+      return failure([{ fullName: name, componentType: memberType, problem }]);
+    }).remove,
+  });
+  command.createDloNativeDeleteClient = () => ({ get: async () => assert.fail('no DLO read') });
+  command.createDmoNativeDeleteClient = () => ({
+    get: async () => ({
+      name: 'Target__dlm',
+      label: 'Target',
+      creationType: 'Custom',
+      dataSpaceName: 'default',
+      fields: [{ name: 'Id__c' }, { name: 'Name__c' }],
+    }),
+  });
+  const before = process.exitCode;
+  let result;
+  try {
+    result = await command.run();
+  } finally {
+    process.exitCode = before;
+  }
+  assert.equal(result.status, 'failed', JSON.stringify(result));
+  assert.equal(result.result.items[0].outcome, 'failed');
+  assert.equal(result.result.items[0].mutation, 'unknown');
+  assert.equal(result.diagnostics.errors.length, 1);
+  assert.equal(result.diagnostics.errors[0].code, 'MAPPING_DELETE_FAILED');
+  assert.ok(result.diagnostics.errors[0].message.includes(problem), JSON.stringify(result));
+  // One deployment attempt and no readback after the failed removal.
+  assert.equal(runs, 1);
+  assert.equal(reads, 1);
 });

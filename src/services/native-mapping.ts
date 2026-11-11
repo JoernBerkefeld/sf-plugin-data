@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { explainMismatch } from './operation-diagnostic.js';
+import { explainMismatch, replaceExplanation } from './operation-diagnostic.js';
 import { isNativeMappingDeletionVersion } from '../transport/api-version.js';
 import {
   NativeMappingError,
@@ -675,18 +675,7 @@ export async function preflightUnmapNativeMapping(
     }
     if (requestedRemovals && !requestedRemovals.some((field) => pairKey(field) === pairKey(pair)))
       continue;
-    if (
-      from.name !== to.name ||
-      from.isPrimaryKey ||
-      to.isPrimaryKey ||
-      to.creationType !== 'Custom' ||
-      !['Text', 'Number'].includes(to.dataType) ||
-      (to.usageTag !== undefined && to.usageTag !== 'None') ||
-      to.keyQualifierName !== undefined ||
-      to.isMapped !== true
-    )
-      // A pair whose target field another mapping also targets is removable (live API 68).
-      throw new NativeMappingError('MAPPING_UNMAP_FIELD_POLICY_UNPROVEN');
+    // Any other pair is removable; Salesforce decides (live API 68, custom and standard fields).
     removals.push(pair);
   }
   if (protectedPairs.length !== 5 || generated.size !== 4)
@@ -836,111 +825,115 @@ export async function unmapNativeMappingFields(
   return plan;
 }
 
+export type NativeMappingDeletePlan = {
+  selected: NativeMappingDocument;
+  /** Every other mapping of the same DMO, ordered by name. */
+  others: NativeMappingDocument[];
+  /** Field names of the target DMO, ordered. */
+  targetFields: string[];
+};
+export type NativeMappingDeleteSettle = {
+  attempts: number;
+  delayMs: number;
+  sleep: (ms: number) => Promise<void>;
+};
+export const defaultMappingDeleteSettle: NativeMappingDeleteSettle = {
+  attempts: 6,
+  delayMs: 5000,
+  sleep: async (ms) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  },
+};
+
 /**
- * Qualify unmap-first deletion with an independently metadata-backed protected survivor.
+ * Read what a mapping deletion must leave untouched: the other mappings and the DMO's fields.
+ * @param {string} target Target DMO name.
+ * @param {MappingClient} client Mapping reader.
+ * @param {MappingDependencies} dependencies Parent readers.
+ * @param {string} [requestScope] Optional request scope.
+ * @returns {Promise<object>} Normalised mappings ordered by name, raw DMO and ordered field names.
+ */
+async function readMappingSurroundings(
+  target: string,
+  client: MappingClient,
+  dependencies: MappingDependencies,
+  requestScope?: string,
+) {
+  let entries: Record<string, unknown>[] = [];
+  try {
+    const response = await client.list(target);
+    if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
+      throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
+    entries = unwrapNativeMappingCollection(response, requestScope);
+  } catch (error) {
+    // A DMO without any mapping answers the filtered list with a typed 404.
+    if (
+      !(error instanceof NativeMappingError) ||
+      error.code !== 'MAPPING_HTTP_ERROR' ||
+      error.status !== 404
+    )
+      throw error;
+  }
+  const mappings = entries
+    .map((entry) => normalizeNativeMapping(entry, requestScope))
+    // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh mapped array within the ES2022 library target.
+    .sort((a, b) => a.identity.apiName.localeCompare(b.identity.apiName));
+  const rawTarget = unwrapNativeDmo(await dependencies.target.get(target));
+  const fields = Array.isArray(rawTarget.fields) ? (rawTarget.fields as { name?: unknown }[]) : [];
+  const targetFields = fields.map((field) => String(field.name));
+  targetFields.sort();
+  return { mappings, rawTarget, targetFields };
+}
+
+/**
+ * Qualify a whole-mapping deletion without writing. Salesforce cannot delete the last mapping of
+ * a custom DMO, so that case is refused here with its way out; a standard DMO has no such limit.
  * @param {string} apiName Exact target-native mapping name.
  * @param {MappingClient} client Target mapping reader.
  * @param {MappingDependencies} dependencies Fresh parent readers.
  * @param {string} [requestScope] Optional request scope; omission has local effective default context.
- * @returns {Promise<object>} Immutable-before-write evidence for independent verification.
+ * @returns {Promise<NativeMappingDeletePlan>} What must be unchanged after the deletion.
  */
 export async function preflightDeleteNativeMapping(
   apiName: string,
   client: MappingClient,
   dependencies: MappingDependencies,
   requestScope?: string,
-) {
+): Promise<NativeMappingDeletePlan> {
   if (!isNativeMappingDeletionVersion(client.apiVersion))
     throw new NativeMappingError('MAPPING_DELETE_VERSION_UNQUALIFIED');
   const selected = await retrieveNativeMapping(apiName, client, requestScope);
-  const raw = await client.get(apiName);
-  if ((raw as Record<string, unknown>).status !== 'ACTIVE')
-    throw new NativeMappingError('MAPPING_TARGET_NOT_SETTLED');
-  if (!isDeepStrictEqual(selected, normalizeNativeMapping(raw, requestScope)))
-    throw new NativeMappingError('MAPPING_TARGET_IDENTITY_MISMATCH');
-  const response = await client.list(selected.spec.targetEntityDeveloperName);
-  if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
-    throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const entries = unwrapNativeMappingCollection(response, requestScope);
-  const names = new Set<string>();
-  const sources = new Set<string>();
-  for (const entry of entries) {
-    const document = normalizeNativeMapping(entry, requestScope);
-    const name = document.identity.apiName.toLowerCase();
-    const source = document.spec.sourceEntityDeveloperName.toLowerCase();
-    if (
-      document.spec.targetEntityDeveloperName !== selected.spec.targetEntityDeveloperName ||
-      names.has(name) ||
-      sources.has(source) ||
-      entry.status !== 'ACTIVE'
-    )
-      throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-    names.add(name);
-    sources.add(source);
-  }
-  const current = entries.find((entry) => entry.developerName === apiName);
-  if (!current || !isDeepStrictEqual(normalizeNativeMapping(current, requestScope), selected))
-    throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const survivorEntry = entries.find(
-    (entry) => entry.sourceEntityDeveloperName !== selected.spec.sourceEntityDeveloperName,
-  );
-  if (!survivorEntry) throw new NativeMappingError('MAPPING_LAST_MAPPING_DELETE_BLOCKED');
-  // The last-for-DMO check above precedes even the authored removal plan.
-  const plan = await preflightUnmapNativeMapping(
-    selected,
+  const target = selected.spec.targetEntityDeveloperName;
+  const { mappings, rawTarget, targetFields } = await readMappingSurroundings(
+    target,
     client,
     dependencies,
-    undefined,
     requestScope,
   );
-  if (!isDeepStrictEqual(plan.inventory, entries))
+  if (!mappings.some((entry) => isDeepStrictEqual(entry, selected)))
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const protectedKeys = new Set(plan.protectedPairs.map((pair) => pairKey(pair)));
-  let qualified = false;
-  for (const entry of entries.filter(
-    (value) => value.sourceEntityDeveloperName !== selected.spec.sourceEntityDeveloperName,
-  )) {
-    const document = normalizeNativeMapping(entry, requestScope);
-    const {
-      generated,
-      sources: from,
-      targets: to,
-      standard,
-    } = await validateDependencies(document, {
-      source: {
-        get: async (name) => plan.parents[plan.sourceNames.indexOf(name)],
-      },
-      target: { get: async () => plan.target },
-    });
-    if (
-      generated.size === 4 &&
-      document.spec.fieldMappings.every((pair) => pair.developerName) &&
-      [...protectedKeys].every((key) =>
-        document.spec.fieldMappings.some((pair) => {
-          if (pairKey(pair) !== key) return false;
-          const source = from.get(pair.sourceFieldDeveloperName)!;
-          const target = to.get(pair.targetFieldDeveloperName)!;
-          return (
-            source.dataType === 'Text' &&
-            target.dataType === 'Text' &&
-            target.isMapped === true &&
-            (generated.has(key) || isKeyPair(source, target, standard))
-          );
-        }),
-      )
-    )
-      qualified = true;
+  const others = mappings.filter((entry) => entry.identity.apiName !== apiName);
+  if (others.length === 0 && nativeDmoWriteScope(rawTarget) === 'custom') {
+    const error = new NativeMappingError('MAPPING_LAST_MAPPING_DELETE_BLOCKED');
+    replaceExplanation(
+      error,
+      `${apiName} is the only mapping of the custom DMO ${target}, and Salesforce does not delete the last mapping of a custom DMO. Delete the DMO instead (sf data360 delete --metadata dmo:${target}); that removes its mapping with it.`,
+    );
+    throw error;
   }
-  if (!qualified) throw new NativeMappingError('MAPPING_SURVIVOR_UNCONFIRMED');
-  return plan;
+  return { selected, others, targetFields };
 }
 
 /**
- * Delete once, require typed exact absence, settle the survivor and verify unchanged parents.
+ * Delete a mapping with one Metadata API destructive deployment, then confirm its absence and
+ * that the DMO's other mappings and its fields are what they were.
  * @param {string} apiName Exact native name, never a source artifact alias.
  * @param {MappingClient} client Mapping transport.
  * @param {MappingDependencies} dependencies Fresh parent readers.
  * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {NativeMappingDeleteSettle} [settle] Bounded readback budget.
  * @returns {Promise<{apiName: string}>} Independently verified absence.
  */
 export async function deleteNativeMapping(
@@ -948,39 +941,40 @@ export async function deleteNativeMapping(
   client: MappingClient,
   dependencies: MappingDependencies,
   requestScope?: string,
+  settle: NativeMappingDeleteSettle = defaultMappingDeleteSettle,
 ): Promise<{ apiName: string }> {
   const before = await preflightDeleteNativeMapping(apiName, client, dependencies, requestScope);
-  const remainder = await unmapNativeMappingFields(
-    before,
-    client,
-    dependencies,
-    () => {},
-    requestScope,
-  );
-  // Requalify the protected-only remainder and all survivor metadata immediately before DELETE.
-  const final = await preflightDeleteNativeMapping(apiName, client, dependencies, requestScope);
-  if (final.removals.length > 0 || !isDeepStrictEqual(final, remainder))
-    throw new NativeMappingError('MAPPING_UNMAP_PLAN_CHANGED');
-  if (!(await checkUnmapSnapshot(final, client, dependencies)))
-    throw new NativeMappingError('MAPPING_TARGET_NOT_SETTLED');
-  await client.delete(apiName);
-  final.inventory = final.inventory.filter((entry) => entry.developerName !== apiName);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    let absent = false;
+  await client.remove(apiName);
+  for (let attempt = 0; attempt < settle.attempts; attempt++) {
+    if (attempt > 0) await settle.sleep(settle.delayMs);
     try {
       await retrieveNativeMapping(apiName, client, requestScope);
+      continue;
     } catch (error) {
       if (
-        error instanceof NativeMappingError &&
-        error.code === 'MAPPING_HTTP_ERROR' &&
-        error.status === 404
+        !(error instanceof NativeMappingError) ||
+        error.code !== 'MAPPING_HTTP_ERROR' ||
+        error.status !== 404
       )
-        absent = true;
-      else throw error;
+        throw error;
     }
-    // Every settlement read checks full content, including while CREATING.
-    const active = await checkUnmapSnapshot(final, client, dependencies);
-    if (absent && active) return { apiName };
+    const after = await readMappingSurroundings(
+      before.selected.spec.targetEntityDeveloperName,
+      client,
+      dependencies,
+      requestScope,
+    );
+    const expected = { mappings: before.others, targetFields: before.targetFields };
+    const observed = { mappings: after.mappings, targetFields: after.targetFields };
+    if (!isDeepStrictEqual(observed, expected))
+      throw explainMismatch(
+        new NativeMappingError('MAPPING_DELETE_SIDE_EFFECT'),
+        'mapping deletion readback of the other mappings and the DMO fields',
+        apiName,
+        expected,
+        observed,
+      );
+    return { apiName };
   }
   throw new NativeMappingError('MAPPING_DELETION_UNCONFIRMED');
 }

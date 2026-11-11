@@ -1,3 +1,58 @@
+# Whole-mapping deletion through the Metadata API — 2026-11-11
+
+`sf data360 delete -m mapping:<Name>` now deletes the whole mapping with one Metadata
+API destructive deployment (type `ObjectSourceTargetMap`, member the mapping
+developer name). The earlier route (unmap the authored pairs one by one, then a
+native DELETE of the remainder, with a qualified surviving mapping) is gone, and with
+it `MAPPING_UNMAP_FIELD_POLICY_UNPROVEN` and `MAPPING_SURVIVOR_UNCONFIRMED`. Admitted
+API versions stay 61 to 68, default 68. Version stays 0.1.0; nothing pushed.
+
+- Before the write the plugin reads the mapping, all mappings of the target DMO and
+  the DMO. Preview is read-only and reports the single planned step `delete`.
+- After the write it polls (up to 6 reads, 5 seconds apart) until the mapping reads
+  404, then requires the DMO's other mappings (pairs and selectors) and the DMO's
+  field names to be exactly what they were; otherwise `MAPPING_DELETE_SIDE_EFFECT`.
+  A deployment Salesforce does not confirm gives `MAPPING_DELETE_FAILED` with
+  Salesforce's problem text and is never retried. A mapping that never reads absent
+  gives `MAPPING_DELETION_UNCONFIRMED`.
+- Any mapping can be deleted, whatever pairs it holds: pairs onto standard fields
+  (`Name__c` to `ssot__Name__c`) and mappings onto standard DMOs included. No other
+  mapping has to qualify as a survivor.
+- The only refusal is the last mapping of a custom DMO. Salesforce does not delete it
+  (Metadata API: internal error; native DELETE: HTTP 500), so the plugin refuses up
+  front, without a write, with `MAPPING_LAST_MAPPING_DELETE_BLOCKED` and a message
+  naming the DMO and the way out: `sf data360 delete --metadata dmo:<Dmo__dlm>`,
+  which removes its mapping. The last mapping of a standard DMO is deleted normally;
+  the DMO stays enabled with its generated `KQ_Id__c` field and no mapped fields.
+- Mapping deploy (a pair dropped from the file): any authored pair can be removed,
+  including a pair onto a standard field of a standard DMO, pairs with different
+  source and target names, and non-Text types; Salesforce decides. The three system
+  pairs, the key qualifier pair and the primary-key pair stay protected.
+
+Live results through the plugin at API 68, two orgs:
+
+1. Non-last mapping of a custom DMO with two mappings: deleted in 48 seconds, the
+   other mapping and all 8 DMO fields unchanged.
+2. Last mapping of the same custom DMO: refused in 4 seconds with the message above,
+   nothing written.
+3. The only mapping of the standard DMO `ssot__Brand__dlm`: deleted in both orgs (25
+   and 28 seconds), one of them still holding the pair onto `ssot__Name__c`.
+4. A pair onto the standard field `ssot__Name__c`: removed by deploying the retrieved
+   mapping file without it. 214 seconds, slow because a mapping deploy sends each of
+   its many verification reads through a separate CLI process.
+5. A real first mapping onto an inactive standard DMO in the second org (62 seconds):
+   outcome created, with `MAPPING_ACTIVATES_STANDARD_DMO`; the DMO then enabled with
+   category `OTHER` and `KQ_Id__c`.
+
+Unit tests for mapping deletion were rewritten: full suite 2864 pass, 0 fail, 2
+skipped before the documentation change. README, `docs/capabilities.md` and
+`docs/artifact-format.md` describe the new behaviour; the README mapping assertions
+in `test/cli.test.mjs` were updated to match.
+
+Not covered live: deletion at API 61 to 67, populated objects, non-default data
+spaces, removal of a pair for a custom field of a standard DMO. Open: mapping deploy
+sends its reads through one CLI process each, which makes pair removal slow.
+
 # Three ways to remove a mapped DMO field — 2026-11-10
 
 A mapped field is never removed on its own, because Salesforce would silently drop

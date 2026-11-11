@@ -14,6 +14,7 @@ import { captureDeployInputDigest, readDeployInputs } from '../lib/artifacts/rea
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { writeNativeMappingDocument } from '../lib/artifacts/write-native-mapping.js';
 import {
+  deleteNativeMapping,
   deployNativeMapping,
   preflightDeleteNativeMapping,
   preflightNativeMapping,
@@ -186,6 +187,12 @@ function world({
       found.fieldMappings = found.fieldMappings.filter((item) => item !== removed);
     },
     delete: async () => assert.fail('no mapping DELETE expected'),
+    // The DMO stays active after its mappings are gone.
+    remove: async (name) => {
+      find(name);
+      writes.push(['mapping:remove', name]);
+      state.mappings = state.mappings.filter((entry) => entry.developerName !== name);
+    },
   };
   return { writes, state, readDmo, dmo, dlo, mapping, deps: { source: dlo, target: dmo } };
 }
@@ -329,18 +336,44 @@ for (const systemType of ['Standard', 'System'])
     assert.ok(!('isMapped' in org.readDmo().fields.find((entry) => entry.name === 'Note__c')));
   });
 
-test('standard target keeps the other unmap and protected-pair refusals', async () => {
+for (const systemType of ['Standard', 'System'])
+  test(`standard target update removes a pair onto a standard field, system fields read as ${systemType}`, async () => {
+    // Source and target names differ and the target is a standard field: removable all the same.
+    const namePair = authoredPairs[1];
+    const org = world({
+      systemType,
+      mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }],
+    });
+    const input = file([...complete.filter((value) => value !== namePair), notePair]);
+    const plan = await preflightNativeMapping(input, org.mapping, org.deps);
+    assert.equal(plan.operation, 'update');
+    assert.deepEqual(plan.removals, [pair(namePair)]);
+    assert.equal(plan.evidence.protectedPairs.length, 5);
+    assert.deepEqual(org.writes, []);
+    const preview = await preflightMapping(input, org.mapping, org.deps);
+    assert.deepEqual(preview.plan, [{ operation: 'unmap', apiName: NAME, ...pair(namePair) }]);
+    const result = await executeMapping(input, org.mapping, org.deps);
+    assert.deepEqual(result, {
+      outcome: 'updated',
+      mutation: 'confirmed-updated',
+      diagnostics: [],
+    });
+    assert.deepEqual(org.writes, [['mapping:unmap', NAME, 'ssot__Name__c']]);
+    const after = normalizeNativeMapping(await org.mapping.get(NAME));
+    assert.deepEqual(
+      after.spec.fieldMappings.map((item) => item.sourceFieldDeveloperName).toSorted(),
+      ['Id__c', 'Note__c', ...systemSources, 'KQ_Id__c'].toSorted(),
+    );
+    assert.ok(
+      !('isMapped' in org.readDmo().fields.find((entry) => entry.name === 'ssot__Name__c')),
+    );
+    // The same file is unchanged afterwards.
+    const again = await preflightMapping(input, org.mapping, org.deps);
+    assert.equal(again.outcome, 'noop');
+  });
+
+test('standard target keeps the protected-pair and create refusals', async () => {
   const mappings = [{ name: NAME, source: DLO, pairs: [...complete, notePair] }];
-  // A pair onto a standard field is not an identity pair on a custom field.
-  const standardField = world({ mappings });
-  await assert.rejects(
-    preflightNativeMapping(
-      file([...complete.filter(([source]) => source !== 'Name__c'), notePair]),
-      standardField.mapping,
-      standardField.deps,
-    ),
-    (error) => error.code === 'MAPPING_UNMAP_FIELD_POLICY_UNPROVEN',
-  );
   // Generated and key pairs cannot be left out of a reconciliation.
   for (const omitted of ['Id__c', 'DataSource__c', 'KQ_Id__c']) {
     const org = world({ mappings });
@@ -395,35 +428,85 @@ test('refused DMO kinds stay MAPPING_TARGET_UNSUPPORTED under a standard name', 
   }
 });
 
-test('standard target mapping delete passes the existing guards and keeps the last-mapping refusal', async () => {
+test('the last mapping of a standard DMO is deleted with one removal', async () => {
+  const settle = { attempts: 3, delayMs: 0, sleep: async () => assert.fail('no wait expected') };
+  // absent: the DMO answers the mapping list with HTTP 404 once its last mapping is gone.
+  for (const absent of [false, true]) {
+    const last = world({ mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }] });
+    const list = last.mapping.list;
+    last.mapping.list = async (...arguments_) => {
+      if (absent && last.state.mappings.length === 0)
+        throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+      return list(...arguments_);
+    };
+    const fieldNames = last.readDmo().fields.map((entry) => entry.name);
+    const plan = await preflightDeleteNativeMapping(NAME, last.mapping, last.deps);
+    assert.deepEqual(plan, {
+      selected: normalizeNativeMapping(await last.mapping.get(NAME)),
+      others: [],
+      targetFields: fieldNames.toSorted(),
+    });
+    assert.deepEqual(last.writes, []);
+    assert.deepEqual(await deleteNativeMapping(NAME, last.mapping, last.deps, undefined, settle), {
+      apiName: NAME,
+    });
+    assert.deepEqual(last.writes, [['mapping:remove', NAME]]);
+    // Deleting the mapping does not undo the activation or remove a field.
+    assert.equal(last.readDmo().isEnabled, true);
+    assert.deepEqual(
+      last.readDmo().fields.map((entry) => entry.name),
+      fieldNames,
+    );
+  }
+});
+
+test('standard target mapping delete keeps the other mapping and needs no pair qualification', async () => {
   const other = 'Other_map_Brand_2';
-  const last = world({ mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }] });
-  await assert.rejects(
-    preflightDeleteNativeMapping(NAME, last.mapping, last.deps),
-    (error) => error.code === 'MAPPING_LAST_MAPPING_DELETE_BLOCKED',
-  );
-  // Pairs onto standard fields are not qualified for unmapping, so such a mapping is not deleted.
-  const typical = world({
+  // Pairs onto standard fields travel with the mapping; nothing is unmapped first.
+  const org = world({
     mappings: [
       { name: NAME, source: DLO, pairs: [...complete, notePair] },
       { name: other, source: 'Other__dll', pairs: complete },
     ],
   });
-  await assert.rejects(
-    preflightDeleteNativeMapping(NAME, typical.mapping, typical.deps),
-    (error) => error.code === 'MAPPING_UNMAP_FIELD_POLICY_UNPROVEN',
+  const plan = await preflightDeleteNativeMapping(NAME, org.mapping, org.deps);
+  assert.deepEqual(plan.others, [normalizeNativeMapping(await org.mapping.get(other))]);
+  assert.ok(!('removals' in plan));
+  assert.deepEqual(org.writes, []);
+  assert.deepEqual(
+    await deleteNativeMapping(NAME, org.mapping, org.deps, undefined, {
+      attempts: 1,
+      delayMs: 0,
+      sleep: async () => {},
+    }),
+    { apiName: NAME },
   );
-  const keyOnly = complete.filter(([source]) => source !== 'Name__c');
-  const org = world({
+  assert.deepEqual(org.writes, [['mapping:remove', NAME]]);
+  assert.deepEqual(
+    org.state.mappings.map((entry) => entry.developerName),
+    [other],
+  );
+  // A removal that takes another mapping's pair with it is reported.
+  const drift = world({
     mappings: [
-      { name: NAME, source: DLO, pairs: [...keyOnly, notePair] },
-      { name: other, source: 'Other__dll', pairs: keyOnly },
+      { name: NAME, source: DLO, pairs: [...complete, notePair] },
+      { name: other, source: 'Other__dll', pairs: complete },
     ],
   });
-  const plan = await preflightDeleteNativeMapping(NAME, org.mapping, org.deps);
-  assert.deepEqual(plan.removals, [pair(notePair)]);
-  assert.equal(plan.protectedPairs.length, 5);
-  assert.deepEqual(org.writes, []);
+  const remove = drift.mapping.remove;
+  drift.mapping.remove = async (name) => {
+    await remove(name);
+    drift.state.mappings[0].fieldMappings.pop();
+  };
+  await assert.rejects(
+    deleteNativeMapping(NAME, drift.mapping, drift.deps, undefined, {
+      attempts: 1,
+      delayMs: 0,
+      sleep: async () => {},
+    }),
+    (error) => error.code === 'MAPPING_DELETE_SIDE_EFFECT',
+  );
+  assert.deepEqual(drift.writes, [['mapping:remove', NAME]]);
 });
 
 test('one command drops the pair of a custom field on a standard DMO, then removes the field', async () => {

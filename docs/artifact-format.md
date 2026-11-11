@@ -166,17 +166,19 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   sent by deploy. A file with only the authored pairs can create a mapping; once the
   mapping exists, a deploy requires the file to list the generated pairs as well
   (`MAPPING_PROTECTED_PAIR_REQUIRED`), so retrieve the mapping and edit that file. A
-  pair onto a standard field cannot be removed, and a mapping that has such pairs
-  cannot be deleted; the last mapping of a DMO cannot be deleted either
-  (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`). Creating the first mapping onto a standard
+  deploy removes every authored pair that the file no longer lists, including a pair
+  onto a standard field; the generated pairs and the primary-key pair must stay.
+  `sf data360 delete -m mapping:<MappingApiName>` deletes a mapping whatever pairs it
+  holds and never removes the file. Only the last mapping of a custom DMO is refused
+  (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`); delete the DMO instead. Creating the first mapping onto a standard
   DMO that is not yet enabled activates it permanently; preview and create report
   `MAPPING_ACTIVATES_STANDARD_DMO`. A pair may be removed from a mapping file even
   when another mapping targets the same field. Observed at API 68 through the plugin:
   a mapping created onto an already active standard DMO from a file with two authored
   pairs, the retrieved file deploying back unchanged, the activation notice in a
-  preview, and the removal of a field shared by two mappings of a custom DMO. A real
-  first mapping onto an inactive standard DMO through the plugin is not verified; the
-  activation itself is observed through the raw API.
+  preview, a first mapping created onto an inactive standard DMO, a pair onto a
+  standard field removed by deploying the retrieved file without it, and the removal
+  of a field shared by two mappings of a custom DMO.
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one

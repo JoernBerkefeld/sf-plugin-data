@@ -132,27 +132,25 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'Full raw DMO preservation is therefore not claimed across reconciliation',
     'does not qualify installed Number removal',
     'not populated-object, cross-org, arbitrary-schema or all-version qualification',
-    'Installed API61 and API68 public deletion acceptance each unmapped two authored identity Text pairs',
-    'exactly three DELETE responses of HTTP `204`',
+    'one Metadata API destructive deployment',
+    'type `ObjectSourceTargetMap`',
+    'It does not unmap pairs first and sends no native DELETE',
     'typed selected-mapping `404`',
-    'the unchanged survivor and exact fixture inventory',
-    'Last-for-DMO preview and execution were both blocked with zero writes at API61/68',
-    'API61 deletion fixtures were provisioned at API68; this deletion evidence does not qualify API61 creation',
-    'API62..67 are an explicitly accepted compatibility assumption, not live-qualified',
-    'not successful public bare/type inventory retrieval acceptance',
+    'observed live at API 68 only',
     'Desired-state removal/retarget remains API68-only',
     'zero-write repeat',
     'DMO GET has no status field',
-    'last mapping for a DMO is blocked before any unmaps',
+    'The last mapping of a custom DMO is refused before any write',
+    'the last mapping of a standard DMO is deleted normally',
     '`--preview` performs zero writes',
-    'all five metadata-qualified protected pairs',
+    'reports the single planned step `delete`',
+    'MAPPING_DELETE_FAILED',
+    'MAPPING_DELETE_SIDE_EFFECT',
+    'MAPPING_DELETION_UNCONFIRMED',
     'DMO `Count__c`/`Gamma__c` fields',
-    'MAPPING_PARENT_CHANGED',
     'An already-absent mapping is conservatively blocked without writes',
     'unchanged-on-404 handling applies only to native DLO/DMO deletion',
     'non-last native DELETE HTTP `204`',
-    'complete pre-final schema',
-    'Desired-state deployment uses the same',
   ])
     assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
   for (const obsolete of [
@@ -255,13 +253,13 @@ test('README separates DLO field admission from live Text qualification', () => 
   assert.ok(!dlo.includes('Update supports a label change and new nonprimary Text fields'));
 });
 
-test('delete help discloses guarded unmap-first deletion and bounded qualification', async () => {
+test('delete help discloses whole-mapping deletion and bounded qualification', async () => {
   const { default: Delete } = await import('../lib/commands/data360/delete.js');
-  assert.match(Delete.summary, /qualified non-last mapping/u);
+  assert.match(Delete.summary, /fields or mappings.$/u);
   for (const text of [
-    'unmapped first',
-    'last mapping for a DMO is blocked before any unmaps',
-    'all five metadata-qualified protected pairs',
+    'one Metadata API destructive deployment (ObjectSourceTargetMap)',
+    'The last mapping of a custom DMO is refused before any write',
+    'delete the DMO instead',
     'empty custom fixtures',
     '--preview performs zero writes',
     'partial failure stops the batch',

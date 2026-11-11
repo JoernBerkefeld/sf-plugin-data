@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Delete from '../lib/commands/data360/delete.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
+import { deleteNativeMapping } from '../lib/services/native-mapping.js';
 
 const invocation = (flags = {}) => {
   const command = Object.create(Delete.prototype);
@@ -55,10 +56,11 @@ for (const scope of [undefined, 'Team'])
         calls++;
         assert.equal(name, 'Generated_123');
         assert.equal(typeof actualClient.delete, 'function');
+        assert.equal(typeof actualClient.remove, 'function');
         assert.ok(dependencies.source);
         assert.ok(dependencies.target);
         assert.equal(actual, scope);
-        return { removals: [] };
+        return { selected: {}, others: [], targetFields: [] };
       };
       const result = await run(command);
       assert.equal(result.status, 'success');
@@ -125,14 +127,10 @@ const mappingFixture = (command) => {
         throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
       return structuredClone(name === selected.developerName ? selected : survivor);
     },
-    deleteField: async (name, selector) => {
-      calls.push(['unmap', name, selector]);
-      const pair = selected.fieldMappings.find((pair) => pair.developerName === selector);
-      selected.fieldMappings = selected.fieldMappings.filter((field) => field !== pair);
-      delete schema.fields.find((field) => field.name === pair.targetFieldDeveloperName).isMapped;
-    },
-    delete: async (name) => {
-      calls.push(['delete', name]);
+    deleteField: async () => assert.fail('mapping deletion never unmaps'),
+    delete: async () => assert.fail('mapping deletion never sends a REST DELETE'),
+    remove: async (name) => {
+      calls.push(['remove', name]);
       deleted = true;
     },
   };
@@ -157,7 +155,7 @@ const mappingFixture = (command) => {
 
 for (const preview of [true, false]) {
   for (const json of [true, false]) {
-    test(`public mapping unmap-first deletion preview=${preview} json=${json}`, async () => {
+    test(`public mapping deletion is one removal preview=${preview} json=${json}`, async () => {
       const command = invocation({ preview });
       const f = mappingFixture(command);
       const lines = [];
@@ -169,17 +167,12 @@ for (const preview of [true, false]) {
       assert.equal(item.mutation, preview ? 'not-attempted' : 'confirmed-deleted');
       if (preview) {
         assert.deepEqual(f.calls, []);
-        assert.deepEqual(
-          item.plan.map((step) => step.operation),
-          ['unmap', 'unmap', 'delete'],
-        );
-        assert.equal(item.plan[0].developerName, 'observed_Name__c');
+        assert.deepEqual(item.plan, [{ operation: 'delete', apiName: 'Generated_123' }]);
         assert.ok(!JSON.stringify(item).includes('fieldMappings'));
-      } else
-        assert.deepEqual(
-          f.calls.map(([kind]) => kind),
-          ['unmap', 'unmap', 'delete'],
-        );
+      } else {
+        assert.deepEqual(f.calls, [['remove', 'Generated_123']]);
+        assert.ok(!('plan' in item));
+      }
       if (json) assert.deepEqual(lines, []);
       else
         assert.ok(
@@ -251,22 +244,8 @@ for (const version of [
         const factory = command[method];
         command[method] = (target, requested) => {
           factories.push([method, target, requested]);
-          const client = factory(target, requested);
-          if (pin !== '61.0' || method !== 'createDloClient') return client;
-          return {
-            get: async (name) => {
-              const value = await client.get(name);
-              const { fields, ...rest } = value;
-              return { dataLakeObjects: [{ ...rest, dataLakeFieldInfoRepresentation: fields }] };
-            },
-          };
+          return factory(target, requested);
         };
-      }
-      if (pin === '61.0') {
-        for (const field of f.schema.fields) {
-          if (field.name !== 'KQ_Id__c') field.usageTag = 'None';
-          if (!field.isPrimaryKey) delete field.isPrimaryKey;
-        }
       }
       const result = await run(command);
       assert.equal(result.status, 'success', JSON.stringify(result));
@@ -275,53 +254,65 @@ for (const version of [
         ['createDloClient', 'target', pin],
         ['createDmoClient', 'target', pin],
       ]);
-      assert.deepEqual(
-        f.calls.map(([kind]) => kind),
-        preview ? [] : ['unmap', 'unmap', 'delete'],
-      );
+      assert.deepEqual(f.calls, preview ? [] : [['remove', 'Generated_123']]);
       if (preview)
-        assert.deepEqual(
-          result.result.items[0].plan.map((step) => step.operation),
-          ['unmap', 'unmap', 'delete'],
-        );
+        assert.deepEqual(result.result.items[0].plan, [
+          { operation: 'delete', apiName: 'Generated_123' },
+        ]);
     });
   }
 }
 
-for (const mode of ['first-lost', 'second-lost', 'ignored', 'final-lost', 'last', 'coverage']) {
+const expectedCodes = {
+  rejected: 'MAPPING_DELETE_FAILED',
+  lost: 'DELETE_FAILED',
+  ignored: 'MAPPING_DELETION_UNCONFIRMED',
+  'side-effect': 'MAPPING_DELETE_SIDE_EFFECT',
+  last: 'MAPPING_LAST_MAPPING_DELETE_BLOCKED',
+  stale: 'MAPPING_INVENTORY_UNCONFIRMED',
+};
+for (const [mode, code] of Object.entries(expectedCodes)) {
   test(`public mapping ${mode} stops batch with honest mutation bookkeeping`, async () => {
     const command = invocation({ metadata: ['mapping:Generated_123', 'dlo:Later__dll'] });
     const f = mappingFixture(command);
-    const remove = f.client.deleteField;
-    f.client.deleteField = async (...arguments_) => {
-      if (mode === 'ignored') {
-        f.calls.push(['unmap']);
-        return;
-      }
-      await remove(...arguments_);
-      if (mode === 'first-lost' || (mode === 'second-lost' && f.calls.length === 2))
-        throw new Error('response lost');
+    const remove = f.client.remove;
+    f.client.remove = async (name) => {
+      if (mode === 'rejected' || mode === 'ignored') f.calls.push(['remove', name]);
+      if (mode === 'rejected') throw new NativeMappingError('MAPPING_DELETE_FAILED');
+      if (mode === 'ignored') return;
+      await remove(name);
+      if (mode === 'lost') throw new Error('response lost');
+      if (mode === 'side-effect') f.survivor.fieldMappings.pop();
     };
-    if (mode === 'final-lost')
-      f.client.delete = async () => {
-        f.calls.push(['delete']);
-        throw new Error('lost');
-      };
     if (mode === 'last')
       f.client.list = async () => ({ objectSourceTargetMaps: [structuredClone(f.selected)] });
-    if (mode === 'coverage') f.survivor.fieldMappings.shift();
+    if (mode === 'stale')
+      f.client.list = async () => ({ objectSourceTargetMaps: [structuredClone(f.survivor)] });
+    // The command's own budget waits in real time; the injected one keeps the same service path.
+    command.deleteMapping = (name, client, dependencies, scope) =>
+      deleteNativeMapping(name, client, dependencies, scope, {
+        attempts: 2,
+        delayMs: 0,
+        sleep: async () => {},
+      });
     command.deleteDlo = async () => assert.fail('later batch member dispatched');
     const result = await run(command);
-    const blocked = ['last', 'coverage'].includes(mode);
+    const blocked = ['last', 'stale'].includes(mode);
     assert.equal(result.status, blocked ? 'blocked' : 'failed', JSON.stringify(result));
     assert.equal(result.result.items.length, 1);
     assert.equal(result.result.items[0].mutation, blocked ? 'not-attempted' : 'unknown');
-    assert.equal(
-      f.calls.length,
-      blocked ? 0 : mode === 'second-lost' ? 2 : mode === 'final-lost' ? 3 : 1,
-    );
-    if (mode === 'last')
-      assert.equal(result.diagnostics.errors[0].code, 'MAPPING_LAST_MAPPING_DELETE_BLOCKED');
+    // Exactly one removal once dispatched, none when blocked.
+    assert.deepEqual(f.calls, blocked ? [] : [['remove', 'Generated_123']]);
+    assert.equal(result.diagnostics.errors.length, 1);
+    assert.equal(result.diagnostics.errors[0].code, code);
+    if (mode === 'last') {
+      // The refusal names the way out: delete the DMO, which takes its mapping with it.
+      assert.match(result.diagnostics.errors[0].message, /only mapping of the custom DMO/u);
+      assert.match(
+        result.diagnostics.errors[0].message,
+        /sf data360 delete --metadata dmo:Target__dlm/u,
+      );
+    }
   });
 }
 
