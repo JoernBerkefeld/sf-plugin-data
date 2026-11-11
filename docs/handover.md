@@ -1,3 +1,29 @@
+# Small fixes after the gap analysis — 2026-11-11
+
+Version stays 0.1.0; nothing pushed.
+
+- Command results name the plugin by `name` and `version` only; the delete and publish
+  results no longer carry the whole package manifest.
+- DLO, DMO and mapping deploy items report mutation `rejected` when Salesforce
+  answered the item's first write with an HTTP 4xx status (nothing written for the
+  item). A failure after a completed write stays `unknown`. Live: a mapping create
+  without a primary-key pair (HTTP 400 `MISSING_ARGUMENT`) now reads
+  `failed`/`rejected`.
+- `delete --field` refreshes a mapping file found by its binding (source DLO, target
+  DMO, data space) when no file carries the org mapping name, and keeps the file's own
+  name. Live: a hand-written `CliMapHw_8c71` file was refreshed in place after the
+  removal of `Extra__c` (26 seconds).
+- The field delete returns the DMO read that confirmed the removal instead of reading
+  once more, so a failed extra read can no longer turn a confirmed deletion into
+  `deletion-unconfirmed`.
+- A deploy that removes DMO fields with `--allow-field-removal` runs the read-only
+  removal check (fields present, mappings ACTIVE, pairs covered by the selected
+  mapping files) before the DMO's PATCH, so a removal that would be refused stops the
+  item before any write.
+
+Fixtures (`Cli*Hw_8c71`, `CliDloHx_8c71`) in `isolated-source` were deleted
+afterwards and read 404.
+
 # DLO categories and event field — 2026-11-11
 
 DLO create sends `spec.category` as the file states it and lets Salesforce decide;

@@ -588,7 +588,8 @@ test('docs and deploy help describe mapped-field removal as one destructive chan
   const artifact = flatDocument('../docs/artifact-format.md');
   for (const text of [
     "Salesforce drops the field's mapping pairs itself",
-    'The DMO deploys in its normal position (data lake objects, DMOs, mappings)',
+    'The DMO then deploys in its normal position (data lake objects, DMOs, mappings)',
+    'a removal that would be refused stops the item as `blocked`/`not-attempted` with nothing written',
     'find the pairs already gone',
     '`droppedPairs`',
     'DMO_FIELD_REMOVAL_SIDE_EFFECT',

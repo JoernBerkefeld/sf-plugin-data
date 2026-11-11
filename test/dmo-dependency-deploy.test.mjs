@@ -357,8 +357,8 @@ for (const preview of [true, false])
     assert.equal(item.mutation, 'confirmed-updated');
     assert.deepEqual(item.removedFields, ['Note__c']);
     assert.equal(item.droppedPairs, undefined);
-    // Mapping reads bracket the removal: one before, one after.
-    assert.deepEqual(lists, ['Person__dlm', 'Person__dlm']);
+    // Mapping reads: the check before any write, the snapshot right before the removal, the readback.
+    assert.deepEqual(lists, ['Person__dlm', 'Person__dlm', 'Person__dlm']);
     assert.equal(item.preflight.diagnostics[0].code, 'DMO_FIELD_REMOVAL_PLANNED');
     assert.ok(calls.includes('segment-execute'));
   });

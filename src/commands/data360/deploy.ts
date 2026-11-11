@@ -43,7 +43,7 @@ import {
   mappedFieldMappings,
 } from '../../services/command-native-dmo.js';
 import type { DmoCommandOptions, MappedField } from '../../services/command-native-dmo.js';
-import { removeFieldsChecked } from '../../services/delete-dmo-field.js';
+import { checkFieldRemoval, removeFieldsChecked } from '../../services/delete-dmo-field.js';
 import { paceReadback, readbackPace } from '../../services/readback-pace.js';
 import { nativeDmoConfirmed } from '../../services/native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
@@ -610,6 +610,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               },
               // Reads before and after the one removal: fields gone, exactly their pairs dropped
               // by Salesforce, every other mapping, pair and field unchanged.
+              precheckRemoval: async (apiName, fields, coverage) => {
+                await checkFieldRemoval(
+                  apiName,
+                  fields,
+                  { dmo: dmoReader(), mappings: mappings() },
+                  coverage,
+                  requestScope,
+                );
+              },
               removeChecked: async (apiName, fields, remove, coverage) => {
                 const dropped = await removeFieldsChecked(
                   apiName,

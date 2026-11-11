@@ -5,6 +5,7 @@ import { preflightNativeDmo, deployNativeDmo, mappedFieldRemoval } from './nativ
 import type { NativeDmoDeployOptions } from './native-dmo.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
+import { WriteLedger, rejectedNextAction } from './deploy-result.js';
 
 /** A mapped field the file omits and the mappings whose pair targets it; empty when unidentified. */
 export type MappedField = { field: string; mappings: string[] };
@@ -356,24 +357,16 @@ export async function executeDmo(
   options: DmoCommandOptions = {},
 ) {
   const { mappedFieldGuide, ...deployOptions } = options;
-  let dispatched = false;
+  const ledger = new WriteLedger();
   const remove = client.removeFields;
   const guarded: DmoClient = {
     ...client,
-    create: async (body) => {
-      dispatched = true;
-      return client.create(body);
-    },
-    update: async (name, body) => {
-      dispatched = true;
-      return client.update(name, body);
-    },
+    create: async (body) => ledger.run(async () => client.create(body)),
+    update: async (name, body) => ledger.run(async () => client.update(name, body)),
     ...(remove
       ? {
-          removeFields: async (name: string, fieldNames: string[]) => {
-            dispatched = true;
-            return remove(name, fieldNames);
-          },
+          removeFields: async (name: string, fieldNames: string[]) =>
+            ledger.run(async () => remove(name, fieldNames)),
         }
       : {}),
   };
@@ -398,9 +391,9 @@ export async function executeDmo(
   } catch (error) {
     // Preflight raises this refusal before any dispatch; the mapping lookup is read-only.
     const mappedFields = await explainMappedRemoval(error, mappedFieldGuide);
+    const failure = ledger.failure(error);
     return {
-      outcome: dispatched ? ('failed' as const) : ('blocked' as const),
-      mutation: dispatched ? ('unknown' as const) : ('not-attempted' as const),
+      ...failure,
       diagnostics: [
         {
           code:
@@ -409,9 +402,11 @@ export async function executeDmo(
               : 'DMO_REQUEST_UNCONFIRMED',
           message: operationDiagnostic(
             error,
-            dispatched
-              ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
-              : unwritten,
+            failure.mutation === 'rejected'
+              ? rejectedNextAction
+              : failure.mutation === 'unknown'
+                ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
+                : unwritten,
           ),
           ...(mappedFields ? { mappedFields } : {}),
         },

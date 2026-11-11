@@ -463,6 +463,10 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   an identifiable mapping, or when the list request fails, it keeps the generic
   instruction. An unmapped field on a mapped DMO is removed normally. The `isMapped`
   marker on fields is never sent, compared or required.
+- Before the DMO's first write (its PATCH, or the destructive change when there is no
+  PATCH) the same read-only check runs (fields present, mappings ACTIVE, every pair on
+  a removed field covered); a removal that would be refused stops the item as
+  `blocked`/`not-attempted` with nothing written.
 - Right before the destructive change the plugin reads the DMO and all of its
   mappings again. A pair for a removed field held by a mapping that is not selected
   with a file, or targeting a field the admission did not cover, stops the DMO item
@@ -717,8 +721,9 @@ Field-level delete,
   `deletion-unconfirmed`/`acknowledged`.
 - After success the existing `data360/dmo/<Name__dlm>.dmo-meta.json` and
   `data360/mapping/<MappingApiName>.mapping-meta.json` files under `--output-dir`
-  (default: current directory) are overwritten with fresh reads. Absent files are
-  not created (`not-present`); no file is deleted. A failed refresh keeps outcome
+  (default: current directory) are overwritten with fresh reads. A mapping file with
+  another name is found by its binding (source DLO, target DMO, data space) and keeps
+  its name. Absent files are not created (`not-present`); no file is deleted. A failed refresh keeps outcome
   `deleted`, reports the file as `failed` and `LOCAL_REFRESH_FAILED`, and exits
   nonzero.
 - `--preview` writes nothing and reports one `unmap` step per pair (the pair
@@ -860,3 +865,7 @@ This does not change API-version discovery or the separate Metadata/SOAP guard.
 - [ ] Bounded opt-in live acceptance with explicit fixture ownership ledger.
 
 No live fixtures were created, claimed, modified or removed by this slice.
+
+Deploy items of DLOs, DMOs and mappings report mutation `rejected` when Salesforce
+answered the item's first write with an HTTP 4xx status: nothing was written for the
+item. A failure after a completed write stays `unknown`.

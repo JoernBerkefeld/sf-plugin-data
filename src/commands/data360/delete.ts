@@ -488,7 +488,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       plan = await planDmoFieldDelete(apiName, fields, clients, requestScope);
       item.identity.dataSpace = plan.dataSpace;
       if (flags.preview) {
-        const files = dmoFieldLocalFiles(plan, root);
+        const files = await dmoFieldLocalFiles(plan, root);
         const present = await Promise.all(files.map(async (file) => localFileExists(file.path)));
         item.plan = [
           ...plan.mappings.flatMap(({ pairs }) =>

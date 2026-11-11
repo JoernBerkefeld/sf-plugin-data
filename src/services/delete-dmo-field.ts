@@ -1,8 +1,12 @@
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { explainMismatch, replaceExplanation } from './operation-diagnostic.js';
-import { NativeDmoError, unwrapNativeDmo } from '../artifacts/native-dmo-document.js';
+import {
+  NativeDmoError,
+  normalizeNativeDmo,
+  unwrapNativeDmo,
+} from '../artifacts/native-dmo-document.js';
 import type { NativeDmoDocument } from '../artifacts/native-dmo-document.js';
 import {
   NativeMappingError,
@@ -73,7 +77,14 @@ export type FieldRemovalSnapshot = {
   pairs: DmoFieldPair[];
 };
 
-export type DmoFieldLocalFile = { kind: 'dmo' | 'mapping'; apiName: string; path: string };
+export type DmoFieldLocalFile = {
+  kind: 'dmo' | 'mapping';
+  /** Org name of the DMO or mapping. */
+  apiName: string;
+  path: string;
+  /** Name the local file uses for the mapping; differs from the org name for a hand-written file. */
+  fileApiName?: string;
+};
 
 export type DmoFieldRefresh = {
   path: string;
@@ -343,7 +354,7 @@ export async function snapshotFieldRemoval(
  * @param {Function} [onSent] Called once the write is about to be sent, and once it returned.
  * @param {string} [requestScope] Optional explicit data space.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
- * @returns {Promise<DmoFieldPair[]>} The pairs Salesforce dropped.
+ * @returns {Promise<{pairs: DmoFieldPair[], dmo: Record<string, unknown>}>} The pairs Salesforce dropped and the DMO read that confirmed it.
  */
 export async function removeFieldsWithPairs(
   snapshot: FieldRemovalSnapshot,
@@ -352,7 +363,7 @@ export async function removeFieldsWithPairs(
   onSent: (step: 'remove' | 'readback') => void = () => {},
   requestScope?: string,
   settle: NativeDmoSettle = defaultNativeDmoSettle,
-): Promise<DmoFieldPair[]> {
+): Promise<{ pairs: DmoFieldPair[]; dmo: Record<string, unknown> }> {
   const { apiName, fields } = snapshot;
   const { fields: beforeFields, ...rawBeforeObject } = snapshot.dmo;
   const beforeObject = stable(rawBeforeObject);
@@ -417,7 +428,7 @@ export async function removeFieldsWithPairs(
       else if (status !== 'ACTIVE')
         throw sideEffect('field removal readback of the mapping status', 'ACTIVE', status);
     }
-    if (settled) return snapshot.pairs;
+    if (settled) return { pairs: snapshot.pairs, dmo };
   }
   throw lingering === 'field'
     ? new NativeDmoError('DMO_PERSISTENCE_UNCONFIRMED')
@@ -445,15 +456,23 @@ export type FieldRemovalCoverage = {
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @returns {Promise<DmoFieldPair[]>} The pairs Salesforce dropped.
  */
-export async function removeFieldsChecked(
+/**
+ * Read-only check before any write of a deployment that removes fields: the snapshot conditions
+ * hold and every pair on a removed field is covered by the admission.
+ * @param {string} apiName Exact DMO full name.
+ * @param {string[]} fields Fields to remove.
+ * @param {FieldRemovalReaders} readers Target readers.
+ * @param {FieldRemovalCoverage} coverage What the admission allowed to be dropped.
+ * @param {string} [requestScope] Optional explicit data space.
+ * @returns {Promise<FieldRemovalSnapshot>} The snapshot.
+ */
+export async function checkFieldRemoval(
   apiName: string,
   fields: string[],
   readers: FieldRemovalReaders,
-  remove: () => Promise<void>,
   coverage: FieldRemovalCoverage,
   requestScope?: string,
-  settle: NativeDmoSettle = defaultNativeDmoSettle,
-): Promise<DmoFieldPair[]> {
+): Promise<FieldRemovalSnapshot> {
   const snapshot = await snapshotFieldRemoval(apiName, fields, readers, requestScope);
   const sourceOf = new Map(
     snapshot.mappings.map((document) => [
@@ -472,7 +491,39 @@ export async function removeFieldsChecked(
       [...new Set(uncovered.map((pair) => pair.targetFieldDeveloperName))],
       `a mapping this deployment does not reconcile holds a pair for it (${[...new Set(uncovered.map((pair) => pair.mapping))].join(', ')}); the field was not removed`,
     );
-  return removeFieldsWithPairs(snapshot, readers, remove, undefined, requestScope, settle);
+  return snapshot;
+}
+
+/**
+ * Snapshot, remove and confirm in one call; used by deploy for fields the file omits.
+ * @param {string} apiName Exact DMO full name.
+ * @param {string[]} fields Fields to remove.
+ * @param {FieldRemovalReaders} readers Target readers.
+ * @param {Function} remove The single Metadata API destructive change.
+ * @param {FieldRemovalCoverage} coverage What the admission allowed to be dropped.
+ * @param {string} [requestScope] Optional explicit data space.
+ * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
+ * @returns {Promise<DmoFieldPair[]>} The pairs Salesforce dropped.
+ */
+export async function removeFieldsChecked(
+  apiName: string,
+  fields: string[],
+  readers: FieldRemovalReaders,
+  remove: () => Promise<void>,
+  coverage: FieldRemovalCoverage,
+  requestScope?: string,
+  settle: NativeDmoSettle = defaultNativeDmoSettle,
+): Promise<DmoFieldPair[]> {
+  const snapshot = await checkFieldRemoval(apiName, fields, readers, coverage, requestScope);
+  const { pairs } = await removeFieldsWithPairs(
+    snapshot,
+    readers,
+    remove,
+    undefined,
+    requestScope,
+    settle,
+  );
+  return pairs;
 }
 
 /**
@@ -505,7 +556,7 @@ export async function executeDmoFieldDelete(
       planned,
       snapshot.pairs,
     );
-  progress.unmappedPairs = await removeFieldsWithPairs(
+  const confirmed = await removeFieldsWithPairs(
     snapshot,
     clients,
     async () => clients.remover.removeFields!(plan.apiName, plan.fields),
@@ -516,30 +567,85 @@ export async function executeDmoFieldDelete(
     requestScope,
     settle,
   );
-  return retrieveNativeDmo(plan.apiName, clients.dmo, plan.dataSpace);
+  progress.unmappedPairs = confirmed.pairs;
+  // The read that confirmed the removal is the result; a further read could only fail it.
+  const document = normalizeNativeDmo(confirmed.dmo, plan.dataSpace);
+  if (document.identity.apiName !== plan.apiName)
+    throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+  return document;
 }
 /**
- * Name the canonical project files of the DMO and of every mapping that loses a pair.
+ * Find the local file of a mapping: the file named after the org mapping, otherwise the one file
+ * whose binding (source DLO, target DMO, data space) matches, as a hand-written file is named
+ * freely. Unreadable files are skipped; two matching files leave the canonical name.
+ * @param {NativeMappingDocument} document Org mapping.
+ * @param {string} root Absolute project root.
+ * @returns {Promise<DmoFieldLocalFile>} The file to refresh, existing or not.
+ */
+async function mappingLocalFile(
+  document: NativeMappingDocument,
+  root: string,
+): Promise<DmoFieldLocalFile> {
+  const folder = path.join(root, 'data360', 'mapping');
+  const canonical: DmoFieldLocalFile = {
+    kind: 'mapping',
+    apiName: document.identity.apiName,
+    path: path.join(folder, `${document.identity.apiName}.mapping-meta.json`),
+  };
+  if (await localFileExists(canonical.path)) return canonical;
+  let names: string[] = [];
+  try {
+    const entries = await readdir(folder);
+    names = entries.filter((name) => name.endsWith('.mapping-meta.json'));
+  } catch {
+    return canonical;
+  }
+  const matches: DmoFieldLocalFile[] = [];
+  for (const name of names) {
+    const file = path.join(folder, name);
+    try {
+      const stat = await lstat(file);
+      if (!stat.isFile()) continue;
+      const local = JSON.parse(await readFile(file, 'utf8')) as {
+        identity?: { apiName?: unknown; dataSpace?: unknown };
+        spec?: { sourceEntityDeveloperName?: unknown; targetEntityDeveloperName?: unknown };
+      };
+      if (
+        local.spec?.sourceEntityDeveloperName === document.spec.sourceEntityDeveloperName &&
+        local.spec?.targetEntityDeveloperName === document.spec.targetEntityDeveloperName &&
+        local.identity?.dataSpace === document.identity.dataSpace &&
+        typeof local.identity?.apiName === 'string' &&
+        name === `${local.identity.apiName}.mapping-meta.json`
+      )
+        matches.push({ ...canonical, path: file, fileApiName: local.identity.apiName });
+    } catch {
+      /* Not a readable mapping file; it is never refreshed. */
+    }
+  }
+  return matches.length === 1 ? matches[0] : canonical;
+}
+
+/**
+ * Name the project files of the DMO and of every mapping that loses a pair.
  * @param {DmoFieldDeletePlan} plan Admitted plan.
  * @param {string} projectRoot Absolute project root.
- * @returns {DmoFieldLocalFile[]} DMO file first, then one file per mapping.
+ * @returns {Promise<DmoFieldLocalFile[]>} DMO file first, then one file per mapping.
  */
-export function dmoFieldLocalFiles(
+export async function dmoFieldLocalFiles(
   plan: DmoFieldDeletePlan,
   projectRoot: string,
-): DmoFieldLocalFile[] {
+): Promise<DmoFieldLocalFile[]> {
   const root = path.resolve(projectRoot);
+  const mappings = await Promise.all(
+    plan.mappings.map(async ({ document }) => mappingLocalFile(document, root)),
+  );
   return [
     {
       kind: 'dmo',
       apiName: plan.apiName,
       path: path.join(root, 'data360', 'dmo', `${plan.apiName}.dmo-meta.json`),
     },
-    ...plan.mappings.map(({ document }) => ({
-      kind: 'mapping' as const,
-      apiName: document.identity.apiName,
-      path: path.join(root, 'data360', 'mapping', `${document.identity.apiName}.mapping-meta.json`),
-    })),
+    ...mappings,
   ];
 }
 
@@ -556,6 +662,23 @@ export async function localFileExists(file: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
+}
+
+/**
+ * Read a mapping for its local file, keeping the name a hand-written file uses.
+ * @param {DmoFieldLocalFile} file Mapping file.
+ * @param {MappingClient} client Mapping reader.
+ * @param {string} [requestScope] Optional explicit data space.
+ * @returns {Promise<NativeMappingDocument>} Current definition under the file's name.
+ */
+async function localMapping(
+  file: DmoFieldLocalFile,
+  client: MappingClient,
+  requestScope?: string,
+): Promise<NativeMappingDocument> {
+  const document = await retrieveNativeMapping(file.apiName, client, requestScope);
+  if (file.fileApiName) document.identity.apiName = file.fileApiName;
+  return document;
 }
 
 /**
@@ -577,7 +700,7 @@ export async function refreshDmoFieldFiles(
 ): Promise<DmoFieldRefresh[]> {
   const root = path.resolve(projectRoot);
   const results: DmoFieldRefresh[] = [];
-  for (const file of dmoFieldLocalFiles(plan, root)) {
+  for (const file of await dmoFieldLocalFiles(plan, root)) {
     try {
       if (!(await localFileExists(file.path))) {
         results.push({ path: file.path, outcome: 'not-present' });
@@ -591,11 +714,7 @@ export async function refreshDmoFieldFiles(
               true,
             )
           : await writers.mapping(
-              await retrieveNativeMapping(
-                file.apiName,
-                clients.mappings as MappingClient,
-                requestScope,
-              ),
+              await localMapping(file, clients.mappings as MappingClient, requestScope),
               root,
               true,
             );

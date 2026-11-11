@@ -378,10 +378,9 @@ test('a custom field of a standard DMO is removed with its pairs like one of a c
     'mapping.get:MapA',
     'mapping.get:MapB',
     `removeFields:${dmoName}:Note__c`,
-    // Readback, then the definition read back without the field.
+    // Readback; the read that confirms the removal is the result, no further read.
     'dmo.get',
     `mapping.list:${dmoName}`,
-    'dmo.get',
   ]);
   const [item] = result.result.items;
   assert.equal(item.mutation, 'confirmed-deleted');
@@ -514,7 +513,6 @@ test('an unmapped field is removed with one destructive change and no mapping wr
     `removeFields:${dmoName}:Note__c`,
     'dmo.get',
     `mapping.list:${dmoName}`,
-    'dmo.get',
   ]);
   // The mapping that keeps all its pairs is unchanged.
   assert.deepEqual(org.mappings, [mapping('MapA', 'SourceA__dll', ['Id__c'])]);
@@ -563,7 +561,6 @@ test('a field mapped by two mappings is removed once, its pairs drop from both, 
     `removeFields:${dmoName}:Note__c`,
     'dmo.get',
     `mapping.list:${dmoName}`,
-    'dmo.get',
     // Local refresh: only files that already exist are read again and overwritten.
     'dmo.get',
     'mapping.get:MapA',
@@ -937,4 +934,47 @@ test('whole-DMO delete without --field keeps its behaviour and never touches the
   // --confirm-delete stays refused for a whole native selection.
   const confirmed = await run(org, { 'confirm-delete': true }, seams);
   assert.equal(confirmed.result.diagnostics.errors[0].code, 'INVALID_SELECTION');
+});
+
+test('a hand-written mapping file is found by its binding and refreshed under its own name', async () => {
+  const root = await temporaryRoot();
+  const org = createOrg(twoMappings());
+  // The file is named after the source-side mapping, not after the org mapping MapB.
+  const local = normalizeNativeMapping(org.mappings[1]);
+  local.identity.apiName = 'MyMapping';
+  await writeNativeMappingDocument(local, root, false);
+  const preview = await run(org, { field: ['Note__c'], preview: true, 'output-dir': root });
+  assert.deepEqual(
+    preview.result.result.items[0].localFiles.map((file) => [
+      path.basename(file.path),
+      file.exists,
+    ]),
+    [
+      ['Example__dlm.dmo-meta.json', false],
+      ['MapA.mapping-meta.json', false],
+      ['MyMapping.mapping-meta.json', true],
+    ],
+  );
+  const { result } = await run(org, {
+    field: ['Note__c'],
+    'confirm-delete': true,
+    'output-dir': root,
+  });
+  assert.equal(result.status, 'success');
+  assert.deepEqual(result.result.items[0].refreshedFiles.at(-1), {
+    path: path.join(root, 'data360', 'mapping', 'MyMapping.mapping-meta.json'),
+    outcome: 'refreshed',
+  });
+  const saved = JSON.parse(
+    await readFile(path.join(root, 'data360', 'mapping', 'MyMapping.mapping-meta.json'), 'utf8'),
+  );
+  assert.equal(saved.identity.apiName, 'MyMapping');
+  assert.deepEqual(
+    saved.spec.fieldMappings.map((pair) => pair.targetFieldDeveloperName),
+    ['Id__c', 'Extra__c'],
+  );
+  // No file under the org name was created.
+  assert.deepEqual(await readdir(path.join(root, 'data360', 'mapping')), [
+    'MyMapping.mapping-meta.json',
+  ]);
 });

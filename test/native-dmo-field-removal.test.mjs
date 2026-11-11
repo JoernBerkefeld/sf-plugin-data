@@ -532,3 +532,25 @@ test('problem texts are bounded to three safe entries', async () => {
   assert.ok(message.includes('Field Three is still in use by a mapping.'));
   assert.ok(!message.includes('Field Four'));
 });
+
+test('a planned removal is checked before the PATCH, so a refused removal writes nothing', async () => {
+  const saved = authored(['Note__c']);
+  saved.spec.label = 'Changed';
+  const { calls, client } = recording();
+  const order = [];
+  await assert.rejects(
+    deployNativeDmo(saved, client, undefined, fast, {
+      ...allow,
+      precheckRemoval: async (target, fields, coverage) => {
+        order.push(['precheck', target, fields, coverage]);
+        throw Object.assign(new Error('mapping not settled'), {
+          code: 'MAPPING_TARGET_NOT_SETTLED',
+        });
+      },
+      removeChecked: async () => assert.fail('no removal after a failed check'),
+    }),
+    /mapping not settled/u,
+  );
+  assert.deepEqual(order, [['precheck', apiName, ['Note__c'], { fields: [], sources: [] }]]);
+  assert.deepEqual(writes(calls), []);
+});

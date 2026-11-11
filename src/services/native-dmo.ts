@@ -50,6 +50,15 @@ export type NativeDmoDeployOptions = {
    * Wraps the single field removal in reads before and after it, and returns the mapping pairs
    * Salesforce dropped with the fields. Without it the removal is sent unwrapped.
    */
+  /**
+   * Read-only check of a planned field removal, run before the PATCH of the same deployment so a
+   * removal that would be refused stops the item before any write.
+   */
+  precheckRemoval?: (
+    targetApiName: string,
+    fields: string[],
+    coverage: { fields: string[]; sources: string[] },
+  ) => Promise<void>;
   removeChecked?: (
     targetApiName: string,
     fields: string[],
@@ -559,6 +568,11 @@ export async function deployNativeDmo(
       operation: 'unchanged',
       document: await resolveTarget(plan.apiName, client, desired.identity.dataSpace),
     };
+  if (plan.operation === 'update' && removed.length > 0 && options.precheckRemoval)
+    await options.precheckRemoval(plan.targetApiName, removed, {
+      fields: options.coveredMappedFields ?? [],
+      sources: options.coveredMappingSources ?? [],
+    });
   const response =
     plan.operation === 'create'
       ? await client.create(plan.body)

@@ -717,8 +717,11 @@ is set. With the flag:
   sf data360 deploy -o target -m mapping:<MappingApiName> -m dmo:Example__dlm --allow-field-removal
   ```
 
-  The DMO deploys in its normal position (data lake objects, DMOs, mappings): its
-  PATCH, then the destructive change. When a PATCH was sent, the plugin waits until
+  Before the DMO's first write the plugin runs the same read-only check (fields
+  present, mappings ACTIVE, every pair on a removed field covered by a selected
+  mapping file); a removal that would be refused stops the item as
+  `blocked`/`not-attempted` with nothing written. The DMO then deploys in its normal
+  position (data lake objects, DMOs, mappings): its PATCH, then the destructive change. When a PATCH was sent, the plugin waits until
   it is readable before the removal. Right before the destructive change it reads the
   DMO and all of its mappings again; if a pair for a removed field is then held by a
   mapping that is not selected with a file, or targets a field the admission did not
@@ -830,7 +833,9 @@ confirmation and writes nothing, neither in the org nor on disk.
   `data360/dmo/<Name__dlm>.dmo-meta.json` and
   `data360/mapping/<MappingApiName>.mapping-meta.json` of every mapping that lost a
   pair are read again from the org and overwritten under `--output-dir` (default:
-  the current directory). A file that does not exist is not created and is reported
+  the current directory). A mapping file named differently, as a hand-written file
+  usually is, is found by its binding (same source DLO, target DMO and data space)
+  and keeps its own name. A file that does not exist is not created and is reported
   as `not-present`. No file is ever deleted. When a refresh fails, the item keeps
   outcome `deleted`, the file is reported as `failed`, and the command reports
   `LOCAL_REFRESH_FAILED` and exits nonzero. Refresh that file with
@@ -3096,7 +3101,8 @@ not executable readiness. Each executor repeats fresh checks; unchanged items do
 write. Execution stops on the first blocked, failed or unknown-mutation item.
 Neither route is atomic or provides a concurrency guarantee.
 Execution items use `operation: execute`, `outcome: created|updated|unchanged|blocked|failed|not-attempted`,
-`mutation: confirmed-created|confirmed-updated|not-attempted|unknown`, optional preflight and diagnostics.
+`mutation: confirmed-created|confirmed-updated|not-attempted|unknown|rejected`, optional preflight and diagnostics.
+`rejected` (DLO, DMO and mapping items) means Salesforce answered the item's first write with an HTTP 4xx status, so nothing was written for it; a failure after a completed write stays `unknown`.
 Prior completed receipts remain visible; remaining items are explicitly not-attempted.
 Only all-created/updated/unchanged results yield aggregate success/exit 0; blocked/failed
 execution exits 1 even after prior mutations. Unknown mutation means creation or update may have

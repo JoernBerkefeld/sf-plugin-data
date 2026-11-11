@@ -3,6 +3,7 @@ import { NativeMappingError } from '../artifacts/native-mapping-document.js';
 import { deployNativeMapping, preflightNativeMapping } from './native-mapping.js';
 import type { MappingDependencies } from './native-mapping.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
+import { WriteLedger, rejectedNextAction } from './deploy-result.js';
 
 type MappingDiagnostic = { code: string; message: string };
 
@@ -98,21 +99,13 @@ export async function executeMapping(
   requestScope?: string,
   onResolvedName?: (apiName: string) => void,
 ) {
-  let dispatched = false;
+  const ledger = new WriteLedger();
   const guarded: MappingClient = {
     ...client,
-    deleteField: async (name, selector) => {
-      dispatched = true;
-      return client.deleteField(name, selector);
-    },
-    create: async (body) => {
-      dispatched = true;
-      return client.create(body);
-    },
-    update: async (name, body) => {
-      dispatched = true;
-      return client.update(name, body);
-    },
+    deleteField: async (name, selector) =>
+      ledger.run(async () => client.deleteField(name, selector)),
+    create: async (body) => ledger.run(async () => client.create(body)),
+    update: async (name, body) => ledger.run(async () => client.update(name, body)),
   };
   try {
     const result = await deployNativeMapping(value, guarded, dependencies, onUpdated, requestScope);
@@ -135,17 +128,19 @@ export async function executeMapping(
         : []) as MappingDiagnostic[],
     };
   } catch (error) {
+    const failure = ledger.failure(error);
     return {
-      outcome: dispatched ? ('failed' as const) : ('blocked' as const),
-      mutation: dispatched ? ('unknown' as const) : ('not-attempted' as const),
+      ...failure,
       diagnostics: [
         {
           code: error instanceof NativeMappingError ? error.code : 'MAPPING_REQUEST_UNCONFIRMED',
           message: operationDiagnostic(
             error,
-            dispatched
-              ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
-              : 'No write attempted; correct the reported check before another attempt.',
+            failure.mutation === 'rejected'
+              ? rejectedNextAction
+              : failure.mutation === 'unknown'
+                ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
+                : 'No write attempted; correct the reported check before another attempt.',
           ),
         },
       ],

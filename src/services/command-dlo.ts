@@ -2,6 +2,7 @@ import { operationDiagnostic } from './operation-diagnostic.js';
 import { DloError } from '../artifacts/dlo-document.js';
 import { preflightNativeDlo, deployNativeDlo } from './native-dlo.js';
 import type { DloClient } from '../transport/dlo-rest.js';
+import { WriteLedger, rejectedNextAction } from './deploy-result.js';
 
 export type DloPreview = {
   family: 'dlo';
@@ -13,7 +14,7 @@ export type DloPreview = {
 export type DloExecution = {
   family: 'dlo';
   outcome: 'created' | 'updated' | 'unchanged' | 'failed' | 'blocked';
-  mutation: 'confirmed-created' | 'confirmed-updated' | 'unknown' | 'not-attempted';
+  mutation: 'confirmed-created' | 'confirmed-updated' | 'unknown' | 'not-attempted' | 'rejected';
   serverProcessing?: true;
   diagnostics: Array<{ code: string; message: string }>;
 };
@@ -50,17 +51,11 @@ export async function executeDloDeploy(
   client: DloClient,
   requestScope?: string,
 ): Promise<DloExecution> {
-  let dispatched = false;
+  const ledger = new WriteLedger();
   const guarded: DloClient = {
     ...client,
-    create: async (body) => {
-      dispatched = true;
-      return client.create(body);
-    },
-    update: async (id, body) => {
-      dispatched = true;
-      return client.update(id, body);
-    },
+    create: async (body) => ledger.run(async () => client.create(body)),
+    update: async (id, body) => ledger.run(async () => client.update(id, body)),
   };
   try {
     const result = await deployNativeDlo(value, guarded, requestScope);
@@ -79,18 +74,20 @@ export async function executeDloDeploy(
       diagnostics: [],
     };
   } catch (error) {
+    const failure = ledger.failure(error);
     return {
       family: 'dlo',
-      outcome: dispatched ? 'failed' : 'blocked',
-      mutation: dispatched ? 'unknown' : 'not-attempted',
+      ...failure,
       diagnostics: [
         {
           code: error instanceof DloError ? error.code : 'DLO_REQUEST_UNCONFIRMED',
           message: operationDiagnostic(
             error,
-            dispatched
-              ? 'Write outcome is unknown; inspect target before another attempt.'
-              : 'Target lookup or definition admission failed; no write attempted.',
+            failure.mutation === 'rejected'
+              ? rejectedNextAction
+              : failure.mutation === 'unknown'
+                ? 'Write outcome is unknown; inspect target before another attempt.'
+                : 'Target lookup or definition admission failed; no write attempted.',
           ),
         },
       ],

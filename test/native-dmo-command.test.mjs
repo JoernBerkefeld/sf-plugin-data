@@ -329,8 +329,9 @@ for (const preview of [true, false])
         );
         return;
       }
-      // One PATCH, then exactly one removal for both fields, bracketed by mapping reads.
+      // A read-only check before the PATCH, then exactly one removal, bracketed by mapping reads.
       assert.deepEqual(calls, [
+        ['mapping:list', name],
         ['update', name],
         ['mapping:list', name],
         ['remove', name, ['Note__c', 'Link__c']],
