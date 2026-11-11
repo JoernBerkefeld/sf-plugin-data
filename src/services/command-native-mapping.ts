@@ -4,6 +4,20 @@ import { deployNativeMapping, preflightNativeMapping } from './native-mapping.js
 import type { MappingDependencies } from './native-mapping.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
 
+type MappingDiagnostic = { code: string; message: string };
+
+/**
+ * Information for a create that is the first mapping of a standard DMO; never a refusal.
+ * @param {string} dmo Target DMO full name.
+ * @returns {MappingDiagnostic} Notice carried by the preview item and the created item.
+ */
+function activationNotice(dmo: string): MappingDiagnostic {
+  return {
+    code: 'MAPPING_ACTIVATES_STANDARD_DMO',
+    message: `Creating the first mapping onto the standard object ${dmo} activates it permanently: it becomes enabled, gets a category and a generated key qualifier field. Deleting the mapping does not undo this.`,
+  };
+}
+
 /**
  * Compare a mapping without exposing payloads or replaying source identity.
  * @param {unknown} value Portable mapping.
@@ -24,7 +38,9 @@ export async function preflightMapping(
     outcome: plan.operation,
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'confirmed-pair-lookup' : 'none',
-    diagnostics: [],
+    diagnostics: (plan.activatesStandardDmo
+      ? [activationNotice(plan.desired.spec.targetEntityDeveloperName)]
+      : []) as MappingDiagnostic[],
     plan: [
       ...(plan.removals ?? []).map((pair) => ({
         operation: 'unmap' as const,
@@ -92,7 +108,9 @@ export async function executeMapping(
           : result.operation === 'create'
             ? ('confirmed-created' as const)
             : ('confirmed-updated' as const),
-      diagnostics: [],
+      diagnostics: (result.activatesStandardDmo
+        ? [activationNotice(result.document.spec.targetEntityDeveloperName)]
+        : []) as MappingDiagnostic[],
     };
   } catch (error) {
     return {

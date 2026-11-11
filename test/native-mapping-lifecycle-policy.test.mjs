@@ -75,10 +75,21 @@ test('mapping create preserves arbitrary custom Id/system-looking fields rather 
   );
 });
 
-test('mapping targets other than custom DMOs are refused, standard DMOs included', async () => {
+test('mapping targets other than custom and standard DMOs are refused', async () => {
   for (const change of [
     { creationType: 'Standard' },
     { creationType: 'Standard', name: 'ssot__Test__dlm' },
+  ]) {
+    const deps = dependencies();
+    const read = deps.target.get;
+    deps.target.get = async () => ({ ...(await read()), ...change });
+    const document = desired();
+    if (change.name) document.spec.targetEntityDeveloperName = change.name;
+    const plan = await preflightNativeMapping(document, client(), deps);
+    assert.equal(plan.operation, 'create', JSON.stringify(change));
+    assert.equal(plan.activatesStandardDmo, true);
+  }
+  for (const change of [
     { creationType: 'Adg' },
     { creationType: 'Bridge' },
     { creationType: undefined },
@@ -97,6 +108,7 @@ test('mapping targets other than custom DMOs are refused, standard DMOs included
   }
   const plan = await preflightNativeMapping(desired(), client(), dependencies());
   assert.equal(plan.writes.length, 1);
+  assert.ok(!('activatesStandardDmo' in plan));
 });
 
 test('mapping unqualified multi-pair delta is blocked before any write', async () => {

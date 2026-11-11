@@ -664,6 +664,45 @@ test('an unmapped removal without a selected mapping on the DMO stays single-sta
   assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
 });
 
+test('two mappings sharing the field each drop their pair, then the DMO removes the field', async () => {
+  const second = 'SrcB_map_Example_2';
+  const org1 = world({ [D]: all }, [
+    { name: M, source: 'SrcA__dll', target: D, fields: all },
+    { name: second, source: 'SrcB__dll', target: D, fields: all },
+  ]);
+  const selection = {
+    dmos: [dmoFile(D, keep)],
+    mappings: [mappingFile(M, 'SrcA__dll', D, keep), mappingFile(second, 'SrcB__dll', D, keep)],
+    services: org1.services,
+  };
+  const { result, cwd } = await deploy(selection);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  // The field stays mapped after the first mapping and is only removed once both let go of it.
+  assert.deepEqual(org1.writes(), [
+    `mapping:unmap:${M}:Note__c`,
+    `mapping:unmap:${second}:Note__c`,
+    `dmo:remove:${D}:Note__c`,
+  ]);
+  assert.equal(org1.events.at(-1), `dmo:get:${D}`);
+  assert.deepEqual(
+    result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
+    [
+      ['dmo', 'updated', 'confirmed-updated'],
+      ['mapping', 'updated', 'confirmed-updated'],
+      ['mapping', 'updated', 'confirmed-updated'],
+    ],
+  );
+  assert.deepEqual(result.result.items[0].removedFields, ['Note__c']);
+  assert.deepEqual(result.result.items[0].diagnostics, []);
+  for (const entry of org1.state.mappings) assert.equal(entry.fieldMappings.length, keep.length);
+  assert.ok(!org1.state.dmos.get(D).fields.some((entry) => entry.name === 'Note__c'));
+  const before = org1.writes().length;
+  const repeat = await deploy({ ...selection, cwd });
+  assert.equal(repeat.result.status, 'success', JSON.stringify(repeat.result));
+  assert.ok(repeat.result.result.items.every((item) => item.outcome === 'unchanged'));
+  assert.equal(org1.writes().length, before);
+});
+
 test('admission covers a field only when every holding mapping is selected without its pair', async () => {
   const { clients } = world({ [D]: all }, [
     { name: M, source: 'SrcA__dll', target: D, fields: all },

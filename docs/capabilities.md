@@ -456,6 +456,8 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   PATCH. A batch that stops between the stages reports `DMO_FIELD_REMOVAL_PENDING`
   on the DMO item.
 - The two-stage order is observed at API 68 on one mapped custom DMO with one mapping.
+  A field held by several mappings needs every one of them selected without its
+  pair; that case and a standard DMO are covered by synthetic tests only.
 - Observed at API 68 on empty custom DMOs in two orgs. Not verified: fields that hold
   data or are referenced by a segment, calculated insight, relationship or other
   component.
@@ -515,8 +517,44 @@ Standard DMO rules:
       platform-generated DMOs. Field-level delete on a standard DMO and removal of a
       mapped custom field are covered by synthetic tests only.
 
-Mappings whose target is not a custom DMO, standard DMOs included, are refused with
-`MAPPING_TARGET_UNSUPPORTED`.
+Native mapping targets, decided from the same raw read:
+
+- A mapping deploys onto a custom DMO or a standard DMO. Any other target
+  (platform-generated, no `creationType`, custom under a namespaced name) is refused
+  with `MAPPING_TARGET_UNSUPPORTED`.
+- Standard target, create: authored pairs may target standard and custom Text fields
+  and must include the primary-key pair (for example `Id__c` to `ssot__Id__c`). The
+  body carries the authored pairs only.
+- Standard target, generated pairs: a system pair is recognised when its target is
+  the source's namesake or `ssot__<Name>Id__c` and the target read reports the field
+  as `System`, or as `Standard` for `DataSource`, `DataSourceObject` and
+  `InternalOrganization`. The key qualifier pair is `KQ_<Key>__c` on both sides for
+  the source primary key `<Key>__c`; on a DMO that is not yet enabled its target
+  field may still be absent. Generated pairs are never sent and, with the key pair,
+  never unmapped.
+- Activation notice: when the raw target read of a standard DMO does not say
+  `isEnabled: true`, the preview item and the created item carry
+  `MAPPING_ACTIVATES_STANDARD_DMO`. The first mapping enables the object for good
+  (category `OTHER`, system field `KQ_Id__c`, `keyQualifierName` on the primary key);
+  deleting the mapping does not undo it. The notice changes neither outcome nor exit
+  status.
+- Standard target, update and delete: a pair for a custom field is added and removed
+  like on a custom DMO, which also makes the single deploy command for a mapped
+  custom field work on a standard DMO. A pair onto a standard field is not unmapped
+  (`MAPPING_UNMAP_FIELD_POLICY_UNPROVEN`), so a mapping holding such pairs is not
+  deleted; the last mapping of a DMO is never deleted.
+- Shared target field: a pair is removed even when another mapping of the same DMO
+  targets the same field. The field must then keep `isMapped: true`; it loses the
+  marker with the last such pair. An addition onto a field another mapping targets
+  stays refused (`MAPPING_ADDITION_POLICY_UNPROVEN`).
+- [x] Observed at API 68 through the raw API: one mapping onto one unused standard DMO
+      (HTTP 201, two authored and four generated pairs, permanent activation, HTTP 500
+      on deleting the only mapping); per-pair removal on a field shared by two
+      mappings of a custom DMO (both stay ACTIVE with their other pairs, the field is
+      unmapped after the second removal).
+- [ ] Not run live through the plugin: mapping deploy, reconciliation and delete onto
+      a standard DMO, the activation notice, shared-field removal and the single
+      deploy command with two mappings. They are covered by synthetic tests.
 
 Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read
 or written. Salesforce may cascade to the DMO's mapping. Deletion resolves the exact

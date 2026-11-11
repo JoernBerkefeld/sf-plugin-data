@@ -891,16 +891,148 @@ test('guarded unmap accepts Number identity fields and checks CREATING snapshots
   assert.equal(f.calls.length, 2);
 });
 
-test('guarded unmap refuses authored fields also covered by another inventory mapping', async () => {
-  const f = unmapFixture();
-  const other = { ...raw(), developerName: 'Other', sourceEntityDeveloperName: 'Other__dll' };
-  f.client.list = async () => ({ objectSourceTargetMaps: [f.state, other] });
-  f.deps.source.get = async (name) => ({ ...source(), name });
-  await assert.rejects(
-    preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps),
-    /POLICY_UNPROVEN/,
+/**
+ * Two mappings of one DMO that both map every field; the mapped marker follows both.
+ * @returns {object} Fake client, parent readers, raw states and the unmap ledger.
+ */
+const sharedFixture = () => {
+  const states = new Map([
+    ['TargetGenerated_123', raw()],
+    ['Other', { ...raw(), developerName: 'Other', sourceEntityDeveloperName: 'Other__dll' }],
+  ]);
+  const calls = [];
+  const read = () => {
+    const schema = target();
+    for (const field of schema.fields)
+      if (
+        [...states.values()].some((state) =>
+          state.fieldMappings.some((entry) => entry.targetFieldDeveloperName === field.name),
+        )
+      )
+        field.isMapped = true;
+    return schema;
+  };
+  const client = {
+    apiVersion: '68.0',
+    list: async (dmo, dlo) => ({
+      objectSourceTargetMaps: structuredClone(
+        [...states.values()].filter(
+          (state) => dlo === undefined || state.sourceEntityDeveloperName === dlo,
+        ),
+      ),
+    }),
+    get: async (name) => structuredClone(states.get(name)),
+    deleteField: async (name, selector) => {
+      calls.push([name, selector]);
+      const state = states.get(name);
+      state.fieldMappings = state.fieldMappings.filter((entry) => entry.developerName !== selector);
+    },
+    update: async () => assert.fail('no PATCH'),
+    create: async () => assert.fail('no POST'),
+    delete: async () => assert.fail('no DELETE'),
+  };
+  const deps = {
+    source: { get: async (name) => ({ ...source(), name }) },
+    target: { get: async () => read() },
+  };
+  return { states, client, deps, calls, read };
+};
+
+test('guarded unmap removes a pair whose field another mapping also targets; the field stays mapped', async () => {
+  const f = sharedFixture();
+  const plan = await preflightUnmapNativeMapping(
+    normalizeNativeMapping(f.states.get('TargetGenerated_123')),
+    f.client,
+    f.deps,
+    [pair('Note__c')],
   );
-  assert.deepEqual(f.calls, []);
+  assert.deepEqual(plan.removals, [pair('Note__c')]);
+  const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => {});
+  assert.deepEqual(f.calls, [['TargetGenerated_123', 'target_Note__c']]);
+  assert.equal(result.target.fields.find((field) => field.name === 'Note__c').isMapped, true);
+  assert.equal(f.states.get('Other').fieldMappings.length, 7);
+  assert.equal(f.states.get('TargetGenerated_123').fieldMappings.length, 6);
+});
+
+test('desired-state removal on a shared field reconciles each mapping; the field is unmapped after the last', async () => {
+  const f = sharedFixture();
+  const without = names.filter((name) => name !== 'Note__c');
+  const first = await deployNativeMapping(desired(without), f.client, f.deps);
+  assert.equal(first.operation, 'update');
+  assert.equal(first.document.spec.fieldMappings.length, 6);
+  assert.equal(f.read().fields.find((field) => field.name === 'Note__c').isMapped, true);
+  const second = desired(without);
+  second.spec.sourceEntityDeveloperName = 'Other__dll';
+  const last = await deployNativeMapping(second, f.client, f.deps);
+  assert.equal(last.operation, 'update');
+  assert.equal(last.document.identity.apiName, 'Other');
+  assert.ok(!('isMapped' in f.read().fields.find((field) => field.name === 'Note__c')));
+  assert.deepEqual(f.calls, [
+    ['TargetGenerated_123', 'target_Note__c'],
+    ['Other', 'target_Note__c'],
+  ]);
+  // Both mappings kept every other pair and nothing is left to do.
+  const replay = await deployNativeMapping(desired(without), f.client, f.deps);
+  assert.equal(replay.operation, 'noop');
+  assert.equal(f.calls.length, 2);
+});
+
+test('shared-field removal keeps the other unmap protections and verifies the mapped marker', async () => {
+  // Generated, key-qualifier and primary-key pairs stay protected beside a second mapping.
+  for (const omitted of ['Id__c', 'DataSource__c', 'KQ_Id__c']) {
+    const f = sharedFixture();
+    await assert.rejects(
+      deployNativeMapping(desired(names.filter((name) => name !== omitted)), f.client, f.deps),
+      /PROTECTED_PAIR_REQUIRED/,
+    );
+    assert.deepEqual(f.calls, []);
+  }
+  for (const mode of ['selector', 'usage', 'version', 'retarget']) {
+    const f = sharedFixture();
+    const input = desired(names.filter((name) => name !== 'Note__c'));
+    if (mode === 'selector')
+      delete f.states.get('TargetGenerated_123').fieldMappings[2].developerName;
+    if (mode === 'usage') {
+      const read = f.deps.target.get;
+      f.deps.target.get = async () => {
+        const schema = await read();
+        schema.fields[2].usageTag = 'Unknown';
+        return schema;
+      };
+    }
+    if (mode === 'version') f.client.apiVersion = '67.0';
+    // A retarget onto a field another mapping targets stays refused.
+    if (mode === 'retarget') {
+      input.spec.fieldMappings = input.spec.fieldMappings.filter(
+        (entry) => entry.sourceFieldDeveloperName !== 'Name__c',
+      );
+      input.spec.fieldMappings.push({
+        sourceFieldDeveloperName: 'Name__c',
+        targetFieldDeveloperName: 'Note__c',
+      });
+    }
+    await assert.rejects(deployNativeMapping(input, f.client, f.deps), mode);
+    assert.deepEqual(f.calls, [], mode);
+  }
+  // Salesforce clearing the marker while another mapping still targets the field is drift.
+  const f = sharedFixture();
+  const remove = f.client.deleteField;
+  let cleared = false;
+  f.client.deleteField = async (...arguments_) => {
+    await remove(...arguments_);
+    cleared = true;
+  };
+  const read = f.deps.target.get;
+  f.deps.target.get = async () => {
+    const schema = await read();
+    if (cleared) delete schema.fields.find((field) => field.name === 'Note__c').isMapped;
+    return schema;
+  };
+  await assert.rejects(
+    deployNativeMapping(desired(names.filter((name) => name !== 'Note__c')), f.client, f.deps),
+    /PARENT_CHANGED/,
+  );
+  assert.equal(f.calls.length, 1);
 });
 
 test('guarded unmap refuses unknown metadata, missing selectors and nonqualified versions before writes', async () => {

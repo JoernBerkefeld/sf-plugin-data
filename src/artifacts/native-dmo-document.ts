@@ -54,7 +54,7 @@ export function nativeDmoWriteScope(raw: Record<string, unknown>): NativeDmoWrit
 }
 
 /**
- * Only customer-created DMOs with an unprefixed name are mapping targets or deletable.
+ * Only customer-created DMOs with an unprefixed name are deletable.
  * @param {Record<string, unknown>} raw Direct native read.
  * @returns {boolean} Whether the target is a custom, non-namespaced DMO.
  */

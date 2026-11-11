@@ -10,10 +10,12 @@ import {
 } from '../artifacts/native-mapping-document.js';
 import { normalizeDlo } from '../artifacts/dlo-document.js';
 import {
-  isCustomNativeDmo,
+  nativeDmoWriteScope,
   normalizeNativeDmo,
   unwrapNativeDmo,
 } from '../artifacts/native-dmo-document.js';
+import type { DloField } from '../artifacts/dlo-document.js';
+import type { NativeDmoField } from '../artifacts/native-dmo-document.js';
 import type {
   NativeMappingDocument,
   NativeMappingField,
@@ -34,7 +36,78 @@ export type NativeMappingDeployPlan = {
   removals?: NativeMappingField[];
   retained?: NativeMappingField[];
   evidence?: NativeMappingUnmapPlan;
+  /** Set when this create is the first mapping of a standard DMO that is not yet enabled. */
+  activatesStandardDmo?: true;
 };
+
+const systemSourceFields = new Set([
+  'DataSource__c',
+  'DataSourceObject__c',
+  'InternalOrganization__c',
+]);
+const keyQualifierField = /^KQ_(\w+)__c$/u;
+
+/**
+ * Recognise a pair Salesforce generates for a system field on a standard DMO. The target field is
+ * the source's namesake or `ssot__<Name>Id__c`. A target field read as System qualifies any such
+ * pair; otherwise only the three known system sources onto their standard-named field do.
+ * @param {DloField} from Source field.
+ * @param {NativeDmoField} to Target field.
+ * @returns {boolean} Whether the pair is generated, not authored.
+ */
+function isStandardSystemPair(from: DloField, to: NativeDmoField): boolean {
+  if (from.isPrimaryKey || to.isPrimaryKey || keyQualifierField.test(from.name)) return false;
+  const named = to.name === `ssot__${from.name.slice(0, -'__c'.length)}Id__c`;
+  if (to.creationType === 'System') return named || to.name === from.name;
+  return named && systemSourceFields.has(from.name) && to.creationType === 'Standard';
+}
+
+/**
+ * Recognise the generated key qualifier pair of a standard DMO: `KQ_<Key>__c` on both sides,
+ * where `<Key>__c` is the source primary key. With a target field it must be a System field that
+ * a target primary key names as its qualifier; without one (the DMO has never been mapped) the
+ * target only needs a primary key, because Salesforce adds the field with the first mapping.
+ * @param {NativeMappingField} pair Mapping pair.
+ * @param {Map<string, DloField>} sources Source fields by name.
+ * @param {Map<string, NativeDmoField>} targets Target fields by name.
+ * @returns {boolean} Whether the pair is generated, not authored.
+ */
+function isStandardKeyQualifierPair(
+  pair: NativeMappingField,
+  sources: Map<string, DloField>,
+  targets: Map<string, NativeDmoField>,
+): boolean {
+  const match = keyQualifierField.exec(pair.sourceFieldDeveloperName);
+  if (!match || pair.targetFieldDeveloperName !== pair.sourceFieldDeveloperName) return false;
+  if (!sources.get(`${match[1]}__c`)?.isPrimaryKey) return false;
+  const to = targets.get(pair.targetFieldDeveloperName);
+  const keys = [...targets.values()].filter((field) => field.isPrimaryKey);
+  if (!to) return keys.length > 0;
+  return (
+    to.creationType === 'System' &&
+    keys.some((field) => field.keyQualifierName === `KQ_${match[1]}`)
+  );
+}
+
+/**
+ * Recognise the authored primary-key pair that is never unmapped. On a custom DMO it is
+ * Id__c -> Id__c on a custom key; on a standard DMO the key keeps its standard name.
+ * @param {DloField} from Source field.
+ * @param {NativeDmoField} to Target field.
+ * @param {boolean} standard Whether the target is a standard DMO.
+ * @returns {boolean} Whether the pair is the qualified key pair.
+ */
+function isKeyPair(from: DloField, to: NativeDmoField, standard: boolean): boolean {
+  return (
+    from.name === 'Id__c' &&
+    from.isPrimaryKey &&
+    to.isPrimaryKey &&
+    to.keyQualifierName === 'KQ_Id' &&
+    (standard
+      ? to.creationType === 'Standard' || to.creationType === 'Custom'
+      : to.name === 'Id__c' && to.creationType === 'Custom')
+  );
+}
 
 /**
  * Compare logical pairs without treating source selectors as portable target identity.
@@ -120,6 +193,8 @@ async function resolveTarget(
 /**
  * Validate source/target existence and every requested field against fresh definitions.
  * The four exact generated pairs are qualified by the retained three-to-seven create probe.
+ * The target is a custom or a standard DMO; on a standard one the generated pairs are recognised
+ * from the target's own field read, and `activates` says its first mapping will enable it.
  * @param {NativeMappingDocument} desired Requested definition.
  * @param {MappingDependencies} dependencies Fresh source and target readers.
  * @returns {Promise<object>} Fresh definitions and evidence-backed generated pairs.
@@ -135,8 +210,12 @@ async function validateDependencies(
   const rawTarget = unwrapNativeDmo(
     await dependencies.target.get(desired.spec.targetEntityDeveloperName),
   );
-  // Mappings to standard, namespaced or platform-generated DMOs are not qualified.
-  if (!isCustomNativeDmo(rawTarget)) throw new NativeMappingError('MAPPING_TARGET_UNSUPPORTED');
+  // Mappings to platform-generated, untyped or namespaced custom DMOs are not qualified.
+  const scope = nativeDmoWriteScope(rawTarget);
+  if (scope === 'refused') throw new NativeMappingError('MAPPING_TARGET_UNSUPPORTED');
+  const standard = scope === 'standard';
+  // The first mapping enables a standard DMO for good; the raw read says whether that is ahead.
+  const activates = standard && rawTarget.isEnabled !== true;
   const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace);
   if (
     source.identity.dataSpace !== desired.identity.dataSpace ||
@@ -148,10 +227,15 @@ async function validateDependencies(
   const sources = new Map(source.spec.fields.map((field) => [field.name, field]));
   const targets = new Map(target.spec.fields.map((field) => [field.name, field]));
   const generated = new Set<string>();
-  const system = new Set(['DataSource__c', 'DataSourceObject__c', 'InternalOrganization__c']);
+  const system = systemSourceFields;
   for (const pair of desired.spec.fieldMappings) {
     const from = sources.get(pair.sourceFieldDeveloperName);
     const to = targets.get(pair.targetFieldDeveloperName);
+    // A never-mapped standard DMO has no key qualifier field yet; its first mapping adds it.
+    if (from && !to && activates && isStandardKeyQualifierPair(pair, sources, targets)) {
+      generated.add(pairKey(pair));
+      continue;
+    }
     if (!from || !to) throw new NativeMappingError('MAPPING_FIELD_NOT_FOUND');
     if (from.dataType !== to.dataType)
       throw explainMismatch(
@@ -162,6 +246,11 @@ async function validateDependencies(
         to.dataType,
         `fields.${pair.sourceFieldDeveloperName}.target.${pair.targetFieldDeveloperName}.dataType`,
       );
+    if (standard) {
+      if (isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets))
+        generated.add(pairKey(pair));
+      continue;
+    }
     if (from.name !== to.name) continue;
     if (
       system.has(to.name) &&
@@ -181,7 +270,7 @@ async function validateDependencies(
         generated.add(pairKey(pair));
     }
   }
-  return { generated, sources, targets };
+  return { generated, sources, targets, standard, activates };
 }
 
 /**
@@ -237,15 +326,22 @@ export async function preflightNativeMapping(
   const desired = validateNativeMappingDocument(value);
   if (desired.identity.dataSpace !== (requestScope ?? 'default'))
     throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
-  const { generated, sources, targets } = await validateDependencies(desired, dependencies);
+  const { generated, sources, targets, standard, activates } = await validateDependencies(
+    desired,
+    dependencies,
+  );
   const target = await resolveTarget(desired, client);
   if (!target) {
     const fields = desired.spec.fieldMappings.filter((pair) => !generated.has(pairKey(pair)));
     // Unknown system/qualifier inputs cannot inherit another component's omission policy.
+    // A standard DMO is authored onto its standard fields as well as its custom ones.
     if (
       fields.some(
         (pair) =>
-          targets.get(pair.targetFieldDeveloperName)?.creationType !== 'Custom' ||
+          (targets.get(pair.targetFieldDeveloperName)?.creationType !== 'Custom' &&
+            !(
+              standard && targets.get(pair.targetFieldDeveloperName)?.creationType === 'Standard'
+            )) ||
           targets.get(pair.targetFieldDeveloperName)?.dataType !== 'Text' ||
           pair.sourceFieldDeveloperName.startsWith('KQ_') ||
           pair.targetFieldDeveloperName.startsWith('KQ_'),
@@ -260,7 +356,12 @@ export async function preflightNativeMapping(
       )
     )
       throw new NativeMappingError('MAPPING_PRIMARY_KEY_PAIR_REQUIRED');
-    return { operation: 'create', desired, writes: [{ body: bodyFor(desired, fields) }] };
+    return {
+      operation: 'create',
+      desired,
+      writes: [{ body: bodyFor(desired, fields) }],
+      ...(activates ? { activatesStandardDmo: true as const } : {}),
+    };
   }
   const incoming = new Set(desired.spec.fieldMappings.map((pair) => pairKey(pair)));
   const removals = target.spec.fieldMappings.filter((pair) => !incoming.has(pairKey(pair)));
@@ -368,7 +469,11 @@ export async function deployNativeMapping(
   dependencies: MappingDependencies,
   onUpdated?: (changes: { deleted: NativeMappingField[]; added: NativeMappingField[] }) => void,
   requestScope?: string,
-): Promise<{ operation: 'create' | 'update' | 'noop'; document: NativeMappingDocument }> {
+): Promise<{
+  operation: 'create' | 'update' | 'noop';
+  document: NativeMappingDocument;
+  activatesStandardDmo?: true;
+}> {
   const plan = await preflightNativeMapping(value, client, dependencies, requestScope);
   const reportUpdate = (): void => {
     if (plan.operation === 'update')
@@ -484,7 +589,11 @@ export async function deployNativeMapping(
       (plan.operation === 'create' || actual.size === plan.desired.spec.fieldMappings.length)
     ) {
       reportUpdate();
-      return { operation: plan.operation, document };
+      return {
+        operation: plan.operation,
+        document,
+        ...(plan.activatesStandardDmo ? { activatesStandardDmo: true as const } : {}),
+      };
     }
   }
   throw new NativeMappingError('MAPPING_PERSISTENCE_UNCONFIRMED');
@@ -548,7 +657,7 @@ export async function preflightUnmapNativeMapping(
     if (normalizeDlo(parentByName.get(name), selected.identity.dataSpace).identity.apiName !== name)
       throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
   }
-  const { generated, sources, targets } = await validateDependencies(selected, {
+  const { generated, sources, targets, standard } = await validateDependencies(selected, {
     source: { get: async (name) => parentByName.get(name) },
     target: { get: async () => target },
   });
@@ -558,16 +667,7 @@ export async function preflightUnmapNativeMapping(
     const from = sources.get(pair.sourceFieldDeveloperName)!;
     const to = targets.get(pair.targetFieldDeveloperName)!;
     if (!pair.developerName) throw new NativeMappingError('MAPPING_SELECTOR_REQUIRED');
-    if (
-      generated.has(pairKey(pair)) ||
-      (from.name === 'Id__c' &&
-        to.name === 'Id__c' &&
-        from.isPrimaryKey &&
-        to.isPrimaryKey &&
-        to.creationType === 'Custom' &&
-        to.keyQualifierName === 'KQ_Id' &&
-        to.dataType === 'Text')
-    ) {
+    if (generated.has(pairKey(pair)) || (isKeyPair(from, to, standard) && to.dataType === 'Text')) {
       if (from.dataType !== 'Text' || to.dataType !== 'Text' || to.isMapped !== true)
         throw new NativeMappingError('MAPPING_PROTECTED_LAYOUT_UNPROVEN');
       protectedPairs.push(pair);
@@ -583,13 +683,9 @@ export async function preflightUnmapNativeMapping(
       !['Text', 'Number'].includes(to.dataType) ||
       (to.usageTag !== undefined && to.usageTag !== 'None') ||
       to.keyQualifierName !== undefined ||
-      to.isMapped !== true ||
-      documents.some(
-        (entry) =>
-          entry.identity.apiName !== selected.identity.apiName &&
-          entry.spec.fieldMappings.some((field) => field.targetFieldDeveloperName === to.name),
-      )
+      to.isMapped !== true
     )
+      // A pair whose target field another mapping also targets is removable (live API 68).
       throw new NativeMappingError('MAPPING_UNMAP_FIELD_POLICY_UNPROVEN');
     removals.push(pair);
   }
@@ -711,7 +807,17 @@ export async function unmapNativeMappingFields(
     const field = (plan.target.fields as Record<string, unknown>[]).find(
       (value) => value.name === pair.targetFieldDeveloperName,
     )!;
-    delete field.isMapped;
+    // The field stays mapped for as long as another mapping of the DMO still targets it.
+    if (
+      !plan.inventory.some(
+        (value) =>
+          value.developerName !== plan.selected.identity.apiName &&
+          (value.fieldMappings as NativeMappingField[]).some(
+            (other) => other.targetFieldDeveloperName === pair.targetFieldDeveloperName,
+          ),
+      )
+    )
+      delete field.isMapped;
     onDispatch();
     await client.deleteField(plan.selected.identity.apiName, pair.developerName!);
     let settled = false;
@@ -799,6 +905,7 @@ export async function preflightDeleteNativeMapping(
       generated,
       sources: from,
       targets: to,
+      standard,
     } = await validateDependencies(document, {
       source: {
         get: async (name) => plan.parents[plan.sourceNames.indexOf(name)],
@@ -817,12 +924,7 @@ export async function preflightDeleteNativeMapping(
             source.dataType === 'Text' &&
             target.dataType === 'Text' &&
             target.isMapped === true &&
-            (generated.has(key) ||
-              (source.name === 'Id__c' &&
-                source.isPrimaryKey &&
-                target.isPrimaryKey &&
-                target.creationType === 'Custom' &&
-                target.keyQualifierName === 'KQ_Id'))
+            (generated.has(key) || isKeyPair(source, target, standard))
           );
         }),
       )

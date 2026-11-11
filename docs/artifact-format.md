@@ -156,6 +156,18 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   `UNSUPPORTED_DMO_FIELD_CHANGE`. A new field must be a plain custom field: no double
   underscore before `__c` and no `creationType` other than `Custom`
   (`UNSUPPORTED_DMO_FIELD_ADDITION`).
+- A mapping file (`data360/mapping/<MappingApiName>.mapping-meta.json`) may name a
+  custom or a standard DMO in `spec.targetEntityDeveloperName`. On a standard DMO the
+  authored pairs use the standard field names (for example `Id__c` to `ssot__Id__c`)
+  and the generated pairs read `DataSource__c` to `ssot__DataSourceId__c`,
+  `DataSourceObject__c` to `ssot__DataSourceObjectId__c`, `InternalOrganization__c`
+  to `ssot__InternalOrganizationId__c` and `KQ_Id__c` to `KQ_Id__c`; on a custom DMO
+  the generated pairs are same-name. Generated pairs are saved by retrieve and never
+  sent by deploy. Creating the first mapping onto a standard DMO that is not yet
+  enabled activates it permanently; preview and create report
+  `MAPPING_ACTIVATES_STANDARD_DMO`. A pair may be removed from a mapping file even
+  when another mapping targets the same field. Both behaviours are observed at API 68
+  through the raw API and covered by synthetic tests in the plugin.
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one
