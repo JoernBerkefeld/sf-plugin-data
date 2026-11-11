@@ -1439,7 +1439,18 @@ sf data360 delete --metadata dlo:CustomerSource__dll --target-org TARGET_ALIAS -
 **Delete executes by default without an additional confirmation prompt.** Use
 `--preview` for a read-only exact-target lookup/report. Execution resolves the
 selected target and deletes that target ID only; no cascade, stream/source/DMO
-cleanup or local-file deletion is performed. Already absent is unchanged. Failed
+cleanup or local-file deletion is performed. Already absent is unchanged.
+
+Before a DLO is deleted (and in `--preview`), the plugin reads what Salesforce lists
+as depending on it. Salesforce refuses to delete a DLO that something depends on
+(HTTP 412 `DEPENDENCY_EXISTS`), for example a DLO mapped onto a DMO, which the list
+names as the DMO. A dependent that the same command does not delete stops the item
+before any write with `DLO_DEPENDENCY_EXISTS`, naming each dependent. A DMO dependent
+counts as deleted by the command when `dmo:<Name>` is selected, or every mapping
+between the DLO and that DMO is selected as `mapping:<Name>`. Selections run
+mappings first, then DMOs, then DLOs, whatever order they are given in; before the
+DLO's DELETE the plugin waits (up to 6 reads, 3 seconds apart) until the list is
+empty, otherwise `DLO_DEPENDENCY_PENDING`. A DLO or DMO DELETE that Salesforce answers with an HTTP 4xx status reports mutation `rejected`: nothing was deleted. The dependency lists of all selected DLOs are read before the first write of the command, so an uncovered dependent stops the command before anything is deleted. A selected DMO removes its own mappings; selecting the last mapping of a custom DMO next to that DMO is refused (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`), because mappings run first. Failed
 or ambiguous mutation outcomes stop without retry or rollback; inspect the target
 before another attempt. DLO delete reads and the DELETE use the bound
 authenticated connection directly (no child `sf api request rest`, no token

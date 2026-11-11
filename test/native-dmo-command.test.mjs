@@ -498,6 +498,7 @@ test('invalid native selections/scope are rejected before authentication', async
   command.createDmoClient = () => client();
   command.deleteDmo = async () => ({ dataSpace: 'default' });
   command.createDloClient = () => ({
+    dependencies: async () => ({ dependencies: [], totalSize: 0 }),
     get: async () => {
       throw new Error('stop before mutation');
     },

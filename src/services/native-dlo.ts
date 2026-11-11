@@ -9,6 +9,8 @@ import {
 import type { DloDocument, DloField } from '../artifacts/dlo-document.js';
 import type { DloClient } from '../transport/dlo-rest.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { replaceExplanation } from './operation-diagnostic.js';
+import { paceReadback, readbackPace } from './readback-pace.js';
 
 export type DloDeployPlan =
   | {
@@ -284,4 +286,99 @@ export async function deleteNativeDlo(
   )
     return { ...deleted, processing: true };
   throw new DloError('DLO_DELETE_NOT_CONFIRMED', 200);
+}
+
+/** One entry of a DLO's dependency list, as Salesforce reports it. */
+export type DloDependent = { componentType: string; name: string };
+
+/**
+ * Read the dependency list of a DLO; anything but the documented shape confirms nothing.
+ * @param {unknown} response Native dependencies response.
+ * @returns {DloDependent[]} Dependents by type and name.
+ */
+export function dloDependents(response: unknown): DloDependent[] {
+  const list = (response as { dependencies?: unknown } | null)?.dependencies;
+  if (!Array.isArray(list)) throw new DloError('DLO_DEPENDENCIES_UNCONFIRMED');
+  return list.map((entry) => {
+    const value = entry as { componentType?: unknown; name?: unknown } | null;
+    if (typeof value?.componentType !== 'string' || typeof value.name !== 'string')
+      throw new DloError('DLO_DEPENDENCIES_UNCONFIRMED');
+    return { componentType: value.componentType, name: value.name };
+  });
+}
+
+/**
+ * Name the dependents a command does not delete.
+ * @param {string} apiName Exact DLO name.
+ * @param {DloDependent[]} open Uncovered dependents.
+ * @returns {DloError} DLO_DEPENDENCY_EXISTS refusal.
+ */
+function dependencyRefusal(apiName: string, open: DloDependent[]): DloError {
+  const error = new DloError('DLO_DEPENDENCY_EXISTS');
+  replaceExplanation(
+    error,
+    `${apiName} cannot be deleted while Salesforce lists dependents: ${open
+      .map((dependent) => `${dependent.componentType} ${dependent.name}`)
+      .join(
+        ', ',
+      )}. Delete them first, or select them in the same command (a data model object as dmo:<Name>, or every mapping between this data lake object and it as mapping:<Name>).`,
+  );
+  return error;
+}
+
+const sameDependent = (a: DloDependent, b: DloDependent): boolean =>
+  a.componentType === b.componentType && a.name === b.name;
+
+/**
+ * Salesforce refuses to delete a DLO that something depends on (HTTP 412 DEPENDENCY_EXISTS), so
+ * the plugin reads the dependency list once, before the command's first write: a dependent the
+ * same command does not delete refuses with DLO_DEPENDENCY_EXISTS naming each one.
+ * @param {string} apiName Exact DLO name.
+ * @param {object} client Dependency reader.
+ * @param {Function} client.dependencies Reads the dependency list of a DLO by name.
+ * @param {Function} covered Whether the same command deletes a dependent.
+ * @returns {Promise<DloDependent[]>} The dependents the command deletes.
+ */
+export async function admitDloDependents(
+  apiName: string,
+  client: { dependencies: (apiName: string) => Promise<unknown> },
+  covered: (dependent: DloDependent) => Promise<boolean>,
+): Promise<DloDependent[]> {
+  const dependents = dloDependents(await client.dependencies(apiName));
+  const open: DloDependent[] = [];
+  for (const dependent of dependents) if (!(await covered(dependent))) open.push(dependent);
+  if (open.length > 0) throw dependencyRefusal(apiName, open);
+  return dependents;
+}
+
+/**
+ * Wait (bounded) until the dependents the command deleted are no longer listed. A dependent
+ * that was not admitted before the first write refuses; one still listed after the last read
+ * gives DLO_DEPENDENCY_PENDING. No DELETE is sent here.
+ * @param {string} apiName Exact DLO name.
+ * @param {object} client Dependency reader.
+ * @param {Function} client.dependencies Reads the dependency list of a DLO by name.
+ * @param {DloDependent[]} admitted Dependents admitted before the command's first write.
+ * @returns {Promise<void>} Resolves when the list is empty.
+ */
+export async function waitForDloDependents(
+  apiName: string,
+  client: { dependencies: (apiName: string) => Promise<unknown> },
+  admitted: DloDependent[],
+): Promise<void> {
+  for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
+    await paceReadback(attempt);
+    const dependents = dloDependents(await client.dependencies(apiName));
+    if (dependents.length === 0) return;
+    const open = dependents.filter(
+      (dependent) => !admitted.some((known) => sameDependent(known, dependent)),
+    );
+    if (open.length > 0) throw dependencyRefusal(apiName, open);
+  }
+  const error = new DloError('DLO_DEPENDENCY_PENDING');
+  replaceExplanation(
+    error,
+    `${apiName} was not deleted: the dependents deleted by this command are still listed by Salesforce. Read the data lake object's dependencies and delete it again once the list is empty.`,
+  );
+  throw error;
 }

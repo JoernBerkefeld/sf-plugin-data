@@ -5,7 +5,10 @@ import { DloError, dloName } from '../artifacts/dlo-document.js';
 import { nativeApiVersion } from './api-version.js';
 import type { DloClient } from './dlo-rest.js';
 
-export type DloDeleteClient = Pick<DloClient, 'get' | 'delete'>;
+export type DloDeleteClient = Pick<DloClient, 'get' | 'delete'> & {
+  /** What Salesforce lists as depending on the DLO; Salesforce refuses its DELETE while any remain. */
+  dependencies: (apiName: string) => Promise<unknown>;
+};
 
 const recordId = /^[A-Za-z0-9]{18}$/u;
 
@@ -73,6 +76,15 @@ export function createNativeDloDeleteClient(
       const client = await bound();
       try {
         return await client.request(`${endpoint}/${apiName}`, 'GET');
+      } catch (error) {
+        throw dloFailure(error);
+      }
+    },
+    dependencies: async (apiName) => {
+      if (!dloName.test(apiName)) throw new DloError('INVALID_DLO_NAME');
+      const client = await bound();
+      try {
+        return await client.request(`${endpoint}/${apiName}/dependencies`, 'GET');
       } catch (error) {
         throw dloFailure(error);
       }

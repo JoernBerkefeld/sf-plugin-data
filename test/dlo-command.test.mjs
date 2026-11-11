@@ -40,6 +40,7 @@ const client = (changes = {}) => {
     create: async () => structuredClone(wire),
     update: async () => structuredClone(wire),
     delete: async () => {},
+    dependencies: async () => ({ dependencies: [], totalSize: 0 }),
     ...changes,
   };
   let deleted = false;

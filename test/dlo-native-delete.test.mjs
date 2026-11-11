@@ -22,17 +22,20 @@ const name = 'Example__dll';
  * @param {string} method HTTP method intercepted.
  * @param {number|string} response Status code, or 'network' for a socket failure.
  * @param {(client: object) => Promise<unknown>} operation Client call under test.
- * @returns {Promise<{attempts: number, outcome: unknown}>} Attempts and settled outcome.
+ * @param {unknown} [body] JSON answer for a successful response.
+ * @returns {Promise<{attempts: number, outcome: unknown, paths: string[]}>} Attempts, outcome and requested paths.
  */
-async function wire(method, response, operation) {
+async function wire(method, response, operation, body) {
   const agent = new MockAgent();
   agent.disableNetConnect();
   requestModule.setDispatcher(agent);
   let attempts = 0;
+  const paths = [];
   const intercept = agent.get(origin).intercept({ path: /./u, method });
   intercept
-    .reply(() => {
+    .reply((options) => {
       attempts++;
+      paths.push(options.path);
       if (response === 'network')
         throw Object.assign(new TypeError('synthetic network error'), {
           cause: { code: 'ECONNRESET' },
@@ -42,7 +45,9 @@ async function wire(method, response, operation) {
         data:
           response === 204
             ? ''
-            : JSON.stringify([{ errorCode: 'INVALID_INPUT', message: 'synthetic' }]),
+            : body === undefined
+              ? JSON.stringify([{ errorCode: 'INVALID_INPUT', message: 'synthetic' }])
+              : JSON.stringify(body),
         responseOptions: { headers: { 'content-type': 'application/json' } },
       };
     })
@@ -61,7 +66,7 @@ async function wire(method, response, operation) {
       (error) => ({ error }),
     );
     assert.equal(connection._refreshDelegate, refresh);
-    return { attempts, outcome };
+    return { attempts, outcome, paths };
   } finally {
     requestModule.setDispatcher();
     await agent.close();
@@ -89,11 +94,33 @@ test('bound DLO DELETE 204 resolves once; any GET 404 maps to absence', async ()
   assert.equal(missing.outcome.error.status, 404);
 });
 
+test('bound DLO dependencies GET reads the dependency route once; 404 is DLO_HTTP_ERROR', async () => {
+  const listed = {
+    dependencies: [{ componentType: 'DataModelObject', id: '0dm000000000001AAA', name: 'X__dlm' }],
+    totalSize: 1,
+  };
+  const read = await wire('GET', 200, (client) => client.dependencies('X__dll'), listed);
+  assert.equal(read.attempts, 1);
+  assert.deepEqual(read.paths, ['/services/data/v68.0/ssot/data-lake-objects/X__dll/dependencies']);
+  assert.deepEqual(read.outcome, { value: listed });
+  const missing = await wire('GET', 404, (client) => client.dependencies('X__dll'));
+  assert.equal(missing.attempts, 1);
+  assert.ok(missing.outcome.error instanceof DloError);
+  assert.equal(missing.outcome.error.code, 'DLO_HTTP_ERROR');
+  assert.equal(missing.outcome.error.status, 404);
+  for (const status of [500, 'network']) {
+    const failed = await wire('GET', status, (client) => client.dependencies('X__dll'));
+    assert.equal(failed.attempts, 1);
+    assert.ok(failed.outcome.error instanceof DloError);
+  }
+});
+
 test('bound DLO client rejects unsafe names and IDs before any request', async () => {
   const client = createNativeDloDeleteClient('target', '68.0', async () =>
     assert.fail('no connection for invalid input'),
   );
   await assert.rejects(client.get('../Bad__dll'), /INVALID_DLO_NAME/);
+  await assert.rejects(client.dependencies('../Bad__dll'), /INVALID_DLO_NAME/);
   await assert.rejects(client.delete('../1dl'), /INVALID_DLO_TARGET_ID/);
 });
 
@@ -122,6 +149,7 @@ test('DLO still readable after acknowledged DELETE is deletion-unconfirmed, neve
       delete: async () => {
         deletes++;
       },
+      dependencies: async () => ({ dependencies: [], totalSize: 0 }),
     });
     const before = process.exitCode;
     let result;
@@ -158,6 +186,7 @@ test('human output names the reason when a DLO delete is blocked before any writ
       throw new DloError('DLO_HTTP_ERROR', 403);
     },
     delete: async () => assert.fail('preview never deletes'),
+    dependencies: async () => ({ dependencies: [], totalSize: 0 }),
   });
   const before = process.exitCode;
   try {
@@ -191,6 +220,7 @@ async function deleteWithReadback(readback, json) {
     delete: async () => {
       deletes++;
     },
+    dependencies: async () => ({ dependencies: [], totalSize: 0 }),
   });
   const before = process.exitCode;
   try {

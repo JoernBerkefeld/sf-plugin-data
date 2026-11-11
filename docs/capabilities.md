@@ -869,3 +869,13 @@ No live fixtures were created, claimed, modified or removed by this slice.
 Deploy items of DLOs, DMOs and mappings report mutation `rejected` when Salesforce
 answered the item's first write with an HTTP 4xx status: nothing was written for the
 item. A failure after a completed write stays `unknown`.
+
+DLO delete reads the DLO's dependency list (`GET ssot/data-lake-objects/{name}/dependencies`)
+before the DELETE, in preview too. Salesforce refuses to delete a DLO with dependents (HTTP 412
+`DEPENDENCY_EXISTS`; a mapped DLO lists the DMO). All selected DLOs are checked before the command's first write; a dependent the same command does not delete stops the command with `DLO_DEPENDENCY_EXISTS`, naming each one, before anything is deleted. A DMO
+dependent is covered by `dmo:<Name>` or by selecting every mapping between the DLO and the
+DMO. Delete selections run mappings, then DMOs, then DLOs; the DLO waits (6 reads, 3 seconds
+apart) for the list to empty, otherwise `DLO_DEPENDENCY_PENDING`. Observed at API 68: a mapped
+DLO refused with the DMO named; DLO plus its mapping deleted in one command (32 s); DLO plus
+its DMO deleted in one command (15 s). DMOs have no dependency route (`/dependencies` answers
+404), so DMO delete checks no dependents.

@@ -69,9 +69,20 @@ import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesf
 import { DloError, dloName } from '../../artifacts/dlo-document.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { createNativeDloDeleteClient } from '../../transport/dlo-native-rest.js';
-import { deleteNativeDlo, retrieveNativeDlo } from '../../services/native-dlo.js';
+import type { DloDeleteClient } from '../../transport/dlo-native-rest.js';
+import {
+  admitDloDependents,
+  deleteNativeDlo,
+  retrieveNativeDlo,
+  waitForDloDependents,
+} from '../../services/native-dlo.js';
+import type { DloDependent } from '../../services/native-dlo.js';
 import { plugin } from '../../plugin.js';
-import { nativeMappingName, NativeMappingError } from '../../artifacts/native-mapping-document.js';
+import {
+  nativeMappingName,
+  NativeMappingError,
+  unwrapNativeMappingCollection,
+} from '../../artifacts/native-mapping-document.js';
 import { createMappingClient } from '../../transport/mapping-rest.js';
 import {
   deleteNativeMapping,
@@ -140,6 +151,7 @@ export type DeleteEnvelope = {
         | 'confirmed-deleted'
         | 'acknowledged-processing'
         | 'acknowledged'
+        | 'rejected'
         | 'unknown';
       prerequisitesPreserved?: true;
       plan?: Array<{
@@ -568,7 +580,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   }
 
   /**
-   * Execute exact selection sequentially, stopping on the first error.
+   * Execute the selection in dependency order (mappings, DMOs, DLOs), stopping on the first error.
    * @returns {Promise<DeleteEnvelope>} Payload-free deletion evidence.
    */
   public async run(): Promise<DeleteEnvelope> {
@@ -1194,8 +1206,74 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       } catch {
         throw new DloError('INVALID_SCOPE');
       }
-      const selectors = [...new Set(flags.metadata)];
+      // Dependents go first: mappings, then DMOs (which take their mappings along), then DLOs.
+      const familyOrder = (selector: string): number =>
+        selector.startsWith('mapping:') ? 0 : selector.startsWith('dmo:') ? 1 : 2;
+      // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the ES2022 library target.
+      const selectors = [...new Set(flags.metadata)].sort(
+        (a, b) => familyOrder(a) - familyOrder(b),
+      );
       const target = await this.resolveTarget(flags['target-org']);
+      // A DLO dependent is covered when this command deletes it: its DMO, or every mapping
+      // between the DLO and that DMO.
+      const coveredBySelection =
+        (dlo: string) =>
+        async (dependent: DloDependent): Promise<boolean> => {
+          if (dependent.componentType !== 'DataModelObject') return false;
+          if (selectors.includes(`dmo:${dependent.name}`)) return true;
+          if (!nativeDmoName.test(dependent.name)) return false;
+          let names: string[] = [];
+          try {
+            const reader = (this.createMappingClient ?? createMappingClient)(
+              target,
+              version,
+              undefined,
+              requestScope,
+              this.createMappingSender(target, version),
+            );
+            names = unwrapNativeMappingCollection(
+              await reader.list(dependent.name, dlo),
+              requestScope,
+            ).map((entry) => String(entry.developerName));
+          } catch {
+            return false;
+          }
+          return names.length > 0 && names.every((name) => selectors.includes(`mapping:${name}`));
+        };
+      // Every selected DLO's dependents are checked before the command's first write.
+      const admittedDependents = new Map<string, DloDependent[]>();
+      for (const selector of selectors.filter((value) => value.startsWith('dlo:'))) {
+        const name = selector.slice(4);
+        try {
+          admittedDependents.set(
+            name,
+            await admitDloDependents(
+              name,
+              this.createDloNativeDeleteClient(target, version) as DloDeleteClient,
+              coveredBySelection(name),
+            ),
+          );
+        } catch (error) {
+          // An absent DLO has nothing to check; the item loop reports it unchanged.
+          if (
+            error instanceof DloError &&
+            error.code === 'DLO_HTTP_ERROR' &&
+            error.status === 404
+          ) {
+            admittedDependents.set(name, []);
+            continue;
+          }
+          const blocked: DeleteEnvelope['result']['items'][number] = {
+            identity: { dataSpace: effectiveScope, apiName: name },
+            operation: flags.preview ? 'preview' : 'delete',
+            outcome: 'blocked',
+            mutation: 'not-attempted',
+          };
+          selectorsByItem.set(blocked, selector);
+          envelope.result.items.push(blocked);
+          throw error;
+        }
+      }
       for (const selector of selectors) {
         const native = selector.startsWith('dmo:');
         const mapping = selector.startsWith('mapping:');
@@ -1212,13 +1290,28 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             ? this.createDmoNativeDeleteClient(target, version)
             : this.createDloNativeDeleteClient(target, version);
         let dispatched = false;
+        // Salesforce's own 4xx answer to the DELETE means nothing was deleted.
+        let refusal: unknown;
         const client = mapping
           ? baseClient
           : {
               ...baseClient,
               delete: async (id: string): Promise<void> => {
                 dispatched = true;
-                await (baseClient as ReturnType<typeof createDloClient>).delete(id);
+                try {
+                  await (baseClient as ReturnType<typeof createDloClient>).delete(id);
+                } catch (error) {
+                  const status = (error as { status?: unknown }).status;
+                  if (
+                    (error instanceof DloError || error instanceof NativeDmoError) &&
+                    error.code.endsWith('_HTTP_ERROR') &&
+                    typeof status === 'number' &&
+                    status >= 400 &&
+                    status < 500
+                  )
+                    refusal = error;
+                  throw error;
+                }
               },
             };
         const item: DeleteEnvelope['result']['items'][number] = {
@@ -1258,6 +1351,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               );
           } else {
             const definitionClient = client as ReturnType<typeof createDloClient>;
+            // Dependents were admitted before the first write; execution waits for them to clear.
+            if (!native && !flags.preview)
+              await waitForDloDependents(
+                apiName,
+                baseClient as DloDeleteClient,
+                admittedDependents.get(apiName) ?? [],
+              );
             if (flags.preview) {
               const document = await (native
                 ? (this.retrieveDmo ?? previewDeleteNativeDmo)(
@@ -1318,7 +1418,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             return finish();
           }
           item.outcome = dispatched ? 'failed' : 'blocked';
-          item.mutation = dispatched ? 'unknown' : 'not-attempted';
+          item.mutation =
+            refusal !== undefined && refusal === error
+              ? 'rejected'
+              : dispatched
+                ? 'unknown'
+                : 'not-attempted';
           envelope.status = dispatched ? 'failed' : 'blocked';
           throw error;
         }

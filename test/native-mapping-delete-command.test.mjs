@@ -19,7 +19,11 @@ const invocation = (flags = {}) => {
   command.resolveTarget = async () => 'target';
   command.createDloClient = command.createDmoClient = () => ({ get: async () => ({}) });
   // DLO/DMO delete use their own bound-connection seams; tests keep overriding the old factories.
-  command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
+  // Unless a test says otherwise, Salesforce lists no dependents of the DLO.
+  command.createDloNativeDeleteClient = (...arguments_) => ({
+    dependencies: async () => ({ dependencies: [], totalSize: 0 }),
+    ...command.createDloClient(...arguments_),
+  });
   command.createDmoNativeDeleteClient = (...arguments_) => command.createDmoClient(...arguments_);
   // Mapping GET/DELETE get a bound sender; the fake mapping clients below never use it.
   command.createMappingSender = () => ({
@@ -170,7 +174,7 @@ for (const preview of [true, false]) {
   }
 }
 
-test('human deletion prints one identified action for each item and stops at failure', async () => {
+test('human deletion prints one identified action for each item, DMOs before DLOs, and stops at failure', async () => {
   for (const failure of [false, true]) {
     const command = invocation({
       metadata: ['dlo:First__dll', 'dmo:Second__dlm', 'dlo:Third__dll'],
@@ -181,11 +185,11 @@ test('human deletion prints one identified action for each item and stops at fai
     command.createDloClient = command.createDmoClient = () => ({ delete: async () => {} });
     command.deleteDlo = async (name, client) => {
       await client.delete(name);
+      if (failure) throw new Error('readback failed');
       return { dataSpace: 'default' };
     };
     command.deleteDmo = async (name, client) => {
       await client.delete(name);
-      if (failure) throw new Error('readback failed');
       return { dataSpace: 'default' };
     };
     const result = await run(command);
@@ -194,12 +198,12 @@ test('human deletion prints one identified action for each item and stops at fai
       lines.slice(1),
       failure
         ? [
-            'deleted dlo First__dll',
-            'Failed: dmo:Second__dlm; mutation: unknown.',
+            'deleted dmo Second__dlm',
+            'Failed: dlo:First__dll; mutation: unknown.',
             // Human output names the stop reason, not only rate-limit diagnostics.
             'DELETE_FAILED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
           ]
-        : ['deleted dlo First__dll', 'deleted dmo Second__dlm', 'deleted dlo Third__dll'],
+        : ['deleted dmo Second__dlm', 'deleted dlo First__dll', 'deleted dlo Third__dll'],
     );
   }
 });
@@ -279,6 +283,12 @@ for (const [mode, code] of Object.entries(expectedCodes)) {
         sleep: async () => {},
       });
     command.deleteDlo = async () => assert.fail('later batch member dispatched');
+    // The DLO's dependency list is read before the first write; it lists nothing here.
+    command.createDloNativeDeleteClient = () => ({
+      dependencies: async () => ({ dependencies: [], totalSize: 0 }),
+      get: async () => assert.fail('later batch member read'),
+      delete: async () => assert.fail('later batch member dispatched'),
+    });
     const result = await run(command);
     const blocked = ['last', 'stale'].includes(mode);
     assert.equal(result.status, blocked ? 'blocked' : 'failed', JSON.stringify(result));

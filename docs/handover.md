@@ -1,3 +1,30 @@
+# DLO delete checks its dependents — 2026-11-11
+
+Version stays 0.1.0; nothing pushed.
+
+- `sf data360 delete` reads a DLO's dependency list before deleting it (preview too):
+  `GET ssot/data-lake-objects/{name}/dependencies`. Salesforce itself refuses to delete
+  a DLO with dependents (raw probe: HTTP 412 `DEPENDENCY_EXISTS`, nothing deleted, the
+  mapping intact), but its message does not name them. The plugin refuses with
+  `DLO_DEPENDENCY_EXISTS` naming each dependent unless the same command deletes it.
+- A mapped DLO lists the DMO (`componentType: DataModelObject`), not the mapping. It
+  counts as covered when `dmo:<Name>` is selected or every mapping between the DLO and
+  that DMO is selected. The dependency lists of all selected DLOs are read and checked
+  before the first write of the command (a review found the first version checked each DLO
+  only at its turn, after earlier deletes); at the DLO's turn only the wait remains.
+- Delete selections now run mappings, then DMOs, then DLOs. The DLO waits (6 reads, 3
+  seconds apart) for its dependency list to clear (`DLO_DEPENDENCY_PENDING` otherwise).
+- A DELETE answered with HTTP 4xx reports mutation `rejected`.
+- DMO dependencies: no route exists (`/dependencies` on a DMO answers 404; the Data 360
+  tool catalogue has dependency lists only for DLOs, data streams and connections).
+  Whether Salesforce refuses a DMO delete while a segment, calculated insight or
+  activation uses the DMO was not probed; that needs a live segment on a fixture DMO.
+
+Live, `isolated-source`, API 68: DLO with a mapping refused with `DataModelObject
+CliDmoDp_8c71__dlm` named (6 s, nothing written); second DLO plus its mapping deleted in
+one command with the DLO listed first (32 s); DLO plus its DMO deleted in one command
+(15 s). All fixtures read 404 afterwards.
+
 # Small fixes after the gap analysis — 2026-11-11
 
 Version stays 0.1.0; nothing pushed.
