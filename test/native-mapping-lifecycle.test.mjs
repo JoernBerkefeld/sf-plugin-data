@@ -1008,14 +1008,20 @@ test('desired-state removal on a shared field reconciles each mapping; the field
 });
 
 test('shared-field removal keeps the other unmap protections and verifies the mapped marker', async () => {
-  // Generated, key-qualifier and primary-key pairs stay protected beside a second mapping.
+  // The primary-key pair stays required beside a second mapping; an omitted generated or
+  // key-qualifier pair is kept as the org has it.
   for (const omitted of ['Id__c', 'DataSource__c', 'KQ_Id__c']) {
     const f = sharedFixture();
-    await assert.rejects(
-      deployNativeMapping(desired(names.filter((name) => name !== omitted)), f.client, f.deps),
-      /PROTECTED_PAIR_REQUIRED/,
-    );
+    const input = desired(names.filter((name) => name !== omitted));
+    if (omitted === 'Id__c')
+      await assert.rejects(deployNativeMapping(input, f.client, f.deps), /PROTECTED_PAIR_REQUIRED/);
+    else {
+      const result = await deployNativeMapping(input, f.client, f.deps);
+      assert.equal(result.operation, 'noop', omitted);
+      assert.equal(result.document.spec.fieldMappings.length, 7);
+    }
     assert.deepEqual(f.calls, []);
+    assert.equal(f.states.get('TargetGenerated_123').fieldMappings.length, 7);
   }
   for (const mode of ['selector', 'version', 'retarget']) {
     const f = sharedFixture();
@@ -1231,6 +1237,159 @@ test('desired-state removal preserves retained selectors and previews observed t
   assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
   assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 0);
   assert.deepEqual(input, before);
+});
+
+/**
+ * Hand-written mapping file: authored pairs only, no generated pairs and no selectors.
+ * @param {string[]} fields Authored field names, mapped onto their namesakes.
+ * @returns {object} Portable document under a source-side name.
+ */
+const handWritten = (fields) => {
+  const document = desired(fields);
+  for (const field of document.spec.fieldMappings) delete field.developerName;
+  return document;
+};
+const generatedNames = names.slice(3);
+const pairNames = (fields) => fields.map((field) => field.sourceFieldDeveloperName);
+
+test('hand-written mapping without generated pairs is a no-op against the existing mapping', async () => {
+  const f = fixture(raw(['Id__c', 'Name__c', ...generatedNames]));
+  const input = handWritten(['Id__c', 'Name__c']);
+  assert.deepEqual(input.spec.fieldMappings, [
+    { sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Id__c' },
+    { sourceFieldDeveloperName: 'Name__c', targetFieldDeveloperName: 'Name__c' },
+  ]);
+  const before = structuredClone(input);
+  const plan = await preflightNativeMapping(input, f.client, f.deps);
+  assert.equal(plan.operation, 'noop');
+  assert.deepEqual(plan.writes, []);
+  // The plan carries the merged document: the authored pairs, then the org's generated pairs.
+  assert.deepEqual(plan.desired.spec.fieldMappings, [
+    ...before.spec.fieldMappings,
+    ...generatedNames.map((name) => pair(name)),
+  ]);
+  assert.notEqual(plan.desired, input);
+  assert.deepEqual(input, before);
+  const preview = await preflightMapping(input, f.client, f.deps);
+  assert.equal(preview.outcome, 'noop');
+  const result = await deployNativeMapping(input, f.client, f.deps);
+  assert.equal(result.operation, 'noop');
+  assert.equal(result.document.spec.fieldMappings.length, 6);
+  assert.deepEqual(await executeMapping(input, f.client, f.deps), {
+    outcome: 'unchanged',
+    mutation: 'not-attempted',
+    diagnostics: [],
+  });
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  assert.deepEqual(input, before);
+});
+
+test('hand-written mapping adds one authored pair with a single names-only PATCH', async () => {
+  const f = fixture(raw(['Id__c', 'Name__c', ...generatedNames]));
+  const input = handWritten(['Id__c', 'Name__c', 'Note__c']);
+  const before = structuredClone(input);
+  const plan = await preflightNativeMapping(input, f.client, f.deps);
+  assert.equal(plan.operation, 'update');
+  assert.equal(plan.removals, undefined);
+  assert.equal(plan.evidence, undefined);
+  assert.deepEqual(pairNames(plan.retained), ['Id__c', 'Name__c', ...generatedNames]);
+  const preview = await preflightMapping(input, f.client, f.deps);
+  assert.deepEqual(preview.plan, [
+    {
+      operation: 'add',
+      apiName: 'TargetGenerated_123',
+      sourceFieldDeveloperName: 'Note__c',
+      targetFieldDeveloperName: 'Note__c',
+    },
+  ]);
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  const result = await deployNativeMapping(input, f.client, f.deps);
+  assert.equal(result.operation, 'update');
+  assert.deepEqual(
+    f.calls.filter(([kind]) => !['get', 'list'].includes(kind)),
+    [
+      [
+        'update',
+        'TargetGenerated_123',
+        {
+          sourceEntityDeveloperName: 'Example__dll',
+          targetEntityDeveloperName: 'Example__dlm',
+          fieldMapping: [
+            { sourceFieldDeveloperName: 'Note__c', targetFieldDeveloperName: 'Note__c' },
+          ],
+        },
+      ],
+    ],
+  );
+  assert.deepEqual(pairNames(result.document.spec.fieldMappings).toSorted(), names.toSorted());
+  assert.deepEqual(input, before);
+  // The same file is unchanged afterwards.
+  const replay = await deployNativeMapping(input, f.client, f.deps);
+  assert.equal(replay.operation, 'noop');
+  assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 1);
+});
+
+test('hand-written mapping removes only its omitted authored pair and keeps the generated pairs', async () => {
+  const f = fixture();
+  const input = handWritten(['Id__c', 'Name__c']);
+  const before = structuredClone(input);
+  const plan = await preflightNativeMapping(input, f.client, f.deps);
+  assert.equal(plan.operation, 'update');
+  assert.deepEqual(plan.removals, [pair('Note__c')]);
+  assert.deepEqual(plan.writes, []);
+  assert.deepEqual(pairNames(plan.retained), ['Id__c', 'Name__c', ...generatedNames]);
+  assert.deepEqual(pairNames(plan.evidence.protectedPairs), ['Id__c', ...generatedNames]);
+  const preview = await preflightMapping(input, f.client, f.deps);
+  assert.deepEqual(preview.plan, [
+    { operation: 'unmap', apiName: 'TargetGenerated_123', ...pair('Note__c') },
+  ]);
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  const changes = [];
+  const result = await deployNativeMapping(input, f.client, f.deps, (change) =>
+    changes.push(change),
+  );
+  assert.deepEqual(changes, [{ deleted: [pair('Note__c')], added: [] }]);
+  assert.equal(result.operation, 'update');
+  assert.deepEqual(
+    result.document.spec.fieldMappings,
+    raw().fieldMappings.filter((entry) => entry.sourceFieldDeveloperName !== 'Note__c'),
+  );
+  assert.deepEqual(
+    f.calls.filter(([kind]) => !['get', 'list'].includes(kind)),
+    [['unmap', 'TargetGenerated_123', 'target_Note__c']],
+  );
+  assert.deepEqual(input, before);
+  const replay = await deployNativeMapping(input, f.client, f.deps);
+  assert.equal(replay.operation, 'noop');
+});
+
+test('hand-written mapping without the key pair is refused; generated pairs are not authored removals', async () => {
+  const f = fixture();
+  const input = handWritten(['Name__c', 'Note__c']);
+  const before = structuredClone(input);
+  await assert.rejects(
+    preflightNativeMapping(input, f.client, f.deps),
+    (error) => error.code === 'MAPPING_PROTECTED_PAIR_REQUIRED',
+  );
+  const blocked = await executeMapping(input, f.client, f.deps);
+  assert.equal(blocked.outcome, 'blocked');
+  assert.equal(blocked.mutation, 'not-attempted');
+  assert.equal(blocked.diagnostics[0].code, 'MAPPING_PROTECTED_PAIR_REQUIRED');
+  assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
+  assert.deepEqual(input, before);
+  // A system-named pair onto a field the org does not report as System is not merged: the
+  // omission stays a removal, which the unmap layout check then refuses.
+  const authored = fixture();
+  authored.schema.fields.find((field) => field.name === 'DataSource__c').creationType = 'Custom';
+  await assert.rejects(
+    preflightNativeMapping(
+      handWritten(['Id__c', 'Name__c', 'Note__c']),
+      authored.client,
+      authored.deps,
+    ),
+    (error) => error.code === 'MAPPING_PROTECTED_LAYOUT_UNPROVEN',
+  );
+  assert.ok(authored.calls.every(([kind]) => ['get', 'list'].includes(kind)));
 });
 
 test('desired-state batch additions and both qualified retarget directions use one names-only PATCH after unmap', async () => {

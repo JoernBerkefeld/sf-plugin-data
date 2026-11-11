@@ -159,12 +159,174 @@ test('DLO save preserves other/custom/primary qualifiers and update refuses thei
       preflightNativeDlo(changed, { get: async () => native() }),
       /FIELD_CHANGE/,
     );
-    if (name !== 'KQ_Id__c') {
-      changed.spec.fields = document().spec.fields.filter((f) => f.name !== name);
+    if (name === 'KQ_Id__c') continue;
+    changed.spec.fields = document().spec.fields.filter((f) => f.name !== name);
+    // An omitted authored field is a removal; an omitted system field stays as the org has it.
+    if (name === 'Note__c')
       await assert.rejects(
         preflightNativeDlo(changed, { get: async () => native() }),
         /FIELD_CHANGE/,
       );
+    else {
+      const kept = await preflightNativeDlo(changed, { get: async () => native() });
+      assert.equal(kept.operation, 'unchanged');
+    }
+  }
+});
+
+/**
+ * Hand-written file: the authored fields only, nothing Salesforce generated.
+ * @param {object[]} [extra] Further authored fields.
+ * @returns {object} Portable document.
+ */
+const handWritten = (extra = []) => {
+  const value = document();
+  value.spec.fields = [...value.spec.fields.slice(0, 2), ...extra];
+  return value;
+};
+const refusedChange = (error) =>
+  error instanceof DloError && error.code === 'UNSUPPORTED_DLO_FIELD_CHANGE';
+
+test('hand-written DLO file without generated fields is unchanged and adds only its new field', async () => {
+  const input = handWritten();
+  assert.deepEqual(
+    input.spec.fields.map((f) => f.name),
+    ['Id__c', 'Note__c'],
+  );
+  const before = structuredClone(input);
+  let writes = 0;
+  const client = {
+    get: async () => native(),
+    create: async () => assert.fail('no POST expected'),
+    update: async () => {
+      writes++;
+      return native();
+    },
+  };
+  const plan = await preflightNativeDlo(input, client);
+  assert.equal(plan.operation, 'unchanged');
+  assert.equal(plan.targetId, targetId);
+  assert.equal(Object.hasOwn(plan, 'body'), false);
+  const result = await deployNativeDlo(input, client);
+  assert.equal(result.operation, 'unchanged');
+  // The org copy keeps all seven fields.
+  assert.deepEqual(result.document, document());
+  assert.equal(writes, 0);
+  assert.deepEqual(input, before);
+
+  const added = handWritten([field('Extra__c')]);
+  const addedBefore = structuredClone(added);
+  const updates = [];
+  const after = native();
+  after.dataLakeFieldInfoRepresentation.push(field('Extra__c'));
+  const deployed = await deployNativeDlo(added, {
+    get: async () => native(),
+    create: async () => assert.fail('no POST expected'),
+    update: async (id, body) => {
+      updates.push([id, body]);
+      return after;
+    },
+  });
+  assert.equal(deployed.operation, 'update');
+  assert.deepEqual(updates, [
+    [
+      targetId,
+      {
+        label: 'Example',
+        dataLakeFieldInputRepresentations: [{ ...field('Extra__c'), name: 'Extra' }],
+      },
+    ],
+  ]);
+  assert.equal(deployed.document.spec.fields.length, 8);
+  assert.deepEqual(added, addedBefore);
+});
+
+test('a listed DLO field is compared on the keys the file states only', async () => {
+  const raw = native();
+  raw.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
+  raw.dataLakeFieldInfoRepresentation[1].creationType = 'Custom';
+  const client = { get: async () => raw };
+  for (const input of [handWritten(), document()]) {
+    assert.equal(Object.hasOwn(input.spec.fields[0], 'keyQualifierName'), false);
+    const plan = await preflightNativeDlo(input, client);
+    assert.equal(plan.operation, 'unchanged');
+  }
+  // A stated key that differs, or that the org copy does not have, is still a change.
+  for (const mutate of [
+    (d) => {
+      d.spec.fields[0].keyQualifierName = 'KQ_Other';
+    },
+    (d) => {
+      d.spec.fields[1].length = 100;
+    },
+    (d) => {
+      d.spec.fields[0].description = 'Only in the file';
+    },
+  ]) {
+    const input = handWritten();
+    mutate(input);
+    await assert.rejects(preflightNativeDlo(input, client), refusedChange);
+  }
+});
+
+test('DLO update keeps only omitted generated fields; other omissions and listed differences refuse', async () => {
+  const cases = {
+    'omitted authored field': (input) => {
+      input.spec.fields = input.spec.fields.filter((f) => f.name !== 'Note__c');
+    },
+    'omitted qualifier of another field': (_input, raw) => {
+      raw.dataLakeFieldInfoRepresentation.push(field('KQ_Other__c'));
+    },
+    'omitted qualifier of a non-key field': (_input, raw) => {
+      raw.dataLakeFieldInfoRepresentation.push(field('KQ_Note__c'));
+    },
+    'omitted system field reported as Custom': (_input, raw) => {
+      raw.dataLakeFieldInfoRepresentation.find((f) => f.name === 'DataSource__c').creationType =
+        'Custom';
+    },
+    'omitted key qualifier reported as Custom': (_input, raw) => {
+      raw.dataLakeFieldInfoRepresentation.find((f) => f.name === 'KQ_Id__c').creationType =
+        'Custom';
+    },
+    'listed system field that differs': (input) => {
+      input.spec.fields.push({ ...field('DataSource__c'), label: 'Changed' });
+    },
+    'listed key qualifier that differs': (input) => {
+      input.spec.fields.push({ ...field('KQ_Id__c'), dataType: 'Number' });
+    },
+  };
+  for (const [name, mutate] of Object.entries(cases)) {
+    const input = handWritten();
+    const raw = native();
+    mutate(input, raw);
+    let writes = 0;
+    const client = {
+      get: async () => raw,
+      create: async () => {
+        writes++;
+      },
+      update: async () => {
+        writes++;
+      },
+    };
+    await assert.rejects(preflightNativeDlo(input, client), refusedChange, name);
+    await assert.rejects(deployNativeDlo(input, client), refusedChange, name);
+    assert.equal(writes, 0, name);
+  }
+  // Each generated field may be left out on its own, or listed exactly as the org has it.
+  for (const name of [
+    'cdp_sys_SourceVersion__c',
+    'DataSource__c',
+    'DataSourceObject__c',
+    'InternalOrganization__c',
+    'KQ_Id__c',
+  ]) {
+    const without = document();
+    without.spec.fields = without.spec.fields.filter((f) => f.name !== name);
+    const only = handWritten([field(name)]);
+    for (const input of [without, only]) {
+      const plan = await preflightNativeDlo(input, { get: async () => native() });
+      assert.equal(plan.operation, 'unchanged', name);
     }
   }
 });

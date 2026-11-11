@@ -1,3 +1,47 @@
+# Hand-written DLO and mapping files deploy onto existing targets — 2026-11-11
+
+A file with only the authored fields or pairs now deploys onto an existing data lake
+object or mapping. Before, such a file created the target and was then refused on the
+next deploy, so the user had to retrieve and edit the retrieved file. Version stays
+0.1.0; nothing pushed. Retrieve saves what it saved before.
+
+- Mapping deploy onto an existing mapping: the file may list only the authored pairs.
+  The pairs Salesforce generated (the three system pairs and the key qualifier pair;
+  on a standard DMO the pairs onto `ssot__DataSourceId__c`,
+  `ssot__DataSourceObjectId__c`, `ssot__InternalOrganizationId__c` and `KQ_Id__c`)
+  are taken from the org's copy and treated as part of the file. A hand-written file
+  therefore deploys back unchanged, can add pairs, and removes exactly the authored
+  pairs it drops. The authored primary-key pair must stay in the file; omitting it
+  gives `MAPPING_PROTECTED_PAIR_REQUIRED`. A retrieved file, which lists the
+  generated pairs, behaves the same.
+- DLO deploy onto an existing DLO: the file may omit the fields Salesforce generated
+  (`cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
+  `InternalOrganization__c` and the key qualifier of the primary key, `KQ_<Key>__c`,
+  for example `KQ_Id__c`); they stay as they are. Any other omitted field is still
+  refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on the keys the
+  file states; keys only the org's copy carries are ignored; a differing stated key
+  is refused.
+
+Live results through the plugin at API 68, one org:
+
+1. Hand-written DLO, custom DMO and mapping files (authored fields and pairs only)
+   created, then deployed again unchanged: all three `unchanged`, no write (62
+   seconds).
+2. The same files with one field added to the DLO and to the DMO, one pair added and
+   one authored pair dropped in the mapping file: all three `updated`. The mapping
+   ends with the two kept authored pairs, the new pair, the key pair and the four
+   generated pairs. 335 seconds, slow because a mapping deploy sends each
+   verification read through its own CLI process.
+3. Hand-written DLO and mapping onto the standard DMO `ssot__Brand__dlm` (pairs
+   `Id__c` to `ssot__Id__c` and `Name__c` to `ssot__Name__c`) created and deployed
+   again: `unchanged` (58 seconds).
+
+Unit tests: 2875 tests, 2873 pass, 0 fail, 2 skipped. README,
+`docs/capabilities.md` and `docs/artifact-format.md` describe the behaviour.
+
+Not covered live: other orgs, API versions below 68, populated objects, non-default
+data spaces.
+
 # Whole-mapping deletion through the Metadata API — 2026-11-11
 
 `sf data360 delete -m mapping:<Name>` now deletes the whole mapping with one Metadata

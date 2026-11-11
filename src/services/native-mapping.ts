@@ -90,6 +90,39 @@ function isStandardKeyQualifierPair(
 }
 
 /**
+ * Recognise a pair Salesforce generates on a custom DMO: a system field onto its namesake, or
+ * the key qualifier of the Id__c primary key.
+ * @param {DloField} from Source field.
+ * @param {NativeDmoField} to Target field.
+ * @param {Map<string, DloField>} sources Source fields by name.
+ * @param {Map<string, NativeDmoField>} targets Target fields by name.
+ * @returns {boolean} Whether the pair is generated, not authored.
+ */
+function isCustomGeneratedPair(
+  from: DloField,
+  to: NativeDmoField,
+  sources: Map<string, DloField>,
+  targets: Map<string, NativeDmoField>,
+): boolean {
+  if (from.name !== to.name) return false;
+  if (
+    systemSourceFields.has(to.name) &&
+    to.creationType === 'System' &&
+    !from.isPrimaryKey &&
+    !to.isPrimaryKey
+  )
+    return true;
+  if (to.name !== 'KQ_Id__c' || to.creationType !== 'System' || to.usageTag !== 'KeyQualifier')
+    return false;
+  const targetKey = targets.get('Id__c');
+  return Boolean(
+    sources.get('Id__c')?.isPrimaryKey &&
+    targetKey?.isPrimaryKey &&
+    targetKey.keyQualifierName === 'KQ_Id',
+  );
+}
+
+/**
  * Recognise the authored primary-key pair that is never unmapped. On a custom DMO it is
  * Id__c -> Id__c on a custom key; on a standard DMO the key keeps its standard name.
  * @param {DloField} from Source field.
@@ -227,7 +260,6 @@ async function validateDependencies(
   const sources = new Map(source.spec.fields.map((field) => [field.name, field]));
   const targets = new Map(target.spec.fields.map((field) => [field.name, field]));
   const generated = new Set<string>();
-  const system = systemSourceFields;
   for (const pair of desired.spec.fieldMappings) {
     const from = sources.get(pair.sourceFieldDeveloperName);
     const to = targets.get(pair.targetFieldDeveloperName);
@@ -251,24 +283,7 @@ async function validateDependencies(
         generated.add(pairKey(pair));
       continue;
     }
-    if (from.name !== to.name) continue;
-    if (
-      system.has(to.name) &&
-      to.creationType === 'System' &&
-      !from.isPrimaryKey &&
-      !to.isPrimaryKey
-    )
-      generated.add(pairKey(pair));
-    if (to.name === 'KQ_Id__c' && to.creationType === 'System' && to.usageTag === 'KeyQualifier') {
-      const sourceKey = sources.get('Id__c');
-      const targetKey = targets.get('Id__c');
-      if (
-        sourceKey?.isPrimaryKey &&
-        targetKey?.isPrimaryKey &&
-        targetKey.keyQualifierName === 'KQ_Id'
-      )
-        generated.add(pairKey(pair));
-    }
+    if (isCustomGeneratedPair(from, to, sources, targets)) generated.add(pairKey(pair));
   }
   return { generated, sources, targets, standard, activates };
 }
@@ -323,7 +338,8 @@ export async function preflightNativeMapping(
   dependencies: MappingDependencies,
   requestScope?: string,
 ): Promise<NativeMappingDeployPlan> {
-  const desired = validateNativeMappingDocument(value);
+  // Cloned: generated pairs of the org are merged into it below, never into the caller's input.
+  const desired = structuredClone(validateNativeMappingDocument(value));
   if (desired.identity.dataSpace !== (requestScope ?? 'default'))
     throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
   const { generated, sources, targets, standard, activates } = await validateDependencies(
@@ -331,6 +347,20 @@ export async function preflightNativeMapping(
     dependencies,
   );
   const target = await resolveTarget(desired, client);
+  if (target) {
+    // Pairs Salesforce generated stay part of the mapping when the file does not list them.
+    const listed = new Set(desired.spec.fieldMappings.map((pair) => pairKey(pair)));
+    for (const pair of target.spec.fieldMappings) {
+      if (listed.has(pairKey(pair))) continue;
+      const from = sources.get(pair.sourceFieldDeveloperName);
+      const to = targets.get(pair.targetFieldDeveloperName);
+      if (!from || !to) continue;
+      const kept = standard
+        ? isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets)
+        : isCustomGeneratedPair(from, to, sources, targets);
+      if (kept) desired.spec.fieldMappings.push(structuredClone(pair));
+    }
+  }
   if (!target) {
     const fields = desired.spec.fieldMappings.filter((pair) => !generated.has(pairKey(pair)));
     // Unknown system/qualifier inputs cannot inherit another component's omission policy.

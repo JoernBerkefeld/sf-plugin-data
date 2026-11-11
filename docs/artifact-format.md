@@ -163,11 +163,12 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   `DataSourceObject__c` to `ssot__DataSourceObjectId__c`, `InternalOrganization__c`
   to `ssot__InternalOrganizationId__c` and `KQ_Id__c` to `KQ_Id__c`; on a custom DMO
   the generated pairs are same-name. Generated pairs are saved by retrieve and never
-  sent by deploy. A file with only the authored pairs can create a mapping; once the
-  mapping exists, a deploy requires the file to list the generated pairs as well
-  (`MAPPING_PROTECTED_PAIR_REQUIRED`), so retrieve the mapping and edit that file. A
-  deploy removes every authored pair that the file no longer lists, including a pair
-  onto a standard field; the generated pairs and the primary-key pair must stay.
+  sent by deploy. A file may list only the authored pairs, for a create and for a
+  deploy onto the existing mapping alike: the generated pairs are taken from the
+  org's copy and treated as part of the file. The authored primary-key pair must stay
+  in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). A deploy removes every authored
+  pair that the file no longer lists, including a pair onto a standard field; the
+  generated pairs and the primary-key pair stay in the mapping.
   `sf data360 delete -m mapping:<MappingApiName>` deletes a mapping whatever pairs it
   holds and never removes the file. Only the last mapping of a custom DMO is refused
   (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`); delete the DMO instead. Creating the first mapping onto a standard
@@ -177,8 +178,18 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   a mapping created onto an already active standard DMO from a file with two authored
   pairs, the retrieved file deploying back unchanged, the activation notice in a
   preview, a first mapping created onto an inactive standard DMO, a pair onto a
-  standard field removed by deploying the retrieved file without it, and the removal
-  of a field shared by two mappings of a custom DMO.
+  standard field removed by deploying the retrieved file without it, the removal
+  of a field shared by two mappings of a custom DMO, and hand-written mapping files
+  with the authored pairs only deploying back unchanged onto a custom and a standard
+  DMO, one of them adding a pair and dropping another.
+- A data lake object file (`data360/dlo/<FullApiName>__dll.dlo-meta.json`) for an
+  existing data lake object may omit the fields Salesforce generated:
+  `cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
+  `InternalOrganization__c` and the key qualifier of the primary key (`KQ_<Key>__c`,
+  for example `KQ_Id__c`). They stay as they are. Any other field of the target that
+  the file omits is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is
+  compared on the keys the file states: keys only the org's copy carries are ignored,
+  and a stated key that differs is refused with the same code.
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one

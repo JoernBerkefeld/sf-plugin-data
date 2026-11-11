@@ -133,16 +133,27 @@ export async function preflightNativeDlo(
     throw new DloError('UNSUPPORTED_DLO_CATEGORY_CHANGE');
   const existing = new Map(target.document.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
+  const keyQualifiers = new Set(
+    target.document.spec.fields
+      .filter((field) => field.isPrimaryKey)
+      .map((field) => `KQ_${field.name}`),
+  );
   for (const [name, field] of existing) {
-    // Native additive PATCH retains only this omitted generated qualifier.
+    // Fields Salesforce generated (system fields and the key qualifier of the primary key) stay
+    // as they are when the file does not list them.
     if (
-      name === 'KQ_Id__c' &&
+      !incoming.has(name) &&
       !field.isPrimaryKey &&
       field.creationType !== 'Custom' &&
-      !incoming.has(name)
+      (systemFields.has(name) || keyQualifiers.has(name))
     )
       continue;
-    if (!isDeepStrictEqual(field, incoming.get(name)))
+    const listed = incoming.get(name);
+    // A listed field is compared on the keys the file states; keys only the org adds are kept.
+    const observed = listed
+      ? Object.fromEntries(Object.entries(field).filter(([key]) => key in listed))
+      : field;
+    if (!isDeepStrictEqual(observed, listed))
       throw explainMismatch(
         new DloError('UNSUPPORTED_DLO_FIELD_CHANGE'),
         'update field preservation',

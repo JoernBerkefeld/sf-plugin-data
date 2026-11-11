@@ -121,10 +121,15 @@ mixed-family or released-package qualification is earned.
 Exact native `dlo:Name__dll` deployment now compares the existing target after all
 category, data-space, primary-key and field-preservation admission. Equal labels
 and no added fields return `unchanged` / `not-attempted`, without POST or PATCH.
-Field order is immaterial; the deliberate portable omission of ordinary generated
-`KQ_Id__c` remains a preservation exception, not deletion. Other field changes or
-removals still block. Label changes and ordinary nonprimary Text additions retain
-the existing update route.
+Field order is immaterial. A file may omit the fields Salesforce generated
+(`cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
+`InternalOrganization__c` and the key qualifier of the primary key, `KQ_<Key>__c`,
+for example `KQ_Id__c`); they stay as they are, so a hand-written file with only the
+authored fields deploys onto its existing DLO. Any other omitted field is refused
+(`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on the keys the file
+states; keys only the org's copy carries are ignored, and a differing stated key is
+refused with the same code. Label changes and ordinary nonprimary Text additions
+retain the existing update route.
 
 Fresh isolated-installed API68 acceptance retrieved an empty standalone Other/default
 DLO from the source and deployed the exact saved file into the target, with differing
@@ -534,9 +539,14 @@ Native mapping targets, decided from the same raw read:
   `InternalOrganization`. The key qualifier pair is `KQ_<Key>__c` on both sides for
   the source primary key `<Key>__c`; on a DMO that is not yet enabled its target
   field may still be absent. Generated pairs are never sent and, with the key pair,
-  never unmapped by a deploy. A file with only the authored pairs can create a mapping; once the
-  mapping exists, a deploy requires the file to list the generated pairs as well
-  (`MAPPING_PROTECTED_PAIR_REQUIRED`), so retrieve the mapping and edit that file.
+  never unmapped by a deploy.
+- Mapping file and existing mapping, custom and standard target alike: the file may
+  list only the authored pairs. The pairs Salesforce generated (the three system
+  pairs and the key qualifier pair) are taken from the org's copy and treated as part
+  of the file, so a hand-written file deploys back `unchanged`, can add pairs, and
+  removes exactly the authored pairs it drops. The authored primary-key pair must
+  stay in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). A retrieved file, which lists
+  the generated pairs, behaves the same.
 - Activation notice: when the raw target read of a standard DMO does not say
   `isEnabled: true`, the preview item and the created item carry
   `MAPPING_ACTIVATES_STANDARD_DMO`. The first mapping enables the object for good
@@ -602,6 +612,16 @@ Native mapping targets, decided from the same raw read:
       Other, `KQ_Id__c` added and referenced by the standard primary key, not undone
       by deleting the mapping) and HTTP 500 on a native DELETE of the only mapping of
       a custom DMO.
+- [x] Observed at API 68 through the plugin in one org, hand-written files with
+      authored fields and pairs only: a data lake object, a custom DMO and their
+      mapping created and deployed again, all three `unchanged` with no write (62
+      seconds); with one field added to the data lake object and to the DMO, one pair
+      added and one authored pair dropped in the mapping file, all three `updated`,
+      the mapping then holding the two kept authored pairs, the new pair, the key pair
+      and the four generated pairs (335 seconds; each verification read of a mapping
+      deploy goes through its own CLI process); a data lake object and a mapping onto
+      `ssot__Brand__dlm` with the pairs `Id__c` to `ssot__Id__c` and `Name__c` to
+      `ssot__Name__c` created and deployed again, `unchanged` (58 seconds).
 - [ ] Not run live through the plugin: removal of a pair for a custom field of a
       standard DMO (covered by synthetic tests), whole-mapping delete at API 61 to
       67, populated objects.

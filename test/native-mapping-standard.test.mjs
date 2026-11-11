@@ -374,18 +374,22 @@ for (const systemType of ['Standard', 'System'])
 
 test('standard target keeps the protected-pair and create refusals', async () => {
   const mappings = [{ name: NAME, source: DLO, pairs: [...complete, notePair] }];
-  // Generated and key pairs cannot be left out of a reconciliation.
+  // The key pair cannot be left out of a reconciliation; an omitted generated pair is kept.
   for (const omitted of ['Id__c', 'DataSource__c', 'KQ_Id__c']) {
     const org = world({ mappings });
-    await assert.rejects(
-      preflightNativeMapping(
-        file(complete.filter(([source]) => source !== omitted)),
-        org.mapping,
-        org.deps,
-      ),
-      (error) => error.code === 'MAPPING_PROTECTED_PAIR_REQUIRED',
-      omitted,
-    );
+    const input = file(complete.filter(([source]) => source !== omitted));
+    if (omitted === 'Id__c')
+      await assert.rejects(
+        preflightNativeMapping(input, org.mapping, org.deps),
+        (error) => error.code === 'MAPPING_PROTECTED_PAIR_REQUIRED',
+        omitted,
+      );
+    else {
+      const plan = await preflightNativeMapping(input, org.mapping, org.deps);
+      assert.equal(plan.operation, 'update', omitted);
+      assert.deepEqual(plan.removals, [pair(notePair)], omitted);
+      assert.equal(plan.evidence.protectedPairs.length, 5, omitted);
+    }
     assert.deepEqual(org.writes, []);
   }
   // A system field of the DMO is never an authored create input.
@@ -410,6 +414,38 @@ test('standard target keeps the protected-pair and create refusals', async () =>
     (error) => error.code === 'MAPPING_FIELD_NOT_FOUND',
   );
 });
+
+for (const systemType of ['Standard', 'System'])
+  test(`hand-written standard mapping without generated pairs is a no-op, system fields read as ${systemType}`, async () => {
+    const org = world({ systemType, mappings: [{ name: NAME, source: DLO, pairs: complete }] });
+    // Authored pairs only, no selectors.
+    const input = file(authoredPairs);
+    for (const item of input.spec.fieldMappings) delete item.developerName;
+    assert.deepEqual(
+      input.spec.fieldMappings,
+      authoredPairs.map((value) => names(value)),
+    );
+    const before = structuredClone(input);
+    const plan = await preflightNativeMapping(input, org.mapping, org.deps);
+    assert.equal(plan.operation, 'noop');
+    assert.deepEqual(plan.writes, []);
+    assert.deepEqual(plan.desired.spec.fieldMappings, [
+      ...authoredPairs.map((value) => names(value)),
+      ...generatedPairs.map((value) => pair(value)),
+    ]);
+    assert.deepEqual(input, before);
+    const preview = await preflightMapping(input, org.mapping, org.deps);
+    assert.equal(preview.outcome, 'noop');
+    assert.deepEqual(preview.diagnostics, []);
+    assert.deepEqual(await executeMapping(input, org.mapping, org.deps), {
+      outcome: 'unchanged',
+      mutation: 'not-attempted',
+      diagnostics: [],
+    });
+    assert.deepEqual(org.writes, []);
+    assert.equal(org.state.mappings[0].fieldMappings.length, 6);
+    assert.deepEqual(input, before);
+  });
 
 test('refused DMO kinds stay MAPPING_TARGET_UNSUPPORTED under a standard name', async () => {
   for (const creationType of ['Adg', 'Bridge', undefined, 'Custom']) {
