@@ -398,14 +398,20 @@ for (const status of [429, 503]) {
               {},
               method,
             ),
+          // The mapping REST DELETE route is the field-pair delete.
           mapping: () =>
-            native(
-              createMappingClient('synthetic', '68.0', runner),
-              'Synthetic',
-              'Synthetic',
-              mappingBody,
-              method,
-            ),
+            method === 'DELETE'
+              ? createMappingClient('synthetic', '68.0', runner).deleteField(
+                  'Synthetic',
+                  'observed_selector_123',
+                )
+              : native(
+                  createMappingClient('synthetic', '68.0', runner),
+                  'Synthetic',
+                  'Synthetic',
+                  mappingBody,
+                  method,
+                ),
           stream: () =>
             createDataStreamClient('synthetic', {}, '68.0', runner).delete(
               '0dk000000000001AAA',

@@ -644,7 +644,7 @@ export type NativeMappingUnmapPlan = {
  * @param {NativeMappingDocument} selected Fresh target definition.
  * @param {MappingClient} client Version-bearing mapping reader.
  * @param {MappingDependencies} dependencies Fresh parent readers.
- * @param {NativeMappingField[]} [requestedRemovals] Desired-state omissions, or all authored pairs.
+ * @param {NativeMappingField[]} requestedRemovals Desired-state omissions.
  * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<NativeMappingUnmapPlan>} Complete removal evidence, without mutation.
  */
@@ -652,7 +652,7 @@ export async function preflightUnmapNativeMapping(
   selected: NativeMappingDocument,
   client: MappingClient,
   dependencies: MappingDependencies,
-  requestedRemovals?: NativeMappingField[],
+  requestedRemovals: NativeMappingField[],
   requestScope?: string,
 ): Promise<NativeMappingUnmapPlan> {
   if (!isNativeMappingDeletionVersion(client.apiVersion))
@@ -703,8 +703,7 @@ export async function preflightUnmapNativeMapping(
       protectedPairs.push(pair);
       continue;
     }
-    if (requestedRemovals && !requestedRemovals.some((field) => pairKey(field) === pairKey(pair)))
-      continue;
+    if (!requestedRemovals.some((field) => pairKey(field) === pairKey(pair))) continue;
     // Any other pair is removable; Salesforce decides (live API 68, custom and standard fields).
     removals.push(pair);
   }
@@ -888,7 +887,7 @@ export const defaultMappingDeleteSettle: NativeMappingDeleteSettle = {
 async function readMappingSurroundings(
   target: string,
   client: MappingClient,
-  dependencies: MappingDependencies,
+  dependencies: Pick<MappingDependencies, 'target'>,
   requestScope?: string,
 ) {
   let entries: Record<string, unknown>[] = [];
@@ -922,14 +921,14 @@ async function readMappingSurroundings(
  * a custom DMO, so that case is refused here with its way out; a standard DMO has no such limit.
  * @param {string} apiName Exact target-native mapping name.
  * @param {MappingClient} client Target mapping reader.
- * @param {MappingDependencies} dependencies Fresh parent readers.
+ * @param {Pick<MappingDependencies, 'target'>} dependencies Fresh DMO reader.
  * @param {string} [requestScope] Optional request scope; omission has local effective default context.
  * @returns {Promise<NativeMappingDeletePlan>} What must be unchanged after the deletion.
  */
 export async function preflightDeleteNativeMapping(
   apiName: string,
   client: MappingClient,
-  dependencies: MappingDependencies,
+  dependencies: Pick<MappingDependencies, 'target'>,
   requestScope?: string,
 ): Promise<NativeMappingDeletePlan> {
   if (!isNativeMappingDeletionVersion(client.apiVersion))
@@ -945,7 +944,8 @@ export async function preflightDeleteNativeMapping(
   if (!mappings.some((entry) => isDeepStrictEqual(entry, selected)))
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   const others = mappings.filter((entry) => entry.identity.apiName !== apiName);
-  if (others.length === 0 && nativeDmoWriteScope(rawTarget) === 'custom') {
+  // Namespaced custom DMOs share the limit, so test the creation type, not the write scope.
+  if (others.length === 0 && rawTarget.creationType === 'Custom') {
     const error = new NativeMappingError('MAPPING_LAST_MAPPING_DELETE_BLOCKED');
     replaceExplanation(
       error,
@@ -969,7 +969,7 @@ export async function preflightDeleteNativeMapping(
 export async function deleteNativeMapping(
   apiName: string,
   client: MappingClient,
-  dependencies: MappingDependencies,
+  dependencies: Pick<MappingDependencies, 'target'>,
   requestScope?: string,
   settle: NativeMappingDeleteSettle = defaultMappingDeleteSettle,
 ): Promise<{ apiName: string }> {

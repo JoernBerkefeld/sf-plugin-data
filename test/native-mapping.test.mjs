@@ -253,7 +253,6 @@ test('mapping transport encodes explicit dataspace on every operation without ch
   await client.get(mappingName);
   await client.create(body());
   await client.update(mappingName, body());
-  await client.delete(mappingName);
   await client.deleteField(mappingName, 'observed_selector_123');
   assert.deepEqual(calls, [
     ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm`],
@@ -261,35 +260,8 @@ test('mapping transport encodes explicit dataspace on every operation without ch
     ['GET', `${prefix}/${mappingName}${query}`],
     ['POST', `${prefix}${query}`],
     ['PATCH', `${prefix}/${mappingName}/field-mappings${query}`],
-    ['DELETE', `${prefix}/${mappingName}${query}`],
     ['DELETE', `${prefix}/${mappingName}/field-mappings/observed_selector_123${query}`],
   ]);
-});
-
-test('mapping DELETE accepts documented200 and observed204 empty without field delete or cascade', async () => {
-  let calls = 0;
-  const client = createMappingClient('target', '68.0', async (arguments_) => {
-    calls++;
-    const request = JSON.parse(
-      await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),
-    );
-    assert.deepEqual(request, {
-      url: `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}`,
-      method: 'DELETE',
-      body: { mode: 'raw', raw: '' },
-    });
-    return http(200);
-  });
-  assert.equal(await client.delete(mappingName), undefined);
-  assert.equal(calls, 1);
-  assert.equal(
-    await createMappingClient('target', '68.0', async () => http(204)).delete(mappingName),
-    undefined,
-  );
-  await assert.rejects(
-    createMappingClient('target', '68.0', async () => http(202)).delete(mappingName),
-    /UNCONFIRMED/,
-  );
 });
 
 test('mapping field DELETE uses exact observed selector once and rejects unsafe or unqualified inputs', async () => {
@@ -383,7 +355,7 @@ test('mapping transport rejects unsafe selection and read documents as write pay
     () => client.list(''),
     () => client.list('Example__dlm', '../escape'),
     () => client.get('../escape'),
-    () => client.delete('../escape'),
+    () => client.remove('../escape'),
     () => client.update('../escape', body()),
     () => client.update(mappingName, { ...body(), fieldMapping: document().spec.fieldMappings }),
     () => client.create(document()),

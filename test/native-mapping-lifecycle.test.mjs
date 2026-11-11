@@ -15,6 +15,7 @@ import {
   unmapNativeMappingFields,
 } from '../lib/services/native-mapping.js';
 import { executeMapping, preflightMapping } from '../lib/services/command-native-mapping.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
 const names = [
   'Id__c',
@@ -492,7 +493,6 @@ const deleteFixture = ({ alone = false } = {}) => {
   const client = {
     apiVersion: '68.0',
     deleteField: async () => assert.fail('mapping deletion never unmaps'),
-    delete: async () => assert.fail('mapping deletion never sends a REST DELETE'),
     list: async (...arguments_) => {
       calls.push(['list', ...arguments_]);
       return {
@@ -580,7 +580,12 @@ test('deletion and shared unmap reject unnormalized or outside versions before r
         (error) => error.code === 'MAPPING_DELETE_VERSION_UNQUALIFIED',
       );
     await assert.rejects(
-      preflightUnmapNativeMapping(normalizeNativeMapping(f.selected), f.client, f.deps),
+      preflightUnmapNativeMapping(
+        normalizeNativeMapping(f.selected),
+        f.client,
+        f.deps,
+        normalizeNativeMapping(f.selected).spec.fieldMappings,
+      ),
       /VERSION_UNQUALIFIED/,
     );
     await assert.rejects(
@@ -664,6 +669,19 @@ test('the last mapping of a custom DMO is refused in preview and execution witho
     // The DMO kind decides, so its read is part of the refusal.
     assert.deepEqual(f.calls.at(-1), ['dmo', 'Example__dlm']);
   }
+});
+
+test('the last mapping of a namespaced custom DMO gets the same refusal', async () => {
+  const f = deleteFixture({ alone: true });
+  f.schema.name = 'ns__Example__dlm';
+  await assert.rejects(
+    preflightDeleteNativeMapping(mappingName, f.client, f.deps),
+    (error) =>
+      error instanceof NativeMappingError &&
+      error.code === 'MAPPING_LAST_MAPPING_DELETE_BLOCKED' &&
+      /only mapping of the custom DMO Example__dlm/u.test(operationDiagnostic(error, '')),
+  );
+  assert.deepEqual(writes(f.calls), []);
 });
 
 test('mapping malformed, incomplete or stale inventory blocks preview and execution before deletion', async () => {
@@ -874,7 +892,12 @@ const unmapFixture = () => {
 
 test('guarded unmap uses fresh observed selectors, preserves five protected pairs and exact schema', async () => {
   const f = unmapFixture();
-  const plan = await preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps);
+  const plan = await preflightUnmapNativeMapping(
+    normalizeNativeMapping(f.state),
+    f.client,
+    f.deps,
+    normalizeNativeMapping(f.state).spec.fieldMappings,
+  );
   assert.equal(plan.protectedPairs.length, 5);
   assert.deepEqual(
     plan.removals.map((pair) => pair.sourceFieldDeveloperName),
@@ -916,7 +939,12 @@ test('guarded unmap accepts Number identity fields and checks CREATING snapshots
     await remove(...arguments_);
     remaining = 1;
   };
-  const plan = await preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps);
+  const plan = await preflightUnmapNativeMapping(
+    normalizeNativeMapping(f.state),
+    f.client,
+    f.deps,
+    normalizeNativeMapping(f.state).spec.fieldMappings,
+  );
   await unmapNativeMappingFields(plan, f.client, f.deps, () => {});
   assert.equal(f.calls.length, 2);
 });
@@ -1081,7 +1109,12 @@ test('guarded unmap refuses unknown metadata, missing selectors and nonqualified
     if (mode === 'selector') delete f.state.fieldMappings[1].developerName;
     if (mode === 'qualifier') f.schema.fields[6].usageTag = 'Unknown';
     await assert.rejects(
-      preflightUnmapNativeMapping(normalizeNativeMapping(f.state), f.client, f.deps),
+      preflightUnmapNativeMapping(
+        normalizeNativeMapping(f.state),
+        f.client,
+        f.deps,
+        normalizeNativeMapping(f.state).spec.fieldMappings,
+      ),
       expected,
       mode,
     );
@@ -1144,6 +1177,7 @@ test('guarded unmap stops after lost response, ignored removal, schema drift or 
       normalizeNativeMapping(f.state),
       f.client,
       f.deps,
+      normalizeNativeMapping(f.state).spec.fieldMappings,
     );
     const remove = f.client.deleteField;
     f.client.deleteField = async (...arguments_) => {
@@ -1173,6 +1207,7 @@ test('guarded unmap revalidates stale evidence and accepts only flag absence, ne
     normalizeNativeMapping(stale.state),
     stale.client,
     stale.deps,
+    normalizeNativeMapping(stale.state).spec.fieldMappings,
   );
   stale.schema.label = 'changed';
   await assert.rejects(
@@ -1184,6 +1219,7 @@ test('guarded unmap revalidates stale evidence and accepts only flag absence, ne
     normalizeNativeMapping(f.state),
     f.client,
     f.deps,
+    normalizeNativeMapping(f.state).spec.fieldMappings,
   );
   const remove = f.client.deleteField;
   f.client.deleteField = async (...arguments_) => {

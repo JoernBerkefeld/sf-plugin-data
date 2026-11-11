@@ -34,7 +34,6 @@ export type MappingClient = {
   get: (mappingDeveloperName: string) => Promise<unknown>;
   create: (body: MappingWriteBody) => Promise<unknown>;
   update: (mappingDeveloperName: string, body: MappingWriteBody) => Promise<unknown>;
-  delete: (mappingDeveloperName: string) => Promise<void>;
   /** One Metadata API destructive deployment of the whole mapping; never retried. */
   remove: (mappingDeveloperName: string) => Promise<void>;
 };
@@ -359,8 +358,5 @@ export function createMappingClient(
     create: async (body) => request('POST', scopeQuery, body),
     update: async (name, body) =>
       request('PATCH', `${nameSuffix(name)}/field-mappings${scopeQuery}`, body),
-    delete: async (name) => {
-      await request('DELETE', `${nameSuffix(name)}${scopeQuery}`);
-    },
   };
 }

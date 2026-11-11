@@ -24,7 +24,6 @@ const runner = async () => assert.fail('bound mapping GET/DELETE must never use 
 const operations = {
   get: { method: 'GET', run: (client) => client.get(name) },
   list: { method: 'GET', run: (client) => client.list('Target__dlm', 'Source__dll') },
-  delete: { method: 'DELETE', run: (client) => client.delete(name) },
   deleteField: {
     method: 'DELETE',
     run: (client) => client.deleteField(name, 'observed_selector_123'),
@@ -128,22 +127,16 @@ test('bound mapping GET rejects array bodies and HTTP 204', async () => {
   assert.equal(empty.outcome.error.code, 'MAPPING_REQUEST_UNCONFIRMED');
 });
 
-test('bound mapping DELETE accepts documented 200 and observed 204 on exact routes', async () => {
-  const deleted = await wire('DELETE', 204, operations.delete.run);
-  assert.deepEqual(deleted.outcome, { value: undefined });
-  assert.deepEqual(deleted.paths, [`${endpoint}/${name}`]);
+test('bound mapping field DELETE accepts documented 200 and observed 204 on the exact route', async () => {
   const field = await wire('DELETE', 204, operations.deleteField.run);
   assert.deepEqual(field.outcome, { value: undefined });
   assert.deepEqual(field.paths, [`${endpoint}/${name}/field-mappings/observed_selector_123`]);
-  // Same contract as the runner path (native-mapping.test.mjs "accepts documented200 and observed204").
-  for (const run of [operations.delete.run, operations.deleteField.run]) {
-    const documented = await wire('DELETE', 200, run, '{}');
-    assert.equal(documented.attempts, 1);
-    assert.deepEqual(documented.outcome, { value: undefined });
-  }
+  const documented = await wire('DELETE', 200, operations.deleteField.run, '{}');
+  assert.equal(documented.attempts, 1);
+  assert.deepEqual(documented.outcome, { value: undefined });
 });
 
-test('mapping delete command builds one bound sender per selector and bound parent reads', async () => {
+test('mapping delete command builds one bound sender per selector and a bound DMO read', async () => {
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: { metadata: ['mapping:Generated_123'], 'data-space': 'default', preview: true },
@@ -159,16 +152,15 @@ test('mapping delete command builds one bound sender per selector and bound pare
   command.createMappingClient = (_target, _version, actualRunner, _scope, actualSender) => {
     assert.equal(actualRunner, undefined);
     assert.equal(actualSender, sender);
-    return { delete: async () => {} };
+    return { remove: async () => {} };
   };
-  const source = { get: async () => ({}) };
   const target = { get: async () => ({}) };
-  command.createDloNativeDeleteClient = () => source;
+  command.createDloNativeDeleteClient = () => assert.fail('mapping delete reads no DLO');
   command.createDmoNativeDeleteClient = () => target;
   command.createDloClient = command.createDmoClient = () =>
-    assert.fail('mapping parent reads must use the bound DLO/DMO clients');
+    assert.fail('the mapping DMO read must use the bound DMO client');
   command.preflightDeleteMapping = async (_name, _client, dependencies) => {
-    assert.equal(dependencies.source, source);
+    assert.deepEqual(Object.keys(dependencies), ['target']);
     assert.equal(dependencies.target, target);
     return { selected: {}, others: [], targetFields: [] };
   };

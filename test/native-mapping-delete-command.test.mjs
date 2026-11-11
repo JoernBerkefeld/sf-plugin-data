@@ -40,7 +40,7 @@ for (const scope of [undefined, 'Team'])
   for (const preview of [false, true])
     test(`public mapping delete passes scope without moving injection positions ${scope}/${preview}`, async () => {
       const command = invocation({ dataspace: scope, preview });
-      const client = { delete: async () => {} };
+      const client = { remove: async () => {} };
       command.createMappingClient = (_target, _version, runner, actual) => {
         assert.equal(runner, undefined);
         assert.equal(actual, scope);
@@ -55,10 +55,8 @@ for (const scope of [undefined, 'Team'])
       ) => {
         calls++;
         assert.equal(name, 'Generated_123');
-        assert.equal(typeof actualClient.delete, 'function');
         assert.equal(typeof actualClient.remove, 'function');
-        assert.ok(dependencies.source);
-        assert.ok(dependencies.target);
+        assert.deepEqual(Object.keys(dependencies), ['target']);
         assert.equal(actual, scope);
         return { selected: {}, others: [], targetFields: [] };
       };
@@ -128,27 +126,13 @@ const mappingFixture = (command) => {
       return structuredClone(name === selected.developerName ? selected : survivor);
     },
     deleteField: async () => assert.fail('mapping deletion never unmaps'),
-    delete: async () => assert.fail('mapping deletion never sends a REST DELETE'),
     remove: async (name) => {
       calls.push(['remove', name]);
       deleted = true;
     },
   };
   command.createMappingClient = () => client;
-  command.createDloClient = () => ({
-    get: async (name) => ({
-      name,
-      label: name,
-      category: 'Other',
-      dataSpaceInfo: [{ name: 'default' }],
-      fields: names.map((name, index) => ({
-        name,
-        label: name,
-        dataType: 'Text',
-        isPrimaryKey: index === 0,
-      })),
-    }),
-  });
+  command.createDloClient = () => assert.fail('mapping deletion reads no DLO');
   command.createDmoClient = () => ({ get: async () => structuredClone(schema) });
   return { calls, client, selected, survivor, schema };
 };
@@ -251,7 +235,6 @@ for (const version of [
       assert.equal(result.status, 'success', JSON.stringify(result));
       assert.deepEqual(factories, [
         ['createMappingClient', 'target', pin],
-        ['createDloClient', 'target', pin],
         ['createDmoClient', 'target', pin],
       ]);
       assert.deepEqual(f.calls, preview ? [] : [['remove', 'Generated_123']]);

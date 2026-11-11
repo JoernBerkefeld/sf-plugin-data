@@ -261,12 +261,18 @@ test('delete help discloses whole-mapping deletion and bounded qualification', a
     'The last mapping of a custom DMO is refused before any write',
     'delete the DMO instead',
     'empty custom fixtures',
-    '--preview performs zero writes',
+    '--preview performs zero writes and reports the planned step',
     'partial failure stops the batch',
-    'no local deletion, parent DELETE, retries or rollback',
+    'no local deletion, retries or rollback',
   ])
     assert.ok(Delete.description.includes(text), text);
-  assert.ok(!Delete.description.includes('No cascade'));
+  for (const stale of [
+    'No cascade',
+    'Full parent schemas and survivor content',
+    'reports the ordered plan',
+    'parent DELETE',
+  ])
+    assert.ok(!Delete.description.includes(stale), stale);
 });
 
 test('API flags admit auto and core numeric versions only; latest is no longer accepted', async () => {
