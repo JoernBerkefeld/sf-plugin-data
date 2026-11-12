@@ -39,14 +39,14 @@ export default class Publish extends SfCommand<PublishEnvelope> {
   public static readonly aliases = ['datacloud:publish', 'd360:publish', 'dc:publish'];
   public static readonly summary = 'Publish one paired Data360 Calculated Insight draft.';
   public static readonly description =
-    'Requires one exact --source-dir XML or JSON member of a matching Calculated Insight pair, explicit --api-version 68.0 and default space (--dataspace; --data-space is a compatibility alias). Only NOT_SCHEDULED, never-run matching DRAFT configuration is publishable. --preview is read-only; an equal ACTIVE target is unchanged without acknowledgement or writes. DRAFT publication requires --allow-processing and uses a separate NotScheduled publication PATCH, never an SQL edit, create or schedule engine. Native publication/read routes use API68; independent Metadata and dependency reads remain API65. Completion requires bounded independent ACTIVE settlement; an unknown mutation is not retried or rolled back. No compute, ingestion or populated-object guarantee.';
+    'Requires one exact --source-dir XML or JSON member of a matching Calculated Insight pair, --api-version auto (68.0) or 68.0 and default space (--dataspace; --data-space is a compatibility alias). Only NOT_SCHEDULED, never-run matching DRAFT configuration is publishable. --preview is read-only; an equal ACTIVE target is unchanged without acknowledgement or writes. DRAFT publication requires --allow-processing and uses a separate NotScheduled publication PATCH, never an SQL edit, create or schedule engine. Native publication/read routes use API68; independent Metadata and dependency reads remain API65. Completion requires bounded independent ACTIVE settlement; an unknown mutation is not retried or rolled back. No compute, ingestion or populated-object guarantee.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
       summary: 'Authenticated target org alias or username.',
     }),
     'source-dir': Flags.string({ char: 'd', summary: 'One exact paired CI XML or JSON member.' }),
-    'api-version': Flags.string({ summary: 'Required explicit native lifecycle pin: 68.0.' }),
+    'api-version': Flags.string({ summary: 'Native lifecycle route: auto (68.0) or 68.0.' }),
     dataspace: Flags.string({ aliases: ['data-space'], summary: 'Default space only.' }),
     preview: Flags.boolean({ default: false, summary: 'Read and report only; never publish.' }),
     'allow-processing': Flags.boolean({
@@ -101,7 +101,10 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       )
         throw new Error('Selection');
       code = 'INVALID_SCOPE';
-      if (flags['api-version'] !== '68.0' || (flags.dataspace ?? 'default') !== 'default')
+      if (
+        !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
+        (flags.dataspace ?? 'default') !== 'default'
+      )
         throw new Error('Scope');
       const snapshot = JSON.stringify(flags);
       code = 'INVALID_SOURCE';

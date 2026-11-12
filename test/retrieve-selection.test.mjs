@@ -1,5 +1,6 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import { acquireRetrieveSelection } from '../lib/services/acquire-retrieve-selection.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
@@ -358,7 +359,7 @@ test('the retrieve command defines no dependency flag and publishes exactly the 
     const written = [];
     command.writeNativeDmo = () => assert.fail('a referenced DMO is never published');
     command.writeSegment = async (document_, root, overwrite) => {
-      assert.equal(root, 'synthetic-root');
+      assert.equal(root, path.resolve('synthetic-root'));
       assert.equal(overwrite, true);
       written.push(document_.identity.apiName);
       return { path: `${document_.identity.apiName}.segment.json`, outcome: 'unchanged' };
@@ -417,7 +418,7 @@ test('an explicit Segment and DMO selection reads each family at its own version
         };
         const written = [];
         command.writeNativeDmo = async (value, root, overwrite) => {
-          assert.equal(root, 'synthetic-root');
+          assert.equal(root, path.resolve('synthetic-root'));
           assert.equal(overwrite, false);
           written.push(`dmo:${value.identity.apiName}`);
           assert.equal(value.spec.fields[0].dataType, 'Text');

@@ -95,7 +95,7 @@ const run = async (command) => {
 const harness = async (overrides = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-publish-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
-  const desired = observeCalculatedInsight(runtime('DRAFT'), '68.0').document;
+  const desired = observeCalculatedInsight(runtime('DRAFT')).document;
   const xml = `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${expression}</expression><masterLabel>Synthetic publish</masterLabel></MktCalcInsightObjectDef>\n`;
   const pair = await writeCalculatedInsightDocument(desired, xml, root, false);
   const flags = {
@@ -212,7 +212,7 @@ test('publish DRAFT without processing acknowledgement is blocked with no mutati
   assert.equal(h.calls.writes, 0);
   assert.equal(result.diagnostics.errors[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
 });
-for (const pin of [undefined, 'auto', '65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
+for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
   test(`publish rejects pin ${pin} before auth`, async () => {
     const h = await harness({ 'api-version': pin });
     const { result } = await run(h.command);
@@ -352,4 +352,36 @@ test('publish help preserves separate lifecycle and no scheduling guarantees', (
   assert.match(Publish.description, /equal ACTIVE target is unchanged/u);
   assert.match(Publish.description, /dependency reads remain API65/u);
   assert.equal(Publish.flags['api-version'].default, undefined);
+});
+
+for (const pin of [undefined, 'auto'])
+  test(`publish accepts default pin ${pin} as native68`, async () => {
+    const h = await harness({ 'api-version': pin });
+    const { result } = await run(h.command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(h.calls.writes, 1);
+  });
+
+test('publish refuses a real DRAFT expression drift but not volatile timestamps', async () => {
+  const h = await harness();
+  const get = h.context.get;
+  let reads = 0;
+  h.context.get = async () => {
+    const raw = await get();
+    raw.lastCalcInsightStatusDateTime = `2026-11-12T07:0${++reads % 10}:00.000Z`;
+    return raw;
+  };
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  const drifted = await harness();
+  const original = drifted.context.get;
+  let count = 0;
+  drifted.context.get = async () => {
+    const raw = await original();
+    if (++count === 2) raw.displayName = 'Changed label';
+    return raw;
+  };
+  const refused = await run(drifted.command);
+  assert.notEqual(refused.result.status, 'success');
+  assert.equal(drifted.calls.writes, 0);
 });

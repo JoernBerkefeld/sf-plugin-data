@@ -686,8 +686,9 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
 
 test('CI delete parser rejects unbound or unqualified intent before authentication', () => {
   for (const [arguments_, code] of [
-    [[], 'INVALID_SCOPE'],
+    [[], 'INVALID_SELECTION'],
     [['--api-version', '68.0'], 'INVALID_SELECTION'],
+    [['--api-version', '65.0', '-d', 'Synthetic.calculatedInsight.json'], 'INVALID_SCOPE'],
     [
       ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--data-space', 'other'],
       'INVALID_SCOPE',
@@ -722,7 +723,8 @@ test('CI delete parser rejects unbound or unqualified intent before authenticati
 test('publish parser blocks missing pairs and unqualified scope before authentication', () => {
   for (const [arguments_, code] of [
     [[], 'INVALID_SELECTION'],
-    [['-d', 'Synthetic.calculatedInsight.json'], 'INVALID_SCOPE'],
+    [['-d', 'Synthetic.calculatedInsight.json'], 'UNSAFE_SOURCE'],
+    [['-d', 'Synthetic.calculatedInsight.json', '--api-version', '65.0'], 'INVALID_SCOPE'],
     [
       ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--data-space', 'other'],
       'INVALID_SCOPE',

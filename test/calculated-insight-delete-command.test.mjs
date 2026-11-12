@@ -94,7 +94,7 @@ const run = async (command) => {
 const harness = async (overrides = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-delete-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
-  const desired = observeCalculatedInsight(runtime(), '68.0').document;
+  const desired = observeCalculatedInsight(runtime()).document;
   const xml = `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${expression}</expression><masterLabel>Synthetic delete</masterLabel></MktCalcInsightObjectDef>\n`;
   const pair = await writeCalculatedInsightDocument(desired, xml, root, false);
   const flags = {
@@ -228,7 +228,7 @@ for (const confirmation of [false, undefined, 'true'])
     assert.equal(h.calls.writes, 0);
     assert.equal(result.diagnostics.errors[0].code, 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
   });
-for (const pin of [undefined, 'auto', '65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
+for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
   test(`CI delete rejects pin ${pin} before auth`, async () => {
     const h = await harness({ 'api-version': pin });
     const { result } = await run(h.command);
@@ -307,4 +307,50 @@ test('CI delete help discloses paired destructive boundary without changing alia
   assert.match(Delete.description, /--confirm-delete/u);
   assert.match(Delete.description, /reads remain API65/u);
   assert.match(Delete.description, /already dual-absent targets are read-only/u);
+});
+
+for (const pin of [undefined, 'auto'])
+  test(`CI delete accepts default pin ${pin} as native68`, async () => {
+    const h = await harness({ 'api-version': pin });
+    const { result } = await run(h.command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(h.calls.writes, 1);
+  });
+
+test('CI delete ignores alternating ACTIVE attribution between baseline and fresh reads', async () => {
+  const h = await harness();
+  h.active();
+  const get = h.context.get;
+  let reads = 0;
+  h.context.get = async () => {
+    const raw = await get();
+    const sourceApiName =
+      ++reads % 2 === 0 ? 'ssot__DeviceId__c' : 'ssot__SoftwareApplicationId__c';
+    for (const role of ['dimensions', 'measures'])
+      raw[role][0].dataSource = { sourceApiName, type: 'STREAMING_DATA_MODEL' };
+    return raw;
+  };
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.equal(h.calls.writes, 1);
+});
+
+test('CI delete still refuses a real status drift between baseline and fresh reads', async () => {
+  const h = await harness();
+  h.active();
+  const get = h.context.get;
+  let reads = 0;
+  h.context.get = async () => {
+    const raw = await get();
+    if (++reads === 2) raw.calculatedInsightStatus = 'DRAFT';
+    if (reads === 2) {
+      raw.dimensions = [];
+      raw.measures = [];
+      raw.isFromPackage = nil;
+    }
+    return raw;
+  };
+  const { result } = await run(h.command);
+  assert.notEqual(result.status, 'success');
+  assert.equal(h.calls.writes, 0);
 });

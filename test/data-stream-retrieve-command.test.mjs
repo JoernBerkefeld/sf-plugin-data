@@ -1,5 +1,6 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import { Config } from '@oclif/core';
 import Retrieve from '../lib/commands/data360/retrieve.js';
@@ -80,7 +81,7 @@ for (const json of [true, false])
       });
       command.jsonEnabled = () => json;
       command.writeDataStream = async (document, root, overwrite) => {
-        assert.equal(root, 'chosen-root');
+        assert.equal(root, path.resolve('chosen-root'));
         assert.equal(overwrite, true);
         return {
           path: `${document.identity.apiName}.json`,

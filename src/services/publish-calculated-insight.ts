@@ -6,7 +6,10 @@ import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import type { CalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import { calculatedInsightDeployContext } from './preflight-calculated-insight-deploy.js';
-import { acquireExactCalculatedInsight } from './retrieve-calculated-insight.js';
+import {
+  acquireExactCalculatedInsight,
+  calculatedInsightTargetEvidence,
+} from './retrieve-calculated-insight.js';
 import type {
   CalculatedInsightConnection,
   CalculatedInsightReadContext,
@@ -120,7 +123,13 @@ export async function publishCalculatedInsight(
     if (!isDeepStrictEqual(bound, await context.bind(desired, context.check)))
       throw new Error('Dependency drift');
     const fresh = await capture();
-    if (!isDeepStrictEqual(baseline, fresh)) throw new Error('Target drift');
+    if (
+      !isDeepStrictEqual(
+        calculatedInsightTargetEvidence(baseline),
+        calculatedInsightTargetEvidence(fresh),
+      )
+    )
+      throw new Error('Target drift');
     await options.verifyInput();
     if (!isDeepStrictEqual(desired, validateCalculatedInsightDocument(value)))
       throw new Error('Input drift');

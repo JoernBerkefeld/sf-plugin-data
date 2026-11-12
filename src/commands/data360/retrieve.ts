@@ -57,11 +57,9 @@ import {
 } from '../../artifacts/calculated-insight-document.js';
 import type { CalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
 import {
-  retrieveCalculatedInsight,
   calculatedInsightReadContext,
   acquireExactCalculatedInsight,
 } from '../../services/retrieve-calculated-insight.js';
-import { bindCalculatedInsightDependencies } from '../../services/bind-calculated-insight-dependencies.js';
 import { retrieveCalculatedInsightSourceMetadata } from '../../transport/project-metadata.js';
 import { writeCalculatedInsightDocument } from '../../artifacts/write-calculated-insight.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
@@ -143,13 +141,35 @@ export type RetrieveEnvelope = {
   };
 };
 
+/** Name the actual reason a calculated insight was not exported. */
+const calculatedInsightRetrieveMessages: Record<string, string> = {
+  CI_NOT_FOUND: 'The calculated insight was not found in the target org; no files were written.',
+  CI_NOT_ACTIVE:
+    'The calculated insight is not ACTIVE (draft, processing or deleting); only ACTIVE calculated insights are retrieved.',
+  CI_RUNTIME_PROFILE_UNQUALIFIED:
+    'The calculated insight has a package origin, query dialect, schedule time zone, schedule history or source-CI link that the artifact cannot represent; no files were written.',
+  CI_EXPRESSION_UNQUALIFIED:
+    'The calculated insight SQL is outside what the calculated insight artifact can represent; no files were written.',
+  CI_CONFIGURATION_UNQUALIFIED:
+    'The calculated insight settings or schema are outside what the calculated insight artifact can represent; no files were written.',
+  CI_SCHEMA_UNQUALIFIED:
+    'The calculated insight dimensions or measures are outside what the calculated insight artifact can represent; no files were written.',
+  CI_ATTRIBUTION_UNQUALIFIED:
+    'The calculated insight field attribution is outside what the calculated insight artifact can represent; no files were written.',
+  CI_METADATA_MISMATCH:
+    'The calculated insight runtime and Metadata API definitions disagree; no files were written.',
+  CI_METADATA_AMBIGUOUS:
+    'The calculated insight Metadata API definition is missing or ambiguous; no files were written.',
+  CI_RUNTIME_UNKNOWN: 'The calculated insight could not be read; no files were written.',
+};
+
 /** Retrieve selected DMO configuration through existing service-owned capability checks. */
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory is blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -252,10 +272,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected acquireDataGraph = retrieveDataGraph;
   protected bindDataGraph = bindDataGraphDependencies;
   protected writeDataGraph = writeDataGraphDocument;
-  protected acquireCalculatedInsight = retrieveCalculatedInsight;
   protected calculatedInsightContext = calculatedInsightReadContext;
   protected acquireExactCalculatedInsight = acquireExactCalculatedInsight;
-  protected bindCalculatedInsight = bindCalculatedInsightDependencies;
   protected acquireCalculatedInsightXml = retrieveCalculatedInsightSourceMetadata;
   protected writeCalculatedInsight = writeCalculatedInsightDocument;
   protected acquireIdentityResolution = retrieveIdentityResolution;
@@ -366,6 +384,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const { flags } = await this.parse(Retrieve);
     const requestScope = flags.dataspace;
     const effectiveScope = requestScope ?? 'default';
+    // Writers require an absolute project root; resolve a relative -d against the cwd once.
+    const outputDirectory = path.resolve(flags['output-dir'] ?? process.cwd());
     const plugin = {
       name: packageMetadata.name,
       version: packageMetadata.version,
@@ -387,7 +407,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       result: {
         scope: {
           dataSpace: effectiveScope,
-          outputDir: path.resolve(flags['output-dir'] ?? process.cwd()),
+          outputDir: outputDirectory,
         },
         selection: flags.metadata ?? [],
         items: [],
@@ -489,7 +509,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
           const receipt = await this.writeDataTransform(
             observed.document,
-            path.resolve(flags['output-dir'] ?? process.cwd()),
+            outputDirectory,
             flags.overwrite,
           );
           envelope.result.items.push({
@@ -557,11 +577,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             this.createDataStreamClients(connection, target, version),
             effectiveScope,
           );
-          const receipt = await this.writeDataStream(
-            document,
-            flags['output-dir'] ?? process.cwd(),
-            flags.overwrite,
-          );
+          const receipt = await this.writeDataStream(document, outputDirectory, flags.overwrite);
           envelope.result.items.push({
             identity: document.identity,
             operation: 'retrieve',
@@ -607,11 +623,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         const context = await this.nativeGraphContext(org.getConnection('68.0'), 'default');
         const apiName = selectors[0].slice(11);
         const document = await this.retrieveNativeGraph(apiName, context);
-        const receipt = await this.writeDataGraph(
-          document,
-          flags['output-dir'] ?? process.cwd(),
-          flags.overwrite,
-        );
+        const receipt = await this.writeDataGraph(document, outputDirectory, flags.overwrite);
         envelope.provenance.sourceOrgId = context.orgId;
         envelope.metadata.soapApiVersion = '68.0';
         envelope.result.items.push({
@@ -750,7 +762,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                       this.createDmoClient(target, version),
                       requestScope,
                     );
-            const root = flags['output-dir'] ?? process.cwd();
+            const root = outputDirectory;
             const receipt =
               document.kind === 'mapping'
                 ? await this.writeNativeMapping(document, root, flags.overwrite)
@@ -800,7 +812,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           target,
           version,
           requestScope,
-          flags['output-dir'] ?? process.cwd(),
+          outputDirectory,
           flags.overwrite,
         );
         envelope.result.items.push(...relationships.items);
@@ -938,6 +950,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return finish('blocked', 'TARGET_ORG_REQUIRED');
     }
     let failed = false;
+    // An error already reported for its component is not reported again without identity.
+    let reported: unknown;
     const diagnose = (error: unknown, apiName?: string, family = 'dmo'): void => {
       let code = 'RETRIEVE_FAILED';
       if (
@@ -978,8 +992,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               'This component was not retrieved; no files were written for it.',
             )
           : apiName
-            ? 'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.'
-            : 'DMO inventory could not be resolved completely; no files were written.',
+            ? (calculatedInsightRetrieveMessages[code] ??
+              'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.')
+            : 'The selection could not be retrieved completely; no files were written.',
         retryable: false,
         ...(apiName ? { identity: { dataSpace: effectiveScope, apiName } } : {}),
       });
@@ -1002,11 +1017,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
           if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
           const document = await this.acquireDlo(apiName, this.createDloClient(target, '68.0'));
-          const receipt = await this.writeDlo(
-            document,
-            flags['output-dir'] ?? process.cwd(),
-            flags.overwrite,
-          );
+          const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
           envelope.result.items.push({
             identity: { dataSpace: 'default', apiName },
             operation: 'retrieve',
@@ -1040,11 +1051,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             this.createMappingClient(target, version, undefined, requestScope),
             requestScope,
           );
-          const receipt = await this.writeNativeMapping(
-            document,
-            flags['output-dir'] ?? process.cwd(),
-            flags.overwrite,
-          );
+          const receipt = await this.writeNativeMapping(document, outputDirectory, flags.overwrite);
           envelope.result.items.push({
             identity: { dataSpace: 'default', apiName },
             operation: 'retrieve',
@@ -1083,7 +1090,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             target,
             nativeApiVersion(flags['api-version']),
             requestScope,
-            flags['output-dir'] ?? process.cwd(),
+            outputDirectory,
             flags.overwrite,
           );
           envelope.result.items.push(...relationships.items);
@@ -1158,66 +1165,46 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         definitionXml: string;
       }> = [];
       // Complete every CI admission before any selected output and before IR repins the receiver.
-      const ciApiVersion =
-        ciSelectors.length > 0
-          ? operationApiVersion(flags['api-version'], 'calculated-insight')
-          : '65.0';
-      const ciVersion = Object.freeze({
-        requested: ciApiVersion,
-        restSelector: `v${ciApiVersion}`,
-        soapNumeric: ciApiVersion,
-      });
       // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
       for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
-        const ciConnection = org.getConnection(ciApiVersion);
-        const context =
-          ciApiVersion === '68.0'
-            ? this.calculatedInsightContext(ciConnection, effectiveScope)
-            : undefined;
-        const acquired = context
-          ? await (async () => {
-              const exact = await this.acquireExactCalculatedInsight(context, apiName);
-              if (exact.state !== 'present' || exact.status !== 'ACTIVE')
-                throw retainConnectDiagnostic(
-                  new CalculatedInsightError('CI_ACQUISITION_FAILED'),
-                  getConnectDiagnostic(exact),
-                );
-              return {
-                identity: exact.document.identity,
-                candidate: exact.document,
-                blockers: [],
-              };
-            })()
-          : await this.acquireCalculatedInsight(ciConnection, apiName, ciVersion, effectiveScope);
-        if (!acquired.candidate || acquired.blockers.length > 0)
-          throw retainConnectDiagnostic(
-            new CalculatedInsightError(acquired.blockers[0] ?? 'CI_ACQUISITION_FAILED'),
-            getConnectDiagnostic(acquired),
+        try {
+          const ciConnection = org.getConnection('68.0');
+          const context = this.calculatedInsightContext(ciConnection, effectiveScope);
+          // Retrieval is read-only: run history and a SYSTEM_MANAGED schedule are admitted.
+          const exact = await this.acquireExactCalculatedInsight(context, apiName, false, true);
+          if (exact.state !== 'present' || exact.status !== 'ACTIVE')
+            throw retainConnectDiagnostic(
+              new CalculatedInsightError(
+                exact.state === 'unknown'
+                  ? (exact.diagnostics.find((code) => /^CI_[A-Z_]+$/u.test(code)) ??
+                      'CI_ACQUISITION_FAILED')
+                  : exact.state === 'absent'
+                    ? 'CI_NOT_FOUND'
+                    : 'CI_NOT_ACTIVE',
+              ),
+              getConnectDiagnostic(exact),
+            );
+          if (
+            exact.document.identity.apiName !== apiName ||
+            exact.document.identity.dataSpace !== 'default'
+          )
+            throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+          await context.bind(exact.document);
+          const target = flags['target-org'] ?? ciConnection.getUsername();
+          if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
+          const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
+          const document = validateCalculatedInsightPair(
+            exact.document,
+            definitionXml,
+            apiName.slice(0, -5),
           );
-        if (
-          acquired.identity.apiName !== apiName ||
-          acquired.identity.dataSpace !== 'default' ||
-          acquired.candidate.identity.apiName !== apiName
-        )
-          throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-        await (context
-          ? context.bind(acquired.candidate)
-          : this.bindCalculatedInsight(
-              acquired.candidate,
-              ciConnection,
-              ciVersion,
-              effectiveScope,
-            ));
-        const target = flags['target-org'] ?? ciConnection.getUsername();
-        if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
-        const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
-        const document = validateCalculatedInsightPair(
-          acquired.candidate,
-          definitionXml,
-          apiName.slice(0, -5),
-        );
-        context?.check();
-        calculatedInsights.push({ document, definitionXml });
+          context.check();
+          calculatedInsights.push({ document, definitionXml });
+        } catch (error: unknown) {
+          diagnose(error, apiName, 'calculated-insight');
+          reported = error;
+          throw error;
+        }
       }
       const sourceGraphGuards: Array<() => Promise<void>> = [];
       const dataGraphs: Array<{ document: DataGraphDocument }> = [];
@@ -1361,33 +1348,21 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           const receipt =
             document.kind === 'data-graph'
-              ? await this.writeDataGraph(
-                  document,
-                  flags['output-dir'] ?? process.cwd(),
-                  flags.overwrite,
-                )
+              ? await this.writeDataGraph(document, outputDirectory, flags.overwrite)
               : document.kind === 'calculated-insight'
                 ? await this.writeCalculatedInsight(
                     document,
                     'definitionXml' in entry ? entry.definitionXml : '',
-                    flags['output-dir'] ?? process.cwd(),
+                    outputDirectory,
                     flags.overwrite,
                   )
                 : document.kind === 'identity-resolution'
-                  ? await this.writeIdentityResolution(
-                      document,
-                      flags['output-dir'] ?? process.cwd(),
-                      flags.overwrite,
-                    )
+                  ? await this.writeIdentityResolution(document, outputDirectory, flags.overwrite)
                   : document.kind === 'segment'
-                    ? await this.writeSegment(
-                        document,
-                        flags['output-dir'] ?? process.cwd(),
-                        flags.overwrite,
-                      )
+                    ? await this.writeSegment(document, outputDirectory, flags.overwrite)
                     : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
                         document,
-                        flags['output-dir'] ?? process.cwd(),
+                        outputDirectory,
                         flags.overwrite,
                       );
           envelope.result.items.push({
@@ -1436,7 +1411,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                               operation: `${document.kind}.get`,
                               apiVersion:
                                 document.kind === 'calculated-insight'
-                                  ? ciApiVersion
+                                  ? '68.0'
                                   : document.kind === 'segment'
                                     ? selection.soapNumeric
                                     : '65.0',
@@ -1451,7 +1426,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                                     transport: 'metadata' as const,
                                   },
                                 ]),
-                            ...(document.kind === 'calculated-insight' && ciApiVersion === '68.0'
+                            ...(document.kind === 'calculated-insight'
                               ? [
                                   {
                                     operation: 'calculated-insight.source',
@@ -1495,7 +1470,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         }
       }
     } catch (error: unknown) {
-      diagnose(error);
+      if (error !== reported) diagnose(error);
     }
     return finish(
       envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',

@@ -3,16 +3,13 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 import { operationDiagnostic } from './operation-diagnostic.js';
 import {
   buildCalculatedInsightUpdateDelta,
-  projectCalculatedInsight,
   validateCalculatedInsightDocument,
 } from '../artifacts/calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { bindCalculatedInsightDependencies } from './bind-calculated-insight-dependencies.js';
 import {
-  calculatedInsightScope,
   calculatedInsightReadContext,
+  calculatedInsightTargetEvidence,
   acquireExactCalculatedInsight,
-  retrieveCalculatedInsight,
 } from './retrieve-calculated-insight.js';
 import type {
   CalculatedInsightConnection,
@@ -90,7 +87,7 @@ export async function planNativeCalculatedInsightDeploy(
     acquired.expectations.runtime,
     acquired.expectations.metadata,
     'default',
-    { apiVersion: '68.0', expectedStatus: draft ? 'DRAFT' : 'ACTIVE' },
+    { expectedStatus: draft ? 'DRAFT' : 'ACTIVE' },
   );
   if (delta.status === 'blocked') throw new Error('Content conversion blocked');
   return {
@@ -99,25 +96,34 @@ export async function planNativeCalculatedInsightDeploy(
   };
 }
 
+/**
+ * Comparable plan evidence: action plus drift-relevant target evidence, never volatile reads.
+ * @param {Awaited<ReturnType<typeof planNativeCalculatedInsightDeploy>>} plan Guarded plan.
+ * @returns {unknown} Detached comparable evidence.
+ */
+export function calculatedInsightPlanEvidence(
+  plan: Awaited<ReturnType<typeof planNativeCalculatedInsightDeploy>>,
+): unknown {
+  return { action: plan.action, target: calculatedInsightTargetEvidence(plan.acquired) };
+}
+
 export type CalculatedInsightPreview = {
   family: 'calculated-insight';
   outcome: 'create' | 'update' | 'unchanged' | 'blocked';
   target: 'present' | 'absent' | 'unknown';
   absenceProof: 'none' | 'native-item-not-found+metadata-empty';
-  route: { apiVersion: '65.0' | '68.0'; method: 'POST' | 'PATCH'; resource: 'calculated-insights' };
+  route: { apiVersion: '68.0'; method: 'POST' | 'PATCH'; resource: 'calculated-insights' };
   requiredEffects: Array<'processing'>;
   diagnostics: Array<{ code: string; message: string }>;
 };
 
 /**
- * Preview only the existing settled forward expression delta; never infer create absence.
+ * Preview one native68 create, update or no-op from independent reads; never writes.
  * @param {unknown} value Complete authored desired CI.
- * @param {CalculatedInsightConnection} connection Authenticated target.
- * @param {ApiVersionSelection} selection Fixed API65 route.
+ * @param {CalculatedInsightConnection} connection Authenticated native68 target.
+ * @param {ApiVersionSelection} selection Exact native68 route.
  * @param {string} dataSpace Default target space.
- * @param {typeof retrieveCalculatedInsight} acquire Independent exact acquisition seam.
- * @param {typeof bindCalculatedInsightDependencies} bind Fresh dependency compatibility seam.
- * @param {CalculatedInsightDeployIntent} options Native lifecycle intent; legacy defaults remain unchanged.
+ * @param {CalculatedInsightDeployIntent} options Explicit draft intent and private readers.
  * @returns {Promise<CalculatedInsightPreview>} Payload-free classification and processing effects.
  */
 export async function preflightCalculatedInsightDeploy(
@@ -125,106 +131,44 @@ export async function preflightCalculatedInsightDeploy(
   connection: CalculatedInsightConnection,
   selection: ApiVersionSelection,
   dataSpace: string,
-  acquire = retrieveCalculatedInsight,
-  bind = bindCalculatedInsightDependencies,
   options: CalculatedInsightDeployIntent = {},
 ): Promise<CalculatedInsightPreview> {
-  if (selection.requested !== '65.0' || 'draft' in options || options.context) {
-    const route = {
-      apiVersion: '68.0' as const,
-      method: 'PATCH' as 'POST' | 'PATCH',
-      resource: 'calculated-insights' as const,
-    };
-    try {
-      const context = calculatedInsightDeployContext(connection, selection, dataSpace, options);
-      const desired = validateCalculatedInsightDocument(value);
-      await context.bind(desired, context.check);
-      const plan = await planNativeCalculatedInsightDeploy(
-        desired,
-        context,
-        options.draft === true,
-      );
-      context.check();
-      return {
-        family: 'calculated-insight',
-        outcome: plan.action,
-        target: plan.acquired.state === 'absent' ? 'absent' : 'present',
-        absenceProof: plan.acquired.state === 'absent' ? plan.acquired.absenceProof : 'none',
-        route: { ...route, method: plan.action === 'create' ? 'POST' : 'PATCH' },
-        requiredEffects: plan.action === 'unchanged' ? [] : ['processing'],
-        diagnostics: [],
-      };
-    } catch (error) {
-      return {
-        family: 'calculated-insight',
-        outcome: 'blocked',
-        target: 'unknown',
-        absenceProof: 'none',
-        route,
-        requiredEffects: [],
-        diagnostics: [
-          {
-            code: 'CI_ADMISSION_FAILED',
-            message: getConnectDiagnostic(error)
-              ? operationDiagnostic(error, 'Native CI deployment was not attempted.')
-              : 'Native CI intent, scope, content or dependencies are unqualified.',
-          },
-        ],
-      };
-    }
-  }
-  const result = (
-    outcome: CalculatedInsightPreview['outcome'],
-    code?: string,
-    error?: unknown,
-  ): CalculatedInsightPreview => ({
-    family: 'calculated-insight',
-    outcome,
-    target: outcome === 'blocked' ? 'unknown' : 'present',
-    absenceProof: 'none',
-    route: { apiVersion: '65.0', method: 'PATCH', resource: 'calculated-insights' },
-    requiredEffects: outcome === 'update' ? ['processing'] : [],
-    diagnostics: code
-      ? [
-          {
-            code,
-            message: getConnectDiagnostic(error)
-              ? operationDiagnostic(error, 'CI deployment was not attempted.')
-              : 'CI target, dependency or expression is not qualified; create and shell conversion are unavailable.',
-          },
-        ]
-      : [],
-  });
+  const route = {
+    apiVersion: '68.0' as const,
+    method: 'PATCH' as 'POST' | 'PATCH',
+    resource: 'calculated-insights' as const,
+  };
   try {
+    const context = calculatedInsightDeployContext(connection, selection, dataSpace, options);
     const desired = validateCalculatedInsightDocument(value);
-    const version = { ...selection };
-    calculatedInsightScope(connection, version, dataSpace, desired.identity.apiName);
-    await bind(desired, connection, version, dataSpace);
-    const acquired = await acquire(connection, desired.identity.apiName, version, dataSpace);
-    if (
-      !acquired.candidate ||
-      !acquired.expectations ||
-      acquired.blockers.length > 0 ||
-      !isDeepStrictEqual(acquired.identity, desired.identity)
-    )
-      return result('blocked', 'CI_TARGET_OR_SHELL_UNQUALIFIED', acquired);
-    const projection = projectCalculatedInsight(
-      acquired.expectations.runtime,
-      acquired.expectations.metadata,
-    );
-    if (!isDeepStrictEqual(projection.document, acquired.candidate))
-      return result('blocked', 'CI_TARGET_CORRELATION_MISMATCH');
-    const delta = buildCalculatedInsightUpdateDelta(
-      desired,
-      acquired.expectations.runtime,
-      acquired.expectations.metadata,
-      dataSpace,
-    );
-    calculatedInsightScope(connection, version, dataSpace, desired.identity.apiName);
-    return delta.status === 'blocked'
-      ? result('blocked', delta.blockers[0])
-      : result(delta.status === 'candidate' ? 'update' : 'unchanged');
+    await context.bind(desired, context.check);
+    const plan = await planNativeCalculatedInsightDeploy(desired, context, options.draft === true);
+    context.check();
+    return {
+      family: 'calculated-insight',
+      outcome: plan.action,
+      target: plan.acquired.state === 'absent' ? 'absent' : 'present',
+      absenceProof: plan.acquired.state === 'absent' ? plan.acquired.absenceProof : 'none',
+      route: { ...route, method: plan.action === 'create' ? 'POST' : 'PATCH' },
+      requiredEffects: plan.action === 'unchanged' ? [] : ['processing'],
+      diagnostics: [],
+    };
   } catch (error) {
-    return result('blocked', 'CI_ADMISSION_FAILED', error);
+    return {
+      family: 'calculated-insight',
+      outcome: 'blocked',
+      target: 'unknown',
+      absenceProof: 'none',
+      route,
+      requiredEffects: [],
+      diagnostics: [
+        {
+          code: 'CI_ADMISSION_FAILED',
+          message: getConnectDiagnostic(error)
+            ? operationDiagnostic(error, 'Native CI deployment was not attempted.')
+            : 'Native CI intent, scope, content or dependencies are unqualified.',
+        },
+      ],
+    };
   }
 }

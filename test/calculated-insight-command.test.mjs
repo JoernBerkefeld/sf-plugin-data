@@ -25,35 +25,6 @@ import { retrieveCalculatedInsightSourceMetadata } from '../lib/transport/projec
 import { ConnectError } from '../lib/transport/connect-client.js';
 import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 
-for (const status of [429, 503]) {
-  for (const json of [false, true]) {
-    test(`legacy CI retrieve HTTP ${status} safe guidance in ${json ? 'JSON' : 'human'} output`, async () => {
-      const h = retrieve();
-      const output = [];
-      h.command.jsonEnabled = () => json;
-      h.command.log = (line) => output.push(line);
-      h.command.warn = (line) => output.push(line);
-      h.command.acquireCalculatedInsight = async () =>
-        retainConnectDiagnostic(
-          {
-            identity: candidate().identity,
-            blockers: ['CI_ACQUISITION_FAILED'],
-          },
-          connectDiagnostic(status, { 'Retry-After': '31' }),
-        );
-      const envelope = await run(h.command);
-      assert.equal(envelope.diagnostics.errors.length, 1);
-      assert.equal(envelope.diagnostics.errors[0].retryable, false);
-      const message = json ? JSON.stringify(envelope) : output.join('\n');
-      assert.match(
-        message,
-        status === 429 ? /429 Too Many Requests/u : /503.*POSSIBLE Connect rate limit/u,
-      );
-      assert.match(message, /Server Retry-After: 31/u);
-      assert.equal(h.calls.length, 0);
-    });
-  }
-}
 import { executeCalculatedInsightDeploy } from '../lib/services/execute-calculated-insight-deploy.js';
 import { preflightCalculatedInsightDeploy } from '../lib/services/preflight-calculated-insight-deploy.js';
 
@@ -112,7 +83,7 @@ const candidate = (name = 'SyntheticInsight__cio') => ({
 });
 const xml = (document = candidate()) =>
   `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${document.spec.expression}</expression><masterLabel>${document.spec.displayName}</masterLabel></MktCalcInsightObjectDef>\n`;
-const version = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
+const version = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' };
 const root = async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-command-'));
   await writeFile(path.join(cwd, '.owner'), randomUUID());
@@ -132,7 +103,7 @@ const retrieve = (overrides = {}) => {
   const calls = [];
   const flags = {
     metadata: ['calculated-insight:SyntheticInsight__cio'],
-    'api-version': '65.0',
+    'api-version': 'auto',
     dataspace: 'default',
     'target-org': 'synthetic',
     overwrite: false,
@@ -140,22 +111,29 @@ const retrieve = (overrides = {}) => {
   };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
-  const connection = { getApiVersion: () => '65.0' };
+  const connection = { getApiVersion: () => '68.0' };
   command.resolveOrg = async () => ({
     getOrgId: () => 'synthetic',
     getConnection: (pin) => {
-      assert.equal(pin, '65.0');
+      assert.equal(pin, '68.0');
       return connection;
     },
   });
-  command.acquireCalculatedInsight = async (_, name, selected) => {
-    assert.deepEqual(selected, version);
-    calls.push(`acquire:${name}`);
-    return { identity: candidate(name).identity, candidate: candidate(name), blockers: [] };
+  command.calculatedInsightContext = (receiver, space) => {
+    assert.equal(receiver, connection);
+    assert.equal(space, 'default');
+    return {
+      check: () => assert.equal(receiver.getApiVersion(), '68.0'),
+      bind: async () => {
+        calls.push('bind65');
+      },
+    };
   };
-  command.bindCalculatedInsight = async () => {
-    calls.push('bind');
-    return {};
+  command.acquireExactCalculatedInsight = async (_, name, deleting, retrieval) => {
+    assert.equal(deleting, false);
+    assert.equal(retrieval, true);
+    calls.push(`native68:${name}`);
+    return { state: 'present', status: 'ACTIVE', document: candidate(name) };
   };
   command.acquireCalculatedInsightXml = async (target, name) => {
     assert.equal(target, 'synthetic');
@@ -268,16 +246,16 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
   const flags = {
     preview: true,
     'source-dir': receipts.map(({ path: member }) => member),
-    'api-version': '65.0',
+    'api-version': '68.0',
     dataspace: 'default',
     ...overrides,
   };
-  const connection = { getApiVersion: () => '65.0' };
+  const connection = { getApiVersion: () => '68.0' };
   flags['target-org'] = {
     getOrgId: () => 'synthetic',
     getUsername: () => 'synthetic@example.invalid',
     getConnection: (pin) => {
-      assert.equal(pin, '65.0');
+      assert.equal(pin, '68.0');
       return connection;
     },
   };
@@ -286,12 +264,19 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
   command.captureInput = captureDeployInputDigest;
   command.verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
   command.resolveInputs = async () => inputs;
-  command.bindCalculatedInsight = async () => {
-    calls.push('bind');
-    return { stable: 'binding' };
+  const context = {
+    check: () => {},
+    bind: async () => {
+      calls.push('bind');
+      return { stable: 'binding' };
+    },
+  };
+  command.calculatedInsightContext = (receiver) => {
+    assert.equal(receiver.getApiVersion(), '68.0');
+    return context;
   };
   command.preflightCalculatedInsight = async (_, receiver, selected) => {
-    assert.equal(receiver, connection);
+    assert.equal(receiver.getApiVersion(), '68.0');
     assert.deepEqual(selected, version);
     calls.push('preview');
     return {
@@ -299,13 +284,13 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
       outcome: 'update',
       target: 'present',
       absenceProof: 'none',
-      route: { apiVersion: '65.0', method: 'PATCH', resource: 'calculated-insights' },
+      route: { apiVersion: '68.0', method: 'PATCH', resource: 'calculated-insights' },
       requiredEffects: ['processing'],
       diagnostics: [],
     };
   };
   command.executeCalculatedInsight = async (document, receiver, selected, space, options) => {
-    assert.equal(receiver, connection);
+    assert.equal(receiver.getApiVersion(), '68.0');
     assert.deepEqual(selected, version);
     assert.equal(space, 'default');
     await options.verifyInput();
@@ -317,13 +302,13 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
     });
     return {
       family: 'calculated-insight',
-      route: { apiVersion: '65.0', method: 'PATCH', resource: 'calculated-insights' },
+      route: { apiVersion: '68.0', method: 'PATCH', resource: 'calculated-insights' },
       outcome: 'updated',
       mutation: 'confirmed-updated',
       diagnostics: [],
     };
   };
-  return { command, calls, inputs, flags, cwd };
+  return { command, calls, inputs, flags, cwd, context };
 };
 
 test('public CI exact multiple retrieve admits all independent pairs before output', async () => {
@@ -347,39 +332,12 @@ test('public CI exact multiple retrieve admits all independent pairs before outp
     result.result.items.every(
       (item) =>
         item.family === 'calculated-insight' &&
-        item.routes.every((route) => route.apiVersion === '65.0'),
+        item.routes.find((route) => route.operation === 'calculated-insight.get').apiVersion ===
+          '68.0',
     ),
   );
 });
-const nativeRetrieve = () => {
-  const fixture = retrieve({ 'api-version': '68.0' });
-  const { command, calls } = fixture;
-  const connection = { getApiVersion: () => '68.0' };
-  command.resolveOrg = async () => ({
-    getOrgId: () => 'synthetic',
-    getConnection: (pin) => {
-      assert.equal(pin, '68.0');
-      return connection;
-    },
-  });
-  command.calculatedInsightContext = (receiver, space) => {
-    assert.equal(receiver, connection);
-    assert.equal(space, 'default');
-    return {
-      check: () => assert.equal(receiver.getApiVersion(), '68.0'),
-      bind: async () => {
-        calls.push('bind65');
-      },
-    };
-  };
-  command.acquireExactCalculatedInsight = async (_, name) => {
-    calls.push(`native68:${name}`);
-    return { state: 'present', status: 'ACTIVE', document: candidate(name) };
-  };
-  command.acquireCalculatedInsight = async () => assert.fail('legacy acquisition');
-  command.bindCalculatedInsight = async () => assert.fail('legacy binding');
-  return fixture;
-};
+const nativeRetrieve = () => retrieve({ 'api-version': '68.0' });
 for (const status of [429, 503])
   for (const json of [false, true])
     test(`native CI retrieve HTTP${status} retains safe ${json ? 'JSON' : 'human'} diagnostic`, async () => {
@@ -389,7 +347,10 @@ for (const status of [429, 503])
       h.command.log = (line) => logs.push(line);
       h.command.warn = (line) => logs.push(line);
       h.command.acquireExactCalculatedInsight = async () =>
-        retainConnectDiagnostic({ state: 'unknown' }, connectDiagnostic(status));
+        retainConnectDiagnostic(
+          { state: 'unknown', diagnostics: ['CI_RUNTIME_UNKNOWN'] },
+          connectDiagnostic(status),
+        );
       const result = await run(h.command);
       assert.equal(result.diagnostics.errors.length, 1);
       assert.equal(result.diagnostics.errors[0].retryable, false);
@@ -490,7 +451,7 @@ test('native68 later pair or binding failure prevents every selected output', as
   }
 });
 test('retrieve help contract distinguishes native68 from fixed65 and ACTIVE-only pairs', () => {
-  assert.match(Retrieve.description, /API65\/auto or explicit API68/u);
+  assert.match(Retrieve.description, /auto or explicit API68 \(no other version\)/u);
   assert.match(Retrieve.description, /ACTIVE configurations only/u);
   assert.match(Retrieve.description, /fixed API65 Metadata, source XML and dependency reads/u);
 });
@@ -592,7 +553,6 @@ async function nativeDeploy(flags = {}, initial = 'absent', names = ['SyntheticI
     return value;
   };
   h.command.calculatedInsightContext = () => context;
-  h.command.bindCalculatedInsight = async () => assert.fail('legacy bind');
   h.command.preflightCalculatedInsight = preflightCalculatedInsightDeploy;
   h.command.executeCalculatedInsight = (document, connection, selection, space, options) =>
     executeCalculatedInsightDeploy(document, connection, selection, space, {
@@ -648,20 +608,26 @@ for (const phase of ['binding', 'fresh', 'execution'])
       assert.ok(!h.calls.some((call) => call.startsWith('POST:')));
     });
 
-test('native68 paired draft creation previews POST and executes once without publication', async () => {
-  const h = await nativeDeploy({ draft: true, preview: false, 'allow-processing': true });
-  const result = await run(h.command);
-  assert.equal(result.status, 'success');
-  assert.equal(result.result.items[0].outcome, 'created');
-  assert.equal(result.result.items[0].route.method, 'POST');
-  assert.equal(h.calls.filter((call) => call === 'POST').length, 1);
-  assert.equal(h.states.get('SyntheticInsight__cio'), 'DRAFT');
-  assert.ok(
-    result.result.items[0].routes.some(
-      (route) => route.apiVersion === '65.0' && route.operation === 'dependency.get',
-    ),
-  );
-});
+for (const pin of ['68.0', 'auto'])
+  test(`native68 paired draft creation at ${pin} previews POST and executes once without publication`, async () => {
+    const h = await nativeDeploy({
+      draft: true,
+      preview: false,
+      'allow-processing': true,
+      'api-version': pin,
+    });
+    const result = await run(h.command);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result.items[0].outcome, 'created');
+    assert.equal(result.result.items[0].route.method, 'POST');
+    assert.equal(h.calls.filter((call) => call === 'POST').length, 1);
+    assert.equal(h.states.get('SyntheticInsight__cio'), 'DRAFT');
+    assert.ok(
+      result.result.items[0].routes.some(
+        (route) => route.apiVersion === '65.0' && route.operation === 'dependency.get',
+      ),
+    );
+  });
 test('native68 absent target requires draft; create requires processing acknowledgement', async () => {
   for (const flags of [{}, { draft: true }]) {
     const h = await nativeDeploy({ preview: false, ...flags });
@@ -729,11 +695,7 @@ test('native68 draft never converts ACTIVE and unknown mutation stops later sele
   assert.equal(h.calls.filter((call) => call === 'unknown').length, 1);
   assert.equal(result.result.items[1].mutation, 'not-attempted');
 });
-for (const flags of [
-  { 'api-version': 'auto' },
-  { 'api-version': '65.0' },
-  { dataspace: 'other' },
-]) {
+for (const flags of [{ 'api-version': '65.0' }, { dataspace: 'other' }]) {
   test(`draft rejects unsupported scope before auth ${JSON.stringify(flags)}`, async () => {
     const h = await deploy({ draft: true, ...flags });
     h.flags['target-org'].getOrgId = () => assert.fail('auth');
@@ -820,6 +782,7 @@ test('later CI pair mismatch prevents ALL mixed selected outputs', async () => {
   assert.ok(!calls.some((call) => call.startsWith('write:')));
 });
 for (const overrides of [
+  { 'api-version': '65.0' },
   { 'api-version': '67.0' },
   { 'api-version': 'latest' },
   { dataspace: 'other' },
@@ -912,9 +875,9 @@ test('CI pair byte drift during preview blocks before dispatch', async () => {
   assert.ok(!calls.some((call) => call.startsWith('execute:')));
 });
 test('CI binding drift blocks before executor', async () => {
-  const { command, calls } = await deploy({ preview: false, 'allow-processing': true });
+  const { command, calls, context } = await deploy({ preview: false, 'allow-processing': true });
   let count = 0;
-  command.bindCalculatedInsight = async () => ({ changed: ++count });
+  context.bind = async () => ({ changed: ++count });
   const result = await run(command);
   assert.equal(result.status, 'blocked');
   assert.equal(result.result.items[0].mutation, 'not-attempted');
@@ -949,7 +912,10 @@ test('CI captured Git selection proceeds through public preview with unchanged a
   assert.equal(result.status, 'success');
 });
 test('mixed CI/DMO ordering checks later CI binding before the earlier prerequisite dispatch', async () => {
-  const { command, calls, inputs } = await deploy({ preview: false, 'allow-processing': true });
+  const { command, calls, inputs, context } = await deploy({
+    preview: false,
+    'allow-processing': true,
+  });
   const dmo = {
     path: 'synthetic.dmo-meta.json',
     document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: table } },
@@ -971,13 +937,13 @@ test('mixed CI/DMO ordering checks later CI binding before the earlier prerequis
     return { outcome: 'unchanged', mutation: 'not-attempted', diagnostics: [] };
   };
   let bindings = 0;
-  command.bindCalculatedInsight = async () => ({ fingerprint: ++bindings });
+  context.bind = async () => ({ fingerprint: ++bindings });
   const result = await run(command);
   assert.equal(result.status, 'blocked');
   assert.equal(result.result.items[0].identity.apiName, table);
   assert.ok(!calls.some((call) => call.startsWith('execute:')));
 });
-test('mixed CI and IR retrieve acquires CI at API65 before IR shared receiver repin', async () => {
+test('mixed CI and IR retrieve acquires CI at native68 before IR shared receiver repin', async () => {
   const { facade, native } = irFixture();
   const ir = projectIdentityResolution(facade, native, facade.objectApiName).candidate;
   const { command, calls } = retrieve({
@@ -996,10 +962,13 @@ test('mixed CI and IR retrieve acquires CI at API65 before IR shared receiver re
       return connection;
     },
   });
-  command.acquireCalculatedInsight = async (receiver) => {
-    assert.equal(receiver.getApiVersion(), '65.0');
-    calls.push('ci65');
-    return { identity: candidate().identity, candidate: candidate(), blockers: [] };
+  command.calculatedInsightContext = (receiver) => {
+    assert.equal(receiver.getApiVersion(), '68.0');
+    return { check: () => {}, bind: async () => {} };
+  };
+  command.acquireExactCalculatedInsight = async () => {
+    calls.push('ci68');
+    return { state: 'present', status: 'ACTIVE', document: candidate() };
   };
   command.acquireIdentityResolution = async (receiver) => {
     assert.equal(receiver.getApiVersion(), '68.0');
@@ -1009,14 +978,14 @@ test('mixed CI and IR retrieve acquires CI at API65 before IR shared receiver re
   command.writeIdentityResolution = async () => ({ path: 'ir.json', outcome: 'retrieved' });
   const result = await run(command);
   assert.equal(result.status, 'success');
-  assert.ok(calls.indexOf('ci65') < calls.indexOf('ir68'));
+  assert.ok(calls.indexOf('ci68') < calls.indexOf('ir68'));
 });
 test('CI dependency node keeps actual DMO prerequisite and fixed version rejects upgrades', () => {
   assert.deepEqual(documentDependencyNode(candidate()).dependencies, [
     { kind: 'dmo', dataSpace: 'default', apiName: table },
   ]);
-  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
-  assert.equal(operationApiVersion('65.0', 'calculated-insight'), '65.0');
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '68.0');
+  assert.throws(() => operationApiVersion('65.0', 'calculated-insight'));
   assert.throws(() => operationApiVersion('67.0', 'calculated-insight'));
   assert.throws(() => operationApiVersion('latest', 'calculated-insight'));
 });
@@ -1065,4 +1034,57 @@ test('CI standard source retrieve maps suffix and validates exact terminal membe
         }),
       })),
     );
+});
+
+for (const [acquisition, code, message] of [
+  [
+    { state: 'unknown', diagnostics: ['CI_RUNTIME_PROFILE_UNQUALIFIED'] },
+    'CI_RUNTIME_PROFILE_UNQUALIFIED',
+    /package origin/u,
+  ],
+  [
+    { state: 'unknown', diagnostics: ['CI_EXPRESSION_UNQUALIFIED'] },
+    'CI_EXPRESSION_UNQUALIFIED',
+    /SQL/u,
+  ],
+  [{ state: 'absent' }, 'CI_NOT_FOUND', /not found/u],
+  [{ state: 'present', status: 'DRAFT', document: candidate() }, 'CI_NOT_ACTIVE', /not ACTIVE/u],
+])
+  test(`CI retrieve names the actual reason ${code} instead of a DMO inventory message`, async () => {
+    const { command, calls } = retrieve();
+    command.acquireExactCalculatedInsight = async () => acquisition;
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors.length, 1);
+    const [error] = result.diagnostics.errors;
+    assert.equal(error.code, code);
+    assert.deepEqual(error.identity, { dataSpace: 'default', apiName: 'SyntheticInsight__cio' });
+    assert.doesNotMatch(error.message, /DMO inventory/u);
+    assert.match(error.message, message);
+    assert.ok(!calls.some((call) => call.startsWith('write:')));
+  });
+
+test('CI deploy receiver keeps the core version getter so the context can repin Metadata to 65', async () => {
+  const h = await deploy({ 'api-version': 'auto' });
+  const core = {
+    version: '68.0',
+    getApiVersion() {
+      return this.version;
+    },
+  };
+  h.flags['target-org'].getConnection = (pin) => {
+    assert.equal(pin, '68.0');
+    return core;
+  };
+  const pins = [];
+  const context = h.command.calculatedInsightContext;
+  h.command.calculatedInsightContext = (receiver, space) => {
+    const metadata = Object.create(receiver);
+    Object.defineProperty(metadata, 'version', { value: '65.0' });
+    pins.push(receiver.getApiVersion(), metadata.getApiVersion());
+    return context(receiver, space);
+  };
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(pins, ['68.0', '65.0']);
 });

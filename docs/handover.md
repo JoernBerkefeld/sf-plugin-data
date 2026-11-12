@@ -1,3 +1,60 @@
+# Calculated insights on API 68 by default — 2026-11-12
+
+Version stays 0.1.0; nothing pushed.
+
+- Calculated insights: default/`auto` is API 68 for retrieve, deploy (including
+  `--draft`), publish and delete; explicit `68.0` is the same route. `--api-version 65.0`
+  is refused with `INVALID_SCOPE` like any other unsupported version. The XML/JSON pair
+  is unchanged. The CI-only API 65 PATCH route, its client method and the legacy
+  retrieve/bind path are gone; standard XML, Metadata and DMO prerequisite reads keep
+  their own fixed route.
+- Retrieve admits ACTIVE CIs that have already run and CIs with a `SYSTEM_MANAGED`
+  schedule (read-only). Still refused: packaged CIs (`isFromPackage: true`) and CIs with
+  schedule history or a source-CI link (`CI_RUNTIME_PROFILE_UNQUALIFIED`). The artifact
+  holds only the qualified SQL expression shapes, so other expressions are refused with
+  `CI_ATTRIBUTION_UNQUALIFIED`; this format limit is open.
+- Retrieve errors name the CI and the reason: `CI_NOT_FOUND`, `CI_NOT_ACTIVE`,
+  `CI_RUNTIME_PROFILE_UNQUALIFIED`, `CI_EXPRESSION_UNQUALIFIED`,
+  `CI_CONFIGURATION_UNQUALIFIED`, `CI_SCHEMA_UNQUALIFIED`, `CI_ATTRIBUTION_UNQUALIFIED`,
+  `CI_METADATA_MISMATCH`, `CI_METADATA_AMBIGUOUS`, `CI_RUNTIME_UNKNOWN`.
+- Deploy, publish and delete still admit only never-run CIs with schedule
+  `NOT_SCHEDULED`. There is no evidence either way on writing run or scheduled CIs;
+  open.
+- Execute, publish and delete compare the authored document, status, native profile
+  and Metadata definition before writing. They no longer compare attribution and
+  runtime fields: the API 68 read returned different `dimensions[0]` and
+  `measures[0].dataSource.sourceApiName` on consecutive reads, which refused a correct
+  repeat or delete with `CI_ADMISSION_FAILED`.
+- CLI parser: CI delete with no source is now `INVALID_SELECTION` (the version is no
+  longer missing); publish with a source and no pin is `UNSAFE_SOURCE` (it reaches the
+  file check). `65.0` on either is `INVALID_SCOPE`. `test/cli.test.mjs` asserts all three.
+- Data graphs: default stays API 67; the native 68 path admits only a root-only
+  Individual graph, while the API itself supports unified roots and updates (widening
+  the native path is a separate package). The create settlement now treats a missing
+  metadata entry or an echo without generated names as still building, waits up to
+  `--wait-timeout` with progress on stderr, and stops at once on a failed or deleting
+  state; it never re-POSTs. This does not fix the create failure itself (see below).
+- Retrieve resolves a relative `-d`/`--output-dir` against the current directory for
+  every family.
+
+Live, `isolated-source`. Raw probe at API 68: CI draft create 56 s, publish 55 s,
+ACTIVE expression update 90 s, delete 30 s; 68 and 65 retrieve wrote byte-identical
+files; the first repeat and the first delete hit the attribution drift refusal and
+passed on retry. Native 68 graph PUT update works (label/description 45 s; adding a
+field and a related object 288 s); raw API 68 also creates, updates and deletes
+unified-root graphs. After the change, all at `auto`: retrieve of two existing run CIs
+exit 0; a fixture CI created, published, deployed unchanged three times and deleted,
+all exit 0; graph retrieve with a relative `-d` exit 0.
+
+Graph create settlement live result: still failing. Two live creates (CliGraphP9_8c71,
+CliGraphP10_8c71) exited 1 `failed`/`unknown` 46-48 s after start, within about one
+second of the graph's createdDate, before settlement read anything, so the cause is at
+the POST echo or the create call, not in the wait. The echo is not retained and the item
+carries no diagnostic code; next step is to record the echo or the failing check in the
+item diagnostics and run one more create. In both runs an unchanged repeat (exit 0),
+retrieve (exit 0) and delete (exit 0, confirmed-deleted) worked, and the graphs were
+gone afterwards.
+
 # Native DMO relationships — 2026-11-12
 
 Version stays 0.1.0; nothing pushed.

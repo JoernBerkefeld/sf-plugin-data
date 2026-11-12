@@ -1,5 +1,6 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import {
@@ -124,7 +125,7 @@ const invocation = (overrides = {}) => {
     };
   };
   const writer = async (value, root, overwrite) => {
-    assert.equal(root, flags['output-dir']);
+    assert.equal(root, path.resolve(flags['output-dir']));
     assert.equal(overwrite, flags.overwrite);
     calls.push(`write:${value.identity.apiName}`);
     return { path: `${value.identity.apiName}.json`, outcome: 'unchanged' };

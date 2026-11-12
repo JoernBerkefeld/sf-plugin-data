@@ -1,5 +1,6 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
@@ -363,7 +364,7 @@ const invocation = (overrides = {}) => {
   command.writeNativeDmo = async (...arguments_) => {
     assert.deepEqual(arguments_, [
       candidate,
-      flags['output-dir'] ?? process.cwd(),
+      path.resolve(flags['output-dir'] ?? process.cwd()),
       flags.overwrite,
     ]);
     return { path: 'synthetic-output.json', outcome: 'retrieved' };
@@ -406,7 +407,7 @@ test('explicit numeric DMO beside a relationship reads both natively at that ver
       return {};
     };
     command.writeRelationship = async (document, root) => {
-      assert.equal(root, 'project');
+      assert.equal(root, path.resolve('project'));
       return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
     };
     const inventories = [];
@@ -472,7 +473,7 @@ for (const apiVersion of ['65.0', '68.0', 'auto']) {
       };
     };
     command.writeSegment = async (document, root, overwrite) => {
-      assert.equal(root, 'custom-root');
+      assert.equal(root, path.resolve('custom-root'));
       assert.equal(overwrite, false);
       return {
         path: `${document.identity.apiName}.segment.json`,
@@ -557,7 +558,7 @@ test('output root and changed-only overwrite flow unchanged to the writer', asyn
   });
   command.writeNativeDmo = async (value, root, overwrite) => {
     assert.equal(value, candidate);
-    assert.equal(root, 'project');
+    assert.equal(root, path.resolve('project'));
     assert.equal(overwrite, true);
     return { path: 'synthetic-output.json', outcome: 'unchanged' };
   };
@@ -608,7 +609,7 @@ test('real selector expansion writes each exact/type/all member once in sorted o
     });
     const written = [];
     command.writeNativeDmo = async (document, root, overwrite) => {
-      assert.equal(root, 'project');
+      assert.equal(root, path.resolve('project'));
       assert.equal(overwrite, true);
       written.push(document.identity.apiName);
       return { path: `${document.identity.apiName}.json`, outcome: 'unchanged' };

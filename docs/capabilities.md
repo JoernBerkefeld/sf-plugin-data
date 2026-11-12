@@ -7,6 +7,13 @@ Explicit API68/default retrieval exports a distinct `.native-dataGraph.json`
 Deploy/delete accept auto/API68 for this native artifact; auto/API67 facade
 retrieval and the existing bounded LastName update remain unchanged.
 
+Known limit: native API 68 create reports `failed`/`unknown` about one second after
+Salesforce accepts the POST although the graph is created (cause not yet identified;
+observed twice). The item can read `ready` about 30 seconds before its day-zero names
+exist and the metadata stays `Inprogress` for about 3.3 minutes, sometimes briefly
+missing. The POST is never resent; an unchanged repeat deploy confirms the graph. Retrieve resolves a relative `-d`/`--output-dir`
+against the current directory for every family.
+
 Absent create requires independent absence/root checks and --allow-processing;
 creation automatically generates supporting resources and defaults to daily full
 refresh with incremental refresh disabled, despite omitting schedule input. Identical deploy is
@@ -25,34 +32,37 @@ storage/credits cleanup or computation claim. Installed package smoke verifies
 offline routing only, not live installed cross-org acceptance. README's 14-resource
 row records Partial native create/delete and retains the separate facade update.
 
-## Public native calculated insight lifecycle — 2026-11-05
+## Public native calculated insight lifecycle — 2026-11-12
 
-This current contract supersedes the historical CI-only boundaries below. Explicit
-API68/default supports paired draft create/edit, separate NOT_SCHEDULED publish,
-qualified bidirectional expression edits on ACTIVE, exact ACTIVE retrieval and
-source-paired confirmed deletion. Default/auto retains legacy65 existing-ACTIVE
-behavior. Internal native64–68 feasibility does not qualify public lifecycle at
-those other versions. Native68 runtime and fixed65 XML/Metadata/dependency routes
-remain distinct. No general SQL, schedule conversion, populated/ran owner or
-Metadata-shell conversion is admitted.
+Calculated insights use native API 68 for retrieve, deploy (including `--draft`),
+publish and delete. Default/`auto` and explicit `68.0` select it; every other
+version, `65.0` included, is refused with `INVALID_SCOPE`. Default space only. The
+XML/JSON pair format is unchanged. Standard XML, Metadata and DMO prerequisite
+reads keep their own fixed routes.
 
-Create needs exact dual absence and --draft; draft edits retain draft:true.
-Publication is explicit; ACTIVE expression PATCH omits draft. Full equality is
-GET-only unchanged without processing acknowledgement. Present-owner delete needs
-its matching XML/JSON pair, exact selector, --confirm-delete, fresh never-run
-NOT_SCHEDULED content and dependencies. No cascade/local removal/retry/rollback.
-Bounded independent settlement, not response echoes, confirms mutations.
+Retrieve exports one exact ACTIVE calculated insight, including one that has run and
+one with a read-only `SYSTEM_MANAGED` schedule. It refuses packaged insights
+(`isFromPackage: true`) and insights with schedule history or a source-CI link
+(`CI_RUNTIME_PROFILE_UNQUALIFIED`). The artifact holds only the qualified SQL
+expression shapes, so other expressions are refused with `CI_ATTRIBUTION_UNQUALIFIED`;
+that format limit is open. Retrieve errors name the component and the reason
+(`CI_NOT_FOUND`, `CI_NOT_ACTIVE`, `CI_RUNTIME_PROFILE_UNQUALIFIED`, …).
 
-Installed cross-org create/publish, byte-identical XML/JSON retrieval, GET-only no-op,
-and ACTIVE edit passed. Two initial installed deletes returned
-CI_DELETION_UNCONFIRMED despite later confirmed runtime/Metadata absence; their
-causes remain unexplained. A later installed delete passed after six DELETING polls
-and dual absence on poll seven (35.2 seconds). This is not reliable-every-time or
-version-specific-defect proof. All CI fixtures are independently absent. ACTIVE is
-not calculation proof; physical storage/credits and computation remain unknown.
-The README 14-resource table now records scoped Partial create/update/delete,
-not general CRUD or released-package qualification. Private evidence has a recovered
-observer-journal finalization gap; see the current handover for its exact limits.
+Deploy, publish and delete admit only never-run insights with schedule
+`NOT_SCHEDULED`; whether run or scheduled ones are safe to write is untested and
+open. Create needs exact dual absence and `--draft`; draft edits keep DRAFT.
+Publication is explicit; an ACTIVE expression PATCH omits draft. Only the qualified
+expression edits are writable. Execute, publish and delete compare the authored
+document, status, native profile and Metadata definition before writing, not the
+attribution and runtime fields that the API 68 read varies between consecutive
+reads, so a correct repeat is `unchanged` and a correct delete proceeds.
+Present-owner delete needs its matching pair, exact selector and `--confirm-delete`.
+No cascade, local removal, retry or rollback; bounded independent settlement, not
+the response, confirms each write.
+
+Live on `isolated-source` (2026-11-12), at `auto`: retrieve of two run insights,
+then create, publish, three unchanged repeats and delete of a fixture, all exit 0.
+ACTIVE is not calculation proof; storage/credits and computation remain unknown.
 
 ## Installed API61 mapping create and single addition — 2026-11-04
 
@@ -296,46 +306,6 @@ must independently establish target ownership, dependencies, absence, settlement
 schema/schedule preservation and deletion. There is no automatic publication,
 upsert, polling, no-op orchestration or public create/delete support in this slice.
 The README's 14-resource CRUD table was checked and left unchanged.
-
-## Public CI command boundary
-
-Exact `calculated-insight:ApiName__cio` retrieve, preview and deploy are routed
-through the qualified CI services at API65/default (`auto` selects that fixed route).
-Retrieve requires independent native runtime/SOAP correlation, typed DMO binding,
-and exact standard `MktCalcInsightObjectDef` project XML before whole-selection
-publication through the strict pair writer. Git-selected CI pairs are captured,
-compared to resolved inputs and freshly byte-verified before target execution.
-
-Deployment is limited to existing ACTIVE Custom/CALCULATED_METRIC/IN_USE owners
-with the qualified `APPROX_COUNT_DISTINCT` engagement expression, schema and
-exact `SYSTEM_MANAGED` or `NOT_SCHEDULED` schedule with null schedule bounds.
-Desired and target schedules must match; no schedule adaptation is performed. Only
-the forward false-predicate plus DeviceId IS NOT NULL expression edit is writable;
-complete equality is unchanged. Creation, shell conversion,
-label/schedule/reverse and arbitrary SQL changes block.
-
-The target-bound workflow starts from the target's retrieved correlated XML/JSON
-pair, then edits only the qualified expression in both members. Two-profile
-admission/preservation has synthetic coverage. Installed target-bound `NOT_SCHEDULED`
-acceptance passed on October 29, 2026: one expression-only PATCH returned HTTP 200,
-ACTIVE remained ACTIVE, and the qualified SQL changed from 324 to 397 bytes. Independent
-runtime/Metadata/dependency readback confirmed schedule and nonexpression preservation;
-the actual public repeat returned unchanged/not-attempted with zero mutations/jobs.
-Last-run fields and error codes remained null; no successful computation is claimed.
-This does not complete unchanged-source-artifact cross-org acceptance;
-a `SYSTEM_MANAGED` source artifact still blocks against a `NOT_SCHEDULED` target.
-The existing never-run/error-free runtime restriction is unchanged, so a source
-reporting `SUCCESS` remains inadmissible. ACTIVE admission does not require a
-successful target calculation run. CRUD ratings and operation scope are unchanged.
-Updates acknowledge processing; every pending CI is rebound and preflighted before
-any next mixed write. Input digest guards and private detached observation recording
-are mandatory executor options. The existing executor attempts at most one PATCH,
-bounds settlement, independently correlates final readback, and never replays unknown
-mutations. The installed target-bound run consumed 8m52.853s including pack/install,
-65/100 logical reads, 5/12 org-facing CLI invocations including the standard child,
-2/12 settlement polls and 1/1 PATCH; explicit jobs/schedule writes/source calls were
-zero. Child/auth HTTP traffic remains unknown, not a global wire-count claim.
-Unchanged-source cross-org and successful-computation acceptance remain separate gates.
 
 General seven-family support is **unimplemented**. Each family section below
 states its own bounded scope; verified behaviour is named there and nothing beyond
@@ -836,8 +806,8 @@ Not qualified:
 
 ## calculated-insight: unimplemented
 
-The existing public predicate-edit workflow and internal native transport above
-have distinct boundaries; neither closes general lifecycle or cross-org support.
+The bounded native lifecycle above does not close general lifecycle or
+cross-org support.
 
 - [ ] Record official endpoints, versions, pagination and writable contracts.
 - [ ] Preserve exact SQL, dimensions, measures, relationships and settings.

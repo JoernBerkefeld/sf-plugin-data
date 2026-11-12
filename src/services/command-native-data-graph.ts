@@ -151,6 +151,14 @@ export async function operateNativeDataGraph(
       return client.delete(name);
     },
   };
+  const waitPause =
+    options.pause ??
+    (async (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const progress =
+    options.progress ??
+    ((message: string) => {
+      process.stderr.write(`${message}\n`);
+    });
   const acquire = async (
     document: Parameters<typeof acquireNativeDataGraph>[1],
   ): Promise<Awaited<ReturnType<typeof acquireNativeDataGraph>>> => {
@@ -178,14 +186,8 @@ export async function operateNativeDataGraph(
           graphRequire(isDeepStrictEqual(root, await bindNativeGraphRoot(context)));
         },
         now,
-        pause:
-          options.pause ??
-          (async (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
-        progress:
-          options.progress ??
-          ((message) => {
-            process.stderr.write(`${message}\n`);
-          }),
+        pause: waitPause,
+        progress,
         started,
         end,
       });
@@ -221,6 +223,9 @@ export async function operateNativeDataGraph(
         },
         safeToDelete: async () => false,
         pause: options.pause,
+        now,
+        // Keep waiting while the created graph is still building, up to --wait-timeout.
+        creation: { started, end, pause: waitPause, progress },
       });
       const result = await lifecycle.create(true);
       return retainConnectDiagnostic(

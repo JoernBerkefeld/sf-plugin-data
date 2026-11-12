@@ -113,6 +113,86 @@ export async function bindNativeGraphRoot(
 }
 
 /**
+ * Detect a ready item whose server-generated names are not populated yet.
+ * @param {unknown} body Untrusted item body.
+ * @returns {boolean} True while generation is visibly incomplete.
+ */
+function nativeGraphStillGenerating(body: unknown): boolean {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const raw = body as Record<string, unknown>;
+  if (raw.status !== 'ready') return false;
+  const source = raw.sourceObject as Record<string, unknown> | undefined;
+  return [
+    raw.idDmoName,
+    raw.valuesDmoName,
+    raw.dayZeroMappingDevName,
+    raw.dayZeroTransformDevName,
+    source?.fragmentDMOName,
+  ].some((value) => typeof value !== 'string' || !value.trim());
+}
+
+/**
+ * Read the exact graph metadata build status after the item itself reads ready.
+ * @param {NativeGraphContext} context Deadline-guarded readers.
+ * @param {string} name Exact graph name.
+ * @returns {Promise<string>} Metadata status, for example Inprogress or Ready.
+ */
+async function nativeGraphMetadataStatus(
+  context: NativeGraphContext,
+  name: string,
+): Promise<string> {
+  const metadata = await context.metadata(name);
+  context.check();
+  if (metadata.status !== 200)
+    throw retainConnectDiagnostic(
+      new Error('Native Graph metadata unavailable'),
+      getConnectDiagnostic(metadata),
+    );
+  const entries = graphRecord(metadata.body).dataGraphMetadata;
+  graphRequire(Array.isArray(entries));
+  const matches = entries
+    .map((entry) => graphRecord(entry))
+    .filter((entry) => entry.developerName === name);
+  // During the build the entry was recorded live to vanish briefly; that is still building.
+  if (matches.length === 0) return 'Missing';
+  graphRequire(matches.length === 1 && matches[0].dataspaceName === 'default');
+  graphText(matches[0].status);
+  return matches[0].status;
+}
+
+/**
+ * Take the identity of a create echo. A complete echo is fully observed; an echo that reads
+ * ready before its generated names exist (still building) yields only its raw identity.
+ * @param {unknown} response Untrusted create response.
+ * @param {NativeDataGraphDocument} document Exact native intent.
+ * @returns {object} Identity fields the settled graph must match.
+ */
+function nativeGraphCreateEcho(
+  response: unknown,
+  document: NativeDataGraphDocument,
+): { id: string; createdDate: string; source: Record<string, unknown> } {
+  if (!nativeGraphStillGenerating(response)) {
+    const returned = observeNativeDataGraph(response, document);
+    return {
+      id: returned.id,
+      createdDate: returned.createdDate,
+      source: graphRecord(returned.target.sourceObject),
+    };
+  }
+  const raw = graphRecord(response);
+  graphText(raw.id);
+  graphText(raw.createdDate);
+  graphRequire(
+    raw.name === document.definition.name && Number.isFinite(Date.parse(raw.createdDate)),
+  );
+  return {
+    id: raw.id,
+    createdDate: new Date(raw.createdDate).toISOString(),
+    source: graphRecord(raw.sourceObject),
+  };
+}
+
+/**
  * Acquire exact native state. HTTP400 alone is never absence evidence; stale metadata is pending.
  * @param {NativeGraphContext} context Independent exact readers, not mutation responses.
  * @param {NativeDataGraphDocument} document Native intent.
@@ -133,6 +213,9 @@ export async function acquireNativeDataGraph(
     diagnostic = getConnectDiagnostic(item);
     context.check();
     if (item.status === 200) {
+      // A just-created graph can read ready ~30s before its generated DMO, mapping and
+      // transform names exist (recorded live at API68); it is still being built, not unknown.
+      if (nativeGraphStillGenerating(item.body)) return { state: 'pending' };
       const admitted = baseline ? nativeDataGraphDocumentFromResponse(item.body) : expected;
       graphRequire(admitted.definition.name === name);
       return { state: 'present', observation: observeNativeDataGraph(item.body, admitted) };
@@ -234,6 +317,77 @@ export async function settleNativeDataGraph(
   } finally {
     expired = true;
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Wait for a created graph to finish building, bounded only by the invocation deadline.
+ * While the item reads creating, still lacks its generated names, or its metadata still shows
+ * it in progress, the graph is being built: keep reading with the documented pacing (20-second
+ * waits, never past the deadline) instead of reporting an unknown result early. GET-only; the
+ * create is never replayed.
+ * @param {NativeGraphContext} context Deadline-guarded readers.
+ * @param {NativeDataGraphDocument} document Exact native intent.
+ * @param {object} timing Invocation clock, deadline, delay and progress sink.
+ * @param {Function} timing.now Invocation clock.
+ * @param {number} timing.started Invocation start time.
+ * @param {number} timing.end Invocation deadline (--wait-timeout).
+ * @param {Function} timing.pause Read-only delay.
+ * @param {Function} timing.progress Stderr-only progress sink.
+ * @returns {Promise<NativeGraphAcquisition>} Ready evidence or unknown.
+ */
+export async function settleNativeDataGraphCreation(
+  context: NativeGraphContext,
+  document: NativeDataGraphDocument,
+  timing: {
+    now: () => number;
+    started: number;
+    end: number;
+    pause: (milliseconds: number) => Promise<unknown>;
+    progress: (message: string) => void;
+  },
+): Promise<NativeGraphAcquisition> {
+  try {
+    for (;;) {
+      context.check();
+      const result = await acquireNativeDataGraph(context, document);
+      if (result.state === 'unknown') return result;
+      // Right after a create, absence is not a building state: report it as unknown.
+      if (result.state === 'absent') return { state: 'unknown' };
+      let stage = result.state === 'present' ? result.observation.status : 'build in progress';
+      // Deleting (or any non-build status) is terminal for a create: stop at once.
+      if (
+        result.state === 'present' &&
+        ![
+          'creating',
+          'editing',
+          'editing_no_version_update',
+          'editing_post_sync',
+          'ready',
+        ].includes(result.observation.status)
+      )
+        return { state: 'unknown' };
+      if (result.state === 'present' && result.observation.status === 'ready') {
+        // The item can read ready while its metadata is still Inprogress (recorded ~3.5 min)
+        // or briefly absent; any other metadata status (e.g. Failed) is terminal.
+        const metadata = await nativeGraphMetadataStatus(
+          context,
+          document.definition.name as string,
+        );
+        if (metadata === 'Ready') return result;
+        if (metadata !== 'Inprogress' && metadata !== 'Missing') return { state: 'unknown' };
+        stage = `ready, metadata ${metadata}`;
+      }
+      const remaining = timing.end - timing.now();
+      if (remaining <= 0) return { state: 'unknown' };
+      const wait = Math.min(20_000, remaining);
+      timing.progress(
+        `Data Graph ${stage}; elapsed ${Math.floor((timing.now() - timing.started) / 1000)}s; next wait ${wait / 1000}s.`,
+      );
+      await timing.pause(wait);
+    }
+  } catch (error) {
+    return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error));
   }
 }
 
@@ -541,6 +695,11 @@ export type NativeGraphResult = {
  * @param {Function} guards.safeToDelete Independently verify no external usage; fail closed.
  * @param {Function} [guards.now] Injectable monotonic wall clock.
  * @param {Function} [guards.pause] Injectable polling delay.
+ * @param {object} [guards.creation] Invocation budget; create settlement waits while building.
+ * @param {number} guards.creation.started Invocation start time.
+ * @param {number} guards.creation.end Invocation deadline (--wait-timeout).
+ * @param {Function} guards.creation.pause Paced read-only delay.
+ * @param {Function} guards.creation.progress Stderr-only progress sink.
  * @returns {{create: Function; delete: Function}} Internal lifecycle, no UPDATE or name-only delete.
  */
 export function nativeDataGraphLifecycle(
@@ -555,6 +714,13 @@ export function nativeDataGraphLifecycle(
     safeToDelete: (receipt: NativeGraphReceipt) => Promise<boolean>;
     now?: () => number;
     pause?: typeof delay;
+    /** Invocation deadline; with it, create settlement waits while the graph is still building. */
+    creation?: {
+      started: number;
+      end: number;
+      pause: (milliseconds: number) => Promise<unknown>;
+      progress: (message: string) => void;
+    };
   },
 ): {
   create: (confirmed: boolean) => Promise<NativeGraphResult>;
@@ -587,7 +753,8 @@ export function nativeDataGraphLifecycle(
     let expired = false;
     const now = guards.now ?? Date.now;
     let previous = now();
-    const end = previous + 120_000;
+    const creation = operation === 'create' ? guards.creation : undefined;
+    const end = creation ? creation.end : previous + 120_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const check = (): void => {
       context.check();
@@ -633,20 +800,21 @@ export function nativeDataGraphLifecycle(
           );
         }
         check();
-        const returned = observeNativeDataGraph(response, document);
-        const settled = await settleNativeDataGraph(readers, document, 'ready', guards.pause);
+        const returned = nativeGraphCreateEcho(response, document);
+        const settled = creation
+          ? await settleNativeDataGraphCreation(readers, document, { ...creation, now })
+          : await settleNativeDataGraph(readers, document, 'ready', guards.pause);
         diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
         graphRequire(
           settled.state === 'present' &&
             settled.observation.id === returned.id &&
             settled.observation.createdDate === returned.createdDate &&
-            graphRecord(settled.observation.target.sourceObject).id ===
-              graphRecord(returned.target.sourceObject).id &&
+            graphRecord(settled.observation.target.sourceObject).id === returned.source.id &&
             graphRecord(settled.observation.target.sourceObject).devName ===
-              graphRecord(returned.target.sourceObject).devName &&
+              returned.source.devName &&
             isDeepStrictEqual(
               graphRecord(settled.observation.target.sourceObject).fields,
-              graphRecord(returned.target.sourceObject).fields,
+              returned.source.fields,
             ) &&
             isDeepStrictEqual(root, await bindNativeGraphRoot(readers)),
         );
@@ -703,7 +871,11 @@ export function nativeDataGraphLifecycle(
       return await Promise.race([
         work(),
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error('Native Graph deadline')), 120_000);
+          timer = setTimeout(
+            () => reject(new Error('Native Graph deadline')),
+            // Node overflows longer delays to 1ms; the guarded check still enforces the end.
+            Math.min(Math.max(end - now(), 0), 2_147_483_647),
+          );
         }),
       ]);
     } catch (error) {

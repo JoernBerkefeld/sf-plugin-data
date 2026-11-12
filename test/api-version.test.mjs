@@ -11,7 +11,7 @@ test('Segment defaults to API68 retaining only explicit65 compatibility without 
   // A DMO is no operational family: it always uses the native version rule.
   assert.throws(() => operationApiVersion('auto', 'dmo'), /INVALID_SCOPE/u);
   assert.equal(nativeApiVersion('auto'), '68.0');
-  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '68.0');
 });
 import test from 'node:test';
 import { inspect } from 'node:util';
@@ -27,7 +27,7 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
   assert.equal(operationApiVersion('68.0', 'dlo'), '68.0');
   for (const pin of ['65.0', '66.0', '67.0', 'latest'])
     assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
-  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '68.0');
   assert.equal(operationApiVersion('auto', 'identity-resolution'), '68.0');
   for (const requested of ['auto', '67.0'])
     assert.equal(legacyIdentityResolutionApiVersion(requested), '67.0');
@@ -36,11 +36,10 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
   assert.throws(() => operationApiVersion('67.0', 'ingestion-dlo'), /INVALID_SCOPE/u);
 });
 
-test('CI preserves auto65 and admits only explicit qualified68 beside legacy65', () => {
-  assert.equal(operationApiVersion('auto', 'calculated-insight'), '65.0');
-  assert.equal(operationApiVersion('65.0', 'calculated-insight'), '65.0');
+test('CI auto is native68 and the removed legacy65 route is refused like other pins', () => {
+  assert.equal(operationApiVersion('auto', 'calculated-insight'), '68.0');
   assert.equal(operationApiVersion('68.0', 'calculated-insight'), '68.0');
-  for (const pin of ['64.0', '66.0', '67.0', '69.0', 'latest'])
+  for (const pin of ['64.0', '65.0', '66.0', '67.0', '69.0', 'latest'])
     assert.throws(() => operationApiVersion(pin, 'calculated-insight'), /INVALID_SCOPE/u);
   assert.equal(operationApiVersion('68.0', 'segment'), '68.0');
 });

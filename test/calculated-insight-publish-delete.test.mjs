@@ -75,15 +75,10 @@ for (const status of [429, 503]) {
     h.context.get = async () => {
       throw retainConnectDiagnostic(new Error('secret'), connectDiagnostic(status));
     };
-    const result = await preflightCalculatedInsightDeploy(
-      h.desired,
-      h.target,
-      h.pin,
-      'default',
-      undefined,
-      undefined,
-      { context: h.context, draft: true },
-    );
+    const result = await preflightCalculatedInsightDeploy(h.desired, h.target, h.pin, 'default', {
+      context: h.context,
+      draft: true,
+    });
     assert.equal(result.outcome, 'blocked');
     assert.equal(result.diagnostics.length, 1);
     assert.match(result.diagnostics[0].message, new RegExp(String(status), 'u'));
@@ -173,7 +168,7 @@ const selection = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0
  */
 function harness() {
   const calls = { writes: 0, reads: 0, metadata: 0, binds: 0, verifies: 0, observations: [] };
-  const desired = observeCalculatedInsight(runtime(), '68.0').document;
+  const desired = observeCalculatedInsight(runtime()).document;
   const target = {
     instanceUrl: 'https://synthetic.my.salesforce.com',
     getApiVersion: () => '68.0',

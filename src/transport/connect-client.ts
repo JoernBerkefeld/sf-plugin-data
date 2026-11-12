@@ -12,7 +12,6 @@ import {
   retainConnectDiagnostic,
 } from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
-import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
 import type { Connection } from '@salesforce/core';
 import { validateSegmentDocument } from '../artifacts/segment-document.js';
 import type { ApiVersionSelection } from './api-version.js';
@@ -170,25 +169,6 @@ export class ConnectClient {
           segmentType: 'Dbt',
           includeDbt: { models: { models: document.spec.models } },
         }),
-        headers: { 'content-type': 'application/json' },
-      },
-      this.noRefreshReceiver(),
-    );
-  }
-
-  /**
-   * Send one expression-only PATCH to the fixed API65 CI resource, without replay.
-   * @param {unknown} value Complete qualified desired document; service owns delta admission.
-   * @returns {Promise<unknown>} Untrusted echo, never settlement evidence.
-   */
-  public async patchCalculatedInsight(value: unknown): Promise<unknown> {
-    if (this.selection.requested !== '65.0') throw new ConnectError('INVALID_REQUEST');
-    const document = validateCalculatedInsightDocument(value);
-    return this.send(
-      {
-        method: 'PATCH',
-        url: this.safeUrl(`${this.prefix}calculated-insights/${document.identity.apiName}`),
-        body: JSON.stringify({ expression: document.spec.expression }),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

@@ -1,17 +1,13 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  projectCalculatedInsight,
-  observeCalculatedInsight,
-} from '../lib/artifacts/calculated-insight-document.js';
-import { retrieveCalculatedInsight } from '../lib/services/retrieve-calculated-insight.js';
+import { projectCalculatedInsight } from '../lib/artifacts/calculated-insight-document.js';
 import { bindCalculatedInsightDependencies } from '../lib/services/bind-calculated-insight-dependencies.js';
 import { preflightCalculatedInsightDeploy } from '../lib/services/preflight-calculated-insight-deploy.js';
 import { executeCalculatedInsightDeploy } from '../lib/services/execute-calculated-insight-deploy.js';
-import { ConnectClient, ConnectError } from '../lib/transport/connect-client.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 
-// eslint-disable-next-line unicorn/no-null -- Synthetic complete API65 fixtures require explicit wire null.
+// eslint-disable-next-line unicorn/no-null -- Synthetic complete native fixtures require explicit wire null.
 const wireNull = null;
 const table = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${table}.ssot__DeviceId__c`;
@@ -70,22 +66,27 @@ const metadata = (expression = original) => ({
   expression,
   masterLabel: 'Synthetic insight',
 });
-const document = (expression = original, schedule = 'SYSTEM_MANAGED') =>
-  projectCalculatedInsight(runtime(expression, 'ACTIVE', schedule), metadata(expression)).document;
-const version = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
-const acquisition = (expression = original, schedule = 'SYSTEM_MANAGED') => ({
-  identity: document().identity,
-  candidate: document(expression, schedule),
-  observations: projectCalculatedInsight(
-    runtime(expression, 'ACTIVE', schedule),
-    metadata(expression),
-  ).observations,
-  expectations: {
-    runtime: runtime(expression, 'ACTIVE', schedule),
-    metadata: metadata(expression),
-  },
-  blockers: [],
+const nativeRuntime = (expression = original, status = 'DRAFT') => ({
+  ...runtime(expression, status, 'NOT_SCHEDULED'),
+  ...(status === 'DRAFT' ? { dimensions: [], measures: [] } : {}),
+  historyPublishScheduleInterval: wireNull,
+  historyPublishScheduleTimeZone: wireNull,
+  historyPublishTime: wireNull,
+  publishScheduleTimeZone: wireNull,
+  sourceCiDevName: wireNull,
+  sourceCiId: wireNull,
+  sourceCiName: wireNull,
+  isFromPackage: false,
+  queryDialect: 'ANSI_SQL',
 });
+const document = (expression = original, schedule = 'NOT_SCHEDULED') =>
+  projectCalculatedInsight(
+    { ...nativeRuntime(expression, 'ACTIVE'), publishScheduleInterval: schedule },
+    metadata(expression),
+    { retrieval: true },
+  ).document;
+// The fixed Metadata and dependency receiver of the native68 context.
+const version = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
 const connection = (expression = original) => ({
   instanceUrl: 'https://synthetic.my.salesforce.com',
   getApiVersion: () => '65.0',
@@ -134,176 +135,6 @@ const compatible = () => ({
       fields: binding().fields.map(({ apiName }) => ({ fullName: apiName, type: 'Text' })),
     },
   ],
-});
-
-/**
- * Create isolated synthetic service spies.
- * @param {object} overrides Bounded injected readers and guards.
- * @param {object} desired Complete desired document.
- * @returns {object} Calls and executable fixture.
- */
-function harness(overrides = {}, desired = document(edited)) {
-  const schedule = desired.spec.publishScheduleInterval;
-  const calls = { writes: 0, reads: 0, captures: 0, bindings: 0, inputs: 0, observations: [] };
-  const options = {
-    allowProcessing: true,
-    verifyInput: async () => {
-      calls.inputs++;
-    },
-    recordObservation: async (value) => {
-      calls.observations.push(value);
-    },
-    bind: async () => {
-      calls.bindings++;
-      return binding();
-    },
-    acquire: async () => {
-      calls.captures++;
-      return acquisition(calls.writes > 0 ? edited : original, schedule);
-    },
-    patch: async () => {
-      calls.writes++;
-      return runtime(edited, 'PROCESSING', schedule);
-    },
-    read: async () => {
-      calls.reads++;
-      return runtime(edited, 'ACTIVE', schedule);
-    },
-    delay: async () => {},
-    ...overrides,
-  };
-  return {
-    calls,
-    run: () => executeCalculatedInsightDeploy(desired, connection(), version, 'default', options),
-  };
-}
-
-test('NOT_SCHEDULED target-bound forward update settles and actual executor repeat is unchanged', async () => {
-  const target = projectCalculatedInsight(
-    runtime(original, 'ACTIVE', 'NOT_SCHEDULED'),
-    metadata(),
-  ).document;
-  const desired = structuredClone(target);
-  desired.spec.expression = edited;
-  const fixture = harness({}, desired);
-  const updated = await fixture.run();
-  assert.equal(updated.mutation, 'confirmed-updated');
-  assert.equal(fixture.calls.writes, 1);
-  assert.equal(fixture.calls.captures, 3);
-  const repeat = harness(
-    { allowProcessing: false, acquire: async () => acquisition(edited, 'NOT_SCHEDULED') },
-    desired,
-  );
-  const repeated = await repeat.run();
-  assert.equal(repeated.outcome, 'unchanged');
-  assert.equal(repeat.calls.writes, 0);
-  assert.equal(repeat.calls.reads, 0);
-});
-for (const [name, overrides] of [
-  ['acknowledgement', { allowProcessing: false }],
-  [
-    'input drift',
-    {
-      verifyInput: async () => {
-        throw new Error('drift');
-      },
-    },
-  ],
-  [
-    'dependency failure',
-    {
-      bind: async () => {
-        throw new Error('missing');
-      },
-    },
-  ],
-  ['target schedule mismatch', { acquire: async () => acquisition() }],
-])
-  test(`NOT_SCHEDULED prewrite ${name} blocks with zero writes`, async () => {
-    const fixture = harness(overrides, document(edited, 'NOT_SCHEDULED'));
-    const result = await fixture.run();
-    assert.equal(result.mutation, 'not-attempted');
-    assert.equal(fixture.calls.writes, 0);
-  });
-test('NOT_SCHEDULED schedule drift between baseline and fresh target blocks', async () => {
-  let captures = 0;
-  const fixture = harness(
-    {
-      acquire: async () =>
-        acquisition(original, ++captures === 1 ? 'NOT_SCHEDULED' : 'SYSTEM_MANAGED'),
-    },
-    document(edited, 'NOT_SCHEDULED'),
-  );
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'not-attempted');
-  assert.equal(fixture.calls.writes, 0);
-});
-test('NOT_SCHEDULED settlement schedule drift is uncertain without replay', async () => {
-  let captures = 0;
-  const fixture = harness(
-    {
-      acquire: async () =>
-        acquisition(
-          ++captures === 3 ? edited : original,
-          captures === 3 ? 'SYSTEM_MANAGED' : 'NOT_SCHEDULED',
-        ),
-    },
-    document(edited, 'NOT_SCHEDULED'),
-  );
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'unknown');
-  assert.equal(fixture.calls.writes, 1);
-});
-test('SYSTEM_MANAGED source artifact is not adapted to NOT_SCHEDULED target', async () => {
-  const fixture = harness({ acquire: async () => acquisition(original, 'NOT_SCHEDULED') });
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'not-attempted');
-  assert.equal(fixture.calls.writes, 0);
-});
-
-test('CI independent acquisition uses exact API65 runtime and guarded SOAP definition', async () => {
-  const result = await retrieveCalculatedInsight(
-    connection(),
-    'SyntheticInsight__cio',
-    version,
-    'default',
-  );
-  assert.deepEqual(result.candidate, document());
-  assert.deepEqual(result.blockers, []);
-});
-for (const mutation of [
-  (value) => {
-    value.metadata.read = async () => [];
-  },
-  (value) => {
-    value.request = async () => runtime(edited);
-  },
-  (value) => {
-    value.request = async () => {
-      throw new Error('private remote content');
-    };
-  },
-])
-  test('CI incomplete/404/mismatched independent acquisition blocks without absence claim', async () => {
-    const target = connection();
-    mutation(target);
-    const result = await retrieveCalculatedInsight(
-      target,
-      'SyntheticInsight__cio',
-      version,
-      'default',
-    );
-    assert.equal(result.candidate, undefined);
-    assert.equal(result.blockers.length, 1);
-    assert.doesNotMatch(JSON.stringify(result), /private remote/u);
-  });
-
-test('CI pending runtime validation does not weaken ACTIVE Metadata projection', () => {
-  const pending = runtime(edited, 'PROCESSING');
-  assert.equal(observeCalculatedInsight(pending).status, 'PROCESSING');
-  assert.throws(() => projectCalculatedInsight(pending, metadata(edited)));
-  pending.lastCalcInsightStatusErrorCode = 'FAILED';
-  assert.throws(() => observeCalculatedInsight(pending));
 });
 
 test('CI target dependencies bind exact mapped Text fields independently', async () => {
@@ -388,243 +219,7 @@ for (const [name, change] of [
     );
   });
 
-test('CI preflight classifies update/unchanged with exact effects and blocks shell/absence', async () => {
-  for (const [expression, outcome] of [
-    [original, 'unchanged'],
-    [edited, 'update'],
-  ]) {
-    const preview = await preflightCalculatedInsightDeploy(
-      document(expression),
-      connection(),
-      version,
-      'default',
-      async () => acquisition(),
-      async () => binding(),
-    );
-    assert.equal(preview.outcome, outcome);
-    assert.deepEqual(preview.requiredEffects, outcome === 'update' ? ['processing'] : []);
-  }
-  const preview = await preflightCalculatedInsightDeploy(
-    document(),
-    connection(),
-    version,
-    'default',
-    async () => ({ identity: document().identity, blockers: ['CI_ACQUISITION_FAILED'] }),
-    async () => binding(),
-  );
-  assert.equal(preview.outcome, 'blocked');
-  assert.equal(preview.absenceProof, 'none');
-});
-
-test('CI unchanged makes zero mutation/job dispatches without acknowledgement', async () => {
-  const fixture = harness({ allowProcessing: false }, document());
-  const result = await fixture.run();
-  assert.equal(result.outcome, 'unchanged');
-  assert.equal(fixture.calls.writes, 0);
-  assert.equal(fixture.calls.reads, 0);
-  assert.equal(fixture.calls.bindings, 2);
-});
-test('CI update without processing acknowledgement performs zero writes', async () => {
-  const fixture = harness({ allowProcessing: false });
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'not-attempted');
-  assert.equal(result.diagnostics[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
-  assert.equal(fixture.calls.writes, 0);
-});
-test('CI one PATCH settles independently with detached attribution observations', async () => {
-  const echo = runtime(edited, 'PROCESSING');
-  echo.measures[0].dataSource = {
-    sourceApiName: 'ssot__DeviceId__c',
-    type: 'STREAMING_DATA_MODEL',
-  };
-  const fixture = harness();
-  let sent = false;
-  const result = await executeCalculatedInsightDeploy(
-    document(edited),
-    connection(),
-    version,
-    'default',
-    {
-      allowProcessing: true,
-      verifyInput: async () => {},
-      recordObservation: async (value) => fixture.calls.observations.push(value),
-      bind: async () => binding(),
-      acquire: async () => {
-        const data = acquisition(sent ? edited : original);
-        if (sent)
-          data.expectations.runtime.measures[0].dataSource = {
-            sourceApiName: 'ssot__SoftwareApplicationId__c',
-            type: 'STREAMING_DATA_MODEL',
-          };
-        return data;
-      },
-      patch: async () => {
-        fixture.calls.writes++;
-        sent = true;
-        return echo;
-      },
-      read: async () => runtime(edited),
-    },
-  );
-  assert.equal(result.mutation, 'confirmed-updated');
-  assert.equal(fixture.calls.writes, 1);
-  assert.deepEqual(
-    fixture.calls.observations.map((value) => value.phase),
-    ['baseline', 'echo', 'poll', 'settled'],
-  );
-  assert.equal(
-    fixture.calls.observations.at(-1).observations.derivedAttribution.measures[0].sourceApiName,
-    'ssot__SoftwareApplicationId__c',
-  );
-  assert.doesNotMatch(JSON.stringify(result), /dataSource|SELECT|target-local/u);
-});
-for (const [name, override] of [
-  [
-    'input drift',
-    {
-      verifyInput: async () => {
-        throw new Error('drift');
-      },
-    },
-  ],
-  ['missing observation recorder', { recordObservation: undefined }],
-  [
-    'dependency missing',
-    {
-      bind: async () => {
-        throw new Error('missing');
-      },
-    },
-  ],
-  [
-    'acquisition mismatch',
-    { acquire: async () => ({ ...acquisition(), candidate: document(edited) }) },
-  ],
-])
-  test(`CI prewrite guard zero mutations: ${name}`, async () => {
-    const fixture = harness(override);
-    const result = await fixture.run();
-    assert.equal(result.mutation, 'not-attempted');
-    assert.equal(fixture.calls.writes, 0);
-  });
-for (const [name, override] of [
-  ['unknown state', { read: async () => runtime(edited, 'ERROR') }],
-  [
-    'read failure',
-    {
-      read: async () => {
-        throw new Error('read failed');
-      },
-    },
-  ],
-  ['schema drift', { read: async () => ({ ...runtime(edited), isEnabled: false }) }],
-  ['Metadata readback drift', { acquire: async () => acquisition() }],
-  ['never settles', { read: async () => runtime(edited, 'PROCESSING') }],
-  [
-    'failed mutation',
-    {
-      patch: async () => {
-        throw new Error('timeout');
-      },
-    },
-  ],
-])
-  test(`CI mutation uncertainty never replays: ${name}`, async () => {
-    const fixture = harness(override);
-    const result = await fixture.run();
-    assert.equal(result.mutation, 'unknown');
-    assert.ok(fixture.calls.writes <= 1);
-  });
-test('CI deadline includes PATCH latency and refuses late success', async () => {
-  let clock = 0;
-  const fixture = harness({
-    now: () => clock,
-    patch: async () => {
-      clock = 120_000;
-      return runtime(edited, 'PROCESSING');
-    },
-  });
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'unknown');
-  assert.equal(fixture.calls.reads, 0);
-});
-test('CI dependency binding drift before dispatch blocks without mutation', async () => {
-  let calls = 0;
-  const fixture = harness({ bind: async () => ({ ...binding(), targetId: String(++calls) }) });
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'not-attempted');
-  assert.equal(fixture.calls.writes, 0);
-});
-test('CI deadline includes final independent Metadata and compatibility reads', async () => {
-  let clock = 0;
-  let captures = 0;
-  const fixture = harness({
-    now: () => clock,
-    acquire: async () => {
-      captures++;
-      if (captures === 3) clock = 120_000;
-      return acquisition(captures === 3 ? edited : original);
-    },
-  });
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'unknown');
-  assert.equal(fixture.calls.writes, 1);
-});
-test('CI PROCESSING poll then ACTIVE requires final independent acquisition', async () => {
-  let polls = 0;
-  const fixture = harness({
-    read: async () => runtime(edited, ++polls === 1 ? 'PROCESSING' : 'ACTIVE'),
-  });
-  const result = await fixture.run();
-  assert.equal(result.mutation, 'confirmed-updated');
-  assert.equal(fixture.calls.captures, 3);
-  assert.equal(fixture.calls.writes, 1);
-  assert.equal(polls, 2);
-});
-test('CI transport sends exactly expression and disables replay/redirect', async () => {
-  let calls = 0;
-  const client = new ConnectClient(
-    {
-      instanceUrl: connection().instanceUrl,
-      _refreshDelegate: {},
-      async request(request, options) {
-        calls++;
-        assert.equal(this._refreshDelegate, undefined);
-        assert.equal(request.method, 'PATCH');
-        assert.equal(
-          request.url,
-          `${connection().instanceUrl}/services/data/v65.0/ssot/calculated-insights/SyntheticInsight__cio`,
-        );
-        assert.deepEqual(JSON.parse(request.body), { expression: edited });
-        assert.equal(options.retry.maxRetries, 0);
-        assert.throws(() => options.followRedirect());
-        return runtime(edited, 'PROCESSING');
-      },
-    },
-    version,
-  );
-  for (const schedule of ['SYSTEM_MANAGED', 'NOT_SCHEDULED'])
-    await client.patchCalculatedInsight(document(edited, schedule));
-  assert.equal(calls, 2);
-  await assert.rejects(
-    new ConnectClient(connection(), '67.0').patchCalculatedInsight(document(edited)),
-  );
-});
-
 const nativeVersion = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' };
-const nativeRuntime = (expression = original, status = 'DRAFT') => ({
-  ...runtime(expression, status, 'NOT_SCHEDULED'),
-  ...(status === 'DRAFT' ? { dimensions: [], measures: [] } : {}),
-  historyPublishScheduleInterval: wireNull,
-  historyPublishScheduleTimeZone: wireNull,
-  historyPublishTime: wireNull,
-  publishScheduleTimeZone: wireNull,
-  sourceCiDevName: wireNull,
-  sourceCiId: wireNull,
-  sourceCiName: wireNull,
-  isFromPackage: false,
-  queryDialect: 'ANSI_SQL',
-});
 /**
  * Synthetic native deploy context with isolated exact reads and mutation counters.
  * @param {string} initial Initial target state or absence.
@@ -682,17 +277,12 @@ function nativeHarness(initial = 'absent', desiredExpression = original) {
     setState(value) {
       state = value;
     },
+    setExpression(value) {
+      expression = value;
+    },
     run: () => executeCalculatedInsightDeploy(desired, target, nativeVersion, 'default', options),
     preview: () =>
-      preflightCalculatedInsightDeploy(
-        desired,
-        target,
-        nativeVersion,
-        'default',
-        undefined,
-        undefined,
-        options,
-      ),
+      preflightCalculatedInsightDeploy(desired, target, nativeVersion, 'default', options),
   };
 }
 
@@ -979,4 +569,49 @@ for (const [name, change] of [
     assert.equal(h.calls.create, 1);
     assert.equal(h.calls.update, 0);
     assert.doesNotMatch(JSON.stringify(result), /SELECT|target-local|timeout/u);
+  });
+
+test('native68 drift check ignores alternating derived attribution between reads', async () => {
+  for (const [initial, desiredExpression, outcome] of [
+    ['ACTIVE', original, 'unchanged'],
+    ['ACTIVE', edited, 'updated'],
+  ]) {
+    const h = nativeHarness(initial, desiredExpression);
+    delete h.options.draft;
+    const get = h.context.get;
+    let reads = 0;
+    // Recorded live: consecutive GETs of one unchanged CI alternate the attributed field.
+    h.context.get = async () => {
+      const raw = await get();
+      const sourceApiName =
+        ++reads % 2 === 0 ? 'ssot__DeviceId__c' : 'ssot__SoftwareApplicationId__c';
+      for (const role of ['dimensions', 'measures'])
+        raw[role][0].dataSource = { sourceApiName, type: 'STREAMING_DATA_MODEL' };
+      raw.lastCalcInsightStatusDateTime = `2026-11-12T07:0${reads % 10}:00.000Z`;
+      return raw;
+    };
+    const result = await h.run();
+    assert.equal(result.outcome, outcome, JSON.stringify(result));
+    assert.equal(h.calls.update, outcome === 'updated' ? 1 : 0);
+  }
+});
+
+for (const [name, drift] of [
+  ['expression', (h) => h.setExpression(edited)],
+  ['status', (h) => h.setState('DRAFT')],
+])
+  test(`native68 real ${name} drift between baseline and fresh plan still refuses`, async () => {
+    const h = nativeHarness('ACTIVE', original);
+    delete h.options.draft;
+    let n = 0;
+    const get = h.context.get;
+    h.context.get = async () => {
+      if (++n === 2) drift(h);
+      return get();
+    };
+    const result = await h.run();
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(result.diagnostics[0].code, 'CI_ADMISSION_FAILED');
+    assert.equal(h.calls.create + h.calls.update, 0);
   });

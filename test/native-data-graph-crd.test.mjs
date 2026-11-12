@@ -2015,3 +2015,224 @@ test('ambiguous DELETE settles reads only and cannot replay after stale metadata
   await expectResult(lifecycle.delete(true), 'outcome', 'blocked');
   assert.equal(f.calls.filter((c) => c === 'DELETE').length, 1);
 });
+
+/**
+ * Native create that passes the recorded live build phases after the POST, one read each:
+ * no item yet (metadata only), item creating, item ready without generated names, item
+ * ready with metadata still Inprogress, then fully Ready.
+ * @param {object} phases Number of reads spent in each phase.
+ * @param {number} [phases.pending] Reads with metadata only and no item yet.
+ * @param {number} [phases.creating] Reads with the item creating.
+ * @param {number} [phases.ungenerated] Reads with a ready item lacking generated names.
+ * @param {number} [phases.inprogress] Reads with a ready item and metadata Inprogress.
+ * @param {number} [phases.vanished] Further reads with a ready item and no metadata entry.
+ * @param {string} [phases.echo] Create echo: creating, or ready without generated names.
+ * @param {string} [phases.metadataStatus] Metadata status reported while in progress.
+ * @returns {object} Fixture, fake clock and recorded waits/progress.
+ */
+function buildingCreate({
+  pending = 0,
+  creating = 0,
+  ungenerated = 0,
+  inprogress = 0,
+  vanished = 0,
+  echo = 'creating',
+  metadataStatus = 'Inprogress',
+}) {
+  const f = fixture();
+  let posted = false;
+  let reads = 0;
+  const get = f.context.get;
+  const metadata = f.context.metadata;
+  const phase = () => {
+    if (reads <= pending) return 'pending';
+    if (reads <= pending + creating) return 'creating';
+    if (reads <= pending + creating + ungenerated) return 'ungenerated';
+    if (reads <= pending + creating + ungenerated + inprogress) return 'inprogress';
+    if (reads <= pending + creating + ungenerated + inprogress + vanished) return 'vanished';
+    return 'ready';
+  };
+  f.client.create = async () => {
+    f.calls.push('POST');
+    posted = true;
+    if (echo === 'creating') return runtime('creating');
+    const raw = runtime('ready');
+    delete raw.dayZeroMappingDevName;
+    delete raw.dayZeroTransformDevName;
+    return raw;
+  };
+  f.context.get = async () => {
+    if (!posted) return get();
+    reads++;
+    const current = phase();
+    if (current === 'pending') return missing();
+    const raw = runtime(current === 'creating' ? 'creating' : 'ready');
+    if (current === 'ungenerated') {
+      delete raw.dayZeroMappingDevName;
+      delete raw.dayZeroTransformDevName;
+    }
+    f.setGraph(raw);
+    return get();
+  };
+  f.context.metadata = async () => {
+    const result = await metadata();
+    if (posted && phase() === 'vanished') return { status: 200, body: { dataGraphMetadata: [] } };
+    if (posted && ['pending', 'ungenerated', 'inprogress'].includes(phase())) {
+      const body = {
+        dataGraphMetadata: [
+          {
+            developerName: name,
+            dataspaceName: 'default',
+            primaryObjectName: 'ssot__Individual__dlm',
+            status: metadataStatus,
+          },
+        ],
+      };
+      return { status: 200, body };
+    }
+    return result;
+  };
+  const timing = { clock: 0, waits: [], progress: [] };
+  return {
+    f,
+    timing,
+    reads: () => reads,
+    options: (waitTimeoutSeconds) =>
+      options('deploy', {
+        waitTimeoutSeconds,
+        now: () => timing.clock,
+        pause: async (milliseconds) => {
+          timing.waits.push(milliseconds);
+          timing.clock += milliseconds;
+        },
+        progress: (message) => timing.progress.push(message),
+      }),
+  };
+}
+
+test('native create keeps waiting through every recorded build phase, beyond the old 46s', async () => {
+  const h = buildingCreate({ pending: 4, creating: 4, ungenerated: 3, inprogress: 5 });
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
+  assert.equal(result.outcome, 'created', JSON.stringify(result));
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.deepEqual(
+    h.f.calls.filter((call) => call === 'POST'),
+    ['POST'],
+  );
+  assert.equal(h.timing.waits.length, 16);
+  assert.ok(h.timing.waits.every((milliseconds) => milliseconds === 20_000));
+  assert.ok(h.timing.clock >= 320_000);
+  for (const stage of [
+    /build in progress; elapsed 0s; next wait 20s/u,
+    /Data Graph creating;/u,
+    /Data Graph ready, metadata Inprogress;/u,
+  ])
+    assert.ok(
+      h.timing.progress.some((line) => stage.test(line)),
+      stage.source,
+    );
+});
+
+test('a ready item without generated names is still building, not unknown', async () => {
+  const f = fixture();
+  const raw = runtime('ready');
+  delete raw.dayZeroMappingDevName;
+  f.setGraph(raw);
+  await expectResult(acquireNativeDataGraph(f.context, document()), 'state', 'pending');
+  f.setGraph(runtime('ready'));
+  await expectResult(acquireNativeDataGraph(f.context, document()), 'state', 'present');
+});
+
+test('native create that never finishes building stops at --wait-timeout without a second POST', async () => {
+  const h = buildingCreate({ pending: 1_000_000 });
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(100));
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.deepEqual(
+    h.f.calls.filter((call) => call === 'POST'),
+    ['POST'],
+  );
+  assert.ok(h.timing.clock <= 100_000);
+  assert.ok(h.timing.waits.every((milliseconds) => milliseconds <= 20_000));
+});
+
+test('native68 Graph retrieve resolves a relative --output-dir against the cwd before writing', async () => {
+  const cwd = await project();
+  const f = fixture();
+  f.setGraph(runtime());
+  const relative = path.relative(process.cwd(), cwd);
+  assert.equal(path.isAbsolute(relative), false);
+  const org = { getConnection: () => ({}), getOrgId: () => f.context.orgId };
+  const command = Object.create(Retrieve.prototype);
+  command.parse = async () => ({
+    flags: {
+      'api-version': '68.0',
+      metadata: [`data-graph:${name}`],
+      'output-dir': relative,
+      overwrite: false,
+    },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveOrg = async () => org;
+  command.nativeGraphContext = async () => f.context;
+  command.retrieveNativeGraph = retrieveNativeDataGraph;
+  const roots = [];
+  command.writeDataGraph = async (value, root, overwrite) => {
+    roots.push(root);
+    return writeDataGraphDocument(value, root, overwrite);
+  };
+  const result = await command.run();
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(roots, [cwd]);
+  assert.equal(result.result.scope.outputDir, cwd);
+  assert.ok(path.isAbsolute(result.result.items[0].path));
+});
+
+test('create echo already ready without generated names is still building, not a failure', async () => {
+  const h = buildingCreate({ echo: 'ready-ungenerated', ungenerated: 2, inprogress: 2 });
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
+  assert.equal(result.outcome, 'created', JSON.stringify(result));
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.equal(h.timing.waits.length, 4);
+  assert.deepEqual(
+    h.f.calls.filter((call) => call === 'POST'),
+    ['POST'],
+  );
+});
+
+test('a metadata entry that vanishes for a while during the build keeps the create waiting', async () => {
+  const h = buildingCreate({ inprogress: 1, vanished: 3 });
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
+  assert.equal(result.outcome, 'created', JSON.stringify(result));
+  assert.equal(h.timing.waits.length, 4);
+  assert.ok(h.timing.progress.some((line) => /ready, metadata Missing;/u.test(line)));
+});
+
+for (const [label, phases] of [
+  ['metadata Failed', { inprogress: 50, metadataStatus: 'Failed' }],
+  ['item deleting', { creating: 50 }],
+])
+  test(`terminal ${label} during create settlement is unknown at once without waiting`, async () => {
+    const h = buildingCreate(phases);
+    if (label === 'item deleting') {
+      const get = h.f.context.get;
+      h.f.context.get = async () => {
+        const read = await get();
+        if (read.status === 200) read.body.status = 'deleting';
+        return read;
+      };
+    }
+    const result = await operateNativeDataGraph(
+      document(),
+      h.f.context,
+      h.f.client,
+      h.options(1800),
+    );
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.deepEqual(h.timing.waits, []);
+    assert.deepEqual(
+      h.f.calls.filter((call) => call === 'POST'),
+      ['POST'],
+    );
+  });

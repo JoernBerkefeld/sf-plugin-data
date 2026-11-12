@@ -112,7 +112,7 @@ const metadata = () => [
     masterLabel: 'Synthetic lifecycle',
   },
 ];
-const document = observeCalculatedInsight(runtime(), '68.0').document;
+const document = observeCalculatedInsight(runtime()).document;
 const missing = () => {
   throw new ConnectError('REQUEST_FAILED', 404, 'ITEM_NOT_FOUND');
 };

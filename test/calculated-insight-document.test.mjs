@@ -9,14 +9,26 @@ import {
   buildCalculatedInsightUpdateDelta,
 } from '../lib/artifacts/calculated-insight-document.js';
 
-// eslint-disable-next-line unicorn/no-null -- Synthetic API65 fixtures preserve explicit wire null values.
+// eslint-disable-next-line unicorn/no-null -- Synthetic native68 fixtures preserve explicit wire null values.
 const wireNull = null;
 const table = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${table}.ssot__DeviceId__c`;
 const application = `${table}.ssot__SoftwareApplicationId__c`;
 const original = `SELECT APPROX_COUNT_DISTINCT(${device}) AS device_count__c, ${application} AS app_id__c FROM ${table} WHERE 1 = 0 GROUP BY ${application}`;
 const edited = original.replace('WHERE 1 = 0', `WHERE 1 = 0 AND ${device} IS NOT NULL`);
+const nativeNullKeys = [
+  'historyPublishScheduleInterval',
+  'historyPublishScheduleTimeZone',
+  'historyPublishTime',
+  'publishScheduleTimeZone',
+  'sourceCiDevName',
+  'sourceCiId',
+  'sourceCiName',
+];
 const runtime = (expression = original) => ({
+  ...Object.fromEntries(nativeNullKeys.map((key) => [key, wireNull])),
+  isFromPackage: false,
+  queryDialect: 'ANSI_SQL',
   apiName: 'SyntheticInsight__cio',
   dataSpace: 'default',
   calculatedInsightStatus: 'ACTIVE',
@@ -52,7 +64,7 @@ const runtime = (expression = original) => ({
     },
   ],
   publishScheduleEndDate: wireNull,
-  publishScheduleInterval: 'SYSTEM_MANAGED',
+  publishScheduleInterval: 'NOT_SCHEDULED',
   publishScheduleStartDateTime: wireNull,
   subType: wireNull,
   lastCalcInsightStatusDateTime: '2026-10-28T10:00:00.000Z',
@@ -100,47 +112,72 @@ test('complete fixed projection is detached and stable with explicit attribution
   ]);
 });
 
-for (const schedule of ['SYSTEM_MANAGED', 'NOT_SCHEDULED']) {
-  test(`exact ${schedule} profile projects, serializes and preserves detached forward delta`, () => {
-    const raw = { ...runtime(), publishScheduleInterval: schedule };
-    const current = projectCalculatedInsight(raw, metadata()).document;
-    const desired = structuredClone(current);
-    desired.spec.expression = edited;
-    const result = delta(desired, raw);
-    assert.equal(result.status, 'candidate');
-    assert.deepEqual(result.patch, { expression: edited });
-    assert.equal(result.expected.spec.publishScheduleInterval, schedule);
-    assert.deepEqual(JSON.parse(serializeCalculatedInsightDocument(current)), current);
-    const detached = validateCalculatedInsightDocument(current);
-    raw.publishScheduleInterval = 'changed';
-    current.spec.publishScheduleInterval = 'changed';
-    desired.spec.publishScheduleInterval = 'changed';
-    assert.equal(detached.spec.publishScheduleInterval, schedule);
-    assert.equal(result.expected.spec.publishScheduleInterval, schedule);
-    assert.equal(
-      delta(detached, { ...runtime(), publishScheduleInterval: schedule }).status,
-      'unchanged',
-    );
-    assert.equal(
-      delta(detached, { ...runtime(edited), publishScheduleInterval: schedule }, metadata(edited))
-        .status,
-      'blocked',
-    );
-  });
-  for (const expression of [original, edited])
-    test(`${schedule} schedule change with ${expression === original ? 'unchanged' : 'forward'} SQL is blocked`, () => {
-      const desired = document(expression);
-      desired.spec.publishScheduleInterval = schedule;
-      const raw = {
-        ...runtime(),
-        publishScheduleInterval: schedule === 'SYSTEM_MANAGED' ? 'NOT_SCHEDULED' : 'SYSTEM_MANAGED',
-      };
-      assert.deepEqual(delta(desired, raw), {
-        status: 'blocked',
-        blockers: ['CI_NON_EXPRESSION_CHANGE'],
-      });
+test('exact NOT_SCHEDULED profile projects, serializes and preserves detached forward delta', () => {
+  const schedule = 'NOT_SCHEDULED';
+  const raw = runtime();
+  const current = projectCalculatedInsight(raw, metadata()).document;
+  const desired = structuredClone(current);
+  desired.spec.expression = edited;
+  const result = delta(desired, raw);
+  assert.equal(result.status, 'candidate');
+  assert.deepEqual(result.patch, { expression: edited });
+  assert.equal(result.expected.spec.publishScheduleInterval, schedule);
+  assert.deepEqual(JSON.parse(serializeCalculatedInsightDocument(current)), current);
+  const detached = validateCalculatedInsightDocument(current);
+  raw.publishScheduleInterval = 'changed';
+  current.spec.publishScheduleInterval = 'changed';
+  desired.spec.publishScheduleInterval = 'changed';
+  assert.equal(detached.spec.publishScheduleInterval, schedule);
+  assert.equal(result.expected.spec.publishScheduleInterval, schedule);
+  assert.equal(delta(detached, runtime()).status, 'unchanged');
+  assert.equal(delta(detached, runtime(edited), metadata(edited)).status, 'candidate');
+});
+
+test('desired SYSTEM_MANAGED against a NOT_SCHEDULED target is a blocked non-expression change', () => {
+  for (const expression of [original, edited]) {
+    const desired = document(expression);
+    desired.spec.publishScheduleInterval = 'SYSTEM_MANAGED';
+    assert.deepEqual(delta(desired), {
+      status: 'blocked',
+      blockers: ['CI_NON_EXPRESSION_CHANGE'],
     });
-}
+  }
+});
+
+const ranSystemManaged = () => ({
+  ...runtime(),
+  publishScheduleInterval: 'SYSTEM_MANAGED',
+  isFromPackage: wireNull,
+  lastRunDateTime: '2026-11-12T07:09:38.000Z',
+  lastRunStatus: 'SUCCESS',
+  lastRunStatusDateTime: '2026-11-12T07:09:39.000Z',
+});
+
+test('run history and SYSTEM_MANAGED are admitted only for read-only retrieval', () => {
+  const raw = ranSystemManaged();
+  assert.throws(() => observeCalculatedInsight(raw), /could not be admitted/u);
+  assert.equal(delta(document(), raw).status, 'blocked');
+  const observed = observeCalculatedInsight(raw, true);
+  assert.equal(observed.status, 'ACTIVE');
+  assert.equal(observed.document.spec.publishScheduleInterval, 'SYSTEM_MANAGED');
+  assert.doesNotMatch(serializeCalculatedInsightDocument(observed.document), /SUCCESS|lastRun/u);
+  assert.deepEqual(
+    projectCalculatedInsight(raw, metadata(), { retrieval: true }).document,
+    observed.document,
+  );
+  // Retrieval admission never widens what the artifact cannot represent.
+  for (const mutate of [
+    (r) => (r.isFromPackage = true),
+    (r) => (r.historyPublishTime = '2026-11-12T07:09:38.000Z'),
+    (r) => (r.publishScheduleInterval = 'HOURLY'),
+    (r) => (r.expression = 'SELECT COUNT(*) FROM Synthetic__dlm'),
+  ]) {
+    const changed = ranSystemManaged();
+    mutate(changed);
+    assert.throws(() => observeCalculatedInsight(changed, true));
+  }
+});
+
 for (const schedule of [undefined, wireNull, 'SystemManaged', 'not_scheduled', 'UNKNOWN'])
   test(`schedule has no fallback: ${String(schedule)}`, () => {
     const desired = document();
@@ -164,7 +201,7 @@ test('identical settled baseline and edited definition produce pure zero-dispatc
   }
 });
 
-test('only qualified forward predicate addition produces exact expression-only candidate', () => {
+test('qualified expression edits produce exact expression-only candidates in both directions', () => {
   const desired = document(edited);
   const result = delta(desired);
   assert.equal(result.status, 'candidate');
@@ -172,7 +209,9 @@ test('only qualified forward predicate addition produces exact expression-only c
   assert.deepEqual(result.expected, desired);
   desired.spec.expression = 'changed';
   assert.equal(result.expected.spec.expression, edited);
-  assert.equal(delta(document(), runtime(edited), metadata(edited)).status, 'blocked');
+  assert.deepEqual(delta(document(), runtime(edited), metadata(edited)).patch, {
+    expression: original,
+  });
 });
 
 for (const field of ['ssot__DeviceId__c', 'ssot__SoftwareApplicationId__c']) {
@@ -273,7 +312,7 @@ for (const [label, mutate] of Object.entries({
     r.dimensions = [];
   },
   unknownRoot: (r) => {
-    r.queryDialect = 'ANSI_SQL';
+    r.unexpectedRoot = true;
   },
   unknownSchema: (r) => {
     r.measures[0].extra = true;
@@ -344,15 +383,6 @@ test('unknown Metadata, authored label edit, mismatched identity and nondefault 
   assert.deepEqual(delta(document(), runtime(), metadata(), 'other').blockers, ['INVALID_SCOPE']);
 });
 
-const nativeNullKeys = [
-  'historyPublishScheduleInterval',
-  'historyPublishScheduleTimeZone',
-  'historyPublishTime',
-  'publishScheduleTimeZone',
-  'sourceCiDevName',
-  'sourceCiId',
-  'sourceCiName',
-];
 const nativeRuntime = (status = 'ACTIVE', expression = original) => ({
   ...runtime(expression),
   ...Object.fromEntries(nativeNullKeys.map((key) => [key, wireNull])),
@@ -362,20 +392,19 @@ const nativeRuntime = (status = 'ACTIVE', expression = original) => ({
   queryDialect: 'ANSI_SQL',
   ...(status === 'DRAFT' ? { dimensions: [], measures: [] } : {}),
 });
-const nativeProfile = { apiVersion: '68.0' };
+const nativeProfile = {};
 
 for (const expression of [original, edited]) {
   for (const status of ['DRAFT', 'PROCESSING', 'ACTIVE']) {
     test(`API68 ${status} observes only qualified SQL ${expression === original ? 'original' : 'edited'}`, () => {
       const raw = nativeRuntime(status, expression);
-      const observed = observeCalculatedInsight(raw, '68.0');
+      const observed = observeCalculatedInsight(raw);
       assert.equal(observed.status, status);
       assert.equal(observed.document.spec.expression, expression);
       assert.deepEqual(observed.observations.nativeProfile, {
         isFromPackage: status === 'DRAFT' ? wireNull : false,
         schema: status === 'DRAFT' ? 'unmaterialized' : 'materialized',
       });
-      assert.throws(() => observeCalculatedInsight(raw));
       assert.doesNotMatch(
         serializeCalculatedInsightDocument(observed.document),
         /isFromPackage|queryDialect|sourceCi|historyPublish|unmaterialized|DRAFT/u,
@@ -415,7 +444,7 @@ for (const expression of [original, edited]) {
 for (const status of ['DRAFT', 'PROCESSING']) {
   test(`API68 ${status} preserves both evidenced package observations`, () => {
     for (const isFromPackage of [wireNull, false]) {
-      const result = observeCalculatedInsight({ ...nativeRuntime(status), isFromPackage }, '68.0');
+      const result = observeCalculatedInsight({ ...nativeRuntime(status), isFromPackage });
       assert.equal(result.observations.nativeProfile.isFromPackage, isFromPackage);
     }
   });
@@ -468,7 +497,7 @@ for (const [label, mutate] of Object.entries({
     for (const status of ['DRAFT', 'PROCESSING', 'ACTIVE']) {
       const raw = nativeRuntime(status);
       mutate(raw);
-      assert.throws(() => observeCalculatedInsight(raw, '68.0'));
+      assert.throws(() => observeCalculatedInsight(raw));
       assert.equal(
         buildCalculatedInsightUpdateDelta(document(), raw, metadata(), 'default', {
           ...nativeProfile,
@@ -482,18 +511,12 @@ for (const [label, mutate] of Object.entries({
 
 test('API68 draft schema never masquerades as materialized publication or deletion', () => {
   assert.throws(() =>
-    observeCalculatedInsight(
-      { ...nativeRuntime('DRAFT'), dimensions: runtime().dimensions },
-      '68.0',
-    ),
+    observeCalculatedInsight({ ...nativeRuntime('DRAFT'), dimensions: runtime().dimensions }),
   );
-  assert.throws(() => observeCalculatedInsight({ ...nativeRuntime(), dimensions: [] }, '68.0'));
-  assert.throws(() =>
-    observeCalculatedInsight({ ...nativeRuntime(), isFromPackage: wireNull }, '68.0'),
-  );
+  assert.throws(() => observeCalculatedInsight({ ...nativeRuntime(), dimensions: [] }));
+  assert.throws(() => observeCalculatedInsight({ ...nativeRuntime(), isFromPackage: wireNull }));
   for (const status of ['DELETING', 'ERROR', 'OTHER'])
-    assert.throws(() => observeCalculatedInsight(nativeRuntime(status), '68.0'));
-  assert.throws(() => observeCalculatedInsight(nativeRuntime(), '69.0'));
+    assert.throws(() => observeCalculatedInsight(nativeRuntime(status)));
   assert.throws(() =>
     projectCalculatedInsight(nativeRuntime(), metadata(), {
       ...nativeProfile,
@@ -510,14 +533,14 @@ test('API68 draft schema never masquerades as materialized publication or deleti
 });
 
 for (const status of ['DRAFT', 'ACTIVE']) {
-  test(`API68 ${status} supports both exact expression directions without widening API65`, () => {
+  test(`API68 ${status} supports both exact expression directions`, () => {
     for (const [current, desired] of [
       [original, edited],
       [edited, original],
     ]) {
       const raw = nativeRuntime(status, current);
       const profile = { ...nativeProfile, expectedStatus: status };
-      const expected = observeCalculatedInsight(nativeRuntime(status, desired), '68.0').document;
+      const expected = observeCalculatedInsight(nativeRuntime(status, desired)).document;
       const result = buildCalculatedInsightUpdateDelta(
         expected,
         raw,
@@ -537,7 +560,6 @@ for (const status of ['DRAFT', 'ACTIVE']) {
         ).status,
         'unchanged',
       );
-      assert.equal(delta(document(), runtime(edited), metadata(edited)).status, 'blocked');
     }
   });
 }

@@ -6,7 +6,6 @@ import { bindCalculatedInsightDependencies } from './bind-calculated-insight-dep
 import type { CalculatedInsightBinding } from './bind-calculated-insight-dependencies.js';
 import {
   CalculatedInsightError,
-  projectCalculatedInsight,
   observeCalculatedInsight,
   calculatedInsightName,
 } from '../artifacts/calculated-insight-document.js';
@@ -19,16 +18,9 @@ export type CalculatedInsightConnection = Pick<
   Connection,
   'instanceUrl' | 'request' | 'getApiVersion' | 'metadata'
 >;
-export type CalculatedInsightAcquisition = {
-  identity: { dataSpace: 'default'; apiName: string };
-  candidate?: CalculatedInsightProjection['document'];
-  observations?: CalculatedInsightProjection['observations'];
-  expectations?: { runtime: unknown; metadata: unknown };
-  blockers: string[];
-};
-
 /**
- * Require the fixed API65/default-space CI scope before any request.
+ * Require the fixed API65/default-space scope of the Metadata and dependency receiver.
+ * Native68 CI reads and writes never use this receiver for runtime routes.
  * @param {CalculatedInsightConnection} connection Existing target connection.
  * @param {ApiVersionSelection} selection Explicit numeric family route.
  * @param {string} dataSpace Exact target space.
@@ -49,51 +41,6 @@ export function calculatedInsightScope(
     !/^[A-Za-z][A-Za-z0-9_]*__cio$/u.test(apiName)
   )
     throw new CalculatedInsightError('INVALID_SCOPE');
-}
-
-/**
- * Independently acquire exact runtime and SOAP Metadata; no 404 absence inference.
- * @param {CalculatedInsightConnection} connection Existing authenticated connection.
- * @param {string} apiName Exact selected CI name.
- * @param {ApiVersionSelection} selection Explicit API65 route.
- * @param {string} dataSpace Explicit default space.
- * @returns {Promise<CalculatedInsightAcquisition>} Candidate only after full correlation.
- */
-export async function retrieveCalculatedInsight(
-  connection: CalculatedInsightConnection,
-  apiName: string,
-  selection: ApiVersionSelection,
-  dataSpace: string,
-): Promise<CalculatedInsightAcquisition> {
-  calculatedInsightScope(connection, selection, dataSpace, apiName);
-  const identity = { dataSpace: 'default' as const, apiName };
-  try {
-    const runtime = await new ConnectClient(connection, selection).get(
-      `/services/data/v65.0/ssot/calculated-insights/${apiName}`,
-    );
-    const definitions = await readCalculatedInsightMetadata(connection, apiName.slice(0, -5));
-    if (!Array.isArray(definitions) || definitions.length !== 1)
-      throw new CalculatedInsightError('CI_METADATA_AMBIGUOUS');
-    const metadata: unknown = definitions[0];
-    const projection = projectCalculatedInsight(runtime, metadata);
-    if (projection.document.identity.apiName !== apiName)
-      throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-    return {
-      identity,
-      candidate: projection.document,
-      observations: projection.observations,
-      expectations: { runtime: structuredClone(runtime), metadata: structuredClone(metadata) },
-      blockers: [],
-    };
-  } catch (error) {
-    return retainConnectDiagnostic(
-      {
-        identity,
-        blockers: [error instanceof CalculatedInsightError ? error.code : 'CI_ACQUISITION_FAILED'],
-      },
-      getConnectDiagnostic(error),
-    );
-  }
 }
 
 export type CalculatedInsightReadContext = {
@@ -162,12 +109,14 @@ export function calculatedInsightReadContext(
  * @param {CalculatedInsightReadContext} context Isolated read context.
  * @param {string} apiName Exact selected identity.
  * @param {boolean} deleting Permit the evidenced deletion transition only.
+ * @param {boolean} retrieval Read-only export: admit run history and SYSTEM_MANAGED schedules.
  * @returns {Promise<ExactCalculatedInsightAcquisition>} Detached evidence or payload-free diagnostics.
  */
 export async function acquireExactCalculatedInsight(
   context: CalculatedInsightReadContext,
   apiName: string,
   deleting = false,
+  retrieval = false,
 ): Promise<ExactCalculatedInsightAcquisition> {
   try {
     context.check();
@@ -203,7 +152,7 @@ export async function acquireExactCalculatedInsight(
     const isDeleting = deleting && raw?.calculatedInsightStatus === 'DELETING';
     const observed = observeCalculatedInsight(
       isDeleting ? { ...raw, calculatedInsightStatus: 'ACTIVE' } : runtime,
-      '68.0',
+      retrieval,
     );
     const { document, observations } = observed;
     if (document.identity.apiName !== apiName)
@@ -235,4 +184,26 @@ export async function acquireExactCalculatedInsight(
       getConnectDiagnostic(error),
     );
   }
+}
+
+/**
+ * Project the drift-relevant target evidence of one exact acquisition.
+ * Authored definition, lifecycle status, package/materialization profile and the independent
+ * Metadata definition are compared. Derived attribution and raw runtime timestamps are not:
+ * consecutive native68 GETs of one unchanged CI were observed to alternate the attributed
+ * source field (DeviceId vs SoftwareApplicationId), which is not a configuration change.
+ * @param {ExactCalculatedInsightAcquisition} acquired Exact acquisition.
+ * @returns {unknown} Detached comparable evidence.
+ */
+export function calculatedInsightTargetEvidence(
+  acquired: ExactCalculatedInsightAcquisition,
+): unknown {
+  if (acquired.state !== 'present') return structuredClone(acquired);
+  return structuredClone({
+    state: acquired.state,
+    status: acquired.status,
+    document: acquired.document,
+    nativeProfile: acquired.observations.nativeProfile,
+    metadata: acquired.expectations.metadata,
+  });
 }

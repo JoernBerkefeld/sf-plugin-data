@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 
-// eslint-disable-next-line unicorn/no-null -- API65 explicitly distinguishes wire null from omitted fields.
+// eslint-disable-next-line unicorn/no-null -- The native API distinguishes wire null from omitted fields.
 const wireNull = null;
 export const calculatedInsightName = /^[A-Za-z][A-Za-z0-9_]{0,194}__cio$/u;
 const objectName = 'ssot__DeviceApplicationEngagement__dlm';
@@ -345,26 +345,25 @@ function attribution(value: unknown): Attribution {
 }
 
 export type CalculatedInsightProfile = {
-  apiVersion?: '65.0' | '68.0';
   expectedStatus?: 'ACTIVE' | 'DRAFT';
+  /** Read-only export: admit run history and a SYSTEM_MANAGED schedule. */
+  retrieval?: boolean;
 };
 
 /**
- * Validate a complete runtime observation without fabricating Metadata correlation.
+ * Validate a complete native68 runtime observation without fabricating Metadata correlation.
  * Pending observations are usable only for echo/poll preservation, never settled admission.
- * @param {unknown} runtimeDetail Exact version-specific response body.
- * @param {string} apiVersion Explicit qualified profile; legacy defaults to API65.
+ * Write paths admit only the recorded never-run, error-free NOT_SCHEDULED profile. Read-only
+ * retrieval also admits run history (not part of the artifact) and a SYSTEM_MANAGED schedule,
+ * which IS exported in the spec; deploy, publish and delete then refuse that schedule by design.
+ * @param {unknown} runtimeDetail Exact native68 response body.
+ * @param {boolean} retrieval Read-only export admission.
  * @returns {CalculatedInsightProjection & {status: 'ACTIVE' | 'PROCESSING' | 'DRAFT'}} Detached runtime observation.
  */
-export function observeCalculatedInsight<Version extends '65.0' | '68.0' = '65.0'>(
+export function observeCalculatedInsight(
   runtimeDetail: unknown,
-  apiVersion: Version = '65.0' as Version,
-): CalculatedInsightProjection & {
-  status: 'ACTIVE' | 'PROCESSING' | (Version extends '68.0' ? 'DRAFT' : never);
-} {
-  if (apiVersion !== '65.0' && apiVersion !== '68.0')
-    throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
-  const native68 = apiVersion === '68.0';
+  retrieval = false,
+): CalculatedInsightProjection & { status: 'ACTIVE' | 'PROCESSING' | 'DRAFT' } {
   const nativeNullKeys = [
     'historyPublishScheduleInterval',
     'historyPublishScheduleTimeZone',
@@ -391,26 +390,31 @@ export function observeCalculatedInsight<Version extends '65.0' | '68.0' = '65.0
     'calculatedInsightStatus',
     ...semanticKeys,
     ...transientKeys,
-    ...(native68 ? [...nativeNullKeys, 'isFromPackage', 'queryDialect'] : []),
+    ...nativeNullKeys,
+    'isFromPackage',
+    'queryDialect',
   ]);
   const status = raw.calculatedInsightStatus;
-  if (status !== 'ACTIVE' && status !== 'PROCESSING' && !(native68 && status === 'DRAFT'))
+  if (status !== 'ACTIVE' && status !== 'PROCESSING' && status !== 'DRAFT')
     throw new CalculatedInsightError('CI_NOT_SETTLED');
   if (
-    native68 &&
-    (nativeNullKeys.some((key) => raw[key] !== wireNull) ||
-      raw.queryDialect !== 'ANSI_SQL' ||
-      raw.publishScheduleInterval !== 'NOT_SCHEDULED' ||
-      (raw.isFromPackage !== false && raw.isFromPackage !== wireNull) ||
-      (status === 'ACTIVE' && raw.isFromPackage !== false))
+    nativeNullKeys.some((key) => raw[key] !== wireNull) ||
+    raw.queryDialect !== 'ANSI_SQL' ||
+    (raw.publishScheduleInterval !== 'NOT_SCHEDULED' &&
+      !(retrieval && raw.publishScheduleInterval === 'SYSTEM_MANAGED')) ||
+    (raw.isFromPackage !== false && raw.isFromPackage !== wireNull) ||
+    (!retrieval && status === 'ACTIVE' && raw.isFromPackage !== false)
   )
     throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
-  // Only the recorded never-run, error-free profile is qualified. Timestamps are observations.
+  // Writes admit only the recorded never-run, error-free profile. Timestamps are observations.
   if (
-    transientKeys.some((key) => key !== 'lastCalcInsightStatusDateTime' && raw[key] !== wireNull) ||
-    typeof raw.lastCalcInsightStatusDateTime !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(raw.lastCalcInsightStatusDateTime) ||
-    !Number.isFinite(Date.parse(raw.lastCalcInsightStatusDateTime))
+    !retrieval &&
+    (transientKeys.some(
+      (key) => key !== 'lastCalcInsightStatusDateTime' && raw[key] !== wireNull,
+    ) ||
+      typeof raw.lastCalcInsightStatusDateTime !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(raw.lastCalcInsightStatusDateTime) ||
+      !Number.isFinite(Date.parse(raw.lastCalcInsightStatusDateTime)))
   )
     throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
   const observations: CalculatedInsightProjection['observations'] = {
@@ -418,11 +422,10 @@ export function observeCalculatedInsight<Version extends '65.0' | '68.0' = '65.0
   };
   const spec = Object.fromEntries(semanticKeys.map((key) => [key, structuredClone(raw[key])]));
   const draft = status === 'DRAFT';
-  if (native68)
-    observations.nativeProfile = {
-      isFromPackage: raw.isFromPackage as false | null,
-      schema: draft ? 'unmaterialized' : 'materialized',
-    };
+  observations.nativeProfile = {
+    isFromPackage: raw.isFromPackage as false | null,
+    schema: draft ? 'unmaterialized' : 'materialized',
+  };
   for (const role of ['dimensions', 'measures'] as const) {
     const fields = spec[role];
     if (draft) {
@@ -450,13 +453,13 @@ export function observeCalculatedInsight<Version extends '65.0' | '68.0' = '65.0
   return {
     document,
     observations,
-    status: status as 'ACTIVE' | 'PROCESSING' | (Version extends '68.0' ? 'DRAFT' : never),
+    status: status as 'ACTIVE' | 'PROCESSING' | 'DRAFT',
   };
 }
 
 /**
  * Correlate a settled runtime observation with separately acquired Metadata.
- * @param {unknown} runtimeDetail Independent version-specific detail body.
+ * @param {unknown} runtimeDetail Independent native68 detail body.
  * @param {unknown} metadataDefinition Independent Metadata definition.
  * @param {CalculatedInsightProfile} profile Explicit native version and required stable state.
  * @returns {CalculatedInsightProjection} Complete admitted semantics and observations.
@@ -470,7 +473,7 @@ export function projectCalculatedInsight(
     throw new CalculatedInsightError('CI_RUNTIME_PROFILE_UNQUALIFIED');
   const { document, observations, status } = observeCalculatedInsight(
     runtimeDetail,
-    profile.apiVersion,
+    profile.retrieval === true,
   );
   if (status !== (profile.expectedStatus ?? 'ACTIVE'))
     throw new CalculatedInsightError('CI_NOT_SETTLED');
@@ -498,7 +501,7 @@ export function projectCalculatedInsight(
  * @param {unknown} runtimeDetail Independently read current runtime body.
  * @param {unknown} metadataDefinition Independently read current Metadata definition.
  * @param {unknown} targetDataSpace Explicit target binding.
- * @param {CalculatedInsightProfile} profile Explicit qualified lifecycle profile; legacy defaults remain unchanged.
+ * @param {CalculatedInsightProfile} profile Explicit qualified lifecycle profile.
  * @returns {CalculatedInsightUpdateDelta} Unchanged, qualified expression candidate, or blockers.
  */
 export function buildCalculatedInsightUpdateDelta(
@@ -522,12 +525,6 @@ export function buildCalculatedInsightUpdateDelta(
       throw new CalculatedInsightError('CI_NON_EXPRESSION_CHANGE');
     if (source.spec.expression === current.spec.expression)
       return { status: 'unchanged', blockers: [], expected: source, observations };
-    if (
-      profile.apiVersion !== '68.0' &&
-      (current.spec.expression !== originalExpression ||
-        source.spec.expression !== editedExpression)
-    )
-      throw new CalculatedInsightError('CI_EXPRESSION_DIRECTION_UNQUALIFIED');
     return {
       status: 'candidate',
       blockers: [],
