@@ -1,3 +1,32 @@
+# Native graph writes: DELETE answer decides, 429/503 resent — 2026-11-12
+
+Follow-up to G1 (user decisions in this session and a side session). Version stays 0.1.0.
+
+- Delete: the DELETE answer decides. 2xx is `deleted` / `confirmed-deleted`; an API 4xx
+  is `failed` / `rejected` with Salesforce's error (delete command maps the new
+  `rejected` mutation); other failures are `failed` / `unknown`. There is no read-back:
+  after the G1 live delete the by-name metadata read
+  (`/ssot/data-graphs/metadata?dataGraphEntityName=`, a Connect read, not the Metadata
+  API) alternated with a stale pre-update copy for about 11-12 minutes, so read-back only
+  produced false "still present" results. No evidence exists of a DELETE 2xx without the
+  graph being deleted. `settleNativeDataGraphDeletion` and the 15-minute delete budget
+  are gone; the delete budget is 120 s again. Pre-delete checks (exact file match,
+  dependency guard) stay.
+- 429/503 on a graph write (create POST, update PUT, DELETE) means not processed:
+  `sendNativeGraphWrite` waits Retry-After delta-seconds (else 20 s; an HTTP-date counts
+  as unparseable), prints "Data Graph <op> rate-limited (HTTP N); retrying in Ns." on
+  stderr and resends the identical write until the invocation deadline, then reports
+  `failed` / `not-attempted` with the diagnostic (no `failedCheck` on create, since the
+  write was refused). Classified only through `getConnectDiagnostic` kinds
+  `rate-limit` / `service-unavailable`. No live 429/503 has been seen on these routes;
+  the cases are unit-tested. Risks if Salesforce ever processes a write and still answers
+  429/503: a resent create meets the existing graph (failed / unknown, never `created`);
+  a resent DELETE of an absent graph gets an unrecorded answer; a resent PUT bumps the
+  version twice.
+- Tests: delete 2xx without read-back, delete API 4xx rejected, 429-then-success,
+  503 with Retry-After and persistent 429 until the deadline for each of DELETE, POST and
+  PUT, plus server-side-success cases; the delete-wait tests are removed.
+
 # Native API 68 data graphs take every shape — 2026-11-12
 
 Package G1 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.

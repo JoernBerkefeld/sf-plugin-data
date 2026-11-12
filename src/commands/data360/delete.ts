@@ -1214,9 +1214,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           mutation:
             result.mutation === 'confirmed-deleted'
               ? 'confirmed-deleted'
-              : result.mutation === 'unknown'
-                ? 'unknown'
-                : 'not-attempted',
+              : result.mutation === 'rejected'
+                ? 'rejected'
+                : result.mutation === 'unknown'
+                  ? 'unknown'
+                  : 'not-attempted',
           routes: [{ operation: 'data-graph.delete', apiVersion: '68.0', transport: 'native' }],
         };
         envelope.result.items.push(item);

@@ -305,13 +305,13 @@ for (const reader of ['root', 'get'])
       });
     const pending = operateNativeDataGraph(document(), f.context, f.client, options('delete'));
     await started;
-    t.mock.timers.tick(900_000);
+    t.mock.timers.tick(120_000);
     assert.deepEqual(await pending, { outcome: 'blocked', mutation: 'not-attempted' });
     await release();
     // Drain late admission continuations without allowing another write or timer.
     for (let turn = 0; turn < 50; turn++) await Promise.resolve();
     assert.deepEqual(f.calls, []);
-    assert.equal(t.mock.timers.tick(900_000), undefined);
+    assert.equal(t.mock.timers.tick(120_000), undefined);
   });
 
 test('late Graph Connect evidence cannot mutate a returned failure or leak into next invocation', async (t) => {
@@ -372,7 +372,7 @@ test('public delete deadline bounds unresolved DELETE and late acknowledgement n
   };
   const pending = operateNativeDataGraph(document(), f.context, f.client, options('delete'));
   await started;
-  t.mock.timers.tick(900_000);
+  t.mock.timers.tick(120_000);
   const result = await pending;
   assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
   f.setGraph(undefined);
@@ -583,17 +583,45 @@ test('product Graph confirmation previews and ambiguous writes never replay', as
   );
   assert.equal(writes, 2);
 });
-test('product Graph deletion waits for stale Metadata and four-source absence', async () => {
+test('public Graph delete trusts the DELETE 2xx and reads nothing afterwards', async () => {
   const f = fixture();
   f.setGraph(runtime());
-  let reads = 0;
-  f.context.metadata = async () => (++reads < 3 ? { status: 200, body: {} } : missingMetadata());
-  await expectResult(
-    operateNativeDataGraph(document(), f.context, f.client, options('delete')),
-    'outcome',
-    'deleted',
+  let deleted = false;
+  let readsAfter = 0;
+  for (const key of ['get', 'metadata', 'inventory', 'query']) {
+    const original = f.context[key];
+    f.context[key] = async (...arguments_) => {
+      if (deleted) readsAfter++;
+      return original(...arguments_);
+    };
+  }
+  f.client.delete = async () => {
+    f.calls.push('DELETE');
+    deleted = true;
+  };
+  assert.deepEqual(
+    await operateNativeDataGraph(document(), f.context, f.client, options('delete')),
+    { outcome: 'deleted', mutation: 'confirmed-deleted' },
   );
-  assert.equal(reads, 3);
+  assert.equal(readsAfter, 0);
+  assert.deepEqual(f.calls, ['DELETE']);
+});
+
+test('public Graph delete answered with an API 4xx is rejected and surfaced', async () => {
+  const f = fixture();
+  f.setGraph(runtime());
+  const evidence = apiDiagnostic(400, [
+    { errorCode: 'INVALID_INPUT', message: 'Graph cannot be deleted' },
+  ]);
+  assert.equal(evidence.kind, 'api-error');
+  f.client.delete = async () => {
+    f.calls.push('DELETE');
+    throw retainConnectDiagnostic(new Error('private-secret'), evidence);
+  };
+  const result = await operateNativeDataGraph(document(), f.context, f.client, options('delete'));
+  assert.deepEqual(result, { outcome: 'failed', mutation: 'rejected' });
+  assert.deepEqual(getConnectDiagnostic(result), evidence);
+  assert.deepEqual(f.calls, ['DELETE']);
 });
 
 /**
@@ -1290,8 +1318,21 @@ for (const mode of ['timeout', 'preservation', 429, 503])
       });
     const result = await command.run();
     assert.equal(result.status, mode === 'timeout' ? 'blocked' : 'failed');
-    assert.equal(result.result.items[0].mutation, mode === 'timeout' ? 'not-attempted' : 'unknown');
-    assert.deepEqual(f.calls, mode === 'timeout' ? [] : ['PUT']);
+    // HTTP429/503 PUTs are not processed: resent every 20 s (0, 20, 40) within the 45 s budget.
+    assert.equal(
+      result.result.items[0].mutation,
+      mode === 'timeout' || typeof mode === 'number' ? 'not-attempted' : 'unknown',
+    );
+    assert.deepEqual(
+      f.calls,
+      mode === 'timeout' ? [] : typeof mode === 'number' ? ['PUT', 'PUT', 'PUT'] : ['PUT'],
+    );
+    if (typeof mode === 'number')
+      assert.ok(
+        stderr.some((message) =>
+          message.includes(`Data Graph update rate-limited (HTTP ${mode}); retrying in 20s.`),
+        ),
+      );
     assert.match(stderr[0], /seconds to many minutes/u);
     if (mode === 'timeout') assert.equal(f.clock, 45_000);
     if (typeof mode === 'number')
@@ -1571,7 +1612,7 @@ for (const seconds of [45, 1800])
   });
 
 for (const status of [429, 503])
-  test(`native update PUT HTTP${status} is single-attempt unknown with private diagnostics`, async () => {
+  test(`native update PUT HTTP${status} is resent after Retry-After until the budget ends`, async () => {
     const f = updateFixture();
     const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
     desired.definition.description = 'change';
@@ -1580,10 +1621,16 @@ for (const status of [429, 503])
       f.calls.push('PUT');
       throw retainConnectDiagnostic(new Error('private-secret'), evidence);
     };
-    const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
-    assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
+    const result = await operateNativeDataGraph(desired, f.context, f.client, {
+      ...f.intent,
+      waitTimeoutSeconds: 100,
+    });
+    // Not processed: PUTs at 0, 31, 62 and 93 s; another 31 s wait would reach the 100 s budget,
+    // so the command stops as refused (not-attempted), not unknown.
+    assert.deepEqual(result, { outcome: 'failed', mutation: 'not-attempted' });
     assert.deepEqual(getConnectDiagnostic(result), evidence);
-    assert.deepEqual(f.calls, ['PUT']);
+    assert.deepEqual(f.calls, ['PUT', 'PUT', 'PUT', 'PUT']);
+    assert.deepEqual(f.waits, [31_000, 31_000, 31_000]);
     assert.equal(JSON.stringify(result).includes('private-secret'), false);
   });
 
@@ -2074,43 +2121,142 @@ for (const status of [429, 503]) {
           undefined,
         );
       });
-  for (const operation of ['deploy', 'delete'])
-    test(`Graph ${operation} HTTP${status} swallowed write retains evidence only on failure`, async () => {
-      for (const succeeds of [false, true]) {
-        const f = fixture();
-        if (operation === 'delete') f.setGraph(runtime());
-        let writes = 0;
-        f.client[operation === 'deploy' ? 'create' : 'delete'] = async () => {
-          writes++;
-          if (succeeds) f.setGraph(operation === 'deploy' ? runtime() : undefined);
-          throw retainConnectDiagnostic(new Error('private-secret'), evidence);
-        };
-        const result = await operateNativeDataGraph(
-          document(),
-          f.context,
-          f.client,
-          options(operation),
-        );
-        assert.equal(writes, 1);
-        if (operation === 'delete' && succeeds) {
-          assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
-          assert.equal(getConnectDiagnostic(result), undefined);
-        } else {
-          assert.deepEqual(result, {
-            outcome: 'failed',
-            mutation: 'unknown',
-            ...(operation === 'deploy' ? { failedCheck: 'request' } : {}),
-          });
-          assert.deepEqual(getConnectDiagnostic(result), evidence);
-          assert.match(
-            operationDiagnostic(result, ''),
-            status === 429 ? /429 Too Many Requests/u : /POSSIBLE Connect rate limit/u,
-          );
-        }
-        assert.equal(JSON.stringify(result).includes('private-secret'), false);
-      }
-    });
 }
+
+/**
+ * One Graph write whose answers are scripted per attempt, under an injected clock.
+ * @param {'delete' | 'create' | 'update'} write Write under test.
+ * @param {Function} answer Attempt number to 'ok' (fixture write), a diagnostic to throw, or
+ * `{ processed: diagnostic }` (the fixture write happens, then the diagnostic is thrown).
+ * @returns {Promise<object>} Result, attempt clock times, pauses, progress and fixture.
+ */
+async function scriptedGraphWrite(write, answer) {
+  const f = write === 'update' ? updateFixture() : fixture();
+  if (write === 'delete') f.setGraph(runtime());
+  const value =
+    write === 'update' ? nativeDataGraphDocumentFromResponse(recursiveRuntime()) : document();
+  if (write === 'update') value.definition.description = 'change';
+  let clock = 0;
+  const attempts = [];
+  const waits = [];
+  const progress = [];
+  const succeed = f.client[write];
+  f.client[write] = async (...arguments_) => {
+    attempts.push(clock);
+    const outcome = answer(attempts.length);
+    if (outcome === 'ok') return succeed(...arguments_);
+    if (outcome.processed) {
+      await succeed(...arguments_);
+      throw retainConnectDiagnostic(new Error('private-secret'), outcome.processed);
+    }
+    throw retainConnectDiagnostic(new Error('private-secret'), outcome);
+  };
+  const result = await operateNativeDataGraph(
+    value,
+    f.context,
+    f.client,
+    options(write === 'delete' ? 'delete' : 'deploy', {
+      ...(write === 'delete' ? {} : { waitTimeoutSeconds: 45 }),
+      now: () => clock,
+      pause: async (milliseconds) => {
+        waits.push(milliseconds);
+        clock += milliseconds;
+      },
+      progress: (message) => progress.push(message),
+    }),
+  );
+  return { result, attempts, waits, progress, f };
+}
+
+const confirmedWrite = {
+  delete: { outcome: 'deleted', mutation: 'confirmed-deleted' },
+  create: { outcome: 'created', mutation: 'confirmed-created' },
+  update: { outcome: 'updated', mutation: 'confirmed-updated' },
+};
+for (const write of ['delete', 'create', 'update']) {
+  test(`Graph ${write} HTTP429 is not processed: the identical write is sent again`, async () => {
+    const limited = connectDiagnostic(429, {});
+    const run = await scriptedGraphWrite(write, (attempt) => (attempt === 1 ? limited : 'ok'));
+    assert.deepEqual(run.result, confirmedWrite[write]);
+    assert.equal(run.attempts.length, 2);
+    assert.equal(run.waits[0], 20_000);
+    assert.ok(
+      run.progress.includes(`Data Graph ${write} rate-limited (HTTP 429); retrying in 20s.`),
+    );
+  });
+
+  test(`Graph ${write} HTTP503 honours Retry-After before the identical resend`, async () => {
+    const unavailable = connectDiagnostic(503, { 'retry-after': '7' });
+    const run = await scriptedGraphWrite(write, (attempt) => (attempt === 1 ? unavailable : 'ok'));
+    assert.deepEqual(run.result, confirmedWrite[write]);
+    assert.equal(run.attempts.length, 2);
+    assert.equal(run.waits[0], 7000);
+    assert.deepEqual(run.attempts, [0, 7000]);
+    assert.ok(
+      run.progress.includes(`Data Graph ${write} rate-limited (HTTP 503); retrying in 7s.`),
+    );
+  });
+
+  test(`Graph ${write} Retry-After 0 still pauses at least one second`, async () => {
+    const limited = connectDiagnostic(429, { 'retry-after': '0' });
+    const run = await scriptedGraphWrite(write, (attempt) => (attempt === 1 ? limited : 'ok'));
+    assert.deepEqual(run.result, confirmedWrite[write]);
+    assert.deepEqual(run.attempts, [0, 1000]);
+  });
+
+  test(`Graph ${write} HTTP429 until the deadline is failed and not processed`, async () => {
+    const limited = connectDiagnostic(429, {});
+    const run = await scriptedGraphWrite(write, () => limited);
+    assert.deepEqual(run.result, { outcome: 'failed', mutation: 'not-attempted' });
+    assert.deepEqual(getConnectDiagnostic(run.result), limited);
+    assert.match(operationDiagnostic(run.result, ''), /429 Too Many Requests/u);
+    assert.equal(JSON.stringify(run.result).includes('private-secret'), false);
+    // Delete budget 120 s; deploy --wait-timeout 45 s. 20-second waits, never up to the end.
+    const end = write === 'delete' ? 120_000 : 45_000;
+    assert.deepEqual(
+      run.attempts,
+      Array.from({ length: Math.ceil(end / 20_000) }, (_, index) => index * 20_000),
+    );
+    assert.ok(run.attempts.every((at) => at < end));
+    const attempts = run.attempts.length;
+    for (let turn = 0; turn < 50; turn++) await Promise.resolve();
+    assert.equal(run.attempts.length, attempts);
+  });
+}
+
+test('Graph DELETE processed server-side but answered HTTP429 is sent again and the second answer decides', async () => {
+  const run = await scriptedGraphWrite('delete', (attempt) =>
+    attempt === 1 ? { processed: connectDiagnostic(429, {}) } : 'ok',
+  );
+  // The fixture answers the second DELETE with 2xx; an API 4xx there would read rejected.
+  assert.deepEqual(run.result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
+  assert.equal(run.attempts.length, 2);
+  assert.deepEqual(run.f.calls, ['DELETE', 'DELETE']);
+});
+
+test('Graph POST processed server-side but answered HTTP429 resends into the existing graph', async () => {
+  const duplicate = apiDiagnostic(400, [{ errorCode: 'INVALID_INPUT', message: 'Graph exists' }]);
+  const run = await scriptedGraphWrite('create', (attempt) =>
+    attempt === 1 ? { processed: connectDiagnostic(429, {}) } : duplicate,
+  );
+  // The resent POST meets the graph the first POST created; that non-429 answer keeps the
+  // read-only reconciliation: an unconfirmed create, never a confirmed one.
+  assert.deepEqual(run.result, { outcome: 'failed', mutation: 'unknown', failedCheck: 'request' });
+  assert.deepEqual(getConnectDiagnostic(run.result), duplicate);
+  assert.equal(run.attempts.length, 2);
+  assert.deepEqual(run.f.calls, ['POST']);
+});
+
+test('Graph PUT processed server-side but answered HTTP503 resends the same payload', async () => {
+  const run = await scriptedGraphWrite('update', (attempt) =>
+    attempt === 1 ? { processed: connectDiagnostic(503, {}) } : 'ok',
+  );
+  // The fixture applies the identical payload twice; the settled graph still matches it.
+  assert.deepEqual(run.result, { outcome: 'updated', mutation: 'confirmed-updated' });
+  assert.equal(run.attempts.length, 2);
+  assert.deepEqual(run.f.calls, ['PUT', 'PUT']);
+  assert.deepEqual(run.f.payloads[0], run.f.payloads[1]);
+});
 
 test('Graph command diagnostics render JSON and human failures including before context exists', async () => {
   const cwd = await project();
@@ -2287,95 +2433,6 @@ test('acquisition carries private API diagnostics without weakening raw absence 
   assert.deepEqual(acquired, { state: 'unknown' });
   assert.equal(getConnectDiagnostic(acquired), evidence);
   assert.deepEqual(f.calls, []);
-});
-
-/**
- * Public delete whose metadata entry outlives the item for a number of reads, on a fake clock.
- * @param {number} linger Metadata reads that still list the graph after the item is gone.
- * @param {boolean} [stays] The DELETE leaves the graph ready.
- * @returns {object} Fixture, intent and recorded waits/progress.
- */
-function lingeringDelete(linger, stays = false) {
-  const f = fixture();
-  f.setGraph(runtime());
-  let deleted = false;
-  let lingering = 0;
-  const metadata = f.context.metadata;
-  f.client.delete = async () => {
-    f.calls.push('DELETE');
-    deleted = true;
-    if (!stays) f.setGraph(undefined);
-  };
-  f.context.metadata = async (...arguments_) => {
-    if (deleted && !stays && lingering < linger) {
-      lingering++;
-      return { status: 200, body: {} };
-    }
-    return metadata(...arguments_);
-  };
-  let clock = 0;
-  const waits = [];
-  const progress = [];
-  const intent = options('delete', {
-    now: () => clock,
-    pause: async (milliseconds) => {
-      waits.push(milliseconds);
-      clock += milliseconds;
-    },
-    progress: (message) => progress.push(message),
-  });
-  return { f, intent, waits, progress };
-}
-
-test('public Graph delete keeps reading while the metadata entry outlives the item', async () => {
-  const h = lingeringDelete(16);
-  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
-  assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
-  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
-  assert.equal(h.waits.length, 16);
-  assert.ok(h.progress.some((line) => /Data Graph removal in progress;/u.test(line)));
-});
-
-test('public Graph delete stops at its 15 minute budget when the metadata entry never goes', async () => {
-  const h = lingeringDelete(1_000_000);
-  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
-  assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
-  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
-  assert.equal(
-    h.waits.reduce((total, wait) => total + wait, 0),
-    900_000,
-  );
-});
-
-test('public Graph delete that leaves the graph ready stops after 12 reads, not the budget', async () => {
-  const h = lingeringDelete(0, true);
-  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
-  assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
-  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
-  assert.equal(h.waits.length, 11);
-});
-
-test('public Graph delete keeps reading while the item reads deleting beyond 12 reads', async () => {
-  const h = lingeringDelete(0);
-  const get = h.f.context.get;
-  let deletingReads = 0;
-  h.f.client.delete = async () => {
-    h.f.calls.push('DELETE');
-    h.f.setGraph(undefined);
-    deletingReads = 20;
-  };
-  h.f.context.get = async (...arguments_) => {
-    if (deletingReads > 0) {
-      deletingReads--;
-      return { status: 200, body: runtime('deleting') };
-    }
-    return get(...arguments_);
-  };
-  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
-  assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
-  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
-  assert.equal(h.waits.length, 20);
-  assert.ok(h.progress.some((line) => /Data Graph deleting;/u.test(line)));
 });
 
 test('a create POST still open at --wait-timeout names the deadline', async (t) => {

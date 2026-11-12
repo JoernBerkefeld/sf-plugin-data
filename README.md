@@ -381,15 +381,18 @@ Executing an existing-target workflow warns upfront on stderr: processing can ta
 seconds to many minutes, up to 30 minutes depending on objects, fields, data volume
 and service load. This is not a completion guarantee. Retry progress stays on
 stderr in human and JSON modes; optional `--json` produces clean structured stdout.
-Before its single guarded PUT, UPDATE independently requires item `ready`, metadata
+Before its guarded PUT, UPDATE independently requires item `ready`, metadata
 `Ready` and the exact DataGraph record's `READY` / `ACTIVE` state and target binding.
 Independent post-write readiness and full preservation, not the response echo,
 establish `updated` / `confirmed-updated`. An identical ready definition returns
-zero-write `unchanged` without processing acknowledgement. PUT HTTP 429/503,
-timeouts and uncertain outcomes are not automatically replayed.
+zero-write `unchanged` without processing acknowledgement. A graph write (create
+POST, update PUT, DELETE) answered HTTP 429 or 503 was not processed: the plugin waits
+(Retry-After seconds when Salesforce sends them, otherwise 20 seconds, with a stderr
+line) and sends the same write again until the command's wait budget ends; then the item
+is `failed` / `not-attempted`. Timeouts and other uncertain outcomes are not resent.
 
 CREATE waits while Salesforce builds the new graph, up to `--wait-timeout` (default
-1800 seconds), with progress on stderr; the create POST is never resent. The graph first
+1800 seconds), with progress on stderr; the create POST is resent only after a 429 or 503 answer. The graph first
 reads `creating` with empty generated names, briefly `processing`, then `ready` before its generated day-zero
 DMO, mapping and transform names exist, and its metadata stays `Inprogress` for about 5
 minutes, sometimes briefly missing from the metadata list. Creating a three-field graph
@@ -411,13 +414,13 @@ Delete requires the exact selector, matching local native artifact and
 root and explicitly empty known native dependency/related-segment arrays are
 rechecked before deletion. Unknown or nonempty dependencies block; **exhaustive
 external-consumer exclusion remains unverified**. Independent definition absence
-was confirmed after live API68 create/read/delete qualification. After the single
-DELETE, delete keeps reading for up to 15 minutes while the graph is being removed,
-with progress on stderr: the item and the metadata list drop it at once, while the
-by-name metadata read can keep returning the graph (even a stale pre-update copy),
-alternating with not found, for minutes. Any other state after the DELETE stops after 12
-reads with `failed` / `unknown`; the DELETE is never resent. Earlier stale
-metadata readback required reconciliation; do not replay an uncertain mutation.
+was confirmed after live API68 create/read/delete qualification. The DELETE's
+answer decides: 2xx is `deleted` / `confirmed-deleted`, an API 4xx is `failed` /
+`rejected` with Salesforce's error, a 429 or 503 that never gets through within the
+budget is `failed` / `not-attempted`, and any other 5xx or a transport failure is
+`failed` / `unknown`. Nothing is read back afterwards: the by-name metadata read keeps
+returning a stale copy of a deleted graph for minutes. The DELETE is resent only after a
+429 or 503 answer, within the 120-second delete budget.
 Generated DMOs, mappings, transforms, internal state, storage and credits cleanup
 are not proven, nor is successful computation. Earlier installed-package CRD smoke
 covered command routing with offline seams; the separate installed UPDATE evidence

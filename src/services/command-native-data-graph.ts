@@ -13,8 +13,9 @@ import {
   acquireNativeDataGraph,
   bindNativeGraphRoot,
   nativeDataGraphLifecycle,
+  NativeGraphWriteRefused,
+  sendNativeGraphWrite,
   settleNativeDataGraph,
-  settleNativeDataGraphDeletion,
   updateNativeDataGraph,
 } from './native-data-graph-crd.js';
 import type { NativeGraphContext, NativeGraphCreateCheck } from './native-data-graph-crd.js';
@@ -71,7 +72,12 @@ export type NativeGraphOperationResult = {
     | 'blocked'
     | 'failed';
   mutation:
-    'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'confirmed-deleted' | 'unknown';
+    | 'not-attempted'
+    | 'confirmed-created'
+    | 'confirmed-updated'
+    | 'confirmed-deleted'
+    | 'rejected'
+    | 'unknown';
   /** After an attempted create: the step that could not confirm it. */
   failedCheck?: NativeGraphCreateCheck;
 };
@@ -113,9 +119,8 @@ export async function operateNativeDataGraph(
   const original = context;
   const now = options.now ?? Date.now;
   const started = now();
-  // Delete waits for the by-name metadata entry, which outlived the item by ~5 min live.
   const budget =
-    options.operation === 'deploy' ? (options.waitTimeoutSeconds ?? 1800) * 1000 : 900_000;
+    options.operation === 'deploy' ? (options.waitTimeoutSeconds ?? 1800) * 1000 : 120_000;
   const end = started + budget;
   let previous = started;
   let expired = false;
@@ -186,19 +191,30 @@ export async function operateNativeDataGraph(
     if (before.state === 'absent' && options.operation === 'delete')
       return { outcome: 'unchanged', mutation: 'not-attempted' };
     if (before.state === 'present' && options.operation === 'deploy') {
-      const outcome = await updateNativeDataGraph(context, writer, document, before.observation, {
-        preview: options.preview,
-        confirmed: options.confirmed,
-        verify: async () => {
-          await options.verifyInput();
-          graphRequire(isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)));
-        },
-        now,
-        pause: waitPause,
-        progress,
-        started,
-        end,
-      });
+      let outcome: Awaited<ReturnType<typeof updateNativeDataGraph>>;
+      try {
+        outcome = await updateNativeDataGraph(context, writer, document, before.observation, {
+          preview: options.preview,
+          confirmed: options.confirmed,
+          verify: async () => {
+            await options.verifyInput();
+            graphRequire(isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)));
+          },
+          now,
+          pause: waitPause,
+          progress,
+          started,
+          end,
+        });
+      } catch (error) {
+        // Every PUT was refused with HTTP429/503 until the budget ran out: nothing was processed.
+        if (error instanceof NativeGraphWriteRefused)
+          return retainConnectDiagnostic(
+            { outcome: 'failed', mutation: 'not-attempted' },
+            getConnectDiagnostic(error),
+          );
+        throw error;
+      }
       return { outcome, mutation: outcome === 'updated' ? 'confirmed-updated' : 'not-attempted' };
     }
     graphRequire(
@@ -268,21 +284,24 @@ export async function operateNativeDataGraph(
     );
     context.check();
     graphRequire(context.orgId === orgId);
+    // The DELETE answer decides: 2xx is deleted, an API 4xx is a refusal. No read-back:
+    // the by-name metadata read serves a stale copy for minutes after a delete (live, API68).
+    // HTTP429/503 was not processed: the identical DELETE is sent again within the budget.
     try {
-      await writer.delete(document.definition.name as string);
+      await sendNativeGraphWrite(
+        async () => writer.delete(document.definition.name as string),
+        'delete',
+        { now, end, pause: waitPause, progress },
+      );
     } catch (error) {
-      diagnostic = getConnectDiagnostic(error) ?? diagnostic;
-      /* GET-only reconciliation; never replay DELETE. */
+      const evidence = getConnectDiagnostic(error);
+      if (error instanceof NativeGraphWriteRefused)
+        return retainConnectDiagnostic({ outcome: 'failed', mutation: 'not-attempted' }, evidence);
+      if (evidence?.kind === 'api-error' && evidence.statusCode >= 400 && evidence.statusCode < 500)
+        return retainConnectDiagnostic({ outcome: 'failed', mutation: 'rejected' }, evidence);
+      // Other 5xx or transport: the DELETE may have happened; never replay it.
+      throw error;
     }
-    const settled = await settleNativeDataGraphDeletion(context, document, {
-      now,
-      started,
-      end,
-      pause: waitPause,
-      progress,
-    });
-    diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
-    graphRequire(settled.state === 'absent');
     return { outcome: 'deleted', mutation: 'confirmed-deleted' };
   };
   try {

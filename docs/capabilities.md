@@ -13,7 +13,7 @@ route. All six graphs in `isolated-source` retrieve at 68 and preview `unchanged
 Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
 generated names (empty names on a non-ready read are not authored values), then `ready`
 before the day-zero names exist, then metadata `Inprogress` for about 5 minutes,
-sometimes briefly missing. The POST is never resent. A create the plugin cannot confirm
+sometimes briefly missing. The POST is resent only after a 429/503 answer. A create the plugin cannot confirm
 reports `failed`/`unknown` with `DATA_GRAPH_CREATE_UNCONFIRMED` naming the step
 (`request`, `response`, `settlement`, `identity`, `deadline`); an unchanged repeat deploy or a
 retrieve confirms the graph. Retrieve resolves a relative
@@ -34,11 +34,12 @@ Delete needs an exact selector, matching local native artifact, --confirm-delete
 and fresh ready/identity/created-date/definition/root checks, with explicitly empty
 known dependency/related-segment arrays. Unknown/nonempty dependencies block;
 exhaustive external-consumer exclusion remains unverified. Live API68 create/read/
-delete evidence confirmed independent graph-definition absence. After the single
-DELETE, settlement reads for up to 15 minutes while the graph is being removed (item
-and metadata list drop it at once; the by-name metadata read can return the graph, even a
-stale pre-update copy, for minutes after, alternating with not-found),
-with stderr progress; any other state stops after 12 reads with `failed`/`unknown`. No generated DMO/mapping/transform/internal-state,
+delete evidence confirmed independent graph-definition absence. The DELETE answer
+decides (2xx deleted, API 4xx rejected, other 5xx/transport unknown); 429/503 means not
+processed: create, update and delete wait (Retry-After or 20 s) and resend within the wait
+budget, then report `failed`/`not-attempted`. There is no
+read-back, because the by-name metadata read serves a stale copy of a deleted graph for
+about 11-12 minutes, alternating with not found. No generated DMO/mapping/transform/internal-state,
 storage/credits cleanup or computation claim. Installed package smoke verifies
 offline routing only, not live installed cross-org acceptance. README's 14-resource
 row records Partial native create/delete and retains the separate facade update.

@@ -416,51 +416,56 @@ export async function settleNativeDataGraphCreation(
 }
 
 /**
- * Wait after a graph DELETE until the graph reads absent on every route. The item disappears
- * first; the by-name metadata entry stayed about 5 minutes longer (recorded live at API68,
- * 2026-11-12). GET-only, paced, never past the deadline, never re-sends the DELETE.
- * @param {NativeGraphContext} context Deadline-guarded readers.
- * @param {NativeDataGraphDocument} document Native intent of the deleted graph.
- * @param {object} timing Invocation clock, deadline, pacing and stderr progress.
- * @param {Function} timing.now Clock.
- * @param {number} timing.started Invocation start.
- * @param {number} timing.end Invocation deadline.
- * @param {Function} timing.pause Read-only delay.
- * @param {Function} timing.progress Stderr-only progress sink.
- * @returns {Promise<NativeGraphAcquisition>} Absence or unknown.
+ * A Graph write Salesforce refused with HTTP429/503 until the wait budget ran out. The request
+ * was not processed; the retained diagnostic is the last refusal.
  */
-export async function settleNativeDataGraphDeletion(
-  context: NativeGraphContext,
-  document: NativeDataGraphDocument,
+export class NativeGraphWriteRefused extends Error {}
+
+/**
+ * Send one Graph write; HTTP429/503 means Salesforce did not process it, so pause (Retry-After
+ * delta-seconds, else 20 s) and send the identical request again within the invocation deadline.
+ * Any other failure is rethrown unchanged.
+ * @template T
+ * @param {Function} write Sends the identical request.
+ * @param {string} operation Name used in progress messages.
+ * @param {object} timing Invocation clock, deadline, delay and stderr progress.
+ * @param {Function} timing.now Invocation clock.
+ * @param {number} timing.end Invocation deadline.
+ * @param {Function} timing.pause Delay seam.
+ * @param {Function} timing.progress Stderr-only progress sink.
+ * @returns {Promise<T>} The accepted write's response.
+ * @throws {NativeGraphWriteRefused} When the next wait would reach the deadline.
+ */
+export async function sendNativeGraphWrite<T>(
+  write: () => Promise<T>,
+  operation: string,
   timing: {
     now: () => number;
-    started: number;
     end: number;
     pause: (milliseconds: number) => Promise<unknown>;
     progress: (message: string) => void;
   },
-): Promise<NativeGraphAcquisition> {
-  try {
-    // Only the recorded removal states (item gone with metadata left, or an item reading
-    // deleting) justify the long wait; any other read keeps the short bound of 12 reads.
-    let other = 0;
-    for (let first = true; ; first = false) {
-      context.check();
-      const result = await acquireNativeDataGraph(context, document);
-      if (result.state === 'unknown' || result.state === 'absent') return result;
-      if (result.state === 'present' && result.observation.status !== 'deleting' && ++other >= 12)
-        return { state: 'unknown' };
-      const remaining = timing.end - timing.now();
-      if (remaining <= 0) return { state: 'unknown' };
-      const wait = Math.min(first ? 5000 : 20_000, remaining);
-      const stage = result.state === 'present' ? result.observation.status : 'removal in progress';
+): Promise<T> {
+  for (;;) {
+    try {
+      return await write();
+    } catch (error) {
+      const diagnostic = getConnectDiagnostic(error);
+      if (diagnostic?.kind !== 'rate-limit' && diagnostic?.kind !== 'service-unavailable')
+        throw error;
+      const header = diagnostic.retryAfter;
+      // At least 1 s: Retry-After 0 must not turn into a tight resend loop.
+      const seconds = header && /^\d+$/u.test(header) ? Math.max(1, Number(header)) : 20;
+      if (timing.now() + seconds * 1000 >= timing.end)
+        throw retainConnectDiagnostic(
+          new NativeGraphWriteRefused('Native Graph write refused'),
+          diagnostic,
+        );
       timing.progress(
-        `Data Graph ${stage}; elapsed ${Math.floor((timing.now() - timing.started) / 1000)}s; next wait ${wait / 1000}s.`,
+        `Data Graph ${operation} rate-limited (HTTP ${diagnostic.statusCode}); retrying in ${seconds}s.`,
       );
-      await timing.pause(wait);
+      await timing.pause(seconds * 1000);
     }
-  } catch (error) {
-    return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error));
   }
 }
 
@@ -594,6 +599,7 @@ export async function readNativeGraphReadiness(
  * @param {number} options.started Invocation start time.
  * @param {number} options.end Invocation deadline.
  * @returns {Promise<'update'|'updated'|'unchanged'>} Independent result, never response echo.
+ * @throws {NativeGraphWriteRefused} When HTTP429/503 refused every PUT until the deadline.
  */
 export async function updateNativeDataGraph(
   context: NativeGraphContext,
@@ -677,8 +683,13 @@ export async function updateNativeDataGraph(
       context.check();
       const update = client.update;
       graphRequire(typeof update === 'function');
-      // A rejected/uncertain PUT is never replayed or reported confirmed from a later echo.
-      await update(document.definition.name as string, payload);
+      // HTTP429/503 was not processed: resend the identical PUT within the deadline. Any other
+      // rejected/uncertain PUT is never replayed or reported confirmed from a later echo.
+      await sendNativeGraphWrite(
+        async () => update(document.definition.name as string, payload),
+        'update',
+        options,
+      );
       context.check();
       break;
     }
@@ -872,12 +883,31 @@ export function nativeDataGraphLifecycle(
         check();
         createUsed = true;
         attempted = true;
-        // A thrown/ambiguous write is reconciled read-only, never replayed or adopted for deletion.
+        // HTTP429/503 was not processed: the identical POST is sent again within the deadline.
+        // Any other thrown/ambiguous write is reconciled read-only, never replayed or adopted.
         let response: unknown;
         createCheck = 'request';
         try {
-          response = await client.create(document.definition);
+          response = await sendNativeGraphWrite(
+            async () => {
+              check();
+              return client.create(document.definition);
+            },
+            'create',
+            {
+              now,
+              end,
+              pause: creation?.pause ?? guards.pause ?? delay,
+              progress: creation?.progress ?? ((): void => {}),
+            },
+          );
         } catch (error) {
+          // Refused, not processed: no create happened, so no failed confirmation check either.
+          if (error instanceof NativeGraphWriteRefused)
+            return retainConnectDiagnostic(
+              { outcome: 'unknown', mutation: 'not-attempted' },
+              getConnectDiagnostic(error),
+            );
           const settled = await settleNativeDataGraph(readers, document, 'ready', guards.pause);
           return retainConnectDiagnostic(
             { outcome: 'unknown', mutation: 'attempted', failedCheck: 'request' },
