@@ -5,6 +5,7 @@ import { graphRequire } from '../artifacts/data-graph-document.js';
 import {
   observeNativeDataGraph,
   nativeDataGraphDocumentFromResponse,
+  nativeDataGraphUnreferenced,
 } from '../artifacts/native-data-graph-document.js';
 import { graphRecord } from '../artifacts/data-graph-document.js';
 import { validateNativeDataGraphDocument } from '../artifacts/native-data-graph-document.js';
@@ -30,7 +31,6 @@ export async function retrieveNativeDataGraph(
   context: NativeGraphContext,
 ): Promise<import('../artifacts/native-data-graph-document.js').NativeDataGraphDocument> {
   context.check();
-  const root = await bindNativeGraphRoot(context);
   const read = await context.get(name);
   if (read.status !== 200)
     throw retainConnectDiagnostic(
@@ -40,13 +40,15 @@ export async function retrieveNativeDataGraph(
   const raw = graphRecord(read.body);
   graphRequire(raw.name === name);
   const document = nativeDataGraphDocumentFromResponse(raw);
+  const rootName = document.definition.primaryObjectName as string;
+  const root = await bindNativeGraphRoot(context, rootName);
   const observed = observeNativeDataGraph(raw, document);
   graphRequire(observed.status === 'ready');
   const fresh = await acquireNativeDataGraph(context, document);
   try {
     graphRequire(
       isDeepStrictEqual({ state: 'present', observation: observed }, fresh) &&
-        isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
+        isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)),
     );
   } catch (error) {
     if (error instanceof Error) retainConnectDiagnostic(error, getConnectDiagnostic(fresh));
@@ -56,7 +58,7 @@ export async function retrieveNativeDataGraph(
 }
 
 export const nativeGraphLimitations =
-  'Native dependency and related-segment arrays are explicitly empty; exhaustive external-consumer exclusion is unverified. Definition absence does not establish generated DMO, mapping or transform cleanup, computation success, storage reclamation or credit savings.';
+  'Native dependency and related-segment arrays block delete only: delete is refused while any node or field reports one, while deploy and retrieve proceed regardless. Exhaustive external-consumer exclusion is unverified. Definition absence does not establish generated DMO, mapping or transform cleanup, computation success, storage reclamation or credit savings.';
 export type NativeGraphOperationResult = {
   outcome:
     | 'create'
@@ -176,7 +178,8 @@ export async function operateNativeDataGraph(
     const document = validateNativeDataGraphDocument(value);
     const orgId = context.orgId;
     await options.verifyInput();
-    const root = await bindNativeGraphRoot(context);
+    const rootName = document.definition.primaryObjectName as string;
+    const root = await bindNativeGraphRoot(context, rootName);
     const before = await acquire(document);
     context.check();
     graphRequire(context.orgId === orgId);
@@ -188,7 +191,7 @@ export async function operateNativeDataGraph(
         confirmed: options.confirmed,
         verify: async () => {
           await options.verifyInput();
-          graphRequire(isDeepStrictEqual(root, await bindNativeGraphRoot(context)));
+          graphRequire(isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)));
         },
         now,
         pause: waitPause,
@@ -201,12 +204,15 @@ export async function operateNativeDataGraph(
     graphRequire(
       options.operation === 'deploy'
         ? before.state === 'absent'
-        : before.state === 'present' && before.observation.status === 'ready',
+        : before.state === 'present' &&
+            before.observation.status === 'ready' &&
+            // Delete stays refused while any node or field reports dependencies or segments.
+            nativeDataGraphUnreferenced(before.observation.target.sourceObject),
     );
     await options.verifyInput();
     graphRequire(
       isDeepStrictEqual(before, await acquire(document)) &&
-        isDeepStrictEqual(root, await bindNativeGraphRoot(context)) &&
+        isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)) &&
         context.orgId === orgId,
     );
     if (options.preview)
@@ -222,7 +228,7 @@ export async function operateNativeDataGraph(
           await options.verifyInput();
           if (phase === 'create-attempt')
             graphRequire(
-              isDeepStrictEqual(root, await bindNativeGraphRoot(context)) &&
+              isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)) &&
                 isDeepStrictEqual(before, await acquire(document)),
             );
         },
@@ -253,12 +259,12 @@ export async function operateNativeDataGraph(
         getConnectDiagnostic(result) ?? diagnostic,
       );
     }
-    // Observation validation requires explicit empty native node/field dependencies and segments.
+    // The pre-check above required empty native node/field dependencies and segments.
     // Compare all captured identity/date/definition fields again after local admission, immediately before dispatch.
     await options.verifyInput();
     graphRequire(
       isDeepStrictEqual(before, await acquire(document)) &&
-        isDeepStrictEqual(root, await bindNativeGraphRoot(context)),
+        isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)),
     );
     context.check();
     graphRequire(context.orgId === orgId);

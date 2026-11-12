@@ -16,6 +16,7 @@ import {
   settleNativeDataGraph,
 } from '../lib/services/native-data-graph-crd.js';
 
+import { buildDataGraphCreateRequest } from '../lib/transport/data-graph-rest.js';
 import {
   operateNativeDataGraph,
   retrieveNativeDataGraph,
@@ -406,13 +407,84 @@ test('product Graph separate invocations create unchanged and delete without cre
 });
 for (const change of [
   (raw) => {
-    delete raw.sourceObject.dependency;
-  },
-  (raw) => {
     raw.sourceObject.relatedSegments = ['consumer'];
   },
   (raw) => {
     raw.sourceObject.fields[0].dependency = ['consumer'];
+  },
+  (raw) => {
+    raw.sourceObject.dependency = ['consumer'];
+  },
+])
+  test('product Graph dependency or segment evidence blocks delete only', async () => {
+    const f = fixture();
+    const raw = runtime();
+    change(raw);
+    f.setGraph(raw);
+    await expectResult(
+      operateNativeDataGraph(document(), f.context, f.client, options('delete')),
+      'outcome',
+      'blocked',
+    );
+    await expectResult(
+      operateNativeDataGraph(document(), f.context, f.client, options('deploy')),
+      'outcome',
+      'unchanged',
+    );
+    assert.deepEqual(f.calls, []);
+  });
+for (const change of [
+  (raw) => {
+    raw.sourceObject.relatedObjects[0].dependency = ['consumer'];
+  },
+  (raw) => {
+    raw.sourceObject.relatedObjects[0].relatedSegments = ['consumer'];
+  },
+  (raw) => {
+    raw.sourceObject.relatedObjects[0].fields[0].dependency = ['consumer'];
+  },
+])
+  test('product Graph dependency evidence on a related object blocks delete only', async () => {
+    const raw = recursiveRuntime();
+    change(raw);
+    const f = updateFixture(raw);
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    await expectResult(
+      operateNativeDataGraph(desired, f.context, f.client, options('delete')),
+      'outcome',
+      'blocked',
+    );
+    await expectResult(
+      operateNativeDataGraph(desired, f.context, f.client, options('deploy')),
+      'outcome',
+      'unchanged',
+    );
+    assert.deepEqual(
+      f.calls.filter((call) => ['POST', 'PUT', 'DELETE'].includes(call)),
+      [],
+    );
+  });
+
+test('a file without a description keeps the graph description and stays unchanged', async () => {
+  const raw = recursiveRuntime();
+  raw.description = 'Live description';
+  const f = updateFixture(raw);
+  const desired = nativeDataGraphDocumentFromResponse(raw);
+  delete desired.definition.description;
+  await expectResult(
+    operateNativeDataGraph(desired, f.context, f.client, options('deploy')),
+    'outcome',
+    'unchanged',
+  );
+  assert.deepEqual(
+    f.calls.filter((call) => call === 'PUT'),
+    [],
+  );
+});
+
+for (const change of [
+  (raw) => {
+    delete raw.sourceObject.dependency;
   },
   (raw) => {
     raw.label = 'different';
@@ -623,7 +695,7 @@ test('public native68 retrieve deploy delete route through real services with se
   assert.equal(deleted.result.items[0].mutation, 'confirmed-deleted');
   assert.match(
     deleted.diagnostics.warnings[0],
-    /exhaustive external-consumer exclusion is unverified/u,
+    /block delete only: .*Exhaustive external-consumer exclusion is unverified/u,
   );
   process.exitCode = 0;
 });
@@ -713,6 +785,141 @@ test('recursive native document and PUT preserve full target bindings and normal
   assert.deepEqual(nativeDataGraphDocumentFromResponse(baseline), saved);
 });
 
+/**
+ * Model the API68 server answer to a create body: generated identities, lowercase enums, an
+ * assigned `derived` root type, a default topK and a reordered field list for related objects.
+ * @param {object} body Create body as sent.
+ * @param {string} status Graph status.
+ * @returns {object} GET-shaped graph.
+ */
+function serverGraph(body, status) {
+  const graph = structuredClone(body);
+  Object.assign(graph, {
+    id: 'synthetic-graph-id',
+    createdDate: '2026-11-12T08:40:00.000Z',
+    kind: 'CdpDataGraphOutputRepresentation',
+    status,
+    version: '0',
+    extendedProperties: '',
+    type: body.type.toLowerCase(),
+    fullRefreshConfig: {
+      schedule: {
+        frequency: body.fullRefreshConfig.schedule.frequency,
+        timeGranularity: body.fullRefreshConfig.schedule.timeGranularity.toLowerCase(),
+      },
+    },
+    ...(status === 'ready'
+      ? {
+          idDmoName: 'Synthetic_ID__dlm',
+          valuesDmoName: 'Synthetic_VALUE__dlm',
+          dayZeroMappingDevName: 'SyntheticMapping',
+          dayZeroTransformDevName: 'SyntheticTransform',
+        }
+      : {}),
+  });
+  const visit = (node, depth) => {
+    Object.assign(node, {
+      id: `node-${depth}`,
+      devName: `${name}_Node${depth}`,
+      categoryDevName: depth === 0 ? 'Profile' : 'Related',
+      dependency: [],
+      relatedSegments: [],
+      recencyCriteria: [],
+      referenceDeveloperName: node.name.replace(/__dlm$/u, ''),
+      projectedName: node.name,
+      ...(status === 'ready' ? { fragmentDMOName: `Fragment${depth}__dlm` } : {}),
+    });
+    if (depth === 0) node.type = 'derived';
+    else {
+      node.topKFilterCriteria ??= {
+        limit: 100,
+        orderCriteria: [{ fieldApiName: 'ssot__Id__c', sortOrder: 'desc' }],
+      };
+      node.fields.reverse();
+    }
+    node.path = node.path.map((join, index) => ({ ...join, devName: `Join${depth}_${index}` }));
+    node.fields = node.fields.map((field, index) => ({
+      ...field,
+      id: `field-${depth}-${index}`,
+      devName: `${name}_Field${depth}_${index}`,
+      name: `${name}_Field${depth}_${index}`,
+      usageTag: field.usageTag.toLowerCase(),
+      dependency: [],
+      isDGRootKeyField: false,
+      fieldRoles: [],
+    }));
+    for (const child of node.relatedObjects) visit(child, depth + 1);
+  };
+  visit(graph.sourceObject, 0);
+  return graph;
+}
+
+test('native create sends a related-object 7-day document and settles on the assigned node type', async () => {
+  const f = fixture();
+  const authored = document();
+  const d = authored.definition;
+  d.fullRefreshConfig = { schedule: { frequency: 7, timeGranularity: 'Day' } };
+  d.incrementalRefreshConfig = { enabled: false };
+  d.idDmoName = 'Foreign_ID__dlm';
+  d.sourceObject.relatedObjects.push({
+    name: 'ssot__ContactPointEmail__dlm',
+    label: 'Contact Point Email',
+    jsonPath: '$.ssot__ContactPointEmail__dlm',
+    path: [
+      { devName: 'ForeignJoin', fieldName: 'ssot__PartyId__c', parentFieldName: 'ssot__Id__c' },
+    ],
+    type: 'standard',
+    fields: ['ssot__Id__c', 'ssot__PartyId__c', 'ssot__EmailAddress__c'].map(
+      (sourceFieldName, index) => ({
+        sourceFieldName,
+        dataType: 'Text',
+        isKeyColumn: index === 0,
+        isProjected: true,
+        usageTag: 'NONE',
+      }),
+    ),
+    relatedObjects: [],
+  });
+  const bodies = [];
+  f.client.create = async (definition) => {
+    f.calls.push('POST');
+    const body = buildDataGraphCreateRequest(definition);
+    bodies.push(body);
+    f.setGraph(serverGraph(body, 'ready'));
+    return serverGraph(body, 'creating');
+  };
+  const result = await operateNativeDataGraph(authored, f.context, f.client, options());
+  assert.deepEqual(result, { outcome: 'created', mutation: 'confirmed-created' });
+  assert.deepEqual(f.calls, ['POST']);
+  const [body] = bodies;
+  assert.equal(body.idDmoName, undefined);
+  assert.deepEqual(body.fullRefreshConfig, { schedule: { frequency: 7, timeGranularity: 'Day' } });
+  assert.equal(body.sourceObject.type, 'standard');
+  assert.equal(body.sourceObject.fields[0].devName, undefined);
+  assert.deepEqual(body.sourceObject.relatedObjects[0].path, [
+    { fieldName: 'ssot__PartyId__c', parentFieldName: 'ssot__Id__c' },
+  ]);
+  // A later deploy of the same authored file meets the API-assigned root type and is refused,
+  // rather than reported unchanged or sent: retrieve first to adopt the assigned type.
+  const again = await operateNativeDataGraph(authored, f.context, f.client, options());
+  assert.equal(again.mutation, 'not-attempted');
+  assert.deepEqual(f.calls, ['POST']);
+});
+
+test('native deploy sends a schedule change and confirms it from independent reads', async () => {
+  const f = updateFixture(runtime());
+  const desired = nativeDataGraphDocumentFromResponse(runtime());
+  desired.definition.fullRefreshConfig.schedule = { frequency: 7, timeGranularity: 'day' };
+  const outcome = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(outcome, { outcome: 'updated', mutation: 'confirmed-updated' });
+  assert.deepEqual(f.calls, ['PUT']);
+  assert.deepEqual(f.payloads[0].fullRefreshConfig, {
+    schedule: { frequency: 7, timeGranularity: 'Day' },
+  });
+  const repeat = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(repeat, { outcome: 'unchanged', mutation: 'not-attempted' });
+  assert.deepEqual(f.calls, ['PUT']);
+});
 test('native PUT admits genuinely new recursive children without adopting generated hints', () => {
   const baseline = runtime();
   const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
@@ -732,26 +939,15 @@ for (const [label, change] of Object.entries({
   root: (d) => {
     d.definition.primaryObjectName = 'Other__dlm';
   },
-  qualifier: (d) => {
-    d.definition.sourceObject.fields[0].keyQualifierName = 'Other';
+  // The API assigns node types (a recorded API68 create sent standard and read derived).
+  nodeType: (d) => {
+    d.definition.sourceObject.relatedObjects[0].type = 'derived';
   },
-  key: (d) => {
-    d.definition.sourceObject.fields[0].isKeyColumn = false;
-  },
-  type: (d) => {
-    d.definition.sourceObject.fields[2].dataType = 'Number';
-  },
-  schedule: (d) => {
-    d.definition.fullRefreshConfig.schedule.frequency = 7;
-  },
-  path: (d) => {
-    d.definition.sourceObject.relatedObjects[0].path[0].parentFieldName = 'Missing';
+  reference: (d) => {
+    d.definition.sourceObject.referenceDeveloperName = 'Other';
   },
   duplicate: (d) => {
     d.definition.sourceObject.fields.push(d.definition.sourceObject.fields[2]);
-  },
-  setting: (d) => {
-    d.definition.sourceObject.relatedObjects[0].topKFilterCriteria.limit = 101;
   },
   getter: (d) => {
     Object.defineProperty(d.definition.sourceObject, 'label', {
@@ -766,6 +962,60 @@ for (const [label, change] of Object.entries({
     change(desired);
     assert.throws(() => buildNativeDataGraphUpdateRequest(baseline, desired));
   });
+
+test('native PUT sends authored changes the API decides instead of refusing them', () => {
+  const baseline = recursiveRuntime();
+  const desired = nativeDataGraphDocumentFromResponse(baseline);
+  const d = desired.definition;
+  d.type = 'other';
+  d.fullRefreshConfig.schedule = { frequency: 7, timeGranularity: 'day' };
+  d.incrementalRefreshConfig = { enabled: true };
+  d.idDmoName = 'Foreign_ID__dlm';
+  d.sourceObject.label = 'Relabelled';
+  d.sourceObject.fields[0].isKeyColumn = false;
+  d.sourceObject.fields[0].keyQualifierName = 'Other';
+  d.sourceObject.fields[2].dataType = 'Number';
+  d.sourceObject.fields.push({
+    sourceFieldName: 'Key__c',
+    dataType: 'Text',
+    isKeyColumn: true,
+    isProjected: true,
+    usageTag: 'key_qualifier',
+    keyQualifierName: 'KQ_Key__c',
+  });
+  const child = d.sourceObject.relatedObjects[0];
+  child.path[0].parentFieldName = 'Other__c';
+  child.topKFilterCriteria.limit = 101;
+  child.recencyCriteria = [{ fieldApiName: 'ssot__Id__c' }];
+  const request = buildNativeDataGraphUpdateRequest(baseline, desired);
+  assert.equal(request.type, 'OTHER');
+  assert.deepEqual(request.fullRefreshConfig, {
+    schedule: { frequency: 7, timeGranularity: 'Day' },
+  });
+  assert.deepEqual(request.incrementalRefreshConfig, { enabled: true });
+  assert.equal(request.idDmoName, baseline.idDmoName);
+  assert.equal(request.sourceObject.label, 'Relabelled');
+  assert.equal(request.sourceObject.devName, baseline.sourceObject.devName);
+  assert.equal(request.sourceObject.fields[0].isKeyColumn, false);
+  assert.equal(request.sourceObject.fields[0].keyQualifierName, 'Other');
+  assert.equal(request.sourceObject.fields[0].devName, baseline.sourceObject.fields[0].devName);
+  assert.equal(request.sourceObject.fields[2].dataType, 'Number');
+  assert.deepEqual(request.sourceObject.fields.at(-1), {
+    sourceFieldName: 'Key__c',
+    dataType: 'Text',
+    isKeyColumn: true,
+    isProjected: true,
+    usageTag: 'KEY_QUALIFIER',
+    keyQualifierName: 'KQ_Key__c',
+  });
+  const sent = request.sourceObject.relatedObjects[0];
+  // A changed join drops the old generated join name; an unchanged one keeps it.
+  assert.deepEqual(sent.path, [{ fieldName: 'ssot__Id__c', parentFieldName: 'Other__c' }]);
+  assert.equal(sent.relatedObjects[0].path[0].devName, 'GeneratedJoin1');
+  assert.equal(sent.topKFilterCriteria.limit, 101);
+  assert.deepEqual(sent.recencyCriteria, [{ fieldApiName: 'ssot__Id__c' }]);
+  assert.equal(sent.fragmentDMOName, 'Fragment0__dlm');
+});
 
 for (const [label, change] of Object.entries({
   top: (g) => {
@@ -783,15 +1033,21 @@ for (const [label, change] of Object.entries({
   path: (g) => {
     g.sourceObject.relatedObjects[0].path[0].unqualified = true;
   },
-  recency: (g) => {
-    g.sourceObject.recencyCriteria = [{ unqualified: true }];
-  },
 }))
   test(`native GET stops on unknown nonvolatile ${label} rather than dropping it`, () => {
     const baseline = recursiveRuntime();
     change(baseline);
     assert.throws(() => nativeDataGraphDocumentFromResponse(baseline));
   });
+
+test('native GET carries recency criteria as returned instead of refusing or dropping them', () => {
+  const baseline = recursiveRuntime();
+  baseline.sourceObject.recencyCriteria = [{ fieldApiName: 'ssot__Id__c', any: 1 }];
+  const saved = nativeDataGraphDocumentFromResponse(baseline);
+  assert.deepEqual(saved.definition.sourceObject.recencyCriteria, [
+    { fieldApiName: 'ssot__Id__c', any: 1 },
+  ]);
+});
 
 /**
  * Supply fake-clock lifecycle with an independently regenerated server response.
@@ -823,6 +1079,10 @@ function updateFixture(graph = recursiveRuntime()) {
     const current = currentRead.body;
     current.label = payload.label;
     current.description = payload.description;
+    const { frequency, timeGranularity } = payload.fullRefreshConfig.schedule;
+    current.fullRefreshConfig = {
+      schedule: { frequency, timeGranularity: timeGranularity.toLowerCase() },
+    };
     current.version = String(Number(current.version) + 1);
     /**
      * Model generated properties only for new fields/nodes.
@@ -1588,23 +1848,8 @@ test('native artifact is distinct, detached and binds generated names', () => {
   assert.equal(observed.target.sourceObject.devName, 'ServerGeneratedNode');
 });
 for (const [label, change] of Object.entries({
-  qualifier: (g) => {
-    g.sourceObject.fields[0].keyQualifierName = 'Other';
-  },
-  order: (g) => {
-    g.sourceObject.fields.reverse();
-  },
-  dependency: (g) => {
-    g.sourceObject.dependency = ['external'];
-  },
-  segment: (g) => {
-    g.sourceObject.relatedSegments = ['external'];
-  },
   projection: (g) => {
     g.sourceObject.fields[2].isProjected = false;
-  },
-  schedule: (g) => {
-    g.fullRefreshConfig.schedule.frequency = 7;
   },
 }))
   test(`native observation rejects ${label}`, () => {
@@ -1612,18 +1857,24 @@ for (const [label, change] of Object.entries({
     change(g);
     assert.throws(() => observeNativeDataGraph(g, document()));
   });
+test('native observation accepts the server field order', () => {
+  // The API reordered the fields of a related object added by PUT (recorded live, API68).
+  const g = runtime();
+  g.sourceObject.fields.reverse();
+  assert.equal(observeNativeDataGraph(g, document()).status, 'ready');
+});
 for (const [label, change] of Object.entries({
   disabled: (r) => {
     r.detail.isEnabled = false;
   },
-  unmapped: (r) => {
-    r.detail.fields[2].isMapped = false;
+  other: (r) => {
+    r.detail.name = 'UnifiedssotIndividualMkt__dlm';
   },
-  qualifier: (r) => {
-    r.detail.fields[0].keyQualifierName = 'Wrong';
+  metadataName: (r) => {
+    r.metadata[0].fullName = 'Other__dlm';
   },
-  primary: (r) => {
-    r.metadata[0].fields[1].mktDataModelFieldAttributes.primaryIndexOrder = '1';
+  creationType: (r) => {
+    r.metadata[0].mktDataModelAttributes.creationType = 'Derived';
   },
   scope: (r) => {
     r.metadata[0].mktDataModelAttributes.dataSpaceName = 'other';
@@ -1637,7 +1888,7 @@ for (const [label, change] of Object.entries({
     const r = root();
     change(r);
     f.context.root = async () => r;
-    await assert.rejects(bindNativeGraphRoot(f.context));
+    await assert.rejects(bindNativeGraphRoot(f.context, 'ssot__Individual__dlm'));
   });
 
 test('absence requires all four independent checks; permission errors never prove absence', async () => {
@@ -2422,6 +2673,22 @@ test('a create response that is not the created graph names the response check',
   );
 });
 
+test('a processing read between creating and ready keeps the create waiting (live API68)', async () => {
+  const h = buildingCreate({ creating: 3, inprogress: 1 });
+  const get = h.f.context.get;
+  let creatingReads = 0;
+  h.f.context.get = async (...arguments_) => {
+    const read = await get(...arguments_);
+    if (read.status === 200 && read.body.status === 'creating' && ++creatingReads === 2)
+      return { status: 200, body: { ...read.body, status: 'processing' } };
+    return read;
+  };
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
+  assert.equal(result.outcome, 'created', JSON.stringify(result));
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.ok(h.timing.progress.some((line) => /Data Graph processing;/u.test(line)));
+});
+
 test('a metadata entry that vanishes for a while during the build keeps the create waiting', async () => {
   const h = buildingCreate({ inprogress: 1, vanished: 3 });
   const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
@@ -2458,3 +2725,271 @@ for (const [label, phases] of [
       ['POST'],
     );
   });
+
+/**
+ * Synthetic topK criteria with the API lowercase sort order.
+ * @param {string} fieldApiName Ordered field.
+ * @returns {object} Node property.
+ */
+const unifiedTopK = (fieldApiName) => ({
+  topKFilterCriteria: { limit: 100, orderCriteria: [{ fieldApiName, sortOrder: 'desc' }] },
+});
+
+/**
+ * Build a synthetic API68 GET shaped like the recorded unified-root graphs (2026-11-12):
+ * derived unified root without description or key qualifier, a bridge with a lowercase
+ * key_qualifier field and topK `desc`, a standard child below it, DateTime/Number fields and a
+ * 7-day schedule.
+ * @returns {object} Ready native GET body.
+ */
+function unifiedRuntime() {
+  let ids = 0;
+  const field = (sourceFieldName, dataType, extra = {}) => {
+    const developmentName = `UnifiedField${ids++}`;
+    return {
+      id: `unified-field-${ids}`,
+      devName: developmentName,
+      name: developmentName,
+      sourceFieldName,
+      sourceFieldLabel: sourceFieldName,
+      dataType,
+      isKeyColumn: false,
+      isProjected: true,
+      isDGRootKeyField: false,
+      usageTag: 'none',
+      dependency: [],
+      fieldRoles: [],
+      ...extra,
+    };
+  };
+  const node = (nodeName, type, jsonPath, nodeFields, path, extra = {}) => ({
+    id: `unified-node-${ids++}`,
+    name: nodeName,
+    devName: `Unified_${nodeName.replace('__dlm', '')}`,
+    label: nodeName,
+    projectedName: nodeName,
+    referenceDeveloperName: nodeName.replace('__dlm', ''),
+    fragmentDMOName: `Fragment${ids}__dlm`,
+    fragmentDMOLabel: 'GET only',
+    categoryDevName: jsonPath === '$' ? 'Profile' : 'Related',
+    type,
+    jsonPath,
+    dependency: [],
+    relatedSegments: [],
+    recencyCriteria: [],
+    fields: nodeFields,
+    path,
+    relatedObjects: [],
+    ...extra,
+  });
+  const join = (fieldName, parentFieldName) => [
+    {
+      devName: `Join${ids++}`,
+      fieldName,
+      parentFieldName,
+      fieldLabel: 'GET only',
+      parentFieldLabel: 'GET only parent',
+    },
+  ];
+  const rootNode = node(
+    'UnifiedssotIndividualMkt__dlm',
+    'derived',
+    '$',
+    [
+      field('ssot__BirthDate__c', 'DateTime'),
+      field('ssot__FirstName__c', 'Text'),
+      field('ssot__Id__c', 'Text', { isKeyColumn: true }),
+    ],
+    [],
+  );
+  const bridge = node(
+    'UnifiedLinkssotIndividualMkt__dlm',
+    'bridge',
+    '$.UnifiedLinkssotIndividualMkt__dlm',
+    [
+      field('SourceRecordId__c', 'Text', {
+        isKeyColumn: true,
+        keyQualifierName: 'KQ_SourceRecordId__c',
+      }),
+      field('KQ_SourceRecordId__c', 'Text', { usageTag: 'key_qualifier' }),
+      field('UnifiedRecordId__c', 'Text'),
+    ],
+    join('UnifiedRecordId__c', 'ssot__Id__c'),
+    unifiedTopK('SourceRecordId__c'),
+  );
+  const account = node(
+    'ssot__Account__dlm',
+    'standard',
+    '$.UnifiedLinkssotIndividualMkt__dlm.ssot__Account__dlm',
+    [
+      field('ssot__Id__c', 'Text', { isKeyColumn: true, keyQualifierName: 'KQ_Id__c' }),
+      field('ssot__AnnualRevenueAmount__c', 'Number'),
+      field('KQ_Id__c', 'Text', { usageTag: 'key_qualifier' }),
+    ],
+    join('ssot__Id__c', 'SourceRecordId__c'),
+    unifiedTopK('ssot__Id__c'),
+  );
+  bridge.relatedObjects = [account];
+  rootNode.relatedObjects = [bridge];
+  return {
+    name,
+    label: 'Unified graph',
+    dataspaceName: 'default',
+    id: 'unified-graph-id',
+    createdDate: '2026-11-05T09:12:27.000Z',
+    createdBy: 'someone',
+    modifiedDate: '2026-11-06T09:12:27.000Z',
+    lastRefreshedDate: '2026-11-07T09:12:27.000Z',
+    primaryObjectName: 'UnifiedssotIndividualMkt__dlm',
+    primaryObjectLabel: 'Unified Individual',
+    kind: 'CdpDataGraphOutputRepresentation',
+    type: 'none',
+    status: 'ready',
+    version: '4',
+    extendedProperties: '',
+    fullRefreshConfig: { schedule: { frequency: 7, timeGranularity: 'day' } },
+    incrementalRefreshConfig: { enabled: false },
+    idDmoName: 'Unified_ID__dlm',
+    idDmoLabel: 'GET only',
+    valuesDmoName: 'Unified_VALUE__dlm',
+    valuesDmoLabel: 'GET only',
+    dayZeroMappingDevName: 'UnifiedMapping',
+    dayZeroTransformDevName: 'UnifiedTransform',
+    sourceObject: rootNode,
+  };
+}
+
+/**
+ * Root readers for a unified (Derived) primary object.
+ * @param {string[]} seen Receives every requested root name.
+ * @returns {Function} Context root reader.
+ */
+function unifiedRoot(seen) {
+  return async (rootName) => {
+    seen.push(rootName);
+    const r = root();
+    r.detail.name = rootName;
+    r.detail.creationType = 'Derived';
+    r.metadata[0].fullName = rootName;
+    r.metadata[0].mktDataModelAttributes.creationType = 'Derived';
+    return r;
+  };
+}
+
+test('native GET of a unified-root graph becomes a normalised document that round-trips', () => {
+  const raw = unifiedRuntime();
+  const saved = nativeDataGraphDocumentFromResponse(raw);
+  const d = saved.definition;
+  assert.equal(d.primaryObjectName, 'UnifiedssotIndividualMkt__dlm');
+  assert.equal(d.type, 'NONE');
+  assert.equal(Object.hasOwn(d, 'description'), false);
+  assert.deepEqual(d.fullRefreshConfig, { schedule: { frequency: 7, timeGranularity: 'Day' } });
+  assert.equal(d.sourceObject.type, 'derived');
+  const bridge = d.sourceObject.relatedObjects[0];
+  assert.equal(bridge.type, 'bridge');
+  assert.deepEqual(
+    bridge.fields.map((f) => f.usageTag),
+    ['NONE', 'KEY_QUALIFIER', 'NONE'],
+  );
+  assert.equal(bridge.topKFilterCriteria.orderCriteria[0].sortOrder, 'DESC');
+  assert.deepEqual(
+    bridge.path.map((p) => [p.fieldName, p.parentFieldName]),
+    [['UnifiedRecordId__c', 'ssot__Id__c']],
+  );
+  const account = bridge.relatedObjects[0];
+  assert.equal(account.fields[1].dataType, 'Number');
+  assert.equal(d.sourceObject.fields[0].dataType, 'DateTime');
+  assert.equal(
+    d.sourceObject.fields.some((f) => f.usageTag === 'KEY_QUALIFIER'),
+    false,
+  );
+  // Saved file, fresh GET and an unchanged update all agree.
+  assert.deepEqual(validateNativeDataGraphDocument(saved), saved);
+  assert.equal(observeNativeDataGraph(raw, saved).status, 'ready');
+  assert.deepEqual(buildNativeDataGraphUpdateRequest(raw, saved), d);
+});
+
+test('native document accepts the API lowercase spellings and normalises them', () => {
+  const raw = unifiedRuntime();
+  const saved = nativeDataGraphDocumentFromResponse(raw);
+  const lower = structuredClone(saved);
+  lower.definition.type = 'none';
+  lower.definition.fullRefreshConfig.schedule.timeGranularity = 'day';
+  const bridge = lower.definition.sourceObject.relatedObjects[0];
+  bridge.fields[1].usageTag = 'key_qualifier';
+  bridge.topKFilterCriteria.orderCriteria[0].sortOrder = 'desc';
+  assert.deepEqual(validateNativeDataGraphDocument(lower), saved);
+  assert.equal(observeNativeDataGraph(raw, lower).status, 'ready');
+});
+
+for (const [label, change] of Object.entries({
+  primary: (d) => {
+    d.definition.primaryObjectName = 'ssot__Individual__dlm';
+  },
+  scope: (d) => {
+    d.definition.dataspaceName = 'other';
+  },
+  unjoined: (d) => {
+    d.definition.sourceObject.relatedObjects[0].path = [];
+  },
+  rootJoin: (d) => {
+    d.definition.sourceObject.path = structuredClone(
+      d.definition.sourceObject.relatedObjects[0].path,
+    );
+  },
+  reparented: (d) => {
+    d.definition.sourceObject.relatedObjects[0].relatedObjects[0].jsonPath = '$.ssot__Account__dlm';
+  },
+  noFields: (d) => {
+    d.definition.sourceObject.fields = [];
+  },
+  frequency: (d) => {
+    d.definition.fullRefreshConfig.schedule.frequency = 0;
+  },
+  limit: (d) => {
+    d.definition.sourceObject.relatedObjects[0].topKFilterCriteria.limit = '100';
+  },
+  unknownKey: (d) => {
+    d.definition.sourceObject.fields[0].unqualified = true;
+  },
+}))
+  test(`native document keeps structural check ${label}`, () => {
+    const d = nativeDataGraphDocumentFromResponse(unifiedRuntime());
+    change(d);
+    assert.throws(() => validateNativeDataGraphDocument(d));
+  });
+
+test('retrieve and deploy preview bind the graph own unified root, not Individual', async () => {
+  const f = fixture();
+  const seen = [];
+  f.context.root = unifiedRoot(seen);
+  const metadata = f.context.metadata;
+  f.context.metadata = async (value) => {
+    const read = await metadata(value);
+    for (const entry of read.body.dataGraphMetadata ?? [])
+      entry.primaryObjectName = 'UnifiedssotIndividualMkt__dlm';
+    return read;
+  };
+  f.setGraph(unifiedRuntime());
+  const saved = await retrieveNativeDataGraph(name, f.context);
+  assert.equal(saved.definition.primaryObjectName, 'UnifiedssotIndividualMkt__dlm');
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((value) => value === 'UnifiedssotIndividualMkt__dlm'));
+  await expectResult(
+    operateNativeDataGraph(saved, f.context, f.client, options('deploy', { preview: true })),
+    'outcome',
+    'unchanged',
+  );
+  // A changed label previews as an update without any write.
+  const relabelled = structuredClone(saved);
+  relabelled.definition.label = 'Relabelled';
+  await expectResult(
+    operateNativeDataGraph(relabelled, f.context, f.client, options('deploy', { preview: true })),
+    'outcome',
+    'update',
+  );
+  assert.deepEqual(f.calls, []);
+  // An Individual root reader no longer satisfies a unified-root graph.
+  f.context.root = async () => root();
+  await assert.rejects(retrieveNativeDataGraph(name, f.context));
+});

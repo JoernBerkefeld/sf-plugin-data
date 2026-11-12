@@ -134,7 +134,7 @@ test('concrete Graph context independently verifies org then uses exact API68/de
   await context.inventory();
   await context.query('SyntheticGraph');
   await context.dataSpace();
-  assert.deepEqual(await context.root(), {
+  assert.deepEqual(await context.root('ssot__Individual__dlm'), {
     detail: { synthetic: true },
     metadata: [{ fullName: 'ssot__Individual__dlm' }],
   });
@@ -151,6 +151,21 @@ test('concrete Graph context independently verifies org then uses exact API68/de
     ],
   );
   assert.deepEqual(Object.getOwnPropertyDescriptors(f.connection), descriptors);
+});
+
+test('Graph context reads the requested root object and refuses unsafe names', async () => {
+  const f = fixture();
+  const context = await nativeDataGraphReadContext(f.connection, 'default');
+  f.connection.metadata.read = async (type, names) => names.map((fullName) => ({ fullName }));
+  const unified = await context.root('UnifiedssotIndividualMkt__dlm');
+  assert.deepEqual(unified.metadata, [{ fullName: 'UnifiedssotIndividualMkt__dlm' }]);
+  assert.equal(
+    f.calls.at(-1).url,
+    `${origin}/services/data/v68.0/ssot/data-model-objects/UnifiedssotIndividualMkt__dlm?dataspace=default`,
+  );
+  const before = f.calls.length;
+  for (const bad of ['', '../x', 'a?b', undefined]) await assert.rejects(context.root(bad));
+  assert.equal(f.calls.length, before);
 });
 
 test('Graph and SOQL HTTP503 both retain normalized display evidence', async () => {
@@ -189,7 +204,7 @@ for (const statusCode of [429, 503])
           ? { rawBody: '<html>private-secret</html>' }
           : { body: [{ message: 'private-secret' }] }),
       });
-      await assert.rejects(context.root(), (error) => {
+      await assert.rejects(context.root('ssot__Individual__dlm'), (error) => {
         assert.equal(getConnectDiagnostic(error).statusCode, statusCode);
         assert.equal(String(error).includes('private-secret'), false);
         return true;

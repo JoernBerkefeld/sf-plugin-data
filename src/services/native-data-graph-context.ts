@@ -162,8 +162,8 @@ export async function nativeDataGraphReadContext(
       query(
         `SELECT Id, DataGraphApiName, Status, LastRunStatus, Version, DataSpaceId FROM DataGraph WHERE DataGraphApiName = '${name(value)}'`,
       ),
-    root: async () => {
-      const rootName = 'ssot__Individual__dlm';
+    root: async (value) => {
+      const rootName = name(value);
       const detail = await read(`${base}/ssot/data-model-objects/${rootName}?dataspace=default`);
       if (detail.status !== 200)
         throw retainConnectDiagnostic(

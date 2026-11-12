@@ -26,7 +26,8 @@ export type NativeGraphContext = {
   metadata: (name: string) => Promise<NativeGraphRead>;
   inventory: () => Promise<NativeGraphRead>;
   query: (name: string) => Promise<NativeGraphRead>;
-  root: () => Promise<{ detail: unknown; metadata: unknown }>;
+  /** Read the named primary object (DMO) detail and its Metadata record. */
+  root: (name: string) => Promise<{ detail: unknown; metadata: unknown }>;
   dataSpace?: () => Promise<NativeGraphRead>;
 };
 export type NativeGraphAcquisition =
@@ -52,28 +53,32 @@ function orderedRootFields(
 }
 
 /**
- * Independently bind an enabled mapped Standard Individual and its exact primary key/qualifier.
+ * Independently bind the graph's enabled primary object in the default data space. The root is
+ * the document's `primaryObjectName` (standard or unified); its fields are not restricted.
  * @param {NativeGraphContext} context Scope-checked readers.
+ * @param {string} rootName The document's primary object.
  * @returns {Promise<{id: string; fingerprint: string}>} Detached root binding.
  */
 export async function bindNativeGraphRoot(
   context: NativeGraphContext,
+  rootName: string,
 ): Promise<{ id: string; fingerprint: string }> {
   context.check();
-  const acquired = structuredClone(await context.root());
+  graphText(rootName);
+  const acquired = structuredClone(await context.root(rootName));
   context.check();
   const detail = graphRecord(acquired.detail);
   graphRequire(Array.isArray(acquired.metadata) && acquired.metadata.length === 1);
   const metadata = graphRecord(acquired.metadata[0]);
   const attributes = graphRecord(metadata.mktDataModelAttributes);
+  graphText(detail.creationType);
   graphRequire(
-    detail.name === 'ssot__Individual__dlm' &&
+    detail.name === rootName &&
       detail.dataSpaceName === 'default' &&
-      detail.creationType === 'Standard' &&
       detail.isEnabled === true &&
       metadata.fullName === detail.name &&
       attributes.dataSpaceName === 'default' &&
-      attributes.creationType === 'Standard',
+      attributes.creationType === detail.creationType,
   );
   graphText(detail.id);
   graphRequire(Array.isArray(detail.fields) && Array.isArray(metadata.fields));
@@ -87,28 +92,9 @@ export async function bindNativeGraphRoot(
     }
     return map;
   };
-  const fields = index(detail.fields, 'name');
-  const meta = index(metadata.fields, 'fullName');
-  for (const name of ['ssot__Id__c', 'KQ_Id__c', 'ssot__FirstName__c'])
-    graphRequire(
-      fields.get(name)?.type === 'Text' &&
-        fields.get(name)?.isMapped === true &&
-        meta.get(name)?.type === 'Text',
-    );
-  graphRequire(
-    fields.get('ssot__Id__c')?.isPrimaryKey === true &&
-      fields.get('ssot__Id__c')?.keyQualifierName === 'KQ_Id' &&
-      fields.get('KQ_Id__c')?.usageTag === 'KeyQualifier',
-  );
-  const primary = [...meta.entries()].filter(
-    ([, field]) =>
-      field.mktDataModelFieldAttributes &&
-      graphRecord(field.mktDataModelFieldAttributes).primaryIndexOrder === '1',
-  );
-  graphRequire(primary.length === 1 && primary[0][0] === 'ssot__Id__c');
   // These field inventories are keyed sets, not ordered projections. Preserve every property.
-  detail.fields = orderedRootFields(fields);
-  metadata.fields = orderedRootFields(meta);
+  detail.fields = orderedRootFields(index(detail.fields, 'name'));
+  metadata.fields = orderedRootFields(index(metadata.fields, 'fullName'));
   return { id: detail.id, fingerprint: nativeGraphFingerprint(acquired) };
 }
 
@@ -161,25 +147,61 @@ async function nativeGraphMetadataStatus(
 }
 
 /**
+ * Take the node types the API assigned on create. A recorded API68 create sent `standard` for a
+ * unified root and the echo read `derived` (2026-11-12); later reads keep the assigned type, so
+ * the created graph is compared with the assigned types, matched by node path.
+ * @param {NativeDataGraphDocument} document Exact native intent.
+ * @param {unknown} echoed Untrusted echoed root node.
+ * @returns {NativeDataGraphDocument} Detached intent carrying the assigned node types.
+ */
+function nativeGraphAssignedTypes(
+  document: NativeDataGraphDocument,
+  echoed: unknown,
+): NativeDataGraphDocument {
+  const result = validateNativeDataGraphDocument(document);
+  const visit = (node: Record<string, unknown>, found: unknown): void => {
+    const echo = graphRecord(found);
+    graphText(echo.type);
+    node.type = echo.type;
+    const children = echo.relatedObjects;
+    graphRequire(Array.isArray(children));
+    for (const child of node.relatedObjects as Record<string, unknown>[])
+      visit(
+        child,
+        children.find((entry: unknown) => graphRecord(entry).jsonPath === child.jsonPath),
+      );
+  };
+  visit(graphRecord(result.definition.sourceObject), echoed);
+  return validateNativeDataGraphDocument(result);
+}
+
+/**
  * Take the identity of a create echo. A complete echo is fully observed; an echo that reads
  * ready before its generated names exist (still building) yields only its raw identity.
  * @param {unknown} response Untrusted create response.
- * @param {NativeDataGraphDocument} document Exact native intent.
- * @returns {object} Identity fields the settled graph must match.
+ * @param {NativeDataGraphDocument} authored Exact native intent.
+ * @returns {object} Identity fields the settled graph must match, and the intent to settle with.
  */
 function nativeGraphCreateEcho(
   response: unknown,
-  document: NativeDataGraphDocument,
-): { id: string; createdDate: string; source: Record<string, unknown> } {
+  authored: NativeDataGraphDocument,
+): {
+  id: string;
+  createdDate: string;
+  source: Record<string, unknown>;
+  document: NativeDataGraphDocument;
+} {
+  const raw = graphRecord(response);
+  const document = nativeGraphAssignedTypes(authored, raw.sourceObject);
   if (!nativeGraphStillGenerating(response)) {
     const returned = observeNativeDataGraph(response, document);
     return {
       id: returned.id,
       createdDate: returned.createdDate,
       source: graphRecord(returned.target.sourceObject),
+      document,
     };
   }
-  const raw = graphRecord(response);
   graphText(raw.id);
   graphText(raw.createdDate);
   graphRequire(
@@ -189,6 +211,7 @@ function nativeGraphCreateEcho(
     id: raw.id,
     createdDate: new Date(raw.createdDate).toISOString(),
     source: graphRecord(raw.sourceObject),
+    document,
   };
 }
 
@@ -360,6 +383,7 @@ export async function settleNativeDataGraphCreation(
         result.state === 'present' &&
         ![
           'creating',
+          'processing',
           'editing',
           'editing_no_version_update',
           'editing_post_sync',
@@ -554,7 +578,8 @@ export async function readNativeGraphReadiness(
 }
 
 /**
- * Apply one bound additive/display delta, then reconcile solely with paced GETs.
+ * Apply one authored change to the bound target (see buildNativeDataGraphUpdateRequest), then
+ * reconcile solely with paced GETs. An equal definition is unchanged with zero writes.
  * @param {NativeGraphContext} context Invocation/deadline guarded readers.
  * @param {DataGraphClient} client Single-attempt guarded writer.
  * @param {NativeDataGraphDocument} document Authored delta.
@@ -785,12 +810,15 @@ export function nativeDataGraphLifecycle(
   const orgId = context.orgId;
   graphRequire(/^00D[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/u.test(orgId));
   const name = document.definition.name as string;
+  const rootName = document.definition.primaryObjectName as string;
   const bodySHA256 = createHash('sha256').update(JSON.stringify(document.definition)).digest('hex');
   let busy = false;
   let createUsed = false;
   let deleteUsed = false;
   let receipt: NativeGraphReceipt | undefined;
   let binding: Awaited<ReturnType<typeof bindNativeGraphRoot>> | undefined;
+  // After a create, the intent carries the node types the API assigned (see the echo).
+  let intent = document;
   // This is intentionally run-local only. A later public integration needs its own persisted adoption policy.
   const run = async (
     operation: 'create' | 'delete',
@@ -827,18 +855,18 @@ export function nativeDataGraphLifecycle(
     };
     const readers = { ...context, check };
     const acquire = async (): Promise<NativeGraphAcquisition> => {
-      const result = await acquireNativeDataGraph(readers, document);
+      const result = await acquireNativeDataGraph(readers, intent);
       diagnostic = getConnectDiagnostic(result) ?? diagnostic;
       return result;
     };
     const work = async (): Promise<NativeGraphResult> => {
       check();
-      const root = await bindNativeGraphRoot(readers);
+      const root = await bindNativeGraphRoot(readers, rootName);
       const before = await acquire();
       check();
       if (operation === 'create') {
         graphRequire(before.state === 'absent');
-        const freshRoot = await bindNativeGraphRoot(readers);
+        const freshRoot = await bindNativeGraphRoot(readers, rootName);
         graphRequire(isDeepStrictEqual(root, freshRoot));
         await guards.record('create-attempt', { orgId, name, bodySHA256, rootId: root.id });
         check();
@@ -861,8 +889,8 @@ export function nativeDataGraphLifecycle(
         const returned = nativeGraphCreateEcho(response, document);
         createCheck = 'settlement';
         const settled = creation
-          ? await settleNativeDataGraphCreation(readers, document, { ...creation, now })
-          : await settleNativeDataGraph(readers, document, 'ready', guards.pause);
+          ? await settleNativeDataGraphCreation(readers, returned.document, { ...creation, now })
+          : await settleNativeDataGraph(readers, returned.document, 'ready', guards.pause);
         diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
         graphRequire(settled.state === 'present');
         createCheck = 'identity';
@@ -877,7 +905,7 @@ export function nativeDataGraphLifecycle(
               graphRecord(settled.observation.target.sourceObject).fields,
               returned.source.fields,
             ) &&
-            isDeepStrictEqual(root, await bindNativeGraphRoot(readers)),
+            isDeepStrictEqual(root, await bindNativeGraphRoot(readers, rootName)),
         );
         const observation = settled.observation;
         const owned: NativeGraphReceipt = {
@@ -893,6 +921,7 @@ export function nativeDataGraphLifecycle(
         await guards.record('created', structuredClone(owned));
         check();
         binding = root;
+        intent = returned.document;
         receipt = owned;
         return { outcome: 'created', mutation: 'attempted', receipt: structuredClone(owned) };
       }
@@ -910,7 +939,7 @@ export function nativeDataGraphLifecycle(
       const fresh = await acquire();
       graphRequire(
         isDeepStrictEqual(before, fresh) &&
-          isDeepStrictEqual(root, await bindNativeGraphRoot(readers)),
+          isDeepStrictEqual(root, await bindNativeGraphRoot(readers, rootName)),
       );
       await guards.record('delete-attempt', structuredClone(owned));
       check();
@@ -923,7 +952,7 @@ export function nativeDataGraphLifecycle(
         /* Reconcile ambiguous acknowledgement with independent GETs only. */
       }
       check();
-      const settled = await settleNativeDataGraph(readers, document, 'absent', guards.pause);
+      const settled = await settleNativeDataGraph(readers, intent, 'absent', guards.pause);
       diagnostic = diagnostic ?? getConnectDiagnostic(settled);
       graphRequire(settled.state === 'absent');
       return { outcome: 'deleted', mutation: 'attempted', receipt: structuredClone(owned) };

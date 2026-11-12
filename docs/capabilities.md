@@ -1,11 +1,14 @@
-## Public native Data Graph CRD — 2026-11-05
+## Public native Data Graph CRUD
 
 Explicit API68/default retrieval exports a distinct `.native-dataGraph.json`
-(`kind: native-data-graph`, `apiVersion: 68.0`), not the existing API67 facade
-`.dataGraph.json`. Scope is one root-only NONE graph on enabled standard
-`ssot__Individual__dlm`, with ordered Text Id, key-qualifier and FirstName fields.
-Deploy/delete accept auto/API68 for this native artifact; auto/API67 facade
-retrieval and the existing bounded LastName update remain unchanged.
+(`kind: native-data-graph`, `apiVersion: 68.0`), not the API67 facade
+`.dataGraph.json`. Every graph shape the API returns is admitted: any root (standard or
+unified), related objects with joins, all field types, any refresh schedule. Checks are
+structural only (closed keys, names, tree and join shape, default data space, root equals
+`primaryObjectName`); the root is bound by the document's own `primaryObjectName`.
+Lowercase API values are stored as `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`; node `type`
+stays lowercase. Deploy/delete accept auto/API68; auto retrieve still selects the API67
+route. All six graphs in `isolated-source` retrieve at 68 and preview `unchanged`.
 
 Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
 generated names (empty names on a non-ready read are not authored values), then `ready`
@@ -13,17 +16,19 @@ before the day-zero names exist, then metadata `Inprogress` for about 5 minutes,
 sometimes briefly missing. The POST is never resent. A create the plugin cannot confirm
 reports `failed`/`unknown` with `DATA_GRAPH_CREATE_UNCONFIRMED` naming the step
 (`request`, `response`, `settlement`, `identity`, `deadline`); an unchanged repeat deploy or a
-retrieve confirms the graph. Known limit: one live create stopped in `settlement` on an
-uncaptured read although the graph was created. Retrieve resolves a relative
+retrieve confirms the graph. Retrieve resolves a relative
 `-d`/`--output-dir` against the current directory for every family.
 
-Absent create requires independent absence/root checks and --allow-processing;
-creation automatically generates supporting resources and defaults to daily full
-refresh with incremental refresh disabled, despite omitting schedule input. Identical deploy is
-zero-write unchanged; a different existing definition blocks because native UPDATE
-is not implemented. GUI UPDATE evidence is not native REST/plugin support.
-Preview is read-only. Native Git selection, mixed families,
-other roots/graphs and cascade are unsupported.
+Create sends the authored root, related objects, fields and schedule and needs
+`--allow-processing`; Salesforce adds key-qualifier fields to related objects and can
+report a different node `type`. A graph with a related object took about 17 minutes to
+build (metadata `Inprogress` most of it). Builds pass a brief `processing` status
+between `creating` and `ready`, which settlement accepts. Update sends the authored
+change in one PUT (label, description, schedule, incremental refresh, added fields and
+related objects, joins, field settings); only name, data space, root object and node
+object/path/type changes are refused. Omitted fields and branches are kept. Identical
+deploy is zero-write `unchanged`. Preview is read-only. Native Git selection, mixed
+families and cascade are unsupported.
 
 Delete needs an exact selector, matching local native artifact, --confirm-delete
 and fresh ready/identity/created-date/definition/root checks, with explicitly empty
@@ -31,7 +36,8 @@ known dependency/related-segment arrays. Unknown/nonempty dependencies block;
 exhaustive external-consumer exclusion remains unverified. Live API68 create/read/
 delete evidence confirmed independent graph-definition absence. After the single
 DELETE, settlement reads for up to 15 minutes while the graph is being removed (item
-and metadata list drop it at once, the by-name metadata entry about 5 minutes later),
+and metadata list drop it at once; the by-name metadata read can return the graph, even a
+stale pre-update copy, for minutes after, alternating with not-found),
 with stderr progress; any other state stops after 12 reads with `failed`/`unknown`. No generated DMO/mapping/transform/internal-state,
 storage/credits cleanup or computation claim. Installed package smoke verifies
 offline routing only, not live installed cross-org acceptance. README's 14-resource

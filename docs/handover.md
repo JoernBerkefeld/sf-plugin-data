@@ -1,3 +1,58 @@
+# Native API 68 data graphs take every shape — 2026-11-12
+
+Package G1 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.
+Version stays 0.1.0; nothing pushed.
+
+- Document (`src/artifacts/native-data-graph-document.ts`): the local allowlists are
+  gone (Individual root only, Id/KQ_Id field order, `standard` nodes only, NONE only,
+  daily refresh only, Text only, one key column, fixed usage tags and topK, empty
+  recency/filter, Profile/Related categories, required description). Kept: inert JSON,
+  closed keys, names, default data space, root equals `primaryObjectName`, tree and
+  join shape, unique field names, positive schedule frequency and topK limit. Stored
+  spelling: `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`; node `type` stays lowercase.
+- Root binding uses the document's `primaryObjectName` (was fixed to
+  `ssot__Individual__dlm`).
+- Create (`buildDataGraphCreateRequest` via `nativeDataGraphCreateDefinition`) sends the
+  authored root, related objects, fields and schedule, dropping only generated names
+  (field and join devNames, fragment and top-level generated names). The create echo
+  adopts the node types the server assigned.
+- Update (`buildNativeDataGraphUpdateRequest`): sends label, description, schedule,
+  incremental refresh, added fields and related objects, joins and field settings as
+  written. Refused: name, data space, root object and a node's object, path, type,
+  reference or projected name. Omitted fields, branches and description are kept.
+- Delete: non-empty `dependency`/`relatedSegments` on any node or field
+  (`nativeDataGraphUnreferenced`) block delete; they no longer block retrieve or update.
+- Settlement accepts the `processing` status. This was the cause of G0's open item:
+  the live create below read `processing` for about 9 s between `creating` and
+  `ready`, and a settlement read in that window was refused (replayed offline:
+  refused before, admitted after).
+- Tests: unified-root fixtures, structural rejections, related-object create body,
+  schedule update, `processing` during create, dependency on related objects and
+  their fields, omitted description. Review: two rounds.
+
+Live, `isolated-source` (00Daj000010xkZNEAY), API 68, 3 of 4 graph creates used:
+
+- Read-only: all six org graphs (four unified `UnifiedssotIndividualMkt__dlm` roots,
+  one `UnifiedssotIndividual9a99__dlm`, two with related objects) retrieve exit 0 and
+  preview `unchanged` exit 0. The plain list route `GET /ssot/data-graphs` answers
+  "Empty Data Graph Name"; list through `/ssot/data-graphs/metadata`. Evidence
+  `F:/Temp/g1live-Y8FgdC`.
+- CliGraphG1_fb8a (Individual root Id/KQ_Id/FirstName, related
+  `ssot__ContactPointEmail__dlm` joined `ssot__PartyId__c` → `ssot__Id__c`, 7-day
+  schedule, hand-written file): preview exit 0; create exit 0 `confirmed-created`
+  (~17 min; metadata `Inprogress` most of it); the server added `KQ_Id__c` to the
+  related object; unchanged repeat exit 0 (18 s); retrieve exit 0 (18 s); update of the
+  retrieved file (schedule 7 → 1 day, description, added root `ssot__LastName__c`)
+  preview exit 0 `update`, deploy exit 0 `confirmed-updated` (267 s), independent GET
+  `ready`, version 1, frequency 1, LastName present; repeat exit 0 `unchanged` (22 s);
+  delete preview exit 0; delete exit 0 `confirmed-deleted` (127 s). Afterwards item
+  not found and SOQL DataGraph 0 rows, but the by-name metadata read alternated between
+  not found and a stale copy with the pre-update description for at least 7 minutes
+  after the delete. Fast poller captures: `F:/Temp/g1blive-FbyZjT/fpoll`.
+
+Verification DB: `data360:graph.native-any-shape.api68`; the G0 entry's open row
+(uncaptured settlement stop) is now explained by `processing`.
+
 # Native API 68 data graph create and delete settle — 2026-11-12
 
 Package G0 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.

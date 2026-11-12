@@ -38,6 +38,15 @@ const candidate = () => ({
     relatedObjects: [],
   },
 });
+/**
+ * The create body: the candidate without generated field developer names.
+ * @returns {object} Expected POST body.
+ */
+const createBody = () => {
+  const value = candidate();
+  for (const field of value.sourceObject.fields) delete field.devName;
+  return value;
+};
 const operations = {
   get: (client) => client.get(name),
   create: (client) => client.create(candidate()),
@@ -69,7 +78,7 @@ test('native Graph binds raw lowercase dataspaceName and exact API68 CRD only', 
     {
       method: 'POST',
       url: endpoint,
-      body: JSON.stringify(candidate()),
+      body: JSON.stringify(createBody()),
       headers: { 'content-type': 'application/json' },
     },
     {
@@ -82,8 +91,115 @@ test('native Graph binds raw lowercase dataspaceName and exact API68 CRD only', 
   ]);
   const input = candidate();
   const detached = buildDataGraphCreateRequest(input);
-  input.sourceObject.fields[0].devName = 'Changed';
-  assert.equal(detached.sourceObject.fields[0].devName, 'AuthoredField0');
+  input.sourceObject.devName = 'Changed';
+  assert.equal(detached.sourceObject.devName, 'AuthoredIndividual');
+});
+
+test('native create sends any authored shape: unified root, related object, 7-day schedule', () => {
+  // Shaped like the recorded API68 create body (unified root, `Day` granularity) plus a join.
+  const authored = {
+    name,
+    label: 'Synthetic graph',
+    description: 'Synthetic unified definition',
+    dataspaceName: 'default',
+    primaryObjectName: 'UnifiedssotIndividualMkt__dlm',
+    type: 'none',
+    fullRefreshConfig: { schedule: { frequency: 7, timeGranularity: 'day' } },
+    incrementalRefreshConfig: { enabled: false },
+    idDmoName: 'Foreign_ID__dlm',
+    valuesDmoName: 'Foreign_VALUE__dlm',
+    dayZeroMappingDevName: 'ForeignMapping',
+    dayZeroTransformDevName: 'ForeignTransform',
+    sourceObject: {
+      name: 'UnifiedssotIndividualMkt__dlm',
+      devName: 'UnifiedssotIndividualMkt__dlm',
+      label: 'Unified Individual MKT',
+      jsonPath: '$',
+      path: [],
+      type: 'standard',
+      fragmentDMOName: 'Foreign_FRAGMENT__dlm',
+      fields: [
+        {
+          sourceFieldName: 'ssot__Id__c',
+          dataType: 'Text',
+          isKeyColumn: true,
+          isProjected: true,
+          usageTag: 'none',
+        },
+        {
+          devName: 'ForeignField',
+          sourceFieldName: 'ssot__BirthDate__c',
+          dataType: 'Date',
+          isKeyColumn: false,
+          isProjected: false,
+          usageTag: 'NONE',
+        },
+      ],
+      relatedObjects: [
+        {
+          name: 'ssot__ContactPointEmail__dlm',
+          label: 'Contact Point Email',
+          jsonPath: '$.ssot__ContactPointEmail__dlm',
+          path: [
+            {
+              devName: 'ForeignJoin',
+              fieldName: 'ssot__PartyId__c',
+              parentFieldName: 'ssot__Id__c',
+            },
+          ],
+          type: 'standard',
+          topKFilterCriteria: {
+            limit: 5,
+            orderCriteria: [{ fieldApiName: 'ssot__Id__c', sortOrder: 'asc' }],
+          },
+          fields: [
+            {
+              sourceFieldName: 'ssot__Id__c',
+              dataType: 'Text',
+              isKeyColumn: true,
+              isProjected: true,
+              usageTag: 'NONE',
+              keyQualifierName: 'KQ_Id__c',
+            },
+            {
+              sourceFieldName: 'KQ_Id__c',
+              dataType: 'Text',
+              isKeyColumn: false,
+              isProjected: true,
+              usageTag: 'key_qualifier',
+            },
+            {
+              sourceFieldName: 'ssot__PartyId__c',
+              dataType: 'Text',
+              isKeyColumn: false,
+              isProjected: true,
+              usageTag: 'NONE',
+            },
+          ],
+          relatedObjects: [],
+        },
+      ],
+    },
+  };
+  const request = buildDataGraphCreateRequest(structuredClone(authored));
+  const expected = structuredClone(authored);
+  for (const key of [
+    'idDmoName',
+    'valuesDmoName',
+    'dayZeroMappingDevName',
+    'dayZeroTransformDevName',
+  ])
+    delete expected[key];
+  expected.type = 'NONE';
+  expected.fullRefreshConfig.schedule.timeGranularity = 'Day';
+  delete expected.sourceObject.fragmentDMOName;
+  expected.sourceObject.fields[0].usageTag = 'NONE';
+  delete expected.sourceObject.fields[1].devName;
+  const child = expected.sourceObject.relatedObjects[0];
+  delete child.path[0].devName;
+  child.topKFilterCriteria.orderCriteria[0].sortOrder = 'ASC';
+  child.fields[1].usageTag = 'KEY_QUALIFIER';
+  assert.deepEqual(request, expected);
 });
 
 test('native Graph rejects other versions, spaces and route injection without requests', async () => {
@@ -150,13 +266,52 @@ const changes = [
     value.sourceObject.id = 'source-node-id';
   },
   (value) => {
-    value.sourceObject.type = 'derived';
-  },
-  (value) => {
     value.sourceObject.path.push('nested');
   },
   (value) => {
     value.sourceObject.relatedObjects.push({ name: 'Other__dlm' });
+  },
+  (value) => {
+    value.sourceObject.fields[2].devName = value.sourceObject.fields[0].devName;
+  },
+  (value) => {
+    value.sourceObject.fields[2].id = 'source-field-id';
+  },
+  (value) => {
+    value.sourceObject.fields.length = 0;
+  },
+  (value) => {
+    value.toJSON = () => assert.fail('must not invoke serializer');
+  },
+  (value) => {
+    Object.defineProperty(value, 'label', { enumerable: true, get: () => assert.fail('getter') });
+  },
+  (value) => {
+    Object.defineProperty(value.sourceObject.fields, '0', {
+      enumerable: true,
+      get: () => assert.fail('field getter'),
+    });
+  },
+];
+for (const [index, change] of changes.entries())
+  test(`native Graph malformed or unqualified create ${index} stops before dispatch`, async () => {
+    let requests = 0;
+    const client = createDataGraphClient(
+      { instanceUrl: origin, request: async () => requests++ },
+      '68.0',
+      'default',
+    );
+    const value = candidate();
+    change(value);
+    await assert.rejects(client.create(value));
+    await assert.rejects(client.create({ input: candidate() }));
+    assert.equal(requests, 0);
+  });
+
+// Settings the API decides are sent as authored, no longer refused locally.
+for (const [index, change] of [
+  (value) => {
+    value.sourceObject.type = 'derived';
   },
   (value) => {
     value.sourceObject.fields.reverse();
@@ -174,38 +329,15 @@ const changes = [
     value.sourceObject.fields[2].isProjected = false;
   },
   (value) => {
-    value.sourceObject.fields[2].devName = value.sourceObject.fields[0].devName;
-  },
-  (value) => {
-    value.sourceObject.fields[2].id = 'source-field-id';
-  },
-  (value) => {
     value.sourceObject.fields.pop();
   },
-  (value) => {
-    value.toJSON = () => assert.fail('must not invoke serializer');
-  },
-  (value) => {
-    Object.defineProperty(value, 'label', { enumerable: true, get: () => assert.fail('getter') });
-  },
-  (value) => {
-    Object.defineProperty(value.sourceObject.fields, '0', {
-      enumerable: true,
-      get: () => assert.fail('field getter'),
-    });
-  },
-];
-for (const [index, change] of changes.entries())
-  test(`native Graph malformed or unqualified create ${index} stops before dispatch`, async () => {
-    const client = createDataGraphClient(
-      { instanceUrl: origin, request: () => assert.fail('unexpected request') },
-      '68.0',
-      'default',
-    );
+].entries())
+  test(`native Graph create ${index} sends an API-decided setting as authored`, () => {
     const value = candidate();
     change(value);
-    await assert.rejects(client.create(value));
-    await assert.rejects(client.create({ input: candidate() }));
+    const expected = structuredClone(value);
+    for (const field of expected.sourceObject.fields) delete field.devName;
+    assert.deepEqual(buildDataGraphCreateRequest(value), expected);
   });
 
 for (const [operation, execute] of Object.entries(operations)) {
