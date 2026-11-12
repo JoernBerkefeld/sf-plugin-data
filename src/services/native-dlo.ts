@@ -2,6 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { explainMismatch } from './operation-diagnostic.js';
 import {
   DloError,
+  dloSystemFields,
+  isGeneratedDloField,
   normalizeDlo,
   unwrapDlo,
   validateDloDocument,
@@ -26,22 +28,13 @@ export type DloDeployPlan =
       document: DloDocument;
     };
 
-const systemFields = new Set([
-  'cdp_sys_SourceVersion__c',
-  // Engagement DLOs: Salesforce adds it with the event field.
-  'cdp_sys_PartitionDate__c',
-  'DataSource__c',
-  'DataSourceObject__c',
-  'InternalOrganization__c',
-]);
-
 /**
  * Identify qualified generated qualifier/system fields, never generic Id-bearing fields.
  * @param {DloField} field Portable definition.
  * @returns {boolean} Whether native create generates this field.
  */
 function generated(field: DloField): boolean {
-  return systemFields.has(field.name) || field.name.startsWith('KQ_');
+  return dloSystemFields.has(field.name) || field.name.startsWith('KQ_');
 }
 
 /**
@@ -153,21 +146,10 @@ export async function preflightNativeDlo(
     );
   const existing = new Map(target.document.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
-  const keyQualifiers = new Set(
-    target.document.spec.fields
-      .filter((field) => field.isPrimaryKey)
-      .map((field) => `KQ_${field.name}`),
-  );
   for (const [name, field] of existing) {
     // Fields Salesforce generated (system fields and the key qualifier of the primary key) stay
-    // as they are when the file does not list them.
-    if (
-      !incoming.has(name) &&
-      !field.isPrimaryKey &&
-      field.creationType !== 'Custom' &&
-      (systemFields.has(name) || keyQualifiers.has(name))
-    )
-      continue;
+    // as they are when the file does not list them; retrieve leaves out exactly these.
+    if (!incoming.has(name) && isGeneratedDloField(field, target.document.spec.fields)) continue;
     const listed = incoming.get(name);
     // A listed field is compared on the keys the file states; keys only the org adds are kept.
     const observed = listed

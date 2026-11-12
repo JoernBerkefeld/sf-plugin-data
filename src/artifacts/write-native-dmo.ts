@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, open, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { NativeDmoError, validateNativeDmoDocument } from './native-dmo-document.js';
+import {
+  leanNativeDmoDocument,
+  NativeDmoError,
+  validateNativeDmoDocument,
+} from './native-dmo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
-
-// Save-only omissions; create and update policies remain independent.
-const omittedSavedFields = new Set(['KQ_Id__c']);
 
 /**
  * Validate real ancestors before publication.
@@ -87,11 +88,8 @@ export async function writeNativeDmoDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateNativeDmoDocument(value);
-  document.spec.fields = document.spec.fields.filter(
-    (field) =>
-      field.isPrimaryKey || field.creationType !== 'System' || !omittedSavedFields.has(field.name),
-  );
+  // Authored content only: the generated fields a deploy keeps from the org when they are omitted.
+  const document = leanNativeDmoDocument(validateNativeDmoDocument(value));
   const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
   if (
     !path.isAbsolute(projectRoot) ||

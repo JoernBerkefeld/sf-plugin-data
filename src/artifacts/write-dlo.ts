@@ -2,11 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, open, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DloError, validateDloDocument } from './dlo-document.js';
+import { DloError, leanDloDocument, validateDloDocument } from './dlo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
-
-// Save-only omissions; create and update policies remain independent.
-const omittedSavedFields = new Set(['KQ_Id__c']);
 
 /**
  * Validate each real directory ancestor before publication.
@@ -87,11 +84,8 @@ export async function writeDloDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateDloDocument(value);
-  document.spec.fields = document.spec.fields.filter(
-    (field) =>
-      field.isPrimaryKey || field.creationType === 'Custom' || !omittedSavedFields.has(field.name),
-  );
+  // Authored content only: the fields a deploy keeps from the org when the file omits them.
+  const document = leanDloDocument(validateDloDocument(value));
   const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
   if (
     !path.isAbsolute(projectRoot) ||

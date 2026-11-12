@@ -111,6 +111,48 @@ export function validateDloDocument(value: unknown): DloDocument {
   return structuredClone(value) as DloDocument;
 }
 
+/** Fields Salesforce adds to a data lake object itself. */
+export const dloSystemFields: ReadonlySet<string> = new Set([
+  'cdp_sys_SourceVersion__c',
+  // Engagement DLOs: Salesforce adds it with the event field.
+  'cdp_sys_PartitionDate__c',
+  'DataSource__c',
+  'DataSourceObject__c',
+  'InternalOrganization__c',
+]);
+
+/**
+ * Whether a field of an existing DLO is one Salesforce generated: a system field or the key
+ * qualifier of a primary key, never a primary key or a custom field. A deploy keeps such a field
+ * when the file leaves it out, and a retrieve leaves it out; both use this one predicate.
+ * @param {DloField} field Field of the DLO.
+ * @param {DloField[]} fields Every field of the same DLO.
+ * @returns {boolean} Whether the field is generated, not authored.
+ */
+export function isGeneratedDloField(field: DloField, fields: readonly DloField[]): boolean {
+  if (field.isPrimaryKey || field.creationType === 'Custom') return false;
+  return (
+    dloSystemFields.has(field.name) ||
+    fields.some((key) => key.isPrimaryKey && field.name === `KQ_${key.name}`)
+  );
+}
+
+/**
+ * Keep the authored content of a DLO definition: generated fields are left out, except a field
+ * the event field names, which the document has to list.
+ * @param {DloDocument} document Complete definition as read.
+ * @returns {DloDocument} Independent copy without generated fields.
+ */
+export function leanDloDocument(document: DloDocument): DloDocument {
+  const lean = structuredClone(document);
+  lean.spec.fields = document.spec.fields.filter(
+    (field) =>
+      field.name === document.spec.eventDateTimeFieldName ||
+      !isGeneratedDloField(field, document.spec.fields),
+  );
+  return lean;
+}
+
 /**
  * Unwrap exactly one native GET object or a POST/PATCH single-object response.
  * @param {unknown} value Native response.

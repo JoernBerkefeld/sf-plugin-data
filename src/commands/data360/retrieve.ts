@@ -15,7 +15,8 @@ import { writeDataStreamDocument } from '../../artifacts/write-data-stream.js';
 import { createDataStreamClient } from '../../transport/data-stream-rest.js';
 import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
 import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
-import { retrieveNativeMapping } from '../../services/native-mapping.js';
+import { retrieveLeanNativeMapping } from '../../services/native-mapping.js';
+import type { MappingDependencies } from '../../services/native-mapping.js';
 import { createMappingClient, createMappingInventoryReader } from '../../transport/mapping-rest.js';
 import { writeNativeMappingDocument } from '../../artifacts/write-native-mapping.js';
 import { NativeMappingError, nativeMappingName } from '../../artifacts/native-mapping-document.js';
@@ -237,10 +238,27 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected acquireDlo = retrieveNativeDlo;
   protected createDloClient = createDloClient;
   protected writeDlo = writeDloDocument;
-  protected acquireNativeMapping = retrieveNativeMapping;
+  // Authored pairs only: the generated pairs are decided from fresh source DLO and target DMO reads.
+  protected acquireNativeMapping = retrieveLeanNativeMapping;
   protected createMappingClient = createMappingClient;
   protected createMappingInventoryReader = createMappingInventoryReader;
   protected writeNativeMapping = writeNativeMappingDocument;
+  /**
+   * Readers of a mapping's source DLO and target DMO; clients are created on the first read.
+   * @param {string} target Resolved username.
+   * @param {string} version Native API version.
+   * @returns {MappingDependencies} Lazy source and target readers.
+   */
+  protected mappingParents(target: string, version: string): MappingDependencies {
+    return {
+      source: {
+        get: async (name) => (this.createDloClient ?? createDloClient)(target, version).get(name),
+      },
+      target: {
+        get: async (name) => (this.createDmoClient ?? createDmoClient)(target, version).get(name),
+      },
+    };
+  }
   protected listNativeNames = listNativeNames;
   protected listNativeMappingNames = listNativeMappingNames;
   protected acquireRelationships = retrieveNativeRelationships;
@@ -750,6 +768,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     apiName,
                     this.createMappingClient(target, version, undefined, requestScope),
                     requestScope,
+                    this.mappingParents(target, version),
                   )
                 : family === 'dlo'
                   ? await this.acquireDlo(
@@ -1050,6 +1069,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             apiName,
             this.createMappingClient(target, version, undefined, requestScope),
             requestScope,
+            this.mappingParents(target, version),
           );
           const receipt = await this.writeNativeMapping(document, outputDirectory, flags.overwrite);
           envelope.result.items.push({
@@ -1060,7 +1080,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             ...receipt,
           });
         } catch (error: unknown) {
-          const code = error instanceof MappingDefinitionError ? error.code : 'OUTPUT_FAILED';
+          const unproven =
+            error instanceof NativeMappingError &&
+            error.code === 'MAPPING_GENERATED_PAIRS_UNPROVEN';
+          const code =
+            error instanceof MappingDefinitionError || unproven ? error.code : 'OUTPUT_FAILED';
           if (
             ![
               'INVALID_SELECTION',
@@ -1075,8 +1099,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             code,
             family: 'mapping',
             identity: { dataSpace: 'default', apiName },
-            message:
-              'This mapping definition was not exported. Check the exact selection, acquisition and output path.',
+            message: unproven
+              ? operationDiagnostic(error, 'This mapping definition was not exported.')
+              : 'This mapping definition was not exported. Check the exact selection, acquisition and output path.',
             retryable: false,
           });
         }

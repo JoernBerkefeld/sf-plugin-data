@@ -169,6 +169,7 @@ for (const preview of [true, false])
         });
       };
       const result = await run(command);
+      const localFile = path.join(process.cwd(), 'data360', 'dlo', `${name}.dlo-meta.json`);
       assert.deepEqual(reads, [[name]]);
       assert.deepEqual(writes, preview || dataspace ? [] : [[id]]);
       assert.equal(result.status, dataspace ? 'blocked' : 'success');
@@ -177,6 +178,12 @@ for (const preview of [true, false])
         operation: preview ? 'preview' : 'delete',
         outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',
         mutation: !dataspace && !preview ? 'confirmed-deleted' : 'not-attempted',
+        // The project's own DLO file is listed by a preview and, absent here, reported not present.
+        ...(dataspace
+          ? {}
+          : preview
+            ? { localFiles: [{ path: localFile, exists: false }] }
+            : { removedLocalFiles: [{ path: localFile, outcome: 'not-present' }] }),
       });
       assert.deepEqual(
         result.diagnostics.errors.map(({ code }) => code),

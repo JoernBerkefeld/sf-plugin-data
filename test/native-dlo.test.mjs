@@ -51,6 +51,12 @@ const native = () => ({
   ],
 });
 const document = () => normalizeDlo(native());
+const systemNames = [
+  'cdp_sys_SourceVersion__c',
+  'DataSource__c',
+  'DataSourceObject__c',
+  'InternalOrganization__c',
+];
 const absent = () => {
   throw new DloError('DLO_HTTP_ERROR', 404);
 };
@@ -80,7 +86,7 @@ test('normalizes GET and write shapes, preserving all fields but not runtime/wra
   assert.ok(!dloName.test('../Example__dll'));
 });
 
-test('DLO save/load omits only generated KQ_Id and roundtrips seven/eight raw fields', async () => {
+test('DLO save keeps authored fields only (no KQ_Id or system fields) and roundtrips seven/eight raw fields', async () => {
   for (const added of [false, true]) {
     const raw = native();
     raw.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
@@ -94,11 +100,11 @@ test('DLO save/load omits only generated KQ_Id and roundtrips seven/eight raw fi
     const saved = input.document;
     assert.equal(raw.dataLakeFieldInfoRepresentation.length, added ? 8 : 7);
     assert.equal(normalized.spec.fields.length, added ? 8 : 7);
-    assert.equal(saved.spec.fields.length, added ? 7 : 6);
+    assert.equal(saved.spec.fields.length, added ? 3 : 2);
     assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), saved);
     assert.deepEqual(
       saved.spec.fields,
-      snapshot.spec.fields.filter((f) => f.name !== 'KQ_Id__c'),
+      snapshot.spec.fields.filter((f) => !['KQ_Id__c', ...systemNames].includes(f.name)),
     );
     assert.equal(saved.spec.fields[0].keyQualifierName, 'KQ_Id');
     assert.deepEqual(raw, before);
@@ -141,7 +147,10 @@ test('DLO save preserves other/custom/primary qualifiers and update refuses thei
     value.spec.fields.push(qualifier);
     const cwd = await mkdtemp(path.join(os.tmpdir(), 'dlo-preserve-qualifier-'));
     const receipt = await writeDloDocument(value, cwd, false);
-    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), value);
+    // Only the generated system fields are left out; these qualifiers are not generated.
+    const authored = structuredClone(value);
+    authored.spec.fields = authored.spec.fields.filter((f) => !systemNames.includes(f.name));
+    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), authored);
     const target = native();
     target.dataLakeFieldInfoRepresentation = value.spec.fields;
     const missing = structuredClone(value);

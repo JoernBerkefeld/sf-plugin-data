@@ -117,7 +117,7 @@ test('native DMO saves all six fields and their definitions, maps type/category 
   assert.deepEqual(normalizeNativeDmo({ ...native(), category: 'Other' }), document());
 });
 
-test('DMO save/load omits only System nonprimary KQ_Id with six/seven raw fields', async () => {
+test('DMO save keeps authored fields only (no System, system or KQ fields) with six/seven raw fields', async () => {
   for (const added of [false, true]) {
     const raw = native();
     if (added) raw.fields.push(field('UpdateNote__c'));
@@ -130,11 +130,11 @@ test('DMO save/load omits only System nonprimary KQ_Id with six/seven raw fields
     const saved = input.document;
     assert.equal(raw.fields.length, added ? 7 : 6);
     assert.equal(normalized.spec.fields.length, added ? 7 : 6);
-    assert.equal(saved.spec.fields.length, added ? 6 : 5);
+    assert.equal(saved.spec.fields.length, added ? 3 : 2);
     assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), saved);
     assert.deepEqual(
       saved.spec.fields,
-      snapshot.spec.fields.filter((f) => f.name !== 'KQ_Id__c'),
+      snapshot.spec.fields.filter((f) => f.creationType !== 'System'),
     );
     assert.equal(saved.spec.fields[0].keyQualifierName, 'KQ_Id');
     assert.deepEqual(raw, before);
@@ -169,7 +169,7 @@ test('DMO save/load omits only System nonprimary KQ_Id with six/seven raw fields
   }
 });
 
-test('DMO save preserves qualifiers; a definition may omit generated fields but not custom ones', async () => {
+test('DMO save leaves generated qualifiers out but keeps a primary key; a definition may omit them', async () => {
   for (const qualifier of [
     { ...authored('KQ_Other__c'), creationType: 'System', usageTag: 'KeyQualifier' },
     { ...authored('KQ_Id__c'), creationType: 'Custom' },
@@ -182,7 +182,12 @@ test('DMO save preserves qualifiers; a definition may omit generated fields but 
     value.spec.fields.push(qualifier);
     const cwd = await mkdtemp(path.join(os.tmpdir(), 'dmo-preserve-qualifier-'));
     const receipt = await writeNativeDmoDocument(value, cwd, false);
-    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), value);
+    // Every generated field (System, system-named or KQ_) is left out, a primary key never.
+    const lean = structuredClone(value);
+    lean.spec.fields = lean.spec.fields.filter(
+      (f) => f.isPrimaryKey || (f.creationType !== 'System' && !f.name.startsWith('KQ_')),
+    );
+    assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), lean);
     const target = native();
     target.fields = value.spec.fields.map(({ dataType, ...f }) => ({ ...f, type: dataType }));
     const missing = structuredClone(value);

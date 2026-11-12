@@ -68,7 +68,7 @@ const org = {
   getConnection: () => ({ getUsername: () => 'target' }),
 };
 
-test('native writer retains fields and binds canonical source bytes', async () => {
+test('native writer leaves generated fields out and binds canonical source bytes', async () => {
   const cwd = await scratch();
   const generated = {
     name: 'DataSource__c',
@@ -80,7 +80,11 @@ test('native writer retains fields and binds canonical source bytes', async () =
   const value = { ...document, spec: { ...document.spec, fields: [...fields, generated] } };
   const receipt = await writeNativeDmoDocument(value, cwd, false);
   assert.equal(receipt.path, path.join(cwd, 'data360', 'dmo', `${name}.dmo-meta.json`));
-  assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), value);
+  // Authored content only: the System field is left out.
+  assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), {
+    ...value,
+    spec: { ...value.spec, fields },
+  });
   const repeated = await writeNativeDmoDocument(value, cwd, false);
   assert.equal(repeated.outcome, 'unchanged');
   await assert.rejects(
@@ -459,6 +463,7 @@ for (const preview of [true, false])
         });
       };
       const result = await run(command);
+      const localFile = path.join(process.cwd(), 'data360', 'dmo', `${name}.dmo-meta.json`);
       // A confirmed delete reads once more after the DELETE.
       assert.deepEqual(reads, preview || dataspace ? [[name]] : [[name], [name]]);
       assert.deepEqual(writes, preview || dataspace ? [] : [[name]]);
@@ -468,6 +473,12 @@ for (const preview of [true, false])
         operation: preview ? 'preview' : 'delete',
         outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',
         mutation: !dataspace && !preview ? 'confirmed-deleted' : 'not-attempted',
+        // The project's own DMO file is listed by a preview and, absent here, reported not present.
+        ...(dataspace
+          ? {}
+          : preview
+            ? { localFiles: [{ path: localFile, exists: false }] }
+            : { removedLocalFiles: [{ path: localFile, outcome: 'not-present' }] }),
       });
       assert.deepEqual(
         result.diagnostics.errors.map(({ code }) => code),

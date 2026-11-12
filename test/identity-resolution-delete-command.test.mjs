@@ -105,8 +105,13 @@ const harness = async (overrides = {}) => {
 };
 for (const version of [undefined, 'auto', '68.0'])
   test(`public IR delete resolves ${version} to native68 and repeat is unchanged`, async () => {
-    const h = await harness({ 'api-version': version });
+    // --keep-local-files leaves the source file, so the repeat reads it again.
+    const h = await harness({ 'api-version': version, 'keep-local-files': true });
     const { result, exit } = await run(h.command);
+    assert.deepEqual(
+      result.result.items[0].removedLocalFiles.map((file) => file.outcome),
+      ['kept'],
+    );
     assert.equal(result.status, 'success');
     assert.equal(exit, undefined);
     assert.equal(result.metadata.apiVersion, '68.0');
@@ -231,7 +236,10 @@ for (const processing of [false, true])
     assert.deepEqual(h.logs, [
       'Delete: success.',
       `deleted identity-resolution Individual_A1b2${processing ? ' (server is still processing)' : ''}`,
+      // Accepted and still processing counts as confirmed: the source file is removed.
+      `removed local file ${result.result.items[0].removedLocalFiles[0].path}`,
     ]);
+    assert.equal(result.result.items[0].removedLocalFiles[0].outcome, 'removed');
   });
 test('IR delete help retains aliases and describes owner-only native68 behavior', () => {
   assert.deepEqual(Delete.aliases, ['datacloud:delete', 'd360:delete', 'dc:delete']);

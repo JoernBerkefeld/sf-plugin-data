@@ -23,6 +23,7 @@ import type {
 import type { MappingClient, MappingWriteBody } from '../transport/mapping-rest.js';
 import type { DloClient } from '../transport/dlo-rest.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
+import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 export type MappingDependencies = {
   source: Pick<DloClient, 'get'>;
@@ -222,16 +223,42 @@ async function resolveTarget(
   return document;
 }
 
+/** Fresh fields of a mapping's source DLO and target DMO, and the target's write scope. */
+export type MappingPairContext = {
+  sources: Map<string, DloField>;
+  targets: Map<string, NativeDmoField>;
+  standard: boolean;
+};
+
 /**
- * Validate source/target existence and every requested field against fresh definitions.
- * The four exact generated pairs are qualified by the retained three-to-seven create probe.
- * The target is a custom or a standard DMO; on a standard one the generated pairs are recognised
- * from the target's own field read, and `activates` says its first mapping will enable it.
- * @param {NativeMappingDocument} desired Requested definition.
- * @param {MappingDependencies} dependencies Fresh source and target readers.
- * @returns {Promise<object>} Fresh definitions and evidence-backed generated pairs.
+ * Whether a pair of an existing mapping is one Salesforce generated. This one predicate decides
+ * both which org pairs a deploy keeps when the file does not list them and which pairs a
+ * retrieve leaves out of the file, so the two cannot diverge. A pair whose source or target
+ * field is not read is never generated.
+ * @param {NativeMappingField} pair Mapping pair.
+ * @param {MappingPairContext} context Fresh source and target fields.
+ * @returns {boolean} Whether the pair is generated, not authored.
  */
-async function validateDependencies(
+export function isGeneratedMappingPair(
+  pair: NativeMappingField,
+  context: MappingPairContext,
+): boolean {
+  const { sources, targets } = context;
+  const from = sources.get(pair.sourceFieldDeveloperName);
+  const to = targets.get(pair.targetFieldDeveloperName);
+  if (!from || !to) return false;
+  return context.standard
+    ? isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets)
+    : isCustomGeneratedPair(from, to, sources, targets);
+}
+
+/**
+ * Read the source DLO and target DMO of a mapping fresh and check their identity.
+ * @param {NativeMappingDocument} desired Mapping whose binding names both.
+ * @param {MappingDependencies} dependencies Fresh source and target readers.
+ * @returns {Promise<object>} Field maps, write scope and whether a first mapping activates the DMO.
+ */
+async function readMappingParents(
   desired: NativeMappingDocument,
   dependencies: MappingDependencies,
 ) {
@@ -256,8 +283,94 @@ async function validateDependencies(
     target.identity.apiName !== desired.spec.targetEntityDeveloperName
   )
     throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
-  const sources = new Map(source.spec.fields.map((field) => [field.name, field]));
-  const targets = new Map(target.spec.fields.map((field) => [field.name, field]));
+  return {
+    activates,
+    context: {
+      sources: new Map(source.spec.fields.map((field) => [field.name, field])),
+      targets: new Map(target.spec.fields.map((field) => [field.name, field])),
+      standard,
+    } satisfies MappingPairContext,
+  };
+}
+
+/**
+ * Name the pairs of a mapping that Salesforce generated, from fresh reads of its source DLO and
+ * target DMO, with the same predicate a deploy uses to keep them. A mapping onto a DMO this
+ * plugin never writes has none: a deploy refuses it, so nothing it lists can be lost.
+ * @param {NativeMappingDocument} document Mapping as read.
+ * @param {MappingDependencies} dependencies Fresh source and target readers.
+ * @returns {Promise<NativeMappingField[]>} Generated pairs, in document order.
+ */
+export async function generatedMappingPairs(
+  document: NativeMappingDocument,
+  dependencies: MappingDependencies,
+): Promise<NativeMappingField[]> {
+  let context: MappingPairContext;
+  try {
+    ({ context } = await readMappingParents(document, dependencies));
+  } catch (error) {
+    if (error instanceof NativeMappingError && error.code === 'MAPPING_TARGET_UNSUPPORTED')
+      return [];
+    throw error;
+  }
+  return document.spec.fieldMappings.filter((pair) => isGeneratedMappingPair(pair, context));
+}
+
+/**
+ * Retrieve one mapping with its authored pairs only: the pairs Salesforce generated are left
+ * out, decided by {@link generatedMappingPairs}. When the source DLO or the target DMO cannot be
+ * read nothing is guessed: the retrieve is refused, as a file missing a pair a deploy does not
+ * recognise as generated would remove it from the org.
+ * @param {string} apiName Observed target mapping name.
+ * @param {MappingClient} client Target mapping transport.
+ * @param {string} [requestScope] Optional request scope.
+ * @param {MappingDependencies} [dependencies] Fresh source and target readers; required.
+ * @returns {Promise<NativeMappingDocument>} Authored portable definition.
+ */
+export async function retrieveLeanNativeMapping(
+  apiName: string,
+  client: MappingClient,
+  requestScope?: string,
+  dependencies?: MappingDependencies,
+): Promise<NativeMappingDocument> {
+  const document = await retrieveNativeMapping(apiName, client, requestScope);
+  let generated: NativeMappingField[];
+  try {
+    if (!dependencies) throw new NativeMappingError('MAPPING_PARENTS_REQUIRED');
+    generated = await generatedMappingPairs(document, dependencies);
+  } catch (error) {
+    const refusal = retainConnectDiagnostic(
+      new NativeMappingError('MAPPING_GENERATED_PAIRS_UNPROVEN'),
+      getConnectDiagnostic(error),
+    );
+    replaceExplanation(
+      refusal,
+      `${apiName} was not saved: its source data lake object ${document.spec.sourceEntityDeveloperName} and target data model object ${document.spec.targetEntityDeveloperName} must be readable to leave out the pairs Salesforce generates${error instanceof Error && 'code' in error ? ` (${String(error.code)})` : ''}. Nothing was written for it.`,
+    );
+    throw refusal;
+  }
+  const omitted = new Set(generated.map((pair) => pairKey(pair)));
+  document.spec.fieldMappings = document.spec.fieldMappings.filter(
+    (pair) => !omitted.has(pairKey(pair)),
+  );
+  return document;
+}
+
+/**
+ * Validate source/target existence and every requested field against fresh definitions.
+ * The four exact generated pairs are qualified by the retained three-to-seven create probe.
+ * The target is a custom or a standard DMO; on a standard one the generated pairs are recognised
+ * from the target's own field read, and `activates` says its first mapping will enable it.
+ * @param {NativeMappingDocument} desired Requested definition.
+ * @param {MappingDependencies} dependencies Fresh source and target readers.
+ * @returns {Promise<object>} Fresh definitions and evidence-backed generated pairs.
+ */
+async function validateDependencies(
+  desired: NativeMappingDocument,
+  dependencies: MappingDependencies,
+) {
+  const { activates, context } = await readMappingParents(desired, dependencies);
+  const { sources, targets } = context;
   const generated = new Set<string>();
   const typeDifferences: NonNullable<NativeMappingDeployPlan['typeDifferences']> = [];
   for (const pair of desired.spec.fieldMappings) {
@@ -286,14 +399,9 @@ async function validateDependencies(
         sourceType: from.dataType,
         targetType: to.dataType,
       });
-    if (standard) {
-      if (isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets))
-        generated.add(pairKey(pair));
-      continue;
-    }
-    if (isCustomGeneratedPair(from, to, sources, targets)) generated.add(pairKey(pair));
+    if (isGeneratedMappingPair(pair, context)) generated.add(pairKey(pair));
   }
-  return { generated, sources, targets, standard, activates, typeDifferences };
+  return { generated, sources, targets, context, activates, typeDifferences };
 }
 
 /**
@@ -350,23 +458,19 @@ export async function preflightNativeMapping(
   const desired = structuredClone(validateNativeMappingDocument(value));
   if (desired.identity.dataSpace !== (requestScope ?? 'default'))
     throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
-  const { generated, sources, targets, standard, activates, typeDifferences } =
-    await validateDependencies(desired, dependencies);
+  const { generated, context, activates, typeDifferences } = await validateDependencies(
+    desired,
+    dependencies,
+  );
   const notices = typeDifferences.length > 0 ? { typeDifferences } : {};
   const target = await resolveTarget(desired, client);
   if (target) {
-    // Pairs Salesforce generated stay part of the mapping when the file does not list them.
+    // Pairs Salesforce generated stay part of the mapping when the file does not list them;
+    // retrieve leaves out exactly these (generatedMappingPairs uses the same predicate).
     const listed = new Set(desired.spec.fieldMappings.map((pair) => pairKey(pair)));
-    for (const pair of target.spec.fieldMappings) {
-      if (listed.has(pairKey(pair))) continue;
-      const from = sources.get(pair.sourceFieldDeveloperName);
-      const to = targets.get(pair.targetFieldDeveloperName);
-      if (!from || !to) continue;
-      const kept = standard
-        ? isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets)
-        : isCustomGeneratedPair(from, to, sources, targets);
-      if (kept) desired.spec.fieldMappings.push(structuredClone(pair));
-    }
+    for (const pair of target.spec.fieldMappings)
+      if (!listed.has(pairKey(pair)) && isGeneratedMappingPair(pair, context))
+        desired.spec.fieldMappings.push(structuredClone(pair));
   }
   if (!target) {
     const fields = desired.spec.fieldMappings.filter((pair) => !generated.has(pairKey(pair)));

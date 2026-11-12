@@ -116,9 +116,11 @@ keys or extra keys. Those values are sent as authored and Salesforce decides.
   although reads return upper case.
 - The field `type` returned by reads is saved as `dataType`. A missing
   `isPrimaryKey` is saved as `false`. The runtime keys listed above are dropped.
-- Generated and system fields are saved, except the system-generated `KQ_Id__c`
-  definition. Keys that only reads return (`creationType`, `isDistinct`,
-  `usageTag`, `keyQualifierName`) are kept.
+- Generated fields are left out: fields read as `creationType` `System`, the
+  system fields `DataSource__c`, `DataSourceObject__c` and
+  `InternalOrganization__c`, and names starting with `KQ_`. A primary key is always
+  saved, and so are the standard fields of a standard DMO. Keys that only reads
+  return (`creationType`, `isDistinct`, `usageTag`, `keyQualifierName`) are kept.
 - Record IDs and other runtime observations of the object are not saved.
 
 The file is indented with two spaces and ends with LF. Identical bytes are
@@ -162,8 +164,12 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   and the generated pairs read `DataSource__c` to `ssot__DataSourceId__c`,
   `DataSourceObject__c` to `ssot__DataSourceObjectId__c`, `InternalOrganization__c`
   to `ssot__InternalOrganizationId__c` and `KQ_Id__c` to `KQ_Id__c`; on a custom DMO
-  the generated pairs are same-name. Generated pairs are saved by retrieve and never
-  sent by deploy. A file may list only the authored pairs, for a create and for a
+  the generated pairs are same-name. Retrieve saves the authored pairs only and deploy
+  never sends generated pairs. Both decide which pairs are generated with one rule,
+  from fresh reads of the source data lake object and the target DMO, so a pair that
+  retrieve leaves out is never read as a removal. When those reads fail, retrieve
+  refuses the mapping with `MAPPING_GENERATED_PAIRS_UNPROVEN` and writes nothing for
+  it. The authored key pair is always saved. A file may list only the authored pairs, for a create and for a
   deploy onto the existing mapping alike: the generated pairs are taken from the
   org's copy and treated as part of the file. The authored primary-key pair must stay
   in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). A deploy removes every authored
@@ -175,7 +181,7 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   preview notice `MAPPING_FIELD_TYPES_DIFFER`. Salesforce requires a pair joining the
   two primary keys when a mapping is created.
   `sf data360 delete -m mapping:<MappingApiName>` deletes a mapping whatever pairs it
-  holds and never removes the file. Only the last mapping of a custom DMO is refused
+  holds and then removes its local file (see Local files after delete). Only the last mapping of a custom DMO is refused
   (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`); delete the DMO instead. Creating the first mapping onto a standard
   DMO that is not yet enabled activates it permanently; preview and create report
   `MAPPING_ACTIVATES_STANDARD_DMO`. A pair may be removed from a mapping file even
@@ -192,7 +198,8 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   `cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
   `InternalOrganization__c`, `cdp_sys_PartitionDate__c` on Engagement data lake
   objects and the key qualifier of the primary key (`KQ_<Key>__c`, for example
-  `KQ_Id__c`). They stay as they are. Any other field of the target that the file
+  `KQ_Id__c`). They stay as they are, and retrieve leaves them out of the file; the
+  field named by `eventDateTimeFieldName` is always saved. Any other field of the target that the file
   omits is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on
   the keys the file states: keys only the org's copy carries are ignored, and a
   stated key that differs is refused with the same code.
@@ -221,8 +228,8 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   mapping pairs with them), then overwrites this file
   and the `data360/mapping/<MappingApiName>.mapping-meta.json` file of every mapping
   that lost a pair with the current definition. Only files that already exist under
-  `--output-dir` (default: current directory) are refreshed; none is created or
-  deleted. It is the one delete operation that writes project files.
+  `--output-dir` (default: current directory) are refreshed in the same form retrieve
+  writes; none is created or removed.
 - The `isMapped` marker on a field is saved as retrieved but describes the mapping,
   not the DMO: it is never sent, compared or required.
 
@@ -301,3 +308,30 @@ unchanged; a differing file requires `--overwrite`, and a file saved for a diffe
 data space is not replaced (`RELATIONSHIP_DATASPACE_COLLISION`). Writer codes:
 `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 `PARTIAL_RELATIONSHIP_OUTPUT`.
+
+## Local files after delete
+
+After a confirmed deletion, `sf data360 delete` removes the deleted component's local
+file: on the outcome `deleted` (mutation `confirmed-deleted`) and on
+`deletion-processing` (mutation `acknowledged-processing`, Salesforce accepted the
+deletion and is finishing it). Removed are the files under `data360/` in the current
+directory for `dlo`, `dmo` and `relationship`, and `data-stream` (with
+`--delete-dlo` also the linked data lake object's file); for a mapping the file of
+that name or the hand-written file whose binding matches; and for a data transform,
+segment, identity resolution, data graph or calculated insight the `--source-dir`
+file (both members of a calculated insight pair). When `--source-dir` names a folder,
+nothing is removed for that family and a warning says so. Mapping files of mappings
+Salesforce removes together with a deleted DMO are not removed, because those
+mappings are not items of the command.
+
+Each file is removed on its own with one unlink. Only regular files are removed:
+directories, symbolic links, junctions, files reached through a linked folder and
+hard-linked files are refused (`UNSAFE_PATH`), as is any path outside the project's
+`data360` folder or other than the exact `--source-dir` file. Each result item lists
+`removedLocalFiles` with an outcome per file: `removed`, `not-present`, `kept` or
+`failed`. A failed removal keeps the confirmed org result, and the command exits
+nonzero with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps every file
+(outcome `kept`). `--preview` removes nothing and lists the files as `localFiles` with
+`exists`. The outcomes unchanged, blocked, failed, unknown, rejected and
+deletion-unconfirmed remove
+nothing. `delete --field` removes no file; it refreshes the DMO and mapping files.

@@ -62,6 +62,41 @@ export function isCustomNativeDmo(raw: Record<string, unknown>): boolean {
   return nativeDmoWriteScope(raw) === 'custom';
 }
 
+const dmoSystemFields = new Set([
+  'DataSource__c',
+  'DataSourceObject__c',
+  'InternalOrganization__c',
+]);
+
+/**
+ * Identify generated fields without borrowing DLO SourceVersion assumptions.
+ * @param {NativeDmoField} field Portable field.
+ * @returns {boolean} Whether writes must omit the field.
+ */
+export function isGeneratedDmoField(field: NativeDmoField): boolean {
+  return (
+    dmoSystemFields.has(field.name) ||
+    field.name.startsWith('KQ_') ||
+    field.creationType === 'System'
+  );
+}
+
+/**
+ * Keep the authored content of a DMO definition: generated fields (system fields, key qualifiers
+ * and every field read as System) are left out; a deploy keeps them from the org when the file
+ * omits them. Primary keys and the standard fields of a standard DMO stay: a deploy compares a
+ * listed standard field, and a definition needs at least one field.
+ * @param {NativeDmoDocument} document Complete definition as read.
+ * @returns {NativeDmoDocument} Independent copy without generated fields.
+ */
+export function leanNativeDmoDocument(document: NativeDmoDocument): NativeDmoDocument {
+  const lean = structuredClone(document);
+  lean.spec.fields = document.spec.fields.filter(
+    (field) => field.isPrimaryKey || !isGeneratedDmoField(field),
+  );
+  return lean;
+}
+
 /** Payload-free refusal for the isolated native DMO boundary. */
 export class NativeDmoError extends Error {
   public constructor(

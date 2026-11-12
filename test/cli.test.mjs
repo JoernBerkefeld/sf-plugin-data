@@ -343,7 +343,7 @@ test('delete help discloses whole-mapping deletion and bounded qualification', a
     'empty custom fixtures',
     '--preview performs zero writes and reports the planned step',
     'partial failure stops the batch',
-    'no local deletion, retries or rollback',
+    'no retries or rollback',
   ])
     assert.ok(Delete.description.includes(text), text);
   for (const stale of [
@@ -656,6 +656,39 @@ test('docs and deploy help describe mapped-field removal as one destructive chan
     Deploy.description,
     /remove the field in the DMO position with one Metadata API destructive change\. Salesforce drops the .*DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise\), and the mappings deployed afterwards find the pairs already gone/u,
   );
+});
+
+test('docs describe lean retrieved files and local file removal on delete', async () => {
+  const readme = flatDocument('../README.md');
+  const capabilities = flatDocument('../docs/capabilities.md');
+  const artifact = flatDocument('../docs/artifact-format.md');
+  for (const document of [readme, capabilities, artifact]) {
+    for (const text of [
+      'MAPPING_GENERATED_PAIRS_UNPROVEN',
+      'LOCAL_FILE_REMOVAL_FAILED',
+      '--keep-local-files',
+      '`removedLocalFiles`',
+      '`localFiles`',
+    ])
+      assert.ok(document.includes(text), text);
+    for (const obsolete of [
+      'Generated pairs are saved by retrieve',
+      'A retrieved file, which lists the generated pairs',
+      'never removes the file',
+      'never cascades or removes the local pair',
+      'needs no local file and never touches one',
+      'no local file read or written',
+      'other system fields remain saved',
+      'and the local file is kept',
+      'local-file deletion is performed',
+    ])
+      assert.ok(!document.includes(obsolete), `obsolete wording: ${obsolete}`);
+  }
+  assert.ok(readme.includes('### Local files after delete'));
+  assert.ok(artifact.includes('## Local files after delete'));
+  const { default: Delete } = await import('../lib/commands/data360/delete.js');
+  assert.ok(Delete.flags['keep-local-files']);
+  assert.ok(Delete.description.includes('LOCAL_FILE_REMOVAL_FAILED'));
 });
 
 test('deploy parser admits repeated non-greedy explicit flags but blocks invalid selections before org work', () => {

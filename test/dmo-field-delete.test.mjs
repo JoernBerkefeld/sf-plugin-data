@@ -104,6 +104,24 @@ function createOrg(mappings = []) {
       org.onRemove?.();
     },
   };
+  // Source DLO reads: a refreshed mapping file leaves out the pairs Salesforce generated.
+  org.dloReader = {
+    get: async (name) => {
+      org.calls.push(`dlo.get:${name}`);
+      return {
+        name,
+        label: name,
+        category: 'Other',
+        dataSpaceInfo: [{ name: 'default' }],
+        fields: ['Id__c', 'Note__c', 'Extra__c', 'DataSource__c'].map((entry) => ({
+          name: entry,
+          label: entry,
+          dataType: 'Text',
+          isPrimaryKey: entry === 'Id__c',
+        })),
+      };
+    },
+  };
   org.mappingClient = {
     list: async (name) => {
       org.calls.push(`mapping.list:${name}`);
@@ -148,6 +166,7 @@ async function run(org, flags, overrides = {}, json = true) {
   };
   command.createDmoNativeDeleteClient = () => org.reader;
   command.createDmoClient = () => org.remover;
+  command.createDloNativeDeleteClient = () => org.dloReader;
   command.createMappingClient = (...arguments_) => {
     org.mappingArguments = arguments_;
     return org.mappingClient;
@@ -561,9 +580,12 @@ test('a field mapped by two mappings is removed once, its pairs drop from both, 
     `removeFields:${dmoName}:Note__c`,
     'dmo.get',
     `mapping.list:${dmoName}`,
-    // Local refresh: only files that already exist are read again and overwritten.
+    // Local refresh: only files that already exist are read again and overwritten; the mapping
+    // file is written lean, from fresh source DLO and target DMO reads.
     'dmo.get',
     'mapping.get:MapA',
+    'dlo.get:SourceA__dll',
+    'dmo.get',
   ]);
   const [item] = result.result.items;
   assert.deepEqual(item.removedFields, ['Note__c']);
@@ -577,9 +599,10 @@ test('a field mapped by two mappings is removed once, its pairs drop from both, 
     { path: mappingFile(root, 'MapB'), outcome: 'not-present' },
   ]);
   const savedDmo = JSON.parse(await readFile(dmoFile(root), 'utf8'));
+  // Refreshed files are lean like a retrieve: the System field is left out.
   assert.deepEqual(
     savedDmo.spec.fields.map((field) => field.name),
-    ['Id__c', 'Extra__c', 'DataSource__c'],
+    ['Id__c', 'Extra__c'],
   );
   const savedMapping = JSON.parse(await readFile(mappingFile(root, 'MapA'), 'utf8'));
   assert.deepEqual(

@@ -1,3 +1,45 @@
+# Lean retrieved files and local file removal on delete — 2026-11-12
+
+Version stays 0.1.0; nothing committed or pushed.
+
+- Retrieve writes authored content only. DLO: the system fields
+  (`cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
+  `InternalOrganization__c`, `cdp_sys_PartitionDate__c`) and `KQ_<key>` are left out; the
+  field named by `eventDateTimeFieldName` always stays (`leanDloDocument`). DMO: System,
+  system-named and `KQ_` fields are left out; primary keys and the standard fields of a
+  standard DMO stay (`leanNativeDmoDocument`). Mapping: the generated pairs are left out
+  (`retrieveLeanNativeMapping`); the authored key pair stays. Relationships are unchanged.
+  `delete --field` refreshes files in the same lean form.
+- Retrieve and deploy share one predicate per family (`isGeneratedDloField`,
+  `isGeneratedDmoField`, `isGeneratedMappingPair`). For mappings it runs on fresh reads of
+  the source DLO and target DMO, so a pair a retrieved file omits is never read as a
+  removal. When those reads fail, retrieve refuses with `MAPPING_GENERATED_PAIRS_UNPROVEN`
+  and writes nothing. Deploy still adds the generated fields and pairs from the org, so
+  lean files redeploy unchanged.
+- `sf data360 delete` removes the local file after a confirmed deletion (`deleted` /
+  `confirmed-deleted` or `deletion-processing` / `acknowledged-processing`);
+  `--keep-local-files` keeps it. `src/services/local-file-removal.ts` removes one regular
+  file at a time with one unlink: no directories, links, junctions or hard-linked files, and
+  only inside the project's `data360` folder or the exact `--source-dir` file
+  (`UNSAFE_PATH` otherwise). Items list `removedLocalFiles` (`removed`, `not-present`,
+  `kept`, `failed`); a failure keeps the org outcome and exits nonzero with
+  `LOCAL_FILE_REMOVAL_FAILED`. Preview lists `localFiles` with `exists`. Families: dlo, dmo,
+  mapping (canonical name or hand-written file found by binding), relationship, data stream
+  (plus the linked DLO with `--delete-dlo`), and the `--source-dir` file of data transform,
+  segment, identity resolution, data graph and calculated insight (both pair members); a
+  `--source-dir` folder removes nothing and gives a warning. Mapping files of mappings
+  Salesforce drops with a deleted DMO are not removed. `delete --field` removes no file.
+- Tests: `test/lean-retrieve.test.mjs`, `test/delete-local-files.test.mjs` and a docs
+  contract in `test/cli.test.mjs`.
+
+Live, `isolated-source`, API 68: a DLO, a custom DMO and their mapping plus a DLO and a
+mapping onto `ssot__Brand__dlm` created (90 s) and retrieved lean (custom mapping pairs:
+Extra, Note, Third, Id; standard: `Name__c` to `ssot__Name__c`, `Id__c` to `ssot__Id__c`).
+All five files redeployed unchanged (10 s); the org still held every generated pair. Delete
+preview listed the mapping file (`exists: true`); mapping delete removed its file (27 s);
+DLO delete with `--keep-local-files` kept its file; DMO plus DLO delete removed both files
+(28 s). All fixtures read 404 afterwards.
+
 # Calculated insights on API 68 by default — 2026-11-12
 
 Version stays 0.1.0; nothing pushed.

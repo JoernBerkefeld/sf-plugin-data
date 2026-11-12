@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { explainMismatch } from './operation-diagnostic.js';
 import {
+  isGeneratedDmoField,
   NativeDmoError,
   nativeDmoName,
   nativeDmoWriteScope,
@@ -87,7 +88,6 @@ export const defaultNativeDmoSettle: NativeDmoSettle = {
   sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 };
 
-const systemFields = new Set(['DataSource__c', 'DataSourceObject__c', 'InternalOrganization__c']);
 // Returned by reads but rejected as unknown input by the API (live API 68 probes).
 const readOnlyFieldKeys = new Set(['creationType', 'isDistinct', 'usageTag', 'keyQualifierName']);
 // Accepted as input but not returned by reads, so they cannot be compared or confirmed.
@@ -111,16 +111,7 @@ export function mappedFieldRemoval(
   return error instanceof Error ? mappedRemovals.get(error) : undefined;
 }
 
-/**
- * Identify generated fields without borrowing DLO SourceVersion assumptions.
- * @param {NativeDmoField} field Portable field.
- * @returns {boolean} Whether writes must omit the field.
- */
-export function isGeneratedDmoField(field: NativeDmoField): boolean {
-  return (
-    systemFields.has(field.name) || field.name.startsWith('KQ_') || field.creationType === 'System'
-  );
-}
+export { isGeneratedDmoField } from '../artifacts/native-dmo-document.js';
 
 /**
  * Project an authored field to native input: bare name, read-only keys dropped, the rest as written.

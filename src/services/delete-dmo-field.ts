@@ -21,9 +21,10 @@ import {
   retrieveNativeDmo,
 } from './native-dmo.js';
 import type { NativeDmoSettle } from './native-dmo.js';
-import { retrieveNativeMapping } from './native-mapping.js';
+import { retrieveLeanNativeMapping } from './native-mapping.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
+import type { DloClient } from '../transport/dlo-rest.js';
 
 /** One mapping pair whose target is a field selected for deletion. */
 export type DmoFieldPair = {
@@ -40,6 +41,8 @@ export type DmoFieldDeleteClients = {
   /** Client with the Metadata API route for the destructive change. */
   remover: Pick<DmoClient, 'removeFields'>;
   mappings: Pick<MappingClient, 'list' | 'get'>;
+  /** Source DLO reads; a refreshed mapping file leaves out the pairs Salesforce generated. */
+  source?: Pick<DloClient, 'get'>;
 };
 
 export type DmoFieldDeletePlan = {
@@ -582,7 +585,7 @@ export async function executeDmoFieldDelete(
  * @param {string} root Absolute project root.
  * @returns {Promise<DmoFieldLocalFile>} The file to refresh, existing or not.
  */
-async function mappingLocalFile(
+export async function mappingLocalFile(
   document: NativeMappingDocument,
   root: string,
 ): Promise<DmoFieldLocalFile> {
@@ -667,16 +670,22 @@ export async function localFileExists(file: string): Promise<boolean> {
 /**
  * Read a mapping for its local file, keeping the name a hand-written file uses.
  * @param {DmoFieldLocalFile} file Mapping file.
- * @param {MappingClient} client Mapping reader.
+ * @param {DmoFieldDeleteClients} clients Mapping, source DLO and target DMO readers.
  * @param {string} [requestScope] Optional explicit data space.
- * @returns {Promise<NativeMappingDocument>} Current definition under the file's name.
+ * @returns {Promise<NativeMappingDocument>} Current authored definition under the file's name.
  */
 async function localMapping(
   file: DmoFieldLocalFile,
-  client: MappingClient,
+  clients: DmoFieldDeleteClients,
   requestScope?: string,
 ): Promise<NativeMappingDocument> {
-  const document = await retrieveNativeMapping(file.apiName, client, requestScope);
+  // Written lean, like a retrieve: without the pairs Salesforce generated.
+  const document = await retrieveLeanNativeMapping(
+    file.apiName,
+    clients.mappings as MappingClient,
+    requestScope,
+    clients.source ? { source: clients.source, target: clients.dmo } : undefined,
+  );
   if (file.fileApiName) document.identity.apiName = file.fileApiName;
   return document;
 }
@@ -713,11 +722,7 @@ export async function refreshDmoFieldFiles(
               root,
               true,
             )
-          : await writers.mapping(
-              await localMapping(file, clients.mappings as MappingClient, requestScope),
-              root,
-              true,
-            );
+          : await writers.mapping(await localMapping(file, clients, requestScope), root, true);
       results.push({
         path: file.path,
         outcome: receipt.outcome === 'unchanged' ? 'unchanged' : 'refreshed',

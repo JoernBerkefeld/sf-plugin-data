@@ -139,6 +139,8 @@ authored fields deploys onto its existing DLO. Any other omitted field is refuse
 states; keys only the org's copy carries are ignored, and a differing stated key is
 refused with the same code. On Engagement DLOs the file may also omit
 `cdp_sys_PartitionDate__c`, the DateTime field Salesforce adds with the event field.
+Retrieve leaves all of these generated fields out of the file; the field named by
+`eventDateTimeFieldName` is always saved, so retrieved files redeploy `unchanged`.
 Label changes and nonprimary field additions of any type Salesforce accepts use the
 update route; changed or removed existing fields are refused with the same code.
 Create sends the category as the file states it, and for Engagement the event field
@@ -359,7 +361,10 @@ The plugin keeps no local allowlists. Category, field data types, label length,
 object and field descriptions and extra keys are sent as authored; Salesforce
 decides and its error is reported. Retrieval supports exact names, the bare type
 and omitted selectors; standard, namespaced and generated DMOs can be retrieved. A
-definition may omit generated and system fields. Keys only returned by reads
+definition may omit generated and system fields, and retrieve leaves them out: fields
+read as `System`, `DataSource__c`, `DataSourceObject__c`, `InternalOrganization__c`
+and `KQ_` names. Primary keys and the standard fields of a standard DMO are always
+saved. Deploy keeps the generated fields from the org. Keys only returned by reads
 (`creationType`, `isDistinct`, `usageTag`, `keyQualifierName`) are kept in
 retrieved files and never sent. After a write the plugin polls reads (up to 6,
 5 seconds apart) to confirm the requested definition and the absence of removed
@@ -553,8 +558,12 @@ Native mapping targets, decided from the same raw read:
   pairs and the key qualifier pair) are taken from the org's copy and treated as part
   of the file, so a hand-written file deploys back `unchanged`, can add pairs, and
   removes exactly the authored pairs it drops. The authored primary-key pair must
-  stay in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). A retrieved file, which lists
-  the generated pairs, behaves the same.
+  stay in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). Retrieve writes the authored
+  pairs only. One rule (`isGeneratedMappingPair`), applied to fresh reads of the
+  source data lake object and the target DMO, decides for retrieve which pairs to
+  leave out and for deploy which org pairs to keep, so a pair a retrieved file omits
+  is never read as a removal. When those reads fail, retrieve refuses the mapping with
+  `MAPPING_GENERATED_PAIRS_UNPROVEN` and writes nothing for it.
 - Activation notice: when the raw target read of a standard DMO does not say
   `isEnabled: true`, the preview item and the created item carry
   `MAPPING_ACTIVATES_STANDARD_DMO`. The first mapping enables the object for good
@@ -650,19 +659,32 @@ Native mapping targets, decided from the same raw read:
       writes run through the Salesforce CLI. Settle reads after a data lake object,
       DMO or mapping write: up to 6, 3 seconds apart; DMO readback after a DMO write
       and field-removal readback: up to 6, 5 seconds apart.
+- [x] Observed at API 68 through the plugin in one org, lean retrieve: a data lake
+      object, a custom DMO and their mapping plus a data lake object and a mapping onto
+      `ssot__Brand__dlm` created (90 s) and retrieved; the files held the authored
+      fields and pairs only (custom mapping: three authored pairs and the key pair;
+      standard mapping: `Name__c` to `ssot__Name__c` and `Id__c` to `ssot__Id__c`).
+      All five files deployed back `unchanged` (10 s) and the org still held every
+      generated pair.
+- [x] Observed at API 68 through the plugin, local files on delete: the preview listed
+      the mapping file (`exists: true`); the mapping delete removed its file (27 s);
+      a data lake object delete with `--keep-local-files` kept its file; a DMO plus
+      data lake object delete removed both files (28 s).
 - [ ] Not run live through the plugin: removal of a pair for a custom field of a
       standard DMO (covered by synthetic tests), whole-mapping delete at API 61 to
       67, populated objects.
 
-Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read
-or written. Salesforce may cascade to the DMO's mapping. Deletion resolves the exact
+Whole-DMO delete: exact name, no dependency preflight, no prompt, no local file read.
+After a confirmed deletion the DMO's local file is removed (see Local files after
+delete in [artifact formats](artifact-format.md)); `--keep-local-files` keeps it.
+Salesforce may cascade to the DMO's mapping. Deletion resolves the exact
 target through `deleteNativeDmo` and uses `DmoClient.delete`.
 
 Field-level delete,
 `sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete`:
 
 - Removes named custom fields from one DMO together with their mapping pairs. It is
-  the one delete operation that writes project files, and it changes mappings the
+  the one delete operation that rewrites project files (it removes none), and it changes mappings the
   command line does not name; execution requires `--confirm-delete`
   (`DMO_FIELD_DELETE_CONFIRMATION_REQUIRED` before any org call).
 - `--field` is repeatable and needs exactly one `dmo:` selector. Any other selector,
@@ -867,3 +889,11 @@ apart) for the list to empty, otherwise `DLO_DEPENDENCY_PENDING`. Observed at AP
 DLO refused with the DMO named; DLO plus its mapping deleted in one command (32 s); DLO plus
 its DMO deleted in one command (15 s). DMOs have no dependency route (`/dependencies` answers
 404), so DMO delete checks no dependents.
+
+After a confirmed deletion (`deleted`/`confirmed-deleted`, or
+`deletion-processing`/`acknowledged-processing`) delete removes the component's local
+file, one regular file at a time and only inside the project's `data360` folder or the
+exact `--source-dir` file. Results list `removedLocalFiles` (`removed`, `not-present`,
+`kept`, `failed`); a failed removal keeps the org outcome and exits nonzero with
+`LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps the files and `--preview` lists
+them as `localFiles`. Details are in [artifact formats](artifact-format.md).

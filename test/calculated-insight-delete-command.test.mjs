@@ -2,7 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Delete from '../lib/commands/data360/delete.js';
@@ -169,6 +169,7 @@ const harness = async (overrides = {}) => {
     pair,
     context,
     connection,
+    restore: () => writeCalculatedInsightDocument(desired, xml, root, false),
     absent: () => {
       absent = true;
     },
@@ -205,6 +206,12 @@ for (const active of [false, true])
       ],
     );
     assert.doesNotMatch(JSON.stringify(result), /SELECT|private-local-id|lastRunDateTime/u);
+    // Both members of the CI pair are its own source files and are removed after the deletion.
+    assert.equal(item.removedLocalFiles.length, 2);
+    assert.ok(item.removedLocalFiles.every((file) => file.outcome === 'removed'));
+    for (const file of item.removedLocalFiles)
+      await assert.rejects(lstat(file.path), { code: 'ENOENT' });
+    await h.restore();
     h.flags['confirm-delete'] = false;
     const repeat = await run(h.command);
     assert.equal(repeat.result.result.items[0].outcome, 'unchanged');

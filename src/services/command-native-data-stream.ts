@@ -31,15 +31,18 @@ export async function preflightDeleteDataStream(
   options: PublicDeleteOptions,
 ) {
   await options.verifyInput();
-  await preflightNativeDataStreamDelete(apiName, clients, {
+  const plan = await preflightNativeDataStreamDelete(apiName, clients, {
     deleteDlo: options.deleteDlo,
     survivorDloNames: [],
   });
   await options.verifyInput();
+  const dloName = (plan.dlo as { name?: unknown } | null)?.name;
   return {
     outcome: 'delete' as const,
     mutation: 'not-attempted' as const,
     deleteDlo: options.deleteDlo,
+    // Names the linked DLO only when it is deleted too, so its local file can be listed.
+    ...(options.deleteDlo && typeof dloName === 'string' ? { targetDloName: dloName } : {}),
   };
 }
 
