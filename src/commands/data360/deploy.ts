@@ -28,8 +28,10 @@ import { verifyDataStreamInputDigest } from '../../artifacts/read-deploy-input.j
 import type { DataStreamDeployInput } from '../../artifacts/read-deploy-input.js';
 import { dataStreamApiVersion } from '../../transport/api-version.js';
 import { ConnectClient } from '../../transport/connect-client.js';
-import { McpExecuteClient } from '../../transport/mcp-execute.js';
-import { createDataStreamClient } from '../../transport/data-stream-rest.js';
+import {
+  createDataStreamClient,
+  createDataStreamReferenceReader,
+} from '../../transport/data-stream-rest.js';
 import { preflightMapping, executeMapping } from '../../services/command-native-mapping.js';
 import { createMappingClient } from '../../transport/mapping-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
@@ -186,7 +188,7 @@ type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
   routes?: Array<{
     operation: string;
     apiVersion: string;
-    transport: 'facade' | 'native' | 'metadata';
+    transport: 'native' | 'metadata';
   }>;
   outcome: DeployExecutionResult['outcome'] | 'not-attempted';
   identity: { dataSpace: string; apiName: string };
@@ -375,11 +377,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     const reader = new ConnectClient(connection, version);
     return {
       streams: createDataStreamClient(target, reader, version),
-      facade: new McpExecuteClient(connection, {
-        requested: '67.0',
-        restSelector: 'v67.0',
-        soapNumeric: '67.0',
-      }),
+      ...createDataStreamReferenceReader(reader, version),
       dlo: {
         get: (name) =>
           reader.get(
@@ -1096,7 +1094,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           const routes: ExecutionItem['routes'] = [
             { operation: 'data-stream.deploy', apiVersion: version, transport: 'native' },
             { operation: 'dlo.get', apiVersion: version, transport: 'native' },
-            { operation: 'connection.read', apiVersion: '67.0', transport: 'facade' },
+            { operation: 'connection.read', apiVersion: version, transport: 'native' },
           ];
           if (flags.preview) {
             const preview = await this.preflightDataStream(input.document, clients);

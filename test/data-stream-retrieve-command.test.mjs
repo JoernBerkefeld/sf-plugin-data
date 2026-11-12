@@ -96,8 +96,9 @@ for (const json of [true, false])
       assert.equal(result.metadata.soapApiVersion, '68.0');
       assert.deepEqual(
         result.result.items[0].routes.map(({ apiVersion }) => apiVersion),
-        ['68.0', '68.0', '67.0'],
+        ['68.0', '68.0', '68.0'],
       );
+      assert.ok(result.result.items[0].routes.every(({ transport }) => transport === 'native'));
       assert.equal(result.result.items[0].family, 'data-stream');
       assert.deepEqual(
         lines,
@@ -179,7 +180,7 @@ test('all four aliases parse stream selection and reject unknown options without
   }
 });
 
-test('production stream client factory pins native68 and facade67 without requests', async () => {
+test('production stream client factory pins native68 without requests', async () => {
   const command = new Retrieve([], await Config.load({ root: process.cwd() }));
   const clients = command.createDataStreamClients(
     {
@@ -190,6 +191,8 @@ test('production stream client factory pins native68 and facade67 without reques
     '68.0',
   );
   assert.equal(typeof clients.streams.get, 'function');
-  assert.equal(typeof clients.facade.read, 'function');
+  assert.equal(typeof clients.connections.list, 'function');
+  assert.equal(typeof clients.dependencies.dlo, 'function');
+  assert.equal(clients.facade, undefined);
   assert.equal(typeof clients.dlo.get, 'function');
 });

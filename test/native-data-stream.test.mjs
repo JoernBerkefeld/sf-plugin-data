@@ -4,10 +4,13 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Connection } from '@salesforce/core';
 import { PassThrough } from 'node:stream';
-import { createDataStreamClient, DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
+import {
+  createDataStreamClient,
+  createDataStreamReferenceReader,
+  DataStreamHttpError,
+} from '../lib/transport/data-stream-rest.js';
 import { ConnectClient, ConnectError } from '../lib/transport/connect-client.js';
 import { dataStreamApiVersion } from '../lib/transport/api-version.js';
-import { McpExecuteClient } from '../lib/transport/mcp-execute.js';
 import {
   resolveDataStreamBinding,
   retrieveNativeDataStream,
@@ -109,6 +112,26 @@ const selection = {
 };
 
 /**
+ * Route the native connection/dependency reader through one replaceable synthetic dispatcher.
+ * @param {object} holder Object whose `reference.read(operation, identity)` answers each read.
+ * @returns {object} Native `connections` and `dependencies` readers.
+ */
+function nativeReferences(holder) {
+  const read = (...arguments_) => holder.reference.read(...arguments_);
+  return {
+    connections: {
+      list: async () => read('connections.list'),
+      get: async (id) => read('connections.get', id),
+      schema: async (id) => read('connections.schema', id),
+    },
+    dependencies: {
+      stream: async (identity) => read('dependencies.stream', identity),
+      dlo: async (identity) => read('dependencies.dlo', identity),
+    },
+  };
+}
+
+/**
  * Build independent synthetic read boundaries without real org calls.
  * @param {object} options Fixture overrides.
  * @returns {object} Mutable synthetic observations and clients.
@@ -138,15 +161,14 @@ function reads(options = {}) {
         throw new DataStreamHttpError('STREAM_HTTP_ERROR', 404);
       },
     },
-    facade: {
-      read: async (operation, parameters) => {
+    reference: {
+      read: async (operation, identity) => {
         calls.push(operation);
-        if (operation === 'd360_connection_list')
-          return { connections: [structuredClone(connection)] };
-        assert.deepEqual(parameters, { connectionId });
-        if (operation === 'd360_connection_get') return structuredClone(connection);
-        if (operation === 'd360_connection_schema_get') return structuredClone(schemas);
-        assert.fail('Unexpected facade read');
+        if (operation === 'connections.list') return { connections: [structuredClone(connection)] };
+        assert.equal(identity, connectionId);
+        if (operation === 'connections.get') return structuredClone(connection);
+        if (operation === 'connections.schema') return structuredClone(schemas);
+        assert.fail('Unexpected native reference read');
       },
     },
     dlo: {
@@ -167,6 +189,7 @@ function reads(options = {}) {
       },
     },
   };
+  Object.assign(clients, nativeReferences(clients));
   return { clients, target, schemas, calls };
 }
 
@@ -724,7 +747,7 @@ test('binding uses independent connection/sole event and actual generated identi
 });
 
 /**
- * Reproduce the detached connection-list envelope observed through the installed facade.
+ * Reproduce the observed native API68 connection-list envelope.
  * @returns {object} Complete first-page response with ten independently named connections.
  */
 function connectionPage() {
@@ -745,10 +768,10 @@ function connectionPage() {
 
 test('binding admits observed complete connection envelope and preserves independent exact identity reads', async () => {
   const fixture = reads();
-  const original = fixture.clients.facade.read;
-  fixture.clients.facade.read = async (operation, parameters) => {
-    if (operation === 'd360_connection_list') {
-      assert.deepEqual(parameters, { connectorType: 'IngestApi', limit: 200, offset: 0 });
+  const original = fixture.clients.reference.read;
+  fixture.clients.reference.read = async (operation, parameters) => {
+    if (operation === 'connections.list') {
+      assert.equal(parameters, undefined);
       return connectionPage();
     }
     return original(operation, parameters);
@@ -757,8 +780,8 @@ test('binding admits observed complete connection envelope and preserves indepen
   assert.equal(result.connectionId, connectionId);
   assert.equal(result.target.recordId, streamId);
   assert.deepEqual(fixture.calls, [
-    'd360_connection_get',
-    'd360_connection_schema_get',
+    'connections.get',
+    'connections.schema',
     selection.apiName,
     'GeneratedStream',
   ]);
@@ -797,8 +820,8 @@ test('connection envelopes reject incomplete, malformed, unknown and ambiguous o
     { connections: Array.from({ length: 200 }, () => connection) },
   ]) {
     const fixture = reads();
-    fixture.clients.facade.read = async (operation) => {
-      assert.equal(operation, 'd360_connection_list');
+    fixture.clients.reference.read = async (operation) => {
+      assert.equal(operation, 'connections.list');
       return listed;
     };
     await assert.rejects(resolveDataStreamBinding(selection, fixture.clients), {
@@ -815,8 +838,8 @@ test('connection envelopes reject incomplete, malformed, unknown and ambiguous o
     [],
   ]) {
     const fixture = reads();
-    fixture.clients.facade.read = async (operation) => {
-      assert.equal(operation, 'd360_connection_list');
+    fixture.clients.reference.read = async (operation) => {
+      assert.equal(operation, 'connections.list');
       return { ...page, connections, totalSize: connections.length };
     };
     await assert.rejects(resolveDataStreamBinding(selection, fixture.clients), {
@@ -826,9 +849,13 @@ test('connection envelopes reject incomplete, malformed, unknown and ambiguous o
   }
 });
 
-test('production facade and native transport reach create preview with the observed connection envelope', async () => {
-  const requests = [];
-  const fixture = reads({ absent: true });
+/**
+ * Build a synthetic core Connection whose GETs answer from one route table (no refresh/replay).
+ * @param {(url: URL) => {statusCode?: number, body: unknown}} answer Response per parsed URL.
+ * @param {object[]} requests Sink receiving every wire request.
+ * @returns {Connection} Synthetic owner Connection.
+ */
+function syntheticOwner(answer, requests) {
   const owner = Object.assign(Object.create(Connection.prototype), {
     instanceUrl: 'https://synthetic.my.salesforce.com',
     version: '68.0',
@@ -840,33 +867,11 @@ test('production facade and native transport reach create preview with the obser
       httpRequest: (request, options) => {
         requests.push(request);
         assert.equal(options.retry.maxRetries, 0);
-        let statusCode = 200;
-        let body;
-        if (request.method === 'POST') {
-          assert.equal(request.url, `${owner.instanceUrl}/services/data/v67.0/ssot/mcp/execute`);
-          const { toolName, paramsJson } = JSON.parse(request.body);
-          const parameters = JSON.parse(paramsJson);
-          if (toolName === 'd360_connection_list') {
-            assert.deepEqual(parameters, { connectorType: 'IngestApi', limit: 200, offset: 0 });
-            body = connectionPage();
-          } else body = awaitFacadeRead(toolName, parameters);
-          statusCode = 201;
-          body = { result: body };
-        } else {
-          assert.equal(request.method, 'GET');
-          const parsed = new URL(request.url);
-          if (parsed.pathname === endpoint)
-            body = {
-              currentPageUrl: `${endpoint}?limit=200&offset=1`,
-              totalSize: 0,
-              dataStreams: [],
-            };
-          else {
-            assert.equal(parsed.pathname, `${endpoint}/Proposed`);
-            statusCode = 404;
-            body = [{ errorCode: 'NOT_FOUND', message: 'Synthetic absence' }];
-          }
-        }
+        assert.equal(request.method, 'GET');
+        const parsed = new URL(request.url);
+        assert.equal(parsed.origin, owner.instanceUrl);
+        assert.ok(!parsed.pathname.includes('/mcp/'));
+        const { statusCode = 200, body } = answer(parsed);
         const pending = Promise.resolve({
           statusCode,
           headers: { 'content-type': 'application/json' },
@@ -877,29 +882,43 @@ test('production facade and native transport reach create preview with the obser
       },
     },
   });
-  /**
-   * Return independently observed detail/schema responses, never list-entry substitutions.
-   * @param {string} operation Read-only facade operation.
-   * @param {object} parameters Exact target-local identity.
-   * @returns {object} Detached response.
-   */
-  function awaitFacadeRead(operation, parameters) {
-    assert.deepEqual(parameters, { connectionId });
-    fixture.calls.push(operation);
-    if (operation === 'd360_connection_get') return structuredClone(connection);
-    assert.equal(operation, 'd360_connection_schema_get');
-    return structuredClone(fixture.schemas);
-  }
-  fixture.clients.facade = new McpExecuteClient(owner, {
-    requested: '67.0',
-    restSelector: 'v67.0',
-    soapNumeric: '67.0',
-  });
-  fixture.clients.streams = createDataStreamClient(
-    'synthetic',
-    new ConnectClient(owner, '68.0'),
-    '68.0',
-    async () => assert.fail('preview must not dispatch mutations'),
+  return owner;
+}
+
+const ssot = '/services/data/v68.0/ssot';
+
+test('production native API68 connection reads reach create preview with the observed envelope', async () => {
+  const requests = [];
+  const fixture = reads({ absent: true });
+  // Native detail carries label/tenant endpoint beyond the admitted identity fields.
+  const detail = {
+    ...connection,
+    label: 'Synthetic',
+    tenantSpecificEndpoint: 'synthetic.c360a.salesforce.com',
+  };
+  const owner = syntheticOwner((parsed) => {
+    const route = parsed.pathname + parsed.search;
+    if (route === `${ssot}/connections?connectorType=IngestApi&limit=200&offset=0`)
+      return { body: connectionPage() };
+    if (route === `${ssot}/connections/${connectionId}`) {
+      fixture.calls.push('connections.get');
+      return { body: detail };
+    }
+    if (route === `${ssot}/connections/${connectionId}/schema`) {
+      fixture.calls.push('connections.schema');
+      return { body: structuredClone(fixture.schemas) };
+    }
+    if (parsed.pathname === endpoint)
+      return {
+        body: { currentPageUrl: `${endpoint}?limit=200&offset=1`, totalSize: 0, dataStreams: [] },
+      };
+    assert.equal(parsed.pathname, `${endpoint}/Proposed`);
+    return { statusCode: 404, body: [{ errorCode: 'NOT_FOUND', message: 'Synthetic absence' }] };
+  }, requests);
+  const reader = new ConnectClient(owner, '68.0');
+  Object.assign(fixture.clients, createDataStreamReferenceReader(reader, '68.0'));
+  fixture.clients.streams = createDataStreamClient('synthetic', reader, '68.0', async () =>
+    assert.fail('preview must not dispatch mutations'),
   );
   fixture.clients.dlo.get = async (name) => {
     fixture.calls.push(name);
@@ -908,12 +927,9 @@ test('production facade and native transport reach create preview with the obser
   };
   const plan = await preflightNativeDataStreamCreate(authored, fixture.clients);
   assert.equal(plan.operation, 'create');
-  assert.deepEqual(fixture.calls, [
-    'd360_connection_get',
-    'd360_connection_schema_get',
-    'Proposed__dll',
-  ]);
+  assert.deepEqual(fixture.calls, ['connections.get', 'connections.schema', 'Proposed__dll']);
   assert.equal(requests.length, 5);
+  assert.ok(requests.every(({ method }) => method === 'GET'));
 });
 
 test('failed, ambiguous and drifting binding reads fail closed without mutations', async () => {
@@ -952,7 +968,7 @@ test('failed, ambiguous and drifting binding reads fail closed without mutations
       });
     },
     (r) => {
-      r.clients.facade.read = async () => ({ connections: [connection, connection] });
+      r.clients.reference.read = async () => ({ connections: [connection, connection] });
     },
   ]) {
     const r = reads();
@@ -993,45 +1009,36 @@ test('retrieval retains generated inventory, classifies only proven source Text 
   });
 });
 
-for (const operation of ['d360_datastream_dependencies_list', 'd360_dlo_dependencies_list'])
-  test(`read facade admits only exact ${operation} parameter contract`, async () => {
-    let calls = 0;
-    const client = new McpExecuteClient(
-      {
-        instanceUrl: 'https://synthetic.my.salesforce.com',
-        _transport: { httpRequest() {} },
-        request: async (request) => {
-          calls++;
-          const body = JSON.parse(request.body);
-          assert.equal(body.toolName, operation);
-          assert.ok(
-            [
-              'GeneratedStream',
-              'ActualDlo__dll',
-              '1dsaj0000023rrR',
-              '1dsaj0000023rrRAAQ',
-              '1dlaj00000AexI9',
-              '1dlaj00000AexI9AAJ',
-            ].includes(JSON.parse(body.paramsJson).recordIdOrDeveloperName),
-          );
-          return { result: { dependencies: [] } };
-        },
+for (const [family, collection] of [
+  ['stream', 'data-streams'],
+  ['dlo', 'data-lake-objects'],
+])
+  test(`native ${family} dependency reader admits only exact name or record ID routes`, async () => {
+    const urls = [];
+    const reader = createDataStreamReferenceReader({
+      get: async (url) => {
+        urls.push(url);
+        return { dependencies: [], totalSize: 0 };
       },
-      { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' },
-    );
-    assert.deepEqual(await client.read(operation, { recordIdOrDeveloperName: 'GeneratedStream' }), {
-      dependencies: [],
     });
-    for (const identity of [
+    const accepted = [
+      'GeneratedStream',
       'ActualDlo__dll',
+      'PublicIngestion1793211653953_ProbeRecord_E8A1BD6C',
       '1dsaj0000023rrR',
       '1dsaj0000023rrRAAQ',
       '1dlaj00000AexI9',
       '1dlaj00000AexI9AAJ',
-    ])
-      assert.deepEqual(await client.read(operation, { recordIdOrDeveloperName: identity }), {
+    ];
+    for (const identity of accepted)
+      assert.deepEqual(await reader.dependencies[family](identity), {
         dependencies: [],
+        totalSize: 0,
       });
+    assert.deepEqual(
+      urls,
+      accepted.map((identity) => `${ssot}/${collection}/${identity}/dependencies`),
+    );
     for (const identity of [
       '',
       '1dsaj0000023rr',
@@ -1050,18 +1057,40 @@ for (const operation of ['d360_datastream_dependencies_list', 'd360_dlo_dependen
       undefined,
       123,
     ])
-      await assert.rejects(client.read(operation, { recordIdOrDeveloperName: identity }), {
-        code: 'INVALID_REQUEST',
-      });
-    for (const parameters of [{}, { recordIdOrDeveloperName: 'GeneratedStream', cascade: true }])
-      await assert.rejects(client.read(operation, parameters));
-    await assert.rejects(client.mutate(operation, { recordIdOrDeveloperName: 'GeneratedStream' }));
-    for (const other of ['d360_dlo_get', 'd360_dlo_kq_list', 'd360_datastream_get'])
-      await assert.rejects(client.read(other, { recordIdOrDeveloperName: '1dsaj0000023rrRAAQ' }), {
-        code: 'INVALID_REQUEST',
-      });
-    assert.equal(calls, 6);
+      await assert.rejects(reader.dependencies[family](identity), { code: 'INVALID_REQUEST' });
+    assert.equal(urls.length, accepted.length);
   });
+
+test('native connection reader pins API68 routes, validates IDs and rejects error-shaped bodies', async () => {
+  const urls = [];
+  let body = { connections: [] };
+  const reader = createDataStreamReferenceReader({
+    get: async (url) => {
+      urls.push(url);
+      return body;
+    },
+  });
+  await reader.connections.list();
+  await reader.connections.get(connectionId);
+  await reader.connections.schema(connectionId.slice(0, 15));
+  assert.deepEqual(urls, [
+    `${ssot}/connections?connectorType=IngestApi&limit=200&offset=0`,
+    `${ssot}/connections/${connectionId}`,
+    `${ssot}/connections/${connectionId.slice(0, 15)}/schema`,
+  ]);
+  for (const identity of ['', '1WM00000000000', `${connectionId}x`, '../x', 'Name', undefined]) {
+    await assert.rejects(reader.connections.get(identity), { code: 'INVALID_REQUEST' });
+    await assert.rejects(reader.connections.schema(identity), { code: 'INVALID_REQUEST' });
+  }
+  assert.equal(urls.length, 3);
+  // eslint-disable-next-line unicorn/no-null -- Exercise a literal malformed JSON response.
+  for (const malformed of [null, [], 'text', {}, { result: { connections: [] } }, { errors: [] }]) {
+    body = malformed;
+    await assert.rejects(reader.connections.list(), { code: 'REQUEST_FAILED' });
+  }
+  for (const version of ['67.0', '69.0', 'latest'])
+    assert.throws(() => createDataStreamReferenceReader({ get: async () => ({}) }, version));
+});
 
 /**
  * Model independent pre/post-dispatch reads with generated names, never an echo-as-read shortcut.
@@ -1096,9 +1125,9 @@ function createLifecycle(options = {}) {
       },
       update: async () => assert.fail('No PATCH in create subchunk'),
     },
-    facade: {
+    reference: {
       read: async (...arguments_) =>
-        (dispatched ? after : before).clients.facade.read(...arguments_),
+        (dispatched ? after : before).clients.reference.read(...arguments_),
     },
     dlo: {
       get: async (name) => {
@@ -1109,6 +1138,7 @@ function createLifecycle(options = {}) {
       },
     },
   };
+  Object.assign(clients, nativeReferences(clients));
   return {
     clients,
     before,
@@ -1218,10 +1248,10 @@ test('create refuses acknowledgement, input drift and binding drift before dispa
   assert.equal(drift.counts().writes, 0);
   const binding = createLifecycle();
   let reads_ = 0;
-  const original = binding.clients.facade.read;
-  binding.clients.facade.read = async (...arguments_) => {
+  const original = binding.clients.reference.read;
+  binding.clients.reference.read = async (...arguments_) => {
     const value = await original(...arguments_);
-    if (arguments_[0] === 'd360_connection_schema_get' && ++reads_ === 2)
+    if (arguments_[0] === 'connections.schema' && ++reads_ === 2)
       value.schemas[0].fields[1].label = 'Changed';
     return value;
   };
@@ -2117,11 +2147,10 @@ async function deleteLifecycle(controls = {}) {
     dependencies: [{ componentType: 'DataStream', id: streamId, name: fixture.target.label }],
     totalSize: 1,
   };
-  const originalRead = fixture.clients.facade.read;
-  fixture.clients.facade.read = async (operation, parameters) => {
-    if (operation === 'd360_datastream_dependencies_list')
-      return { dependencies: [], totalSize: 0 };
-    if (operation === 'd360_dlo_dependencies_list')
+  const originalRead = fixture.clients.reference.read;
+  fixture.clients.reference.read = async (operation, parameters) => {
+    if (operation === 'dependencies.stream') return { dependencies: [], totalSize: 0 };
+    if (operation === 'dependencies.dlo')
       return state.writes && !controls.pending
         ? { dependencies: [], totalSize: 0 }
         : structuredClone(dependencies);
@@ -2184,44 +2213,33 @@ async function deleteLifecycle(controls = {}) {
   };
 }
 
-test('delete preflight composes production facade transport with exact numeric-leading dependency IDs', async () => {
+test('delete preflight composes production native API68 dependency routes with exact numeric-leading IDs', async () => {
   const fixture = await deleteLifecycle();
-  const originalRead = fixture.clients.facade.read;
+  const originalRead = fixture.clients.reference.read;
   const requests = [];
-  const owner = Object.assign(Object.create(Connection.prototype), {
-    instanceUrl: 'https://synthetic.my.salesforce.com',
-    version: '68.0',
-    accessToken: 'synthetic-token',
-    _propagators: [],
-    logger: { getRawLogger: () => ({ debug() {} }) },
-    _refreshDelegate: { refresh: () => assert.fail('no refresh') },
-    _transport: {
-      httpRequest: (request, options) => {
-        assert.equal(request.method, 'POST');
-        assert.equal(request.url, `${owner.instanceUrl}/services/data/v67.0/ssot/mcp/execute`);
-        assert.equal(options.retry.maxRetries, 0);
-        const { toolName, paramsJson } = JSON.parse(request.body);
-        const parameters = JSON.parse(paramsJson);
-        requests.push({ toolName, parameters });
-        if (toolName === 'd360_datastream_dependencies_list')
-          assert.deepEqual(parameters, { recordIdOrDeveloperName: streamId });
-        if (toolName === 'd360_dlo_dependencies_list')
-          assert.deepEqual(parameters, { recordIdOrDeveloperName: fixture.parent.name });
-        const pending = originalRead(toolName, parameters).then((body) => ({
-          statusCode: 201,
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ result: body }),
-        }));
-        pending.stream = () => new PassThrough();
-        return pending;
-      },
+  const answers = new Map([
+    [`${ssot}/data-streams/${streamId}/dependencies`, 'dependencies.stream'],
+    [`${ssot}/data-lake-objects/${fixture.parent.name}/dependencies`, 'dependencies.dlo'],
+  ]);
+  const pendingBodies = [];
+  const owner = syntheticOwner((parsed) => {
+    const operation = answers.get(parsed.pathname);
+    assert.ok(operation, parsed.pathname);
+    assert.equal(parsed.search, '');
+    return { body: pendingBodies.shift() };
+  }, requests);
+  const native = createDataStreamReferenceReader(new ConnectClient(owner, '68.0'), '68.0');
+  // Synthetic bodies still come from the lifecycle model; only the dependency wire is native.
+  fixture.clients.dependencies = {
+    stream: async (identity) => {
+      pendingBodies.push(await originalRead('dependencies.stream', identity));
+      return native.dependencies.stream(identity);
     },
-  });
-  fixture.clients.facade = new McpExecuteClient(owner, {
-    requested: '67.0',
-    restSelector: 'v67.0',
-    soapNumeric: '67.0',
-  });
+    dlo: async (identity) => {
+      pendingBodies.push(await originalRead('dependencies.dlo', identity));
+      return native.dependencies.dlo(identity);
+    },
+  };
   const plan = await preflightNativeDataStreamDelete(
     'GeneratedStream',
     fixture.clients,
@@ -2230,17 +2248,8 @@ test('delete preflight composes production facade transport with exact numeric-l
   assert.equal(plan.deleteDlo, false);
   assert.equal(fixture.state.writes, 0);
   assert.deepEqual(
-    requests.filter(({ toolName }) => toolName.endsWith('_dependencies_list')),
-    [
-      {
-        toolName: 'd360_datastream_dependencies_list',
-        parameters: { recordIdOrDeveloperName: streamId },
-      },
-      {
-        toolName: 'd360_dlo_dependencies_list',
-        parameters: { recordIdOrDeveloperName: fixture.parent.name },
-      },
-    ],
+    requests.map(({ url }) => new URL(url).pathname),
+    [...answers.keys()],
   );
   for (const identity of ['GeneratedStream/Other', streamId, '../GeneratedStream'])
     await assert.rejects(

@@ -104,8 +104,9 @@ for (const preview of [false, true])
           assert.equal(item.mutation, preview ? 'not-attempted' : 'confirmed-deleted');
           assert.deepEqual(
             item.routes.map((route) => route.apiVersion),
-            ['68.0', '68.0', '67.0'],
+            ['68.0', '68.0', '68.0'],
           );
+          assert.ok(item.routes.every(({ transport }) => transport === 'native'));
         }
         assert.equal(fixture.calls.filter((call) => Array.isArray(call)).length, 2);
         assert.ok(
@@ -210,7 +211,15 @@ test('real delete adapters reject unbound target and sanitize before actual muta
         writes++;
       },
     },
-    facade: { read: async () => assert.fail('No dependency read after failed exact target') },
+    connections: {
+      list: async () => assert.fail('No connection read after failed exact target'),
+      get: async () => assert.fail('No connection read after failed exact target'),
+      schema: async () => assert.fail('No connection read after failed exact target'),
+    },
+    dependencies: {
+      stream: async () => assert.fail('No dependency read after failed exact target'),
+      dlo: async () => assert.fail('No dependency read after failed exact target'),
+    },
     dlo: { get: async () => assert.fail('No parent read') },
   };
   const options = { deleteDlo: false, verifyInput: async () => {} };
@@ -284,39 +293,47 @@ function lifecycle(controls = {}) {
         writes++;
       },
     },
-    facade: {
-      read: async (operation) => {
-        if (operation === 'd360_connection_list')
-          return { connections: [{ name: 'Connection', id: cid, connectorType: 'IngestApi' }] };
-        if (operation === 'd360_connection_get')
-          return { name: 'Connection', id: cid, connectorType: 'IngestApi', status: 'CONNECTED' };
-        if (operation === 'd360_connection_schema_get')
-          return {
-            schemas: [
-              {
-                name: 'Event',
-                schemaType: 'IngestApi',
-                availabilityStatus: writes ? 'Available' : 'In Use',
-                fields: [{ name: 'ProbeId', label: 'ProbeId', dataType: 'Text' }],
-              },
-            ],
-          };
-        if (operation === 'd360_datastream_dependencies_list')
-          return { dependencies: [], totalSize: 0 };
-        if (operation === 'd360_dlo_dependencies_list')
-          return writes
-            ? { dependencies: [], totalSize: 0 }
-            : {
-                dependencies: [
-                  {
-                    componentType: 'DataStream',
-                    id: controls.wrongOwner ? '1ds000000000002AAA' : sid,
-                    name: stream.label,
-                  },
-                ],
-                totalSize: 1,
-              };
-        assert.fail('Unexpected facade operation');
+    connections: {
+      list: async () => ({
+        connections: [{ name: 'Connection', id: cid, connectorType: 'IngestApi' }],
+      }),
+      get: async (identity) => {
+        assert.equal(identity, cid);
+        return { name: 'Connection', id: cid, connectorType: 'IngestApi', status: 'CONNECTED' };
+      },
+      schema: async (identity) => {
+        assert.equal(identity, cid);
+        return {
+          schemas: [
+            {
+              name: 'Event',
+              schemaType: 'IngestApi',
+              availabilityStatus: writes ? 'Available' : 'In Use',
+              fields: [{ name: 'ProbeId', label: 'ProbeId', dataType: 'Text' }],
+            },
+          ],
+        };
+      },
+    },
+    dependencies: {
+      stream: async (identity) => {
+        assert.equal(identity, sid);
+        return { dependencies: [], totalSize: 0 };
+      },
+      dlo: async (identity) => {
+        assert.equal(identity, parent.name);
+        return writes
+          ? { dependencies: [], totalSize: 0 }
+          : {
+              dependencies: [
+                {
+                  componentType: 'DataStream',
+                  id: controls.wrongOwner ? '1ds000000000002AAA' : sid,
+                  name: stream.label,
+                },
+              ],
+              totalSize: 1,
+            };
       },
     },
     dlo: {

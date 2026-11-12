@@ -1,3 +1,44 @@
+# Data stream reads on native API 68; the API 67 tool layer is gone — 2026-11-12
+
+Package F1 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`, the last
+package of that plan. Version stays 0.1.0; nothing pushed.
+
+- `src/transport/mcp-execute.ts` and its tests are deleted (with the unused
+  `d360_ci_create` mutation). Its last callers, the data stream reads in
+  `native-data-stream.ts`, use `createDataStreamReferenceReader`
+  (`src/transport/data-stream-rest.ts`): GET `/ssot/connections?connectorType=IngestApi&limit=200&offset=0`,
+  `/ssot/connections/{id}`, `/ssot/connections/{id}/schema`,
+  `/ssot/data-streams/{name}/dependencies`, `/ssot/data-lake-objects/{name}/dependencies`.
+  Live probes: bodies equal the old tool results minus the `{result}` wrapper. All guards
+  unchanged; route output says `native` / 68.0. Review: no must-fix.
+- Docs: README no longer names an API 67 route; the stale capabilities section on the
+  removed `ingestion-dlo` family is gone.
+
+Live, `isolated-source` (00Daj000010xkZNEAY), all at `auto`; stream creates 3 of 4:
+
+- Read-only on probe stream `PublicIngestion1793211653953_ProbeRecord_E8A1BD6C`: retrieve
+  exit 0 (`connection.read@68.0/native`), redeploy preview exit 0 `unchanged`, delete
+  preview exit 0 (`dependency.read@68.0/native`).
+- Salesforce names a new stream and its DLO after the connection and ignores the authored
+  name: file `CliStreamF1_d63c` on probe connection `DloOwn20261028B7` created
+  `DloOwn20261028B7_ProbeRecord_<8 hex>`; the plugin reports it as `targetApiName`, and a
+  repeat with the authored file is blocked (name mismatch). Use the reported name.
+- Run 1 (`…_2A5A8AB6`): create exit 0 `confirmed-created` (44 s); retrieve by target name
+  exit 0; repeat of the retrieved file exit 0 `unchanged`; delete preview exit 0; delete
+  `--delete-dlo` exit 1 `failed`/`unknown` after 120 s with an HTTP 400 (no payload), though
+  stream and DLO were deleted (stream 404, DLO 404).
+- Runs 2 (`…_5AEAFF82`) and 3 (`…_5D42884C`): create exit 0, retrieve exit 0, delete
+  `--delete-dlo` exit 0 `confirmed-deleted` (131 s, 120 s). Run 3 with a 1 s poller and
+  `SF_LOG_LEVEL=trace`: the DELETE answers in ~4 s; the settlement loop reads the stream,
+  connection list, connection, schema and `data-streams?connectionName=…` for ~90 s; every
+  polled read went 200 → 404 cleanly, never 400.
+- **Open:** run 1's 400 came from a read not polled; the remaining candidates (stream read,
+  stream list by connection) were native before F1. Treated as an intermittent Salesforce
+  answer during stream removal; next step is a poller on `data-streams?connectionName=`.
+- All three fixtures and their DLOs read 404 afterwards.
+
+Evidence `F:/Temp/f1live-0I9N8c`. Verification DB: `data360:data-stream.native-reference-reads.api68`.
+
 # Data graphs only on native API 68 — 2026-11-12
 
 Package G2 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.
@@ -16,8 +57,7 @@ Version stays 0.1.0; nothing pushed.
   refused. Review fix: the Git matcher now matches `.native-dataGraph.json`, so a changed
   native graph refuses `--changed-since` (`INVALID_GIT_SELECTION`) instead of being
   dropped silently.
-- `mcp-execute.ts` remains only for data stream `connection.read` (retrieve, deploy) and
-  `dependency.read` (delete), plus the unused `d360_ci_create` mutation: package F1.
+- `mcp-execute.ts` then remained only for data stream reads; package F1 removed it.
 - Docs: README native graph section, 14-resource row and examples (no
   `--api-version 68.0` needed), the "Existing API67 facade workflow" section removed;
   capabilities graph sections; `test/tooling.test.mjs` heading. Review: two rounds.

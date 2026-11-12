@@ -112,7 +112,7 @@ Current plugin limits:
   (61.0 and above for native retrieval/deploy) is not live qualification at every
   version; native mapping pair removal and whole-mapping deletion are admitted at the
   same versions. Legacy routes remain family-specific
-  (API65 legacy families; API67 data stream connection and dependency reads), not the latest API.
+  (API65 legacy families), not the latest API. No family uses the API 67 tool layer.
   Public IR retrieval/deployment uses native API68 for default/`auto` or explicit `68.0`.
   `--api-version latest` is not accepted.
 - DMOs have one route, the native one, with the artifact

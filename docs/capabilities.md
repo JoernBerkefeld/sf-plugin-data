@@ -58,6 +58,14 @@ the `1ir…` ID check before DELETE; configuration type or secondary DMO changes
 DELETE while `PUBLISHING`/`DELETING` (`IDENTITY_RESOLUTION_NOT_SETTLED`). Run statistics
 are not part of the file. The API 67 IR routes are gone.
 
+## Data stream reference reads on native API 68
+
+Data stream retrieve, deploy and delete read connections (`/ssot/connections` list, by id
+and `/schema`) and dependencies (`/ssot/data-streams/{name}/dependencies`,
+`/ssot/data-lake-objects/{name}/dependencies`) through native API 68 GETs; route output
+says `transport: native`. The API 67 tool layer (`mcp-execute.ts`) is gone. The native
+bodies matched the tool results minus the `{result}` wrapper in live probes.
+
 ## Public native calculated insight lifecycle — 2026-11-12
 
 Calculated insights use native API 68 for retrieve, deploy (including `--draft`),
@@ -221,31 +229,6 @@ mutations, processing/deployment/activation jobs or target calls. Read-only Meta
 retrieval jobs are not configuration deployment jobs. README's14-resource Segment
 qualification was reconciled without changing ratings or icons. Current acceptance is
 bound to132 frozen inputs and118 installed files; exact provenance is in the handover.
-
-## Public existing-target Ingestion API DLO
-
-Exact `ingestion-dlo:Name__dll` selectors, canonical JSON files and Git-selected
-members support retrieve/preview/deploy at fixed API67/default space (`auto` or
-numeric67; mixed API65 families require auto). No inventory, creation, deletion,
-connector provisioning. Acquisition binds exact returned
-DLO/stream/connection identities through complete inventories and a single schema
-event; never parses generated names. Shared sources, multi-event schemas, unknown
-meaningful properties, additional pending fields and unsupported variants block.
-
-Portable configuration contains logical connection name and complete Text event.
-Equality is zero mutations without acknowledgement. Only exactly one Text addition
-is admitted, with `--allow-processing`: one complete source schema PUT followed by
-one stream sync, never a direct DLO patch. Private independent observations establish
-old field/mapping/PK/KQ/system/refresh preservation and ACTIVE settlement. The finite
-default poll window is six reads at60 seconds within360 seconds; no replay/rollback.
-
-Whole-selection admission checks every family/version/input/effect before writes;
-fresh full pending binding fingerprints precede dispatch. The executor's input
-verifier checks local/Git bytes only, including after legitimate schema PUT; its
-phase-specific independent target checks own source/sync preservation. Public
-adapters retain diagnostic codes, stage, mutation certainty and both write routes.
-Synthetic regressions exercise real public command dispatch and two-stage executor;
-installed/live public and cross-org acceptance remain pending independent gates.
 
 ## Internal native CI transport and feasibility — 2026-11-04
 

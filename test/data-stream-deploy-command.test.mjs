@@ -143,8 +143,9 @@ for (const preview of [true, false])
       assert.equal(result.metadata.soapApiVersion, '68.0');
       assert.deepEqual(
         result.result.items[0].routes.map((route) => route.apiVersion),
-        ['68.0', '68.0', '67.0'],
+        ['68.0', '68.0', '68.0'],
       );
+      assert.ok(result.result.items[0].routes.every(({ transport }) => transport === 'native'));
       assert.ok(calls.includes(preview ? 'preview' : 'execute'));
       assert.ok(!calls.includes(preview ? 'execute' : 'preview'));
       if (json) assert.deepEqual(lines, []);
@@ -250,7 +251,7 @@ test('updated/unchanged use existing conventions and do not count noop as deploy
   }
 });
 
-test('all aliases parse stream deploy selection; production factory pins native68/facade67', async () => {
+test('all aliases parse stream deploy selection; production factory pins native68', async () => {
   const config = await Config.load({ root: process.cwd() });
   for (const topic of ['data360', 'datacloud', 'd360', 'dc']) {
     const Command = await config.findCommand(`${topic}:deploy`, { must: true }).load();
@@ -274,7 +275,9 @@ test('all aliases parse stream deploy selection; production factory pins native6
     '68.0',
   );
   assert.equal(typeof clients.streams.update, 'function');
-  assert.equal(typeof clients.facade.read, 'function');
+  assert.equal(typeof clients.connections.schema, 'function');
+  assert.equal(typeof clients.dependencies.stream, 'function');
+  assert.equal(clients.facade, undefined);
   assert.equal(typeof clients.dlo.get, 'function');
 });
 
@@ -400,22 +403,23 @@ function lifecycle(controls = {}) {
         return { name: target.name, recordId: target.recordId };
       },
     },
-    facade: {
-      read: async (operation) =>
-        operation === 'd360_connection_list'
-          ? { connections: [structuredClone(connection)] }
-          : operation === 'd360_connection_get'
-            ? structuredClone(connection)
-            : {
-                schemas: [
-                  {
-                    name: 'ProbeEvent',
-                    schemaType: 'IngestApi',
-                    availabilityStatus: exists ? 'In Use' : 'Available',
-                    fields: structuredClone(fields),
-                  },
-                ],
-              },
+    connections: {
+      list: async () => ({ connections: [structuredClone(connection)] }),
+      get: async () => structuredClone(connection),
+      schema: async () => ({
+        schemas: [
+          {
+            name: 'ProbeEvent',
+            schemaType: 'IngestApi',
+            availabilityStatus: exists ? 'In Use' : 'Available',
+            fields: structuredClone(fields),
+          },
+        ],
+      }),
+    },
+    dependencies: {
+      stream: async () => assert.fail('No dependency read during deploy'),
+      dlo: async () => assert.fail('No dependency read during deploy'),
     },
     dlo: {
       get: async () => {

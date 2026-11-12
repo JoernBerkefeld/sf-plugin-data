@@ -111,8 +111,10 @@ import {
 } from '../../transport/api-version.js';
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import { ConnectClient } from '../../transport/connect-client.js';
-import { createDataStreamClient } from '../../transport/data-stream-rest.js';
-import { McpExecuteClient } from '../../transport/mcp-execute.js';
+import {
+  createDataStreamClient,
+  createDataStreamReferenceReader,
+} from '../../transport/data-stream-rest.js';
 import {
   preflightDeleteDataStream,
   executeDeleteDataStream,
@@ -164,7 +166,7 @@ export type DeleteEnvelope = {
       targetDloName?: string;
       routes?: Array<{
         operation: string;
-        transport: 'native' | 'facade' | 'metadata';
+        transport: 'native' | 'metadata';
         apiVersion: string;
       }>;
       outcome:
@@ -398,11 +400,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         undefined,
         openBoundSsot(target, version, async () => connection),
       ),
-      facade: new McpExecuteClient(connection, {
-        requested: '67.0',
-        restSelector: 'v67.0',
-        soapNumeric: '67.0',
-      }),
+      ...createDataStreamReferenceReader(reader, version),
       dlo: {
         get: (identity) =>
           reader.get(
@@ -1406,7 +1404,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             routes: [
               { operation: 'data-stream.delete', transport: 'native', apiVersion: version },
               { operation: 'dlo.get', transport: 'native', apiVersion: version },
-              { operation: 'dependency.read', transport: 'facade', apiVersion: '67.0' },
+              { operation: 'dependency.read', transport: 'native', apiVersion: version },
             ],
           };
           selectorsByItem.set(item, selector);

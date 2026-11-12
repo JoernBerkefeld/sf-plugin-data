@@ -18,7 +18,6 @@ import { createDloClient } from '../lib/transport/dlo-rest.js';
 import { createDmoClient } from '../lib/transport/dmo-rest.js';
 import { createMappingClient } from '../lib/transport/mapping-rest.js';
 import { createDataStreamClient } from '../lib/transport/data-stream-rest.js';
-import { McpExecuteClient } from '../lib/transport/mcp-execute.js';
 
 const origin = 'https://synthetic.my.salesforce.com';
 
@@ -326,49 +325,6 @@ for (const status of [429, 503]) {
       });
       assert.equal(f.count(), 1);
     });
-  test(`facade POST mutation HTTP${status} preserves wire status without replay`, async () => {
-    const f = core(status);
-    const client = new McpExecuteClient(f.connection, {
-      requested: '67.0',
-      restSelector: 'v67.0',
-      soapNumeric: '67.0',
-    });
-    await assert.rejects(
-      client.mutate('d360_ci_create', {
-        input: {
-          apiName: 'Synthetic__cio',
-          displayName: 'Synthetic',
-          expression: 'SELECT 1',
-          definitionType: 'CalculatedMetric',
-          dataSpaceName: 'default',
-          draft: true,
-        },
-      }),
-      (error) => {
-        assert.equal(error.statusCode, status);
-        assert.equal(getConnectDiagnostic(error).retryAfter, '7');
-        return true;
-      },
-    );
-    assert.equal(f.count(), 1);
-  });
-  test(`semantic facade POST read HTTP${status} preserves wire status without replay`, async () => {
-    const f = core(status);
-    const client = new McpExecuteClient(f.connection, {
-      requested: '67.0',
-      restSelector: 'v67.0',
-      soapNumeric: '67.0',
-    });
-    await assert.rejects(
-      client.read('d360_dlo_get', { recordIdOrDeveloperName: 'Synthetic__dll' }),
-      (error) => {
-        assert.equal(error.statusCode, status);
-        assert.equal(getConnectDiagnostic(error).retryAfter, '7');
-        return true;
-      },
-    );
-    assert.equal(f.count(), 1);
-  });
   for (const family of ['dlo', 'dmo', 'mapping', 'stream'])
     for (const method of family === 'stream' ? ['DELETE'] : ['GET', 'POST', 'PATCH', 'DELETE'])
       test(`CLI ${family} ${method} HTTP${status} retains only safe header evidence`, async () => {

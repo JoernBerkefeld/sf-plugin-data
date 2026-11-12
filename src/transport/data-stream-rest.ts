@@ -25,9 +25,83 @@ export type DataStreamClient = {
   update: (recordId: string, document: unknown) => Promise<unknown>;
   delete: (recordId: string, deleteDlo: boolean) => Promise<void>;
 };
+type JsonObject = Record<string, unknown>;
+/** Native connection and dependency reads a stream binding/delete decision depends on. */
+export type DataStreamReferenceReader = {
+  connections: {
+    list: () => Promise<JsonObject>;
+    get: (connectionId: string) => Promise<JsonObject>;
+    schema: (connectionId: string) => Promise<JsonObject>;
+  };
+  dependencies: {
+    stream: (recordIdOrName: string) => Promise<JsonObject>;
+    dlo: (recordIdOrName: string) => Promise<JsonObject>;
+  };
+};
 const name = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
+const developerName = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const id = /^[A-Za-z0-9]{18}$/u;
 const readId = /^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u;
+
+/**
+ * Admit an exact connection record ID as one encoded path segment.
+ * @param {string} value Candidate 15/18-character ID.
+ * @returns {string} Connection resource path.
+ */
+function connectionPath(value: string): string {
+  if (typeof value !== 'string' || !readId.test(value)) throw new ConnectError('INVALID_REQUEST');
+  return `connections/${encodeURIComponent(value)}`;
+}
+
+/**
+ * Admit an exact developer name or record ID as one encoded dependency path segment.
+ * @param {string} value Candidate identity.
+ * @returns {string} Dependency resource suffix.
+ */
+function dependencyPath(value: string): string {
+  if (typeof value !== 'string' || (!developerName.test(value) && !readId.test(value)))
+    throw new ConnectError('INVALID_REQUEST');
+  return `${encodeURIComponent(value)}/dependencies`;
+}
+
+/**
+ * Construct native connection/dependency readers. Family admission validates bodies and decides.
+ * @param {ConnectClient} reader Authenticated native GET transport.
+ * @param {string} apiVersion Qualified stream pin (API68 only).
+ * @returns {DataStreamReferenceReader} Read-only native routes.
+ */
+export function createDataStreamReferenceReader(
+  reader: Pick<ConnectClient, 'get'>,
+  apiVersion = 'auto',
+): DataStreamReferenceReader {
+  const root = `/services/data/v${dataStreamApiVersion(apiVersion)}/ssot`;
+  const read = async (path: string): Promise<JsonObject> => {
+    const value = await reader.get<unknown>(`${root}/${path}`);
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new ConnectError('REQUEST_FAILED');
+    const resource = value as JsonObject;
+    if (
+      Object.keys(resource).length === 0 ||
+      ['error', 'errors', 'errorCode', 'body', 'result'].some((key) =>
+        Object.hasOwn(resource, key),
+      ) ||
+      (Object.hasOwn(resource, 'success') && resource.success !== true)
+    )
+      throw new ConnectError('REQUEST_FAILED');
+    return resource;
+  };
+  return {
+    connections: {
+      list: async () => read('connections?connectorType=IngestApi&limit=200&offset=0'),
+      get: async (connectionId) => read(connectionPath(connectionId)),
+      schema: async (connectionId) => read(`${connectionPath(connectionId)}/schema`),
+    },
+    dependencies: {
+      stream: async (identity) => read(`data-streams/${dependencyPath(identity)}`),
+      dlo: async (identity) => read(`data-lake-objects/${dependencyPath(identity)}`),
+    },
+  };
+}
 
 /** Genuine native HTTP failure, without response text or credentials. */
 export class DataStreamHttpError extends DataStreamError {

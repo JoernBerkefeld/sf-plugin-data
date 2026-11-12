@@ -10,13 +10,13 @@ import {
 import { ConnectError } from '../transport/connect-client.js';
 import type { DataStreamDocument, DataStreamMapping } from '../artifacts/data-stream-document.js';
 import { DataStreamHttpError } from '../transport/data-stream-rest.js';
-import type { DataStreamClient } from '../transport/data-stream-rest.js';
-import type { McpExecuteClient } from '../transport/mcp-execute.js';
+import type { DataStreamClient, DataStreamReferenceReader } from '../transport/data-stream-rest.js';
 
 type Json = Record<string, unknown>;
 export type DataStreamReadClients = {
   streams: Pick<DataStreamClient, 'get' | 'list'>;
-  facade: Pick<McpExecuteClient, 'read'>;
+  connections: DataStreamReferenceReader['connections'];
+  dependencies: DataStreamReferenceReader['dependencies'];
   dlo: { get: (name: string) => Promise<unknown> };
 };
 export type DataStreamBinding = {
@@ -195,13 +195,8 @@ export async function resolveDataStreamBinding(
     )
   )
     throw new DataStreamError('INVALID_STREAM_BINDING');
-  const listed = await clients.facade.read('d360_connection_list', {
-    connectorType: 'IngestApi',
-    limit: 200,
-    offset: 0,
-  });
+  const listed = await clients.connections.list();
   // Admit the prior bare list or the observed complete first-page envelope only.
-  // The facade request is API67; its observed current-page echo is independently API68.
   // No continuation contract is admitted, and a full page cannot prove exhaustion.
   const keys = Object.keys(listed);
   const bare = keys.length === 1 && keys[0] === 'connections';
@@ -238,7 +233,7 @@ export async function resolveDataStreamBinding(
   const selected = connections.filter((connection) => connection.name === selection.connectionName);
   if (selected.length !== 1) throw new DataStreamError('AMBIGUOUS_STREAM_CONNECTION');
   const connectionId = selected[0].id as string;
-  const detail = await clients.facade.read('d360_connection_get', { connectionId });
+  const detail = await clients.connections.get(connectionId);
   if (
     detail.id !== connectionId ||
     detail.name !== selection.connectionName ||
@@ -246,7 +241,7 @@ export async function resolveDataStreamBinding(
     detail.status !== 'CONNECTED'
   )
     throw new DataStreamError('STREAM_CONNECTION_MISMATCH');
-  const schemas = await clients.facade.read('d360_connection_schema_get', { connectionId });
+  const schemas = await clients.connections.schema(connectionId);
   // GET lacks event identity. Initial scope accepts only a sole independently uploaded event.
   if (!Array.isArray(schemas.schemas) || schemas.schemas.length !== 1)
     throw new DataStreamError('AMBIGUOUS_STREAM_EVENT');
@@ -386,11 +381,7 @@ export async function retrieveNativeDataStream(
     throw new DataStreamError('INVALID_STREAM_BINDING');
   const raw = inspectNativeDataStream(await clients.streams.get(apiName));
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
-  const connectionIdList = await clients.facade.read('d360_connection_list', {
-    connectorType: 'IngestApi',
-    limit: 200,
-    offset: 0,
-  });
+  const connectionIdList = await clients.connections.list();
   if (!Array.isArray(connectionIdList.connections))
     throw new DataStreamError('INCOMPLETE_CONNECTION_LIST');
   const matches = connectionIdList.connections
@@ -398,9 +389,7 @@ export async function retrieveNativeDataStream(
     .filter((item) => item.name === raw.dataSource);
   if (matches.length !== 1 || typeof matches[0].id !== 'string' || !recordId.test(matches[0].id))
     throw new DataStreamError('AMBIGUOUS_STREAM_CONNECTION');
-  const schema = await clients.facade.read('d360_connection_schema_get', {
-    connectionId: matches[0].id,
-  });
+  const schema = await clients.connections.schema(matches[0].id);
   if (!Array.isArray(schema.schemas) || schema.schemas.length !== 1)
     throw new DataStreamError('AMBIGUOUS_STREAM_EVENT');
   const info = object(raw.dataLakeObjectInfo);
@@ -1297,7 +1286,7 @@ export type DataStreamDeletePlan = {
 
 /**
  * Admit only the observed complete dependency response, never a transport-success shortcut.
- * @param {unknown} value Independent facade dependency result.
+ * @param {unknown} value Independent native dependency result.
  * @returns {Json} Complete dependency inventory with exact observed shape.
  */
 function streamDeleteDependencies(value: unknown): Json {
@@ -1315,7 +1304,7 @@ function streamDeleteDependencies(value: unknown): Json {
 /**
  * Snapshot exact selected target, source, linked parent and explicitly protected survivors.
  * @param {string} apiName Exact selected target developer name, never a portable proposal.
- * @param {DataStreamReadClients} clients Independent native and facade readers.
+ * @param {DataStreamReadClients} clients Independent native readers.
  * @param {object} options Explicit cascade choice and protected unrelated parent names.
  * @param {boolean} options.deleteDlo Explicit acknowledgement of linked-parent deletion.
  * @param {readonly string[]} options.survivorDloNames Unselected parents to preserve independently.
@@ -1371,14 +1360,10 @@ export async function preflightNativeDataStreamDelete(
       'parents',
     );
   const streamDependencies = streamDeleteDependencies(
-    await clients.facade.read('d360_datastream_dependencies_list', {
-      recordIdOrDeveloperName: target.recordId,
-    }),
+    await clients.dependencies.stream(target.recordId as string),
   );
   const dloDependencies = streamDeleteDependencies(
-    await clients.facade.read('d360_dlo_dependencies_list', {
-      recordIdOrDeveloperName: dlo.name,
-    }),
+    await clients.dependencies.dlo(dlo.name as string),
   );
   const dependencies = dloDependencies.dependencies as unknown[];
   // Both modes refuse unknown/shared dependencies; cascade additionally has an explicit opt-in.
@@ -1555,9 +1540,7 @@ export async function deleteNativeDataStream(
             );
         }
         const released = streamDeleteDependencies(
-          await clients.facade.read('d360_dlo_dependencies_list', {
-            recordIdOrDeveloperName: plan.dlo.name,
-          }),
+          await clients.dependencies.dlo(plan.dlo.name as string),
         );
         if (released.totalSize !== 0)
           throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');

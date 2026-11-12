@@ -12,7 +12,10 @@ import { operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { dataStreamApiVersion, nativeApiVersion } from '../../transport/api-version.js';
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import { writeDataStreamDocument } from '../../artifacts/write-data-stream.js';
-import { createDataStreamClient } from '../../transport/data-stream-rest.js';
+import {
+  createDataStreamClient,
+  createDataStreamReferenceReader,
+} from '../../transport/data-stream-rest.js';
 import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
 import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
 import { retrieveLeanNativeMapping } from '../../services/native-mapping.js';
@@ -38,7 +41,6 @@ import { createRelationshipClient } from '../../transport/relationship-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
 import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
-import { McpExecuteClient } from '../../transport/mcp-execute.js';
 import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
 import path from 'node:path';
 import {
@@ -126,7 +128,7 @@ export type RetrieveEnvelope = {
       routes?: Array<{
         operation: string;
         apiVersion: string;
-        transport: 'native' | 'facade' | 'metadata';
+        transport: 'native' | 'metadata';
       }>;
     }>;
   };
@@ -160,7 +162,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities; one exact data-graph:ApiName per run, default space only. Graph inventory and mixed selections are blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities; one exact data-graph:ApiName per run, default space only. Graph inventory and mixed selections are blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -212,11 +214,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const reader = new ConnectClient(connection, version);
     return {
       streams: createDataStreamClient(target, reader, version),
-      facade: new McpExecuteClient(connection, {
-        requested: '67.0',
-        restSelector: 'v67.0',
-        soapNumeric: '67.0',
-      }),
+      ...createDataStreamReferenceReader(reader, version),
       dlo: {
         get: (name) => reader.get(`/services/data/v${version}/ssot/data-lake-objects/${name}`),
       },
@@ -580,7 +578,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             routes: [
               { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
               { operation: 'dlo.get', apiVersion: version, transport: 'native' },
-              { operation: 'connection.read', apiVersion: '67.0', transport: 'facade' },
+              { operation: 'connection.read', apiVersion: version, transport: 'native' },
             ],
             ...receipt,
           });
