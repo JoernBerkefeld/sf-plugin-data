@@ -61,10 +61,10 @@ plugin features.
 
 | Resource                                   | Retrieve                                                                                                                                                                                                            | Create                                                                                                                            | Update                                                                                                                          | Delete                                                                                                                                                                      | Scope / limits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />                                                        | One native route, default/auto API68 (numeric pins from 61 kept): `data360/dmo/<ApiName>__dlm.dmo-meta.json`, all/type/exact retrieval, create or update by target name, exact-name delete. No local allowlists: category, field types, labels, descriptions and extra keys are sent as authored and Salesforce decides. Observed at API68 on empty, unmapped custom DMOs in the default data space: categories Profile, Engagement and Other; ten field data types; update of object label and description, existing field labels and added fields. Refused before any write: changing a field's data type or the primary key, removing a field without `--allow-field-removal`, and any write to a platform-generated DMO or a custom DMO under a namespaced name. A standard DMO (`creationType` `Standard`, for example `ssot__Brand__dlm`) takes custom-field additions, edits and removals and changes of its object label and description only; its standard and system fields are never sent, its category is ignored, and it is never created or deleted (observed at API68 through the plugin on one standard DMO in two orgs, active in one of them). With `--allow-field-removal`, custom fields missing from the file are removed by a Metadata API destructive change for `CustomField`; the primary key and generated fields are never removed. A mapped field is removed only when the same command also deploys every mapping holding its pair, with the pair taken out of the mapping file; the removal runs in the DMO position and Salesforce drops the field's pairs with it. `sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete` removes named custom fields in one step: one destructive change for the fields (Salesforce drops their mapping pairs), then a refresh of the existing project files. Polled reads confirm writes; batches order DLO, DMO, mapping. Used by `--changed-since` and mixed selections. Removal of a mapped field is observed at API68 on custom DMOs with one and with two mappings. Data-bearing DMOs and fields, standard DMOs in active use, non-default data spaces, relationships and other API versions are not verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Data Model Objects (DMOs), `dmo`           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native definition deletion" />                                                        | One native route, default/auto API68 (numeric pins from 61 kept): `data360/dmo/<ApiName>__dlm.dmo-meta.json`, all/type/exact retrieval, create or update by target name, exact-name delete. No local allowlists: category, field types, labels, descriptions and extra keys are sent as authored and Salesforce decides. Observed at API68 on empty, unmapped custom DMOs in the default data space: categories Profile, Engagement and Other; ten field data types; update of object label and description, existing field labels and added fields. Refused before any write: changing a field's data type or the primary key, removing a field without `--allow-field-removal`, and any write to a platform-generated DMO or a custom DMO under a namespaced name. A standard DMO (`creationType` `Standard`, for example `ssot__Brand__dlm`) takes custom-field additions, edits and removals and changes of its object label and description only; its standard and system fields are never sent, its category is ignored, and it is never created or deleted (observed at API68 through the plugin on one standard DMO in two orgs, active in one of them). With `--allow-field-removal`, custom fields missing from the file are removed by a Metadata API destructive change for `CustomField`; the primary key and generated fields are never removed. A mapped field is removed only when the same command also deploys every mapping holding its pair, with the pair taken out of the mapping file; the removal runs in the DMO position and Salesforce drops the field's pairs with it. `sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete` removes named custom fields in one step: one destructive change for the fields (Salesforce drops their mapping pairs), then a refresh of the existing project files. Polled reads confirm writes; batches order DLO, DMO, mapping, relationship. Used by `--changed-since` and mixed selections. Removal of a mapped field is observed at API68 on custom DMOs with one and with two mappings. Data-bearing DMOs and fields, standard DMOs in active use, non-default data spaces, relationships and other API versions are not verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Data Lake Objects (DLOs), `dlo`            | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 definition retrieval" />                                                                                             | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 standalone definition creation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Label changes and ordinary field additions" />  | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact target definition deletion" />                                                      | API68/default native definition CRUD through authenticated standard CLI; canonical `data360/dlo/<FullApiName>__dll.dlo-meta.json`, operation-specific payloads and target-name auto POST/PATCH replace handcrafted requests. Create sends the category as the file states it (Salesforce decides; observed: Profile and Engagement) and, for Engagement, the event field `spec.eventDateTimeFieldName`; neither can change afterwards (`UNSUPPORTED_DLO_CATEGORY_CHANGE`, `UNSUPPORTED_DLO_EVENT_FIELD_CHANGE`). An existing DLO takes label changes and field additions only. A file for an existing DLO may omit the fields Salesforce generated (`cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`, `InternalOrganization__c`, `cdp_sys_PartitionDate__c` on Engagement DLOs and the key qualifier of the primary key, for example `KQ_Id__c`); any other omitted or changed field is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). Metadata retrieval worked at 65–68 but complete-schema redeploy hit PK/qualifier failures. Explicit preview is read-only; delete executes without prompting. Not ingestion or cascade cleanup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | DLO-to-DMO mappings, `mapping`             | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping retrieval" />                                                                                                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native mapping creation" />                       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Qualified desired-state pair reconciliation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Whole-mapping Metadata API deletion" />                                                     | Canonical native JSON; default/auto API68, numeric pins preserved. All/type/exact retrieval; explicit deploy/delete only. Installed API68 acceptance covers create, canonical retrieval, one additive pair, JSON Text removal with batch addition, both Text retarget directions and zero-write previews/repeats. Delete (native API 61 and up, default 68) removes the whole mapping, whatever pairs it holds, with one Metadata API destructive deployment for `ObjectSourceTargetMap`; preview is read-only, and polled reads confirm that the mapping is absent and that the other mappings and the field names of the DMO are unchanged. Only the last mapping of a custom DMO is refused, before any write (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`): Salesforce does not delete it, so delete the DMO, which removes its mapping. The last mapping of a standard DMO is deleted normally. Separate installed API61 create, read and one-pair addition with omitted scope passed; pair removal is observed through the plugin at API 61, 64 and 68. Create and update send the pairs the file lists, whatever their data types and names, one source onto several targets and targets another mapping also holds; Salesforce decides. Pairs whose types differ get the preview notice `MAPPING_FIELD_TYPES_DIFFER`. Installed API68 cross-org acceptance additionally covers exact source retrieval, target-local DLO/DMO rebinding, create, one additive Text pair and a GET-only repeat. Not general cross-org schemas, populated objects or released-package qualification. The target is a custom DMO or a standard DMO (`creationType` `Standard`). The first mapping onto a standard DMO that is not yet enabled activates it permanently; the preview and the create item then carry the notice `MAPPING_ACTIVATES_STANDARD_DMO`. A file for an existing mapping may list only the authored pairs: the pairs Salesforce generated (three system pairs and the key qualifier pair) are taken from the org's copy and treated as part of the file. The key pair (source primary key onto target primary key) must stay in the file (`MAPPING_PROTECTED_PAIR_REQUIRED`). A deploy removes any authored pair that the file no longer lists, including a pair onto a standard field and a pair that another mapping of the same DMO also holds; generated pairs and the primary-key pair stay. Observed at API68 through the plugin: a mapping created onto a standard DMO, already active in one org and inactive in another (there with the notice, the DMO enabled afterwards), its retrieved file deploying back unchanged, hand-written files with the authored pairs only deploying back unchanged onto a custom and a standard DMO, one such file adding a pair and dropping another, a pair onto a standard field removed by deploy, a field shared by two mappings of a custom DMO removed, a non-last mapping of a custom DMO deleted, the last one refused, and the only mapping of a standard DMO deleted in two orgs. |
-| DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Unavailable                                                                                                                       | Unavailable                                                                                                                     | Unavailable                                                                                                                                                                 | Exact API65/default standard XML export only; no inventory or plugin operational deploy admission. Installed source-only exact-export acceptance passed; semantic/cross-org acceptance remains unproved.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| DMO field relationships, `relationship`    | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native relationship retrieval by source DMO" />                                                                                     | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native relationship creation" />                  | Unavailable                                                                                                                     | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native relationship deletion" />                                                      | One native route, default/auto API68 (numeric pins from 61 kept): `data360/relationship/<Name>.relationship-meta.json` holding the source and target object and field, cardinality and owner. Retrieve takes a source DMO (`relationship:<Dmo__dlm>`) and writes every relationship whose source is that DMO; bare `relationship` is refused. Salesforce generates relationship names; deploy finds the relationship by its binding (source and target object and field), so a hand-written file may use any name. Present with the same cardinality and owner is `unchanged`, absent is created, a different cardinality or owner is refused (`RELATIONSHIP_CHANGE_UNSUPPORTED`): there is no update route, so delete and deploy again. Deploy never deletes relationships. Salesforce requires both DMOs to be mapped. Exact-name delete reads the local file to find the source DMO. Batches order DLO, DMO, mapping, relationship. Observed at API68 through the plugin on empty custom DMOs in one org in the default data space; standard and data-bearing DMOs, non-default data spaces and other API versions are not verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Data Transforms, `data-transform`          | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native API68 definition retrieval" />                                                                                         | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Explicit create-only definition POST" />          | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact-ID label and description update" />       | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded exact-ID delete with inventory settlement" />                                       | One exact canonical CUSTOM/BATCH/STL definition, API68/default only; compatible existing DLO prerequisites. Explicit create/update, GET-only preview and unchanged repeat, processing acknowledgment for changed execution. No upsert, run/schedule, provisioning or mixed/Git selection. Exact-ID delete requires the matching source file and `--confirm-delete`; unconfirmed settlement is reported nonzero. Offline regressions/local installed checks are separate from unperformed live public lifecycle acceptance. Native zero-row qualification is separate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Source object definitions                  | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                     | Unavailable                                                                                                                                                                 | Definition XML only, not connectors or credentials.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Data Streams, `data-stream`                | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native stream retrieval" />                                                                                                   | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded Ingestion API stream creation" />         | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Additive nonprimary Text mapping update" />     | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded exact stream deletion" />                                                           | Exact stream-only API68/default Ingestion API/Other/UPSERT subset; portable JSON, preview and processing acknowledgement. Installed cross-org qualification covers source create/retrieve, connectionName-only target remap/create/retrieve, additive Text update, zero-write repeat and explicit cascade cleanup on both sides. Preserve-DLO deletion has separate bounded evidence. Not general connectors, populated data, other API versions or released-package qualification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -134,7 +134,7 @@ Current plugin limits:
   label/description or qualified forward empty-audience predicate updates, CI predicate updates,
   native API68 IR full-settings create/update and Graph
   projection updates are separate bounded profiles. Explicit native batches settle DLOs, then
-  DMOs, then mappings. General DLO schema edits and unqualified mapping changes are not enabled.
+  DMOs, then mappings, then relationships. General DLO schema edits and unqualified mapping changes are not enabled.
   IR provisioning is limited to the qualified Individual profile described below. Graph
   creation/deletion is a separate narrow native API68 profile, not facade provisioning.
   Use `--preview` before deployment.
@@ -1077,8 +1077,7 @@ guarantee.
 ## Metadata examples: prerequisites and qualification
 
 The chapters below document **standard Salesforce CLI Metadata API retrieval**
-and separately bounded mapping deployment, custom DMO deletion and custom relationship
-lifecycle at API `65.0`. These `sf project` commands are provided by
+and separately bounded mapping deployment and custom DMO deletion at API `65.0`. These `sf project` commands are provided by
 Salesforce CLI, not additional `sf data360` plugin commands. Successful retrieval
 proves a source export, **not full CRUD, cross-org portability or safe replay**.
 The plugin's own native DMO retrieval, creation, update and deletion are described
@@ -1830,156 +1829,128 @@ using the same DLO did not unlock native deletion of the original mapping (HTTP
 non-last native DELETE HTTP `204` also removed the DMO `Count__c`/`Gamma__c` fields;
 the plugin does not send that request.
 
-### DMO field relationship: `FieldSrcTrgtRelationship`
+### DMO field relationship: native definition retrieve, create and delete
+
+A relationship links a field of one DMO (the source) to a field of another DMO (the
+target), for example an order's customer reference to the customer's key. The plugin
+keeps one file per relationship at
+`data360/relationship/<Name>.relationship-meta.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "relationship",
+  "identity": {
+    "apiName": "Order_CustomerId_map_Customer_Id_1794467679481",
+    "dataSpace": "default"
+  },
+  "spec": {
+    "sourceObjectName": "Order__dlm",
+    "sourceFieldName": "CustomerId__c",
+    "targetObjectName": "Customer__dlm",
+    "targetFieldName": "Id__c",
+    "cardinality": "ManyToOne",
+    "relationshipOwner": "DataCloud"
+  }
+}
+```
+
+Salesforce generates the relationship name when it creates the relationship. A
+hand-written file may use any name: deploy finds the relationship by its binding
+(source object and field, target object and field), not by name. Cardinality and
+owner are sent as written and Salesforce decides which values it accepts. All
+relationship requests use the native route, default/`auto` API `68.0`; numeric pins
+from `61.0` are kept.
 
 #### Read / Retrieve
 
-The plugin supports exact definition-only export for one or multiple named relationships:
-
 ```sh
-sf data360 retrieve --target-org SOURCE_ALIAS --api-version 65.0 -m relationship:ExactRelationshipName -m relationship:AnotherRelationshipName --json
+sf data360 retrieve -m relationship:Order__dlm -o SOURCE_ALIAS
 ```
 
-Use exact developer names in the `default` data space. The default API version,
-explicit `65.0`, and `auto` use the fixed Metadata API65 route; other numeric pins
-and `latest` are rejected. Output uses the configured package source root and
-`fieldSrcTrgtRelationships/<name>.fieldSrcTrgtRelationship-meta.xml`, retaining exact
-XML bytes. Identical files are unchanged; differing files require `--overwrite`.
-Independent member failures retain successful exports and return a nonzero aggregate.
-
-Each successful relationship result includes `family: "relationship"`,
-`definitionOnly: true`, `deployable: false`, and its actual API65 Metadata route.
-Here `deployable: false` means this plugin's operational deploy does not admit the
-export; it does not prohibit standard Metadata deployment by other tools.
-Inventory, operational file/Git deploy admission and semantic
-compatibility are not supported. Isolated installed source-only acceptance on
-October 29, 2026 verified exact XML against independent standard retrieval,
-configured output, unchanged repeat, API65/auto routing, duplicate selection and
-local deploy-input rejection. Multiple distinct members and failure continuation
-remain synthetic-test evidence only; semantic and cross-org acceptance are unproved. The custom plugin command is not an
-out-of-the-box Salesforce CLI command; the table's API icon describes its API-led
-export mechanism.
-
-For comparison, the following is a separate out-of-the-box Salesforce CLI retrieve:
-
-```sh
-sf project retrieve start --metadata FieldSrcTrgtRelationship:ssot__ReturnOrder_CustomerAccountId_map_Account_Id_N_1 --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
-```
-
-This standard, DataCloud-owned example serializes the ReturnOrder-to-Account
-field references and `ManyToOne` cardinality. It supplements object lookup XML;
-referenced objects/fields are dependencies, not automatically proven portable.
-Treat this standard relationship as retrieve-only evidence.
+`relationship:<Dmo__dlm>` writes every relationship whose source is that DMO, one
+file each, beneath `--output-dir` (default: current directory). Several DMOs may be
+selected. A bare `relationship` selector, meaning every relationship of the org, is
+refused with `RELATIONSHIP_INVENTORY_UNQUALIFIED`. The plugin reads the DMO's
+relationship list in pages of 200 by offset; the pages must add up to the reported
+`totalSize` without duplicate names, otherwise that DMO stops with
+`RELATIONSHIP_INVENTORY_INCOMPLETE`. The file keeps the six authored values only;
+the id, labels, status and creation type are not saved. Identical files are
+unchanged; a differing file requires `--overwrite`.
 
 #### Create
 
-Standard API 65 creation succeeded for a **separate custom `ManyToOne` relationship**
-between two fresh, test-owned empty DMOs in `default`. These DMOs were separately
-facade-created, not standard Metadata-created: source `McpRelA_20261027_1524__dlm`
-with Text `Id__c` primary and Text `ParentId__c`, and target
-`McpRelB_20261027_1524__dlm` with Text `Id__c` primary. Actual object names, primary
-keys and system qualifiers were independently verified before deployment. The
-managed/standard example above was not modified.
-
-**Historical low-level fixture reproduction, not a turnkey wrapper:** an isolated
-source project contained the following owned lookup prerequisite at
-`force-app/main/default/objects/McpRelA_20261027_1524__dlm/fields/ParentLookup__c.field-meta.xml`.
-The explicit `fullName` is required; the initial local omission failed validation.
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
-  <fullName>ParentLookup__c</fullName>
-  <label>Parent Lookup</label>
-  <referenceTo>McpRelB_20261027_1524__dlm</referenceTo>
-  <relationshipName>McpRelChildren</relationshipName>
-  <type>Lookup</type>
-</CustomField>
-```
-
-Relationship XML at
-`force-app/main/default/fieldSrcTrgtRelationships/McpRel_20261027_1524.fieldSrcTrgtRelationship-meta.xml`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<FieldSrcTrgtRelationship xmlns="http://soap.sforce.com/2006/04/metadata">
-  <definitionCreationType>Custom</definitionCreationType>
-  <lookupFieldName>McpRelA_20261027_1524__dlm.ParentLookup__c</lookupFieldName>
-  <masterLabel>MCP Relationship 20261027 1524</masterLabel>
-  <owner>DataCloud</owner>
-  <relationshipCardinality>ManyToOne</relationshipCardinality>
-  <sourceFieldName>McpRelA_20261027_1524__dlm.ParentId__c</sourceFieldName>
-  <targetFieldName>McpRelB_20261027_1524__dlm.Id__c</targetFieldName>
-</FieldSrcTrgtRelationship>
-```
-
-The exact tested two-selector command shape creates both components; `TARGET_ALIAS`
-is the authenticated, deliberately selected qualification target. This mutates the
-org and requires the matching existing owned DMO prerequisites—not business assets.
-
 ```sh
-sf project deploy start --metadata CustomField:McpRelA_20261027_1524__dlm.ParentLookup__c --metadata FieldSrcTrgtRelationship:McpRel_20261027_1524 --target-org TARGET_ALIAS --api-version 65.0 --test-level NoTestRun --wait 5 --json
+sf data360 deploy -m relationship:Order_CustomerId_map_Customer_Id_1794467679481 -o TARGET_ALIAS --preview
+sf data360 deploy -m relationship:Order_CustomerId_map_Customer_Id_1794467679481 -o TARGET_ALIAS
 ```
 
-Independent exact Metadata reads confirmed the lookup and every relationship value;
-API 65 relationship reads on both DMOs returned the same single custom relationship,
-source/target, `ManyToOne` cardinality and observed `INACTIVE` status. No processing
-or activation action was issued; this is not general lifecycle or inertness proof.
+`--source-dir` with the file path works as well; the file must sit in a
+`data360/relationship/` folder and its name must match `identity.apiName`. Two files
+with the same binding in one command are refused (`DUPLICATE_IDENTITY`). Deploy lists
+the source DMO's relationships and looks for the binding:
+
+- Present with the same cardinality and owner: `unchanged`, nothing is written.
+- Absent: one create request on the source DMO, then reads of the list until the
+  relationship is `ACTIVE` with the requested cardinality and owner
+  (`RELATIONSHIP_PERSISTENCE_UNCONFIRMED` if that does not happen in time; a status
+  other than `ACTIVE` or `CREATING` stops the reads at once with the same code). The
+  result names the relationship Salesforce created in `targetApiName`.
+- Present with a different cardinality or owner: refused with
+  `RELATIONSHIP_CHANGE_UNSUPPORTED` before any write.
+
+Salesforce requires both DMOs to be mapped. Otherwise the create request answers
+HTTP 400 `No ObjectSourceTargetMaps were found for the DMOs in the relationships.`,
+reported as `RELATIONSHIP_HTTP_ERROR` with mutation `rejected`; the plugin does not
+check this itself. In a batch, relationships run after DLOs, DMOs and mappings, so
+one command can create both objects, their mappings and the relationship. A preview
+of a relationship whose DMO the same batch creates reports `planned-dependencies`:
+nothing is asserted about the relationship until the DMO exists.
 
 #### Update
 
-Changing **only** the relationship XML's `masterLabel` to
-`MCP Relationship Updated 20261027 1524` and running the following command succeeded:
-
-```sh
-sf project deploy start --metadata FieldSrcTrgtRelationship:McpRel_20261027_1524 --target-org TARGET_ALIAS --api-version 65.0 --test-level NoTestRun --wait 5 --json
-```
-
-Exact Metadata readback confirmed the changed label and same relationship ID.
-Independent API readbacks preserved the source, target, cardinality and `INACTIVE`
-status; DMO schemas/PK/KQ were preserved. Repeating the identical command reported
-`changed=false` / `Unchanged` with equal independent readbacks. This is persisted
-configuration idempotency, not proof of zero internal writes/work. Retargeting,
-cardinality changes, `OneToOne`, managed/shared/business relationships and general
-cross-org fidelity remain unqualified.
+Salesforce has no route to change a relationship. To change its cardinality or
+owner, delete it and deploy the file again. Deploy never deletes relationships.
 
 #### Delete
 
-Exact standard API 65 relationship deletion succeeded. It **also removed the newly
-owned, sole-use lookup field**, without an explicit field-delete request. Both DMO
-identities remained, exact relationship Metadata was absent, and both relationship
-API endpoints independently returned empty HTTP 204 responses.
-
-The tested command used an internally generated version-only `package.xml` as in
-the DMO Delete subsection and an ephemeral `relationship-delete.xml` containing:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<Package xmlns="http://soap.sforce.com/2006/04/metadata">
-  <types>
-    <members>McpRel_20261027_1524</members>
-    <name>FieldSrcTrgtRelationship</name>
-  </types>
-  <version>65.0</version>
-</Package>
-```
-
 ```sh
-sf project deploy start --manifest package.xml --post-destructive-changes relationship-delete.xml --target-org TARGET_ALIAS --api-version 65.0 --test-level NoTestRun --wait 5 --json
+sf data360 delete -m relationship:Order_CustomerId_map_Customer_Id_1794467679481 -o TARGET_ALIAS --preview
+sf data360 delete -m relationship:Order_CustomerId_map_Customer_Id_1794467679481 -o TARGET_ALIAS
 ```
 
-These manifests describe the qualified internal mechanism, **not a user
-hand-authoring requirement**; intended orchestration keeps them internal and out of
-Git. No public relationship create/update/delete wrapper is implemented; the exact
-definition-only retrieve above does not authorize this lifecycle. Do not apply the observed
-lookup cascade to a shared or pre-existing field or rerun against the deleted fixture.
+The selector names the relationship as the org knows it. Delete reads the local
+file `data360/relationship/<Name>.relationship-meta.json` in the current directory
+to learn the source DMO; without it the command stops with
+`RELATIONSHIP_FILE_REQUIRED` and names the expected path. It confirms that the
+relationship exists with the file's binding (another binding:
+`RELATIONSHIP_TARGET_BINDING_MISMATCH`). When no relationship has that name but one
+with the file's binding exists under another generated name, for example after the
+file was deployed again, the command refuses with `RELATIONSHIP_NAME_MISMATCH`,
+deletes nothing and names that relationship: retrieve it
+(`sf data360 retrieve -m relationship:<SourceDmo__dlm>`) and delete it by that name.
+Only when neither the name nor the binding is present is the result `unchanged`.
+Otherwise it, sends one DELETE
+(`ssot/data-model-objects/relationships/{name}`) and reads the source DMO's list
+until the relationship is gone (`RELATIONSHIP_DELETION_UNCONFIRMED` otherwise). An
+HTTP 4xx answer reports mutation `rejected`. According to the API reference only
+custom relationships can be deleted; the plugin sends the request and reports
+Salesforce's answer. In a delete command relationships run first, before mappings,
+DMOs and DLOs. `--preview` only reads. There is no confirmation prompt, and the
+local file is kept.
 
-Both empty DMO prerequisites were subsequently deleted using the bounded standard
-DMO route and independently confirmed absent. An isolated empty cleanup project
-was necessary: stale local lookup XML after the cascade caused the first DMO cleanup
-to fail; provisional component successes were not trusted. The final cleanup was
-terminally successful with independent Metadata and Connect absence. No new fixture
-from this relationship test remains; the original DLO was untouched and retained.
+Salesforce offers no read by relationship name (GET answers HTTP 405), and the
+list's `nextPageUrl` does not advance, so the plugin always reads relationships
+through a DMO's list with explicit offsets.
+
+Observed at API 68 through the plugin in one org, on empty custom DMOs in the
+default data space: one deploy created two DLOs, two DMOs, two mappings and the
+relationship (123 seconds; its preview showed `planned-dependencies`); the repeat
+was unchanged (4 seconds); retrieve by DMO (4 seconds) and a deploy of the retrieved
+file were unchanged (4 seconds); the delete preview only read (5 seconds); the delete
+was confirmed (9 seconds) and its repeat unchanged (3 seconds). Standard and
+data-bearing DMOs, non-default data spaces, other API versions and cardinalities
+other than `ManyToOne` are not verified.
 
 ### Source object configuration: `DataSourceObject`
 
@@ -3102,7 +3073,7 @@ Without `--preview`, the same explicit selection performs supported guarded crea
 or bounded updates. Batches containing Segment, calculated insight, Data Graph or
 Identity Resolution inputs preflight the whole selection before the first write, so a
 known blocker prevents all writes. Native batches instead
-order DLO, DMO, mapping and admit/settle each item independently before dependent writes;
+order DLO, DMO, mapping, relationship and admit/settle each item independently before dependent writes;
 a later blocker can follow an earlier successful mutation. With
 `--allow-field-removal`, a DMO with fields to remove runs its PATCH and then its
 removal in the DMO position, before the selected mappings; a mapped field that no
@@ -3113,7 +3084,7 @@ write. Execution stops on the first blocked, failed or unknown-mutation item.
 Neither route is atomic or provides a concurrency guarantee.
 Execution items use `operation: execute`, `outcome: created|updated|unchanged|blocked|failed|not-attempted`,
 `mutation: confirmed-created|confirmed-updated|not-attempted|unknown|rejected`, optional preflight and diagnostics.
-`rejected` (DLO, DMO and mapping items) means Salesforce answered the item's first write with an HTTP 4xx status, so nothing was written for it; a failure after a completed write stays `unknown`.
+`rejected` (DLO, DMO, mapping and relationship items) means Salesforce answered the item's first write with an HTTP 4xx status, so nothing was written for it; a failure after a completed write stays `unknown`.
 Prior completed receipts remain visible; remaining items are explicitly not-attempted.
 Only all-created/updated/unchanged results yield aggregate success/exit 0; blocked/failed
 execution exits 1 even after prior mutations. Unknown mutation means creation or update may have

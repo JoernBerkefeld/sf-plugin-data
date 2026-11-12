@@ -112,7 +112,7 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const mapping = readme
     .split('### DLO-to-DMO mapping: native definition CRUD')[1]
-    ?.split('### DMO field relationship:')[0]
+    ?.split('### DMO field relationship: native definition retrieve, create and delete')[0]
     .replaceAll(/\s+/gu, ' ');
   assert.ok(mapping, 'native mapping workflow must be documented');
   for (const required of [
@@ -179,6 +179,43 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
   ])
     assert.ok(!readme.includes(obsolete), `obsolete README contract: ${obsolete}`);
   assert.match(readme, /Native batches instead\s+order DLO, DMO, mapping/u);
+});
+
+test('README documents native relationships without the removed XML export', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const section = readme
+    .split('### DMO field relationship: native definition retrieve, create and delete')[1]
+    ?.split('### Source object configuration:')[0]
+    .replaceAll(/\s+/gu, ' ');
+  assert.ok(section, 'native relationship workflow must be documented');
+  for (const required of [
+    'data360/relationship/<Name>.relationship-meta.json',
+    'sf data360 retrieve -m relationship:Order__dlm',
+    'RELATIONSHIP_INVENTORY_UNQUALIFIED',
+    'RELATIONSHIP_INVENTORY_INCOMPLETE',
+    'deploy finds the relationship by its binding',
+    'RELATIONSHIP_CHANGE_UNSUPPORTED',
+    'Deploy never deletes relationships',
+    'Salesforce requires both DMOs to be mapped',
+    'planned-dependencies',
+    'RELATIONSHIP_FILE_REQUIRED',
+    'ssot/data-model-objects/relationships/{name}',
+    'In a delete command relationships run first',
+    'RELATIONSHIP_NAME_MISMATCH',
+  ])
+    assert.ok(section.includes(required), `missing relationship contract: ${required}`);
+  const row = readme.split('\n').find((line) => line.startsWith('| DMO field relationships'));
+  assert.equal((row.match(/Partial/gu) ?? []).length, 3);
+  assert.match(row, /\|\s*Unavailable\s*\|/u);
+  for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
+    const text = readFileSync(new URL(file, import.meta.url), 'utf8');
+    for (const removed of [
+      'fieldSrcTrgtRelationship-meta.xml',
+      'FieldSrcTrgtRelationship',
+      'definitionOnly: true',
+    ])
+      assert.ok(!text.includes(removed), `${file} mentions ${removed}`);
+  }
 });
 
 test('README and current docs do not mention removed mapping refusal codes', () => {

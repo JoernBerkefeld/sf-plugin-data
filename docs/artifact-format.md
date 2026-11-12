@@ -249,3 +249,55 @@ space. Data-bearing DMOs, non-default data spaces, other API versions,
 relationships and SQL/flex DMOs are not qualified.
 
 DMOs use only `data360/dmo/<ApiName>__dlm.dmo-meta.json`.
+
+## Public native relationship document
+
+`sf data360 retrieve -m relationship:<Dmo__dlm>` writes one file per relationship
+whose source is that DMO, at
+`<project-root>/data360/relationship/<Name>.relationship-meta.json`.
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "relationship",
+  "identity": {
+    "apiName": "Order_CustomerId_map_Customer_Id_1794467679481",
+    "dataSpace": "default"
+  },
+  "spec": {
+    "sourceObjectName": "Order__dlm",
+    "sourceFieldName": "CustomerId__c",
+    "targetObjectName": "Customer__dlm",
+    "targetFieldName": "Id__c",
+    "cardinality": "ManyToOne",
+    "relationshipOwner": "DataCloud"
+  }
+}
+```
+
+Shape checks:
+
+- The document has exactly `schemaVersion: 1`, `kind: "relationship"`, `identity`
+  and `spec`; `identity` has exactly `apiName` (a letter, then letters, digits or
+  underscores) and a nonblank, trimmed `dataSpace`.
+- `spec` has exactly the six keys shown. Object names end `__dlm`, field names end
+  `__c`. `cardinality` and `relationshipOwner` are nonblank strings sent as written;
+  Salesforce decides which values it accepts.
+- The file name must equal `identity.apiName` and the file must sit in a
+  `data360/relationship/` folder. Shape failures are reported as
+  `INVALID_RELATIONSHIP_DOCUMENT`.
+
+Salesforce generates the relationship name (the example's shape). Retrieval saves
+that name and the six authored values; the id, labels, status and creation type are
+not saved. A hand-written file may use any valid name, because deploy finds the
+relationship by its binding: source object and field, target object and field. Two
+files with the same binding in one command are refused (`DUPLICATE_IDENTITY`).
+Delete uses the file to learn the source DMO, and the selector name must be the
+org's relationship name; if the binding exists only under another name, delete
+refuses with `RELATIONSHIP_NAME_MISMATCH` and names it.
+
+The file is indented with two spaces and ends with LF. Identical bytes are
+unchanged; a differing file requires `--overwrite`, and a file saved for a different
+data space is not replaced (`RELATIONSHIP_DATASPACE_COLLISION`). Writer codes:
+`UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
+`PARTIAL_RELATIONSHIP_OUTPUT`.

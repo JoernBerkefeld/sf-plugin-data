@@ -6,6 +6,11 @@ import { validateDataStreamDocument } from './data-stream-document.js';
 import type { DataStreamDocument } from './data-stream-document.js';
 import { nativeMappingName, validateNativeMappingDocument } from './native-mapping-document.js';
 import type { NativeMappingDocument } from './native-mapping-document.js';
+import {
+  nativeRelationshipName,
+  validateNativeRelationshipDocument,
+} from './native-relationship-document.js';
+import type { NativeRelationshipDocument } from './native-relationship-document.js';
 import { nativeDmoName, validateNativeDmoDocument } from './native-dmo-document.js';
 import type { NativeDmoDocument } from './native-dmo-document.js';
 import { dloName, validateDloDocument } from './dlo-document.js';
@@ -346,11 +351,56 @@ export async function verifyDataTransformInputDigest(
   }
 }
 
+export type RelationshipDeployInput = {
+  path: string;
+  document: NativeRelationshipDocument;
+  inputDigest: string;
+};
+
+/**
+ * Admit canonical relationship JSON whose file name is the relationship name.
+ * @param {string} file Exact local relationship member.
+ * @returns {Promise<RelationshipDeployInput>} Immutable content and byte binding.
+ */
+export async function readRelationshipInput(file: string): Promise<RelationshipDeployInput> {
+  const name = path.basename(file).slice(0, -'.relationship-meta.json'.length);
+  const directory = path.dirname(file);
+  if (
+    !file.endsWith('.relationship-meta.json') ||
+    !nativeRelationshipName.test(name) ||
+    path.basename(directory) !== 'relationship' ||
+    path.basename(path.dirname(directory)) !== 'data360'
+  )
+    throw new DeployInputError('INVALID_SELECTION');
+  const bytes = await memberBytes(file);
+  let document: NativeRelationshipDocument;
+  try {
+    document = validateNativeRelationshipDocument(strictJson(decode(bytes)));
+    if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+  const after = await memberBytes(file);
+  if (!after.equals(bytes)) refuse();
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value))
+      if (child && typeof child === 'object') freeze(child as object);
+    Object.freeze(value);
+  };
+  freeze(document);
+  return Object.freeze({
+    path: file,
+    document,
+    inputDigest: createHash('sha256').update(bytes).digest('hex'),
+  });
+}
+
 export type DeployInput =
   | DataTransformDeployInput
   | NativeDataGraphDeployInput
   | DataStreamDeployInput
   | MappingDeployInput
+  | RelationshipDeployInput
   | NativeDmoDeployInput
   | SupportedDeployInput
   | IdentityResolutionDeployInput
@@ -816,6 +866,15 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
       refuse();
     return current.inputDigest;
   }
+  if (input.document.kind === 'relationship') {
+    const current = await readRelationshipInput(input.path);
+    if (
+      current.inputDigest !== (input as RelationshipDeployInput).inputDigest ||
+      JSON.stringify(current.document) !== JSON.stringify(input.document)
+    )
+      refuse();
+    return current.inputDigest;
+  }
   if (isNativeDmoInput(input)) {
     const current = await readNativeDmoInput(input.path);
     if (
@@ -869,6 +928,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       return { kind: 'data-stream', name: value.slice(12) };
     if (value.startsWith('mapping:') && nativeMappingName.test(value.slice(8)))
       return { kind: 'mapping', name: value.slice(8) };
+    if (value.startsWith('relationship:') && nativeRelationshipName.test(value.slice(13)))
+      return { kind: 'relationship', name: value.slice(13) };
     if (value.startsWith('dmo:') && nativeDmoName.test(value.slice(4)))
       return { kind: 'dmo', name: value.slice(4) };
     if (value.startsWith('dlo:') && dloName.test(value.slice(4)) && value.endsWith('__dll'))
@@ -888,6 +949,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       item.kind !== 'dmo' &&
       item.kind !== 'dlo' &&
       item.kind !== 'mapping' &&
+      item.kind !== 'relationship' &&
       item.kind !== 'data-stream' &&
       item.kind !== 'data-transform',
   )
@@ -915,30 +977,37 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
               ? path.join(flags.cwd, 'data360', 'data-stream', `${name}.data-stream-meta.json`)
               : kind === 'mapping'
                 ? path.join(flags.cwd, 'data360', 'mapping', `${name}.mapping-meta.json`)
-                : kind === 'dlo'
-                  ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
-                  : kind === 'data-graph'
-                    ? path.join(
-                        base!,
-                        'data360',
-                        'dataGraphs',
-                        `${name}${nativeGraphs.has(name) ? '.native-dataGraph.json' : '.dataGraph.json'}`,
-                      )
-                    : kind === 'calculated-insight'
+                : kind === 'relationship'
+                  ? path.join(
+                      flags.cwd,
+                      'data360',
+                      'relationship',
+                      `${name}.relationship-meta.json`,
+                    )
+                  : kind === 'dlo'
+                    ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
+                    : kind === 'data-graph'
                       ? path.join(
                           base!,
                           'data360',
-                          'calculatedInsights',
-                          `${name}.calculatedInsight.json`,
+                          'dataGraphs',
+                          `${name}${nativeGraphs.has(name) ? '.native-dataGraph.json' : '.dataGraph.json'}`,
                         )
-                      : kind === 'identity-resolution'
+                      : kind === 'calculated-insight'
                         ? path.join(
                             base!,
                             'data360',
-                            'identityResolution',
-                            `${name}.identityResolution.json`,
+                            'calculatedInsights',
+                            `${name}.calculatedInsight.json`,
                           )
-                        : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+                        : kind === 'identity-resolution'
+                          ? path.join(
+                              base!,
+                              'data360',
+                              'identityResolution',
+                              `${name}.identityResolution.json`,
+                            )
+                          : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (
@@ -1056,6 +1125,29 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
           selectors &&
           !selectors.some(
             (item) => item.kind === 'mapping' && item.name === input.document.identity.apiName,
+          )
+        )
+          throw new DeployInputError('INVALID_SELECTION');
+        identities.add(key);
+        inputs.push(input);
+        continue;
+      }
+      if (file.endsWith('.relationship-meta.json')) {
+        const input = await readRelationshipInput(file);
+        const key =
+          `relationship:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        // Deploy matches relationships by binding, so two files with one binding are one identity.
+        const { sourceObjectName, sourceFieldName, targetObjectName, targetFieldName } =
+          input.document.spec;
+        const binding =
+          `relationship-binding:${input.document.identity.dataSpace}:${sourceObjectName}:${sourceFieldName}:${targetObjectName}:${targetFieldName}`.toLowerCase();
+        if (identities.has(key) || identities.has(binding))
+          throw new DeployInputError('DUPLICATE_IDENTITY');
+        identities.add(binding);
+        if (
+          selectors &&
+          !selectors.some(
+            (item) => item.kind === 'relationship' && item.name === input.document.identity.apiName,
           )
         )
           throw new DeployInputError('INVALID_SELECTION');

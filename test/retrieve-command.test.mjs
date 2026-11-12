@@ -7,7 +7,7 @@ import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js'
 import { SegmentError } from '../lib/artifacts/segment-document.js';
 import { MetadataReadError } from '../lib/services/read-metadata.js';
 
-import { RelationshipDefinitionError } from '../lib/artifacts/write-relationship-definition.js';
+import { NativeRelationshipError } from '../lib/artifacts/native-relationship-document.js';
 
 import { MappingDefinitionError } from '../lib/artifacts/write-mapping-definition.js';
 
@@ -200,8 +200,6 @@ for (const version of ['65.0', 'auto']) {
     assert.deepEqual(result.result.selection, ['mapping:Alpha', 'mapping:Zulu']);
     for (const item of result.result.items) {
       assert.equal(item.family, 'mapping');
-      assert.equal(item.definitionOnly, undefined);
-      assert.equal(item.deployable, undefined);
       assert.deepEqual(item.routes, [
         {
           operation: 'mapping.get',
@@ -254,28 +252,19 @@ for (const mode of ['read', 'output', 'overwrite'])
     assert.ok(lines.some((x) => x.startsWith('mapping:Middle:')));
     assert.doesNotMatch(JSON.stringify(result), /private-token/u);
   });
-test('mixed mapping relationship and DMO auto preserves routes and outputs', async () => {
+test('mixed mapping relationship and DMO auto stays on the native route', async () => {
   const command = invocation({
-    metadata: ['mapping:Alpha', 'relationship:Link', 'dmo:Sample__dlm'],
+    metadata: ['mapping:Alpha', 'relationship:Link__dlm', 'dmo:Sample__dlm'],
     'api-version': 'auto',
   });
-  command.acquireMappingXml = command.acquireRelationshipXml = async () => '<opaque/>';
-  command.writeMapping = command.writeRelationship = async (name) => ({
-    path: `${name}.xml`,
-    outcome: 'retrieved',
-  });
-  command.acquireSelection = async (identities, conn, selection) => {
-    // No other family pins the batch, so the DMO's native version applies.
-    assert.equal(selection.soapNumeric, '68.0');
-    assert.deepEqual(
-      identities.map((x) => x.kind),
-      ['dmo'],
-    );
-    return [{ document: candidate }];
-  };
+  command.writeMapping = async (name) => ({ path: `${name}.json`, outcome: 'retrieved' });
+  command.acquireSelection = () => assert.fail('native families do not use the Metadata selection');
   const { result } = await run(command);
-  assert.equal(result.status, 'success');
-  assert.equal(result.result.items.length, 3);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(
+    result.result.items.map((item) => `${item.family ?? 'dmo'}:${item.identity.apiName}`),
+    ['dmo:Sample__dlm', 'mapping:Alpha', 'relationship:Link_Rel'],
+  );
   assert.equal(result.metadata.apiVersion, 'auto');
 });
 test('mixed mapping Graph auto retains Graph67 and mapping65 pins', async () => {
@@ -309,6 +298,25 @@ const candidate = {
   spec: { arbitrary: 'service-owned' },
 };
 const connection = {};
+/**
+ * A portable relationship whose source is the DMO.
+ * @param {string} dmo Source DMO.
+ * @param {string} suffix Name suffix.
+ * @returns {object} Relationship document.
+ */
+const relationshipDocument = (dmo, suffix) => ({
+  schemaVersion: 1,
+  kind: 'relationship',
+  identity: { dataSpace: 'default', apiName: `${dmo.slice(0, -5)}_${suffix}` },
+  spec: {
+    sourceObjectName: dmo,
+    sourceFieldName: 'BRef__c',
+    targetObjectName: 'B__dlm',
+    targetFieldName: 'Id__c',
+    cardinality: 'ManyToOne',
+    relationshipOwner: 'DataCloud',
+  },
+});
 const invocation = (overrides = {}) => {
   const command = Object.create(Retrieve.prototype);
   const flags = {
@@ -326,6 +334,12 @@ const invocation = (overrides = {}) => {
   command.listNativeNames = async (_connection, _version, family) =>
     family === 'dmo' ? ['Sample__dlm'] : [];
   command.listNativeMappingNames = async () => [];
+  command.createRelationshipClient = () => ({});
+  command.acquireRelationships = async (dmo) => [relationshipDocument(dmo, 'Rel')];
+  command.writeRelationship = async (document) => ({
+    path: `${document.identity.apiName}.json`,
+    outcome: 'retrieved',
+  });
   command.createMappingInventoryReader = command.createMappingClient = () => ({});
   command.acquireNativeMapping = async (name) => ({
     kind: 'mapping',
@@ -362,7 +376,7 @@ test('latest is refused for every DMO selection before authentication or discove
     { metadata: undefined },
     { metadata: ['dmo'] },
     { metadata: ['dmo:Sample__dlm'] },
-    { metadata: ['dmo:Sample__dlm', 'relationship:Link'] },
+    { metadata: ['dmo:Sample__dlm', 'relationship:Link__dlm'] },
     { metadata: ['dmo', 'segment:Audience'] },
   ]) {
     const command = invocation({ ...overrides, 'api-version': 'latest' });
@@ -379,44 +393,45 @@ test('latest is refused for every DMO selection before authentication or discove
   }
 });
 
-test('explicit numeric DMO beside a relationship now reads and writes the native format', async () => {
+test('explicit numeric DMO beside a relationship reads both natively at that version', async () => {
   for (const metadata of [
-    ['relationship:Link', 'dmo:Sample__dlm'],
-    ['relationship:Link', 'dmo'],
+    ['relationship:Link__dlm', 'dmo:Sample__dlm'],
+    ['relationship:Link__dlm', 'dmo'],
   ]) {
     const command = invocation({ metadata, 'api-version': '65.0', 'output-dir': 'project' });
-    command.acquireRelationshipXml = async () => '<opaque/>';
-    command.writeRelationship = async (name) => ({ path: `${name}.xml`, outcome: 'retrieved' });
+    const versions = [];
+    command.createRelationshipClient = (_connection, target, version) => {
+      assert.equal(target, 'synthetic');
+      versions.push(version);
+      return {};
+    };
+    command.writeRelationship = async (document, root) => {
+      assert.equal(root, 'project');
+      return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
+    };
     const inventories = [];
     command.listNativeNames = async (actualConnection, version, family, scope) => {
       assert.equal(actualConnection, connection);
       inventories.push([version, family, scope]);
-      return ['Sample__dlm'];
+      return family === 'dmo' ? ['Sample__dlm'] : [];
     };
-    const selections = [];
-    command.acquireSelection = async (identities, actualConnection, selection) => {
-      assert.equal(actualConnection, connection);
-      assert.deepEqual(selection, {
-        requested: '65.0',
-        restSelector: 'v65.0',
-        soapNumeric: '65.0',
-      });
-      selections.push(identities);
-      return [{ document: candidate }];
-    };
+    command.acquireSelection = () => assert.fail('no Metadata selection');
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'success', JSON.stringify(result));
     assert.equal(exitCode, undefined);
     assert.deepEqual(inventories, metadata.includes('dmo') ? [['65.0', 'dmo', 'default']] : []);
-    assert.deepEqual(selections, [[{ kind: 'dmo', dataSpace: 'default', apiName: 'Sample__dlm' }]]);
-    assert.deepEqual(result.result.selection, ['relationship:Link', 'dmo:Sample__dlm']);
+    assert.deepEqual(versions, ['65.0']);
+    assert.deepEqual(result.result.selection, ['dmo:Sample__dlm', 'relationship:Link__dlm']);
     const item = result.result.items.find((entry) => entry.identity.apiName === 'Sample__dlm');
     assert.equal(item.path, 'synthetic-output.json');
     assert.deepEqual(item.routes, [
       { operation: 'dmo.get', apiVersion: '65.0', transport: 'native' },
     ]);
-    // The API65 metadata adapter route evidence must not reappear.
-    assert.ok(!JSON.stringify(result).includes('dmo.metadata'));
+    const relationship = result.result.items.find((entry) => entry.family === 'relationship');
+    assert.deepEqual(relationship.routes, [
+      { operation: 'relationship.list', apiVersion: '65.0', transport: 'native' },
+    ]);
+    assert.ok(!JSON.stringify(result).includes('"transport":"metadata"'));
   }
 });
 
@@ -718,113 +733,113 @@ test('service refusals and remote failures never publish candidates or leak erro
   }
 });
 
-for (const version of ['65.0', 'auto']) {
-  test(`relationship exact export is sorted unique and definition-only at ${version}`, async () => {
-    const command = invocation({
-      metadata: ['relationship:Zulu', 'relationship:Alpha', 'relationship:Zulu'],
-      'api-version': version,
-    });
-    command.listNativeNames = () => assert.fail('relationship must not select DMOs');
-    const reads = [];
-    command.acquireRelationshipXml = async (org, name) => {
-      assert.equal(org, 'synthetic');
-      reads.push(name);
-      return `<${name}/>`;
-    };
-    command.writeRelationship = async (name, xml) => {
-      assert.equal(xml, `<${name}/>`);
-      return { path: `${name}.xml`, outcome: 'retrieved' };
-    };
-    const { result } = await run(command);
-    assert.equal(result.status, 'success');
-    assert.equal(result.metadata.apiVersion, version);
-    assert.deepEqual(reads, ['Alpha', 'Zulu']);
-    assert.deepEqual(result.result.selection, ['relationship:Alpha', 'relationship:Zulu']);
-    for (const item of result.result.items) {
-      assert.equal(item.family, 'relationship');
-      assert.equal(item.definitionOnly, true);
-      assert.equal(item.deployable, false);
-      assert.deepEqual(item.routes, [
-        { operation: 'relationship.metadata', apiVersion: '65.0', transport: 'metadata' },
-      ]);
-    }
+test('relationship:Dmo retrieves every source relationship of each DMO, sorted and unique', async () => {
+  const command = invocation({
+    metadata: ['relationship:Zulu__dlm', 'relationship:Alpha__dlm', 'relationship:Zulu__dlm'],
+    'api-version': 'auto',
   });
-}
+  command.listNativeNames = () => assert.fail('relationship must not list DMOs');
+  const reads = [];
+  command.createRelationshipClient = (actualConnection, target, version, scope) => {
+    assert.equal(actualConnection, connection);
+    assert.deepEqual([target, version, scope], ['synthetic', '68.0', 'default']);
+    return { marker: true };
+  };
+  command.acquireRelationships = async (dmo, client, scope) => {
+    assert.deepEqual([client, scope], [{ marker: true }, 'default']);
+    reads.push(dmo);
+    return [relationshipDocument(dmo, 'One'), relationshipDocument(dmo, 'Two')];
+  };
+  const written = [];
+  command.writeRelationship = async (document, root, overwrite) => {
+    assert.deepEqual([root, overwrite], [process.cwd(), false]);
+    written.push(document.identity.apiName);
+    return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
+  };
+  const { result } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.deepEqual(reads, ['Alpha__dlm', 'Zulu__dlm']);
+  assert.deepEqual(written, ['Alpha_One', 'Alpha_Two', 'Zulu_One', 'Zulu_Two']);
+  assert.deepEqual(result.result.selection, ['relationship:Alpha__dlm', 'relationship:Zulu__dlm']);
+  for (const item of result.result.items) {
+    assert.equal(item.family, 'relationship');
+    assert.deepEqual(item.routes, [
+      { operation: 'relationship.list', apiVersion: '68.0', transport: 'native' },
+    ]);
+  }
+});
 
 for (const override of [
   { 'api-version': '60.0' },
   { 'api-version': 'latest' },
-  { 'api-version': '59.0' },
-  { dataspace: 'other' },
-  { metadata: ['relationship:../escape'] },
+  { metadata: ['relationship:Alpha'] },
+  { metadata: ['relationship:../escape__dlm'] },
   { metadata: ['relationship'] },
-  { metadata: ['relationship:Alpha', 'data-graph:Graph'], 'api-version': '65.0' },
+  { metadata: ['relationship', 'dmo:Sample__dlm'] },
 ]) {
   test(`relationship selection refuses before auth ${JSON.stringify(override)}`, async () => {
-    const command = invocation({ metadata: ['relationship:Alpha'], ...override });
-    command.resolveOrg = () => assert.fail('invalid scope must precede auth');
+    const command = invocation({ metadata: ['relationship:Alpha__dlm'], ...override });
+    command.resolveOrg = () => assert.fail('invalid selection must precede auth');
     const { result } = await run(command);
     assert.equal(result.status, 'blocked');
+    if (override.metadata?.includes('relationship'))
+      assert.equal(result.diagnostics.errors[0].code, 'RELATIONSHIP_INVENTORY_UNQUALIFIED');
   });
 }
 
 for (const mode of ['read', 'output', 'overwrite']) {
   test(`relationship ${mode} failure between successes continues with truthful human labels`, async () => {
     const command = invocation({
-      metadata: ['relationship:Zulu', 'relationship:Middle', 'relationship:Alpha'],
+      metadata: ['relationship:Zulu__dlm', 'relationship:Middle__dlm', 'relationship:Alpha__dlm'],
     });
     const lines = [];
     command.jsonEnabled = () => false;
     command.log = (line) => lines.push(line);
-    command.acquireRelationshipXml = async (org, name) => {
-      if (mode === 'read' && name === 'Middle') throw new Error('private-token');
-      return '<xml/>';
+    command.acquireRelationships = async (dmo) => {
+      if (mode === 'read' && dmo === 'Middle__dlm') throw new Error('private-token');
+      return [relationshipDocument(dmo, 'Rel')];
     };
-    command.writeRelationship = async (name) => {
-      if (mode !== 'read' && name === 'Middle')
-        throw new RelationshipDefinitionError(
+    command.writeRelationship = async (document) => {
+      if (mode !== 'read' && document.identity.apiName === 'Middle_Rel')
+        throw new NativeRelationshipError(
           mode === 'overwrite' ? 'OVERWRITE_REQUIRED' : 'OUTPUT_FAILED',
         );
-      return { path: `${name}.xml`, outcome: 'retrieved' };
+      return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
     };
     const { result, exitCode } = await run(command);
     assert.equal(result.status, mode === 'overwrite' ? 'blocked' : 'failed');
     assert.equal(exitCode, 1);
     assert.deepEqual(
       result.result.items.map((item) => item.identity.apiName),
-      ['Alpha', 'Zulu'],
+      ['Alpha_Rel', 'Zulu_Rel'],
     );
     assert.equal(result.diagnostics.errors[0].family, 'relationship');
-    assert.ok(lines.some((line) => line.startsWith('relationship:Middle:')));
+    assert.equal(
+      result.diagnostics.errors[0].identity.apiName,
+      mode === 'read' ? 'Middle__dlm' : 'Middle_Rel',
+    );
+    assert.ok(lines.some((line) => line.startsWith('relationship:Middle')));
+    assert.ok(lines.includes('Downloaded relationship: 2'));
     assert.doesNotMatch(JSON.stringify(result), /private-token/u);
   });
 }
 
-test('auto mixed relationship and DMO selection preserves DMO route and both outputs', async () => {
+test('auto mixed relationship and DMO selection reads both natively', async () => {
   const command = invocation({
-    metadata: ['relationship:Alpha', 'dmo:Sample__dlm'],
+    metadata: ['relationship:Alpha__dlm', 'dmo:Sample__dlm'],
     'api-version': 'auto',
   });
-  command.acquireRelationshipXml = async () => '<xml/>';
-  command.writeRelationship = async () => ({ path: 'Alpha.xml', outcome: 'retrieved' });
-  command.acquireSelection = async (identities, conn, selection) => {
-    // No other family pins the batch, so the DMO's native version applies.
-    assert.equal(selection.soapNumeric, '68.0');
-    assert.deepEqual(
-      identities.map((identity) => identity.kind),
-      ['dmo'],
-    );
-    return [{ document: candidate }];
-  };
+  command.acquireSelection = () => assert.fail('no Metadata selection');
   const { result } = await run(command);
   assert.equal(result.status, 'success');
   assert.equal(result.metadata.apiVersion, 'auto');
+  assert.deepEqual(result.result.selection, ['dmo:Sample__dlm', 'relationship:Alpha__dlm']);
   assert.equal(result.result.items.length, 2);
 });
 
-test('auto mixed Graph and relationship preserves Graph67 and Metadata65 routes', async () => {
+test('auto mixed Graph and relationship keeps Graph67 and the native relationship route', async () => {
   const command = invocation({
-    metadata: ['relationship:Alpha', 'data-graph:Graph'],
+    metadata: ['relationship:Alpha__dlm', 'data-graph:Graph'],
     'api-version': 'auto',
   });
   const pins = [];
@@ -835,8 +850,6 @@ test('auto mixed Graph and relationship preserves Graph67 and Metadata65 routes'
       return connection;
     },
   });
-  command.acquireRelationshipXml = async () => '<xml/>';
-  command.writeRelationship = async () => ({ path: 'Alpha.xml', outcome: 'retrieved' });
   command.readRawDataGraph = async () => {
     throw new Error('synthetic graph read failure');
   };
@@ -844,7 +857,10 @@ test('auto mixed Graph and relationship preserves Graph67 and Metadata65 routes'
   assert.equal(result.metadata.apiVersion, 'auto');
   assert.equal(result.metadata.soapApiVersion, '67.0');
   assert.ok(pins.includes('67.0'));
-  assert.equal(result.result.items[0].routes[0].apiVersion, '65.0');
+  assert.equal(result.result.items[0].family, 'relationship');
+  assert.deepEqual(result.result.items[0].routes, [
+    { operation: 'relationship.list', apiVersion: '68.0', transport: 'native' },
+  ]);
 });
 
 test('writer refusal and ambiguous publication failure return nonzero without silent success', async () => {

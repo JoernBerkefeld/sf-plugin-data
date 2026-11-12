@@ -570,11 +570,7 @@ for (const metadata of [
       'mapping:Map',
     ]);
     assert.equal(result.result.items.length, 3);
-    assert.ok(
-      result.result.items.every(
-        (item) => item.routes[0].transport === 'native' && !item.definitionOnly,
-      ),
-    );
+    assert.ok(result.result.items.every((item) => item.routes[0].transport === 'native'));
   });
 
 test('public mapping inventory uses owned connection while artifact acquisition retains CLI client', async () => {

@@ -36,7 +36,7 @@ import { validateCalculatedInsightDocument } from '../../artifacts/calculated-in
 import { deleteCalculatedInsight } from '../../services/delete-calculated-insight.js';
 import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
-import { operationDiagnostic } from '../../services/operation-diagnostic.js';
+import { operationDiagnostic, replaceExplanation } from '../../services/operation-diagnostic.js';
 import {
   nativeDmoFieldName,
   nativeDmoName,
@@ -44,6 +44,17 @@ import {
 } from '../../artifacts/native-dmo-document.js';
 import { writeNativeDmoDocument } from '../../artifacts/write-native-dmo.js';
 import { writeNativeMappingDocument } from '../../artifacts/write-native-mapping.js';
+import { lstat } from 'node:fs/promises';
+import {
+  NativeRelationshipError,
+  nativeRelationshipName,
+} from '../../artifacts/native-relationship-document.js';
+import { createRelationshipClient } from '../../transport/relationship-rest.js';
+import {
+  deleteNativeRelationship,
+  preflightDeleteNativeRelationship,
+} from '../../services/native-relationship.js';
+import { readRelationshipInput } from '../../artifacts/read-deploy-input.js';
 import {
   dmoFieldLocalFiles,
   executeDmoFieldDelete,
@@ -266,7 +277,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or mappings.';
   public static readonly description =
-    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no local deletion, retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id.';
+    'Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:Individual_suffix (1..4 alphanumeric suffix, or Individual) requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching PUBLISHED nonautomatic owner. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, explicit --api-version 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:Name) runs first in the batch, before mappings, DMOs and DLOs, and needs the local file data360/relationship/<Name>.relationship-meta.json in the current project to learn the source DMO. The relationships of the source DMO are listed: a relationship with that name must carry the binding of the file; when the name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH and nothing is deleted; when neither is present the result is unchanged. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no local deletion, retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -278,7 +289,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multipleNonGreedy: true,
       required: true,
       summary:
-        'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm (alone with --field) or mapping:ApiName.',
+        'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:Individual_suffix or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm (alone with --field), mapping:ApiName or relationship:Name (reads data360/relationship/Name.relationship-meta.json).',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68.',
@@ -383,6 +394,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     openBoundSsot(target, version);
   protected preflightDeleteMapping = preflightDeleteNativeMapping;
   protected deleteMapping = deleteNativeMapping;
+  protected createRelationshipClient = createRelationshipClient;
+  protected preflightDeleteRelationship = preflightDeleteNativeRelationship;
+  protected deleteRelationship = deleteNativeRelationship;
+  // Relationship list/DELETE share one bound Connection per selector; tests replace this seam.
+  protected createRelationshipSender = (target: string, version: string): BoundSsot =>
+    openBoundSsot(target, version);
   // Field-level delete: the only DMO client with the Metadata API route for removeFields.
   protected createDmoClient = createDmoClient;
   protected writeNativeDmo = writeNativeDmoDocument;
@@ -580,7 +597,117 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   }
 
   /**
-   * Execute the selection in dependency order (mappings, DMOs, DLOs), stopping on the first error.
+   * Delete or preview one relationship by name. The local relationship file names the source DMO
+   * whose inventory proves presence before, and absence after, the single DELETE.
+   * @param {string} selector Exact relationship:Name selector.
+   * @param {string} target Resolved username.
+   * @param {string} version Native API version.
+   * @param {boolean} preview Read-only when true.
+   * @param {string | undefined} requestScope Optional request scope.
+   * @param {DeleteEnvelope} envelope Envelope receiving the item.
+   * @param {Map<DeleteItem, string>} selectorsByItem Human labels.
+   * @returns {Promise<void>} Resolves when the item settled; throws to stop the batch.
+   */
+  private async deleteOneRelationship(
+    selector: string,
+    target: string,
+    version: string,
+    preview: boolean,
+    requestScope: string | undefined,
+    envelope: DeleteEnvelope,
+    selectorsByItem: Map<DeleteItem, string>,
+  ): Promise<void> {
+    const apiName = selector.slice('relationship:'.length);
+    const item: DeleteItem = {
+      identity: { dataSpace: requestScope ?? 'default', apiName },
+      operation: preview ? 'preview' : 'delete',
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+    };
+    selectorsByItem.set(item, selector);
+    envelope.result.items.push(item);
+    let dispatched = false;
+    // Salesforce's own 4xx answer to the DELETE means nothing was deleted.
+    let refusal: unknown;
+    try {
+      const file = path.join(
+        process.cwd(),
+        'data360',
+        'relationship',
+        `${apiName}.relationship-meta.json`,
+      );
+      try {
+        await lstat(file);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        const missing = new NativeRelationshipError('RELATIONSHIP_FILE_REQUIRED');
+        replaceExplanation(
+          missing,
+          `Deleting ${selector} needs the local file ${file}, which names the source DMO; retrieve it with sf data360 retrieve --metadata relationship:<SourceDmo__dlm>. Nothing was deleted.`,
+        );
+        throw missing;
+      }
+      const { document } = await readRelationshipInput(file);
+      const base = (this.createRelationshipClient ?? createRelationshipClient)(
+        target,
+        version,
+        undefined,
+        requestScope,
+        (this.createRelationshipSender ?? openBoundSsot)(target, version),
+      );
+      const client = {
+        list: base.list,
+        remove: async (name: string): Promise<void> => {
+          dispatched = true;
+          try {
+            await base.remove(name);
+          } catch (error) {
+            if (
+              error instanceof NativeRelationshipError &&
+              error.code === 'RELATIONSHIP_HTTP_ERROR' &&
+              typeof error.status === 'number' &&
+              error.status >= 400 &&
+              error.status < 500
+            )
+              refusal = error;
+            throw error;
+          }
+        },
+      };
+      if (preview) {
+        const plan = await (this.preflightDeleteRelationship ?? preflightDeleteNativeRelationship)(
+          apiName,
+          document,
+          client,
+          requestScope,
+        );
+        item.outcome = plan.present ? 'delete' : 'unchanged';
+        return;
+      }
+      const result = await (this.deleteRelationship ?? deleteNativeRelationship)(
+        apiName,
+        document,
+        client,
+        requestScope,
+      );
+      item.outcome = result.outcome;
+      if (result.outcome === 'deleted') item.mutation = 'confirmed-deleted';
+    } catch (error) {
+      item.outcome = dispatched ? 'failed' : 'blocked';
+      item.mutation =
+        refusal !== undefined && refusal === error
+          ? 'rejected'
+          : dispatched
+            ? 'unknown'
+            : 'not-attempted';
+      envelope.status = dispatched ? 'failed' : 'blocked';
+      throw error;
+    }
+  }
+
+  /**
+   * Execute the selection in dependency order (relationships, mappings, DMOs, DLOs), stopping on
+   * the first error.
    * @returns {Promise<DeleteEnvelope>} Payload-free deletion evidence.
    */
   public async run(): Promise<DeleteEnvelope> {
@@ -1196,7 +1323,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           (value) =>
             !(value.startsWith('dlo:') && dloName.test(value.slice(4))) &&
             !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))) &&
-            !(value.startsWith('mapping:') && nativeMappingName.test(value.slice(8))),
+            !(value.startsWith('mapping:') && nativeMappingName.test(value.slice(8))) &&
+            !(value.startsWith('relationship:') && nativeRelationshipName.test(value.slice(13))),
         )
       )
         throw new DloError('INVALID_SELECTION');
@@ -1206,9 +1334,16 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       } catch {
         throw new DloError('INVALID_SCOPE');
       }
-      // Dependents go first: mappings, then DMOs (which take their mappings along), then DLOs.
+      // Dependents go first: relationships (which need their DMOs), mappings, then DMOs (which
+      // take their mappings along), then DLOs.
       const familyOrder = (selector: string): number =>
-        selector.startsWith('mapping:') ? 0 : selector.startsWith('dmo:') ? 1 : 2;
+        selector.startsWith('relationship:')
+          ? 0
+          : selector.startsWith('mapping:')
+            ? 1
+            : selector.startsWith('dmo:')
+              ? 2
+              : 3;
       // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the ES2022 library target.
       const selectors = [...new Set(flags.metadata)].sort(
         (a, b) => familyOrder(a) - familyOrder(b),
@@ -1275,6 +1410,18 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         }
       }
       for (const selector of selectors) {
+        if (selector.startsWith('relationship:')) {
+          await this.deleteOneRelationship(
+            selector,
+            target,
+            version,
+            flags.preview,
+            requestScope,
+            envelope,
+            selectorsByItem,
+          );
+          continue;
+        }
         const native = selector.startsWith('dmo:');
         const mapping = selector.startsWith('mapping:');
         const apiName = selector.slice(selector.indexOf(':') + 1);
@@ -1436,6 +1583,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           error instanceof DloError ||
           error instanceof NativeDmoError ||
           error instanceof NativeMappingError ||
+          error instanceof NativeRelationshipError ||
           error instanceof DataStreamError ||
           error instanceof DataTransformError
             ? error.code

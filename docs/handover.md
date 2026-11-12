@@ -1,3 +1,41 @@
+# Native DMO relationships — 2026-11-12
+
+Version stays 0.1.0; nothing pushed.
+
+- New family `relationship` on the native route (default/auto API 68, numeric pins from
+  61): file `data360/relationship/<Name>.relationship-meta.json` with `identity`
+  (`apiName`, `dataSpace`) and `spec` (source/target object and field, `cardinality`,
+  `relationshipOwner`). It replaces the Metadata API 65 XML export of
+  `FieldSrcTrgtRelationship` that `retrieve -m relationship:<Name>` used to write; the
+  XML writer and its tests are removed.
+- Retrieve `-m relationship:<Dmo__dlm>` writes every relationship whose source is that
+  DMO. Bare `relationship` is refused (`RELATIONSHIP_INVENTORY_UNQUALIFIED`). The list
+  is read with explicit paging (limit 200, offset) and must add up to `totalSize`
+  (`RELATIONSHIP_INVENTORY_INCOMPLETE`): `nextPageUrl` repeats the current offset and
+  there is no read by name (GET answers 405).
+- Deploy matches by binding, not by the Salesforce-generated name: present with the
+  same cardinality and owner is `unchanged`; absent is one create, then reads until
+  ACTIVE (a status other than ACTIVE or CREATING stops them early); a different cardinality or owner is refused
+  (`RELATIONSHIP_CHANGE_UNSUPPORTED`, no update route). Deploy never deletes. Native
+  batches run DLOs, DMOs, mappings, then relationships; preview of a relationship whose
+  DMO the batch creates reports `planned-dependencies`.
+- Salesforce requires both DMOs to be mapped: create between unmapped DMOs answers HTTP
+  400 (`RELATIONSHIP_HTTP_ERROR`, mutation `rejected`); no local check.
+- Delete `-m relationship:<Name>` reads the local file for the source DMO
+  (`RELATIONSHIP_FILE_REQUIRED` names the path), confirms the binding (`RELATIONSHIP_NAME_MISMATCH`, nothing deleted, when only another
+  name carries it; `unchanged` when neither name nor binding exists), sends one DELETE (`ssot/data-model-objects/relationships/{name}`) and
+  confirms absence. 4xx is `rejected`. Relationships run first in a delete command.
+  Per the API only custom relationships can be deleted; the plugin surfaces the answer.
+
+Live, `isolated-source`, API 68. Raw probes: create between unmapped DMOs 400; between
+mapped DMOs 201, ACTIVE about 5 s later and listed from both DMOs; DELETE by name 204;
+GET by name 405; `ssot__Individual__dlm` lists 145 relationships (default page 20,
+limit 200 returns all). Plugin: one deploy of two DLOs, two DMOs, two mappings and the
+relationship (123 s, preview `planned-dependencies`); redeploy unchanged (4 s);
+retrieve by DMO (4 s) and redeploy of the retrieved file unchanged (4 s); delete
+preview read-only (5 s); delete confirmed (9 s); repeat delete unchanged (3 s).
+Fixtures deleted and read 404 afterwards.
+
 # DLO delete checks its dependents — 2026-11-11
 
 Version stays 0.1.0; nothing pushed.

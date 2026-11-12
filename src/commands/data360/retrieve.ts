@@ -28,10 +28,13 @@ import { retrieveNativeDlo } from '../../services/native-dlo.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { writeDloDocument } from '../../artifacts/write-dlo.js';
 import {
-  RelationshipDefinitionError,
-  writeRelationshipDefinition,
-} from '../../artifacts/write-relationship-definition.js';
-import { retrieveRelationshipSourceMetadata } from '../../transport/project-metadata.js';
+  NativeRelationshipError,
+  relationshipDmoName,
+} from '../../artifacts/native-relationship-document.js';
+import { writeNativeRelationshipDocument } from '../../artifacts/write-native-relationship.js';
+import { retrieveNativeRelationships } from '../../services/native-relationship.js';
+import { createRelationshipClient } from '../../transport/relationship-rest.js';
+import { openBoundSsot } from '../../transport/bound-ssot.js';
 import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
 import {
@@ -131,9 +134,6 @@ export type RetrieveEnvelope = {
         | 'dlo'
         | 'relationship'
         | 'mapping';
-      definitionOnly?: true;
-      /** False means unavailable to this plugin's operational deploy, not standard Metadata deploy. */
-      deployable?: false;
       routes?: Array<{
         operation: string;
         apiVersion: string;
@@ -149,7 +149,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:ApiName exports standard API65/default XML only; it is not deployable through this plugin operational deploy and does not admit prerequisites. Relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory is blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 and fixed API67 connection reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Explicit API68 Graph retrieval writes distinct *.native-dataGraph.json authored intent for the qualified root-only Individual NONE subset; no generated identities are replayed. Auto/numeric67 retain the facade Graph artifact and default space; only qualified ready root-only NONE configurations are portable. Graph inventory is blocked. CI requires default space and API65/auto or explicit API68, exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs. Explicit API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -172,7 +172,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Exact data-transform:Name API68/default authored input; native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. Legacy relationship:ApiName XML, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName remain exact-only.',
+        'Exact data-transform:Name API68/default authored input; native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName remain exact-only.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -223,8 +223,21 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected writeNativeMapping = writeNativeMappingDocument;
   protected listNativeNames = listNativeNames;
   protected listNativeMappingNames = listNativeMappingNames;
-  protected acquireRelationshipXml = retrieveRelationshipSourceMetadata;
-  protected writeRelationship = writeRelationshipDefinition;
+  protected acquireRelationships = retrieveNativeRelationships;
+  protected createRelationshipClient = (
+    connection: Connection,
+    target: string,
+    version: string,
+    requestScope?: string,
+  ): ReturnType<typeof createRelationshipClient> =>
+    createRelationshipClient(
+      target,
+      version,
+      undefined,
+      requestScope,
+      openBoundSsot(target, version, async () => connection),
+    );
+  protected writeRelationship = writeNativeRelationshipDocument;
   protected discoverDataGraphOwner = discoverDataGraphOwner;
   protected readRawDataGraph = async (
     connection: Parameters<typeof retrieveDataGraph>[0],
@@ -270,6 +283,81 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       },
     };
   };
+  /**
+   * Retrieve every relationship whose source is one of the DMOs, one file each. Each DMO's
+   * inventory is read completely before its files are written; failures stay per DMO or file.
+   * @param {string[]} dmoNames Exact sorted source DMOs.
+   * @param {Connection} connection Command-owned connection for the bound reads.
+   * @param {string} target Resolved username.
+   * @param {string} version Native API version.
+   * @param {string | undefined} requestScope Optional request scope.
+   * @param {string} root Project root.
+   * @param {boolean} overwrite Permit replacing differing files.
+   * @returns {Promise<object>} Items, diagnostics and whether a failure was not local.
+   */
+  private async retrieveRelationshipFamily(
+    dmoNames: string[],
+    connection: Connection,
+    target: string,
+    version: string,
+    requestScope: string | undefined,
+    root: string,
+    overwrite: boolean,
+  ): Promise<{
+    items: RetrieveEnvelope['result']['items'];
+    errors: RetrieveEnvelope['diagnostics']['errors'];
+    failed: boolean;
+  }> {
+    const items: RetrieveEnvelope['result']['items'] = [];
+    const errors: RetrieveEnvelope['diagnostics']['errors'] = [];
+    let failed = false;
+    const diagnose = (error: unknown, apiName: string): void => {
+      const code = error instanceof NativeRelationshipError ? error.code : 'NATIVE_RETRIEVE_FAILED';
+      if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH'].includes(code)) failed = true;
+      errors.push({
+        code,
+        message: operationDiagnostic(
+          error,
+          'Relationship retrieval did not complete for this item; the org was not changed.',
+        ),
+        retryable: false,
+        identity: { dataSpace: requestScope ?? 'default', apiName },
+        family: 'relationship',
+      });
+    };
+    for (const dmo of dmoNames) {
+      let documents;
+      try {
+        documents = await (this.acquireRelationships ?? retrieveNativeRelationships)(
+          dmo,
+          this.createRelationshipClient(connection, target, version, requestScope),
+          requestScope,
+        );
+      } catch (error) {
+        diagnose(error, dmo);
+        continue;
+      }
+      for (const document of documents)
+        try {
+          const receipt = await (this.writeRelationship ?? writeNativeRelationshipDocument)(
+            document,
+            root,
+            overwrite,
+          );
+          items.push({
+            identity: document.identity,
+            operation: 'retrieve',
+            family: 'relationship',
+            routes: [{ operation: 'relationship.list', apiVersion: version, transport: 'native' }],
+            ...receipt,
+          });
+        } catch (error) {
+          diagnose(error, document.identity.apiName);
+        }
+    }
+    return { items, errors, failed };
+  }
+
   /**
    * Acquire the complete runtime projection, then publish only its authored candidate.
    * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
@@ -538,16 +626,32 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         return finish('blocked', 'NATIVE_GRAPH_RETRIEVE_BLOCKED', error);
       }
     }
+    // A relationship is retrieved per source DMO; an inventory of all of them is not offered.
+    if (selectors.includes('relationship'))
+      return finish('blocked', 'RELATIONSHIP_INVENTORY_UNQUALIFIED');
     const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
+    const relationshipDmos = [
+      ...new Set(
+        selectors
+          .filter((value) => value.startsWith('relationship:'))
+          .map((value) => value.slice('relationship:'.length)),
+      ),
+    ];
+    relationshipDmos.sort();
     if (
-      selectors.every((value) =>
-        nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
+      selectors.every(
+        (value) =>
+          value.startsWith('relationship:') ||
+          nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
       )
     ) {
       let version: string;
       try {
         version = nativeApiVersion(flags['api-version']);
+        if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
+          return finish('blocked', 'INVALID_SELECTION');
         for (const selector of selectors) {
+          if (selector.startsWith('relationship:')) continue;
           const [family, name, extra] = selector.split(':');
           if (
             extra !== undefined ||
@@ -615,9 +719,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           error,
         );
       }
-      envelope.result.selection = [...selected].flatMap(([family, names]) =>
-        names.map((name) => `${family}:${name}`),
-      );
+      envelope.result.selection = [
+        ...[...selected].flatMap(([family, names]) => names.map((name) => `${family}:${name}`)),
+        ...relationshipDmos.map((name) => `relationship:${name}`),
+      ];
       let failed = false;
       for (const family of nativeFamilies) {
         if (
@@ -687,6 +792,21 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           }
         }
       }
+      if (relationshipDmos.length > 0) {
+        outputTypes.add('relationship');
+        const relationships = await this.retrieveRelationshipFamily(
+          relationshipDmos,
+          connection,
+          target,
+          version,
+          requestScope,
+          flags['output-dir'] ?? process.cwd(),
+          flags.overwrite,
+        );
+        envelope.result.items.push(...relationships.items);
+        envelope.diagnostics.errors.push(...relationships.errors);
+        if (relationships.failed) failed = true;
+      }
       return finish(
         envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
       );
@@ -694,7 +814,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
     const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
-    const relationshipSelectors = selectors.filter((value) => value.startsWith('relationship:'));
     const graphSelectors = selectors.filter((value) => value.startsWith('data-graph:'));
     const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
     const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
@@ -727,13 +846,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
           throw new MappingDefinitionError('INVALID_SELECTION');
       }
-      if (selectors.includes('relationship'))
-        throw new RelationshipDefinitionError('RELATIONSHIP_INVENTORY_UNQUALIFIED');
-      if (relationshipSelectors.length > 0) {
-        if (!['65.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
-          throw new RelationshipDefinitionError('INVALID_SCOPE');
-        if (relationshipSelectors.some((value) => !segmentName.test(value.slice(13))))
-          throw new RelationshipDefinitionError('INVALID_SELECTION');
+      if (relationshipDmos.length > 0) {
+        nativeApiVersion(flags['api-version']);
+        if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
+          throw new NativeRelationshipError('INVALID_SELECTION');
       }
       if (selectors.includes('data-graph'))
         throw new DataGraphError('DATA_GRAPH_INVENTORY_UNQUALIFIED');
@@ -775,8 +891,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       effectiveVersion =
         dloSelectors.length === selectors.length && dloSelectors.length > 0
           ? '68.0'
-          : relationshipSelectors.length + mappingSelectors.length === selectors.length &&
-              selectors.length > 0
+          : mappingSelectors.length === selectors.length && selectors.length > 0
             ? '65.0'
             : sharedFamily
               ? operationApiVersion(flags['api-version'], sharedFamily)
@@ -787,7 +902,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       return finish(
         'blocked',
         error instanceof MappingDefinitionError ||
-          error instanceof RelationshipDefinitionError ||
+          error instanceof NativeRelationshipError ||
           error instanceof DloError ||
           error instanceof DataGraphError ||
           error instanceof IdentityResolutionError ||
@@ -959,57 +1074,28 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           });
         }
       }
-      const relationships = [...new Set(relationshipSelectors.map((value) => value.slice(13)))];
-
-      relationships.sort();
-      for (const apiName of relationships) {
-        try {
-          const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
-          if (!target) throw new RelationshipDefinitionError('TARGET_ORG_REQUIRED');
-          let definitionXml;
-          try {
-            definitionXml = await this.acquireRelationshipXml(target, apiName);
-          } catch {
-            throw new RelationshipDefinitionError('RELATIONSHIP_ACQUISITION_FAILED');
-          }
-          const receipt = await this.writeRelationship(
-            apiName,
-            definitionXml,
+      if (relationshipDmos.length > 0) {
+        const target = flags['target-org'] ?? org.getConnection().getUsername();
+        if (target) {
+          const relationships = await this.retrieveRelationshipFamily(
+            relationshipDmos,
+            org.getConnection(),
+            target,
+            nativeApiVersion(flags['api-version']),
+            requestScope,
             flags['output-dir'] ?? process.cwd(),
             flags.overwrite,
           );
-          envelope.result.items.push({
-            identity: { dataSpace: 'default', apiName },
-            operation: 'retrieve',
-            family: 'relationship',
-            definitionOnly: true,
-            deployable: false,
-            routes: [
-              { operation: 'relationship.metadata', apiVersion: '65.0', transport: 'metadata' },
-            ],
-            ...receipt,
-          });
-        } catch (error: unknown) {
-          const code = error instanceof RelationshipDefinitionError ? error.code : 'OUTPUT_FAILED';
-          if (
-            ![
-              'INVALID_SELECTION',
-              'INVALID_SCOPE',
-              'OVERWRITE_REQUIRED',
-              'UNSAFE_PATH',
-              'TARGET_ORG_REQUIRED',
-            ].includes(code)
-          )
-            failed = true;
+          envelope.result.items.push(...relationships.items);
+          envelope.diagnostics.errors.push(...relationships.errors);
+          if (relationships.failed) failed = true;
+        } else
           envelope.diagnostics.errors.push({
-            code,
+            code: 'TARGET_ORG_REQUIRED',
             family: 'relationship',
-            identity: { dataSpace: 'default', apiName },
-            message:
-              'This relationship definition was not exported. Check the exact selection, acquisition and output path.',
+            message: 'Relationships were not retrieved; no target org username was resolved.',
             retryable: false,
           });
-        }
       }
       // Pin only this command-owned connection, before any service uses it.
       const connection = org.getConnection(selection.soapNumeric);
@@ -1034,7 +1120,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       envelope.result.selection = [
         ...dlos.map((name) => `dlo:${name}`),
         ...mappings.map((name) => `mapping:${name}`),
-        ...relationships.map((name) => `relationship:${name}`),
+        ...relationshipDmos.map((name) => `relationship:${name}`),
         ...names.map((name) => `dmo:${name}`),
         ...segments.map((name) => `segment:${name}`),
       ];
@@ -1267,7 +1353,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       envelope.result.selection = [
         ...dlos.map((name) => `dlo:${name}`),
         ...mappings.map((name) => `mapping:${name}`),
-        ...relationships.map((name) => `relationship:${name}`),
+        ...relationshipDmos.map((name) => `relationship:${name}`),
         ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
       ];
       for (const entry of entries) {

@@ -754,23 +754,41 @@ Not qualified:
 - [ ] Relationships and SQL/flex DMOs.
 - [ ] Released-package acceptance.
 
-## relationship: exact definition-only export
+## relationship: native definition retrieve, create and delete
 
-- [x] Public `sf data360 retrieve -m relationship:ExactDeveloperName` supports one/multiple
-      sorted unique exact names in default space, with default/65.0/auto fixed to Metadata API65.
-- [x] Export exact standard XML to the configured package's `fieldSrcTrgtRelationships`
-      directory; support unchanged repeat and explicit differing-file overwrite consent.
-- [x] Report `family: relationship`, `definitionOnly: true`, `deployable: false` and the
-      actual Metadata route. This excludes this plugin's operational deploy, not standard
-      Metadata deployment elsewhere. Retain successful members after independent failures.
-- [x] Reject inventory and operational file/Git deploy input admission.
-      Synthetic tests cover output safety, version/mixed-family routing and zero-mutation rejection.
-- [x] Isolated installed source-only definition export on mcnext-sdo, October 29, 2026:
-      exact independent standard XML comparison, configured root, unchanged repeat,
-      API65/auto requested/actual routes, duplicate selection and local deploy-input rejection.
-      Multiple distinct members/failure continuation remain synthetic only; no semantic
-      or cross-org portability claim. Binding and finite-call receipts are in docs/handover.md.
-- [ ] Relationship prerequisite compatibility, operational preview/create/update/repeat.
+- [x] File `data360/relationship/<Name>.relationship-meta.json`: `schemaVersion: 1`,
+      `kind: relationship`, `identity` (`apiName`, `dataSpace`) and `spec` with
+      `sourceObjectName`, `sourceFieldName`, `targetObjectName`, `targetFieldName`,
+      `cardinality` and `relationshipOwner`. Cardinality and owner are sent as written.
+- [x] Native route only, default/auto API68; numeric pins from 61 are kept.
+- [x] Retrieve `-m relationship:<Dmo__dlm>`: every relationship whose source is that
+      DMO, one file each. Bare `relationship` is refused
+      (`RELATIONSHIP_INVENTORY_UNQUALIFIED`). The list is read in pages of 200 by
+      offset and must add up to `totalSize` without duplicate names
+      (`RELATIONSHIP_INVENTORY_INCOMPLETE` otherwise).
+- [x] Deploy matches by binding (source object and field, target object and field), so
+      a hand-written file may use any name; Salesforce generates the name on create.
+      Present with the same cardinality and owner: `unchanged`. Absent: one create,
+      then reads until ACTIVE (`RELATIONSHIP_PERSISTENCE_UNCONFIRMED`, at once on a
+      status other than ACTIVE or CREATING). Different
+      cardinality or owner: `RELATIONSHIP_CHANGE_UNSUPPORTED` before any write.
+- [x] Native batches run DLOs, DMOs, mappings, then relationships; a preview of a
+      relationship whose DMO the batch creates reports `planned-dependencies`.
+- [x] Salesforce requires both DMOs to be mapped (HTTP 400, reported as
+      `RELATIONSHIP_HTTP_ERROR`, mutation `rejected`); no local check.
+- [x] Delete `-m relationship:<Name>` reads the local file to find the source DMO
+      (`RELATIONSHIP_FILE_REQUIRED` names the expected path), confirms the binding
+      (`RELATIONSHIP_NAME_MISMATCH`, nothing deleted, when the binding exists only
+      under another name; `unchanged` when neither name nor binding is present), sends one DELETE and confirms absence
+      (`RELATIONSHIP_DELETION_UNCONFIRMED`). HTTP 4xx: mutation `rejected`.
+      Relationships run first in a delete command. `--preview` only reads.
+- [x] Observed at API68 through the plugin in one org on empty custom DMOs: combined
+      create of two DLOs, two DMOs, two mappings and the relationship, unchanged
+      repeat, retrieve by DMO with unchanged redeploy, read-only delete preview,
+      confirmed delete and unchanged repeat delete.
+- [ ] Update (no Salesforce route; delete and deploy again).
+- [ ] Standard and data-bearing DMOs, non-default data spaces, other API versions,
+      cardinalities other than ManyToOne.
 
 ## mapping: unimplemented operational semantics; exact definition-only export available
 
