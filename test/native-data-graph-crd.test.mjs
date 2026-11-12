@@ -304,13 +304,13 @@ for (const reader of ['root', 'get'])
       });
     const pending = operateNativeDataGraph(document(), f.context, f.client, options('delete'));
     await started;
-    t.mock.timers.tick(120_000);
+    t.mock.timers.tick(900_000);
     assert.deepEqual(await pending, { outcome: 'blocked', mutation: 'not-attempted' });
     await release();
     // Drain late admission continuations without allowing another write or timer.
     for (let turn = 0; turn < 50; turn++) await Promise.resolve();
     assert.deepEqual(f.calls, []);
-    assert.equal(t.mock.timers.tick(120_000), undefined);
+    assert.equal(t.mock.timers.tick(900_000), undefined);
   });
 
 test('late Graph Connect evidence cannot mutate a returned failure or leak into next invocation', async (t) => {
@@ -371,7 +371,7 @@ test('public delete deadline bounds unresolved DELETE and late acknowledgement n
   };
   const pending = operateNativeDataGraph(document(), f.context, f.client, options('delete'));
   await started;
-  t.mock.timers.tick(120_000);
+  t.mock.timers.tick(900_000);
   const result = await pending;
   assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
   f.setGraph(undefined);
@@ -1039,6 +1039,39 @@ for (const mode of ['timeout', 'preservation', 429, 503])
     assert.equal(JSON.stringify(result).includes('private-secret'), false);
     process.exitCode = 0;
   });
+
+test('public Graph create that cannot be confirmed names the failed check on the item', async () => {
+  const cwd = await project();
+  const f = updateFixture();
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  const receipt = await writeDataGraphDocument(desired, cwd, false);
+  const command = Object.create(Deploy.prototype);
+  command.parse = async () => ({
+    flags: {
+      'api-version': '68.0',
+      'source-dir': [receipt.path],
+      preview: false,
+      'allow-processing': true,
+    },
+  });
+  command.argv = ['--json'];
+  command.config = {};
+  command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+  command.resolveTargetOrg = async () => ({ getConnection: () => ({}) });
+  command.nativeGraphContext = async () => f.context;
+  command.nativeGraphClient = () => f.client;
+  command.operateNativeGraph = async () => ({
+    outcome: 'failed',
+    mutation: 'unknown',
+    failedCheck: 'response',
+  });
+  const result = await command.run();
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].mutation, 'unknown');
+  assert.equal(result.result.items[0].diagnostics[0].code, 'DATA_GRAPH_CREATE_UNCONFIRMED');
+  assert.match(result.result.items[0].diagnostics[0].message, /response check/u);
+  process.exitCode = 0;
+});
 
 for (const selection of ['other-family', 'git'])
   test(`public Graph wait budget rejects ${selection} before auth or Git work`, async () => {
@@ -1812,7 +1845,11 @@ for (const status of [429, 503]) {
           assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
           assert.equal(getConnectDiagnostic(result), undefined);
         } else {
-          assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
+          assert.deepEqual(result, {
+            outcome: 'failed',
+            mutation: 'unknown',
+            ...(operation === 'deploy' ? { failedCheck: 'request' } : {}),
+          });
           assert.deepEqual(getConnectDiagnostic(result), evidence);
           assert.match(
             operationDiagnostic(result, ''),
@@ -2001,6 +2038,137 @@ test('acquisition carries private API diagnostics without weakening raw absence 
   assert.deepEqual(f.calls, []);
 });
 
+/**
+ * Public delete whose metadata entry outlives the item for a number of reads, on a fake clock.
+ * @param {number} linger Metadata reads that still list the graph after the item is gone.
+ * @param {boolean} [stays] The DELETE leaves the graph ready.
+ * @returns {object} Fixture, intent and recorded waits/progress.
+ */
+function lingeringDelete(linger, stays = false) {
+  const f = fixture();
+  f.setGraph(runtime());
+  let deleted = false;
+  let lingering = 0;
+  const metadata = f.context.metadata;
+  f.client.delete = async () => {
+    f.calls.push('DELETE');
+    deleted = true;
+    if (!stays) f.setGraph(undefined);
+  };
+  f.context.metadata = async (...arguments_) => {
+    if (deleted && !stays && lingering < linger) {
+      lingering++;
+      return { status: 200, body: {} };
+    }
+    return metadata(...arguments_);
+  };
+  let clock = 0;
+  const waits = [];
+  const progress = [];
+  const intent = options('delete', {
+    now: () => clock,
+    pause: async (milliseconds) => {
+      waits.push(milliseconds);
+      clock += milliseconds;
+    },
+    progress: (message) => progress.push(message),
+  });
+  return { f, intent, waits, progress };
+}
+
+test('public Graph delete keeps reading while the metadata entry outlives the item', async () => {
+  const h = lingeringDelete(16);
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
+  assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
+  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
+  assert.equal(h.waits.length, 16);
+  assert.ok(h.progress.some((line) => /Data Graph removal in progress;/u.test(line)));
+});
+
+test('public Graph delete stops at its 15 minute budget when the metadata entry never goes', async () => {
+  const h = lingeringDelete(1_000_000);
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
+  assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
+  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
+  assert.equal(
+    h.waits.reduce((total, wait) => total + wait, 0),
+    900_000,
+  );
+});
+
+test('public Graph delete that leaves the graph ready stops after 12 reads, not the budget', async () => {
+  const h = lingeringDelete(0, true);
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
+  assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown' });
+  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
+  assert.equal(h.waits.length, 11);
+});
+
+test('public Graph delete keeps reading while the item reads deleting beyond 12 reads', async () => {
+  const h = lingeringDelete(0);
+  const get = h.f.context.get;
+  let deletingReads = 0;
+  h.f.client.delete = async () => {
+    h.f.calls.push('DELETE');
+    h.f.setGraph(undefined);
+    deletingReads = 20;
+  };
+  h.f.context.get = async (...arguments_) => {
+    if (deletingReads > 0) {
+      deletingReads--;
+      return { status: 200, body: runtime('deleting') };
+    }
+    return get(...arguments_);
+  };
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.intent);
+  assert.deepEqual(result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
+  assert.equal(h.f.calls.filter((call) => call === 'DELETE').length, 1);
+  assert.equal(h.waits.length, 20);
+  assert.ok(h.progress.some((line) => /Data Graph deleting;/u.test(line)));
+});
+
+test('a create POST still open at --wait-timeout names the deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture();
+  let entered;
+  const started = new Promise((resolve) => {
+    entered = resolve;
+  });
+  f.client.create = () => {
+    f.calls.push('POST');
+    entered();
+    return new Promise(() => {});
+  };
+  const pending = operateNativeDataGraph(
+    document(),
+    f.context,
+    f.client,
+    options('deploy', { waitTimeoutSeconds: 60 }),
+  );
+  await started;
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(await pending, {
+    outcome: 'failed',
+    mutation: 'unknown',
+    failedCheck: 'deadline',
+  });
+  assert.deepEqual(
+    f.calls.filter((call) => call === 'POST'),
+    ['POST'],
+  );
+});
+
+test('empty generated names are dropped only while the graph is not ready', () => {
+  const creating = { ...runtime('creating'), valuesDmoName: '', valuesDmoLabel: '' };
+  assert.equal(
+    Object.hasOwn(nativeDataGraphDocumentFromResponse(creating).definition, 'valuesDmoName'),
+    false,
+  );
+  assert.throws(() =>
+    nativeDataGraphDocumentFromResponse({ ...runtime('ready'), valuesDmoName: '' }),
+  );
+});
+
 test('ambiguous DELETE settles reads only and cannot replay after stale metadata timeout', async () => {
   const f = fixture();
   const lifecycle = nativeDataGraphLifecycle(document(), f.context, f.client, f.guards);
@@ -2017,6 +2185,23 @@ test('ambiguous DELETE settles reads only and cannot replay after stale metadata
 });
 
 /**
+ * A creating item as API68 returns it live (create echo 2026-11-12): empty generated value
+ * DMO name and label, no ID DMO or fragment names, plus server bookkeeping fields.
+ * @returns {object} Raw creating item.
+ */
+function recordedCreating() {
+  return {
+    ...runtime('creating'),
+    createdBy: '005000000000000AAA',
+    modifiedDate: '2026-11-05T09:12:27.000Z',
+    lastRefreshedDate: '2026-11-05T09:12:27.000Z',
+    primaryObjectLabel: 'Individual',
+    valuesDmoLabel: '',
+    valuesDmoName: '',
+  };
+}
+
+/**
  * Native create that passes the recorded live build phases after the POST, one read each:
  * no item yet (metadata only), item creating, item ready without generated names, item
  * ready with metadata still Inprogress, then fully Ready.
@@ -2026,7 +2211,8 @@ test('ambiguous DELETE settles reads only and cannot replay after stale metadata
  * @param {number} [phases.ungenerated] Reads with a ready item lacking generated names.
  * @param {number} [phases.inprogress] Reads with a ready item and metadata Inprogress.
  * @param {number} [phases.vanished] Further reads with a ready item and no metadata entry.
- * @param {string} [phases.echo] Create echo: creating, or ready without generated names.
+ * @param {string} [phases.echo] Create echo: creating, creating-recorded (the live API68 shape,
+ *   also used for creating reads), or ready without generated names.
  * @param {string} [phases.metadataStatus] Metadata status reported while in progress.
  * @returns {object} Fixture, fake clock and recorded waits/progress.
  */
@@ -2056,6 +2242,7 @@ function buildingCreate({
     f.calls.push('POST');
     posted = true;
     if (echo === 'creating') return runtime('creating');
+    if (echo === 'creating-recorded') return recordedCreating();
     const raw = runtime('ready');
     delete raw.dayZeroMappingDevName;
     delete raw.dayZeroTransformDevName;
@@ -2066,7 +2253,10 @@ function buildingCreate({
     reads++;
     const current = phase();
     if (current === 'pending') return missing();
-    const raw = runtime(current === 'creating' ? 'creating' : 'ready');
+    const raw =
+      current === 'creating' && echo === 'creating-recorded'
+        ? recordedCreating()
+        : runtime(current === 'creating' ? 'creating' : 'ready');
     if (current === 'ungenerated') {
       delete raw.dayZeroMappingDevName;
       delete raw.dayZeroTransformDevName;
@@ -2148,6 +2338,7 @@ test('native create that never finishes building stops at --wait-timeout without
   const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(100));
   assert.equal(result.outcome, 'failed');
   assert.equal(result.mutation, 'unknown');
+  assert.equal(result.failedCheck, 'settlement');
   assert.deepEqual(
     h.f.calls.filter((call) => call === 'POST'),
     ['POST'],
@@ -2194,6 +2385,37 @@ test('create echo already ready without generated names is still building, not a
   assert.equal(result.outcome, 'created', JSON.stringify(result));
   assert.equal(result.mutation, 'confirmed-created');
   assert.equal(h.timing.waits.length, 4);
+  assert.deepEqual(
+    h.f.calls.filter((call) => call === 'POST'),
+    ['POST'],
+  );
+});
+
+test('the recorded API68 creating echo with empty generated names settles as created', async () => {
+  const h = buildingCreate({
+    echo: 'creating-recorded',
+    creating: 2,
+    ungenerated: 1,
+    inprogress: 1,
+  });
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
+  assert.equal(result.outcome, 'created', JSON.stringify(result));
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.ok(h.timing.progress.some((line) => /Data Graph creating;/u.test(line)));
+  assert.deepEqual(
+    h.f.calls.filter((call) => call === 'POST'),
+    ['POST'],
+  );
+});
+
+test('a create response that is not the created graph names the response check', async () => {
+  const h = buildingCreate({});
+  h.f.client.create = async () => {
+    h.f.calls.push('POST');
+    return { unexpected: true };
+  };
+  const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(1800));
+  assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown', failedCheck: 'response' });
   assert.deepEqual(
     h.f.calls.filter((call) => call === 'POST'),
     ['POST'],

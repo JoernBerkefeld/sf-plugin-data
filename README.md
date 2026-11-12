@@ -389,14 +389,17 @@ establish `updated` / `confirmed-updated`. An identical ready definition returns
 zero-write `unchanged` without processing acknowledgement. PUT HTTP 429/503,
 timeouts and uncertain outcomes are not automatically replayed.
 
-Known limit: native API 68 CREATE currently reports `failed` with mutation `unknown`
-about one second after Salesforce accepts the POST, although the graph is created; read
-it with retrieve (or deploy the same file again, which reports `unchanged` once the
-graph is built) instead of creating it again. Salesforce builds a new graph for several
-minutes: the item can read `ready` about 30 seconds before its generated day-zero DMO,
-mapping and transform names exist, and its metadata stays `Inprogress` for about 3.3
-minutes, sometimes briefly missing from the metadata list. The create POST is never
-resent.
+CREATE waits while Salesforce builds the new graph, up to `--wait-timeout` (default
+1800 seconds), with progress on stderr; the create POST is never resent. The graph first
+reads `creating` with empty generated names, then `ready` before its generated day-zero
+DMO, mapping and transform names exist, and its metadata stays `Inprogress` for about 5
+minutes, sometimes briefly missing from the metadata list. Creating a three-field graph
+took about 7 minutes. When a check after the request cannot confirm the graph, the item
+reports `failed` with mutation `unknown` and `DATA_GRAPH_CREATE_UNCONFIRMED`, naming
+the step (`request`, `response`, `settlement`, `identity` or `deadline` when `--wait-timeout` ran out). The graph may exist:
+read it with retrieve, or deploy the same file again (`unchanged` once the graph is
+built), instead of creating it again. Known limit: one live create stopped this way in
+`settlement` on a read that was not captured; the graph was created.
 
 November 5 qualification separately verified native API label, description,
 additive-field, child and multihop changes. Installed public CLI acceptance made
@@ -410,7 +413,11 @@ Delete requires the exact selector, matching local native artifact and
 root and explicitly empty known native dependency/related-segment arrays are
 rechecked before deletion. Unknown or nonempty dependencies block; **exhaustive
 external-consumer exclusion remains unverified**. Independent definition absence
-was confirmed after live API68 create/read/delete qualification. Earlier stale
+was confirmed after live API68 create/read/delete qualification. After the single
+DELETE, delete keeps reading for up to 15 minutes while the graph is being removed,
+with progress on stderr: the item and the metadata list drop it at once, the by-name
+metadata entry about 5 minutes later. Any other state after the DELETE stops after 12
+reads with `failed` / `unknown`; the DELETE is never resent. Earlier stale
 metadata readback required reconciliation; do not replay an uncertain mutation.
 Generated DMOs, mappings, transforms, internal state, storage and credits cleanup
 are not proven, nor is successful computation. Earlier installed-package CRD smoke

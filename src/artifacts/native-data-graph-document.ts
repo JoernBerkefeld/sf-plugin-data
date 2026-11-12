@@ -349,6 +349,10 @@ export function nativeDataGraphDocumentFromResponse(value: unknown): NativeDataG
       /^\d+$/u.test(raw.version),
   );
   const definition = pick(raw, topKeys);
+  // A graph that is still being created carries empty generated names (`valuesDmoName: ""`
+  // in the API68 create echo, recorded live 2026-11-12); they are not authored values.
+  if (raw.status !== 'ready')
+    for (const key of topKeys.slice(7, 13)) if (definition[key] === '') delete definition[key];
   definition.type = 'NONE';
   definition.sourceObject = observedNode(raw.sourceObject);
   graphRequire(

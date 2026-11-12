@@ -7,12 +7,15 @@ Explicit API68/default retrieval exports a distinct `.native-dataGraph.json`
 Deploy/delete accept auto/API68 for this native artifact; auto/API67 facade
 retrieval and the existing bounded LastName update remain unchanged.
 
-Known limit: native API 68 create reports `failed`/`unknown` about one second after
-Salesforce accepts the POST although the graph is created (cause not yet identified;
-observed twice). The item can read `ready` about 30 seconds before its day-zero names
-exist and the metadata stays `Inprogress` for about 3.3 minutes, sometimes briefly
-missing. The POST is never resent; an unchanged repeat deploy confirms the graph. Retrieve resolves a relative `-d`/`--output-dir`
-against the current directory for every family.
+Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
+generated names (empty names on a non-ready read are not authored values), then `ready`
+before the day-zero names exist, then metadata `Inprogress` for about 5 minutes,
+sometimes briefly missing. The POST is never resent. A create the plugin cannot confirm
+reports `failed`/`unknown` with `DATA_GRAPH_CREATE_UNCONFIRMED` naming the step
+(`request`, `response`, `settlement`, `identity`, `deadline`); an unchanged repeat deploy or a
+retrieve confirms the graph. Known limit: one live create stopped in `settlement` on an
+uncaptured read although the graph was created. Retrieve resolves a relative
+`-d`/`--output-dir` against the current directory for every family.
 
 Absent create requires independent absence/root checks and --allow-processing;
 creation automatically generates supporting resources and defaults to daily full
@@ -26,8 +29,10 @@ Delete needs an exact selector, matching local native artifact, --confirm-delete
 and fresh ready/identity/created-date/definition/root checks, with explicitly empty
 known dependency/related-segment arrays. Unknown/nonempty dependencies block;
 exhaustive external-consumer exclusion remains unverified. Live API68 create/read/
-delete evidence ultimately confirmed independent graph-definition absence after
-stale-metadata reconciliation. No generated DMO/mapping/transform/internal-state,
+delete evidence confirmed independent graph-definition absence. After the single
+DELETE, settlement reads for up to 15 minutes while the graph is being removed (item
+and metadata list drop it at once, the by-name metadata entry about 5 minutes later),
+with stderr progress; any other state stops after 12 reads with `failed`/`unknown`. No generated DMO/mapping/transform/internal-state,
 storage/credits cleanup or computation claim. Installed package smoke verifies
 offline routing only, not live installed cross-org acceptance. README's 14-resource
 row records Partial native create/delete and retains the separate facade update.

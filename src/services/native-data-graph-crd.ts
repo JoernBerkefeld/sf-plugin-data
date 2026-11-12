@@ -392,6 +392,55 @@ export async function settleNativeDataGraphCreation(
 }
 
 /**
+ * Wait after a graph DELETE until the graph reads absent on every route. The item disappears
+ * first; the by-name metadata entry stayed about 5 minutes longer (recorded live at API68,
+ * 2026-11-12). GET-only, paced, never past the deadline, never re-sends the DELETE.
+ * @param {NativeGraphContext} context Deadline-guarded readers.
+ * @param {NativeDataGraphDocument} document Native intent of the deleted graph.
+ * @param {object} timing Invocation clock, deadline, pacing and stderr progress.
+ * @param {Function} timing.now Clock.
+ * @param {number} timing.started Invocation start.
+ * @param {number} timing.end Invocation deadline.
+ * @param {Function} timing.pause Read-only delay.
+ * @param {Function} timing.progress Stderr-only progress sink.
+ * @returns {Promise<NativeGraphAcquisition>} Absence or unknown.
+ */
+export async function settleNativeDataGraphDeletion(
+  context: NativeGraphContext,
+  document: NativeDataGraphDocument,
+  timing: {
+    now: () => number;
+    started: number;
+    end: number;
+    pause: (milliseconds: number) => Promise<unknown>;
+    progress: (message: string) => void;
+  },
+): Promise<NativeGraphAcquisition> {
+  try {
+    // Only the recorded removal states (item gone with metadata left, or an item reading
+    // deleting) justify the long wait; any other read keeps the short bound of 12 reads.
+    let other = 0;
+    for (let first = true; ; first = false) {
+      context.check();
+      const result = await acquireNativeDataGraph(context, document);
+      if (result.state === 'unknown' || result.state === 'absent') return result;
+      if (result.state === 'present' && result.observation.status !== 'deleting' && ++other >= 12)
+        return { state: 'unknown' };
+      const remaining = timing.end - timing.now();
+      if (remaining <= 0) return { state: 'unknown' };
+      const wait = Math.min(first ? 5000 : 20_000, remaining);
+      const stage = result.state === 'present' ? result.observation.status : 'removal in progress';
+      timing.progress(
+        `Data Graph ${stage}; elapsed ${Math.floor((timing.now() - timing.started) / 1000)}s; next wait ${wait / 1000}s.`,
+      );
+      await timing.pause(wait);
+    }
+  } catch (error) {
+    return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error));
+  }
+}
+
+/**
  * Resolve the authoritative default dataspace once per invocation.
  * @param {NativeGraphContext} context Bound target readers.
  * @returns {Promise<string>} Exact active default record identity.
@@ -681,7 +730,13 @@ export type NativeGraphResult = {
   outcome: 'created' | 'deleted' | 'blocked' | 'unknown';
   mutation: 'not-attempted' | 'attempted';
   receipt?: NativeGraphReceipt;
+  /** After an attempted create: the step that could not confirm it. */
+  failedCheck?: NativeGraphCreateCheck;
 };
+
+/** Steps after the create request that must confirm the created graph. */
+export type NativeGraphCreateCheck =
+  'request' | 'response' | 'settlement' | 'identity' | 'deadline';
 
 /**
  * Create one run-local CRD owner; receipts cannot be imported to adopt preexisting graphs.
@@ -751,6 +806,7 @@ export function nativeDataGraphLifecycle(
     let attempted = false;
     let diagnostic: ConnectDiagnostic | undefined;
     let expired = false;
+    let createCheck: NativeGraphCreateCheck | undefined;
     const now = guards.now ?? Date.now;
     let previous = now();
     const creation = operation === 'create' ? guards.creation : undefined;
@@ -790,21 +846,26 @@ export function nativeDataGraphLifecycle(
         attempted = true;
         // A thrown/ambiguous write is reconciled read-only, never replayed or adopted for deletion.
         let response: unknown;
+        createCheck = 'request';
         try {
           response = await client.create(document.definition);
         } catch (error) {
           const settled = await settleNativeDataGraph(readers, document, 'ready', guards.pause);
           return retainConnectDiagnostic(
-            { outcome: 'unknown', mutation: 'attempted' },
+            { outcome: 'unknown', mutation: 'attempted', failedCheck: 'request' },
             getConnectDiagnostic(error) ?? getConnectDiagnostic(settled),
           );
         }
+        createCheck = 'response';
         check();
         const returned = nativeGraphCreateEcho(response, document);
+        createCheck = 'settlement';
         const settled = creation
           ? await settleNativeDataGraphCreation(readers, document, { ...creation, now })
           : await settleNativeDataGraph(readers, document, 'ready', guards.pause);
         diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
+        graphRequire(settled.state === 'present');
+        createCheck = 'identity';
         graphRequire(
           settled.state === 'present' &&
             settled.observation.id === returned.id &&
@@ -883,6 +944,7 @@ export function nativeDataGraphLifecycle(
         {
           outcome: attempted ? 'unknown' : 'blocked',
           mutation: attempted ? 'attempted' : 'not-attempted',
+          ...(attempted && createCheck ? { failedCheck: createCheck } : {}),
         },
         getConnectDiagnostic(error) ?? diagnostic,
       );

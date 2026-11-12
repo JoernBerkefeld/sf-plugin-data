@@ -1,3 +1,58 @@
+# Native API 68 data graph create and delete settle — 2026-11-12
+
+Package G0 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.
+Version stays 0.1.0; nothing pushed.
+
+- Cause of the create failure (P8-P10): the API 68 create echo reads `creating` with
+  `valuesDmoName: ""` and `valuesDmoLabel: ""` and no `idDmoName` or fragment name.
+  The generated-name check required non-empty text, so the echo was refused before
+  settlement and the lifecycle reported `unknown` without a diagnostic. Found offline
+  from the recorded raw echo (`F:/Temp/d7probe-mFhcud/g2-create.out`). Fix:
+  `nativeDataGraphDocumentFromResponse` drops empty generated names on a non-ready read.
+  The test fixture had omitted those keys instead of sending empty strings; a fixture
+  with the recorded shape now covers it.
+- An unconfirmed create names the failed step: `failedCheck` (`request`, `response`,
+  `settlement`, `identity`, `deadline`) on the lifecycle and operation results, and the deploy
+  item carries `DATA_GRAPH_CREATE_UNCONFIRMED`.
+- Delete: after the DELETE the item and the metadata list drop the graph at once, but the
+  by-name metadata read kept returning it for about 5 minutes, so the old 12-read
+  settlement (~59 s) reported `failed`/`unknown` for a successful delete.
+  `settleNativeDataGraphDeletion` keeps reading while the graph is being removed
+  (pending, or an item reading `deleting`), first wait 5 s then 20 s, stderr progress,
+  within a fixed 15 minute delete budget (was 120 s). Any other state stops after 12
+  reads. The DELETE is never resent.
+- Tests in `test/native-data-graph-crd.test.mjs`: recorded creating echo, failed-check
+  values (request/response/settlement), deploy item diagnostic, delete waiting through
+  lingering metadata, delete budget, delete that leaves the graph ready. Three delete
+  deadline tests now tick 900 s. Also: a create POST still open at `--wait-timeout`
+  (`deadline`), a delete whose item reads `deleting` past 12 reads, and the empty-name drop
+  applying only to non-ready reads. Review: two rounds, zero must-fix.
+
+Live, `isolated-source` (00Daj000010xkZNEAY), all at `auto` unless noted, 2 of 4 graph
+creates used:
+
+- CliGraphG0_f583: create exit 1 after 64 s, `failed`/`unknown`,
+  `DATA_GRAPH_CREATE_UNCONFIRMED` (settlement), no HTTP diagnostic; one `creating` read
+  passed first. The graph was created and settled. **Open:** the failing read was not
+  captured. All later captured states replay as admitted offline (scratch
+  `replay.mjs`); an empty node `fragmentDMOName` would fail but was never seen. Next
+  create (G1) runs beside a fast raw poller.
+- CliGraphG0b_e09a: preview exit 0 (create, route data-graph.deploy 68.0 native); create
+  exit 0 `confirmed-created` (412 s; `creating` twice, then ready with metadata
+  `Inprogress` ~5 min); unchanged repeat exit 0 (132 s); retrieve at auto exit 1
+  `DATA_GRAPH_OWNER_DISCOVERY_FAILED` (still the API 67 route until G2); retrieve with
+  `--api-version 68.0` exit 0 (19 s); delete preview exit 0; delete exit 1 `failed`/
+  `unknown` at 59 s with the old settlement (graph was deleted; by-name metadata listed
+  until ~5 min after the DELETE).
+- CliGraphG0_f583 delete with the new settlement: preview exit 0, delete exit 0
+  `confirmed-deleted` (66 s, "removal in progress" at 35 s and 40 s), local file removed.
+- Both fixtures afterwards: item not found, by-name metadata unlisted, SOQL DataGraph
+  totalSize 0.
+
+Verification DB: `data360:graph.native-create-delete-settlement.api68` (status
+partial; the uncaptured settlement stop is the open row). Evidence:
+`F:/Temp/g0live-qgaDJC`.
+
 # Lean retrieved files and local file removal on delete — 2026-11-12
 
 Version stays 0.1.0; nothing committed or pushed.

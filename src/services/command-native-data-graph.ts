@@ -13,9 +13,10 @@ import {
   bindNativeGraphRoot,
   nativeDataGraphLifecycle,
   settleNativeDataGraph,
+  settleNativeDataGraphDeletion,
   updateNativeDataGraph,
 } from './native-data-graph-crd.js';
-import type { NativeGraphContext } from './native-data-graph-crd.js';
+import type { NativeGraphContext, NativeGraphCreateCheck } from './native-data-graph-crd.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
 
 /**
@@ -69,6 +70,8 @@ export type NativeGraphOperationResult = {
     | 'failed';
   mutation:
     'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'confirmed-deleted' | 'unknown';
+  /** After an attempted create: the step that could not confirm it. */
+  failedCheck?: NativeGraphCreateCheck;
 };
 
 /**
@@ -103,12 +106,14 @@ export async function operateNativeDataGraph(
   },
 ): Promise<NativeGraphOperationResult> {
   let attempted = false;
+  let creating = false;
   let diagnostic: ConnectDiagnostic | undefined;
   const original = context;
   const now = options.now ?? Date.now;
   const started = now();
+  // Delete waits for the by-name metadata entry, which outlived the item by ~5 min live.
   const budget =
-    options.operation === 'deploy' ? (options.waitTimeoutSeconds ?? 1800) * 1000 : 120_000;
+    options.operation === 'deploy' ? (options.waitTimeoutSeconds ?? 1800) * 1000 : 900_000;
   const end = started + budget;
   let previous = started;
   let expired = false;
@@ -227,6 +232,7 @@ export async function operateNativeDataGraph(
         // Keep waiting while the created graph is still building, up to --wait-timeout.
         creation: { started, end, pause: waitPause, progress },
       });
+      creating = true;
       const result = await lifecycle.create(true);
       return retainConnectDiagnostic(
         {
@@ -242,6 +248,7 @@ export async function operateNativeDataGraph(
               : result.mutation === 'attempted'
                 ? 'unknown'
                 : 'not-attempted',
+          ...(result.failedCheck ? { failedCheck: result.failedCheck } : {}),
         },
         getConnectDiagnostic(result) ?? diagnostic,
       );
@@ -261,7 +268,13 @@ export async function operateNativeDataGraph(
       diagnostic = getConnectDiagnostic(error) ?? diagnostic;
       /* GET-only reconciliation; never replay DELETE. */
     }
-    const settled = await settleNativeDataGraph(context, document, 'absent', options.pause);
+    const settled = await settleNativeDataGraphDeletion(context, document, {
+      now,
+      started,
+      end,
+      pause: waitPause,
+      progress,
+    });
     diagnostic = getConnectDiagnostic(settled) ?? diagnostic;
     graphRequire(settled.state === 'absent');
     return { outcome: 'deleted', mutation: 'confirmed-deleted' };
@@ -289,6 +302,8 @@ export async function operateNativeDataGraph(
       {
         outcome: attempted ? 'failed' : 'blocked',
         mutation: attempted ? 'unknown' : 'not-attempted',
+        // The invocation deadline can fire before the create lifecycle reports its step.
+        ...(attempted && creating ? { failedCheck: 'deadline' as const } : {}),
       },
       getConnectDiagnostic(error) ?? diagnostic,
     );

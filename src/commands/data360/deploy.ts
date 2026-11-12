@@ -1103,7 +1103,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   : result.mutation === 'unknown'
                     ? 'unknown'
                     : 'not-attempted',
-            diagnostics: [],
+            diagnostics: result.failedCheck
+              ? [
+                  {
+                    code: 'DATA_GRAPH_CREATE_UNCONFIRMED',
+                    message: `The create request was sent but ${result.failedCheck === 'deadline' ? '--wait-timeout ran out before the graph was confirmed' : `the ${result.failedCheck} check could not confirm the graph`}; it may exist. Retrieve it or deploy again to reconcile.`,
+                  },
+                ]
+              : [],
             routes,
           });
         return finish(
