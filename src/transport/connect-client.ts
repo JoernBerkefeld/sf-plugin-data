@@ -196,16 +196,17 @@ export class ConnectClient {
   /**
    * PATCH the complete preserved input shape on one exact native68 owner; never run processing.
    * @param {unknown} value Complete independently admitted desired definition.
+   * @param {unknown} [current] Current target definition; lists it has and the file empties are sent empty.
    * @returns {Promise<unknown>} Untrusted response, never settlement evidence.
    */
-  public async patchIdentityResolution(value: unknown): Promise<unknown> {
+  public async patchIdentityResolution(value: unknown, current?: unknown): Promise<unknown> {
     if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
     const document = nativeIdentityResolutionDocument(value);
     return this.send(
       {
         method: 'PATCH',
         url: this.safeUrl(`${this.prefix}identity-resolutions/${document.identity.apiName}`),
-        body: JSON.stringify(buildNativeIdentityResolutionUpdate(document)),
+        body: JSON.stringify(buildNativeIdentityResolutionUpdate(document, current)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

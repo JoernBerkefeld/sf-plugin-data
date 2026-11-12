@@ -23,10 +23,11 @@ const run = async (command) => {
     process.exitCode = previous;
   }
 };
-const harness = async (overrides = {}) => {
+const harness = async (overrides = {}, shape = () => {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ir-delete-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
   const raw = { ...nativeIrFixture(), id: '1ir000000000001AAA' };
+  shape(raw);
   const desired = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
   const directory = path.join(root, 'main', 'default', 'data360', 'identityResolution');
   await mkdir(directory, { recursive: true });
@@ -123,6 +124,17 @@ for (const version of [undefined, 'auto', '68.0'])
     assert.equal(h.calls.writes, 1);
     assert.match(result.diagnostics.warnings[0], /physical.*unverified/u);
   });
+test('public IR delete of an automatic ruleset with a longer name reaches the one DELETE', async () => {
+  const h = await harness({}, (raw) => {
+    raw.objectApiName = 'Individual_Marketing1';
+    raw.rulesetId = 'Marketing1';
+    raw.doesRunAutomatically = true;
+  });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(result.result.items[0].mutation, 'confirmed-deleted');
+  assert.equal(h.calls.writes, 1);
+});
 for (const mode of ['preview', 'absent', 'unconfirmed'])
   test(`public IR ${mode} confirmation behavior`, async () => {
     const h = await harness({ preview: mode === 'preview', 'confirm-delete': false });
@@ -243,7 +255,7 @@ for (const processing of [false, true])
   });
 test('IR delete help retains aliases and describes owner-only native68 behavior', () => {
   assert.deepEqual(Delete.aliases, ['datacloud:delete', 'd360:delete', 'dc:delete']);
-  assert.match(Delete.description, /identity-resolution:Individual_suffix/u);
+  assert.match(Delete.description, /identity-resolution:ObjectApiName/u);
   assert.match(Delete.description, /ID\/name absence/u);
   assert.match(Delete.description, /physical profile\/output cleanup remain unverified/u);
 });

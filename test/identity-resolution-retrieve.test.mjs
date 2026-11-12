@@ -90,16 +90,37 @@ test('expanded native retrieval preserves all settings and twelve returned owner
   assert.equal(requests.length, 1);
 });
 
+test('IR native68 acquisition retrieves every ruleset shape and state the API returns', async () => {
+  for (const mutate of [
+    (r) => ({ ...r, rulesetId: 'Z9y8' }),
+    (r) => ({ ...r, trustedSources: [{ name: 'Synthetic__dll' }] }),
+    (r) => ({ ...r, filters: [{ fieldName: 'ssot__FirstName__c', value: 'Meaningful' }] }),
+    (r) => ({ ...r, rulesetStatus: 'PUBLISHING' }),
+    (r) => ({ ...r, rulesetStatus: 'NEW', matchRules: [] }),
+    (r) => ({ ...r, doesRunAutomatically: true, lastJobStatus: 'SUCCESS', sourceProfiles: 522 }),
+    (r) => ({ ...r, reconciliationRules: r.reconciliationRules.slice(0, 1) }),
+  ]) {
+    const reply = mutate(nativeIrFixture());
+    const { conn, requests } = connection(reply);
+    const result = await retrieveIdentityResolution(
+      conn,
+      'Individual_A1b2',
+      nativeSelection,
+      'default',
+    );
+    assert.deepEqual(result.blockers, []);
+    assert.equal(result.candidate.identity.apiName, 'Individual_A1b2');
+    assert.equal(requests.length, 1);
+  }
+});
+
 test('IR native68 acquisition refuses errors, unknown forms and owner correlation drift without fallback', async () => {
   for (const mutate of [
     () => {},
     () => ({ error: 'private raw detail' }),
     (r) => ({ ...r, id: '' }),
-    (r) => ({ ...r, rulesetId: 'Z9y8' }),
-    (r) => ({ ...r, trustedSources: [{}] }),
-    (r) => ({ ...r, filters: [{ fieldName: 'ssot__FirstName__c', value: 'Meaningful' }] }),
+    (r) => ({ ...r, objectApiName: 'Individual_Other' }),
     (r) => ({ ...r, extra: true }),
-    (r) => ({ ...r, rulesetStatus: 'PUBLISHING' }),
   ]) {
     const reply = mutate(nativeIrFixture());
     const { conn, requests } = connection(reply);

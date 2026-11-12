@@ -23,7 +23,7 @@ export type IdentityResolutionSourceReference = {
   apiName: string;
 };
 export type IdentityResolutionReconciliationSettings = {
-  ruleType: 'LastUpdated' | 'MostFrequent' | 'SourceSequence';
+  ruleType: string;
   shouldIgnoreEmptyValue: boolean;
   sources: IdentityResolutionSourceReference[];
 };
@@ -32,21 +32,22 @@ export type IdentityResolutionDocument = {
   kind: 'identity-resolution';
   identity: { dataSpace: 'default'; apiName: string };
   spec: {
-    configurationType: 'Individual';
+    configurationType: string;
     label: string;
     description: string;
-    doesRunAutomatically: false;
-    isCaseSensitive: true;
+    doesRunAutomatically: boolean;
+    isCaseSensitive: boolean;
     secondaryDmo: IdentityResolutionDmoReference;
-    filters: [];
-    trustedSources?: [];
+    filters: unknown[];
+    trustedSources?: unknown[];
     matchRules: Array<{
       label: string;
       criteria: Array<{
         field: IdentityResolutionFieldReference;
-        matchMethodType: 'Fuzzy' | 'Exact' | 'ExactNormalized';
+        matchMethodType: string;
         caseSensitiveMatch: boolean;
         shouldMatchOnBlank: boolean;
+        partyIdentificationInfo?: Record<string, unknown>;
       }>;
     }>;
     reconciliationRules: Array<
@@ -80,6 +81,14 @@ export class IdentityResolutionError extends Error {
 }
 
 export const identityResolutionName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
+const dmoName = /^[A-Za-z][A-Za-z0-9_]*__dlm$/u;
+const objectName = /^[A-Za-z][A-Za-z0-9_]*$/u;
+// Documents keep the established PascalCase spelling of these API values; the API answers
+// in lowercase. Values outside these lists are kept exactly as the API returns them.
+const matchMethods = ['Fuzzy', 'Exact', 'ExactNormalized'];
+const ruleTypes = ['LastUpdated', 'MostFrequent', 'SourceSequence'];
+const configurationTypes = ['Individual'];
+// Historical API67 facade/graph contract only (retained until package G2).
 const entities = [
   'Individual',
   'ContactPointEmail',
@@ -202,54 +211,56 @@ export function validateIdentityResolutionDocument(value: unknown): IdentityReso
     'reconciliationRules',
     ...(hasTrustedSources ? ['trustedSources'] : []),
   ]);
-  requireValid(!hasTrustedSources || isDeepStrictEqual(spec.trustedSources, []));
+  // Filters and trusted sources are sent as authored; the API decides what they may contain.
+  requireValid(!hasTrustedSources || Array.isArray(spec.trustedSources));
+  requireValid(Array.isArray(spec.filters));
+  text(spec.configurationType);
   requireValid(
-    spec.configurationType === 'Individual' &&
-      spec.doesRunAutomatically === false &&
-      spec.isCaseSensitive === true,
+    typeof spec.doesRunAutomatically === 'boolean' && typeof spec.isCaseSensitive === 'boolean',
   );
   text(spec.label);
   text(spec.description, true);
-  requireValid(
-    isDeepStrictEqual(spec.secondaryDmo, dmo(entities[0])) && isDeepStrictEqual(spec.filters, []),
-  );
-  requireValid(Array.isArray(spec.matchRules) && spec.matchRules.length > 0);
+  validateDmo(spec.secondaryDmo);
+  requireValid(Array.isArray(spec.matchRules));
   const labels = new Set<unknown>();
   for (const value of spec.matchRules) {
     const rule = record(value, ['label', 'criteria']);
     text(rule.label);
     requireValid(!labels.has(rule.label));
     labels.add(rule.label);
-    requireValid(Array.isArray(rule.criteria) && rule.criteria.length > 0);
+    requireValid(Array.isArray(rule.criteria));
     const seen = new Set<string>();
     for (const value of rule.criteria) {
+      const party =
+        value !== null &&
+        typeof value === 'object' &&
+        Object.hasOwn(value, 'partyIdentificationInfo');
       const criterion = record(value, [
         'field',
         'matchMethodType',
         'caseSensitiveMatch',
         'shouldMatchOnBlank',
+        ...(party ? ['partyIdentificationInfo'] : []),
       ]);
+      const info = criterion.partyIdentificationInfo;
+      requireValid(!party || (info && typeof info === 'object' && !Array.isArray(info)));
       const reference = record(criterion.field, ['kind', 'dataSpace', 'parentApiName', 'apiName']);
       validateField(reference, reference.parentApiName);
+      text(criterion.matchMethodType);
       requireValid(
-        ['Fuzzy', 'Exact', 'ExactNormalized'].includes(String(criterion.matchMethodType)) &&
-          typeof criterion.caseSensitiveMatch === 'boolean' &&
+        typeof criterion.caseSensitiveMatch === 'boolean' &&
           typeof criterion.shouldMatchOnBlank === 'boolean',
-      );
-      // Native68 rejected this exact combination; field labels are not an API allowlist.
-      requireValid(
-        criterion.caseSensitiveMatch !== true ||
-          reference.parentApiName !== 'ssot__Individual__dlm' ||
-          reference.apiName !== 'ssot__FirstName__c',
       );
       const key = `${String(reference.parentApiName)}.${String(reference.apiName)}`;
       requireValid(!seen.has(key));
       seen.add(key);
     }
   }
-  requireValid(Array.isArray(spec.reconciliationRules) && spec.reconciliationRules.length === 6);
-  for (const [index, entity] of entities.entries()) {
-    const reconciliation = record(spec.reconciliationRules[index], [
+  requireValid(Array.isArray(spec.reconciliationRules));
+  // Outputs are identified by owner, entity and role, so each entity appears once.
+  const reconciled = new Set<unknown>();
+  for (const value of spec.reconciliationRules) {
+    const reconciliation = record(value, [
       'entity',
       'ruleType',
       'shouldIgnoreEmptyValue',
@@ -257,7 +268,10 @@ export function validateIdentityResolutionDocument(value: unknown): IdentityReso
       'sources',
       'outputs',
     ]);
-    requireValid(isDeepStrictEqual(reconciliation.entity, dmo(entity)));
+    validateDmo(reconciliation.entity);
+    const entity = (reconciliation.entity as IdentityResolutionDmoReference).apiName;
+    requireValid(!reconciled.has(entity));
+    reconciled.add(entity);
     validateSettings(reconciliation);
     requireValid(Array.isArray(reconciliation.fields));
     const seen = new Set<unknown>();
@@ -271,35 +285,25 @@ export function validateIdentityResolutionDocument(value: unknown): IdentityReso
     }
     requireValid(isDeepStrictEqual(reconciliation.outputs, outputs(identity.apiName, entity)));
   }
-  if (!hasTrustedSources) {
-    // Historical Graph/facade artifacts retain their original bounded contract.
-    requireValid(Array.isArray(spec.matchRules) && spec.matchRules.length === 1);
-    const match = spec.matchRules[0] as Record<string, unknown>;
-    requireValid(Array.isArray(match.criteria) && match.criteria.length === 3);
-    for (const [index, expected] of criteria.entries()) {
-      const item = match.criteria[index] as Record<string, unknown>;
-      requireValid(
-        isDeepStrictEqual(item.field, field(expected[0], expected[1])) &&
-          item.matchMethodType === expected[2] &&
-          item.caseSensitiveMatch === false &&
-          item.shouldMatchOnBlank === false,
-      );
-    }
-    for (const [index, value] of spec.reconciliationRules.entries()) {
-      const item = value as Record<string, unknown>;
-      requireValid(
-        (item.ruleType === 'LastUpdated' || (index === 0 && item.ruleType === 'MostFrequent')) &&
-          item.shouldIgnoreEmptyValue === true &&
-          isDeepStrictEqual(item.fields, []) &&
-          isDeepStrictEqual(item.sources, []),
-      );
-    }
-  }
   return structuredClone(value) as IdentityResolutionDocument;
 }
 
 /**
- * Check a logical field against its explicit reconciliation parent.
+ * Check a logical DMO reference by name only.
+ * @param {unknown} value Candidate reference.
+ */
+function validateDmo(value: unknown): void {
+  const reference = record(value, ['kind', 'dataSpace', 'apiName']);
+  requireValid(
+    reference.kind === 'dmo' &&
+      reference.dataSpace === 'default' &&
+      typeof reference.apiName === 'string' &&
+      dmoName.test(reference.apiName),
+  );
+}
+
+/**
+ * Check a logical field against its explicit parent.
  * @param {Record<string, unknown>} reference Logical field.
  * @param {unknown} parent Required parent.
  */
@@ -308,7 +312,7 @@ function validateField(reference: Record<string, unknown>, parent: unknown): voi
     reference.kind === 'dmo-field' &&
       reference.dataSpace === 'default' &&
       typeof parent === 'string' &&
-      entities.includes(parent) &&
+      dmoName.test(parent) &&
       reference.parentApiName === parent &&
       typeof reference.apiName === 'string' &&
       /^[A-Za-z][A-Za-z0-9_]*__c$/u.test(reference.apiName),
@@ -320,15 +324,9 @@ function validateField(reference: Record<string, unknown>, parent: unknown): voi
  * @param {Record<string, unknown>} settings Object or explicit field settings.
  */
 function validateSettings(settings: Record<string, unknown>): void {
+  text(settings.ruleType);
   requireValid(
-    ['LastUpdated', 'MostFrequent', 'SourceSequence'].includes(String(settings.ruleType)) &&
-      typeof settings.shouldIgnoreEmptyValue === 'boolean' &&
-      Array.isArray(settings.sources),
-  );
-  requireValid(
-    settings.ruleType === 'SourceSequence'
-      ? settings.sources.length > 0
-      : settings.sources.length === 0,
+    typeof settings.shouldIgnoreEmptyValue === 'boolean' && Array.isArray(settings.sources),
   );
   const seen = new Set<unknown>();
   for (const value of settings.sources) {
@@ -337,7 +335,7 @@ function validateSettings(settings: Record<string, unknown>): void {
       source.kind === 'dlo' &&
         source.dataSpace === 'default' &&
         typeof source.apiName === 'string' &&
-        /^[A-Za-z][A-Za-z0-9_]*__dll$/u.test(source.apiName) &&
+        objectName.test(source.apiName) &&
         !seen.has(source.apiName),
     );
     seen.add(source.apiName);
@@ -408,7 +406,31 @@ export function projectNativeIdentityResolution(
 }
 
 /**
- * Validate the exact native shape, retaining the historical paired-reader seam until deployment migration.
+ * Map an API enum to the document spelling: known values case-insensitively, others unchanged.
+ * @param {unknown} value API value.
+ * @param {string[]} known Document spellings.
+ * @returns {string} Document value.
+ */
+function canonical(value: unknown, known: string[]): string {
+  text(value);
+  const name = value as string;
+  return known.find((item) => item.toLowerCase() === name.toLowerCase()) ?? name;
+}
+
+// Read-only run statistics the API adds once a ruleset has run; never configuration.
+const runtimeKeys = new Set([
+  'anonymousUnifiedProfiles',
+  'consolidationRate',
+  'knownUnifiedProfiles',
+  'lastJobCompleted',
+  'lastJobStatus',
+  'matchedSourceProfiles',
+  'sourceProfiles',
+  'totalUnifiedProfiles',
+]);
+
+/**
+ * Project the owner the API returns; the historical API67 facade mode keeps its bounded contract.
  * @param {unknown} native Native response.
  * @param {string} apiName Requested identity.
  * @param {unknown} [facade] Historical API67 facade response only.
@@ -439,58 +461,65 @@ function projectOwner(
     'secondaryDmo',
   ];
   const nativeMode = facade === undefined;
-  // API68 exact GET for the default Individual owner omits rulesetId entirely.
-  const defaultOwner =
-    nativeMode &&
-    native !== null &&
-    typeof native === 'object' &&
-    !Object.hasOwn(native, 'rulesetId') &&
-    (native as Record<string, unknown>).objectApiName === 'Individual';
-  // Native68 may return filters:[] or omit it; retain the exact read for drift comparisons.
-  const nativeFilters =
-    nativeMode && native !== null && typeof native === 'object' && Object.hasOwn(native, 'filters');
-  const nativeRaw = record(native, [
-    ...keys.filter(
-      (key) => !(key === 'filters' && !nativeFilters) && !(defaultOwner && key === 'rulesetId'),
-    ),
-    ...(nativeMode ? ['trustedSources'] : []),
+  requireValid(native && typeof native === 'object' && !Array.isArray(native));
+  const has = (key: string): boolean => Object.hasOwn(native, key);
+  // Native68 may omit filters, trustedSources, description and (default owner) rulesetId.
+  const optional = new Set(['filters', 'rulesetId', 'description']);
+  let observed = native as Record<string, unknown>;
+  if (nativeMode)
+    observed = Object.fromEntries(
+      Object.entries(observed).filter(([key]) => !runtimeKeys.has(key)),
+    );
+  const nativeRaw = record(observed, [
+    ...keys.filter((key) => (nativeMode ? !optional.has(key) || has(key) : key !== 'filters')),
+    ...(nativeMode && has('trustedSources') ? ['trustedSources'] : []),
   ]);
   const raw = nativeMode ? nativeRaw : record(facade, keys);
-  const filters = nativeMode && !nativeFilters ? [] : raw.filters;
-  if (nativeMode) {
-    requireValid(isDeepStrictEqual(nativeRaw.trustedSources, []));
-    requireValid(defaultOwner || raw.objectApiName === `Individual_${String(raw.rulesetId)}`);
-  } else {
+  if (nativeMode)
+    requireValid(
+      raw.rulesetId === undefined ||
+        (typeof raw.rulesetId === 'string' && raw.rulesetId.trim().length > 0),
+    );
+  else {
     const { filters: omitted, ...withoutFilters } = raw;
     requireValid(isDeepStrictEqual(omitted, []) && isDeepStrictEqual(withoutFilters, nativeRaw));
+    requireValid(
+      raw.configurationType === 'individual' &&
+        raw.secondaryDmo === entities[0] &&
+        raw.doesRunAutomatically === false &&
+        raw.isCaseSensitive === true &&
+        typeof raw.rulesetId === 'string' &&
+        /^[A-Za-z0-9]{4}$/u.test(raw.rulesetId),
+    );
+    if (raw.rulesetStatus !== 'PUBLISHED')
+      throw new IdentityResolutionError('IDENTITY_RESOLUTION_NOT_SETTLED');
   }
   requireValid(
     raw.objectApiName === apiName &&
       raw.dataSpaceName === 'default' &&
-      raw.configurationType === 'individual' &&
-      raw.secondaryDmo === entities[0],
+      typeof raw.secondaryDmo === 'string',
   );
   text(raw.id);
-  requireValid(
-    defaultOwner ||
-      (typeof raw.rulesetId === 'string' &&
-        (nativeMode ? /^[A-Za-z0-9]{1,4}$/u : /^[A-Za-z0-9]{4}$/u).test(raw.rulesetId)),
-  );
-  if (raw.rulesetStatus !== 'PUBLISHED')
-    throw new IdentityResolutionError('IDENTITY_RESOLUTION_NOT_SETTLED');
-  requireValid(Array.isArray(raw.matchRules) && raw.matchRules.length > 0);
+  text(raw.rulesetStatus);
+  requireValid(Array.isArray(raw.matchRules));
   if (!nativeMode) requireValid(raw.matchRules.length === 1);
   const matchRules = raw.matchRules.map((value) => {
     const match = record(value, ['criteria', 'label']);
-    requireValid(Array.isArray(match.criteria) && match.criteria.length > 0);
+    requireValid(Array.isArray(match.criteria));
     if (!nativeMode) requireValid(match.criteria.length === 3);
     const matchCriteria = match.criteria.map((value, index) => {
+      const party =
+        nativeMode &&
+        value !== null &&
+        typeof value === 'object' &&
+        Object.hasOwn(value, 'partyIdentificationInfo');
       const item = record(value, [
         'caseSensitiveMatch',
         'entityName',
         'fieldName',
         'matchMethodType',
         'shouldMatchOnBlank',
+        ...(party ? ['partyIdentificationInfo'] : []),
       ]);
       const expected = criteria[index];
       if (!nativeMode)
@@ -501,57 +530,55 @@ function projectOwner(
             item.caseSensitiveMatch === false &&
             item.shouldMatchOnBlank === false,
         );
-      const method = ['Fuzzy', 'Exact', 'ExactNormalized'].find(
-        (name) => name.toLowerCase() === item.matchMethodType,
-      );
-      requireValid(
-        method && typeof item.entityName === 'string' && typeof item.fieldName === 'string',
-      );
+      requireValid(typeof item.entityName === 'string' && typeof item.fieldName === 'string');
       return {
         field: field(item.entityName, item.fieldName),
-        matchMethodType: method,
+        matchMethodType: canonical(item.matchMethodType, matchMethods),
         caseSensitiveMatch: item.caseSensitiveMatch,
         shouldMatchOnBlank: item.shouldMatchOnBlank,
+        ...(party ? { partyIdentificationInfo: item.partyIdentificationInfo } : {}),
       };
     });
     return { label: match.label, criteria: matchCriteria };
   });
-  requireValid(Array.isArray(raw.reconciliationRules) && raw.reconciliationRules.length === 6);
+  requireValid(Array.isArray(raw.reconciliationRules));
+  if (!nativeMode) requireValid(raw.reconciliationRules.length === 6);
   const bindings: IdentityResolutionProjection['expectations']['outputs'] = [];
   const generatedNames = new Set<string>();
+  const roles = ['unifiedDmoName', 'linkDmoName'];
   const reconciliationRules = raw.reconciliationRules.map((value, index) => {
+    requireValid(value && typeof value === 'object');
     const item = record(value, [
       'entityName',
       'fields',
-      'linkDmoName',
       'ruleType',
       'shouldIgnoreEmptyValue',
       'sources',
-      'unifiedDmoName',
+      // Outputs may not be generated yet; bind only the names the API returns.
+      ...roles.filter((key) => !nativeMode || Object.hasOwn(value, key)),
     ]);
-    requireValid(item.entityName === entities[index]);
+    requireValid(typeof item.entityName === 'string');
+    const entity = item.entityName;
     if (!nativeMode)
       requireValid(
-        (item.ruleType === 'lastupdated' || (index === 0 && item.ruleType === 'mostfrequent')) &&
+        entity === entities[index] &&
+          (item.ruleType === 'lastupdated' || (index === 0 && item.ruleType === 'mostfrequent')) &&
           item.shouldIgnoreEmptyValue === true &&
           isDeepStrictEqual(item.fields, []) &&
           isDeepStrictEqual(item.sources, []),
       );
-    const identities = outputs(apiName, entities[index]);
-    for (const [roleIndex, key] of ['unifiedDmoName', 'linkDmoName'].entries()) {
+    const identities = outputs(apiName, entity);
+    for (const [roleIndex, key] of roles.entries()) {
       const name = item[key];
-      requireValid(
-        typeof name === 'string' &&
-          /^[A-Za-z][A-Za-z0-9_]*__dlm$/u.test(name) &&
-          !generatedNames.has(name),
-      );
+      if (nativeMode && (name === undefined || name === null)) continue;
+      requireValid(typeof name === 'string' && dmoName.test(name) && !generatedNames.has(name));
       generatedNames.add(name);
       bindings.push({ identity: identities[roleIndex], sourceApiName: name });
     }
     return {
-      entity: dmo(entities[index]),
+      entity: dmo(entity),
       ...projectSettings(item),
-      fields: projectOverrides(item.fields, entities[index]),
+      fields: projectOverrides(item.fields, entity),
       outputs: identities,
     };
   });
@@ -560,14 +587,16 @@ function projectOwner(
     kind: 'identity-resolution',
     identity: { dataSpace: 'default', apiName: raw.objectApiName },
     spec: {
-      configurationType: 'Individual',
+      configurationType: canonical(raw.configurationType, configurationTypes),
       label: raw.label,
-      description: raw.description,
+      description: nativeMode && !has('description') ? '' : raw.description,
       doesRunAutomatically: raw.doesRunAutomatically,
       isCaseSensitive: raw.isCaseSensitive,
-      secondaryDmo: dmo(entities[0]),
-      filters,
-      ...(nativeMode ? { trustedSources: nativeRaw.trustedSources } : {}),
+      secondaryDmo: dmo(raw.secondaryDmo),
+      filters: nativeMode && !has('filters') ? [] : raw.filters,
+      ...(nativeMode
+        ? { trustedSources: has('trustedSources') ? nativeRaw.trustedSources : [] }
+        : {}),
       matchRules,
       reconciliationRules,
     },
@@ -583,17 +612,14 @@ function projectOwner(
 }
 
 /**
- * Normalize only earned lowercase wire enums and ordered source references.
+ * Map API enum casing to the document spelling and keep ordered source references.
  * @param {Record<string, unknown>} item Exact native settings.
  * @returns {object} Portable settings.
  */
 function projectSettings(item: Record<string, unknown>): object {
-  const ruleType = ['LastUpdated', 'MostFrequent', 'SourceSequence'].find(
-    (name) => name.toLowerCase() === item.ruleType,
-  );
-  requireValid(ruleType && Array.isArray(item.sources));
+  requireValid(Array.isArray(item.sources));
   return {
-    ruleType,
+    ruleType: canonical(item.ruleType, ruleTypes),
     shouldIgnoreEmptyValue: item.shouldIgnoreEmptyValue,
     sources: item.sources.map((value) => {
       const source = record(value, ['name']);

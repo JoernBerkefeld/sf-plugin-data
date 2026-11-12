@@ -3020,6 +3020,7 @@ test('retrieve and deploy preview bind the graph own unified root, not Individua
   const f = fixture();
   const seen = [];
   f.context.root = unifiedRoot(seen);
+  f.context.identityResolutions = ownerList('PUBLISHED');
   const metadata = f.context.metadata;
   f.context.metadata = async (value) => {
     const read = await metadata(value);
@@ -3049,4 +3050,211 @@ test('retrieve and deploy preview bind the graph own unified root, not Individua
   // An Individual root reader no longer satisfies a unified-root graph.
   f.context.root = async () => root();
   await assert.rejects(retrieveNativeDataGraph(name, f.context));
+});
+
+/**
+ * One identity resolution list item shaped like the API68 GET (2026-11-12).
+ * @param {string} objectApiName Ruleset name.
+ * @param {string} unifiedDmoName Unified output DMO.
+ * @param {string} rulesetStatus Ruleset status.
+ * @returns {object} List item.
+ */
+const ruleset = (objectApiName, unifiedDmoName, rulesetStatus) => ({
+  objectApiName,
+  rulesetStatus,
+  dataSpaceName: 'default',
+  reconciliationRules: [
+    {
+      entityName: 'ssot__Individual__dlm',
+      unifiedDmoName,
+      linkDmoName: unifiedDmoName.replace('Unified', 'UnifiedLink'),
+    },
+  ],
+});
+
+/**
+ * Identity resolution list reader.
+ * @param {string} [status] rulesetStatus of the owner of the unified root; omit for no owner.
+ * @returns {Function} Context reader.
+ */
+function ownerList(status) {
+  return async () => {
+    return {
+      status: 200,
+      body: {
+        identityResolutions: [
+          ruleset('Individual', 'UnifiedssotIndividual__dlm', 'PUBLISHED'),
+          // Case differs from the root name on purpose: the match is case-insensitive.
+          ...(status ? [ruleset('Individual_MKT', 'unifiedssotindividualmkt__dlm', status)] : []),
+        ],
+      },
+    };
+  };
+}
+
+/**
+ * Unified-root fixture with the graph absent (preview plans a create).
+ * @returns {object} Fixture plus the unified document.
+ */
+function unifiedPreview() {
+  const f = fixture();
+  f.context.root = unifiedRoot([]);
+  return { f, saved: nativeDataGraphDocumentFromResponse(unifiedRuntime()) };
+}
+
+test('deploy preview blocks a root that does not exist in the target', async () => {
+  const f = fixture();
+  let acquired = 0;
+  const get = f.context.get;
+  f.context.get = async (value) => {
+    acquired++;
+    return get(value);
+  };
+  f.context.identityResolutions = async () => assert.fail('no owner read without a root');
+  f.context.root = async () => {
+    throw retainConnectDiagnostic(
+      new Error('Native Graph root unavailable'),
+      apiDiagnostic(404, JSON.stringify([{ errorCode: 'NOT_FOUND', message: 'absent' }]), {}),
+    );
+  };
+  const result = await operateNativeDataGraph(
+    document(),
+    f.context,
+    f.client,
+    options('deploy', { preview: true }),
+  );
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(result.diagnostics[0].code, 'DATA_GRAPH_ROOT_NOT_FOUND');
+  assert.match(result.diagnostics[0].message, /ssot__Individual__dlm/u);
+  assert.equal(acquired, 0);
+  // Any other root failure stays a plain block: only 404 means absent.
+  f.context.root = async () => {
+    throw retainConnectDiagnostic(new Error('x'), apiDiagnostic(503, '<html></html>', {}));
+  };
+  const other = await operateNativeDataGraph(
+    document(),
+    f.context,
+    f.client,
+    options('deploy', { preview: true }),
+  );
+  assert.equal(other.outcome, 'blocked');
+  assert.equal(other.diagnostics, undefined);
+  assert.deepEqual(f.calls, []);
+});
+
+for (const [label, status, code] of [
+  ['without an owner', undefined, 'DATA_GRAPH_OWNER_NOT_FOUND'],
+  ['with an unpublished owner', 'NEW', 'DATA_GRAPH_OWNER_NOT_PUBLISHED'],
+])
+  test(`deploy preview blocks a unified root ${label}`, async () => {
+    const { f, saved } = unifiedPreview();
+    f.context.identityResolutions = ownerList(status);
+    const result = await operateNativeDataGraph(
+      saved,
+      f.context,
+      f.client,
+      options('deploy', { preview: true }),
+    );
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.deepEqual(
+      result.diagnostics.map((d) => d.code),
+      [code],
+    );
+    if (status) assert.match(result.diagnostics[0].message, /Individual_MKT.*NEW/u);
+    assert.deepEqual(f.calls, []);
+  });
+
+test('deploy preview names the published owner of a unified root', async () => {
+  const { f, saved } = unifiedPreview();
+  f.context.identityResolutions = ownerList('PUBLISHED');
+  const result = await operateNativeDataGraph(
+    saved,
+    f.context,
+    f.client,
+    options('deploy', { preview: true }),
+  );
+  assert.equal(result.outcome, 'create');
+  assert.deepEqual(result.diagnostics, [
+    {
+      code: 'DATA_GRAPH_OWNER',
+      message:
+        'The graph root UnifiedssotIndividualMkt__dlm is produced by identity resolution ruleset Individual_MKT (PUBLISHED).',
+    },
+  ]);
+  assert.deepEqual(f.calls, []);
+});
+
+test('deploy preview of an Individual root reads no identity resolution list', async () => {
+  const f = fixture();
+  f.context.identityResolutions = async () => assert.fail('Individual root has no owner');
+  const result = await operateNativeDataGraph(
+    document(),
+    f.context,
+    f.client,
+    options('deploy', { preview: true }),
+  );
+  assert.deepEqual(result, { outcome: 'create', mutation: 'not-attempted' });
+});
+
+test('real deploy of a unified root never reads the identity resolution list', async () => {
+  const f = fixture();
+  f.context.root = unifiedRoot([]);
+  f.context.identityResolutions = async () => assert.fail('the API decides on a real deploy');
+  const metadata = f.context.metadata;
+  f.context.metadata = async (value) => {
+    const read = await metadata(value);
+    for (const entry of read.body.dataGraphMetadata ?? [])
+      entry.primaryObjectName = 'UnifiedssotIndividualMkt__dlm';
+    return read;
+  };
+  f.setGraph(unifiedRuntime());
+  const saved = nativeDataGraphDocumentFromResponse(unifiedRuntime());
+  const result = await operateNativeDataGraph(saved, f.context, f.client, options('deploy'));
+  assert.deepEqual(result, { outcome: 'unchanged', mutation: 'not-attempted' });
+  // With no owner at all the real deploy still sends the create; the API answers.
+  f.setGraph(undefined);
+  f.client.create = async () => {
+    f.calls.push('POST');
+    throw retainConnectDiagnostic(
+      new Error('rejected'),
+      apiDiagnostic(400, JSON.stringify([{ errorCode: 'INVALID_INPUT', message: 'no' }]), {}),
+    );
+  };
+  const created = await operateNativeDataGraph(saved, f.context, f.client, options('deploy'));
+  assert.ok(f.calls.includes('POST'));
+  assert.equal(created.diagnostics, undefined);
+});
+
+test('deploy command surfaces the preview owner codes on the item', async () => {
+  const cwd = await project();
+  const saved = nativeDataGraphDocumentFromResponse(unifiedRuntime());
+  const receipt = await writeDataGraphDocument(saved, cwd, false);
+  const run = async (status) => {
+    const { f } = unifiedPreview();
+    f.context.identityResolutions = ownerList(status);
+    const command = Object.create(Deploy.prototype);
+    command.parse = async () => ({
+      flags: { 'api-version': '68.0', 'source-dir': [receipt.path], preview: true },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+    command.resolveTargetOrg = async () => ({ getConnection: () => ({}) });
+    command.nativeGraphContext = async () => f.context;
+    command.nativeGraphClient = () => f.client;
+    command.operateNativeGraph = (value, context, client, intent) =>
+      operateNativeDataGraph(value, context, client, { ...intent, pause: async () => {} });
+    return command.run();
+  };
+  const unpublished = await run('NEW');
+  assert.equal(unpublished.status, 'blocked');
+  assert.equal(unpublished.result.items[0].outcome, 'blocked');
+  assert.equal(unpublished.result.items[0].diagnostics[0].code, 'DATA_GRAPH_OWNER_NOT_PUBLISHED');
+  const published = await run('PUBLISHED');
+  assert.equal(published.status, 'success');
+  assert.equal(published.result.items[0].outcome, 'create');
+  assert.equal(published.result.items[0].diagnostics[0].code, 'DATA_GRAPH_OWNER');
+  assert.match(published.result.items[0].diagnostics[0].message, /Individual_MKT/u);
+  process.exitCode = 0;
 });

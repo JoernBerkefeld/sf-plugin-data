@@ -7,7 +7,7 @@ import {
   nativeDataGraphDocumentFromResponse,
   nativeDataGraphUnreferenced,
 } from '../artifacts/native-data-graph-document.js';
-import { graphRecord } from '../artifacts/data-graph-document.js';
+import { graphRecord, graphText } from '../artifacts/data-graph-document.js';
 import { validateNativeDataGraphDocument } from '../artifacts/native-data-graph-document.js';
 import {
   acquireNativeDataGraph,
@@ -80,7 +80,55 @@ export type NativeGraphOperationResult = {
     | 'unknown';
   /** After an attempted create: the step that could not confirm it. */
   failedCheck?: NativeGraphCreateCheck;
+  /** Deploy preview only: root/owner findings (blocking codes or the named owner). */
+  diagnostics?: Array<{ code: string; message: string }>;
 };
+
+/**
+ * Find the identity resolution that produces a unified graph root (deploy preview only; the
+ * real deploy leaves this decision to the API).
+ * @param {NativeGraphContext} context Scope-checked readers.
+ * @param {string} rootName The graph's unified primary object.
+ * @returns {Promise<{name: string; status: unknown} | undefined>} The owning ruleset, if any.
+ */
+async function readNativeGraphRootOwner(
+  context: NativeGraphContext,
+  rootName: string,
+): Promise<{ name: string; status: unknown } | undefined> {
+  context.check();
+  graphRequire(typeof context.identityResolutions === 'function');
+  const read = await context.identityResolutions();
+  context.check();
+  if (read.status !== 200)
+    throw retainConnectDiagnostic(
+      new Error('Identity resolution list unavailable'),
+      getConnectDiagnostic(read),
+    );
+  const list = graphRecord(read.body).identityResolutions;
+  graphRequire(Array.isArray(list));
+  const wanted = rootName.toLowerCase();
+  const owners = new Map<string, unknown>();
+  for (const value of list) {
+    const ruleset = graphRecord(value);
+    if (typeof ruleset.dataSpaceName === 'string' && ruleset.dataSpaceName !== 'default') continue;
+    const rules = ruleset.reconciliationRules ?? [];
+    graphRequire(Array.isArray(rules));
+    if (
+      rules.some(
+        (rule) =>
+          typeof graphRecord(rule).unifiedDmoName === 'string' &&
+          (graphRecord(rule).unifiedDmoName as string).toLowerCase() === wanted,
+      )
+    ) {
+      graphText(ruleset.objectApiName);
+      owners.set(ruleset.objectApiName, ruleset.rulesetStatus);
+    }
+  }
+  // One unified object has one producing ruleset; anything else is not a safe answer.
+  graphRequire(owners.size <= 1);
+  const [owner] = owners;
+  return owner ? { name: owner[0], status: owner[1] } : undefined;
+}
 
 /**
  * Bind one invocation to fresh target identity and root; never import creation ownership.
@@ -184,7 +232,48 @@ export async function operateNativeDataGraph(
     const orgId = context.orgId;
     await options.verifyInput();
     const rootName = document.definition.primaryObjectName as string;
-    const root = await bindNativeGraphRoot(context, rootName);
+    // Deploy preview checks root and owner itself: no API answer exists without a write.
+    // The real deploy sends the graph as authored and the API decides.
+    const checkOwner = options.preview && options.operation === 'deploy';
+    const blocked = (code: string, message: string): NativeGraphOperationResult => ({
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+      diagnostics: [{ code, message }],
+    });
+    let root: Awaited<ReturnType<typeof bindNativeGraphRoot>>;
+    try {
+      root = await bindNativeGraphRoot(context, rootName);
+    } catch (error) {
+      if (checkOwner && getConnectDiagnostic(error)?.statusCode === 404)
+        return blocked(
+          'DATA_GRAPH_ROOT_NOT_FOUND',
+          `The graph root ${rootName} does not exist in the target (data space default).`,
+        );
+      throw error;
+    }
+    let ownerDiagnostics: Array<{ code: string; message: string }> = [];
+    // A Derived root is an identity resolution output (unified DMO); other roots have no owner.
+    if (checkOwner && root.creationType === 'Derived') {
+      const owner = await readNativeGraphRootOwner(context, rootName);
+      if (!owner)
+        return blocked(
+          'DATA_GRAPH_OWNER_NOT_FOUND',
+          `No identity resolution ruleset in the target produces the graph root ${rootName}.`,
+        );
+      if (owner.status !== 'PUBLISHED')
+        return blocked(
+          'DATA_GRAPH_OWNER_NOT_PUBLISHED',
+          `Identity resolution ruleset ${owner.name} produces the graph root ${rootName} but is ${typeof owner.status === 'string' ? owner.status : 'not published'}; publish it before deploying the graph.`,
+        );
+      ownerDiagnostics = [
+        {
+          code: 'DATA_GRAPH_OWNER',
+          message: `The graph root ${rootName} is produced by identity resolution ruleset ${owner.name} (PUBLISHED).`,
+        },
+      ];
+    }
+    const withOwner = (result: NativeGraphOperationResult): NativeGraphOperationResult =>
+      ownerDiagnostics.length > 0 ? { ...result, diagnostics: ownerDiagnostics } : result;
     const before = await acquire(document);
     context.check();
     graphRequire(context.orgId === orgId);
@@ -215,7 +304,10 @@ export async function operateNativeDataGraph(
           );
         throw error;
       }
-      return { outcome, mutation: outcome === 'updated' ? 'confirmed-updated' : 'not-attempted' };
+      return withOwner({
+        outcome,
+        mutation: outcome === 'updated' ? 'confirmed-updated' : 'not-attempted',
+      });
     }
     graphRequire(
       options.operation === 'deploy'
@@ -232,10 +324,10 @@ export async function operateNativeDataGraph(
         context.orgId === orgId,
     );
     if (options.preview)
-      return {
+      return withOwner({
         outcome: options.operation === 'deploy' ? 'create' : 'delete',
         mutation: 'not-attempted',
-      };
+      });
     graphRequire(options.confirmed === true);
     if (options.operation === 'deploy') {
       // Reuse the qualified create settlement; fixture ownership is not public delete authority.

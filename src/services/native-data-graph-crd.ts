@@ -29,6 +29,8 @@ export type NativeGraphContext = {
   /** Read the named primary object (DMO) detail and its Metadata record. */
   root: (name: string) => Promise<{ detail: unknown; metadata: unknown }>;
   dataSpace?: () => Promise<NativeGraphRead>;
+  /** Read the identity resolution list (deploy preview owner check only). */
+  identityResolutions?: () => Promise<NativeGraphRead>;
 };
 export type NativeGraphAcquisition =
   | { state: 'present'; observation: NativeDataGraphObservation }
@@ -57,12 +59,12 @@ function orderedRootFields(
  * the document's `primaryObjectName` (standard or unified); its fields are not restricted.
  * @param {NativeGraphContext} context Scope-checked readers.
  * @param {string} rootName The document's primary object.
- * @returns {Promise<{id: string; fingerprint: string}>} Detached root binding.
+ * @returns {Promise<{id: string; creationType: string; fingerprint: string}>} Detached root binding.
  */
 export async function bindNativeGraphRoot(
   context: NativeGraphContext,
   rootName: string,
-): Promise<{ id: string; fingerprint: string }> {
+): Promise<{ id: string; creationType: string; fingerprint: string }> {
   context.check();
   graphText(rootName);
   const acquired = structuredClone(await context.root(rootName));
@@ -95,7 +97,11 @@ export async function bindNativeGraphRoot(
   // These field inventories are keyed sets, not ordered projections. Preserve every property.
   detail.fields = orderedRootFields(index(detail.fields, 'name'));
   metadata.fields = orderedRootFields(index(metadata.fields, 'fullName'));
-  return { id: detail.id, fingerprint: nativeGraphFingerprint(acquired) };
+  return {
+    id: detail.id,
+    creationType: detail.creationType,
+    fingerprint: nativeGraphFingerprint(acquired),
+  };
 }
 
 /**

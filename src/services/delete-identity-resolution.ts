@@ -4,7 +4,10 @@ import { projectNativeIdentityResolution } from '../artifacts/identity-resolutio
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { nativeIdentityResolutionDocument } from './preflight-identity-resolution-deploy.js';
+import {
+  inFlightIdentityResolutionStatuses,
+  nativeIdentityResolutionDocument,
+} from './preflight-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import {
   bindIdentityResolutionDependencies,
@@ -36,7 +39,7 @@ export type IdentityResolutionDeleteResult = {
 };
 
 /**
- * Delete one matching published, nonautomatic native68 owner definition without replay.
+ * Delete one matching settled native68 owner definition without replay.
  * Generated definitions are bound before dispatch but never manually deleted. Input/output
  * compatibility is not exhaustive inbound-consumer exclusion or physical profile cleanup.
  * @param {unknown} value Immutable local configuration expectation, not ownership authority.
@@ -122,8 +125,7 @@ export async function deleteIdentityResolution(
     check();
     if (
       typeof options.verifyInput !== 'function' ||
-      ('preview' in options && typeof options.preview !== 'boolean') ||
-      desired.spec.doesRunAutomatically !== false
+      ('preview' in options && typeof options.preview !== 'boolean')
     )
       throw new Error('Intent');
     const verifyInput = options.verifyInput;
@@ -213,6 +215,13 @@ export async function deleteIdentityResolution(
         !isDeepStrictEqual(baseline.candidate, desired)
       )
         throw new Error('Owner mismatch');
+      // A DELETE while the API is still processing the ruleset could not be told apart from it.
+      if (
+        inFlightIdentityResolutionStatuses.includes(
+          String(baseline.expectations.native.rulesetStatus),
+        )
+      )
+        return result('blocked', 'IDENTITY_RESOLUTION_NOT_SETTLED');
       if (!isDeepStrictEqual(project(await read(id)), baseline))
         throw new Error('Identity mismatch');
       // Existing binders establish selected input/output compatibility, not reverse consumers.
@@ -235,23 +244,16 @@ export async function deleteIdentityResolution(
         { ...frozen },
       );
       check();
-      if (!Array.isArray(outputs) || outputs.length !== 12) throw new Error('Output proof');
+      if (!Array.isArray(outputs) || outputs.length !== expected.length)
+        throw new Error('Output proof');
       const ids = new Set([id]);
       for (const [index, binding] of outputs.entries()) {
-        const unified = expected[index].identity.role === 'unified';
         if (
           !isDeepStrictEqual(binding.identity, expected[index].identity) ||
           binding.targetApiName !== expected[index].targetApiName ||
           typeof binding.targetId !== 'string' ||
           !binding.targetId.trim() ||
-          ids.has(binding.targetId) ||
-          binding.creationType !== (unified ? 'Derived' : 'Bridge') ||
-          !Array.isArray(binding.fields) ||
-          binding.fields.filter(
-            (field) =>
-              field.apiName === (unified ? 'ssot__Id__c' : 'UnifiedRecordId__c') &&
-              field.dataType === 'Text',
-          ).length !== 1
+          ids.has(binding.targetId)
         )
           throw new Error('Output mismatch');
         ids.add(binding.targetId);
@@ -289,7 +291,7 @@ export async function deleteIdentityResolution(
             transitional.reconciliationRules = structuredClone(
               baseline.expectations.native.reconciliationRules,
             );
-          transitional.rulesetStatus = 'PUBLISHED';
+          transitional.rulesetStatus = baseline.expectations.native.rulesetStatus;
           if (!isDeepStrictEqual(project(transitional), baseline))
             throw new Error('Readback drift');
         }

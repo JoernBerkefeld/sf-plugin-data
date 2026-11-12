@@ -11,7 +11,6 @@ import {
   bindIdentityResolutionDependencies,
   verifyIdentityResolutionOutputs,
 } from '../lib/services/bind-identity-resolution-dependencies.js';
-import { executeIdentityResolutionDeploy } from '../lib/services/execute-identity-resolution-deploy.js';
 import {
   irFixture,
   expandedNativeIrFixture,
@@ -167,7 +166,7 @@ test('native binding reuses only completed raw pairs within one invocation, pres
   const first = await bind();
   assert.equal(
     first.fingerprint,
-    '7445d1276e9003f73c36c2f135fb3f1e4927fee3cc60c33ed78d6afeb9eb3b58',
+    '59c6ee5a4eb1726eb2c5f088b8e4b960fb822336b6c473a2ed5a0a45e8f997c7',
   );
   const names = [
     expanded.spec.reconciliationRules[0].entity.apiName,
@@ -189,7 +188,7 @@ test('native binding reuses only completed raw pairs within one invocation, pres
   const reversed = await bind(reordered);
   assert.equal(
     reversed.fingerprint,
-    'cd7bc63e316f412b3dc5a6ad3e21d5e4d442c50c853381919ef6e3c2b3eaaf95',
+    'fcc2178760b74f952fe7fce12ba564a5601c67fff0438801d5602f55bdde14c7',
   );
   drift = true;
   const changed = await bind();
@@ -551,23 +550,22 @@ for (const [name, value] of Object.entries({
       mktDataModelFieldAttributes: value,
     });
   };
+// Keys, attribute bags and field types are recorded as observed; the API decides.
 for (const [name, change] of Object.entries(inputAttributeFailures))
-  test(`IR input attribute evidence fails closed: ${name}`, async () => {
-    await assert.rejects(
-      bindIdentityResolutionDependencies(
-        document,
-        connection,
-        selection,
-        'default',
-        async (apiName) => {
-          const f = await inputRead(apiName);
-          f.metadata[0].fields.push({ fullName: 'AllowedRelationship__c', type: 'Lookup' });
-          change(f);
-          return f;
-        },
-      ),
-      { code: 'IDENTITY_RESOLUTION_BINDING_UNQUALIFIED' },
+  test(`IR input attribute evidence is recorded, not refused: ${name}`, async () => {
+    const proof = await bindIdentityResolutionDependencies(
+      document,
+      connection,
+      selection,
+      'default',
+      async (apiName) => {
+        const f = await inputRead(apiName);
+        f.metadata[0].fields.push({ fullName: 'AllowedRelationship__c', type: 'Lookup' });
+        change(f);
+        return f;
+      },
     );
+    assert.match(proof.fingerprint, /^[a-f0-9]{64}$/u);
   });
 
 const inputFailures = {
@@ -592,17 +590,8 @@ const inputFailures = {
   wrongName: (f) => {
     f.metadata[0].fullName = 'Wrong__dlm';
   },
-  wrongType: (f) => {
-    f.detail.fields[0].type = 'Number';
-  },
-  wrongMetaType: (f) => {
-    f.metadata[0].fields[0].type = 'Number';
-  },
-  missingKey: (f) => {
-    delete f.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder;
-  },
-  falseKey: (f) => {
-    f.detail.fields[0].isPrimaryKey = false;
+  missingField: (f) => {
+    f.detail.fields = f.detail.fields.slice(0, 1);
   },
   bounds: (f) => {
     f.detail.fields = Array.from({ length: 4097 }, () => f.detail.fields[0]);
@@ -625,11 +614,38 @@ for (const [name, change] of Object.entries(inputFailures))
     );
   });
 
-test('IR input match fields require exact Text compatibility, not just keys', async () => {
+test('IR input fields need presence in both reads; any type and key are recorded', async () => {
+  for (const change of [
+    (f) => {
+      if (f.detail.fields.length > 1) f.detail.fields[1].type = 'Email';
+    },
+    (f) => {
+      f.metadata[0].fields[0].type = 'Number';
+    },
+    (f) => {
+      delete f.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder;
+    },
+    (f) => {
+      f.detail.fields[0].isPrimaryKey = false;
+    },
+  ]) {
+    const proof = await bindIdentityResolutionDependencies(
+      document,
+      connection,
+      selection,
+      'default',
+      async (name) => {
+        const f = await inputRead(name);
+        change(f);
+        return f;
+      },
+    );
+    assert.match(proof.fingerprint, /^[a-f0-9]{64}$/u);
+  }
   await assert.rejects(
     bindIdentityResolutionDependencies(document, connection, selection, 'default', async (name) => {
       const f = await inputRead(name);
-      if (f.detail.fields.length > 1) f.detail.fields[1].type = 'Number';
+      if (f.metadata[0].fields.length > 1) f.metadata[0].fields.splice(1, 1);
       return f;
     }),
   );
@@ -658,24 +674,35 @@ test('IR outputs resolve twelve target owner-returned names and IDs, not source 
   );
   assert.equal(new Set(proof.map((item) => item.targetId)).size, 12);
   assert.ok(proof.every((item) => item.targetId.startsWith('target-local-')));
-  assert.deepEqual(proof[1].fields, [{ apiName: 'UnifiedRecordId__c', dataType: 'Text' }]);
+  assert.equal(proof[0].creationType, 'Derived');
+  assert.equal(proof[1].creationType, 'Bridge');
+  assert.equal(Object.hasOwn(proof[1], 'fields'), false);
+});
+
+test('IR outputs bind by name, space and ID only; creation type and fields are observed', async () => {
+  const proof = await verifyIdentityResolutionOutputs(
+    owner,
+    outputs,
+    connection,
+    selection,
+    async (apiName) => {
+      const f = await outputRead(apiName);
+      f.detail.creationType = 'Custom';
+      f.metadata[0].mktDataModelAttributes.creationType = 'Custom';
+      f.detail.fields = [{ name: 'Other__c', type: 'Number' }];
+      f.metadata[0].fields = [{ fullName: 'Other__c', type: 'Number' }];
+      return f;
+    },
+    acquireOwner,
+  );
+  assert.equal(proof.length, 12);
+  assert.ok(proof.every((item) => item.creationType === 'Custom'));
 });
 
 const outputFailures = Object.fromEntries(
-  Object.entries(inputFailures).filter(([name]) => !['missingKey', 'falseKey'].includes(name)),
+  Object.entries(inputFailures).filter(([name]) => name !== 'missingField'),
 );
-for (const [name, change] of Object.entries({
-  ...outputFailures,
-  wrongCreation: (f) => {
-    f.detail.creationType = 'Custom';
-  },
-  wrongMetadataCreation: (f) => {
-    f.metadata[0].mktDataModelAttributes.creationType = 'Custom';
-  },
-  missingField: (f) => {
-    f.detail.fields = [];
-  },
-}))
+for (const [name, change] of Object.entries(outputFailures))
   test(`IR generated outputs fail closed: ${name}`, async () => {
     await assert.rejects(
       verifyIdentityResolutionOutputs(
@@ -786,21 +813,6 @@ test('IR binders reject wrong scope and never default a missing space', async ()
   );
 });
 
-test('IR executor production defaults do not turn missing metadata into permissive success', async () => {
-  let mutations = 0;
-  const result = await executeIdentityResolutionDeploy(document, connection, selection, 'default', {
-    targetApiName: owner.targetApiName,
-    allowProcessing: true,
-    verifyInput: async () => {},
-    acquire: acquireOwner,
-    mutate: async () => {
-      mutations++;
-    },
-  });
-  assert.equal(result.outcome, 'blocked');
-  assert.equal(mutations, 0);
-});
-
 test('IR output owner is rechecked after twelve DMO reads to detect concurrent drift', async () => {
   let reads = 0;
   await assert.rejects(
@@ -855,7 +867,7 @@ test('native68 output binding reprojects only the returned owner and preserves i
       outputRead,
       async () => {
         const result = await acquire();
-        result.expectations.native.rulesetId = 'Z9y8';
+        result.expectations.native.id = 'other-owner-id';
         return result;
       },
     ),
@@ -863,7 +875,8 @@ test('native68 output binding reprojects only the returned owner and preserves i
 });
 
 for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
-  ['67.0', '65.0', selection, false],
+  // The bind reader always reads at API68, also behind an API67 owner connection.
+  ['67.0', '68.0', selection, false],
   ['68.0', '68.0', nativeSelection, false],
   ['68.0', '68.0', nativeSelection, true],
 ])
@@ -965,7 +978,7 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
       names.push('SyntheticLead__dll', 'SyntheticContact__dll');
       assert.equal(
         proof.fingerprint,
-        '7445d1276e9003f73c36c2f135fb3f1e4927fee3cc60c33ed78d6afeb9eb3b58',
+        '59c6ee5a4eb1726eb2c5f088b8e4b960fb822336b6c473a2ed5a0a45e8f997c7',
       );
     }
     for (const acquired of Object.values(acquisitions)) {

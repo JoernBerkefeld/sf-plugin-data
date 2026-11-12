@@ -29,16 +29,6 @@ export function nativeApiVersion(requested = 'auto'): string {
   throw new Error('INVALID_SCOPE');
 }
 
-/**
- * Keep historical IR deployment pinned until its independent native-write migration.
- * @param {string} requested Exact user selection.
- * @returns {string} Historical deployment version.
- */
-export function legacyIdentityResolutionApiVersion(requested: string): string {
-  if (requested === 'auto' || requested === '67.0') return '67.0';
-  throw new Error('INVALID_SCOPE');
-}
-
 export type OperationalFamily =
   | 'segment'
   | 'identity-resolution'

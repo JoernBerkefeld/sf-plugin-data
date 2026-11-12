@@ -525,13 +525,36 @@ test('legacy IR documents require explicit migration before any target access', 
   assert.deepEqual(calls, []);
 });
 
-test('public FirstName case-sensitive matching rejects before any target access or mutation', async () => {
+test('public FirstName case-sensitive and automatic-run settings reach preflight as authored', async () => {
   const input = ir();
   input.document.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;
+  input.document.spec.doesRunAutomatically = true;
   const { command, calls } = setup({}, [input]);
+  command.preflightIdentityResolution = async (document) => {
+    assert.deepEqual(document, input.document);
+    calls.push('preflight');
+    return preview('identity-resolution');
+  };
+  command.executeIdentityResolution = async (
+    document,
+    _connection,
+    _selection,
+    _space,
+    options,
+  ) => {
+    assert.deepEqual(document, input.document);
+    await options.verifyInput();
+    return {
+      family: 'identity-resolution',
+      route: preview('identity-resolution').route,
+      outcome: 'updated',
+      mutation: 'confirmed-updated',
+      diagnostics: [],
+    };
+  };
   const result = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.deepEqual(calls, []);
+  assert.equal(result.status, 'success');
+  assert.equal(calls.includes('preflight'), true);
 });
 
 test('public rich IR admission retains complete supported settings and existing argv', async () => {

@@ -185,23 +185,16 @@ export async function executeNativeIdentityResolutionDeploy(
         verificationConnection,
         { ...selection },
       );
-      if (!Array.isArray(proof) || proof.length !== 12) throw new Error('Output proof absent');
+      if (!Array.isArray(proof) || proof.length !== expected.length)
+        throw new Error('Output proof absent');
       const ids = new Set([ownerId]);
       for (const [index, binding] of proof.entries()) {
-        const unified = expected[index].identity.role === 'unified';
         if (
           !isDeepStrictEqual(binding.identity, expected[index].identity) ||
           binding.targetApiName !== expected[index].targetApiName ||
           typeof binding.targetId !== 'string' ||
           !binding.targetId.trim() ||
-          ids.has(binding.targetId) ||
-          binding.creationType !== (unified ? 'Derived' : 'Bridge') ||
-          !Array.isArray(binding.fields) ||
-          binding.fields.filter(
-            (field) =>
-              field.apiName === (unified ? 'ssot__Id__c' : 'UnifiedRecordId__c') &&
-              field.dataType === 'Text',
-          ).length !== 1
+          ids.has(binding.targetId)
         )
           throw new Error('Output mismatch');
         ids.add(binding.targetId);
@@ -360,7 +353,7 @@ export async function executeNativeIdentityResolutionDeploy(
     const echo = await bounded(async () => {
       const response = creating
         ? await client.createIdentityResolution(desired)
-        : await client.patchIdentityResolution(desired);
+        : await client.patchIdentityResolution(desired, baseline?.candidate);
       acknowledged = true;
       return response;
     });
@@ -369,10 +362,16 @@ export async function executeNativeIdentityResolutionDeploy(
     if (!echo || typeof echo !== 'object' || Array.isArray(echo))
       throw new Error('Malformed response');
     const response = echo as Record<string, unknown>;
+    // A created owner settles PUBLISHED; an updated one settles in its previous state
+    // (an unpublished ruleset stays unpublished) or PUBLISHED. PUBLISHING is in flight.
+    const baselineStatus = baseline?.expectations.native.rulesetStatus;
+    const settledStatus = (status: unknown): boolean =>
+      status === 'PUBLISHED' || (!creating && status === baselineStatus);
     if (
       !['id', 'objectApiName', 'rulesetStatus'].some((key) => Object.hasOwn(response, key)) ||
       (response.rulesetStatus !== undefined &&
-        !['PUBLISHING', 'PUBLISHED'].includes(response.rulesetStatus as string)) ||
+        response.rulesetStatus !== 'PUBLISHING' &&
+        !settledStatus(response.rulesetStatus)) ||
       (response.objectApiName !== undefined &&
         response.objectApiName !== desired.identity.apiName) ||
       (response.id !== undefined && (typeof response.id !== 'string' || !response.id.trim())) ||
@@ -380,10 +379,12 @@ export async function executeNativeIdentityResolutionDeploy(
     )
       throw new Error('Mutation identity mismatch');
     const compare = (raw: unknown): IdentityResolutionProjection => {
-      const observed = structuredClone(raw) as Record<string, unknown>;
-      if (!observed || !['PUBLISHING', 'PUBLISHED'].includes(observed.rulesetStatus as string))
+      const observed = raw as Record<string, unknown>;
+      if (
+        !observed ||
+        (observed.rulesetStatus !== 'PUBLISHING' && !settledStatus(observed.rulesetStatus))
+      )
         throw new Error('Malformed response');
-      observed.rulesetStatus = 'PUBLISHED';
       const projection = project(observed);
       if (
         !isDeepStrictEqual(projection.candidate, desired) ||
@@ -424,7 +425,7 @@ export async function executeNativeIdentityResolutionDeploy(
         throw new Error('Settlement identity drift');
       settledIdentity = settled.expectations;
       deadline();
-      if ((raw as Record<string, unknown>).rulesetStatus !== 'PUBLISHED') continue;
+      if (!settledStatus((raw as Record<string, unknown>).rulesetStatus)) continue;
       const settledOutputs = await bounded(() => outputs(settled));
       if (baseline && !isDeepStrictEqual(bound, settledOutputs)) throw new Error('Output drift');
       if (!isDeepStrictEqual(project(await bounded(read)), settled))

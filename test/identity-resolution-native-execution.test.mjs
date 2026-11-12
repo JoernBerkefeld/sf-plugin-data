@@ -58,6 +58,8 @@ function harness(creating = true) {
         const payload = JSON.parse(request.body);
         for (const key of ['label', 'description', 'doesRunAutomatically', 'isCaseSensitive'])
           raw[key] = payload[key];
+        for (const key of ['filters', 'trustedSources'])
+          if (Object.hasOwn(payload, key)) raw[key] = payload[key];
         raw.matchRules = payload.matchRules.map((rule) => ({
           ...rule,
           criteria: rule.criteria.map((criterion) => ({
@@ -358,13 +360,36 @@ test('native deadline fences late dependency transport reads without mutating th
   assert.equal(h.writes.length, 1);
 });
 
-test('native invalid FirstName case-sensitive input blocks before reads or writes', async () => {
+test('native FirstName case-sensitive and automatic-run input is sent as authored', async () => {
   const h = harness();
   h.desired.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;
+  h.desired.spec.doesRunAutomatically = true;
   const result = await h.run();
-  assert.equal(result.mutation, 'not-attempted');
-  assert.equal(h.gets, 0);
-  assert.equal(h.writes.length, 0);
+  assert.equal(result.mutation, 'confirmed-created');
+  const body = JSON.parse(h.writes[0].body);
+  assert.equal(body.matchRules[0].criteria[0].caseSensitiveMatch, true);
+  assert.equal(body.doesRunAutomatically, true);
+});
+
+test('native PATCH of an unpublished (NEW) ruleset settles in its state without publishing', async () => {
+  const h = harness(false);
+  h.raw.rulesetStatus = 'NEW';
+  h.raw.matchRules = [];
+  h.desired.spec.matchRules = [];
+  h.desired.spec.label = 'Renamed draft';
+  const result = await h.run();
+  assert.equal(result.mutation, 'confirmed-updated');
+  assert.equal(h.raw.rulesetStatus, 'NEW');
+  assert.equal(h.writes.length, 1);
+});
+
+test('native CREATE of a non-default reconciliation set binds every returned output', async () => {
+  const h = harness();
+  h.desired.spec.reconciliationRules = h.desired.spec.reconciliationRules.slice(0, 2);
+  h.raw.reconciliationRules = h.raw.reconciliationRules.slice(0, 2);
+  const result = await h.run();
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.equal(JSON.parse(h.writes[0].body).reconciliationRules.length, 2);
 });
 
 test('native default Individual CREATE omits rulesetId (synthetic only, not live qualification)', async () => {
@@ -483,20 +508,27 @@ test('native empty-filter presence remains part of full raw owner drift comparis
   assert.equal(h.writes.length, 0);
 });
 
-test('native nonempty filters block admission and cannot confirm a mutated owner', async () => {
-  for (const afterWrite of [false, true]) {
+test('native nonempty filters are sent as authored and cannot confirm a mutated owner', async () => {
+  const filters = [{ fieldName: 'ssot__FirstName__c', value: 'Meaningful' }];
+  for (const variant of ['kept', 'emptied', 'afterWrite']) {
     const h = harness(false);
     h.desired.spec.description = 'New description';
-    const filters = [{ fieldName: 'ssot__FirstName__c', value: 'Meaningful' }];
-    if (afterWrite)
+    if (variant === 'afterWrite')
       h.echo = () => {
         h.raw.filters = filters;
         return structuredClone(h.raw);
       };
-    else h.raw.filters = filters;
+    else h.raw.filters = structuredClone(filters);
+    if (variant === 'kept') h.desired.spec.filters = structuredClone(filters);
     const result = await h.run();
-    assert.equal(result.mutation, afterWrite ? 'unknown' : 'not-attempted');
-    assert.equal(h.writes.length, afterWrite ? 1 : 0);
+    assert.equal(
+      result.mutation,
+      { kept: 'confirmed-updated', emptied: 'confirmed-updated', afterWrite: 'unknown' }[variant],
+    );
+    assert.equal(h.writes.length, 1);
+    if (variant === 'kept') assert.deepEqual(JSON.parse(h.writes[0].body).filters, filters);
+    // Emptying sends the empty list; the API decides.
+    if (variant === 'emptied') assert.deepEqual(JSON.parse(h.writes[0].body).filters, []);
   }
 });
 

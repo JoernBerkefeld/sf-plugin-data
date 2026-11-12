@@ -1076,7 +1076,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   ? 'present'
                   : 'unknown',
             absenceProof: 'none',
-            diagnostics: [],
+            diagnostics: result.diagnostics ?? [],
             routes,
           });
         else

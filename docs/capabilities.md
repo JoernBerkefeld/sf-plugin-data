@@ -28,7 +28,9 @@ change in one PUT (label, description, schedule, incremental refresh, added fiel
 related objects, joins, field settings); only name, data space, root object and node
 object/path/type changes are refused. Omitted fields and branches are kept. Identical
 deploy is zero-write `unchanged`. Preview is read-only. Native Git selection, mixed
-families and cascade are unsupported.
+families and cascade are unsupported. Preview (only) checks the root DMO and, for a derived
+root, its IR owner via `GET /ssot/identity-resolutions` (`DATA_GRAPH_ROOT_NOT_FOUND`,
+`DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, info `DATA_GRAPH_OWNER`).
 
 Delete needs an exact selector, matching local native artifact, --confirm-delete
 and fresh ready/identity/created-date/definition/root checks, with explicitly empty
@@ -43,6 +45,20 @@ about 11-12 minutes, alternating with not found. No generated DMO/mapping/transf
 storage/credits cleanup or computation claim. Installed package smoke verifies
 offline routing only, not live installed cross-org acceptance. README's 14-resource
 row records Partial native create/delete and retains the separate facade update.
+
+## Public native identity resolution
+
+Retrieve, deploy (POST create, full-settings PATCH) and delete use native API68 in the
+default data space for every ruleset the API returns or accepts: any configuration type
+and name, automatic run on or off, case sensitivity, secondary DMO, filters, trusted
+sources, any match and reconciliation rules, unpublished rulesets. Kept refusals:
+structural checks; one reconciliation entry per entity (outputs are keyed by entity);
+the `1ir…` ID check before DELETE; configuration type or secondary DMO changes
+(`blocked-changes`, PATCH cannot carry them); a create name other than `<type>` or
+`<type>_<rulesetId>` (`IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH`); PATCH or
+DELETE while `PUBLISHING`/`DELETING` (`IDENTITY_RESOLUTION_NOT_SETTLED`). Run statistics
+are not part of the file. The API 67 IR deploy route is gone; its legacy reader remains
+only for the API 67 graph route until that is removed.
 
 ## Public native calculated insight lifecycle — 2026-11-12
 

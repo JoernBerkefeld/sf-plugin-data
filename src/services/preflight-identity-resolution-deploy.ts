@@ -4,8 +4,6 @@ import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 import {
-  identityResolutionName,
-  projectIdentityResolution,
   projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../artifacts/identity-resolution-document.js';
@@ -15,11 +13,10 @@ import type {
 } from '../artifacts/identity-resolution-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
-import { retrieveLegacyIdentityResolution as retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 import { bindIdentityResolutionDependencies } from './bind-identity-resolution-dependencies.js';
 
 /**
- * Admit only the empirically qualified native68 authored variant.
+ * Admit a complete authored definition for the native68 route; the API decides its settings.
  * Legacy artifacts must be explicitly migrated by retrieval, never silently normalized.
  * @param {unknown} value Complete portable definition.
  * @returns {IdentityResolutionDocument} Detached native68 definition.
@@ -28,24 +25,27 @@ export function nativeIdentityResolutionDocument(value: unknown): IdentityResolu
   const document = validateIdentityResolutionDocument(value);
   if (!Object.hasOwn(document.spec, 'trustedSources'))
     throw new Error('IDENTITY_RESOLUTION_TRUSTED_SOURCES_MIGRATION_REQUIRED');
-  if (!/^Individual(?:_[A-Za-z0-9]{1,4})?$/u.test(document.identity.apiName))
-    throw new Error('IDENTITY_RESOLUTION_NATIVE68_VARIANT_UNQUALIFIED');
   return document;
 }
 
 /**
- * Build the complete proven CREATE input, never replay source IDs or generated names.
- * Authored empty trusted sources remain in the document but are omitted from the request.
+ * Build the CREATE input from the document, never replaying source IDs or generated names.
+ * The API names a ruleset `<type>_<rulesetId>`, so the ruleset ID is everything after the
+ * type and its underscore; a name equal to the type creates the default ruleset (no ID).
+ * Preflight refuses names that are neither (IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH).
  * @param {unknown} value Complete native68 portable definition.
  * @returns {Record<string, unknown>} Detached native request, not execution authorization.
  */
 export function buildNativeIdentityResolutionCreate(value: unknown): Record<string, unknown> {
   const document = nativeIdentityResolutionDocument(value);
+  const name = document.identity.apiName;
+  const prefix = `${document.spec.configurationType}_`;
+  const rulesetId = name.toLowerCase().startsWith(prefix.toLowerCase())
+    ? name.slice(prefix.length)
+    : '';
   return {
-    configurationType: 'Individual',
-    ...(document.identity.apiName === 'Individual'
-      ? {}
-      : { rulesetId: document.identity.apiName.slice('Individual_'.length) }),
+    configurationType: document.spec.configurationType,
+    ...(rulesetId ? { rulesetId } : {}),
     dataSpaceName: document.identity.dataSpace,
     secondaryDmo: document.spec.secondaryDmo.apiName,
     ...buildNativeIdentityResolutionUpdate(document),
@@ -56,20 +56,35 @@ export function buildNativeIdentityResolutionCreate(value: unknown): Record<stri
  * Serialize the complete qualified parent PATCH shape without generated output identities.
  * Empty explicit overrides reset fields to object inheritance; source order is semantic.
  * @param {unknown} value Complete native68 desired definition.
+ * @param {unknown} [current] Current target definition, when updating.
  * @returns {Record<string, unknown>} Detached input-shaped configuration.
  */
-export function buildNativeIdentityResolutionUpdate(value: unknown): Record<string, unknown> {
+export function buildNativeIdentityResolutionUpdate(
+  value: unknown,
+  current?: unknown,
+): Record<string, unknown> {
   const document = nativeIdentityResolutionDocument(value);
+  const existing = current === undefined ? undefined : nativeIdentityResolutionDocument(current);
   const settings = (item: IdentityResolutionReconciliationSettings): Record<string, unknown> => ({
     ruleType: item.ruleType,
     shouldIgnoreEmptyValue: item.shouldIgnoreEmptyValue,
     sources: item.sources.map((source) => ({ name: source.apiName })),
   });
+  // Empty filters and trusted sources stay omitted, as in the proven requests, unless the
+  // existing ruleset has entries: then the empty list is sent and the API decides.
+  const lists = Object.fromEntries(
+    (['filters', 'trustedSources'] as const)
+      .filter(
+        (key) => (document.spec[key]?.length ?? 0) > 0 || (existing?.spec[key]?.length ?? 0) > 0,
+      )
+      .map((key) => [key, document.spec[key] ?? []]),
+  );
   return {
     label: document.spec.label,
     description: document.spec.description,
     doesRunAutomatically: document.spec.doesRunAutomatically,
     isCaseSensitive: document.spec.isCaseSensitive,
+    ...lists,
     matchRules: document.spec.matchRules.map((rule) => ({
       label: rule.label,
       criteria: rule.criteria.map((criterion) => ({
@@ -78,6 +93,9 @@ export function buildNativeIdentityResolutionUpdate(value: unknown): Record<stri
         matchMethodType: criterion.matchMethodType,
         shouldMatchOnBlank: criterion.shouldMatchOnBlank,
         caseSensitiveMatch: criterion.caseSensitiveMatch,
+        ...(criterion.partyIdentificationInfo
+          ? { partyIdentificationInfo: criterion.partyIdentificationInfo }
+          : {}),
       })),
     })),
     reconciliationRules: document.spec.reconciliationRules.map((rule) => ({
@@ -92,7 +110,7 @@ export function buildNativeIdentityResolutionUpdate(value: unknown): Record<stri
 }
 
 /**
- * Compare complete supported configuration while retaining exact logical owner identity.
+ * Compare complete configuration while retaining exact logical owner identity.
  * @param {unknown} current Independently projected settled target.
  * @param {unknown} value Complete desired definition.
  * @returns {boolean} Qualified full supported configuration semantic delta.
@@ -103,10 +121,16 @@ export function nativeIdentityResolutionConfigurationDelta(
 ): boolean {
   const expected = nativeIdentityResolutionDocument(current);
   const desired = nativeIdentityResolutionDocument(value);
+  // PATCH carries neither configuration type nor secondary DMO, so it cannot change them.
   return (
-    isDeepStrictEqual(expected.identity, desired.identity) && !isDeepStrictEqual(expected, desired)
+    isDeepStrictEqual(expected.identity, desired.identity) &&
+    expected.spec.configurationType === desired.spec.configurationType &&
+    isDeepStrictEqual(expected.spec.secondaryDmo, desired.spec.secondaryDmo) &&
+    !isDeepStrictEqual(expected, desired)
   );
 }
+
+export const inFlightIdentityResolutionStatuses = ['PUBLISHING', 'DELETING'];
 
 /**
  * Hash private binding evidence without exposing target resource identities.
@@ -249,6 +273,12 @@ export async function preflightNativeIdentityResolutionDeploy(
       ) {
         result.target = 'absent';
         result.absenceProof = 'exact-item-not-found';
+        // The API names a new ruleset `<type>_<rulesetId>` (or `<type>`); a file name that
+        // does not follow it would create a ruleset under another name than the file's.
+        const name = desired.identity.apiName.toLowerCase();
+        const type = desired.spec.configurationType.toLowerCase();
+        if (name !== type && !(name.startsWith(`${type}_`) && name.length > type.length + 1))
+          throw new Error('IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH');
         const precreateBinding = await bindNativeIdentityResolutionPrecreate(
           desired,
           connection,
@@ -274,9 +304,17 @@ export async function preflightNativeIdentityResolutionDeploy(
         getConnectDiagnostic(error),
       );
     }
-    const current = projectNativeIdentityResolution(raw, desired.identity.apiName).candidate;
+    const projection = projectNativeIdentityResolution(raw, desired.identity.apiName);
+    const current = projection.candidate;
     if (!isDeepStrictEqual(selection, frozen) || connection.getApiVersion() !== '68.0')
       throw new Error('INVALID_SCOPE');
+    // A write while the API is still processing the ruleset could not be told apart from it.
+    if (
+      inFlightIdentityResolutionStatuses.includes(
+        String(projection.expectations.native.rulesetStatus),
+      )
+    )
+      throw new Error('IDENTITY_RESOLUTION_NOT_SETTLED');
     result.target = 'present';
     result.outcome = isDeepStrictEqual(current, desired)
       ? 'unchanged'
@@ -309,145 +347,10 @@ export type IdentityResolutionTargetConnection = Pick<
   'instanceUrl' | 'request' | 'getApiVersion'
 >;
 export type IdentityResolutionPreflightOptions = {
-  targetApiName?: string;
   verifyDependencies?: (
     document: IdentityResolutionDocument,
     connection: IdentityResolutionTargetConnection,
     apiVersion: ApiVersionSelection,
     dataSpace: string,
   ) => Promise<void>;
-  acquire?: typeof retrieveIdentityResolution;
 };
-export type IdentityResolutionDeployPreview = {
-  family: 'identity-resolution';
-  outcome: 'update' | 'unchanged' | 'blocked-changes' | 'blocked';
-  target: 'present' | 'unknown';
-  absenceProof: 'none';
-  route: { apiVersion: '67.0'; operation: 'd360_ir_update' };
-  requiredEffects: Array<'publication' | 'generated-output-provisioning'>;
-  diagnostics: Array<{ code: string; message: string }>;
-};
-
-/**
- * Preview an explicitly bound existing PUBLISHED owner; never infer absence or authorize writes.
- * Dependency verification defaults to independent bounded target DMO/Metadata compatibility reads.
- * Label/description edits are not qualified by evidence that only preserved those values.
- * @param {unknown} value Complete authored desired configuration.
- * @param {IdentityResolutionTargetConnection} connection Authenticated numeric API67 target.
- * @param {ApiVersionSelection} apiVersion Explicit frozen API67 selection.
- * @param {string} dataSpace Explicit default target space.
- * @param {IdentityResolutionPreflightOptions} options Exact owner binding and fresh compatibility verifier.
- * @returns {Promise<IdentityResolutionDeployPreview>} Payload-free read-only classification.
- */
-export async function preflightIdentityResolutionDeploy(
-  value: unknown,
-  connection: IdentityResolutionTargetConnection,
-  apiVersion: ApiVersionSelection,
-  dataSpace: string,
-  options: IdentityResolutionPreflightOptions = {},
-): Promise<IdentityResolutionDeployPreview> {
-  const result = (
-    outcome: IdentityResolutionDeployPreview['outcome'],
-    target: IdentityResolutionDeployPreview['target'],
-    code?: string,
-    evidence?: unknown,
-  ): IdentityResolutionDeployPreview =>
-    retainConnectDiagnostic(
-      {
-        family: 'identity-resolution',
-        outcome,
-        target,
-        absenceProof: 'none',
-        route: { apiVersion: '67.0', operation: 'd360_ir_update' },
-        requiredEffects:
-          outcome === 'update' ? ['publication', 'generated-output-provisioning'] : [],
-        diagnostics: code
-          ? [
-              {
-                code,
-                message: getConnectDiagnostic(evidence)
-                  ? operationDiagnostic(
-                      evidence,
-                      'IR preview is not execution authorization. Resolve target, dependency or configuration qualification before deployment.',
-                    )
-                  : 'IR preview is not execution authorization. Resolve target, dependency or configuration qualification before deployment.',
-              },
-            ]
-          : [],
-      },
-      getConnectDiagnostic(evidence),
-    );
-  let desired: IdentityResolutionDocument;
-  try {
-    desired = validateIdentityResolutionDocument(value);
-  } catch {
-    return result('blocked', 'unknown', 'INVALID_SOURCE');
-  }
-  try {
-    if (
-      apiVersion?.requested !== '67.0' ||
-      apiVersion.restSelector !== 'v67.0' ||
-      apiVersion.soapNumeric !== '67.0' ||
-      connection.getApiVersion() !== '67.0' ||
-      dataSpace !== 'default' ||
-      !identityResolutionName.test(desired.identity.apiName) ||
-      (options.targetApiName !== undefined && options.targetApiName !== desired.identity.apiName)
-    )
-      return result('blocked', 'unknown', 'INVALID_SCOPE');
-    // Snapshot caller-owned routing/options before asynchronous reads; never derive names from suffixes.
-    const targetApiName = desired.identity.apiName;
-    const selection = { ...apiVersion };
-    const acquire = options.acquire ?? retrieveIdentityResolution;
-    const verify = options.verifyDependencies ?? bindIdentityResolutionDependencies;
-    if (typeof verify !== 'function')
-      return result('blocked', 'unknown', 'IDENTITY_RESOLUTION_DEPENDENCY_VERIFIER_REQUIRED');
-    // Verification must independently read existing target dependencies on every invocation, including equality.
-    await verify(structuredClone(desired), connection, { ...selection }, dataSpace);
-    const acquired = await acquire(connection, targetApiName, selection, dataSpace);
-    if (
-      !acquired.candidate ||
-      !acquired.expectations ||
-      !Array.isArray(acquired.blockers) ||
-      acquired.blockers.length > 0
-    )
-      return result(
-        'blocked',
-        'unknown',
-        'IDENTITY_RESOLUTION_CREATE_AND_TARGET_UNQUALIFIED',
-        acquired,
-      );
-    // Re-project independent full representations instead of trusting a candidate or injected success flag.
-    const projection = projectIdentityResolution(
-      acquired.expectations.facade,
-      acquired.expectations.native,
-      targetApiName,
-    );
-    if (
-      !isDeepStrictEqual(acquired.identity, desired.identity) ||
-      !isDeepStrictEqual(
-        validateIdentityResolutionDocument(acquired.candidate),
-        projection.candidate,
-      ) ||
-      !isDeepStrictEqual(acquired.expectations.outputs, projection.expectations.outputs)
-    )
-      return result('blocked', 'unknown', 'IDENTITY_RESOLUTION_TARGET_CORRELATION_MISMATCH');
-    const current = projection.candidate;
-    if (isDeepStrictEqual(current, desired)) return result('unchanged', 'present');
-    // Only the first entity's LastUpdated -> MostFrequent delta is evidenced. All six generated
-    // reconciliation entries and ordered matching semantics remain in the full comparison.
-    const expected = structuredClone(current);
-    if (expected.spec.reconciliationRules[0].ruleType !== 'LastUpdated')
-      return result('blocked-changes', 'present', 'IDENTITY_RESOLUTION_UPDATE_UNQUALIFIED');
-    expected.spec.reconciliationRules[0].ruleType = 'MostFrequent';
-    return isDeepStrictEqual(expected, desired)
-      ? result('update', 'present')
-      : result('blocked-changes', 'present', 'IDENTITY_RESOLUTION_UPDATE_UNQUALIFIED');
-  } catch (error) {
-    return result(
-      'blocked',
-      'unknown',
-      'IDENTITY_RESOLUTION_TARGET_OR_DEPENDENCY_UNQUALIFIED',
-      error,
-    );
-  }
-}

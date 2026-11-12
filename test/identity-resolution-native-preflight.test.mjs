@@ -80,14 +80,14 @@ test('native68 API rejection survives target wrapping without qualifying absence
   assert.match(result.diagnostics[0].message, /admission is incomplete/u);
 });
 
-test('native68 FirstName case-sensitive input is rejected by builders and preflight before target access', async () => {
+test('native68 FirstName case-sensitive input is sent as authored; the API decides', async () => {
   const h = harness();
   h.desired.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;
   for (const build of [buildNativeIdentityResolutionCreate, buildNativeIdentityResolutionUpdate])
-    assert.throws(() => build(h.desired));
+    assert.equal(build(h.desired).matchRules[0].criteria[0].caseSensitiveMatch, true);
   const result = await h.run();
-  assert.equal(result.outcome, 'blocked');
-  assert.deepEqual(h.calls, { inputs: 0, gets: 0 });
+  assert.equal(result.outcome, 'update');
+  assert.deepEqual(h.calls, { inputs: 1, gets: 1 });
 });
 
 test('native68 preflight independently reads exact name and verifies only input dependencies', async () => {
@@ -103,13 +103,52 @@ test('native68 preflight independently reads exact name and verifies only input 
   assert.equal(JSON.stringify(preview).includes('synthetic-owner-id'), false);
 });
 
-test('native68 preflight refuses nonempty target filters instead of comparing a lossy document', async () => {
+test('native68 preflight compares nonempty target filters as part of the document', async () => {
   const h = harness();
   h.raw.filters = [{ fieldName: 'ssot__FirstName__c', value: 'Meaningful' }];
+  // Emptying the target's filters is an update; the PATCH sends the empty list.
   const preview = await h.run();
-  assert.equal(preview.outcome, 'blocked');
-  assert.equal(preview.target, 'unknown');
-  assert.deepEqual(h.calls, { inputs: 1, gets: 1 });
+  assert.equal(preview.outcome, 'update');
+  assert.equal(preview.target, 'present');
+  h.desired.spec.filters = structuredClone(h.raw.filters);
+  const unchanged = await h.run();
+  assert.equal(unchanged.outcome, 'unchanged');
+  h.desired.spec.filters.push({ fieldName: 'ssot__LastName__c', value: 'Other' });
+  const update = await h.run();
+  assert.equal(update.outcome, 'update');
+  assert.deepEqual(h.calls, { inputs: 3, gets: 3 });
+});
+
+test('native68 preflight blocks changes PATCH cannot carry and writes over in-flight processing', async () => {
+  for (const modify of [
+    (d) => {
+      d.spec.configurationType = 'Account';
+    },
+    (d) => {
+      d.spec.secondaryDmo.apiName = 'ssot__Account__dlm';
+    },
+  ]) {
+    const h = harness();
+    modify(h.desired);
+    const preview = await h.run();
+    assert.equal(preview.outcome, 'blocked-changes');
+    assert.equal(preview.diagnostics[0].code, 'IDENTITY_RESOLUTION_UPDATE_UNQUALIFIED');
+  }
+  for (const status of ['PUBLISHING', 'DELETING']) {
+    const h = harness();
+    h.raw.rulesetStatus = status;
+    const preview = await h.run();
+    assert.equal(preview.outcome, 'blocked');
+    assert.equal(preview.diagnostics[0].code, 'IDENTITY_RESOLUTION_NOT_SETTLED');
+  }
+  // An unpublished ruleset is an ordinary target.
+  const h = harness();
+  h.raw.rulesetStatus = 'NEW';
+  const draft = await h.run();
+  assert.equal(draft.outcome, 'unchanged');
+  h.desired.spec.doesRunAutomatically = true;
+  const automatic = await h.run();
+  assert.equal(automatic.outcome, 'update');
 });
 
 test('native68 source migration and unsupported names stop before reads', async () => {
@@ -185,13 +224,44 @@ test('native68 CREATE builder is complete and uses proven PascalCase without sou
   assert.deepEqual(nativeIdentityResolutionDocument(h.desired), h.desired);
 });
 
-test('native68 CREATE and PATCH builders reject nonempty authored trusted sources', () => {
+test('native68 CREATE and PATCH builders send nonempty trusted sources and filters as authored', () => {
   const h = harness();
-  h.desired.spec.trustedSources = [source('First__dll')];
-  for (const build of [buildNativeIdentityResolutionCreate, buildNativeIdentityResolutionUpdate])
-    assert.throws(() => build(h.desired), {
-      code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
+  h.desired.spec.trustedSources = [{ name: 'First__dll' }];
+  h.desired.spec.filters = [{ fieldName: 'ssot__FirstName__c', value: 'Meaningful' }];
+  for (const build of [buildNativeIdentityResolutionCreate, buildNativeIdentityResolutionUpdate]) {
+    const body = build(h.desired);
+    assert.deepEqual(body.trustedSources, [{ name: 'First__dll' }]);
+    assert.deepEqual(body.filters, h.desired.spec.filters);
+  }
+});
+
+test('native68 CREATE derives configuration type and ruleset ID from the document', () => {
+  for (const [apiName, configurationType, rulesetId] of [
+    ['Individual', 'Individual', undefined],
+    ['Individual_MKT', 'Individual', 'MKT'],
+    ['Individual_Ab12345', 'Individual', 'Ab12345'],
+    ['Account_ab12', 'account', 'ab12'],
+    // Everything after the type prefix, not after the last underscore.
+    ['Individual_a_b', 'Individual', 'a_b'],
+  ]) {
+    const raw = nativeIrFixture();
+    raw.objectApiName = apiName;
+    raw.configurationType = configurationType.toLowerCase();
+    raw.doesRunAutomatically = true;
+    if (rulesetId === undefined) delete raw.rulesetId;
+    else raw.rulesetId = rulesetId;
+    raw.matchRules[0].criteria[0].partyIdentificationInfo = { partyName: 'Key', partyType: 'Id' };
+    const desired = projectNativeIdentityResolution(raw, apiName).candidate;
+    const body = buildNativeIdentityResolutionCreate(desired);
+    assert.equal(body.configurationType, configurationType);
+    assert.equal(body.rulesetId, rulesetId);
+    assert.equal(Object.hasOwn(body, 'rulesetId'), rulesetId !== undefined);
+    assert.equal(body.doesRunAutomatically, true);
+    assert.deepEqual(body.matchRules[0].criteria[0].partyIdentificationInfo, {
+      partyName: 'Key',
+      partyType: 'Id',
     });
+  }
 });
 
 test('native68 rich settings preserve ordered sources, flags, rules and explicit override reset', async () => {
@@ -268,6 +338,23 @@ test('native68 rich settings preserve ordered sources, flags, rules and explicit
     'rulesetStatus',
   ])
     assert.equal(Object.hasOwn(patch, key), false);
+});
+
+test('native68 CREATE of a name that does not follow <type>_<rulesetId> is refused before any write', async () => {
+  const h = harness();
+  h.options.verifyPrecreateInputs = async () => ({ fingerprint: 'a'.repeat(64) });
+  h.desired.spec.configurationType = 'Account';
+  h.connection.request = async () => {
+    throw {
+      statusCode: 404,
+      name: 'ITEM_NOT_FOUND',
+      errorCode: 'ITEM_NOT_FOUND',
+      data: { errorCode: 'ITEM_NOT_FOUND', message: 'No item' },
+    };
+  };
+  const preview = await h.run();
+  assert.equal(preview.outcome, 'blocked');
+  assert.equal(preview.diagnostics[0].code, 'IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH');
 });
 
 test('native68 exact absence and compatible inputs preview CREATE without predicting outputs', async () => {

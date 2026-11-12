@@ -177,5 +177,6 @@ export async function nativeDataGraphReadContext(
       check();
       return { detail: detail.body, metadata };
     },
+    identityResolutions: () => read(`${base}/ssot/identity-resolutions`),
   };
 }

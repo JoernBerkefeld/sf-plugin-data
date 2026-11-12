@@ -1,3 +1,57 @@
+# Identity resolution fully native API 68; graph preview checks its owner — 2026-11-12
+
+Package I1 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.
+Version stays 0.1.0; nothing pushed.
+
+- IR local allowlists removed (document, preflight, response projection, output binding,
+  delete): the `Individual(_x{1,4})` name pattern, `configurationType: Individual`,
+  `doesRunAutomatically: false`, `isCaseSensitive: true`, Individual secondary DMO, empty
+  filters, the fixed six reconciliation entities, the FirstName case rule, `__dll`-only
+  sources, PUBLISHED-only retrieve, exactly 12 Derived/Bridge outputs, Text/`__c` field
+  checks and the delete refusal of auto-run rulesets. Run statistics (`lastJobStatus`,
+  `knownUnifiedProfiles`, ...) are dropped from the file.
+- Kept: structural checks, default data space, one reconciliation entry per entity, the
+  `1ir…` ID check before DELETE, `blocked-changes` for configuration type or secondary
+  DMO changes (PATCH has no field for them), `IDENTITY_RESOLUTION_NOT_SETTLED` for PATCH or
+  DELETE while `PUBLISHING`/`DELETING`, and `IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH` when a
+  new ruleset's name is not `<type>` or `<type>_<rulesetId>` (the create derives the
+  ruleset id from the name). Emptying filters or trusted sources now sends the empty list
+  in the PATCH.
+- Removed the dead API 67 IR deploy code: `execute-identity-resolution-deploy.ts`, the 67
+  `preflightIdentityResolutionDeploy`, `legacyIdentityResolutionApiVersion` and their tests.
+  `retrieveLegacyIdentityResolution` and the facade projection stay until G2 (the API 67
+  graph route calls them). The `d360_ir_*` operations in `mcp-execute.ts` have no callers.
+- Graph `--preview` (only) checks the root: 404 is `DATA_GRAPH_ROOT_NOT_FOUND`; a
+  `Derived` root is matched case-insensitively against
+  `GET /ssot/identity-resolutions` `reconciliationRules[].unifiedDmoName`
+  (`DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, info
+  `DATA_GRAPH_OWNER`). The real deploy reads no owner (user decision). Only the first page
+  of the IR list is read. Mixed IR+graph ordering moved to the CRUD pipeline plan.
+- Review: two rounds.
+
+Live, `isolated-source` (00Daj000010xkZNEAY), API 68 (IR creates 1 of 2, graph creates 4 of 4):
+
+- Read-only: probe ruleset `Individual_9a99` retrieve exit 0, preview `unchanged` exit 0.
+- Graph `CliGraphI1_364c` preview before the IR existed: exit 1 `DATA_GRAPH_ROOT_NOT_FOUND`.
+- Fixture IR `Individual_5810` ("CliIR probe 5810", `doesRunAutomatically: true`, one
+  match rule; refused locally before): preview exit 0 create; create exit 0
+  `confirmed-created` (695 s).
+- Graph preview after: exit 0, create, `DATA_GRAPH_OWNER` naming `Individual_5810
+(PUBLISHED)`; create on `UnifiedssotIndividual5810__dlm` exit 0 `confirmed-created`
+  (~16 min); repeat exit 0 `unchanged` (11 s); retrieve exit 0 (root type `derived`);
+  update (description, schedule 7 → 1 day) preview exit 0, deploy exit 0
+  `confirmed-updated` (38 s), independent GET ready, version 0, frequency 1; repeat exit
+  0 `unchanged` (10 s); delete preview exit 0; delete exit 0 `confirmed-deleted` (27 s);
+  item not found, SOQL 0.
+- IR delete preview exit 0; delete exit 0 `deletion-processing` /
+  `acknowledged-processing` (86 s); `DELETING` until ~3.5 min after, then not found; gone
+  from the list; `UnifiedssotIndividual5810__dlm` reads `ITEM_NOT_FOUND`.
+- G2 gate met: a unified-root graph owned by a fixture IR is created, retrieved, updated,
+  redeployed unchanged and deleted at API 68.
+
+Evidence `F:/Temp/i1live-Go44D5`. Verification DB:
+`data360:identity-resolution.native-any-ruleset.api68`.
+
 # Native graph writes: DELETE answer decides, 429/503 resent — 2026-11-12
 
 Follow-up to G1 (user decisions in this session and a side session). Version stays 0.1.0.

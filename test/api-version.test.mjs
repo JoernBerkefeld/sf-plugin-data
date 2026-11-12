@@ -19,7 +19,6 @@ import {
   nativeApiVersion,
   operationApiVersion,
   resolveApiVersion,
-  legacyIdentityResolutionApiVersion,
 } from '../lib/transport/api-version.js';
 
 test('native DLO auto pins API68 without changing unrelated qualified family routes', () => {
@@ -29,9 +28,6 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
     assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
   assert.equal(operationApiVersion('auto', 'calculated-insight'), '68.0');
   assert.equal(operationApiVersion('auto', 'identity-resolution'), '68.0');
-  for (const requested of ['auto', '67.0'])
-    assert.equal(legacyIdentityResolutionApiVersion(requested), '67.0');
-  assert.throws(() => legacyIdentityResolutionApiVersion('68.0'), /INVALID_SCOPE/u);
   assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
   assert.throws(() => operationApiVersion('67.0', 'ingestion-dlo'), /INVALID_SCOPE/u);
 });

@@ -12,20 +12,15 @@ import {
   nativeIrFixture,
 } from './identity-resolution-fixtures.mjs';
 
-test('native68 rejects demonstrated unsupported FirstName case-sensitive matching in documents and readback', () => {
+test('native68 sends FirstName case-sensitive matching as authored; the API decides', () => {
   const raw = nativeIrFixture();
-  const desired = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
-  desired.spec.matchRules[0].criteria[0].caseSensitiveMatch = true;
-  assert.throws(() => validateIdentityResolutionDocument(desired), {
-    code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
-  });
   raw.matchRules[0].criteria[0].caseSensitiveMatch = true;
-  assert.throws(() => projectNativeIdentityResolution(raw, raw.objectApiName), {
-    code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
-  });
+  const desired = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
+  assert.equal(desired.spec.matchRules[0].criteria[0].caseSensitiveMatch, true);
+  assert.deepEqual(validateIdentityResolutionDocument(desired), desired);
 });
 
-test('native68 retains empty trustedSources and all admitted definition without private owner/output identities', () => {
+test('native68 keeps trusted sources and other settings as returned, without private owner/output identities', () => {
   const raw = nativeIrFixture();
   const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
   assert.equal(projection.expectations.facade, undefined);
@@ -43,24 +38,30 @@ test('native68 retains empty trustedSources and all admitted definition without 
   }
   raw.label = 'changed';
   assert.equal(projection.expectations.native.label, 'Synthetic owner');
+  const accepted = nativeIrFixture();
+  delete accepted.trustedSources;
+  assert.deepEqual(
+    projectNativeIdentityResolution(accepted, 'Individual_A1b2').candidate.spec.trustedSources,
+    [],
+  );
+  const trusted = nativeIrFixture();
+  trusted.trustedSources = [{ name: 'Synthetic__dll' }];
+  trusted.reconciliationRules[0].ruleType = 'newruletype';
+  trusted.matchRules[0].criteria[0].matchMethodType = 'Fuzzy';
+  const kept = projectNativeIdentityResolution(trusted, 'Individual_A1b2').candidate;
+  assert.deepEqual(kept.spec.trustedSources, [{ name: 'Synthetic__dll' }]);
+  // Unknown API values are kept exactly; known ones get the document spelling in any casing.
+  assert.equal(kept.spec.reconciliationRules[0].ruleType, 'newruletype');
+  assert.equal(kept.spec.matchRules[0].criteria[0].matchMethodType, 'Fuzzy');
   for (const mutate of [
-    (r) => {
-      delete r.trustedSources;
-    },
-    (r) => {
-      r.trustedSources = [{}];
-    },
     (r) => {
       r.trustedSources = {};
     },
     (r) => {
-      r.rulesetId = 'Z9y8';
+      r.reconciliationRules[0].ruleType = '';
     },
     (r) => {
-      r.reconciliationRules[0].ruleType = 'unsupported';
-    },
-    (r) => {
-      r.matchRules[0].criteria[0].matchMethodType = 'Fuzzy';
+      r.matchRules[0].criteria[0].matchMethodType = 42;
     },
   ]) {
     const value = nativeIrFixture();
@@ -68,11 +69,11 @@ test('native68 retains empty trustedSources and all admitted definition without 
     assert.throws(() => projectNativeIdentityResolution(value, 'Individual_A1b2'));
   }
   const invalid = structuredClone(projection.candidate);
-  invalid.spec.trustedSources = [{}];
+  invalid.spec.trustedSources = {};
   assert.throws(() => validateIdentityResolutionDocument(invalid));
 });
 
-test('native68 live-shaped GET preserves empty filters and complete raw comparison evidence', () => {
+test('native68 live-shaped GET keeps filters as returned and complete raw comparison evidence', () => {
   const raw = nativeIrFixture();
   const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
   assert.deepEqual(projection.candidate.spec.filters, []);
@@ -88,52 +89,60 @@ test('native68 live-shaped GET preserves empty filters and complete raw comparis
   const normalized = projectNativeIdentityResolution(omitted, omitted.objectApiName);
   assert.deepEqual(normalized.candidate, projection.candidate);
   assert.notDeepEqual(normalized.expectations.native, projection.expectations.native);
-  raw.filters.push({ fieldName: 'ssot__FirstName__c', value: 'Meaningful' });
-  assert.deepEqual(projection.expectations.native.filters, []);
-  for (const filters of [raw.filters, {}, undefined, false])
+  const filtered = structuredClone(raw);
+  filtered.filters.push({ fieldName: 'ssot__FirstName__c', value: 'Meaningful' });
+  assert.deepEqual(
+    projectNativeIdentityResolution(filtered, raw.objectApiName).candidate.spec.filters,
+    filtered.filters,
+  );
+  for (const filters of [{}, undefined, false])
     assert.throws(() => projectNativeIdentityResolution({ ...raw, filters }, raw.objectApiName), {
       code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
     });
 });
 
-test('native68 uses exact optional alphanumeric suffix mapping while historical Graph reads stay four-character', () => {
-  for (const suffix of ['', 'A', 't1', 'Ab3', 'A1b2']) {
+test('native68 admits any owner name and ruleset ID while historical Graph reads stay four-character', () => {
+  for (const [apiName, rulesetId] of [
+    ['Individual', undefined],
+    ['Individual_A', 'A'],
+    ['Individual_mce', 'mce'],
+    ['Individual_MKT', 'MKT'],
+    ['Individual_A1b2', 'A1b2'],
+    ['Individual_A1234', 'A1234'],
+    ['Individual_A_b', 'A_b'],
+    ['Account_ab12', 'ab12'],
+  ]) {
     const raw = nativeIrFixture();
-    raw.objectApiName = suffix ? `Individual_${suffix}` : 'Individual';
-    if (suffix) raw.rulesetId = suffix;
-    else delete raw.rulesetId;
-    const document = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
-    assert.equal(document.identity.apiName, raw.objectApiName);
+    raw.objectApiName = apiName;
+    if (rulesetId === undefined) delete raw.rulesetId;
+    else raw.rulesetId = rulesetId;
+    const document = projectNativeIdentityResolution(raw, apiName).candidate;
+    assert.equal(document.identity.apiName, apiName);
     assert.deepEqual(
       validateIdentityResolutionDocument(JSON.parse(serializeIdentityResolutionDocument(document))),
       document,
     );
-    if (suffix.length !== 4) {
+    if (rulesetId?.length !== 4) {
       const pair = irFixture();
-      pair.facade.objectApiName = raw.objectApiName;
-      if (suffix) pair.facade.rulesetId = suffix;
-      else delete pair.facade.rulesetId;
+      pair.facade.objectApiName = apiName;
+      if (rulesetId === undefined) delete pair.facade.rulesetId;
+      else pair.facade.rulesetId = rulesetId;
       pair.native = structuredClone(pair.facade);
       delete pair.native.filters;
-      assert.throws(() => projectIdentityResolution(pair.facade, pair.native, raw.objectApiName));
+      assert.throws(() => projectIdentityResolution(pair.facade, pair.native, apiName));
     }
   }
-  for (const [apiName, suffix] of [
+  for (const [apiName, rulesetId, requested = apiName] of [
     ['Individual_', ''],
-    ['Individual', ''],
+    ['Individual', '  '],
     ['Individual', 0],
-    ['Individual_A', undefined],
-    ['Individual_A', 'a'],
-    ['Individual_A1234', 'A1234'],
-    ['Individual_A_b', 'A_b'],
     ['Individual_A-b', 'A-b'],
-    ['Individual_A ', 'A '],
+    ['Individual_A1b2', 'A1b2', 'Individual_Other'],
   ]) {
     const raw = nativeIrFixture();
     raw.objectApiName = apiName;
-    if (suffix === undefined) delete raw.rulesetId;
-    else raw.rulesetId = suffix;
-    assert.throws(() => projectNativeIdentityResolution(raw, apiName));
+    raw.rulesetId = rulesetId;
+    assert.throws(() => projectNativeIdentityResolution(raw, requested));
   }
 });
 
@@ -403,7 +412,13 @@ test('IR portable validation refuses identity drift, unknown settings and execut
       d.identity.id = 'source';
     },
     (d) => {
-      d.spec.matchRules[0].criteria[0].matchMethodType = 'Unknown';
+      d.spec.matchRules[0].criteria[0].matchMethodType = '';
+    },
+    (d) => {
+      d.spec.doesRunAutomatically = 'yes';
+    },
+    (d) => {
+      d.spec.reconciliationRules.push(structuredClone(d.spec.reconciliationRules[0]));
     },
   ]) {
     const value = structuredClone(document);
@@ -424,4 +439,151 @@ test('IR portable validation refuses identity drift, unknown settings and execut
   const cyclic = structuredClone(document);
   cyclic.spec.filters.push(cyclic);
   assert.throws(() => validateIdentityResolutionDocument(cyclic));
+});
+
+/**
+ * Build a ruleset shaped like the recorded API68 list entries (runtime statistics, no
+ * description, a party identifier criterion, automatic runs).
+ * @returns {object} Synthetic native owner.
+ */
+function runningIrFixture() {
+  const raw = nativeIrFixture();
+  delete raw.description;
+  Object.assign(raw, {
+    objectApiName: 'Individual_mce',
+    rulesetId: 'mce',
+    doesRunAutomatically: true,
+    anonymousUnifiedProfiles: 0,
+    consolidationRate: 3,
+    knownUnifiedProfiles: 504,
+    lastJobCompleted: '2026-08-18T11:27:21.000Z',
+    lastJobStatus: 'SUCCESS',
+    matchedSourceProfiles: 36,
+    sourceProfiles: 522,
+    totalUnifiedProfiles: 504,
+  });
+  raw.matchRules = [
+    {
+      label: 'Subscriber key',
+      criteria: [
+        {
+          caseSensitiveMatch: false,
+          entityName: 'ssot__PartyIdentification__dlm',
+          fieldName: 'ssot__IdentificationNumber__c',
+          matchMethodType: 'exact',
+          partyIdentificationInfo: { partyName: 'Subscriber Key', partyType: 'Person Identifier' },
+          shouldMatchOnBlank: false,
+        },
+      ],
+    },
+  ];
+  return raw;
+}
+
+test('native68 automatic ruleset with run statistics, party identifier and no description round-trips', () => {
+  const raw = runningIrFixture();
+  const projection = projectNativeIdentityResolution(raw, 'Individual_mce');
+  const document = projection.candidate;
+  assert.equal(document.spec.doesRunAutomatically, true);
+  assert.equal(document.spec.description, '');
+  assert.deepEqual(document.spec.matchRules[0].criteria[0].partyIdentificationInfo, {
+    partyName: 'Subscriber Key',
+    partyType: 'Person Identifier',
+  });
+  const bytes = serializeIdentityResolutionDocument(document);
+  for (const statistic of ['lastJobStatus', 'knownUnifiedProfiles', 'SUCCESS'])
+    assert.equal(bytes.includes(statistic), false);
+  // Statistics change between reads, so they are not owner comparison evidence either.
+  assert.equal(Object.hasOwn(projection.expectations.native, 'lastJobStatus'), false);
+  const later = runningIrFixture();
+  later.knownUnifiedProfiles = 999;
+  later.lastJobStatus = 'FAILURE';
+  assert.deepEqual(projectNativeIdentityResolution(later, 'Individual_mce'), projection);
+  assert.deepEqual(validateIdentityResolutionDocument(JSON.parse(bytes)), document);
+  const party = structuredClone(document);
+  party.spec.matchRules[0].criteria[0].partyIdentificationInfo = 'Subscriber Key';
+  assert.throws(() => validateIdentityResolutionDocument(party));
+  const unknown = runningIrFixture();
+  unknown.unknownSetting = true;
+  assert.throws(() => projectNativeIdentityResolution(unknown, 'Individual_mce'));
+});
+
+test('native68 projects a non-default reconciliation set, count and configuration type', () => {
+  const raw = nativeIrFixture();
+  raw.configurationType = 'account';
+  raw.secondaryDmo = 'ssot__Account__dlm';
+  raw.isCaseSensitive = false;
+  raw.matchRules = [
+    {
+      label: 'Account name',
+      criteria: [
+        {
+          caseSensitiveMatch: true,
+          entityName: 'ssot__Account__dlm',
+          fieldName: 'ssot__Name__c',
+          matchMethodType: 'fuzzy',
+          shouldMatchOnBlank: true,
+        },
+      ],
+    },
+  ];
+  raw.reconciliationRules = [
+    {
+      entityName: 'ssot__Account__dlm',
+      fields: [],
+      linkDmoName: 'SyntheticLinkAccount__dlm',
+      ruleType: 'sourcesequence',
+      shouldIgnoreEmptyValue: false,
+      sources: [],
+      unifiedDmoName: 'SyntheticUnifiedAccount__dlm',
+    },
+    {
+      entityName: 'Custom_Contact__dlm',
+      fields: [
+        {
+          fieldName: 'Phone__c',
+          ruleType: 'lastupdated',
+          shouldIgnoreEmptyValue: true,
+          sources: [{ name: 'Custom_Source__dll' }],
+        },
+      ],
+      linkDmoName: 'SyntheticLinkContact__dlm',
+      ruleType: 'mostfrequent',
+      shouldIgnoreEmptyValue: true,
+      sources: [{ name: 'Other_Source' }],
+      unifiedDmoName: 'SyntheticUnifiedContact__dlm',
+    },
+  ];
+  const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
+  const document = projection.candidate;
+  assert.equal(document.spec.configurationType, 'account');
+  assert.deepEqual(document.spec.secondaryDmo.apiName, 'ssot__Account__dlm');
+  assert.deepEqual(
+    document.spec.reconciliationRules.map((rule) => [rule.entity.apiName, rule.ruleType]),
+    [
+      ['ssot__Account__dlm', 'SourceSequence'],
+      ['Custom_Contact__dlm', 'MostFrequent'],
+    ],
+  );
+  assert.equal(projection.expectations.outputs.length, 4);
+  assert.deepEqual(
+    validateIdentityResolutionDocument(JSON.parse(serializeIdentityResolutionDocument(document))),
+    document,
+  );
+});
+
+test('native68 projects an unpublished (NEW) ruleset without match rules or generated outputs', () => {
+  const raw = nativeIrFixture();
+  raw.rulesetStatus = 'NEW';
+  raw.matchRules = [];
+  for (const rule of raw.reconciliationRules) {
+    delete rule.unifiedDmoName;
+    // eslint-disable-next-line unicorn/no-null -- The API may answer JSON null for an absent output.
+    rule.linkDmoName = null;
+  }
+  const projection = projectNativeIdentityResolution(raw, raw.objectApiName);
+  assert.deepEqual(projection.candidate.spec.matchRules, []);
+  assert.deepEqual(projection.expectations.outputs, []);
+  assert.equal(projection.expectations.native.rulesetStatus, 'NEW');
+  assert.equal(serializeIdentityResolutionDocument(projection.candidate).includes('NEW'), false);
 });

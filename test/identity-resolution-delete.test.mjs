@@ -109,6 +109,24 @@ test('IR delete binds both identities and sends exactly one target-ID DELETE the
   assert.equal(repeat.outcome, 'unchanged');
   assert.equal(h.writes.length, 1);
 });
+for (const shape of ['automatic', 'unpublished', 'reduced'])
+  test(`IR delete of an ${shape} ruleset reaches the one DELETE and confirms absence`, async () => {
+    const h = deleteHarness();
+    if (shape === 'automatic') {
+      h.raw.doesRunAutomatically = true;
+      Object.assign(h.raw, { lastJobStatus: 'SUCCESS', knownUnifiedProfiles: 504 });
+    }
+    if (shape === 'unpublished') Object.assign(h.raw, { rulesetStatus: 'NEW', matchRules: [] });
+    if (shape === 'reduced') h.raw.reconciliationRules = h.raw.reconciliationRules.slice(0, 2);
+    Object.assign(h.desired, projectNativeIdentityResolution(h.raw, h.raw.objectApiName).candidate);
+    const result = await h.run();
+    assert.equal(result.outcome, 'deleted');
+    assert.equal(result.mutation, 'confirmed-deleted');
+    assert.deepEqual(
+      h.writes.map((write) => write.method),
+      ['DELETE'],
+    );
+  });
 for (const mode of ['preview', 'absent', 'confirmation'])
   test(`IR ${mode} makes zero writes`, async () => {
     const h = deleteHarness();
@@ -434,3 +452,14 @@ test('IR transport rejects API67 before wire dispatch', async () => {
   await assert.rejects(new ConnectClient(h.connection, '67.0').deleteIdentityResolution(h.raw.id));
   assert.equal(h.writes.length, 0);
 });
+
+for (const status of ['PUBLISHING', 'DELETING'])
+  test(`native68 IR delete of a ${status} ruleset is blocked as not settled without a write`, async () => {
+    const h = deleteHarness();
+    h.raw.rulesetStatus = status;
+    Object.assign(h.desired, projectNativeIdentityResolution(h.raw, h.raw.objectApiName).candidate);
+    const result = await h.run();
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.diagnostics[0].code, 'IDENTITY_RESOLUTION_NOT_SETTLED');
+    assert.deepEqual(h.writes, []);
+  });

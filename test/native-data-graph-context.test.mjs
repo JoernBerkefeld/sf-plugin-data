@@ -163,6 +163,8 @@ test('Graph context reads the requested root object and refuses unsafe names', a
     f.calls.at(-1).url,
     `${origin}/services/data/v68.0/ssot/data-model-objects/UnifiedssotIndividualMkt__dlm?dataspace=default`,
   );
+  await context.identityResolutions();
+  assert.equal(f.calls.at(-1).url, `${origin}/services/data/v68.0/ssot/identity-resolutions`);
   const before = f.calls.length;
   for (const bad of ['', '../x', 'a?b', undefined]) await assert.rejects(context.root(bad));
   assert.equal(f.calls.length, before);
