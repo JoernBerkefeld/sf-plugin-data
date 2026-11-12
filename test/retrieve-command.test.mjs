@@ -268,28 +268,18 @@ test('mixed mapping relationship and DMO auto stays on the native route', async 
   );
   assert.equal(result.metadata.apiVersion, 'auto');
 });
-test('mixed mapping Graph auto retains Graph67 and mapping65 pins', async () => {
-  const command = invocation({
-    metadata: ['mapping:Alpha', 'data-graph:Graph'],
-    'api-version': 'auto',
-  });
-  const pins = [];
-  command.resolveOrg = async () => ({
-    getOrgId: () => 'synthetic-org',
-    getConnection: (version) => {
-      pins.push(version);
-      return connection;
-    },
-  });
-  command.acquireMappingXml = async () => '<opaque/>';
-  command.writeMapping = async () => ({ path: 'Alpha.xml', outcome: 'retrieved' });
-  command.readRawDataGraph = async () => {
-    throw new Error('synthetic');
-  };
-  const { result } = await run(command);
-  assert.equal(result.metadata.soapApiVersion, '67.0');
-  assert.ok(pins.includes('67.0'));
-  assert.equal(result.result.items[0].routes[0].apiVersion, '68.0');
+test('a native Graph in a mixed retrieve selection is refused before org access', async () => {
+  for (const metadata of [
+    ['mapping:Alpha', 'data-graph:Graph'],
+    ['relationship:Alpha__dlm', 'data-graph:Graph'],
+    ['identity-resolution:Individual_A1b2', 'data-graph:Graph'],
+  ]) {
+    const command = invocation({ metadata, 'api-version': 'auto' });
+    command.resolveOrg = async () => assert.fail('org resolved');
+    const { result } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
+  }
 });
 
 const candidate = {
@@ -836,32 +826,6 @@ test('auto mixed relationship and DMO selection reads both natively', async () =
   assert.equal(result.metadata.apiVersion, 'auto');
   assert.deepEqual(result.result.selection, ['dmo:Sample__dlm', 'relationship:Alpha__dlm']);
   assert.equal(result.result.items.length, 2);
-});
-
-test('auto mixed Graph and relationship keeps Graph67 and the native relationship route', async () => {
-  const command = invocation({
-    metadata: ['relationship:Alpha__dlm', 'data-graph:Graph'],
-    'api-version': 'auto',
-  });
-  const pins = [];
-  command.resolveOrg = async () => ({
-    getOrgId: () => 'synthetic-org',
-    getConnection: (version) => {
-      pins.push(version);
-      return connection;
-    },
-  });
-  command.readRawDataGraph = async () => {
-    throw new Error('synthetic graph read failure');
-  };
-  const { result } = await run(command);
-  assert.equal(result.metadata.apiVersion, 'auto');
-  assert.equal(result.metadata.soapApiVersion, '67.0');
-  assert.ok(pins.includes('67.0'));
-  assert.equal(result.result.items[0].family, 'relationship');
-  assert.deepEqual(result.result.items[0].routes, [
-    { operation: 'relationship.list', apiVersion: '68.0', transport: 'native' },
-  ]);
 });
 
 test('writer refusal and ambiguous publication failure return nonzero without silent success', async () => {

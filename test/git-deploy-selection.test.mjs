@@ -167,6 +167,17 @@ for (const member of ['path']) {
   });
 }
 
+test('a changed native data graph file refuses the Git selection instead of being dropped', async () => {
+  const cwd = await fixture();
+  await put(cwd, 'force-app/main/default/data360/dataGraphs/Example.native-dataGraph.json', {
+    kind: 'native-data-graph',
+  });
+  await assert.rejects(
+    selectGitDeployInputs({ cwd, ref: 'HEAD' }),
+    refusal('INVALID_GIT_SELECTION'),
+  );
+});
+
 test('legacy Segment XML Git selection refuses rather than discovering or rewriting JSON', async () => {
   const cwd = await fixture();
   await segment(cwd);

@@ -16,7 +16,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
+import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { writeIdentityResolutionDocument } from '../lib/artifacts/write-identity-resolution.js';
 import {
   captureDeployInputDigest,
@@ -32,7 +32,7 @@ const document = (name = 'Individual_A1b2') => {
   const { facade, native } = irFixture();
   facade.objectApiName = name;
   native.objectApiName = name;
-  return projectIdentityResolution(facade, native, name).candidate;
+  return projectNativeIdentityResolution(native, name).candidate;
 };
 const fixture = async (configured = false) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ir-files-'));

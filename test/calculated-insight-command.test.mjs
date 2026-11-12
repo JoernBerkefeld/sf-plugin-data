@@ -12,7 +12,7 @@ import path from 'node:path';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import Deploy from '../lib/commands/data360/deploy.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
-import { projectIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
+import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
 import {
   readDeployInputs,
@@ -752,8 +752,13 @@ test('native68 mixed unqualified family and draft unrelated family reject before
     h.command.resolveInputs = async () => [
       ...h.inputs,
       {
-        path: 'Synthetic.dataGraph.json',
-        document: { kind: 'data-graph', identity: { dataSpace: 'default', apiName: 'Synthetic' } },
+        path: 'Synthetic.native-dataGraph.json',
+        document: {
+          schemaVersion: 1,
+          kind: 'native-data-graph',
+          apiVersion: '68.0',
+          definition: {},
+        },
       },
     ];
     h.flags['target-org'].getOrgId = () => assert.fail('auth');
@@ -945,7 +950,7 @@ test('mixed CI/DMO ordering checks later CI binding before the earlier prerequis
 });
 test('mixed CI and IR retrieve acquires CI at native68 before IR shared receiver repin', async () => {
   const { facade, native } = irFixture();
-  const ir = projectIdentityResolution(facade, native, facade.objectApiName).candidate;
+  const ir = projectNativeIdentityResolution(native, facade.objectApiName).candidate;
   const { command, calls } = retrieve({
     metadata: [
       'identity-resolution:' + facade.objectApiName,

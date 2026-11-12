@@ -16,7 +16,7 @@ export type DataGraphClient = {
  * Build the native API68 create body from an authored definition of any shape the native
  * document admits; the API decides what it accepts. Generated names are dropped (see
  * nativeDataGraphCreateDefinition); enum spellings are sent in request form.
- * @param {unknown} value Raw authored definition, not the API67 facade artifact.
+ * @param {unknown} value Raw authored definition.
  * @returns {Record<string, unknown>} Detached native request.
  */
 export function buildDataGraphCreateRequest(value: unknown): Record<string, unknown> {

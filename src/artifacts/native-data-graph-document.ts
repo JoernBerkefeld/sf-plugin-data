@@ -1,7 +1,12 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { dataGraphName, graphRecord, graphRequire, graphText } from './data-graph-document.js';
-import { graphCanonicalObject } from '../services/retrieve-data-graph.js';
+import {
+  dataGraphName,
+  graphCanonicalObject,
+  graphRecord,
+  graphRequire,
+  graphText,
+} from './data-graph-document.js';
 
 export type NativeDataGraphDocument = {
   schemaVersion: 1;

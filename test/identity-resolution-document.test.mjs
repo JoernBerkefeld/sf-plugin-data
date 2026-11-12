@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  projectIdentityResolution,
   projectNativeIdentityResolution,
   serializeIdentityResolutionDocument,
   validateIdentityResolutionDocument,
@@ -122,15 +121,6 @@ test('native68 admits any owner name and ruleset ID while historical Graph reads
       validateIdentityResolutionDocument(JSON.parse(serializeIdentityResolutionDocument(document))),
       document,
     );
-    if (rulesetId?.length !== 4) {
-      const pair = irFixture();
-      pair.facade.objectApiName = apiName;
-      if (rulesetId === undefined) delete pair.facade.rulesetId;
-      else pair.facade.rulesetId = rulesetId;
-      pair.native = structuredClone(pair.facade);
-      delete pair.native.filters;
-      assert.throws(() => projectIdentityResolution(pair.facade, pair.native, apiName));
-    }
   }
   for (const [apiName, rulesetId, requested = apiName] of [
     ['Individual_', ''],
@@ -216,8 +206,8 @@ test('expanded native GET roundtrips ordered settings into input-shaped semantic
   );
 });
 
-const project = ({ facade, native } = irFixture()) =>
-  projectIdentityResolution(facade, native, 'Individual_A1b2');
+const project = ({ native } = irFixture()) =>
+  projectNativeIdentityResolution(native, 'Individual_A1b2');
 
 test('IR projects both observed reconciliation variants losslessly and detaches private correlation', () => {
   for (const method of ['lastupdated', 'mostfrequent']) {
@@ -256,8 +246,8 @@ test('IR projects both observed reconciliation variants losslessly and detaches 
       assert.equal(bytes.includes(secret), false);
     assert.deepEqual(validateIdentityResolutionDocument(JSON.parse(bytes)), document);
     assert.equal(serializeIdentityResolutionDocument(JSON.parse(bytes)), bytes);
-    input.facade.label = 'changed';
-    assert.equal(result.expectations.facade.label, 'Synthetic owner');
+    input.native.label = 'changed';
+    assert.equal(result.expectations.native.label, 'Synthetic owner');
   }
 });
 
@@ -275,12 +265,11 @@ test('IR legacy arbitrary logicalName artifacts are explicitly refused, never re
 
 test('IR projects exact exposed API bytes without suffix inference, labels or generated names', () => {
   const pair = irFixture();
-  pair.facade.objectApiName = 'ExposedOwner_ActualSuffix';
-  pair.native.objectApiName = pair.facade.objectApiName;
-  const projected = projectIdentityResolution(pair.facade, pair.native, pair.facade.objectApiName);
+  pair.native.objectApiName = 'ExposedOwner_ActualSuffix';
+  const projected = projectNativeIdentityResolution(pair.native, pair.native.objectApiName);
   assert.equal(projected.candidate.identity.apiName, 'ExposedOwner_ActualSuffix');
-  assert.throws(() => projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2'));
-  assert.throws(() => projectIdentityResolution(pair.facade, pair.native, pair.facade.label));
+  assert.throws(() => projectNativeIdentityResolution(pair.native, 'Individual_A1b2'));
+  assert.throws(() => projectNativeIdentityResolution(pair.native, pair.native.label));
   const bytes = serializeIdentityResolutionDocument(projected.candidate);
   assert.equal(bytes.includes('ActualSuffix'), true);
   for (const privateValue of [
@@ -292,109 +281,6 @@ test('IR projects exact exposed API bytes without suffix inference, labels or ge
   ])
     assert.equal(bytes.includes(privateValue), false);
 });
-
-const unsupported = [
-  (r) => {
-    r.extra = true;
-  },
-  (r) => {
-    r.filters = [{}];
-  },
-  (r) => {
-    delete r.description;
-  },
-  (r) => {
-    r.doesRunAutomatically = true;
-  },
-  (r) => {
-    r.isCaseSensitive = false;
-  },
-  (r) => {
-    r.secondaryDmo = 'Unknown__dlm';
-  },
-  (r) => {
-    r.configurationType = 'Individual';
-  },
-  (r) => {
-    r.matchRules[0].criteria.reverse();
-  },
-  (r) => {
-    r.matchRules[0].criteria[0].caseSensitiveMatch = true;
-  },
-  (r) => {
-    r.matchRules[0].criteria[0].shouldMatchOnBlank = true;
-  },
-  (r) => {
-    r.matchRules[0].criteria[0].unknown = [];
-  },
-  (r) => {
-    r.reconciliationRules.reverse();
-  },
-  (r) => {
-    r.reconciliationRules[1].ruleType = 'mostfrequent';
-  },
-  (r) => {
-    r.reconciliationRules[0].fields = [{}];
-  },
-  (r) => {
-    r.reconciliationRules[0].sources = [{}];
-  },
-  (r) => {
-    r.reconciliationRules[0].shouldIgnoreEmptyValue = false;
-  },
-  (r) => {
-    r.reconciliationRules[0].unifiedDmoName = r.reconciliationRules[0].linkDmoName;
-  },
-  (r) => {
-    r.reconciliationRules[0].unifiedDmoName = 'invalid';
-  },
-  (r) => {
-    r.rulesetId = 'wrong';
-  },
-  (r) => {
-    r.dataSpaceName = 'other';
-  },
-];
-for (const [index, mutate] of unsupported.entries())
-  test(`IR rejects unsupported complete shape ${index}`, () => {
-    const input = irFixture();
-    mutate(input.facade);
-    input.native = structuredClone(input.facade);
-    delete input.native.filters;
-    assert.throws(() => project(input), { code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION' });
-  });
-
-test('IR rejects native divergence, missing fields, extra filters and arbitrary wrappers', () => {
-  for (const mutate of [
-    (n) => {
-      n.label = 'different';
-    },
-    (n) => {
-      delete n.description;
-    },
-    (n) => {
-      n.filters = [];
-    },
-    (n) => {
-      n.matchRules[0].criteria[0].matchMethodType = 'Fuzzy';
-    },
-  ]) {
-    const input = irFixture();
-    mutate(input.native);
-    assert.throws(() => project(input));
-  }
-  assert.throws(() =>
-    project({ facade: { result: irFixture().facade }, native: irFixture().native }),
-  );
-});
-
-for (const status of ['PUBLISHING', 'DELETING', 'UNKNOWN', 42])
-  test(`IR refuses unsettled state ${status}`, () => {
-    const input = irFixture();
-    input.facade.rulesetStatus = status;
-    input.native.rulesetStatus = status;
-    assert.throws(() => project(input), { code: 'IDENTITY_RESOLUTION_NOT_SETTLED' });
-  });
 
 test('IR portable validation refuses identity drift, unknown settings and executable JSON', () => {
   const document = project().candidate;

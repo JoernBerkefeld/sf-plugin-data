@@ -84,7 +84,6 @@ export function expandedNativeIrFixture() {
   raw.reconciliationRules[5].ruleType = 'mostfrequent';
   return raw;
 }
-export const selection = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
 export const nativeSelection = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' };
 
 /**

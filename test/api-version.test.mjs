@@ -28,8 +28,15 @@ test('native DLO auto pins API68 without changing unrelated qualified family rou
     assert.throws(() => operationApiVersion(pin, 'dlo'), /INVALID_SCOPE/u);
   assert.equal(operationApiVersion('auto', 'calculated-insight'), '68.0');
   assert.equal(operationApiVersion('auto', 'identity-resolution'), '68.0');
-  assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
+  assert.equal(operationApiVersion('auto', 'data-graph'), '68.0');
   assert.throws(() => operationApiVersion('67.0', 'ingestion-dlo'), /INVALID_SCOPE/u);
+});
+
+test('data graphs run only on native API68: auto and 68.0 select it, other versions are refused', () => {
+  assert.equal(operationApiVersion('auto', 'data-graph'), '68.0');
+  assert.equal(operationApiVersion('68.0', 'data-graph'), '68.0');
+  for (const pin of ['65.0', '66.0', '67.0', '69.0', 'latest'])
+    assert.throws(() => operationApiVersion(pin, 'data-graph'), /INVALID_SCOPE/u);
 });
 
 test('CI auto is native68 and the removed legacy65 route is refused like other pins', () => {

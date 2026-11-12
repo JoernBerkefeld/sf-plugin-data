@@ -1,3 +1,39 @@
+# Data graphs only on native API 68 — 2026-11-12
+
+Package G2 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.
+Version stays 0.1.0; nothing pushed.
+
+- `operationApiVersion('data-graph')`: default/`auto` and `68.0` select native API 68 for
+  retrieve, deploy and delete; any other version is `INVALID_SCOPE` before any org access.
+- Deleted the API 67 tool-layer graph route and what only served it:
+  `execute-data-graph-deploy.ts`, `preflight-data-graph-deploy.ts`, `retrieve-data-graph.ts`,
+  `discover-data-graph-owner.ts`, `bind-data-graph-dependencies.ts`, the `.dataGraph.json`
+  artifact, the facade graph read and `d360_transform_get` in retrieve, the IR-before-graph
+  ordering in deploy, `retrieveLegacyIdentityResolution` and the facade IR projection, and
+  the graph/IR/transform operations in `mcp-execute.ts`. Tests of the removed code removed.
+  `data-graph-document.ts` keeps only the helpers the native path uses.
+- Not ported (CRUD pipeline plan): Git and mixed-family selections with a graph are
+  refused. Review fix: the Git matcher now matches `.native-dataGraph.json`, so a changed
+  native graph refuses `--changed-since` (`INVALID_GIT_SELECTION`) instead of being
+  dropped silently.
+- `mcp-execute.ts` remains only for data stream `connection.read` (retrieve, deploy) and
+  `dependency.read` (delete), plus the unused `d360_ci_create` mutation: package F1.
+- Docs: README native graph section, 14-resource row and examples (no
+  `--api-version 68.0` needed), the "Existing API67 facade workflow" section removed;
+  capabilities graph sections; `test/tooling.test.mjs` heading. Review: two rounds.
+
+Live, `isolated-source` (00Daj000010xkZNEAY), all at `auto` (no `--api-version`):
+
+- Read-only: all six org graphs retrieve exit 0 and preview exit 0 `unchanged` on route
+  68.0, each naming its IR owner (`DATA_GRAPH_OWNER`).
+- Fixture CliGraphG2_1bed (Individual root, 5th graph create, approved by the user):
+  preview exit 0 create (route 68.0); create exit 0 `confirmed-created` (1040 s); repeat
+  exit 0 `unchanged` (18 s); retrieve exit 0 (21 s); update (description) exit 0
+  `confirmed-updated` (42 s); repeat exit 0 `unchanged` (21 s); delete preview exit 0;
+  delete exit 0 `confirmed-deleted` (43 s); item not found, SOQL 0.
+
+Evidence `F:/Temp/g2live-AJX3Dj`. Verification DB: `data360:graph.auto-routes-native68.api68`.
+
 # Identity resolution fully native API 68; graph preview checks its owner — 2026-11-12
 
 Package I1 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`.

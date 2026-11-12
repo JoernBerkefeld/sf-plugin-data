@@ -66,7 +66,6 @@ export type IdentityResolutionDocument = {
 export type IdentityResolutionProjection = {
   candidate: IdentityResolutionDocument;
   expectations: {
-    facade?: Record<string, unknown>;
     native: Record<string, unknown>;
     outputs: Array<{ identity: IdentityResolutionOutputIdentity; sourceApiName: string }>;
   };
@@ -88,20 +87,6 @@ const objectName = /^[A-Za-z][A-Za-z0-9_]*$/u;
 const matchMethods = ['Fuzzy', 'Exact', 'ExactNormalized'];
 const ruleTypes = ['LastUpdated', 'MostFrequent', 'SourceSequence'];
 const configurationTypes = ['Individual'];
-// Historical API67 facade/graph contract only (retained until package G2).
-const entities = [
-  'Individual',
-  'ContactPointEmail',
-  'ContactPointPhone',
-  'ContactPointAddress',
-  'ContactPointApp',
-  'PartyIdentification',
-].map((name) => `ssot__${name}__dlm`);
-const criteria = [
-  ['ssot__Individual__dlm', 'ssot__FirstName__c', 'Fuzzy'],
-  ['ssot__Individual__dlm', 'ssot__LastName__c', 'Exact'],
-  ['ssot__ContactPointEmail__dlm', 'ssot__EmailAddress__c', 'ExactNormalized'],
-] as const;
 
 /**
  * Enforce a payload-free invariant.
@@ -376,24 +361,7 @@ function outputs(apiName: string, entity: string): IdentityResolutionOutputIdent
 }
 
 /**
- * Compare complete independent observed owner representations and project the admitted variant.
- * Only native omission of facade filters:[] is qualified; no other omission/case is normalized between reads.
- * @param {unknown} facade API67 application result from frozen read transport.
- * @param {unknown} native Independent native API65 exact owner response.
- * @param {string} apiName Exact exposed owner API name requested by the caller.
- * @returns {IdentityResolutionProjection} Portable candidate plus private correlation baseline.
- */
-export function projectIdentityResolution(
-  facade: unknown,
-  native: unknown,
-  apiName: string,
-): IdentityResolutionProjection {
-  requireValid(facade !== undefined);
-  return projectOwner(native, apiName, facade);
-}
-
-/**
- * Project the genuine API68 owner without manufacturing a facade representation.
+ * Project the genuine API68 owner.
  * @param {unknown} native Exact native owner response.
  * @param {string} apiName Requested owner API name.
  * @returns {IdentityResolutionProjection} Portable definition and private owner expectations.
@@ -430,18 +398,12 @@ const runtimeKeys = new Set([
 ]);
 
 /**
- * Project the owner the API returns; the historical API67 facade mode keeps its bounded contract.
+ * Project the owner the API returns.
  * @param {unknown} native Native response.
  * @param {string} apiName Requested identity.
- * @param {unknown} [facade] Historical API67 facade response only.
  * @returns {IdentityResolutionProjection} Checked projection.
  */
-function projectOwner(
-  native: unknown,
-  apiName: string,
-  facade?: unknown,
-): IdentityResolutionProjection {
-  if (facade !== undefined) json(facade);
+function projectOwner(native: unknown, apiName: string): IdentityResolutionProjection {
   json(native);
   requireValid(typeof apiName === 'string' && identityResolutionName.test(apiName));
   const keys = [
@@ -460,40 +422,21 @@ function projectOwner(
     'rulesetStatus',
     'secondaryDmo',
   ];
-  const nativeMode = facade === undefined;
   requireValid(native && typeof native === 'object' && !Array.isArray(native));
   const has = (key: string): boolean => Object.hasOwn(native, key);
   // Native68 may omit filters, trustedSources, description and (default owner) rulesetId.
   const optional = new Set(['filters', 'rulesetId', 'description']);
-  let observed = native as Record<string, unknown>;
-  if (nativeMode)
-    observed = Object.fromEntries(
-      Object.entries(observed).filter(([key]) => !runtimeKeys.has(key)),
-    );
-  const nativeRaw = record(observed, [
-    ...keys.filter((key) => (nativeMode ? !optional.has(key) || has(key) : key !== 'filters')),
-    ...(nativeMode && has('trustedSources') ? ['trustedSources'] : []),
+  const observed = Object.fromEntries(
+    Object.entries(native as Record<string, unknown>).filter(([key]) => !runtimeKeys.has(key)),
+  );
+  const raw = record(observed, [
+    ...keys.filter((key) => !optional.has(key) || has(key)),
+    ...(has('trustedSources') ? ['trustedSources'] : []),
   ]);
-  const raw = nativeMode ? nativeRaw : record(facade, keys);
-  if (nativeMode)
-    requireValid(
-      raw.rulesetId === undefined ||
-        (typeof raw.rulesetId === 'string' && raw.rulesetId.trim().length > 0),
-    );
-  else {
-    const { filters: omitted, ...withoutFilters } = raw;
-    requireValid(isDeepStrictEqual(omitted, []) && isDeepStrictEqual(withoutFilters, nativeRaw));
-    requireValid(
-      raw.configurationType === 'individual' &&
-        raw.secondaryDmo === entities[0] &&
-        raw.doesRunAutomatically === false &&
-        raw.isCaseSensitive === true &&
-        typeof raw.rulesetId === 'string' &&
-        /^[A-Za-z0-9]{4}$/u.test(raw.rulesetId),
-    );
-    if (raw.rulesetStatus !== 'PUBLISHED')
-      throw new IdentityResolutionError('IDENTITY_RESOLUTION_NOT_SETTLED');
-  }
+  requireValid(
+    raw.rulesetId === undefined ||
+      (typeof raw.rulesetId === 'string' && raw.rulesetId.trim().length > 0),
+  );
   requireValid(
     raw.objectApiName === apiName &&
       raw.dataSpaceName === 'default' &&
@@ -502,14 +445,11 @@ function projectOwner(
   text(raw.id);
   text(raw.rulesetStatus);
   requireValid(Array.isArray(raw.matchRules));
-  if (!nativeMode) requireValid(raw.matchRules.length === 1);
   const matchRules = raw.matchRules.map((value) => {
     const match = record(value, ['criteria', 'label']);
     requireValid(Array.isArray(match.criteria));
-    if (!nativeMode) requireValid(match.criteria.length === 3);
-    const matchCriteria = match.criteria.map((value, index) => {
+    const matchCriteria = match.criteria.map((value) => {
       const party =
-        nativeMode &&
         value !== null &&
         typeof value === 'object' &&
         Object.hasOwn(value, 'partyIdentificationInfo');
@@ -521,15 +461,6 @@ function projectOwner(
         'shouldMatchOnBlank',
         ...(party ? ['partyIdentificationInfo'] : []),
       ]);
-      const expected = criteria[index];
-      if (!nativeMode)
-        requireValid(
-          item.entityName === expected[0] &&
-            item.fieldName === expected[1] &&
-            item.matchMethodType === expected[2].toLowerCase() &&
-            item.caseSensitiveMatch === false &&
-            item.shouldMatchOnBlank === false,
-        );
       requireValid(typeof item.entityName === 'string' && typeof item.fieldName === 'string');
       return {
         field: field(item.entityName, item.fieldName),
@@ -542,11 +473,10 @@ function projectOwner(
     return { label: match.label, criteria: matchCriteria };
   });
   requireValid(Array.isArray(raw.reconciliationRules));
-  if (!nativeMode) requireValid(raw.reconciliationRules.length === 6);
   const bindings: IdentityResolutionProjection['expectations']['outputs'] = [];
   const generatedNames = new Set<string>();
   const roles = ['unifiedDmoName', 'linkDmoName'];
-  const reconciliationRules = raw.reconciliationRules.map((value, index) => {
+  const reconciliationRules = raw.reconciliationRules.map((value) => {
     requireValid(value && typeof value === 'object');
     const item = record(value, [
       'entityName',
@@ -555,22 +485,14 @@ function projectOwner(
       'shouldIgnoreEmptyValue',
       'sources',
       // Outputs may not be generated yet; bind only the names the API returns.
-      ...roles.filter((key) => !nativeMode || Object.hasOwn(value, key)),
+      ...roles.filter((key) => Object.hasOwn(value, key)),
     ]);
     requireValid(typeof item.entityName === 'string');
     const entity = item.entityName;
-    if (!nativeMode)
-      requireValid(
-        entity === entities[index] &&
-          (item.ruleType === 'lastupdated' || (index === 0 && item.ruleType === 'mostfrequent')) &&
-          item.shouldIgnoreEmptyValue === true &&
-          isDeepStrictEqual(item.fields, []) &&
-          isDeepStrictEqual(item.sources, []),
-      );
     const identities = outputs(apiName, entity);
     for (const [roleIndex, key] of roles.entries()) {
       const name = item[key];
-      if (nativeMode && (name === undefined || name === null)) continue;
+      if (name === undefined || name === null) continue;
       requireValid(typeof name === 'string' && dmoName.test(name) && !generatedNames.has(name));
       generatedNames.add(name);
       bindings.push({ identity: identities[roleIndex], sourceApiName: name });
@@ -589,14 +511,12 @@ function projectOwner(
     spec: {
       configurationType: canonical(raw.configurationType, configurationTypes),
       label: raw.label,
-      description: nativeMode && !has('description') ? '' : raw.description,
+      description: has('description') ? raw.description : '',
       doesRunAutomatically: raw.doesRunAutomatically,
       isCaseSensitive: raw.isCaseSensitive,
       secondaryDmo: dmo(raw.secondaryDmo),
-      filters: nativeMode && !has('filters') ? [] : raw.filters,
-      ...(nativeMode
-        ? { trustedSources: has('trustedSources') ? nativeRaw.trustedSources : [] }
-        : {}),
+      filters: has('filters') ? raw.filters : [],
+      trustedSources: has('trustedSources') ? raw.trustedSources : [],
       matchRules,
       reconciliationRules,
     },
@@ -604,8 +524,7 @@ function projectOwner(
   return {
     candidate,
     expectations: {
-      ...(nativeMode ? {} : { facade: structuredClone(raw) }),
-      native: structuredClone(nativeRaw),
+      native: structuredClone(raw),
       outputs: structuredClone(bindings),
     },
   };

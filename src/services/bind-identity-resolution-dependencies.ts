@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
   IdentityResolutionError,
-  projectIdentityResolution,
   projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../artifacts/identity-resolution-document.js';
@@ -13,10 +12,7 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import { readDmoMetadata } from './read-metadata.js';
-import {
-  retrieveIdentityResolution,
-  retrieveLegacyIdentityResolution,
-} from './retrieve-identity-resolution.js';
+import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 
 export type IdentityResolutionOutputBinding = {
   identity: IdentityResolutionOutputIdentity;
@@ -46,7 +42,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Admit exact native68 binding or the unchanged historical API67 deployment/graph scope.
+ * Admit exact native68 binding only.
  * @param {IdentityResolutionTargetConnection} connection Existing family connection.
  * @param {ApiVersionSelection} selection Explicit family version selection.
  */
@@ -55,16 +51,15 @@ function scope(
   selection: ApiVersionSelection,
 ): void {
   requireProof(
-    ['67.0', '68.0'].includes(selection?.requested) &&
-      selection.restSelector === `v${selection.requested}` &&
-      selection.soapNumeric === selection.requested &&
-      connection.getApiVersion() === selection.requested,
+    selection?.requested === '68.0' &&
+      selection.restSelector === 'v68.0' &&
+      selection.soapNumeric === '68.0' &&
+      connection.getApiVersion() === '68.0',
   );
 }
 
 /**
  * Use an operation-local API68 receiver without mutating the caller's connection or Metadata client.
- * The historical API67 graph route passes its own reader.
  * @param {IdentityResolutionTargetConnection} connection Existing family connection.
  * @returns {Acquire} Native68 reader.
  */
@@ -257,7 +252,7 @@ export async function bindIdentityResolutionDependencies(
  * @param {IdentityResolutionTargetConnection} connection Command-owned connection.
  * @param {ApiVersionSelection} selection Explicit family route.
  * @param {Function} acquire Independent detail and Metadata acquisition seam.
- * @param {Function} acquireOwner Independent facade/native target owner acquisition seam.
+ * @param {Function} acquireOwner Independent native target owner acquisition seam.
  * @returns {Promise<IdentityResolutionOutputBinding[]>} Independently verified private target bindings.
  */
 export async function verifyIdentityResolutionOutputs(
@@ -266,9 +261,7 @@ export async function verifyIdentityResolutionOutputs(
   connection: IdentityResolutionTargetConnection,
   selection: ApiVersionSelection,
   acquire: Acquire = reader(connection),
-  acquireOwner = connection.getApiVersion() === '68.0'
-    ? retrieveIdentityResolution
-    : retrieveLegacyIdentityResolution,
+  acquireOwner = retrieveIdentityResolution,
 ): Promise<IdentityResolutionOutputBinding[]> {
   selection = { ...selection };
   scope(connection, selection);
@@ -295,14 +288,10 @@ export async function verifyIdentityResolutionOutputs(
       new IdentityResolutionError('IDENTITY_RESOLUTION_BINDING_UNQUALIFIED'),
       getConnectDiagnostic(acquired),
     );
-  const projection =
-    selection.requested === '68.0'
-      ? projectNativeIdentityResolution(acquired.expectations.native, target.targetApiName)
-      : projectIdentityResolution(
-          acquired.expectations.facade,
-          acquired.expectations.native,
-          target.targetApiName,
-        );
+  const projection = projectNativeIdentityResolution(
+    acquired.expectations.native,
+    target.targetApiName,
+  );
   const expected = projection.expectations.outputs.map(({ identity, sourceApiName }) => ({
     identity,
     targetApiName: sourceApiName,
@@ -329,14 +318,10 @@ export async function verifyIdentityResolutionOutputs(
       new IdentityResolutionError('IDENTITY_RESOLUTION_BINDING_UNQUALIFIED'),
       getConnectDiagnostic(final),
     );
-  const finalProjection =
-    selection.requested === '68.0'
-      ? projectNativeIdentityResolution(final.expectations.native, target.targetApiName)
-      : projectIdentityResolution(
-          final.expectations.facade,
-          final.expectations.native,
-          target.targetApiName,
-        );
+  const finalProjection = projectNativeIdentityResolution(
+    final.expectations.native,
+    target.targetApiName,
+  );
   requireProof(isDeepStrictEqual(finalProjection, projection));
   scope(connection, selection);
   return bindings;

@@ -1,7 +1,5 @@
 import { validateDloDocument } from './dlo-document.js';
 import type { DloDocument } from './dlo-document.js';
-import { validateDataGraphDocument } from './data-graph-document.js';
-import type { DataGraphDocument } from './data-graph-document.js';
 import { validateCalculatedInsightDocument } from './calculated-insight-document.js';
 import type { CalculatedInsightDocument } from './calculated-insight-document.js';
 import { validateIdentityResolutionDocument } from './identity-resolution-document.js';
@@ -12,7 +10,7 @@ import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
 export type DependencyIdentity = {
-  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'data-graph' | 'dlo';
+  kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'dlo';
   dataSpace: string;
   apiName: string;
 };
@@ -37,7 +35,7 @@ export class DependencySelectionError extends Error {
  */
 export function dependencyKey(identity: DependencyIdentity): string {
   if (
-    !['dmo', 'segment', 'identity-resolution', 'calculated-insight', 'data-graph', 'dlo'].includes(
+    !['dmo', 'segment', 'identity-resolution', 'calculated-insight', 'dlo'].includes(
       identity.kind,
     ) ||
     identity.dataSpace !== 'default' ||
@@ -58,24 +56,12 @@ export function documentDependencyNode(
     | SegmentDocument
     | IdentityResolutionDocument
     | CalculatedInsightDocument
-    | DataGraphDocument
     | DloDocument,
 ): DependencyNode {
   if (value.kind === 'dlo') {
     const document = validateDloDocument(value);
     // Source ownership is freshly admitted by its family service, never provisioned.
     return { identity: { kind: 'dlo', ...document.identity }, dependencies: [] };
-  }
-  if (value.kind === 'data-graph') {
-    const document = validateDataGraphDocument(value);
-    return {
-      identity: { kind: 'data-graph', ...document.identity },
-      dependencies: [
-        typeof document.spec.primaryObjectName === 'string'
-          ? { kind: 'dmo', dataSpace: 'default', apiName: document.spec.primaryObjectName }
-          : { ...document.spec.primaryObjectName.owner },
-      ],
-    };
   }
   if (value.kind === 'calculated-insight') {
     const document = validateCalculatedInsightDocument(value);

@@ -3,11 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, open, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  DataGraphError,
-  serializeDataGraphDocument,
-  validateDataGraphDocument,
-} from './data-graph-document.js';
+import { DataGraphError } from './data-graph-document.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
 
@@ -83,7 +79,7 @@ async function existing(file: string): Promise<Buffer | undefined> {
 }
 
 /**
- * Publish portable Graph JSON only, with owned OS-temp staging and no-clobber publication.
+ * Publish native Graph JSON only, with owned OS-temp staging and no-clobber publication.
  * @param {unknown} value Complete portable document.
  * @param {string} projectRoot Absolute output project root.
  * @param {boolean} overwrite Permit differing existing bytes.
@@ -96,13 +92,8 @@ export async function writeDataGraphDocument(
   overwrite: boolean,
   publish = publication,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const native = (value as { kind?: unknown })?.kind === 'native-data-graph';
-  const document = native
-    ? validateNativeDataGraphDocument(value)
-    : validateDataGraphDocument(value);
-  const bytes = Buffer.from(
-    native ? `${JSON.stringify(document, undefined, 2)}\n` : serializeDataGraphDocument(document),
-  );
+  const document = validateNativeDataGraphDocument(value);
+  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -120,7 +111,7 @@ export async function writeDataGraphDocument(
       base,
       'data360',
       'dataGraphs',
-      `${'definition' in document ? document.definition.name : document.identity.apiName}${native ? '.native-dataGraph.json' : '.dataGraph.json'}`,
+      `${document.definition.name as string}.native-dataGraph.json`,
     );
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
@@ -156,9 +147,7 @@ export async function writeDataGraphDocument(
     published = true;
     const completed = await existing(destination);
     if (!completed?.equals(bytes)) throw new DataGraphError('OUTPUT_CHANGED');
-    (native ? validateNativeDataGraphDocument : validateDataGraphDocument)(
-      JSON.parse(completed.toString('utf8')),
-    );
+    validateNativeDataGraphDocument(JSON.parse(completed.toString('utf8')));
     return { path: destination, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new DataGraphError('PARTIAL_DATA_GRAPH_OUTPUT');

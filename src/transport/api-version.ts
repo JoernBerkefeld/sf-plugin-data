@@ -59,13 +59,9 @@ export function operationApiVersion(requested: string, family: OperationalFamily
       break;
     }
     case 'calculated-insight':
-    case 'identity-resolution': {
-      if (requested === 'auto' || requested === '68.0') return '68.0';
-
-      break;
-    }
+    case 'identity-resolution':
     case 'data-graph': {
-      if (requested === 'auto' || requested === '67.0') return '67.0';
+      if (requested === 'auto' || requested === '68.0') return '68.0';
 
       break;
     }

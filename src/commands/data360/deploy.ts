@@ -68,18 +68,6 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
-import { preflightDataGraphDeploy } from '../../services/preflight-data-graph-deploy.js';
-import type { DataGraphDeployPreview } from '../../services/preflight-data-graph-deploy.js';
-import { executeDataGraphDeploy } from '../../services/execute-data-graph-deploy.js';
-import type {
-  DataGraphDeployExecution,
-  DataGraphObservation,
-} from '../../services/execute-data-graph-deploy.js';
-import { graphCanonicalObject, retrieveDataGraph } from '../../services/retrieve-data-graph.js';
-import { bindDataGraphDependencies } from '../../services/bind-data-graph-dependencies.js';
-import { validateDataGraphDocument } from '../../artifacts/data-graph-document.js';
-import { verifyDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
-import type { DataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
 import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import type { CalculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import { preflightCalculatedInsightDeploy } from '../../services/preflight-calculated-insight-deploy.js';
@@ -177,7 +165,7 @@ type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
     | SegmentDeployExecution['family']
     | IdentityResolutionDeployExecution['family']
     | CalculatedInsightExecution['family']
-    | DataGraphDeployExecution['family']
+    | 'data-graph'
     | 'dlo'
     | 'dmo'
     | 'mapping'
@@ -192,8 +180,7 @@ type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
   route?:
     | SegmentDeployExecution['route']
     | IdentityResolutionDeployExecution['route']
-    | CalculatedInsightExecution['route']
-    | DataGraphDeployExecution['route'];
+    | CalculatedInsightExecution['route'];
   requiredEffects?:
     SegmentDeployPreview['requiredEffects'] | IdentityResolutionDeployPreview['requiredEffects'];
   routes?: Array<{
@@ -254,7 +241,13 @@ export type DeployEnvelope = {
           | SegmentDeployPreview
           | IdentityResolutionDeployPreview
           | CalculatedInsightPreview
-          | DataGraphDeployPreview
+          | {
+              family: 'data-graph';
+              outcome: 'create' | 'update' | 'unchanged' | 'blocked';
+              target: 'absent' | 'present' | 'unknown';
+              absenceProof: 'none';
+              diagnostics: Array<{ code: string; message: string }>;
+            }
           | Awaited<ReturnType<typeof preflightDataStream>>
           | NativeDmoPreview
           | Awaited<ReturnType<typeof preflightMapping>>
@@ -291,7 +284,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation and Git selection are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Mapping stays outside Git selection. A native DMO changed since a Git reference or selected beside Segment/CI/Graph/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Native Graph artifacts (*.native-dataGraph.json) use auto/API68/default: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Native Graph Git and mixed-family selections are blocked. Existing facade Graph artifacts retain exact data-graph:ApiName, auto or numeric67/default, only existing ready root-only NONE LastName append or unchanged; updates require --allow-processing. Graph create, inventory, nesting and reverse/settings changes are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Batches containing Segment, CI, Graph or IR inputs preflight the whole selection before the first write; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Legacy IR documents must be explicitly migrated by retrieval. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation and Git selection are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Mapping stays outside Git selection. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Graph Git and mixed-family selections are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Batches containing Segment, CI or IR inputs preflight the whole selection before the first write; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Legacy IR documents must be explicitly migrated by retrieval. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -326,13 +319,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
     'changed-since': Flags.string({
       summary:
-        'Select canonical DMO, JSON Segment/paired CI, Graph and IR Git changes since the merge base with a commit reference.',
+        'Select canonical DMO, JSON Segment/paired CI and IR Git changes since the merge base with a commit reference.',
       exclusive: ['source-dir', 'metadata'],
     }),
     'allow-processing': Flags.boolean({
       default: false,
       summary:
-        'Acknowledge Transform/stream create/update and Segment/CI/Graph/IR processing; IR CREATE also provisions generated outputs.',
+        'Acknowledge Transform/stream create/update, Graph create/update and Segment/CI/IR processing; IR CREATE also provisions generated outputs.',
     }),
     'allow-field-removal': Flags.boolean({
       default: false,
@@ -431,72 +424,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       this.ssotSenders.set(key, sender);
     }
     return sender;
-  }
-
-  protected graphConfigurations?: Map<string, string>;
-  protected preflightDataGraph = preflightDataGraphDeploy;
-  protected executeDataGraph = executeDataGraphDeploy;
-  protected verifyDataGraphInput = verifyDataGraphInputDigest;
-  protected dataGraphObservations?: Map<string, DataGraphObservation[]>;
-
-  /**
-   * Retain detached private observations before classification, never in output files.
-   * @param {string} key Exact input path.
-   * @param {DataGraphObservation} observation Raw private observation.
-   * @returns {Promise<void>} Resolves after capture.
-   */
-  protected async recordDataGraphObservation(
-    key: string,
-    observation: DataGraphObservation,
-  ): Promise<void> {
-    this.dataGraphObservations ??= new Map();
-    const entries = this.dataGraphObservations.get(key) ?? [];
-    entries.push(structuredClone(observation));
-    this.dataGraphObservations.set(key, entries);
-  }
-
-  /**
-   * Bind independent root dependencies and full current owner configuration before batch writes.
-   * @param {DataGraphDeployInput} input Captured local content.
-   * @param {Connection} connection Operation-local API67 receiver.
-   * @param {ApiVersionSelection} selection Fixed family route.
-   * @returns {Promise<string>} Private fingerprint.
-   */
-  protected async bindDataGraph(
-    input: DataGraphDeployInput,
-    connection: Connection,
-    selection: ApiVersionSelection,
-  ): Promise<string> {
-    const dependencies = await bindDataGraphDependencies(
-      input.document,
-      connection,
-      selection,
-      'default',
-    );
-    const acquired = await retrieveDataGraph(
-      connection,
-      input.document.identity.apiName,
-      selection,
-      'default',
-      { dependencyBinding: dependencies },
-    );
-    if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
-      throw new Error('Graph binding unavailable');
-    const configuration = JSON.stringify(
-      graphCanonicalObject({
-        graph: acquired.expectations,
-        preservationFingerprint: dependencies.preservationFingerprint,
-      }),
-    );
-    const prior = this.graphConfigurations?.get(input.path);
-    if (prior !== undefined && prior !== configuration)
-      throw new Error('Graph configuration drift');
-    this.graphConfigurations?.set(input.path, configuration);
-    return createHash('sha256')
-      .update(
-        JSON.stringify(graphCanonicalObject({ dependencies, expectations: acquired.expectations })),
-      )
-      .digest('hex');
   }
 
   protected calculatedInsightContext = calculatedInsightReadContext;
@@ -814,7 +741,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         return finish('blocked', 'INVALID_SELECTION');
       let sourceDirectories = flags['source-dir'];
       let gitDlos: GitDeploySelection['dlos'];
-      let gitDataGraphs: GitDeploySelection['dataGraphs'];
       let gitCalculatedInsights: GitDeploySelection['calculatedInsights'];
       let gitSegments: GitDeploySelection['segments'];
       let gitIdentityResolutions: GitDeploySelection['identityResolutions'];
@@ -825,7 +751,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         if (selected.paths.length === 0) return finish('success');
         sourceDirectories = selected.paths;
         gitDlos = selected.dlos;
-        gitDataGraphs = selected.dataGraphs;
         gitCalculatedInsights = selected.calculatedInsights;
         gitSegments = selected.segments;
         gitIdentityResolutions = selected.identityResolutions;
@@ -1015,8 +940,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           flags.draft
         )
           return finish('blocked', 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
-        if (!['auto', '68.0'].includes(flags['api-version']) || effectiveScope !== 'default')
+        try {
+          operationApiVersion(flags['api-version'], 'data-graph');
+        } catch {
           return finish('blocked', 'INVALID_SCOPE');
+        }
+        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
         const input = graphInputs[0];
         families.set(input.path, 'data-graph');
         const snapshot = JSON.stringify(flags);
@@ -1059,7 +988,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           envelope.result.items.push({
             identity,
             path: input.path,
-            family: 'data-graph',
+            family: 'data-graph' as const,
             operation: 'preview',
             outcome:
               result.outcome === 'create'
@@ -1215,7 +1144,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input.document.kind === 'relationship' ||
           input.document.kind === 'dlo',
       );
-      // A native DMO selected by Git, or beside Segment/CI/Graph/IR inputs, joins the ordered
+      // A native DMO selected by Git, or beside Segment/CI/IR inputs, joins the ordered
       // dependency batch below; mappings, relationships and all-native explicit selections stay
       // on this route.
       if (
@@ -1627,36 +1556,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           throw new GitSelectionError('INVALID_GIT_SELECTION');
         for (const input of gitDlos) await this.verifyDloInput(input);
       }
-      const hasDataGraphs = admitted.some((input) => input.document.kind === 'data-graph');
-      if (hasDataGraphs) {
-        try {
-          for (const input of admitted) admitVersion(input);
-        } catch {
-          return finish('blocked', 'INVALID_SCOPE');
-        }
-        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-        for (const input of admitted)
-          if (input.document.kind === 'data-graph') validateDataGraphDocument(input.document);
-      }
-      if (gitDataGraphs) {
-        const current = admitted.filter(
-          (input): input is DataGraphDeployInput => input.document.kind === 'data-graph',
-        );
-        if (
-          current.length !== gitDataGraphs.length ||
-          gitDataGraphs.some(
-            (captured) =>
-              !current.some(
-                (input) =>
-                  input.path === captured.path &&
-                  input.inputDigest === captured.inputDigest &&
-                  JSON.stringify(input.document) === JSON.stringify(captured.document),
-              ),
-          )
-        )
-          throw new GitSelectionError('INVALID_GIT_SELECTION');
-        for (const captured of gitDataGraphs) await this.verifyDataGraphInput(captured);
-      }
       const hasCalculatedInsights = admitted.some(
         (input) => input.document.kind === 'calculated-insight',
       );
@@ -1727,11 +1626,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 ? 'segment'
                 : input.document.kind === 'calculated-insight'
                   ? 'calculated-insight'
-                  : input.document.kind === 'data-graph'
-                    ? 'data-graph'
-                    : input.document.kind === 'dlo'
-                      ? 'dlo'
-                      : 'dmo';
+                  : input.document.kind === 'dlo'
+                    ? 'dlo'
+                    : 'dmo';
           try {
             admitVersion(input);
           } catch {
@@ -1778,18 +1675,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         return finish('blocked', 'INVALID_SCOPE');
       }
       const hasSegments = inputs.some((input) => input.document.kind === 'segment');
-      if (
-        hasSegments ||
-        hasIdentityResolutions ||
-        hasCalculatedInsights ||
-        hasDataGraphs ||
-        hasDlos
-      ) {
+      if (hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos) {
         const nodes = inputs.map((input) =>
           input.document.kind === 'segment' ||
           input.document.kind === 'identity-resolution' ||
           input.document.kind === 'calculated-insight' ||
-          input.document.kind === 'data-graph' ||
           input.document.kind === 'dlo'
             ? documentDependencyNode(input.document)
             : { identity: { kind: 'dmo' as const, ...input.document.identity }, dependencies: [] },
@@ -1804,11 +1694,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     ? 'segment'
                     : input.document.kind === 'calculated-insight'
                       ? 'calculated-insight'
-                      : input.document.kind === 'data-graph'
-                        ? 'data-graph'
-                        : input.document.kind === 'dlo'
-                          ? 'dlo'
-                          : 'dmo',
+                      : input.document.kind === 'dlo'
+                        ? 'dlo'
+                        : 'dmo',
               ...input.document.identity,
             }),
             input,
@@ -1816,27 +1704,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         );
         inputs = orderDependencyNodes(nodes).map((key) => byKey.get(key)!);
       }
-      for (const input of inputs) {
-        if (input.document.kind !== 'data-graph') continue;
-        const root = input.document.spec.primaryObjectName;
-        if (typeof root === 'string') continue;
-        const owners = inputs.filter(
-          (candidate) => candidate.document.kind === 'identity-resolution',
-        );
-        if (
-          owners.length > 0 &&
-          !owners.some((owner) => owner.document.identity.apiName === root.owner.apiName)
-        )
-          throw new DependencySelectionError('DATA_GRAPH_SELECTED_OWNER_MISMATCH');
-      }
       // Preserve original Segment JSON snapshots and bind mixed-batch DMO bytes before target reads.
       const captured =
-        hasSegments ||
-        hasIdentityResolutions ||
-        hasCalculatedInsights ||
-        hasDataGraphs ||
-        hasDlos ||
-        hasNativeDmos
+        hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos || hasNativeDmos
           ? await Promise.all(
               inputs.map(async (input) => ({
                 input,
@@ -1847,7 +1717,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           : [];
       const verifyInputs = async (): Promise<void> => {
         for (const input of gitDlos ?? []) await this.verifyDloInput(input);
-        for (const input of gitDataGraphs ?? []) await this.verifyDataGraphInput(input);
         for (const input of gitCalculatedInsights ?? [])
           await this.verifyCalculatedInsightInput(input);
         for (const { input, digest } of captured) {
@@ -1876,15 +1745,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               input.document.kind === 'identity-resolution' ||
               input.document.kind === 'calculated-insight'
             ? Object.freeze({ requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' })
-            : input.document.kind === 'data-graph'
-              ? Object.freeze({ requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' })
-              : isNativeDmoInput(input)
-                ? Object.freeze({
-                    requested: nativeDmoVersion,
-                    restSelector: `v${nativeDmoVersion}`,
-                    soapNumeric: nativeDmoVersion,
-                  })
-                : selection;
+            : isNativeDmoInput(input)
+              ? Object.freeze({
+                  requested: nativeDmoVersion,
+                  restSelector: `v${nativeDmoVersion}`,
+                  soapNumeric: nativeDmoVersion,
+                })
+              : selection;
       const routes = (input: DeployInput): ExecutionItem['routes'] =>
         input.document.kind === 'segment'
           ? [
@@ -1912,94 +1779,86 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   transport: 'native',
                 },
               ]
-            : input.document.kind === 'data-graph'
+            : input.document.kind === 'identity-resolution'
               ? [
-                  { operation: 'd360_data_graph_get', apiVersion: '67.0', transport: 'facade' },
-                  { operation: 'd360_transform_get', apiVersion: '67.0', transport: 'facade' },
-                  { operation: 'dependency.metadata', apiVersion: '65.0', transport: 'metadata' },
-                  { operation: 'd360_data_graph_update', apiVersion: '67.0', transport: 'facade' },
-                ]
-              : input.document.kind === 'identity-resolution'
-                ? [
-                    {
-                      operation: 'identity-resolutions.get',
-                      apiVersion: '68.0',
-                      transport: 'native',
-                    },
-                    {
-                      operation:
-                        irAdmissions.get(input.path)?.outcome === 'create'
-                          ? 'dependency.get'
-                          : 'dependency-and-output.get',
-                      apiVersion: '68.0',
-                      transport: 'native',
-                    },
-                    {
-                      operation:
-                        irAdmissions.get(input.path)?.outcome === 'create'
-                          ? 'dependency.metadata'
-                          : 'dependency-and-output.metadata',
-                      apiVersion: '68.0',
-                      transport: 'metadata',
-                    },
-                    ...(irAdmissions.get(input.path)?.outcome === 'create'
-                      ? [
-                          {
-                            operation: 'data-model-objects.list',
-                            apiVersion: '68.0',
-                            transport: 'native' as const,
-                          },
-                        ]
-                      : []),
-                    {
-                      operation:
-                        irAdmissions.get(input.path)?.route.operation ??
-                        'identity-resolutions.patch',
-                      apiVersion: '68.0',
-                      transport: 'native',
-                    },
-                  ]
-                : input.document.kind === 'calculated-insight'
-                  ? [
-                      {
-                        operation: 'calculated-insight.deploy',
-                        apiVersion: '68.0',
-                        transport: 'native',
-                      },
-                      {
-                        operation: 'calculated-insight.get',
-                        apiVersion: '68.0',
-                        transport: 'native',
-                      },
-                      {
-                        operation: 'calculated-insight.metadata',
-                        apiVersion: '65.0',
-                        transport: 'metadata',
-                      },
-                      { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' },
-                      {
-                        operation: 'dependency.metadata',
-                        apiVersion: '65.0',
-                        transport: 'metadata',
-                      },
-                    ]
-                  : isNativeDmoInput(input)
+                  {
+                    operation: 'identity-resolutions.get',
+                    apiVersion: '68.0',
+                    transport: 'native',
+                  },
+                  {
+                    operation:
+                      irAdmissions.get(input.path)?.outcome === 'create'
+                        ? 'dependency.get'
+                        : 'dependency-and-output.get',
+                    apiVersion: '68.0',
+                    transport: 'native',
+                  },
+                  {
+                    operation:
+                      irAdmissions.get(input.path)?.outcome === 'create'
+                        ? 'dependency.metadata'
+                        : 'dependency-and-output.metadata',
+                    apiVersion: '68.0',
+                    transport: 'metadata',
+                  },
+                  ...(irAdmissions.get(input.path)?.outcome === 'create'
                     ? [
                         {
-                          operation: 'dmo.deploy',
-                          apiVersion: nativeDmoVersion,
+                          operation: 'data-model-objects.list',
+                          apiVersion: '68.0',
+                          transport: 'native' as const,
+                        },
+                      ]
+                    : []),
+                  {
+                    operation:
+                      irAdmissions.get(input.path)?.route.operation ?? 'identity-resolutions.patch',
+                    apiVersion: '68.0',
+                    transport: 'native',
+                  },
+                ]
+              : input.document.kind === 'calculated-insight'
+                ? [
+                    {
+                      operation: 'calculated-insight.deploy',
+                      apiVersion: '68.0',
+                      transport: 'native',
+                    },
+                    {
+                      operation: 'calculated-insight.get',
+                      apiVersion: '68.0',
+                      transport: 'native',
+                    },
+                    {
+                      operation: 'calculated-insight.metadata',
+                      apiVersion: '65.0',
+                      transport: 'metadata',
+                    },
+                    { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' },
+                    {
+                      operation: 'dependency.metadata',
+                      apiVersion: '65.0',
+                      transport: 'metadata',
+                    },
+                  ]
+                : isNativeDmoInput(input)
+                  ? [
+                      {
+                        operation: 'dmo.deploy',
+                        apiVersion: nativeDmoVersion,
+                        transport: 'native',
+                      },
+                    ]
+                  : flags['api-version'] === 'auto'
+                    ? [
+                        {
+                          operation: `${input.document.kind}.deploy`,
+                          apiVersion: '65.0',
                           transport: 'native',
                         },
                       ]
-                    : flags['api-version'] === 'auto'
-                      ? [
-                          {
-                            operation: `${input.document.kind}.deploy`,
-                            apiVersion: '65.0',
-                            transport: 'native',
-                          },
-                        ]
-                      : undefined;
+                    : undefined;
       const injectedOrg = flags['target-org'] as unknown;
       const org =
         injectedOrg && typeof injectedOrg === 'object'
@@ -2036,7 +1895,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const connectionFor = (input: DeployInput): Connection => {
         if (
           input.document.kind !== 'identity-resolution' &&
-          input.document.kind !== 'data-graph' &&
           input.document.kind !== 'segment' &&
           input.document.kind !== 'calculated-insight' &&
           input.document.kind !== 'dlo'
@@ -2086,19 +1944,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           requestScope,
           ...fieldRemoval(dmoMappings, dmoClient),
         );
-      this.graphConfigurations = new Map();
-      const graphBindings = new Map<string, string>();
-      const verifyGraphBinding = async (input: DeployInput): Promise<void> => {
-        if (input.document.kind !== 'data-graph') return;
-        const fingerprint = await this.bindDataGraph(
-          input as DataGraphDeployInput,
-          connectionFor(input),
-          familySelection(input),
-        );
-        const prior = graphBindings.get(input.path);
-        if (prior !== undefined && prior !== fingerprint) throw new Error('Graph binding drift');
-        graphBindings.set(input.path, fingerprint);
-      };
       const irAdmissions = new Map<string, IdentityResolutionDeployPreview>();
       const irBindings = new Map<string, string>();
       const verifyIrBinding = async (input: DeployInput): Promise<void> => {
@@ -2145,55 +1990,30 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           const preview =
             input.document.kind === 'dlo'
               ? await this.preflightDlo(input.document, dloClient())
-              : input.document.kind === 'data-graph'
-                ? await this.preflightDataGraph(
+              : input.document.kind === 'calculated-insight'
+                ? await this.preflightCalculatedInsight(
                     input.document,
                     connectionFor(input),
                     familySelection(input),
                     effectiveScope,
+                    ciIntent(input),
                   )
-                : input.document.kind === 'calculated-insight'
-                  ? await this.preflightCalculatedInsight(
+                : input.document.kind === 'identity-resolution'
+                  ? await this.preflightIdentityResolution(
                       input.document,
                       connectionFor(input),
                       familySelection(input),
                       effectiveScope,
-                      ciIntent(input),
                     )
-                  : input.document.kind === 'identity-resolution'
-                    ? await this.preflightIdentityResolution(
+                  : segment
+                    ? await this.preflightSegment(
                         input.document,
                         connectionFor(input),
                         familySelection(input),
                         effectiveScope,
                       )
-                    : segment
-                      ? await this.preflightSegment(
-                          input.document,
-                          connectionFor(input),
-                          familySelection(input),
-                          effectiveScope,
-                        )
-                      : await previewNativeDmo(input as NativeDmoDeployInput);
+                    : await previewNativeDmo(input as NativeDmoDeployInput);
           if (input.document.kind === 'dlo') await this.verifyDloInput(input as DloDeployInput);
-          if (input.document.kind === 'data-graph') {
-            await this.verifyDataGraphInput(input as DataGraphDeployInput);
-            if (preview.outcome === 'update' || preview.outcome === 'unchanged')
-              await verifyGraphBinding(input);
-            if (
-              !flags.preview &&
-              preview.outcome === 'update' &&
-              (flags['allow-processing'] !== true ||
-                !(preview as DataGraphDeployPreview).requiredEffects.includes('processing'))
-            ) {
-              blocked = true;
-              (preview.diagnostics as Array<{ code: string; message: string }>).push({
-                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
-                message:
-                  'Graph processing requires explicit --allow-processing. No batch writes were attempted.',
-              });
-            }
-          }
           if (input.document.kind === 'identity-resolution') {
             await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
             irAdmissions.set(input.path, preview as IdentityResolutionDeployPreview);
@@ -2298,17 +2118,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             preflight: { outcome, target, absenceProof, diagnostics },
             ...(routes(input) ? { routes: routes(input) } : {}),
             ...(input.document.kind === 'dlo' ? { family: 'dlo' as const } : {}),
-            ...(input.document.kind === 'data-graph'
-              ? {
-                  family: 'data-graph' as const,
-                  route: {
-                    apiVersion: '67.0' as const,
-                    operation: 'd360_data_graph_update' as const,
-                  },
-                  requiredEffects: (envelope.result.items[index] as DataGraphDeployPreview)
-                    .requiredEffects,
-                }
-              : {}),
             ...(input.document.kind === 'identity-resolution'
               ? {
                   family: 'identity-resolution' as const,
@@ -2354,23 +2163,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               for (const pending of inputs.slice(index)) {
                 if (pending.document.kind === 'dlo') {
                   await this.preflightDlo(pending.document, dloClient());
-                  continue;
-                }
-                if (pending.document.kind === 'data-graph') {
-                  await verifyGraphBinding(pending);
-                  const fresh = await this.preflightDataGraph(
-                    pending.document,
-                    connectionFor(pending),
-                    familySelection(pending),
-                    effectiveScope,
-                  );
-                  if (
-                    !['unchanged', 'update'].includes(fresh.outcome) ||
-                    (fresh.outcome === 'update' &&
-                      (flags['allow-processing'] !== true ||
-                        !fresh.requiredEffects.includes('processing')))
-                  )
-                    throw new DependencySelectionError('DATA_GRAPH_FRESH_ADMISSION_BLOCKED');
                   continue;
                 }
                 if (pending.document.kind === 'identity-resolution') {
@@ -2455,65 +2247,52 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               const result =
                 input.document.kind === 'dlo'
                   ? await this.executeDlo(input.document, dloClient())
-                  : input.document.kind === 'data-graph'
-                    ? await this.executeDataGraph(
+                  : input.document.kind === 'calculated-insight'
+                    ? await this.executeCalculatedInsight(
                         input.document,
                         connectionFor(input),
                         familySelection(input),
                         effectiveScope,
                         {
+                          ...ciIntent(input),
                           allowProcessing: flags['allow-processing'] === true,
                           verifyInput: verifyInputs,
                           recordObservation: async (observation) =>
-                            this.recordDataGraphObservation(input.path, observation),
+                            this.recordCalculatedInsightObservation(input.path, observation),
                         },
                       )
-                    : input.document.kind === 'calculated-insight'
-                      ? await this.executeCalculatedInsight(
+                    : input.document.kind === 'identity-resolution'
+                      ? await this.executeIdentityResolution(
                           input.document,
                           connectionFor(input),
                           familySelection(input),
                           effectiveScope,
                           {
-                            ...ciIntent(input),
                             allowProcessing: flags['allow-processing'] === true,
-                            verifyInput: verifyInputs,
-                            recordObservation: async (observation) =>
-                              this.recordCalculatedInsightObservation(input.path, observation),
+                            verifyInput: async () => {
+                              await verifyInputs();
+                              await verifyIrBinding(input);
+                            },
+                            allowGeneratedOutputProvisioning: flags['allow-processing'] === true,
                           },
                         )
-                      : input.document.kind === 'identity-resolution'
-                        ? await this.executeIdentityResolution(
+                      : input.document.kind === 'segment'
+                        ? await this.executeSegment(
                             input.document,
                             connectionFor(input),
                             familySelection(input),
                             effectiveScope,
                             {
                               allowProcessing: flags['allow-processing'] === true,
-                              verifyInput: async () => {
-                                await verifyInputs();
-                                await verifyIrBinding(input);
-                              },
-                              allowGeneratedOutputProvisioning: flags['allow-processing'] === true,
+                              verifyInput: verifyInputs,
                             },
                           )
-                        : input.document.kind === 'segment'
-                          ? await this.executeSegment(
-                              input.document,
-                              connectionFor(input),
-                              familySelection(input),
-                              effectiveScope,
-                              {
-                                allowProcessing: flags['allow-processing'] === true,
-                                verifyInput: verifyInputs,
-                              },
-                            )
-                          : await (this.executeNativeDmo ?? executeDmo)(
-                              (input as NativeDmoDeployInput).document,
-                              dmoClient(),
-                              requestScope,
-                              ...fieldRemoval(dmoMappings, dmoClient),
-                            );
+                        : await (this.executeNativeDmo ?? executeDmo)(
+                            (input as NativeDmoDeployInput).document,
+                            dmoClient(),
+                            requestScope,
+                            ...fieldRemoval(dmoMappings, dmoClient),
+                          );
               const { serverProcessing, ...execution } = result as typeof result & {
                 serverProcessing?: true;
               };
@@ -2538,36 +2317,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             if (item.outcome === 'blocked') {
               blocked = true;
               break;
-            }
-            if (
-              input.document.kind === 'identity-resolution' &&
-              item.outcome === 'updated' &&
-              item.mutation === 'confirmed-updated'
-            ) {
-              // Only a verified selected-owner settlement authorizes a new dependency baseline.
-              // Protected binding still rejects any change to the full pending Graph/transform.
-              try {
-                await verifyInputs();
-                for (const pending of inputs.slice(index + 1)) {
-                  if (pending.document.kind !== 'data-graph') continue;
-                  const root = pending.document.spec.primaryObjectName;
-                  if (
-                    typeof root === 'string' ||
-                    root.owner.apiName !== input.document.identity.apiName
-                  )
-                    continue;
-                  const fingerprint = await this.bindDataGraph(
-                    pending as DataGraphDeployInput,
-                    connectionFor(pending),
-                    familySelection(pending),
-                  );
-                  graphBindings.set(pending.path, fingerprint);
-                }
-                await verifyInputs();
-              } catch {
-                blocked = true;
-                break;
-              }
             }
           }
         }

@@ -3,10 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PassThrough } from 'node:stream';
 import { Connection } from '@salesforce/core';
-import {
-  projectIdentityResolution,
-  projectNativeIdentityResolution,
-} from '../lib/artifacts/identity-resolution-document.js';
+import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import {
   bindIdentityResolutionDependencies,
   verifyIdentityResolutionOutputs,
@@ -14,10 +11,11 @@ import {
 import {
   irFixture,
   expandedNativeIrFixture,
-  selection,
   nativeIrFixture,
   nativeSelection,
 } from './identity-resolution-fixtures.mjs';
+
+const selection = nativeSelection;
 
 import {
   apiDiagnostic,
@@ -69,13 +67,13 @@ for (const failureRead of [1, 2]) {
 
 const connection = {
   instanceUrl: 'https://synthetic.example',
-  getApiVersion: () => '67.0',
+  getApiVersion: () => '68.0',
   request: async () => {
     throw new Error('Unexpected request');
   },
 };
 const pair = irFixture();
-const projection = projectIdentityResolution(pair.facade, pair.native, 'Individual_A1b2');
+const projection = projectNativeIdentityResolution(pair.native, 'Individual_A1b2');
 const document = projection.candidate;
 const owner = { targetApiName: 'Individual_A1b2', targetId: pair.facade.id, dataSpace: 'default' };
 const outputs = projection.expectations.outputs.map(({ identity, sourceApiName }) => ({
@@ -818,7 +816,7 @@ test('IR output owner is rechecked after twelve DMO reads to detect concurrent d
   await assert.rejects(
     verifyIdentityResolutionOutputs(owner, outputs, connection, selection, outputRead, async () => {
       const result = await acquireOwner();
-      if (reads++ > 0) result.expectations.facade.id = 'changed-owner';
+      if (reads++ > 0) result.expectations.native.id = 'changed-owner';
       return result;
     }),
   );
@@ -875,8 +873,6 @@ test('native68 output binding reprojects only the returned owner and preserves i
 });
 
 for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
-  // The bind reader always reads at API68, also behind an API67 owner connection.
-  ['67.0', '68.0', selection, false],
   ['68.0', '68.0', nativeSelection, false],
   ['68.0', '68.0', nativeSelection, true],
 ])

@@ -104,7 +104,11 @@ import {
   deleteNativeMapping,
   preflightDeleteNativeMapping,
 } from '../../services/native-mapping.js';
-import { nativeApiVersion, dataStreamApiVersion } from '../../transport/api-version.js';
+import {
+  nativeApiVersion,
+  dataStreamApiVersion,
+  operationApiVersion,
+} from '../../transport/api-version.js';
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import { ConnectClient } from '../../transport/connect-client.js';
 import { createDataStreamClient } from '../../transport/data-stream-rest.js';
@@ -1164,11 +1168,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           !flags['source-dir']
         )
           throw new DloError('INVALID_SELECTION');
-        if (
-          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
-          effectiveScope !== 'default'
-        )
+        try {
+          operationApiVersion(flags['api-version'] ?? 'auto', 'data-graph');
+        } catch {
           throw new DloError('INVALID_SCOPE');
+        }
+        if (effectiveScope !== 'default') throw new DloError('INVALID_SCOPE');
         const inputs = await this.resolveInputs({
           cwd: process.cwd(),
           sourceDir: [flags['source-dir']],

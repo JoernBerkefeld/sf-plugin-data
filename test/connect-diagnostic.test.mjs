@@ -334,7 +334,16 @@ for (const status of [429, 503]) {
       soapNumeric: '67.0',
     });
     await assert.rejects(
-      client.mutate('d360_data_graph_delete', { dataGraphName: 'Synthetic' }),
+      client.mutate('d360_ci_create', {
+        input: {
+          apiName: 'Synthetic__cio',
+          displayName: 'Synthetic',
+          expression: 'SELECT 1',
+          definitionType: 'CalculatedMetric',
+          dataSpaceName: 'default',
+          draft: true,
+        },
+      }),
       (error) => {
         assert.equal(error.statusCode, status);
         assert.equal(getConnectDiagnostic(error).retryAfter, '7');
@@ -351,11 +360,7 @@ for (const status of [429, 503]) {
       soapNumeric: '67.0',
     });
     await assert.rejects(
-      client.read('d360_data_graph_get', {
-        dataGraphName: 'Synthetic',
-        includeCIDetails: true,
-        includeSegmentDetails: true,
-      }),
+      client.read('d360_dlo_get', { recordIdOrDeveloperName: 'Synthetic__dll' }),
       (error) => {
         assert.equal(error.statusCode, status);
         assert.equal(getConnectDiagnostic(error).retryAfter, '7');

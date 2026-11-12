@@ -1,7 +1,6 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { validateDataGraphDocument } from '../lib/artifacts/data-graph-document.js';
 import {
   observeNativeDataGraph,
   validateNativeDataGraphDocument,
@@ -725,6 +724,151 @@ test('public native68 retrieve deploy delete route through real services with se
     deleted.diagnostics.warnings[0],
     /block delete only: .*Exhaustive external-consumer exclusion is unverified/u,
   );
+  process.exitCode = 0;
+});
+
+/**
+ * Run one graph command with stubbed parsing and the given seams.
+ * @param {Function} Class Command class.
+ * @param {object} flags Parsed flags.
+ * @param {object} seams Instance seams to replace.
+ * @returns {Promise<object>} Command envelope.
+ */
+async function runGraphCommand(Class, flags, seams) {
+  const command = Object.create(Class.prototype);
+  command.parse = async () => ({ flags });
+  command.jsonEnabled = () => true;
+  Object.assign(command, seams);
+  return command.run();
+}
+
+test('graph retrieve, deploy and delete use native API68 at auto and with no flag', async () => {
+  assert.equal(Retrieve.flags['api-version'].default, 'auto');
+  assert.equal(Deploy.flags['api-version'].default, 'auto');
+  for (const apiVersion of ['auto', undefined]) {
+    const cwd = await project();
+    const f = fixture();
+    const receipt = await writeDataGraphDocument(document(), cwd, false);
+    const pins = [];
+    const org = {
+      getConnection: (version) => {
+        pins.push(version);
+        return {};
+      },
+      getOrgId: () => f.context.orgId,
+    };
+    const seams = {
+      resolveInputs: async () => readDeployInputs({ cwd, sourceDir: [receipt.path] }),
+      resolveTargetOrg: async () => org,
+      resolveOrg: async () => org,
+      resolveConnection: async () => ({}),
+      nativeGraphContext: async () => f.context,
+      retrieveNativeGraph: retrieveNativeDataGraph,
+      writeDataGraph: writeDataGraphDocument,
+      nativeGraphClient: (connection, version) => {
+        pins.push(version);
+        return f.client;
+      },
+      operateNativeGraph: (value, context, client, intent) =>
+        operateNativeDataGraph(value, context, client, { ...intent, pause: async () => {} }),
+    };
+    // Retrieve and deploy parse the flag default 'auto'; delete has no flag default.
+    const parsed = apiVersion ?? 'auto';
+    const created = await runGraphCommand(
+      Deploy,
+      {
+        'api-version': parsed,
+        'source-dir': [receipt.path],
+        preview: false,
+        'allow-processing': true,
+      },
+      seams,
+    );
+    assert.equal(created.status, 'success');
+    assert.equal(created.result.items[0].mutation, 'confirmed-created');
+    assert.equal(created.result.items[0].routes[0].apiVersion, '68.0');
+    const read = await runGraphCommand(
+      Retrieve,
+      {
+        'api-version': parsed,
+        metadata: [`data-graph:${name}`],
+        'output-dir': cwd,
+        overwrite: true,
+      },
+      seams,
+    );
+    assert.equal(read.status, 'success');
+    assert.deepEqual(read.result.items[0].routes, [
+      { operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' },
+    ]);
+    assert.match(read.result.items[0].path, /\.native-dataGraph\.json$/u);
+    const deleted = await runGraphCommand(
+      Delete,
+      {
+        ...(apiVersion ? { 'api-version': apiVersion } : {}),
+        metadata: [`data-graph:${name}`],
+        'source-dir': receipt.path,
+        'confirm-delete': true,
+        preview: false,
+      },
+      seams,
+    );
+    assert.equal(deleted.status, 'success');
+    assert.equal(deleted.result.items[0].mutation, 'confirmed-deleted');
+    assert.deepEqual([...new Set(pins)], ['68.0']);
+  }
+  process.exitCode = 0;
+});
+
+test('graph retrieve, deploy and delete refuse API 67.0 and 65.0 as INVALID_SCOPE before org access', async () => {
+  const cwd = await project();
+  const receipt = await writeDataGraphDocument(document(), cwd, false);
+  const seams = {
+    resolveInputs: async () => readDeployInputs({ cwd, sourceDir: [receipt.path] }),
+    ...Object.fromEntries(
+      ['resolveTargetOrg', 'resolveOrg', 'resolveConnection', 'nativeGraphContext'].map((seam) => [
+        seam,
+        async () => assert.fail('org access before refusal'),
+      ]),
+    ),
+  };
+  for (const apiVersion of ['67.0', '65.0']) {
+    const results = [
+      await runGraphCommand(
+        Retrieve,
+        {
+          'api-version': apiVersion,
+          metadata: [`data-graph:${name}`],
+          'output-dir': cwd,
+        },
+        seams,
+      ),
+      await runGraphCommand(
+        Deploy,
+        {
+          'api-version': apiVersion,
+          'source-dir': [receipt.path],
+          preview: true,
+        },
+        seams,
+      ),
+      await runGraphCommand(
+        Delete,
+        {
+          'api-version': apiVersion,
+          metadata: [`data-graph:${name}`],
+          'source-dir': receipt.path,
+          'confirm-delete': true,
+          preview: true,
+        },
+        seams,
+      ),
+    ];
+    for (const result of results) {
+      assert.equal(result.status, 'blocked');
+      assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
+    }
+  }
   process.exitCode = 0;
 });
 
@@ -1867,7 +2011,6 @@ test('native artifact is distinct, detached and binds generated names', () => {
   const checked = validateNativeDataGraphDocument(input);
   input.definition.label = 'changed';
   assert.equal(checked.definition.label, 'Synthetic graph');
-  assert.throws(() => validateDataGraphDocument(checked));
   for (const change of [
     (d) => {
       d.kind = 'data-graph';

@@ -10,11 +10,7 @@ import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
 const origin = 'https://synthetic.my.salesforce.com';
 const version = { requested: '67.0', restSelector: 'v67.0', soapNumeric: '67.0' };
-const graphRead = {
-  dataGraphName: 'Synthetic',
-  includeCIDetails: true,
-  includeSegmentDetails: true,
-};
+const dloRead = { recordIdOrDeveloperName: 'Synthetic__dll' };
 const ci = {
   input: {
     apiName: 'Synthetic__cio',
@@ -25,100 +21,7 @@ const ci = {
     draft: true,
   },
 };
-const graph = {
-  input: {
-    name: 'Synthetic',
-    label: 'Synthetic',
-    description: 'Synthetic',
-    creationMode: 'DEFAULT',
-    dataspaceName: 'default',
-    primaryObjectName: 'Synthetic__dlm',
-    type: 'NONE',
-    fullRefreshConfig: { schedule: { frequency: 7, timeGranularity: 'Day' } },
-    incrementalRefreshConfig: { enabled: false },
-    sourceObject: {
-      name: 'Synthetic__dlm',
-      devName: 'Synthetic__dlm',
-      label: 'Synthetic',
-      path: [],
-      relatedObjects: [],
-      fields: [
-        { sourceFieldName: 'ssot__Id__c', dataType: 'Text', isKeyColumn: true, isProjected: true },
-        {
-          sourceFieldName: 'ssot__FirstName__c',
-          dataType: 'Text',
-          isKeyColumn: false,
-          isProjected: true,
-        },
-      ],
-    },
-  },
-};
-const irInput = {
-  label: 'Synthetic',
-  description: 'Synthetic',
-  doesRunAutomatically: false,
-  matchRules: {
-    rules: [
-      {
-        label: 'Synthetic',
-        criteria: {
-          criteria: [
-            {
-              entityName: 'ssot__Individual__dlm',
-              fieldName: 'ssot__FirstName__c',
-              matchMethodType: 'Fuzzy',
-              shouldMatchOnBlank: false,
-            },
-            {
-              entityName: 'ssot__Individual__dlm',
-              fieldName: 'ssot__LastName__c',
-              matchMethodType: 'Exact',
-              shouldMatchOnBlank: false,
-            },
-            {
-              entityName: 'ssot__ContactPointEmail__dlm',
-              fieldName: 'ssot__EmailAddress__c',
-              matchMethodType: 'ExactNormalized',
-              shouldMatchOnBlank: false,
-            },
-          ],
-        },
-      },
-    ],
-  },
-  reconciliationRules: {
-    rules: [
-      {
-        entityName: 'ssot__Individual__dlm',
-        ruleType: 'LastUpdated',
-        shouldIgnoreEmptyValue: true,
-      },
-    ],
-  },
-};
-const irCreate = {
-  input: {
-    configurationType: 'Individual',
-    dataSpaceName: 'default',
-    rulesetId: 'test',
-    ...irInput,
-  },
-};
-const irUpdate = { identityResolution: 'Individual_test', input: structuredClone(irInput) };
-irUpdate.input.reconciliationRules.rules[0].ruleType = 'MostFrequent';
-const graphResult = {
-  name: 'Synthetic',
-  dataspaceName: 'default',
-  id: 'synthetic',
-  status: 'ready',
-};
-const irResult = {
-  objectApiName: 'Individual_test',
-  dataSpaceName: 'default',
-  id: 'synthetic',
-  rulesetStatus: 'PUBLISHING',
-};
+const dloResult = { name: 'Synthetic__dll', id: 'synthetic' };
 const ciResult = {
   apiName: 'Synthetic__cio',
   dataSpace: 'default',
@@ -133,7 +36,7 @@ const ciResult = {
  * @returns {object} Actual core connection and counted transport fixture.
  */
 function fixture(body, statusCode = 201, failure) {
-  if (body === undefined) body = { result: graphResult };
+  if (body === undefined) body = { result: dloResult };
   const calls = [];
   const connection = Object.create(Connection.prototype);
   const refresh = {
@@ -172,8 +75,8 @@ for (const mutation of [false, true])
     test(`facade HTTP400 mutation=${mutation} privately retains only safe parsed detail: ${message}`, async () => {
       const f = fixture([{ errorCode: 'INVALID_INPUT', message }], 400);
       const operation = mutation
-        ? f.client.mutate('d360_data_graph_delete', { dataGraphName: 'Synthetic' })
-        : f.client.read('d360_data_graph_get', graphRead);
+        ? f.client.mutate('d360_ci_create', ci)
+        : f.client.read('d360_dlo_get', dloRead);
       await assert.rejects(operation, (error) => {
         assert.equal(error.code, 'REQUEST_FAILED');
         assert.equal(error.statusCode, 400);
@@ -195,7 +98,7 @@ test('facade native data without observed HTTP failure is not display evidence',
     data: { errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' },
   });
   const f = fixture(undefined, 201, failure);
-  await assert.rejects(f.client.read('d360_data_graph_get', graphRead), (error) => {
+  await assert.rejects(f.client.read('d360_dlo_get', dloRead), (error) => {
     assert.equal(getConnectDiagnostic(error), undefined);
     assert.doesNotMatch(inspect(error), /private-credential|ruleset/u);
     return true;
@@ -203,28 +106,9 @@ test('facade native data without observed HTTP failure is not display evidence',
   assert.equal(f.calls.length, 1);
 });
 
-const transformRead = { dataTransformNameOrId: 'OwnerReturnedTransform' };
-const transformResult = {
-  name: 'OwnerReturnedTransform',
-  id: 'synthetic-transform-id',
-  dataSpaceName: 'default',
-  creationSource: 'Data Graph',
-  status: 'ACTIVE',
-  lastRunStatus: 'SUCCESS',
-  lastRunDate: '2026-10-01T10:00:00.000Z',
-};
-
 const operations = [
-  ['d360_transform_get', transformRead, transformResult],
+  ['d360_dlo_get', dloRead, dloResult],
   ['d360_ci_create', ci, ciResult],
-  ['d360_data_graph_create', graph, graphResult],
-  ['d360_data_graph_get', graphRead, graphResult],
-  ['d360_data_graph_update', { ...graph, editScheduleOnly: false }, graphResult],
-  ['d360_data_graph_delete', { dataGraphName: 'Synthetic' }, { success: true }],
-  ['d360_ir_create', irCreate, irResult],
-  ['d360_ir_get', { identityResolution: 'Individual_test' }, irResult],
-  ['d360_ir_update', irUpdate, irResult],
-  ['d360_ir_delete', { identityResolution: 'Individual_test' }, { success: true }],
 ];
 
 for (const [operation, parameters, resource] of operations) {
@@ -248,7 +132,7 @@ for (const [operation, parameters, resource] of operations) {
   });
 }
 
-for (const operation of ['d360_ci_create', 'd360_data_graph_get']) {
+for (const operation of ['d360_ci_create', 'd360_dlo_get']) {
   for (const failure of [401, 503, 'disconnect']) {
     test(`actual core ${operation} never refreshes/retries/replays ${failure}`, async () => {
       const { client, calls } = fixture(
@@ -257,9 +141,7 @@ for (const operation of ['d360_ci_create', 'd360_data_graph_get']) {
         failure === 'disconnect' ? new Error('secret') : undefined,
       );
       await assert.rejects(
-        operation.endsWith('_get')
-          ? client.read(operation, graphRead)
-          : client.mutate(operation, ci),
+        operation.endsWith('_get') ? client.read(operation, dloRead) : client.mutate(operation, ci),
         (error) => {
           assert.equal(error.code, failure === 401 ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED');
           assert.equal(inspect(error).includes('secret'), false);
@@ -273,10 +155,10 @@ for (const operation of ['d360_ci_create', 'd360_data_graph_get']) {
 
 for (const statusCode of [200, 201, 204, 202, 301, 302, 307, 308]) {
   test(`HTTP ${statusCode} is independently validated before application success`, async () => {
-    const { client, calls } = fixture({ result: graphResult }, statusCode);
+    const { client, calls } = fixture({ result: dloResult }, statusCode);
     await (statusCode === 200 || statusCode === 201
-      ? client.read('d360_data_graph_get', graphRead)
-      : assert.rejects(client.read('d360_data_graph_get', graphRead), { code: 'REQUEST_FAILED' }));
+      ? client.read('d360_dlo_get', dloRead)
+      : assert.rejects(client.read('d360_dlo_get', dloRead), { code: 'REQUEST_FAILED' }));
     assert.equal(calls.length, 1);
   });
 }
@@ -290,41 +172,32 @@ for (const [index, body] of [
   { result: JSON.parse('null') },
   { result: [] },
   { error: 'secret' },
-  { result: graphResult, error: 'secret' },
-  { body: { result: graphResult } },
+  { result: ciResult, error: 'secret' },
+  { body: { result: ciResult } },
   { statusCode: 201, body: { error: 'secret' } },
-  { responseCode: 201, defaultExc: JSON.stringify({ result: graphResult }) },
-  { result: { ...graphResult, success: false } },
-  { result: { ...graphResult, error: 'secret' } },
-  { result: { ...graphResult, errors: [] } },
-  { result: { ...graphResult, errorCode: 'secret' } },
-  { result: { ...graphResult, result: {} } },
-  { result: { ...graphResult, body: { error: 'secret' } } },
-  { result: { ...graphResult, name: 'Other' } },
-  { result: { ...graphResult, dataspaceName: 'other' } },
-  { result: { ...graphResult, status: 'unrecognized' } },
-  { result: { name: 'Synthetic' } },
+  { responseCode: 201, defaultExc: JSON.stringify({ result: ciResult }) },
+  { result: { ...ciResult, success: false } },
+  { result: { ...ciResult, error: 'secret' } },
+  { result: { ...ciResult, errors: [] } },
+  { result: { ...ciResult, errorCode: 'secret' } },
+  { result: { ...ciResult, result: {} } },
+  { result: { ...ciResult, body: { error: 'secret' } } },
+  { result: { ...ciResult, apiName: 'Other__cio' } },
+  { result: { ...ciResult, dataSpace: 'other' } },
+  { result: { ...ciResult, calculatedInsightStatus: 'ACTIVE' } },
+  { result: { apiName: 'Synthetic__cio' } },
 ].entries()) {
   test(`malformed/error/contradictory HTTP201 application outcome ${index} fails closed`, async () => {
     const { client, calls } = fixture(body === undefined ? 'invalid' : body);
-    await assert.rejects(client.read('d360_data_graph_get', graphRead), { code: 'REQUEST_FAILED' });
+    await assert.rejects(client.mutate('d360_ci_create', ci), { code: 'REQUEST_FAILED' });
     assert.equal(calls.length, 1);
   });
 }
 
 for (const [operation, parameters, resource] of operations) {
-  test(`${operation} rejects operation-specific identity or missing success`, async () => {
+  test(`${operation} rejects operation-specific identity or an empty result`, async () => {
     const { client } = fixture({
-      result: {
-        ...resource,
-        ...(operation.endsWith('_delete')
-          ? { success: false }
-          : operation.startsWith('d360_ir_')
-            ? { objectApiName: 'Wrong' }
-            : operation === 'd360_ci_create'
-              ? { apiName: 'Wrong__cio' }
-              : { name: 'Wrong' }),
-      },
+      result: operation === 'd360_ci_create' ? { ...resource, apiName: 'Wrong__cio' } : {},
     });
     await assert.rejects(
       client[operation.endsWith('_get') ? 'read' : 'mutate'](operation, parameters),
@@ -388,13 +261,7 @@ test('operation-specific inputs reject malformed, extra, sparse and unqualified 
         code: 'INVALID_REQUEST',
       });
   }
-  const badGraph = structuredClone(graph);
-  badGraph.input.incrementalRefreshConfig.enabled = true;
-  const badIr = structuredClone(irCreate);
-  badIr.input.doesRunAutomatically = true;
   for (const [operation, parameters] of [
-    ['d360_data_graph_create', badGraph],
-    ['d360_ir_create', badIr],
     ['d360_ci_create', { input: { ...ci.input, draft: false } }],
   ])
     await assert.rejects(client.mutate(operation, parameters), { code: 'INVALID_REQUEST' });
@@ -428,69 +295,20 @@ test('accessors, cycles, custom serializers and non-JSON values cannot change va
   assert.equal(calls.length, 0);
 });
 
-test('transform reads bind exact returned name or id, not a derived name or current invocation time', async () => {
-  const { client, calls } = fixture({ result: transformResult });
-  assert.deepEqual(await client.read('d360_transform_get', transformRead), transformResult);
-  await assert.rejects(
-    client.read('d360_transform_get', { dataTransformNameOrId: 'UnrelatedTransform' }),
-    { code: 'REQUEST_FAILED' },
-  );
-  const byId = fixture({ result: { ...transformResult, id: 'SyntheticTransformId' } });
-  const idRead = await byId.client.read('d360_transform_get', {
-    dataTransformNameOrId: 'SyntheticTransformId',
-  });
-  assert.equal(idRead.name, transformResult.name);
-  assert.equal(calls.length, 2);
-});
-
-for (const change of [
-  { dataSpaceName: 'other' },
-  { creationSource: 'Other' },
-  { id: '' },
-  { name: 'Wrong' },
-  { status: undefined },
-  { lastRunStatus: undefined },
-  { lastRunDate: undefined },
-  { lastRunDate: 'yesterday' },
-  { error: { message: 'private' } },
-  { success: false },
-]) {
-  test(`transform rejects incomplete or contradictory read ${JSON.stringify(change)}`, async () => {
-    const { client, calls } = fixture({ result: { ...transformResult, ...change } });
-    await assert.rejects(client.read('d360_transform_get', transformRead), {
-      code: 'REQUEST_FAILED',
-    });
-    assert.equal(calls.length, 1);
-  });
-}
-
-test('transform pending observations do not manufacture completion or allow mutation', async () => {
-  for (const lastRunStatus of ['PENDING', 'IN_PROGRESS', 'FAILED']) {
-    const resource = { ...transformResult, lastRunStatus, lastRunDate: JSON.parse('null') };
-    const { client } = fixture({ result: resource });
-    assert.deepEqual(await client.read('d360_transform_get', transformRead), resource);
-    await assert.rejects(client.mutate('d360_transform_get', transformRead), {
-      code: 'INVALID_REQUEST',
-    });
-  }
-});
-
-test('private observer records actual unknown status and nested errors before rejection', async () => {
+test('private observer records actual nested errors and empty results before rejection', async () => {
   for (const resource of [
-    { ...graphResult, status: 'unknown_state' },
-    { ...graphResult, status: 42 },
-    { ...graphResult, status: undefined },
-    { ...graphResult, error: { message: 'private diagnostic' } },
+    {},
+    { ...dloResult, success: false },
+    { ...dloResult, errors: [] },
+    { ...dloResult, error: { message: 'private diagnostic' } },
   ]) {
     const body = { result: structuredClone(resource) };
-    if (body.result.status === undefined) delete body.result.status;
     const { client, calls } = fixture(body);
     const observations = [];
     await assert.rejects(
-      client.read('d360_data_graph_get', graphRead, async (value) => {
+      client.read('d360_dlo_get', dloRead, async (value) => {
         observations.push(structuredClone(value));
-        value.result.status = 'ready';
-        delete value.result.error;
+        value.result = { ...dloResult };
       }),
       { code: 'REQUEST_FAILED' },
     );
@@ -500,22 +318,22 @@ test('private observer records actual unknown status and nested errors before re
 });
 
 test('read observer is awaited, detached and fail-closed, never a mutation authorization', async () => {
-  const { client, calls } = fixture({ result: graphResult });
+  const { client, calls } = fixture({ result: dloResult });
   let recorded = false;
-  const output = await client.read('d360_data_graph_get', graphRead, async (value) => {
+  const output = await client.read('d360_dlo_get', dloRead, async (value) => {
     await Promise.resolve();
     value.result.name = 'tampered';
     recorded = true;
   });
   assert.equal(recorded, true);
-  assert.deepEqual(output, graphResult);
+  assert.deepEqual(output, dloResult);
   await assert.rejects(
-    client.read('d360_data_graph_get', graphRead, async () => {
+    client.read('d360_dlo_get', dloRead, async () => {
       throw new Error('private recorder failure');
     }),
     { code: 'REQUEST_FAILED' },
   );
-  await assert.rejects(client.read('d360_data_graph_get', graphRead, true), {
+  await assert.rejects(client.read('d360_dlo_get', dloRead, true), {
     code: 'INVALID_REQUEST',
   });
   assert.equal(calls.length, 2);

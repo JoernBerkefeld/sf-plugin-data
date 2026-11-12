@@ -19,18 +19,10 @@ export type IngestionReadOperation =
   | 'd360_connection_list'
   | 'd360_connection_get'
   | 'd360_connection_schema_get';
-export type McpReadOperation =
-  'd360_data_graph_get' | 'd360_ir_get' | 'd360_transform_get' | IngestionReadOperation;
+export type McpReadOperation = IngestionReadOperation;
 /** Private detached wire observation; never include it in artifacts or command results. */
 export type McpReadObserver = (observation: unknown) => Promise<void>;
-export type McpMutationOperation =
-  | 'd360_ci_create'
-  | 'd360_data_graph_create'
-  | 'd360_data_graph_update'
-  | 'd360_data_graph_delete'
-  | 'd360_ir_create'
-  | 'd360_ir_update'
-  | 'd360_ir_delete';
+export type McpMutationOperation = 'd360_ci_create';
 type Operation = McpReadOperation | McpMutationOperation;
 type JsonObject = Record<string, unknown>;
 type WireResponse = { statusCode: number; headers?: unknown };
@@ -50,21 +42,8 @@ const ingestionReads = new Set<string>([
   'd360_connection_get',
   'd360_connection_schema_get',
 ]);
-const reads = new Set<string>([
-  'd360_data_graph_get',
-  'd360_ir_get',
-  'd360_transform_get',
-  ...ingestionReads,
-]);
-const mutations = new Set<string>([
-  'd360_ci_create',
-  'd360_data_graph_create',
-  'd360_data_graph_update',
-  'd360_data_graph_delete',
-  'd360_ir_create',
-  'd360_ir_update',
-  'd360_ir_delete',
-]);
+const reads = ingestionReads;
+const mutations = new Set<string>(['d360_ci_create']);
 const namePattern = /^[A-Za-z][A-Za-z0-9_]*$/u;
 
 /** Reject a request without retaining its payload. */
@@ -125,143 +104,6 @@ function json(value: unknown, ancestors = new Set<object>()): void {
   }
   if (Array.isArray(value) && Object.keys(value).length !== value.length) invalid();
   ancestors.delete(value);
-}
-
-/**
- *
- * @param {unknown} value Candidate JSON value.
- * @param {boolean} update Allow the qualified update omission of creationMode.
- * @returns {unknown} Validated value or a fail-closed diagnostic.
- */
-function graph(value: unknown, update: boolean): JsonObject {
-  const input = object(value, [
-    'name',
-    'label',
-    'description',
-    ...(!update || (value && typeof value === 'object' && Object.hasOwn(value, 'creationMode'))
-      ? ['creationMode']
-      : []),
-    'dataspaceName',
-    'primaryObjectName',
-    'type',
-    'fullRefreshConfig',
-    'incrementalRefreshConfig',
-    'sourceObject',
-  ]);
-  if (
-    !name(input.name) ||
-    !text(input.label) ||
-    typeof input.description !== 'string' ||
-    ((!update || Object.hasOwn(input, 'creationMode')) && input.creationMode !== 'DEFAULT') ||
-    input.dataspaceName !== 'default' ||
-    !name(input.primaryObjectName) ||
-    !input.primaryObjectName.endsWith('__dlm') ||
-    input.type !== 'NONE'
-  )
-    invalid();
-  const schedule = object(object(input.fullRefreshConfig, ['schedule']).schedule, [
-    'frequency',
-    'timeGranularity',
-  ]);
-  if (schedule.frequency !== 7 || schedule.timeGranularity !== 'Day') invalid();
-  if (object(input.incrementalRefreshConfig, ['enabled']).enabled !== false) invalid();
-  const source = object(input.sourceObject, [
-    'name',
-    'devName',
-    'label',
-    'path',
-    'fields',
-    'relatedObjects',
-  ]);
-  if (
-    source.name !== input.primaryObjectName ||
-    source.devName !== source.name ||
-    !text(source.label) ||
-    !Array.isArray(source.path) ||
-    source.path.length > 0 ||
-    !Array.isArray(source.relatedObjects) ||
-    source.relatedObjects.length > 0 ||
-    !Array.isArray(source.fields) ||
-    source.fields.length < 2 ||
-    source.fields.length > 3
-  )
-    invalid();
-  const fields = source.fields as unknown[];
-  const expected = ['ssot__Id__c', 'ssot__FirstName__c', 'ssot__LastName__c'];
-  for (const [index, value] of fields.entries()) {
-    const field = object(value, ['sourceFieldName', 'dataType', 'isKeyColumn', 'isProjected']);
-    if (
-      field.sourceFieldName !== expected[index] ||
-      field.dataType !== 'Text' ||
-      field.isKeyColumn !== (index === 0) ||
-      field.isProjected !== true
-    )
-      invalid();
-  }
-  return input;
-}
-
-/**
- *
- * @param {unknown} value Candidate JSON value.
- * @param {boolean} create Whether this is the create contract.
- * @returns {unknown} Validated value or a fail-closed diagnostic.
- */
-function ir(value: unknown, create: boolean): JsonObject {
-  const input = object(value, [
-    ...(create ? ['configurationType', 'dataSpaceName', 'rulesetId'] : []),
-    'label',
-    'description',
-    'doesRunAutomatically',
-    'matchRules',
-    'reconciliationRules',
-  ]);
-  if (
-    !text(input.label) ||
-    typeof input.description !== 'string' ||
-    input.doesRunAutomatically !== false ||
-    (create &&
-      (input.configurationType !== 'Individual' ||
-        input.dataSpaceName !== 'default' ||
-        typeof input.rulesetId !== 'string' ||
-        !/^[A-Za-z0-9]{4}$/u.test(input.rulesetId)))
-  )
-    invalid();
-  const rules = object(input.matchRules, ['rules']).rules;
-  if (!Array.isArray(rules) || rules.length !== 1) invalid();
-  const rule = object(rules[0], ['label', 'criteria']);
-  const criteria = object(rule.criteria, ['criteria']).criteria;
-  if (!text(rule.label) || !Array.isArray(criteria) || criteria.length !== 3) invalid();
-  const expected = [
-    ['ssot__Individual__dlm', 'ssot__FirstName__c', 'Fuzzy'],
-    ['ssot__Individual__dlm', 'ssot__LastName__c', 'Exact'],
-    ['ssot__ContactPointEmail__dlm', 'ssot__EmailAddress__c', 'ExactNormalized'],
-  ];
-  for (const [index, value] of criteria.entries()) {
-    const item = object(value, [
-      'entityName',
-      'fieldName',
-      'matchMethodType',
-      'shouldMatchOnBlank',
-    ]);
-    if (
-      item.entityName !== expected[index][0] ||
-      item.fieldName !== expected[index][1] ||
-      item.matchMethodType !== expected[index][2] ||
-      item.shouldMatchOnBlank !== false
-    )
-      invalid();
-  }
-  const reconciliation = object(input.reconciliationRules, ['rules']).rules;
-  if (!Array.isArray(reconciliation) || reconciliation.length !== 1) invalid();
-  const item = object(reconciliation[0], ['entityName', 'ruleType', 'shouldIgnoreEmptyValue']);
-  if (
-    item.entityName !== 'ssot__Individual__dlm' ||
-    item.ruleType !== (create ? 'LastUpdated' : 'MostFrequent') ||
-    item.shouldIgnoreEmptyValue !== true
-  )
-    invalid();
-  return input;
 }
 
 /**
@@ -344,54 +186,6 @@ function parameters(operation: Operation, value: unknown): JsonObject {
         invalid();
       return parameters_;
     }
-    case 'd360_data_graph_create':
-    case 'd360_data_graph_update': {
-      const update = operation === 'd360_data_graph_update';
-      const parameters_ = object(value, update ? ['input', 'editScheduleOnly'] : ['input']);
-      graph(parameters_.input, update);
-      if (update && parameters_.editScheduleOnly !== false) invalid();
-      return parameters_;
-    }
-    case 'd360_transform_get': {
-      const parameters_ = object(value, ['dataTransformNameOrId']);
-      if (!name(parameters_.dataTransformNameOrId)) invalid();
-      return parameters_;
-    }
-    case 'd360_ir_create': {
-      const parameters_ = object(value, ['input']);
-      ir(parameters_.input, true);
-      return parameters_;
-    }
-    case 'd360_ir_update': {
-      const parameters_ = object(value, ['identityResolution', 'input']);
-      if (
-        !name(parameters_.identityResolution) ||
-        !/^Individual_[A-Za-z0-9]{4}$/u.test(parameters_.identityResolution)
-      )
-        invalid();
-      ir(parameters_.input, false);
-      return parameters_;
-    }
-    case 'd360_data_graph_get':
-    case 'd360_data_graph_delete': {
-      const read = operation === 'd360_data_graph_get';
-      const parameters_ = object(
-        value,
-        read ? ['dataGraphName', 'includeCIDetails', 'includeSegmentDetails'] : ['dataGraphName'],
-      );
-      if (
-        !name(parameters_.dataGraphName) ||
-        (read &&
-          (parameters_.includeCIDetails !== true || parameters_.includeSegmentDetails !== true))
-      )
-        invalid();
-      return parameters_;
-    }
-    default: {
-      const parameters_ = object(value, ['identityResolution']);
-      if (!name(parameters_.identityResolution)) invalid();
-      return parameters_;
-    }
   }
 }
 
@@ -427,58 +221,12 @@ function result(operation: Operation, parameters_: JsonObject, value: unknown): 
   if (ingestionReads.has(operation)) {
     // Family admission independently validates full identities, source authority and settlement.
     if (Object.keys(resource).length === 0) throw new ConnectError('REQUEST_FAILED');
-  } else if (operation.endsWith('_delete')) {
-    if (Object.keys(resource).length !== 1 || resource.success !== true)
-      throw new ConnectError('REQUEST_FAILED');
-  } else if (operation === 'd360_ci_create') {
+  } else {
     const input = parameters_.input as JsonObject;
     if (
       resource.apiName !== input.apiName ||
       resource.dataSpace !== 'default' ||
       resource.calculatedInsightStatus !== 'DRAFT'
-    )
-      throw new ConnectError('REQUEST_FAILED');
-  } else if (operation === 'd360_transform_get') {
-    // Read the exact owner-returned name (or returned id); do not derive a transform name.
-    // Pending/failed runs remain observations, not eligibility or successful processing proof.
-    if (
-      (resource.name !== parameters_.dataTransformNameOrId &&
-        resource.id !== parameters_.dataTransformNameOrId) ||
-      !text(resource.name) ||
-      !name(resource.name) ||
-      !text(resource.id) ||
-      resource.dataSpaceName !== 'default' ||
-      resource.creationSource !== 'Data Graph' ||
-      !text(resource.status) ||
-      !text(resource.lastRunStatus) ||
-      (resource.lastRunDate !== null &&
-        (typeof resource.lastRunDate !== 'string' ||
-          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(resource.lastRunDate) ||
-          !Number.isFinite(Date.parse(resource.lastRunDate))))
-    )
-      throw new ConnectError('REQUEST_FAILED');
-  } else if (operation.startsWith('d360_data_graph_')) {
-    const expected =
-      operation === 'd360_data_graph_get'
-        ? parameters_.dataGraphName
-        : (parameters_.input as JsonObject).name;
-    if (
-      resource.name !== expected ||
-      resource.dataspaceName !== 'default' ||
-      !text(resource.id) ||
-      !['creating', 'processing', 'editing_post_sync', 'ready'].includes(resource.status as string)
-    )
-      throw new ConnectError('REQUEST_FAILED');
-  } else {
-    const expected =
-      operation === 'd360_ir_create'
-        ? `Individual_${(parameters_.input as JsonObject).rulesetId as string}`
-        : parameters_.identityResolution;
-    if (
-      resource.objectApiName !== expected ||
-      resource.dataSpaceName !== 'default' ||
-      !text(resource.id) ||
-      !['PUBLISHING', 'PUBLISHED', 'DELETING'].includes(resource.rulesetStatus as string)
     )
       throw new ConnectError('REQUEST_FAILED');
   }

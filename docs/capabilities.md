@@ -1,14 +1,14 @@
 ## Public native Data Graph CRUD
 
-Explicit API68/default retrieval exports a distinct `.native-dataGraph.json`
-(`kind: native-data-graph`, `apiVersion: 68.0`), not the API67 facade
-`.dataGraph.json`. Every graph shape the API returns is admitted: any root (standard or
+Default/`auto` or `68.0` retrieval exports `.native-dataGraph.json`
+(`kind: native-data-graph`, `apiVersion: 68.0`); other versions are `INVALID_SCOPE`. The
+API67 graph route and its `.dataGraph.json` file are gone. Every graph shape the API returns is admitted: any root (standard or
 unified), related objects with joins, all field types, any refresh schedule. Checks are
 structural only (closed keys, names, tree and join shape, default data space, root equals
 `primaryObjectName`); the root is bound by the document's own `primaryObjectName`.
 Lowercase API values are stored as `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`; node `type`
-stays lowercase. Deploy/delete accept auto/API68; auto retrieve still selects the API67
-route. All six graphs in `isolated-source` retrieve at 68 and preview `unchanged`.
+stays lowercase. All six graphs in `isolated-source` retrieve at `auto` and preview
+`unchanged` on route 68.0. Git and mixed-family selections are refused.
 
 Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
 generated names (empty names on a non-ready read are not authored values), then `ready`
@@ -43,8 +43,7 @@ budget, then report `failed`/`not-attempted`. There is no
 read-back, because the by-name metadata read serves a stale copy of a deleted graph for
 about 11-12 minutes, alternating with not found. No generated DMO/mapping/transform/internal-state,
 storage/credits cleanup or computation claim. Installed package smoke verifies
-offline routing only, not live installed cross-org acceptance. README's 14-resource
-row records Partial native create/delete and retains the separate facade update.
+offline routing only, not live installed cross-org acceptance.
 
 ## Public native identity resolution
 
@@ -57,8 +56,7 @@ the `1ir…` ID check before DELETE; configuration type or secondary DMO changes
 (`blocked-changes`, PATCH cannot carry them); a create name other than `<type>` or
 `<type>_<rulesetId>` (`IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH`); PATCH or
 DELETE while `PUBLISHING`/`DELETING` (`IDENTITY_RESOLUTION_NOT_SETTLED`). Run statistics
-are not part of the file. The API 67 IR deploy route is gone; its legacy reader remains
-only for the API 67 graph route until that is removed.
+are not part of the file. The API 67 IR routes are gone.
 
 ## Public native calculated insight lifecycle — 2026-11-12
 
@@ -248,62 +246,6 @@ phase-specific independent target checks own source/sync preservation. Public
 adapters retain diagnostic codes, stage, mutation certainty and both write routes.
 Synthetic regressions exercise real public command dispatch and two-stage executor;
 installed/live public and cross-org acceptance remain pending independent gates.
-
-## Public Graph root-only workflow
-
-Exact repeatable `data-graph:ApiName` selectors support public retrieve, preview,
-guarded deploy and canonical file/Git selection. Use `--api-version auto` or numeric
-67.0, default space; mixed Graph/API65 families require auto. Numeric65, latest,
-inventory block before service reads or writes.
-The admitted scope is the qualified root-only NONE configuration: unified Individual
-logical root, ordered Text Id key/FirstName and the single forward non-key LastName
-append, seven-day refresh and incremental disabled. Create/delete, nesting,
-reverse projection, label/description and settings changes remain blocked.
-A strict GET inventory rejects unknown meaningful properties rather than dropping
-them. Computed node/field/output identities stay private. Portable JSON excludes
-request-only `creationMode`; absent GET mode requires no historical receipt or
-creation intent. A returned mode must explicitly be DEFAULT; DRAFT/null/unknown
-values block. Update sends mode absent, not null or DEFAULT. This proves only the
-qualified existing-owner omission variant, not arbitrary historical-mode preservation.
-
-Acquisition reads exact Graph, its returned day-zero transform, then a fresh identical
-Graph. Eligibility requires ACTIVE/SUCCESS, a completed dated run and matching
-load-field/key/output lineage; an existing completed run may predate invocation.
-Preflight independently binds API65 REST/Metadata root identity, required Text fields
-and explicit key. Only equality or the complete preserved LastName append is admitted.
-Execution rechecks input, dependencies and owner baseline, acknowledges processing,
-and attempts one full update with `editScheduleOnly: false`. A zero-mutation unchanged
-result does not require processing acknowledgement. Complete local selection admission,
-digests, independent dependency/owner bindings and all-pending fresh checks precede
-any mixed-batch mutation; one blocked Graph prevents every batch write.
-
-Settlement defaults to a finite 40-minute window, at most 41 Graph poll reads spaced
-60 seconds (eligibility/confirmation reads are additional bounded acquisitions).
-`processing` and `editing_post_sync` remain pending even after transform SUCCESS.
-Private detached application observations are recorded before status/error classification;
-unknown status, nested errors, recorder failure, timeout or preserved-binding drift
-stop without replay. Confirmation requires independent ready/complete equality, the
-same exact owner transform with a later completed run and fresh dependency binding.
-Clock/read/delay seams exercise approximately thirty minutes synthetically. No live
-plugin, installed command, no-op computation or cross-org acceptance is claimed.
-
-## Internal Graph transport boundary
-
-The fixed API67 facade now admits semantically read-only `d360_transform_get`
-with exact `dataTransformNameOrId`. It requires matching returned name/id,
-explicit default space, `creationSource: 'Data Graph'`, status/run-status and
-an explicitly null or dated last run. This is read adaptation, not eligibility:
-family admission must require ACTIVE/SUCCESS and a completed dated run bound to
-fresh Graph-returned `dayZeroTransformDevName`; an older completed run need not
-postdate the current invocation.
-
-`McpExecuteClient.read(operation, parameters, observe?)` optionally awaits a
-private detached raw application-body observation before strict result/status/error
-classification. Unknown Graph status and nested errors are recorded then rejected;
-recorder failure fails closed. It does not expose observations in public results,
-permit mutation recording, retry transport failures or weaken supported status guards.
-The public family workflow above consumes this boundary. Installed/live public
-zero-write acceptance remains separate from synthetic implementation verification.
 
 ## Internal native CI transport and feasibility — 2026-11-04
 
@@ -840,11 +782,9 @@ Not qualified:
 - [ ] Classify generated-schema dependencies and automatic-run side effects.
 - [ ] Prove configuration-only behavior without running resolution.
 
-## data-graph: bounded existing-owner support above; broader scope pending
+## data-graph: native API 68 route
 
-- [ ] Record official endpoints, versions, pagination and nested writable contracts.
-- [ ] Preserve nested graph references and external dependencies.
-- [ ] Establish a safe documented update route or explicitly block existing changes.
+- [x] Native API68 retrieve, create, PUT update and delete; see the top section.
 - [ ] Prove create/read-back/no-op without refresh, activation or delete/recreate.
 
 ## segment: unimplemented

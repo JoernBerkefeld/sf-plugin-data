@@ -5,7 +5,7 @@ import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import {
   IdentityResolutionError,
-  projectIdentityResolution,
+  projectNativeIdentityResolution,
 } from '../lib/artifacts/identity-resolution-document.js';
 import { operationApiVersion } from '../lib/transport/api-version.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
@@ -70,7 +70,7 @@ const document = (apiName) => {
   const { facade, native } = irFixture();
   facade.objectApiName = apiName;
   native.objectApiName = apiName;
-  return projectIdentityResolution(facade, native, apiName).candidate;
+  return projectNativeIdentityResolution(native, apiName).candidate;
 };
 const invocation = (overrides = {}) => {
   const command = Object.create(Retrieve.prototype);
@@ -147,9 +147,9 @@ const run = async (command) => {
 test('fixed per-family auto routes never reinterpret numeric pins and refuse latest', () => {
   for (const family of ['segment', 'identity-resolution'])
     assert.equal(operationApiVersion('auto', family), '68.0');
-  assert.equal(operationApiVersion('auto', 'data-graph'), '67.0');
-  assert.equal(operationApiVersion('67.0', 'data-graph'), '67.0');
-  assert.throws(() => operationApiVersion('68.0', 'data-graph'), /INVALID_SCOPE/u);
+  assert.equal(operationApiVersion('auto', 'data-graph'), '68.0');
+  assert.equal(operationApiVersion('68.0', 'data-graph'), '68.0');
+  assert.throws(() => operationApiVersion('67.0', 'data-graph'), /INVALID_SCOPE/u);
   assert.equal(operationApiVersion('68.0', 'identity-resolution'), '68.0');
   for (const [requested, family] of [
     ['65.0', 'identity-resolution'],
