@@ -1,3 +1,17 @@
+## Deploy phases (native + dependency batch) — 2026-11-13
+
+One deploy may hold phase 1 (DLO, DMO, mapping, relationship) and phase 3 (identity
+resolution, calculated insight, Segment) files. With a mapping or relationship in the
+selection, phase 1 runs on the native route first; phase 3 starts only after every phase 1
+item settled, and a blocked, failed or unknown item stops the run. DLO/DMO files beside
+phase 3 files only stay in the ordered batch. Inside phase 3, a calculated insight or
+Segment on an identity resolution's unified or link DMO (name derived from the ruleset
+file) runs after that ruleset is `PUBLISHED`. Before the first phase 1 write, phase 3
+inputs pass their local file, version and dependency checks. Preview runs every phase read-only (also after a blocked phase) and
+reports items whose parents an earlier phase creates as `planned-dependencies`
+(`DEPENDENCIES_PLANNED`). Data streams, data transforms and data graphs still deploy
+alone. Verified offline with mocked executors only; no live mixed run yet.
+
 ## Public native Data Graph CRUD
 
 Default/`auto` or `68.0` retrieval exports `.native-dataGraph.json`
@@ -66,7 +80,10 @@ POST/PATCH, requires the immediate answer to name the ruleset (API name, or the
 existing ID on PATCH) and returns `creation-processing` /
 `update-processing` with mutation `acknowledged-processing`, exit 0, with no
 settlement reads. `--changed-since` with no IR in the change set is also
-`INVALID_ASYNC_SCOPE` (exit 1); with `--preview` the flag has no effect.
+`INVALID_ASYNC_SCOPE` (exit 1); with `--preview` the flag has no effect. A selection
+holding a calculated insight, Segment or data graph on the ruleset's derived unified or
+link DMO is refused with `--async` (`IDENTITY_RESOLUTION_ASYNC_DEPENDENTS`); without
+it, those dependents run after the ruleset reads `PUBLISHED`.
 
 - Helps: no wait for publishing (one to four minutes after the write) or for the
   checks after it; several rulesets can be deployed in a row and checked later.

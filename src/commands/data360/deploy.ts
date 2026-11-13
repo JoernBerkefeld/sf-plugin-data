@@ -80,7 +80,11 @@ import type {
   CalculatedInsightExecution,
   CalculatedInsightObservation,
 } from '../../services/execute-calculated-insight-deploy.js';
-import { validateCalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
+import {
+  CalculatedInsightError,
+  validateCalculatedInsightDocument,
+} from '../../artifacts/calculated-insight-document.js';
+import { IdentityResolutionError } from '../../artifacts/identity-resolution-document.js';
 import { verifyCalculatedInsightInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
@@ -120,6 +124,15 @@ import type { DeployExecutionResult, DeployPreviewResult } from '../../services/
 import { plugin as packageMetadata } from '../../plugin.js';
 import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
 import type { GitDeploySelection } from '../../artifacts/git-deploy-selection.js';
+import {
+  crudPhase,
+  identityResolutionEdges,
+  inputDependencies,
+  inputKey,
+  planDeployStages,
+  runCrudStages,
+} from '../../services/crud-plan.js';
+import type { CrudStageResult } from '../../services/crud-plan.js';
 import {
   dependencyKey,
   DependencySelectionError,
@@ -162,6 +175,23 @@ const resolveTargetOrg = async (
 type NativeDmoPreview = Omit<Awaited<ReturnType<typeof preflightDmo>>, 'diagnostics'> & {
   diagnostics: Array<{ code: string; message: string }>;
 };
+
+/**
+ * Native route order: relationships need mapped DMOs, so they follow DLOs, DMOs and mappings.
+ * @param {DeployInput} input Native input.
+ * @returns {number} Rank.
+ */
+const rank = (input: DeployInput): number =>
+  input.document.kind === 'dlo'
+    ? 0
+    : input.document.kind === 'dmo'
+      ? 1
+      : input.document.kind === 'mapping'
+        ? 2
+        : 3;
+
+type PlannedDependencyFamily =
+  'identity-resolution' | 'calculated-insight' | 'segment' | 'dlo' | 'dmo';
 
 type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
   family?:
@@ -265,6 +295,13 @@ export type DeployEnvelope = {
               diagnostics: Array<{ code: string; message: string }>;
             }
           | {
+              family: PlannedDependencyFamily;
+              outcome: 'planned-dependencies';
+              target: string;
+              absenceProof: string;
+              diagnostics: Array<{ code: string; message: string }>;
+            }
+          | {
               family: 'mapping';
               outcome: 'planned-dependencies';
               target: string;
@@ -289,7 +326,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes and destructive reconciliation are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection (every family; files deleted in the range are reported in result.selection.deletions and never deleted by deploy; transforms stay refused there because --transform-operation is not accepted with it). Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Graph mixed-family selections are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Batches containing Segment, CI or IR inputs preflight the whole selection before the first write; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. --async (IR only) returns as soon as Salesforce accepts an IR create or update (creation-processing / update-processing, mutation acknowledged-processing) instead of waiting minutes for PUBLISHED: publish, settings and generated outputs are not confirmed; rerun the same deploy to check (IDENTITY_RESOLUTION_NOT_SETTLED while in flight, unchanged once settled). Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes and destructive reconciliation are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection (every family; files deleted in the range are reported in result.selection.deletions and never deleted by deploy; transforms stay refused there because --transform-operation is not accepted with it). Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A selection with a mapping or relationship may also hold IR, CI and Segment inputs: they run afterwards in the ordered batch, only once every native item settled; preview reports items whose parent an earlier phase creates as planned-dependencies (DEPENDENCIES_PLANNED). An IR runs before a CI or Segment that uses its unified or link DMO (name derived from the ruleset file), and those start only after the IR is PUBLISHED. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Graph mixed-family selections are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Each phase stage preflights all of its own items before its first write: a batch of Segment, CI or IR inputs (with DLO/DMO beside them when no mapping or relationship is selected) is preflighted as a whole, and an IR dependent stage only after the IR is PUBLISHED; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. In a selection that also holds a mapping or relationship, only the local checks of the IR/CI/Segment inputs (version, data space, file shape, dependency identities and order) run before the native writes; their Git snapshot, prerequisite and target checks run in their later stage, so a blocker there can follow earlier native writes, which stay reported. Preview runs every stage read-only, also after a blocked one. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. --async (IR only) returns as soon as Salesforce accepts an IR create or update (creation-processing / update-processing, mutation acknowledged-processing) instead of waiting minutes for PUBLISHED: publish, settings and generated outputs are not confirmed; rerun the same deploy to check (IDENTITY_RESOLUTION_NOT_SETTLED while in flight, unchanged once settled). --async is refused when the selection holds a graph, CI or Segment on the unified DMO of that IR (IDENTITY_RESOLUTION_ASYNC_DEPENDENTS). Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -806,6 +843,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         !resolvedInputs.some((input) => input.document.kind === 'identity-resolution')
       )
         return finish('blocked', 'INVALID_ASYNC_SCOPE');
+      // An IR that returns before PUBLISHED cannot be the parent of a graph, CI or Segment
+      // selected beside it (they read its unified DMO).
+      if (flags.async && identityResolutionEdges(resolvedInputs).size > 0)
+        return finish('blocked', 'IDENTITY_RESOLUTION_ASYNC_DEPENDENTS');
       const transformInputs = resolvedInputs.filter(
         (input): input is DataTransformDeployInput => input.document.kind === 'data-transform',
       );
@@ -1178,39 +1219,35 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         > =>
           input.document.kind !== 'native-data-graph' && input.document.kind !== 'data-transform',
       );
-      const nativeInputs = legacyInputs.filter(
-        (input) =>
-          isNativeDmoInput(input) ||
-          input.document.kind === 'mapping' ||
-          input.document.kind === 'relationship' ||
-          input.document.kind === 'dlo',
-      );
-      // A native DLO/DMO-only Git selection, or one beside Segment/CI/IR inputs, joins the ordered
-      // dependency batch below; selections with a mapping or relationship (explicit or Git) and
-      // all-native explicit selections stay on this route.
-      if (
-        nativeInputs.some(
+      const isP1 = (input: DeployInput): boolean => crudPhase(input) === 'P1';
+      // Selections with a mapping or relationship (explicit or Git) and all-native explicit
+      // selections run their P1 inputs (DLO, DMO, mapping, relationship) on the native route as
+      // the first stage; P3 inputs (IR, CI, Segment) follow in the dependency batch. A native
+      // DLO/DMO-only Git selection, or one beside P3 inputs only, stays in the batch as before.
+      const nativeRoute =
+        legacyInputs.some(
           (input) => input.document.kind === 'mapping' || input.document.kind === 'relationship',
         ) ||
-        (nativeInputs.length === resolvedInputs.length && changedSince === undefined)
-      ) {
-        if (nativeInputs.length !== resolvedInputs.length)
-          return finish('blocked', 'NATIVE_MIXED_SELECTION_UNSUPPORTED');
+        (legacyInputs.every((input) => isP1(input)) && changedSince === undefined);
+      const edges = identityResolutionEdges(legacyInputs);
+      const stageResult = (
+        status: CrudStageResult['status'],
+        code?: string,
+        error?: unknown,
+      ): CrudStageResult => ({
+        status,
+        ...(code === undefined ? {} : { code }),
+        ...(error === undefined ? {} : { error }),
+      });
+      const runNativeStage = async (
+        nativeInputs: typeof legacyInputs,
+      ): Promise<CrudStageResult> => {
         let version: string;
         try {
           version = nativeApiVersion(flags['api-version']);
         } catch {
-          return finish('blocked', 'INVALID_SCOPE');
+          return stageResult('blocked', 'INVALID_SCOPE');
         }
-        // Relationships need mapped DMOs, so they follow DLOs, DMOs and mappings.
-        const rank = (input: DeployInput): number =>
-          input.document.kind === 'dlo'
-            ? 0
-            : input.document.kind === 'dmo'
-              ? 1
-              : input.document.kind === 'mapping'
-                ? 2
-                : 3;
         // Sort the freshly admitted selection, never preflight dependent mappings before parents settle.
 
         nativeInputs.sort((a, b) => rank(a) - rank(b) || a.path.localeCompare(b.path));
@@ -1225,7 +1262,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : flags['target-org'] === undefined && !this.resolveTargetOrg
               ? undefined
               : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
-        if (!org || !org.getUsername()) return finish('blocked', 'TARGET_ORG_REQUIRED');
+        if (!org || !org.getUsername()) return stageResult('blocked', 'TARGET_ORG_REQUIRED');
         const target = org.getUsername()!;
         envelope.provenance.targetOrgId = org.getOrgId();
         envelope.metadata.apiVersion = flags['api-version'] ?? 'auto';
@@ -1312,7 +1349,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 operation: 'execute',
                 path: input.path,
               });
-              return finish('blocked');
+              return stageResult('blocked');
             }
           }
           await verify();
@@ -1416,7 +1453,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               operation: 'preview',
               path: input.path,
             });
-            if (preview.outcome === 'blocked') return finish('blocked');
+            if (preview.outcome === 'blocked')
+              // Later preview stages still run; hand on what this stage plans so far.
+              return {
+                ...stageResult('blocked'),
+                planned: [...plannedParents].map((key) => key.toLowerCase()),
+              };
             if (preview.outcome === 'create') plannedParents.add(`${kind}:${identity.apiName}`);
             continue;
           }
@@ -1464,7 +1506,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             path: input.path,
           });
           if (result.outcome === 'blocked' || result.outcome === 'failed')
-            return finish(result.outcome);
+            return stageResult(result.outcome);
           if (hasMappings && kind !== 'mapping' && kind !== 'relationship') {
             // Independently verify definitions; only DLO reads expose an ACTIVE settlement status.
             let settled = false;
@@ -1535,846 +1577,974 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   },
                 ],
               });
-              return finish('failed');
+              return stageResult('failed');
             }
           }
         }
         await verify();
-        return finish('success');
-      }
-      // The flag parser admits only auto or a numeric version; refuse anything else unparsed.
-      if (effectiveScope !== 'default' || !/^(?:auto|\d{2,3}\.0)$/u.test(flags['api-version']))
-        return finish('blocked', 'INVALID_SCOPE');
-      const admitted = legacyInputs.filter(
-        (
-          input,
-        ): input is Exclude<
-          DeployInput,
-          | import('../../artifacts/read-deploy-input.js').MappingDeployInput
-          | import('../../artifacts/read-deploy-input.js').RelationshipDeployInput
-          | DataStreamDeployInput
-          | NativeDataGraphDeployInput
-          | import('../../artifacts/read-deploy-input.js').DataTransformDeployInput
-        > =>
-          input.document.kind !== 'mapping' &&
-          input.document.kind !== 'relationship' &&
-          input.document.kind !== 'data-stream',
-      );
-      // Native DMO items keep the native version rule (auto is 68.0), not another family's pin.
-      const admitVersion = (input: (typeof admitted)[number]): void => {
-        if (isNativeDmoInput(input)) nativeApiVersion(flags['api-version']);
-        else if (input.document.kind === 'identity-resolution')
-          operationApiVersion(flags['api-version'], 'identity-resolution');
-        else operationApiVersion(flags['api-version'], input.document.kind);
+        // Preview: parents this stage plans to create; later stages report dependents as planned.
+        return { status: 'success', planned: [...plannedParents].map((key) => key.toLowerCase()) };
       };
-      const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
-      if (hasDlos) {
-        try {
-          for (const input of admitted) admitVersion(input);
-        } catch {
-          return finish('blocked', 'INVALID_SCOPE');
-        }
-        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-        for (const input of admitted)
-          if (input.document.kind === 'dlo') validateDloDocument(input.document);
-      }
-      if (gitDlos) {
-        const current = admitted.filter(
-          (input): input is DloDeployInput => input.document.kind === 'dlo',
+      const runBatchStage = async (
+        stageInputs: typeof legacyInputs,
+        planned: ReadonlySet<string>,
+      ): Promise<CrudStageResult> => {
+        const base = envelope.result.items.length;
+        // Git snapshots minus those another stage owns; a snapshot missing from the whole
+        // selection stays, so its count check still blocks.
+        const stagePaths = new Set(stageInputs.map((input) => input.path));
+        const otherPaths = new Set(
+          legacyInputs.map((input) => input.path).filter((file) => !stagePaths.has(file)),
         );
-        if (
-          current.length !== gitDlos.length ||
-          gitDlos.some(
-            (captured) =>
-              !current.some(
-                (input) =>
-                  input.path === captured.path &&
-                  input.inputDigest === captured.inputDigest &&
-                  JSON.stringify(input.document) === JSON.stringify(captured.document),
-              ),
-          )
-        )
-          throw new GitSelectionError('INVALID_GIT_SELECTION');
-        for (const input of gitDlos) await this.verifyDloInput(input);
-      }
-      const hasCalculatedInsights = admitted.some(
-        (input) => input.document.kind === 'calculated-insight',
-      );
-      if (hasCalculatedInsights) {
-        try {
-          for (const input of admitted) admitVersion(input);
-        } catch {
-          return finish('blocked', 'INVALID_SCOPE');
-        }
-        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-        for (const input of admitted)
-          if (input.document.kind === 'calculated-insight')
-            validateCalculatedInsightDocument(input.document);
-      }
-      if (gitCalculatedInsights) {
-        const current = admitted.filter(
-          (input): input is CalculatedInsightDeployInput =>
-            input.document.kind === 'calculated-insight',
+        const own = <T extends { path: string }>(list: readonly T[] | undefined): T[] | undefined =>
+          list?.filter((item) => !otherPaths.has(item.path));
+        const stageGitDlos = own(gitDlos);
+        const stageGitCalculatedInsights = own(gitCalculatedInsights);
+        const stageGitSegments = own(gitSegments);
+        const stageGitIdentityResolutions = own(gitIdentityResolutions);
+        // The flag parser admits only auto or a numeric version; refuse anything else unparsed.
+        if (effectiveScope !== 'default' || !/^(?:auto|\d{2,3}\.0)$/u.test(flags['api-version']))
+          return stageResult('blocked', 'INVALID_SCOPE');
+        const admitted = stageInputs.filter(
+          (
+            input,
+          ): input is Exclude<
+            DeployInput,
+            | import('../../artifacts/read-deploy-input.js').MappingDeployInput
+            | import('../../artifacts/read-deploy-input.js').RelationshipDeployInput
+            | DataStreamDeployInput
+            | NativeDataGraphDeployInput
+            | import('../../artifacts/read-deploy-input.js').DataTransformDeployInput
+          > =>
+            input.document.kind !== 'mapping' &&
+            input.document.kind !== 'relationship' &&
+            input.document.kind !== 'data-stream',
         );
-        if (
-          current.length !== gitCalculatedInsights.length ||
-          gitCalculatedInsights.some(
-            (captured) =>
-              !current.some(
-                (input) =>
-                  input.path === captured.path &&
-                  input.companionPath === captured.companionPath &&
-                  input.inputDigest === captured.inputDigest &&
-                  JSON.stringify(input.document) === JSON.stringify(captured.document),
-              ),
-          )
-        )
-          throw new GitSelectionError('INVALID_GIT_SELECTION');
-        for (const captured of gitCalculatedInsights)
-          await this.verifyCalculatedInsightInput(captured);
-      }
-      // Bind every captured Git owner to the original immutable authored bytes, never drop IR.
-      if (gitIdentityResolutions) {
-        const current = admitted.filter(
-          (input) => input.document.kind === 'identity-resolution',
-        ) as IdentityResolutionDeployInput[];
-        if (
-          current.length !== gitIdentityResolutions.length ||
-          gitIdentityResolutions.some(
-            (captured) =>
-              !current.some(
-                (input) =>
-                  input.path === captured.path &&
-                  input.inputDigest === captured.inputDigest &&
-                  JSON.stringify(input.document) === JSON.stringify(captured.document),
-              ),
-          )
-        )
-          throw new GitSelectionError('INVALID_GIT_SELECTION');
-        for (const captured of gitIdentityResolutions)
-          await this.verifyIdentityResolutionInput(captured);
-      }
-      let inputs = admitted;
-      const hasIdentityResolutions = inputs.some(
-        (input) => input.document.kind === 'identity-resolution',
-      );
-      if (hasIdentityResolutions) {
-        for (const input of inputs) {
-          const family =
-            input.document.kind === 'identity-resolution'
-              ? 'identity-resolution'
-              : input.document.kind === 'segment'
-                ? 'segment'
-                : input.document.kind === 'calculated-insight'
-                  ? 'calculated-insight'
-                  : input.document.kind === 'dlo'
-                    ? 'dlo'
-                    : 'dmo';
+        // Native DMO items keep the native version rule (auto is 68.0), not another family's pin.
+        const admitVersion = (input: (typeof admitted)[number]): void => {
+          if (isNativeDmoInput(input)) nativeApiVersion(flags['api-version']);
+          else if (input.document.kind === 'identity-resolution')
+            operationApiVersion(flags['api-version'], 'identity-resolution');
+          else operationApiVersion(flags['api-version'], input.document.kind);
+        };
+        const hasDlos = admitted.some((input) => input.document.kind === 'dlo');
+        if (hasDlos) {
           try {
-            admitVersion(input);
+            for (const input of admitted) admitVersion(input);
           } catch {
-            return finish('blocked', 'INVALID_SCOPE');
+            return stageResult('blocked', 'INVALID_SCOPE');
           }
-          if (family === 'identity-resolution') {
+          if (effectiveScope !== 'default') return stageResult('blocked', 'INVALID_SCOPE');
+          for (const input of admitted)
+            if (input.document.kind === 'dlo') validateDloDocument(input.document);
+        }
+        if (stageGitDlos) {
+          const current = admitted.filter(
+            (input): input is DloDeployInput => input.document.kind === 'dlo',
+          );
+          if (
+            current.length !== stageGitDlos.length ||
+            stageGitDlos.some(
+              (captured) =>
+                !current.some(
+                  (input) =>
+                    input.path === captured.path &&
+                    input.inputDigest === captured.inputDigest &&
+                    JSON.stringify(input.document) === JSON.stringify(captured.document),
+                ),
+            )
+          )
+            throw new GitSelectionError('INVALID_GIT_SELECTION');
+          for (const input of stageGitDlos) await this.verifyDloInput(input);
+        }
+        const hasCalculatedInsights = admitted.some(
+          (input) => input.document.kind === 'calculated-insight',
+        );
+        if (hasCalculatedInsights) {
+          try {
+            for (const input of admitted) admitVersion(input);
+          } catch {
+            return stageResult('blocked', 'INVALID_SCOPE');
+          }
+          if (effectiveScope !== 'default') return stageResult('blocked', 'INVALID_SCOPE');
+          for (const input of admitted)
+            if (input.document.kind === 'calculated-insight')
+              validateCalculatedInsightDocument(input.document);
+        }
+        if (stageGitCalculatedInsights) {
+          const current = admitted.filter(
+            (input): input is CalculatedInsightDeployInput =>
+              input.document.kind === 'calculated-insight',
+          );
+          if (
+            current.length !== stageGitCalculatedInsights.length ||
+            stageGitCalculatedInsights.some(
+              (captured) =>
+                !current.some(
+                  (input) =>
+                    input.path === captured.path &&
+                    input.companionPath === captured.companionPath &&
+                    input.inputDigest === captured.inputDigest &&
+                    JSON.stringify(input.document) === JSON.stringify(captured.document),
+                ),
+            )
+          )
+            throw new GitSelectionError('INVALID_GIT_SELECTION');
+          for (const captured of stageGitCalculatedInsights)
+            await this.verifyCalculatedInsightInput(captured);
+        }
+        // Bind every captured Git owner to the original immutable authored bytes, never drop IR.
+        if (stageGitIdentityResolutions) {
+          const current = admitted.filter(
+            (input) => input.document.kind === 'identity-resolution',
+          ) as IdentityResolutionDeployInput[];
+          if (
+            current.length !== stageGitIdentityResolutions.length ||
+            stageGitIdentityResolutions.some(
+              (captured) =>
+                !current.some(
+                  (input) =>
+                    input.path === captured.path &&
+                    input.inputDigest === captured.inputDigest &&
+                    JSON.stringify(input.document) === JSON.stringify(captured.document),
+                ),
+            )
+          )
+            throw new GitSelectionError('INVALID_GIT_SELECTION');
+          for (const captured of stageGitIdentityResolutions)
+            await this.verifyIdentityResolutionInput(captured);
+        }
+        let inputs = admitted;
+        const hasIdentityResolutions = inputs.some(
+          (input) => input.document.kind === 'identity-resolution',
+        );
+        if (hasIdentityResolutions) {
+          for (const input of inputs) {
+            const family =
+              input.document.kind === 'identity-resolution'
+                ? 'identity-resolution'
+                : input.document.kind === 'segment'
+                  ? 'segment'
+                  : input.document.kind === 'calculated-insight'
+                    ? 'calculated-insight'
+                    : input.document.kind === 'dlo'
+                      ? 'dlo'
+                      : 'dmo';
             try {
-              nativeIdentityResolutionDocument(input.document);
-            } catch (error) {
-              return finish(
-                'blocked',
-                error instanceof Error && /^IDENTITY_RESOLUTION_[A-Z0-9_]+$/u.test(error.message)
-                  ? error.message
-                  : 'INVALID_SOURCE',
-              );
+              admitVersion(input);
+            } catch {
+              return stageResult('blocked', 'INVALID_SCOPE');
+            }
+            if (family === 'identity-resolution') {
+              try {
+                nativeIdentityResolutionDocument(input.document);
+              } catch (error) {
+                return stageResult(
+                  'blocked',
+                  error instanceof Error && /^IDENTITY_RESOLUTION_[A-Z0-9_]+$/u.test(error.message)
+                    ? error.message
+                    : 'INVALID_SOURCE',
+                );
+              }
             }
           }
+          if (effectiveScope !== 'default') return stageResult('blocked', 'INVALID_SCOPE');
         }
-        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-      }
-      if (gitSegments) {
-        const current = inputs.filter(
-          (input): input is SegmentDeployInput => input.document.kind === 'segment',
-        );
-        if (
-          current.length !== gitSegments.length ||
-          gitSegments.some(
-            (captured) =>
-              !current.some(
-                (input) =>
-                  input.path === captured.path && input.inputDigest === captured.inputDigest,
-              ),
-          )
-        )
-          throw new GitSelectionError('INVALID_GIT_SELECTION');
-        for (const captured of gitSegments) await this.verifySegmentInput(captured);
-      }
-      if (inputs.length === 0) return finish('blocked', 'INVALID_SELECTION');
-      const hasNativeDmos = inputs.some((input) => isNativeDmoInput(input));
-      let nativeDmoVersion = '68.0';
-      try {
-        if (hasNativeDmos) nativeDmoVersion = nativeApiVersion(flags['api-version']);
-      } catch {
-        return finish('blocked', 'INVALID_SCOPE');
-      }
-      const hasSegments = inputs.some((input) => input.document.kind === 'segment');
-      if (hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos) {
-        const nodes = inputs.map((input) =>
-          input.document.kind === 'segment' ||
-          input.document.kind === 'identity-resolution' ||
-          input.document.kind === 'calculated-insight' ||
-          input.document.kind === 'dlo'
-            ? documentDependencyNode(input.document)
-            : { identity: { kind: 'dmo' as const, ...input.document.identity }, dependencies: [] },
-        );
-        const byKey = new Map(
-          inputs.map((input) => [
-            dependencyKey({
-              kind:
-                input.document.kind === 'identity-resolution'
-                  ? 'identity-resolution'
-                  : input.document.kind === 'segment'
-                    ? 'segment'
-                    : input.document.kind === 'calculated-insight'
-                      ? 'calculated-insight'
-                      : input.document.kind === 'dlo'
-                        ? 'dlo'
-                        : 'dmo',
-              ...input.document.identity,
-            }),
-            input,
-          ]),
-        );
-        inputs = orderDependencyNodes(nodes).map((key) => byKey.get(key)!);
-      }
-      // Preserve original Segment JSON snapshots and bind mixed-batch DMO bytes before target reads.
-      const captured =
-        hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos || hasNativeDmos
-          ? await Promise.all(
-              inputs.map(async (input) => ({
-                input,
-                digest:
-                  input.document.kind === 'segment' ? undefined : await this.captureInput(input),
-              })),
+        if (stageGitSegments) {
+          const current = inputs.filter(
+            (input): input is SegmentDeployInput => input.document.kind === 'segment',
+          );
+          if (
+            current.length !== stageGitSegments.length ||
+            stageGitSegments.some(
+              (captured) =>
+                !current.some(
+                  (input) =>
+                    input.path === captured.path && input.inputDigest === captured.inputDigest,
+                ),
             )
-          : [];
-      const verifyInputs = async (): Promise<void> => {
-        for (const input of gitDlos ?? []) await this.verifyDloInput(input);
-        for (const input of gitCalculatedInsights ?? [])
-          await this.verifyCalculatedInsightInput(input);
-        for (const { input, digest } of captured) {
-          if (input.document.kind === 'calculated-insight')
-            await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
-          if (input.document.kind === 'identity-resolution')
-            await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
-          if (input.document.kind === 'segment')
-            await this.verifySegmentInput(input as SegmentDeployInput);
-          else if ((await this.captureInput(input)) !== digest)
-            throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
+          )
+            throw new GitSelectionError('INVALID_GIT_SELECTION');
+          for (const captured of stageGitSegments) await this.verifySegmentInput(captured);
         }
-      };
-      await verifyInputs();
-      const familySelection = (input: DeployInput): ApiVersionSelection =>
-        input.document.kind === 'segment'
-          ? (() => {
-              const version = operationApiVersion(flags['api-version'], 'segment');
-              return Object.freeze({
-                requested: version,
-                restSelector: `v${version}`,
-                soapNumeric: version,
-              });
-            })()
-          : input.document.kind === 'dlo' ||
-              input.document.kind === 'identity-resolution' ||
-              input.document.kind === 'calculated-insight'
-            ? Object.freeze({ requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' })
-            : isNativeDmoInput(input)
-              ? Object.freeze({
-                  requested: nativeDmoVersion,
-                  restSelector: `v${nativeDmoVersion}`,
-                  soapNumeric: nativeDmoVersion,
-                })
-              : selection;
-      const routes = (input: DeployInput): ExecutionItem['routes'] =>
-        input.document.kind === 'segment'
-          ? [
-              {
-                operation: 'segment.deploy',
-                apiVersion: familySelection(input).soapNumeric,
-                transport: 'native',
-              },
-              {
-                operation: 'dependency.get',
-                apiVersion: familySelection(input).soapNumeric,
-                transport: 'native',
-              },
-              {
-                operation: 'dependency.metadata',
-                apiVersion: familySelection(input).soapNumeric,
-                transport: 'metadata',
-              },
-            ]
-          : input.document.kind === 'dlo'
+        if (inputs.length === 0) return stageResult('blocked', 'INVALID_SELECTION');
+        const hasNativeDmos = inputs.some((input) => isNativeDmoInput(input));
+        let nativeDmoVersion = '68.0';
+        try {
+          if (hasNativeDmos) nativeDmoVersion = nativeApiVersion(flags['api-version']);
+        } catch {
+          return stageResult('blocked', 'INVALID_SCOPE');
+        }
+        const hasSegments = inputs.some((input) => input.document.kind === 'segment');
+        if (hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos) {
+          const nodes = inputs.map((input) =>
+            input.document.kind === 'segment' ||
+            input.document.kind === 'identity-resolution' ||
+            input.document.kind === 'calculated-insight' ||
+            input.document.kind === 'dlo'
+              ? documentDependencyNode(input.document)
+              : {
+                  identity: { kind: 'dmo' as const, ...input.document.identity },
+                  dependencies: [],
+                },
+          );
+          const byKey = new Map(
+            inputs.map((input) => [
+              dependencyKey({
+                kind:
+                  input.document.kind === 'identity-resolution'
+                    ? 'identity-resolution'
+                    : input.document.kind === 'segment'
+                      ? 'segment'
+                      : input.document.kind === 'calculated-insight'
+                        ? 'calculated-insight'
+                        : input.document.kind === 'dlo'
+                          ? 'dlo'
+                          : 'dmo',
+                ...input.document.identity,
+              }),
+              input,
+            ]),
+          );
+          inputs = orderDependencyNodes(nodes).map((key) => byKey.get(key)!);
+        }
+        // Preserve original Segment JSON snapshots and bind mixed-batch DMO bytes before target reads.
+        const captured =
+          hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos || hasNativeDmos
+            ? await Promise.all(
+                inputs.map(async (input) => ({
+                  input,
+                  digest:
+                    input.document.kind === 'segment' ? undefined : await this.captureInput(input),
+                })),
+              )
+            : [];
+        const verifyInputs = async (): Promise<void> => {
+          for (const input of stageGitDlos ?? []) await this.verifyDloInput(input);
+          for (const input of stageGitCalculatedInsights ?? [])
+            await this.verifyCalculatedInsightInput(input);
+          for (const { input, digest } of captured) {
+            if (input.document.kind === 'calculated-insight')
+              await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
+            if (input.document.kind === 'identity-resolution')
+              await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
+            if (input.document.kind === 'segment')
+              await this.verifySegmentInput(input as SegmentDeployInput);
+            else if ((await this.captureInput(input)) !== digest)
+              throw new DependencySelectionError('DEPENDENCY_INPUT_CHANGED');
+          }
+        };
+        await verifyInputs();
+        const familySelection = (input: DeployInput): ApiVersionSelection =>
+          input.document.kind === 'segment'
+            ? (() => {
+                const version = operationApiVersion(flags['api-version'], 'segment');
+                return Object.freeze({
+                  requested: version,
+                  restSelector: `v${version}`,
+                  soapNumeric: version,
+                });
+              })()
+            : input.document.kind === 'dlo' ||
+                input.document.kind === 'identity-resolution' ||
+                input.document.kind === 'calculated-insight'
+              ? Object.freeze({ requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' })
+              : isNativeDmoInput(input)
+                ? Object.freeze({
+                    requested: nativeDmoVersion,
+                    restSelector: `v${nativeDmoVersion}`,
+                    soapNumeric: nativeDmoVersion,
+                  })
+                : selection;
+        const routes = (input: DeployInput): ExecutionItem['routes'] =>
+          input.document.kind === 'segment'
             ? [
                 {
-                  operation: 'dlo.deploy',
-                  apiVersion: '68.0',
+                  operation: 'segment.deploy',
+                  apiVersion: familySelection(input).soapNumeric,
                   transport: 'native',
                 },
+                {
+                  operation: 'dependency.get',
+                  apiVersion: familySelection(input).soapNumeric,
+                  transport: 'native',
+                },
+                {
+                  operation: 'dependency.metadata',
+                  apiVersion: familySelection(input).soapNumeric,
+                  transport: 'metadata',
+                },
               ]
-            : input.document.kind === 'identity-resolution'
+            : input.document.kind === 'dlo'
               ? [
                   {
-                    operation: 'identity-resolutions.get',
-                    apiVersion: '68.0',
-                    transport: 'native',
-                  },
-                  {
-                    operation:
-                      irAdmissions.get(input.path)?.outcome === 'create'
-                        ? 'dependency.get'
-                        : 'dependency-and-output.get',
-                    apiVersion: '68.0',
-                    transport: 'native',
-                  },
-                  {
-                    operation:
-                      irAdmissions.get(input.path)?.outcome === 'create'
-                        ? 'dependency.metadata'
-                        : 'dependency-and-output.metadata',
-                    apiVersion: '68.0',
-                    transport: 'metadata',
-                  },
-                  ...(irAdmissions.get(input.path)?.outcome === 'create'
-                    ? [
-                        {
-                          operation: 'data-model-objects.list',
-                          apiVersion: '68.0',
-                          transport: 'native' as const,
-                        },
-                      ]
-                    : []),
-                  {
-                    operation:
-                      irAdmissions.get(input.path)?.route.operation ?? 'identity-resolutions.patch',
+                    operation: 'dlo.deploy',
                     apiVersion: '68.0',
                     transport: 'native',
                   },
                 ]
-              : input.document.kind === 'calculated-insight'
+              : input.document.kind === 'identity-resolution'
                 ? [
                     {
-                      operation: 'calculated-insight.deploy',
+                      operation: 'identity-resolutions.get',
                       apiVersion: '68.0',
                       transport: 'native',
                     },
                     {
-                      operation: 'calculated-insight.get',
+                      operation:
+                        irAdmissions.get(input.path)?.outcome === 'create'
+                          ? 'dependency.get'
+                          : 'dependency-and-output.get',
                       apiVersion: '68.0',
                       transport: 'native',
                     },
                     {
-                      operation: 'calculated-insight.metadata',
-                      apiVersion: '65.0',
+                      operation:
+                        irAdmissions.get(input.path)?.outcome === 'create'
+                          ? 'dependency.metadata'
+                          : 'dependency-and-output.metadata',
+                      apiVersion: '68.0',
                       transport: 'metadata',
                     },
-                    { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' },
+                    ...(irAdmissions.get(input.path)?.outcome === 'create'
+                      ? [
+                          {
+                            operation: 'data-model-objects.list',
+                            apiVersion: '68.0',
+                            transport: 'native' as const,
+                          },
+                        ]
+                      : []),
                     {
-                      operation: 'dependency.metadata',
-                      apiVersion: '65.0',
-                      transport: 'metadata',
+                      operation:
+                        irAdmissions.get(input.path)?.route.operation ??
+                        'identity-resolutions.patch',
+                      apiVersion: '68.0',
+                      transport: 'native',
                     },
                   ]
-                : isNativeDmoInput(input)
+                : input.document.kind === 'calculated-insight'
                   ? [
                       {
-                        operation: 'dmo.deploy',
-                        apiVersion: nativeDmoVersion,
+                        operation: 'calculated-insight.deploy',
+                        apiVersion: '68.0',
                         transport: 'native',
                       },
+                      {
+                        operation: 'calculated-insight.get',
+                        apiVersion: '68.0',
+                        transport: 'native',
+                      },
+                      {
+                        operation: 'calculated-insight.metadata',
+                        apiVersion: '65.0',
+                        transport: 'metadata',
+                      },
+                      { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' },
+                      {
+                        operation: 'dependency.metadata',
+                        apiVersion: '65.0',
+                        transport: 'metadata',
+                      },
                     ]
-                  : flags['api-version'] === 'auto'
+                  : isNativeDmoInput(input)
                     ? [
                         {
-                          operation: `${input.document.kind}.deploy`,
-                          apiVersion: '65.0',
+                          operation: 'dmo.deploy',
+                          apiVersion: nativeDmoVersion,
                           transport: 'native',
                         },
                       ]
-                    : undefined;
-      const injectedOrg = flags['target-org'] as unknown;
-      const org =
-        injectedOrg && typeof injectedOrg === 'object'
-          ? (injectedOrg as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
-          : flags['target-org'] === undefined && !this.resolveTargetOrg
-            ? undefined
-            : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
-      if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
-      envelope.provenance.targetOrgId = org.getOrgId();
-      // Batches of only Segments, CIs and native DMOs default to 68.0; other families keep 65.0.
-      const batchVersion =
-        flags['api-version'] === 'auto'
-          ? inputs.every(
-              (input) =>
-                input.document.kind === 'segment' ||
-                input.document.kind === 'calculated-insight' ||
-                isNativeDmoInput(input),
-            )
-            ? '68.0'
-            : '65.0'
-          : flags['api-version'];
-      const selection: ApiVersionSelection = Object.freeze({
-        requested: batchVersion,
-        restSelector: `v${batchVersion}`,
-        soapNumeric: batchVersion,
-      });
-      envelope.metadata.soapApiVersion = inputs.every(
-        (input) => input.document.kind === 'identity-resolution',
-      )
-        ? '68.0'
-        : selection.soapNumeric;
-      const connection = org.getConnection(selection.soapNumeric);
-      // Core Org may reuse and mutate one receiver; pin a distinct operation-local view instead.
-      const connectionFor = (input: DeployInput): Connection => {
-        if (
-          input.document.kind !== 'identity-resolution' &&
-          input.document.kind !== 'segment' &&
-          input.document.kind !== 'calculated-insight' &&
-          input.document.kind !== 'dlo'
+                    : flags['api-version'] === 'auto'
+                      ? [
+                          {
+                            operation: `${input.document.kind}.deploy`,
+                            apiVersion: '65.0',
+                            transport: 'native',
+                          },
+                        ]
+                      : undefined;
+        const injectedOrg = flags['target-org'] as unknown;
+        const org =
+          injectedOrg && typeof injectedOrg === 'object'
+            ? (injectedOrg as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
+            : flags['target-org'] === undefined && !this.resolveTargetOrg
+              ? undefined
+              : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
+        if (!org) return stageResult('blocked', 'TARGET_ORG_REQUIRED');
+        envelope.provenance.targetOrgId = org.getOrgId();
+        // Batches of only Segments, CIs and native DMOs default to 68.0; other families keep 65.0.
+        const batchVersion =
+          flags['api-version'] === 'auto'
+            ? inputs.every(
+                (input) =>
+                  input.document.kind === 'segment' ||
+                  input.document.kind === 'calculated-insight' ||
+                  isNativeDmoInput(input),
+              )
+              ? '68.0'
+              : '65.0'
+            : flags['api-version'];
+        const selection: ApiVersionSelection = Object.freeze({
+          requested: batchVersion,
+          restSelector: `v${batchVersion}`,
+          soapNumeric: batchVersion,
+        });
+        envelope.metadata.soapApiVersion = inputs.every(
+          (input) => input.document.kind === 'identity-resolution',
         )
-          return connection;
-        const receiver = Object.create(connection) as Connection;
-        const version = familySelection(input).soapNumeric;
-        Object.defineProperty(receiver, 'version', { value: version });
-        // A CI context derives its fixed API65 Metadata receiver from this one by repinning
-        // `version`; a constant getApiVersion would hide that pin, so CI keeps the core getter.
-        if (input.document.kind !== 'calculated-insight')
-          Object.defineProperty(receiver, 'getApiVersion', { value: () => version });
-        Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
-        return receiver;
-      };
-      const dloClient = (): ReturnType<typeof createDloClient> => {
-        const username = org.getUsername();
-        if (!username) throw new Error('TARGET_ORG_REQUIRED');
-        return this.createDloClient(username, '68.0', undefined, this.ssotSender(username, '68.0'));
-      };
-      const dmoClient = (): ReturnType<typeof createDmoClient> => {
-        const username = org.getUsername();
-        if (!username) throw new Error('TARGET_ORG_REQUIRED');
-        return (this.createDmoClient ?? createDmoClient)(
-          username,
-          nativeDmoVersion,
-          undefined,
-          this.ssotSender(username, nativeDmoVersion),
-        );
-      };
-      // Read-only mapping inventory for a refused mapped-field removal; built only on refusal.
-      const dmoMappings = (): ReturnType<typeof createMappingClient> => {
-        const username = org.getUsername();
-        if (!username) throw new Error('TARGET_ORG_REQUIRED');
-        return (this.createMappingClient ?? createMappingClient)(
-          username,
-          nativeDmoVersion,
-          undefined,
-          requestScope,
-          this.ssotSender(username, nativeDmoVersion),
-        );
-      };
-      const previewNativeDmo = async (input: NativeDmoDeployInput): Promise<NativeDmoPreview> =>
-        (this.preflightNativeDmo ?? preflightDmo)(
-          input.document,
-          dmoClient(),
-          requestScope,
-          ...fieldRemoval(dmoMappings, dmoClient),
-        );
-      const irAdmissions = new Map<string, IdentityResolutionDeployPreview>();
-      const irBindings = new Map<string, string>();
-      const verifyIrBinding = async (input: DeployInput): Promise<void> => {
-        if (input.document.kind !== 'identity-resolution') return;
-        const fingerprint = await this.bindIdentityResolution(
-          input as IdentityResolutionDeployInput,
-          connectionFor(input),
-          familySelection(input),
-        );
-        const prior = irBindings.get(input.path);
-        if (prior !== undefined && prior !== fingerprint) throw new Error('IR binding drift');
-        irBindings.set(input.path, fingerprint);
-      };
-      const ciContexts = new Map<string, CalculatedInsightReadContext>();
-      const ciIntent = (
-        input: DeployInput,
-      ): { context?: CalculatedInsightReadContext; draft?: true } => {
-        if (input.document.kind !== 'calculated-insight') return {};
-        let context = ciContexts.get(input.path);
-        if (!context) {
-          context = this.calculatedInsightContext(connectionFor(input), effectiveScope);
-          ciContexts.set(input.path, context);
-        }
-        context.check();
-        return { context, ...(flags.draft ? { draft: true as const } : {}) };
-      };
-      const ciBindings = new Map<string, string>();
-      const verifyCiBinding = async (input: DeployInput): Promise<void> => {
-        if (input.document.kind !== 'calculated-insight') return;
-        const context = ciIntent(input).context!;
-        const bound = await context.bind(input.document, context.check);
-        context.check();
-        const fingerprint = createHash('sha256').update(JSON.stringify(bound)).digest('hex');
-        const prior = ciBindings.get(input.path);
-        if (prior !== undefined && prior !== fingerprint) throw new Error('CI binding drift');
-        ciBindings.set(input.path, fingerprint);
-      };
-      let failed = false;
-      let blocked = false;
-      for (const input of inputs) {
-        try {
-          const segment = input.document.kind === 'segment';
-          if (segment) await this.verifySegmentInput(input as SegmentDeployInput);
-          const preview =
-            input.document.kind === 'dlo'
-              ? await this.preflightDlo(input.document, dloClient())
-              : input.document.kind === 'calculated-insight'
-                ? await this.preflightCalculatedInsight(
-                    input.document,
-                    connectionFor(input),
-                    familySelection(input),
-                    effectiveScope,
-                    ciIntent(input),
-                  )
-                : input.document.kind === 'identity-resolution'
-                  ? await this.preflightIdentityResolution(
+          ? '68.0'
+          : selection.soapNumeric;
+        const connection = org.getConnection(selection.soapNumeric);
+        // Core Org may reuse and mutate one receiver; pin a distinct operation-local view instead.
+        const connectionFor = (input: DeployInput): Connection => {
+          if (
+            input.document.kind !== 'identity-resolution' &&
+            input.document.kind !== 'segment' &&
+            input.document.kind !== 'calculated-insight' &&
+            input.document.kind !== 'dlo'
+          )
+            return connection;
+          const receiver = Object.create(connection) as Connection;
+          const version = familySelection(input).soapNumeric;
+          Object.defineProperty(receiver, 'version', { value: version });
+          // A CI context derives its fixed API65 Metadata receiver from this one by repinning
+          // `version`; a constant getApiVersion would hide that pin, so CI keeps the core getter.
+          if (input.document.kind !== 'calculated-insight')
+            Object.defineProperty(receiver, 'getApiVersion', { value: () => version });
+          Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
+          return receiver;
+        };
+        const dloClient = (): ReturnType<typeof createDloClient> => {
+          const username = org.getUsername();
+          if (!username) throw new Error('TARGET_ORG_REQUIRED');
+          return this.createDloClient(
+            username,
+            '68.0',
+            undefined,
+            this.ssotSender(username, '68.0'),
+          );
+        };
+        const dmoClient = (): ReturnType<typeof createDmoClient> => {
+          const username = org.getUsername();
+          if (!username) throw new Error('TARGET_ORG_REQUIRED');
+          return (this.createDmoClient ?? createDmoClient)(
+            username,
+            nativeDmoVersion,
+            undefined,
+            this.ssotSender(username, nativeDmoVersion),
+          );
+        };
+        // Read-only mapping inventory for a refused mapped-field removal; built only on refusal.
+        const dmoMappings = (): ReturnType<typeof createMappingClient> => {
+          const username = org.getUsername();
+          if (!username) throw new Error('TARGET_ORG_REQUIRED');
+          return (this.createMappingClient ?? createMappingClient)(
+            username,
+            nativeDmoVersion,
+            undefined,
+            requestScope,
+            this.ssotSender(username, nativeDmoVersion),
+          );
+        };
+        const previewNativeDmo = async (input: NativeDmoDeployInput): Promise<NativeDmoPreview> =>
+          (this.preflightNativeDmo ?? preflightDmo)(
+            input.document,
+            dmoClient(),
+            requestScope,
+            ...fieldRemoval(dmoMappings, dmoClient),
+          );
+        const irAdmissions = new Map<string, IdentityResolutionDeployPreview>();
+        const irBindings = new Map<string, string>();
+        const verifyIrBinding = async (input: DeployInput): Promise<void> => {
+          if (input.document.kind !== 'identity-resolution') return;
+          const fingerprint = await this.bindIdentityResolution(
+            input as IdentityResolutionDeployInput,
+            connectionFor(input),
+            familySelection(input),
+          );
+          const prior = irBindings.get(input.path);
+          if (prior !== undefined && prior !== fingerprint) throw new Error('IR binding drift');
+          irBindings.set(input.path, fingerprint);
+        };
+        const ciContexts = new Map<string, CalculatedInsightReadContext>();
+        const ciIntent = (
+          input: DeployInput,
+        ): { context?: CalculatedInsightReadContext; draft?: true } => {
+          if (input.document.kind !== 'calculated-insight') return {};
+          let context = ciContexts.get(input.path);
+          if (!context) {
+            context = this.calculatedInsightContext(connectionFor(input), effectiveScope);
+            ciContexts.set(input.path, context);
+          }
+          context.check();
+          return { context, ...(flags.draft ? { draft: true as const } : {}) };
+        };
+        const ciBindings = new Map<string, string>();
+        const verifyCiBinding = async (input: DeployInput): Promise<void> => {
+          if (input.document.kind !== 'calculated-insight') return;
+          const context = ciIntent(input).context!;
+          const bound = await context.bind(input.document, context.check);
+          context.check();
+          const fingerprint = createHash('sha256').update(JSON.stringify(bound)).digest('hex');
+          const prior = ciBindings.get(input.path);
+          if (prior !== undefined && prior !== fingerprint) throw new Error('CI binding drift');
+          ciBindings.set(input.path, fingerprint);
+        };
+        let failed = false;
+        let blocked = false;
+        for (const input of inputs) {
+          // A parent created by an earlier stage of this preview does not exist yet: report the
+          // item as planned instead of comparing it against a target that cannot hold it.
+          const parents = inputDependencies(input, edges).filter((key) => planned.has(key));
+          if (parents.length > 0) {
+            envelope.result.items.push({
+              family: input.document.kind as PlannedDependencyFamily,
+              outcome: 'planned-dependencies',
+              target: 'unknown',
+              absenceProof: 'none',
+              diagnostics: [
+                {
+                  code: 'DEPENDENCIES_PLANNED',
+                  message: `Selected parent ${parents.join(', ')} is created earlier in this deploy and must settle before this item is compared; no existence or write outcome is asserted.`,
+                },
+              ],
+              identity: { ...input.document.identity },
+              operation: 'preview',
+              path: input.path,
+            });
+            continue;
+          }
+          try {
+            const segment = input.document.kind === 'segment';
+            if (segment) await this.verifySegmentInput(input as SegmentDeployInput);
+            const preview =
+              input.document.kind === 'dlo'
+                ? await this.preflightDlo(input.document, dloClient())
+                : input.document.kind === 'calculated-insight'
+                  ? await this.preflightCalculatedInsight(
                       input.document,
                       connectionFor(input),
                       familySelection(input),
                       effectiveScope,
+                      ciIntent(input),
                     )
-                  : segment
-                    ? await this.preflightSegment(
+                  : input.document.kind === 'identity-resolution'
+                    ? await this.preflightIdentityResolution(
                         input.document,
                         connectionFor(input),
                         familySelection(input),
                         effectiveScope,
                       )
-                    : await previewNativeDmo(input as NativeDmoDeployInput);
-          if (input.document.kind === 'dlo') await this.verifyDloInput(input as DloDeployInput);
-          if (input.document.kind === 'identity-resolution') {
-            await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
-            irAdmissions.set(input.path, preview as IdentityResolutionDeployPreview);
-            if (['create', 'update', 'unchanged'].includes(preview.outcome))
-              await verifyIrBinding(input);
-            const effects: readonly string[] = (preview as IdentityResolutionDeployPreview)
-              .requiredEffects;
-            if (
-              !flags.preview &&
-              (preview.outcome === 'create' || preview.outcome === 'update') &&
-              (flags['allow-processing'] !== true ||
-                !effects?.includes('processing') ||
-                (preview.outcome === 'create' &&
-                  !effects.includes('generated-output-provisioning')))
-            ) {
-              blocked = true;
-              (preview.diagnostics as Array<{ code: string; message: string }>).push({
-                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
-                message:
-                  'IR processing and CREATE generated-output provisioning require explicit --allow-processing. No batch writes were attempted.',
-              });
+                    : segment
+                      ? await this.preflightSegment(
+                          input.document,
+                          connectionFor(input),
+                          familySelection(input),
+                          effectiveScope,
+                        )
+                      : await previewNativeDmo(input as NativeDmoDeployInput);
+            if (input.document.kind === 'dlo') await this.verifyDloInput(input as DloDeployInput);
+            if (input.document.kind === 'identity-resolution') {
+              await this.verifyIdentityResolutionInput(input as IdentityResolutionDeployInput);
+              irAdmissions.set(input.path, preview as IdentityResolutionDeployPreview);
+              if (['create', 'update', 'unchanged'].includes(preview.outcome))
+                await verifyIrBinding(input);
+              const effects: readonly string[] = (preview as IdentityResolutionDeployPreview)
+                .requiredEffects;
+              if (
+                !flags.preview &&
+                (preview.outcome === 'create' || preview.outcome === 'update') &&
+                (flags['allow-processing'] !== true ||
+                  !effects?.includes('processing') ||
+                  (preview.outcome === 'create' &&
+                    !effects.includes('generated-output-provisioning')))
+              ) {
+                blocked = true;
+                (preview.diagnostics as Array<{ code: string; message: string }>).push({
+                  code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+                  message:
+                    'IR processing and CREATE generated-output provisioning require explicit --allow-processing. No batch writes were attempted.',
+                });
+              }
             }
-          }
-          if (input.document.kind === 'calculated-insight') {
-            await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
-            if (['create', 'update', 'unchanged'].includes(preview.outcome))
-              await verifyCiBinding(input);
-            if (
-              !flags.preview &&
-              (preview.outcome === 'create' || preview.outcome === 'update') &&
-              (flags['allow-processing'] !== true ||
-                !(preview as CalculatedInsightPreview).requiredEffects.includes('processing'))
-            ) {
-              blocked = true;
-              (preview.diagnostics as Array<{ code: string; message: string }>).push({
-                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
-                message:
-                  'CI processing requires explicit --allow-processing. No batch writes were attempted.',
-              });
+            if (input.document.kind === 'calculated-insight') {
+              await this.verifyCalculatedInsightInput(input as CalculatedInsightDeployInput);
+              if (['create', 'update', 'unchanged'].includes(preview.outcome))
+                await verifyCiBinding(input);
+              if (
+                !flags.preview &&
+                (preview.outcome === 'create' || preview.outcome === 'update') &&
+                (flags['allow-processing'] !== true ||
+                  !(preview as CalculatedInsightPreview).requiredEffects.includes('processing'))
+              ) {
+                blocked = true;
+                (preview.diagnostics as Array<{ code: string; message: string }>).push({
+                  code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+                  message:
+                    'CI processing requires explicit --allow-processing. No batch writes were attempted.',
+                });
+              }
             }
-          }
-          if (segment) {
-            await this.verifySegmentInput(input as SegmentDeployInput);
-            const effects = (preview as SegmentDeployPreview).requiredEffects;
-            if (
-              !flags.preview &&
-              ['create', 'update'].includes(preview.outcome) &&
-              (flags['allow-processing'] !== true || !effects?.includes('processing'))
-            ) {
-              blocked = true;
-              (preview.diagnostics as Array<{ code: string; message: string }>).push({
-                code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
-                message:
-                  'Qualified Segment creates and updates require explicit --allow-processing. No batch writes were attempted.',
-              });
+            if (segment) {
+              await this.verifySegmentInput(input as SegmentDeployInput);
+              const effects = (preview as SegmentDeployPreview).requiredEffects;
+              if (
+                !flags.preview &&
+                ['create', 'update'].includes(preview.outcome) &&
+                (flags['allow-processing'] !== true || !effects?.includes('processing'))
+              ) {
+                blocked = true;
+                (preview.diagnostics as Array<{ code: string; message: string }>).push({
+                  code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+                  message:
+                    'Qualified Segment creates and updates require explicit --allow-processing. No batch writes were attempted.',
+                });
+              }
             }
+            envelope.result.items.push({
+              ...preview,
+              ...(routes(input) ? { routes: routes(input) } : {}),
+              identity: { ...input.document.identity },
+              operation: 'preview',
+              path: input.path,
+            });
+            if (preview.outcome === 'blocked' || preview.outcome === 'blocked-changes')
+              blocked = true;
+          } catch (error) {
+            failed = true;
+            envelope.result.items.push({
+              identity: { ...input.document.identity },
+              operation: 'preview',
+              path: input.path,
+              outcome: 'blocked',
+              target: 'unknown',
+              absenceProof: 'none',
+              diagnostics: [
+                {
+                  // A native DMO refusal names its own reason (for example a standard target).
+                  code: error instanceof NativeDmoError ? error.code : 'PREFLIGHT_FAILED',
+                  message: operationDiagnostic(
+                    error,
+                    'Target preview failed; no deployment was executed.',
+                  ),
+                  ...(mappedFieldMappings(error)
+                    ? { mappedFields: mappedFieldMappings(error) }
+                    : {}),
+                },
+              ],
+            });
           }
-          envelope.result.items.push({
-            ...preview,
-            ...(routes(input) ? { routes: routes(input) } : {}),
-            identity: { ...input.document.identity },
-            operation: 'preview',
-            path: input.path,
-          });
-          if (preview.outcome === 'blocked' || preview.outcome === 'blocked-changes')
-            blocked = true;
-        } catch (error) {
-          failed = true;
-          envelope.result.items.push({
-            identity: { ...input.document.identity },
-            operation: 'preview',
-            path: input.path,
-            outcome: 'blocked',
-            target: 'unknown',
-            absenceProof: 'none',
-            diagnostics: [
-              {
-                // A native DMO refusal names its own reason (for example a standard target).
-                code: error instanceof NativeDmoError ? error.code : 'PREFLIGHT_FAILED',
-                message: operationDiagnostic(
-                  error,
-                  'Target preview failed; no deployment was executed.',
-                ),
-                ...(mappedFieldMappings(error) ? { mappedFields: mappedFieldMappings(error) } : {}),
-              },
-            ],
-          });
         }
-      }
-      if (flags.preview && !failed) await verifyInputs();
-      if (!flags.preview) {
-        const items: ExecutionItem[] = inputs.map((input, index) => {
-          const { outcome, target, absenceProof, diagnostics } = envelope.result.items[
-            index
-          ] as DeployPreviewResult;
-          return {
-            identity: { ...input.document.identity },
-            operation: 'execute',
-            path: input.path,
-            outcome: 'not-attempted',
-            mutation: 'not-attempted',
-            preflight: { outcome, target, absenceProof, diagnostics },
-            ...(routes(input) ? { routes: routes(input) } : {}),
-            ...(input.document.kind === 'dlo' ? { family: 'dlo' as const } : {}),
-            ...(input.document.kind === 'identity-resolution'
-              ? {
-                  family: 'identity-resolution' as const,
-                  route: (envelope.result.items[index] as IdentityResolutionDeployPreview).route,
-                  requiredEffects: (envelope.result.items[index] as IdentityResolutionDeployPreview)
-                    .requiredEffects,
-                }
-              : {}),
-            ...(input.document.kind === 'calculated-insight'
-              ? {
-                  family: 'calculated-insight' as const,
-                  route: (envelope.result.items[index] as CalculatedInsightPreview).route,
-                  requiredEffects: (envelope.result.items[index] as CalculatedInsightPreview)
-                    .requiredEffects,
-                }
-              : {}),
-            ...(input.document.kind === 'segment'
-              ? {
-                  family: 'segment' as const,
-                  route: {
-                    apiVersion: familySelection(input).soapNumeric,
-                    method:
-                      (envelope.result.items[index] as SegmentDeployPreview).outcome === 'create'
-                        ? ('POST' as const)
-                        : ('PATCH' as const),
-                    resource: 'segments' as const,
-                  },
-                  requiredEffects: (envelope.result.items[index] as SegmentDeployPreview)
-                    .requiredEffects,
-                }
-              : {}),
-            diagnostics: [],
-          };
-        });
-        // Keep whole-selection evidence, but never mistake admission for attempted execution.
-        envelope.result.items = items;
-        if (!failed && !blocked) {
-          for (const [index, input] of inputs.entries()) {
-            const item = items[index];
-            try {
-              await verifyInputs();
-              // Re-admit every pending dependent before any next write, including a DMO write.
-              for (const pending of inputs.slice(index)) {
-                if (pending.document.kind === 'dlo') {
-                  await this.preflightDlo(pending.document, dloClient());
-                  continue;
-                }
-                if (pending.document.kind === 'identity-resolution') {
-                  await verifyIrBinding(pending);
-                  const fresh = await this.preflightIdentityResolution(
-                    pending.document,
-                    connectionFor(pending),
-                    familySelection(pending),
-                    effectiveScope,
-                  );
-                  if (
-                    (irAdmissions.get(pending.path)?.outcome === 'create') !==
-                      (fresh.outcome === 'create') ||
-                    !['create', 'unchanged', 'update'].includes(fresh.outcome) ||
-                    ((fresh.outcome === 'update' || fresh.outcome === 'create') &&
-                      (flags['allow-processing'] !== true ||
-                        !fresh.requiredEffects.includes('processing') ||
-                        (fresh.outcome === 'create' &&
-                          !fresh.requiredEffects.includes('generated-output-provisioning'))))
-                  )
-                    throw new DependencySelectionError(
-                      'IDENTITY_RESOLUTION_FRESH_ADMISSION_BLOCKED',
+        if (flags.preview && !failed) await verifyInputs();
+        if (!flags.preview) {
+          const items: ExecutionItem[] = inputs.map((input, index) => {
+            const { outcome, target, absenceProof, diagnostics } = envelope.result.items[
+              base + index
+            ] as DeployPreviewResult;
+            return {
+              identity: { ...input.document.identity },
+              operation: 'execute',
+              path: input.path,
+              outcome: 'not-attempted',
+              mutation: 'not-attempted',
+              preflight: { outcome, target, absenceProof, diagnostics },
+              ...(routes(input) ? { routes: routes(input) } : {}),
+              ...(input.document.kind === 'dlo' ? { family: 'dlo' as const } : {}),
+              ...(input.document.kind === 'identity-resolution'
+                ? {
+                    family: 'identity-resolution' as const,
+                    route: (envelope.result.items[base + index] as IdentityResolutionDeployPreview)
+                      .route,
+                    requiredEffects: (
+                      envelope.result.items[base + index] as IdentityResolutionDeployPreview
+                    ).requiredEffects,
+                  }
+                : {}),
+              ...(input.document.kind === 'calculated-insight'
+                ? {
+                    family: 'calculated-insight' as const,
+                    route: (envelope.result.items[base + index] as CalculatedInsightPreview).route,
+                    requiredEffects: (
+                      envelope.result.items[base + index] as CalculatedInsightPreview
+                    ).requiredEffects,
+                  }
+                : {}),
+              ...(input.document.kind === 'segment'
+                ? {
+                    family: 'segment' as const,
+                    route: {
+                      apiVersion: familySelection(input).soapNumeric,
+                      method:
+                        (envelope.result.items[base + index] as SegmentDeployPreview).outcome ===
+                        'create'
+                          ? ('POST' as const)
+                          : ('PATCH' as const),
+                      resource: 'segments' as const,
+                    },
+                    requiredEffects: (envelope.result.items[base + index] as SegmentDeployPreview)
+                      .requiredEffects,
+                  }
+                : {}),
+              diagnostics: [],
+            };
+          });
+          // Keep whole-selection evidence, but never mistake admission for attempted execution.
+          envelope.result.items.splice(base, items.length, ...items);
+          if (!failed && !blocked) {
+            for (const [index, input] of inputs.entries()) {
+              const item = items[index];
+              try {
+                await verifyInputs();
+                // Re-admit every pending dependent before any next write, including a DMO write.
+                for (const pending of inputs.slice(index)) {
+                  if (pending.document.kind === 'dlo') {
+                    await this.preflightDlo(pending.document, dloClient());
+                    continue;
+                  }
+                  if (pending.document.kind === 'identity-resolution') {
+                    await verifyIrBinding(pending);
+                    const fresh = await this.preflightIdentityResolution(
+                      pending.document,
+                      connectionFor(pending),
+                      familySelection(pending),
+                      effectiveScope,
                     );
-                  continue;
-                }
-                if (pending.document.kind === 'calculated-insight') {
-                  await verifyCiBinding(pending);
-                  const fresh = await this.preflightCalculatedInsight(
+                    if (
+                      (irAdmissions.get(pending.path)?.outcome === 'create') !==
+                        (fresh.outcome === 'create') ||
+                      !['create', 'unchanged', 'update'].includes(fresh.outcome) ||
+                      ((fresh.outcome === 'update' || fresh.outcome === 'create') &&
+                        (flags['allow-processing'] !== true ||
+                          !fresh.requiredEffects.includes('processing') ||
+                          (fresh.outcome === 'create' &&
+                            !fresh.requiredEffects.includes('generated-output-provisioning'))))
+                    )
+                      throw new DependencySelectionError(
+                        'IDENTITY_RESOLUTION_FRESH_ADMISSION_BLOCKED',
+                      );
+                    continue;
+                  }
+                  if (pending.document.kind === 'calculated-insight') {
+                    await verifyCiBinding(pending);
+                    const fresh = await this.preflightCalculatedInsight(
+                      pending.document,
+                      connectionFor(pending),
+                      familySelection(pending),
+                      effectiveScope,
+                      ciIntent(pending),
+                    );
+                    if (
+                      ![
+                        'unchanged',
+                        'update',
+                        ...(selection.soapNumeric === '68.0' ? ['create'] : []),
+                      ].includes(fresh.outcome) ||
+                      ((fresh.outcome === 'update' || fresh.outcome === 'create') &&
+                        (flags['allow-processing'] !== true ||
+                          !fresh.requiredEffects.includes('processing')))
+                    )
+                      throw new DependencySelectionError('CI_FRESH_ADMISSION_BLOCKED');
+                    continue;
+                  }
+                  if (pending.document.kind !== 'segment') continue;
+                  const fresh = await this.preflightSegment(
                     pending.document,
                     connectionFor(pending),
                     familySelection(pending),
                     effectiveScope,
-                    ciIntent(pending),
                   );
                   if (
-                    ![
-                      'unchanged',
-                      'update',
-                      ...(selection.soapNumeric === '68.0' ? ['create'] : []),
-                    ].includes(fresh.outcome) ||
-                    ((fresh.outcome === 'update' || fresh.outcome === 'create') &&
+                    !['unchanged', 'update', 'create'].includes(fresh.outcome) ||
+                    (['update', 'create'].includes(fresh.outcome) &&
                       (flags['allow-processing'] !== true ||
                         !fresh.requiredEffects.includes('processing')))
                   )
-                    throw new DependencySelectionError('CI_FRESH_ADMISSION_BLOCKED');
-                  continue;
+                    throw new DependencySelectionError('SEGMENT_FRESH_ADMISSION_BLOCKED');
                 }
-                if (pending.document.kind !== 'segment') continue;
-                const fresh = await this.preflightSegment(
-                  pending.document,
-                  connectionFor(pending),
-                  familySelection(pending),
-                  effectiveScope,
-                );
-                if (
-                  !['unchanged', 'update', 'create'].includes(fresh.outcome) ||
-                  (['update', 'create'].includes(fresh.outcome) &&
-                    (flags['allow-processing'] !== true ||
-                      !fresh.requiredEffects.includes('processing')))
-                )
-                  throw new DependencySelectionError('SEGMENT_FRESH_ADMISSION_BLOCKED');
+                await verifyInputs();
+              } catch (error) {
+                item.outcome = 'blocked';
+                item.diagnostics = [
+                  {
+                    code: 'DEPLOY_FRESH_ADMISSION_BLOCKED',
+                    message: operationDiagnostic(
+                      error,
+                      'Fresh input or dependency admission failed before this item. No further writes were attempted.',
+                    ),
+                  },
+                ];
+                blocked = true;
+                break;
               }
-              await verifyInputs();
-            } catch (error) {
-              item.outcome = 'blocked';
-              item.diagnostics = [
-                {
-                  code: 'DEPLOY_FRESH_ADMISSION_BLOCKED',
-                  message: operationDiagnostic(
-                    error,
-                    'Fresh input or dependency admission failed before this item. No further writes were attempted.',
-                  ),
-                },
-              ];
-              blocked = true;
-              break;
-            }
-            // Set conservative evidence only at dispatch; admission failures cannot imply a write.
-            item.outcome = 'failed';
-            item.mutation = 'unknown';
-            try {
-              const result =
-                input.document.kind === 'dlo'
-                  ? await this.executeDlo(input.document, dloClient())
-                  : input.document.kind === 'calculated-insight'
-                    ? await this.executeCalculatedInsight(
-                        input.document,
-                        connectionFor(input),
-                        familySelection(input),
-                        effectiveScope,
-                        {
-                          ...ciIntent(input),
-                          allowProcessing: flags['allow-processing'] === true,
-                          verifyInput: verifyInputs,
-                          recordObservation: async (observation) =>
-                            this.recordCalculatedInsightObservation(input.path, observation),
-                        },
-                      )
-                    : input.document.kind === 'identity-resolution'
-                      ? await this.executeIdentityResolution(
+              // Set conservative evidence only at dispatch; admission failures cannot imply a write.
+              item.outcome = 'failed';
+              item.mutation = 'unknown';
+              try {
+                const result =
+                  input.document.kind === 'dlo'
+                    ? await this.executeDlo(input.document, dloClient())
+                    : input.document.kind === 'calculated-insight'
+                      ? await this.executeCalculatedInsight(
                           input.document,
                           connectionFor(input),
                           familySelection(input),
                           effectiveScope,
                           {
+                            ...ciIntent(input),
                             allowProcessing: flags['allow-processing'] === true,
-                            verifyInput: async () => {
-                              await verifyInputs();
-                              await verifyIrBinding(input);
-                            },
-                            allowGeneratedOutputProvisioning: flags['allow-processing'] === true,
-                            ...(flags.async ? { async: true } : {}),
+                            verifyInput: verifyInputs,
+                            recordObservation: async (observation) =>
+                              this.recordCalculatedInsightObservation(input.path, observation),
                           },
                         )
-                      : input.document.kind === 'segment'
-                        ? await this.executeSegment(
+                      : input.document.kind === 'identity-resolution'
+                        ? await this.executeIdentityResolution(
                             input.document,
                             connectionFor(input),
                             familySelection(input),
                             effectiveScope,
                             {
                               allowProcessing: flags['allow-processing'] === true,
-                              verifyInput: verifyInputs,
+                              verifyInput: async () => {
+                                await verifyInputs();
+                                await verifyIrBinding(input);
+                              },
+                              allowGeneratedOutputProvisioning: flags['allow-processing'] === true,
+                              ...(flags.async ? { async: true } : {}),
                             },
                           )
-                        : await (this.executeNativeDmo ?? executeDmo)(
-                            (input as NativeDmoDeployInput).document,
-                            dmoClient(),
-                            requestScope,
-                            ...fieldRemoval(dmoMappings, dmoClient),
-                          );
-              const { serverProcessing, ...execution } = result as typeof result & {
-                serverProcessing?: true;
-              };
-              if (['dlo', 'segment'].includes(input.document.kind) && serverProcessing)
-                processingDlos.add(input.path);
-              Object.assign(item, execution);
-            } catch (error) {
-              item.diagnostics = [
-                {
-                  code: 'EXECUTION_UNCONFIRMED',
-                  message: operationDiagnostic(
-                    error,
-                    'Mutation may have occurred. Inspect target before any further attempt; no retry or rollback was performed.',
-                  ),
-                },
-              ];
-            }
-            if (item.mutation === 'unknown' || item.outcome === 'failed') {
-              failed = true;
-              break;
-            }
-            if (item.outcome === 'blocked') {
-              blocked = true;
-              break;
+                        : input.document.kind === 'segment'
+                          ? await this.executeSegment(
+                              input.document,
+                              connectionFor(input),
+                              familySelection(input),
+                              effectiveScope,
+                              {
+                                allowProcessing: flags['allow-processing'] === true,
+                                verifyInput: verifyInputs,
+                              },
+                            )
+                          : await (this.executeNativeDmo ?? executeDmo)(
+                              (input as NativeDmoDeployInput).document,
+                              dmoClient(),
+                              requestScope,
+                              ...fieldRemoval(dmoMappings, dmoClient),
+                            );
+                const { serverProcessing, ...execution } = result as typeof result & {
+                  serverProcessing?: true;
+                };
+                if (['dlo', 'segment'].includes(input.document.kind) && serverProcessing)
+                  processingDlos.add(input.path);
+                Object.assign(item, execution);
+              } catch (error) {
+                item.diagnostics = [
+                  {
+                    code: 'EXECUTION_UNCONFIRMED',
+                    message: operationDiagnostic(
+                      error,
+                      'Mutation may have occurred. Inspect target before any further attempt; no retry or rollback was performed.',
+                    ),
+                  },
+                ];
+              }
+              if (item.mutation === 'unknown' || item.outcome === 'failed') {
+                failed = true;
+                break;
+              }
+              if (item.outcome === 'blocked') {
+                blocked = true;
+                break;
+              }
             }
           }
         }
+        return {
+          ...stageResult(
+            failed ? 'failed' : blocked ? 'blocked' : 'success',
+            failed
+              ? flags.preview
+                ? 'PREFLIGHT_FAILED'
+                : 'DEPLOY_EXECUTION_FAILED'
+              : blocked
+                ? flags.preview
+                  ? 'DEPLOY_PREVIEW_BLOCKED'
+                  : 'DEPLOY_EXECUTION_BLOCKED'
+                : undefined,
+          ),
+          // Preview: what this stage creates, or could not compare, is planned for later stages.
+          ...(flags.preview
+            ? {
+                planned: inputs
+                  .filter((_, index) =>
+                    ['create', 'planned-dependencies'].includes(
+                      envelope.result.items[base + index]?.outcome,
+                    ),
+                  )
+                  .map((input) => inputKey(input)),
+              }
+            : {}),
+        };
+      };
+      const stages = planDeployStages(legacyInputs, { nativeRoute });
+      if (stages.length === 0) {
+        if (changedSince === undefined) return finish('blocked', 'INVALID_SELECTION');
+        // An empty Git admission still checks its captured snapshots in the batch.
+        stages.push({ phase: 'P3', inputs: [] });
       }
-      return finish(
-        failed ? 'failed' : blocked ? 'blocked' : 'success',
-        failed
-          ? flags.preview
-            ? 'PREFLIGHT_FAILED'
-            : 'DEPLOY_EXECUTION_FAILED'
-          : blocked
-            ? flags.preview
-              ? 'DEPLOY_PREVIEW_BLOCKED'
-              : 'DEPLOY_EXECUTION_BLOCKED'
-            : undefined,
+      // A P3 stage after a native P1 stage must be admissible before the first P1 write: its
+      // version, data space and every local (no org access) file and dependency shape check.
+      if (stages[0]?.phase === 'P1' && stages.length > 1) {
+        try {
+          if (effectiveScope !== 'default') throw new Error('INVALID_SCOPE');
+          for (const input of legacyInputs)
+            if (!isP1(input))
+              operationApiVersion(
+                flags['api-version'],
+                input.document.kind as Parameters<typeof operationApiVersion>[1],
+              );
+        } catch {
+          return finish('blocked', 'INVALID_SCOPE');
+        }
+        const later = legacyInputs.filter((input) => !isP1(input));
+        try {
+          for (const input of later) {
+            if (input.document.kind === 'identity-resolution')
+              nativeIdentityResolutionDocument(input.document);
+            if (input.document.kind === 'calculated-insight')
+              validateCalculatedInsightDocument(input.document);
+          }
+          orderDependencyNodes(
+            later.map((input) =>
+              documentDependencyNode(
+                input.document as Parameters<typeof documentDependencyNode>[0],
+              ),
+            ),
+          );
+        } catch (error) {
+          return finish(
+            'blocked',
+            // Same codes as the batch path, plus the validators' own codes.
+            error instanceof DependencySelectionError ||
+              error instanceof CalculatedInsightError ||
+              error instanceof IdentityResolutionError
+              ? error.code
+              : error instanceof Error && /^IDENTITY_RESOLUTION_[A-Z0-9_]+$/u.test(error.message)
+                ? error.message
+                : 'INVALID_SOURCE',
+          );
+        }
+      }
+      // Preview runs every stage read-only, even after a blocked one; execution stops there.
+      const outcome = await runCrudStages(
+        stages,
+        async (stage, planned) =>
+          stage.phase === 'P1'
+            ? runNativeStage(stage.inputs)
+            : runBatchStage(stage.inputs, planned),
+        { continueAfterBlocked: flags.preview },
       );
+      return finish(outcome.status, outcome.code, outcome.error);
     } catch (error: unknown) {
       if (error instanceof GitSelectionError) {
         envelope.diagnostics.errors.push({

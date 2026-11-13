@@ -2,6 +2,8 @@
 export const hints: Readonly<Record<string, string>> = {
   IDENTITY_RESOLUTION_ACQUISITION_FAILED:
     'The identity resolution ruleset could not be read from the org. Check the API name, your Data Cloud access and any Salesforce detail, then rerun the retrieve.',
+  IDENTITY_RESOLUTION_ASYNC_DEPENDENTS:
+    'The selection holds an identity resolution and a graph, calculated insight or Segment that uses its unified DMO, so --async cannot be used. Drop --async, or deploy the dependents in a later run.',
   IDENTITY_RESOLUTION_BINDING_UNQUALIFIED:
     'The DMOs and fields this ruleset uses, or the unified objects it creates, could not be verified in the target org. Check that they exist with the expected fields, then rerun.',
   IDENTITY_RESOLUTION_DELETE_ADMISSION_FAILED:

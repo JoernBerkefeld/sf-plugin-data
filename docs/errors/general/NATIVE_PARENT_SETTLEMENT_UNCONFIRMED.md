@@ -36,6 +36,6 @@ Deployed: 0 (0 created / 0 updated / 1 failed)
 
 ## Related codes
 
-- [`NATIVE_MIXED_SELECTION_UNSUPPORTED`](../general/NATIVE_MIXED_SELECTION_UNSUPPORTED.md) — which families the native route accepts.
+- [`DEPENDENCIES_PLANNED`](../dependency/DEPENDENCIES_PLANNED.md) — how a preview reports items whose parents an earlier phase creates.
 - [`MAPPING_TARGET_NOT_SETTLED`](../mapping/MAPPING_TARGET_NOT_SETTLED.md) — a mapping's target DMO was not ready.
 - [`DEPLOY_EXECUTION_FAILED`](../general/DEPLOY_EXECUTION_FAILED.md) — the general deploy failure.

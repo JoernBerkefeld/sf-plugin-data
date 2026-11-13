@@ -868,9 +868,33 @@ Retrieve and deploy act on exactly the selected components. What a component dep
 on is checked, not pulled in: a prerequisite must be selected explicitly or already
 exist in the target, and a missing or incompatible one blocks with its diagnostic.
 
-- A native DMO selected beside Segment, calculated insight or Identity Resolution
-  inputs, explicitly or through Git, joins the ordered batch and is deployed before the
-  components that depend on it.
+- Deploy runs a selection in phases and starts a phase only after every item of the
+  previous one settled; a blocked, failed or unknown item stops the run. Phase 1 holds
+  DLOs, DMOs, mappings and relationships; phase 3 holds Identity Resolution, calculated
+  insights and Segments. A selection with a mapping or relationship runs phase 1 on the
+  native route (DLO, DMO, mapping, relationship, each parent settled before its
+  dependents) and then phase 3 in the ordered batch, so mappings and Segments can be
+  deployed in one command. Data streams, data transforms and data graphs still deploy on
+  their own.
+- A native DLO or DMO selected beside Segment, calculated insight or Identity
+  Resolution inputs only (explicitly or through Git) joins the ordered batch and is
+  deployed before the components that depend on it.
+- An Identity Resolution runs before a calculated insight or Segment that uses its
+  unified or link DMO, and those start only after the ruleset reads `PUBLISHED`. The
+  DMO names come from the ruleset file: ruleset `Individual_5810` with reconciliation
+  DMO `ssot__Individual__dlm` produces `UnifiedssotIndividual5810__dlm` and
+  `UnifiedLinkssotIndividual5810__dlm`. `--async` is refused when the selection holds
+  such a dependent or a data graph on that DMO
+  (`IDENTITY_RESOLUTION_ASYNC_DEPENDENTS`).
+- Before any phase 1 write, phase 3 inputs pass their local checks (version, data
+  space, file shape, dependency identities and order); a failure blocks the whole run.
+  Their org reads (Git snapshot rebinding, prerequisites, target comparison) run in
+  phase 3, so a blocker found there follows the phase 1 writes, which stay reported.
+- Preview runs every phase read-only, also after a phase reported a blocked item (the
+  result stays blocked). An item whose parent an earlier phase creates is
+  reported as `planned-dependencies` (`DEPENDENCIES_PLANNED`, or
+  `MAPPING_DEPENDENCIES_PLANNED` / `RELATIONSHIP_DEPENDENCIES_PLANNED` inside
+  phase 1) instead of being compared.
 - On retrieve, a DMO selected beside other families is read on the native route at
   the native version (`auto` is 68.0); each other family keeps its own version rule,
   so `--api-version` must be one that every selected family accepts.
@@ -2663,7 +2687,10 @@ running), the command exits 0, and human output ends with
 `accepted, still processing: 1`. `--async` applies to Identity Resolution only; a
 selection without an IR is refused with `INVALID_ASYNC_SCOPE`. That includes
 `--changed-since` when the change set holds no IR: the command exits 1, so drop
-`--async` for such runs. Other items in the same batch still wait as usual. With
+`--async` for such runs. A selection that also holds a calculated insight, Segment or
+data graph using the ruleset's unified or link DMO is refused with
+`IDENTITY_RESOLUTION_ASYNC_DEPENDENTS`, because those must wait for `PUBLISHED`.
+Other items in the same batch still wait as usual. With
 `--preview`, `--async` changes nothing, because preview never writes.
 
 How it helps:
@@ -3159,9 +3186,16 @@ executed create.
 status blocked/exit 1; unexpected failures make status failed/exit 1. Mixed results
 remain visible. Preview writes no local artifact/report and performs no mutations.
 Without `--preview`, the same explicit selection performs supported guarded creation
-or bounded updates. Batches containing Segment, calculated insight, Data Graph or
-Identity Resolution inputs preflight the whole selection before the first write, so a
-known blocker prevents all writes. Native batches instead
+or bounded updates. Each deploy phase preflights all of its own items before its first write: a batch of
+Segment, calculated insight or Identity Resolution inputs (with DLO/DMO files beside
+them when no mapping or relationship is selected) is checked as a whole, so a known
+blocker in it prevents all of its writes; Segments and calculated insights on an Identity
+Resolution's unified DMO are checked only after that ruleset is `PUBLISHED`. When the
+selection also holds a mapping or relationship, only the local checks of the later
+inputs (version, data space, file shape, dependency identities and order) run before
+the native writes; their Git snapshot, prerequisite and target checks run in their own
+phase, so a blocker there can follow writes from an earlier phase, and those writes stay
+reported. Native batches instead
 order DLO, DMO, mapping, relationship and admit/settle each item independently before dependent writes;
 a later blocker can follow an earlier successful mutation. With
 `--allow-field-removal`, a DMO with fields to remove runs its PATCH and then its

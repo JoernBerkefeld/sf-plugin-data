@@ -56,8 +56,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Listing the DLOs, DMOs or mappings in the org failed, so nothing was retrieved. Check the org session and permissions in the message, then rerun or select exact type:ApiName members.',
   NATIVE_INVENTORY_UNCONFIRMED:
     'The list of DLOs or DMOs from the org could not be confirmed complete, so nothing was retrieved. Retrieve exact members with -m dmo:<Name> or -m dlo:<Name>, or rerun later.',
-  NATIVE_MIXED_SELECTION_UNSUPPORTED:
-    'Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs. Deploy other families in a separate run.',
   NATIVE_PARENT_SETTLEMENT_UNCONFIRMED:
     'A parent DLO or DMO was written but could not be confirmed ready, so dependent items were not deployed. Wait, check the parent with deploy --preview, then rerun.',
   NATIVE_RETRIEVE_FAILED:

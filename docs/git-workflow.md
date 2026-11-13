@@ -32,8 +32,12 @@ Where a selection goes:
 
 - DLO/DMO only, or with Segment, calculated insight or identity resolution: the
   ordered dependency batch.
-- Native files with at least one mapping or relationship (DLO, DMO, mapping,
-  relationship only): the native route (DLO, DMO, mapping, relationship).
+- Native files with at least one mapping or relationship: the native route (DLO, DMO,
+  mapping, relationship) first; Segment, calculated insight and identity resolution
+  files in the same range follow in the ordered dependency batch once the native items
+  settled.
+- Inside the batch, an identity resolution runs before a calculated insight or Segment
+  on its unified DMO, which start only once the ruleset is published.
 - One data graph alone: the graph route (default wait budget; `--wait-timeout` is not
   accepted with `--changed-since`).
 - Data streams alone: the stream route.

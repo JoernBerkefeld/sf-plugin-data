@@ -1,3 +1,76 @@
+# Deploy phases P1 + P3 through `crud-plan.ts`; IR unified-DMO edges; `--async` guard — 2026-11-13
+
+Chunk B1 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed. Offline only
+(mocked executors); no live org calls.
+
+- New `src/services/crud-plan.ts` (pure, no I/O):
+  - `crudPhase(input)`: `P1` (dlo, dmo, mapping, relationship) or `P3` (identity-resolution,
+    calculated-insight, segment); `undefined` for streams, transforms, graphs.
+  - `componentKey(kind, apiName)` → lower-case `kind:apiname`; `inputKey(input)`.
+  - `unifiedDmoNames(irDocument)` → `Unified<entity><rulesetId>__dlm` and
+    `UnifiedLink<entity><rulesetId>__dlm` per reconciliation DMO (`<entity>` = DMO name
+    without `__dlm` and underscores; `<rulesetId>` = name after `<type>_`, empty when name
+    equals the type; any other name derives nothing; malformed documents derive nothing).
+    Matches live evidence `Individual_5810` → `UnifiedssotIndividual5810__dlm`.
+  - `identityResolutionEdges(inputs)` → `Map<dependentPath, irApiName[]>` for Segment
+    (`segmentOn`, dependencies), CI (dependencies) and native graph (`primaryObjectName`,
+    related object names) inputs referencing a selected IR's derived DMO (case-insensitive).
+    The one place for M3; chunk C reuses it for P4 graph ordering.
+  - `inputDependencies(input, edges)` → component keys an input needs (references, mapping
+    DLO/DMO, relationship DMOs, IR edges).
+  - `planDeployStages(inputs, { nativeRoute })` → `Array<{ phase, inputs }>`: with
+    `nativeRoute`, all P1 inputs form stage 1; the rest is the batch, split into levels so
+    an input that needs a selected IR (directly or through another selected input) is in a
+    later stage than the IR.
+  - `runCrudStages(stages, handler, { continueAfterBlocked })`: sequential; a stage starts
+    only after the previous returned `success` (preview: every stage runs anyway); the first
+    non-success result is returned. Preview `planned` keys
+    (`create` or `planned-dependencies` items) are accumulated and handed to later stages.
+- `deploy.ts`: the native rank route is now the closure `runNativeStage(inputs)` and the
+  dependency batch `runBatchStage(inputs, planned)`; both return `CrudStageResult` instead of
+  calling `finish`; the run ends with `runCrudStages(planDeployStages(...))` and one
+  `finish`. Routing rule unchanged (`nativeRoute` = a mapping/relationship is selected, or
+  an all-P1 explicit selection), except that P3 inputs beside a mapping/relationship are no
+  longer refused: they run as later stages. DLO/DMO beside P3 only stay in the batch
+  (unchanged; decision: keeps the whole-batch preflight and existing behaviour).
+  Batch stage details: items are appended at offset `base` (no longer replacing
+  `envelope.result.items`); Git per-family snapshot checks drop only snapshots another stage
+  owns; preview items whose dependency key is in `planned` are pushed as
+  `planned-dependencies` with `DEPENDENCIES_PLANNED` and not preflighted. Before a staged
+  run, P3 versions and the default data space are admitted (`INVALID_SCOPE`) so a P3
+  refusal never follows P1 writes. An empty `--changed-since` admission still runs the
+  batch for its snapshot checks.
+- Q4: `--async` with any IR edge in the selection (Segment, CI or graph) →
+  `IDENTITY_RESOLUTION_ASYNC_DEPENDENTS`, before target access. IR → dependents wait for
+  `PUBLISHED` because the default IR executor settles before returning and the dependents
+  are a later stage.
+- Codes: new `DEPENDENCIES_PLANNED` (dependency) and `IDENTITY_RESOLUTION_ASYNC_DEPENDENTS`
+  (identity-resolution) with pages and index lines. `NATIVE_MIXED_SELECTION_UNSUPPORTED`
+  removed (unreachable: streams, graphs and transforms return earlier, so only P1/P3 reach
+  the native route); its page and links are gone.
+- Tests: `test/crud-plan.test.mjs` (8): name derivation, edges for Segment/CI/graph, stage
+  planning + runner stop/planned hand-off, mapping + Segment in phase order, P1 failure stops
+  before P3, preview planned parents (DMO create → mapping and Segment planned), IR create →
+  Segment preflight only after IR settled (preview planned / compared when IR unchanged),
+  Q4 refusal for Segment/CI/graph and pass-through without a dependent.
+
+Handover for B2 (P0 streams, P2 transforms, P4 graphs):
+
+- Resume point: `deploy.ts` single-family routes (transform ~line 856, graph ~1018, stream
+  ~1140) still return before the stage plan. Turn each into a stage handler like
+  `runNativeStage` (return `CrudStageResult`, preview `planned` keys), extend `CrudPhase`
+  with `P0`/`P2`/`P4` and `crudPhase`, and make `planDeployStages` emit P0 → P1 → P2 → P3
+  levels → P4. Then remove `NATIVE_GRAPH_SELECTION_UNSUPPORTED` and
+  `DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED` (code, hint, page, index, links).
+- P4 graph waits for P3: use `identityResolutionEdges` (already covers graphs) so a graph
+  needing a selected IR is reported planned in preview (IR create) and runs after the IR
+  stage. Remaining from the plan: stream DLO collision with a P1 DLO (M2), transform DLO
+  bindings planned in preview, `--wait-timeout` / transform flags scope in mixed runs.
+- Constraints: phases run sequentially and execution stops on the first non-success;
+  preview runs every stage (`continueAfterBlocked`) and returns the first non-success;
+  P3 local checks (version, space, IR/CI/Segment shape, dependency order) run before any
+  P1 write; single-family behaviour must stay identical.
+
 # Git selection admits every family; deleted files become delete candidates — 2026-11-13
 
 Chunk A of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.

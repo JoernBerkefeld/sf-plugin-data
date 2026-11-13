@@ -36,5 +36,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`NATIVE_MIXED_SELECTION_UNSUPPORTED`](../general/NATIVE_MIXED_SELECTION_UNSUPPORTED.md) — the same rule for other native families.
+- [`NATIVE_GRAPH_SELECTION_UNSUPPORTED`](../data-graph/NATIVE_GRAPH_SELECTION_UNSUPPORTED.md) — the same rule for data graphs.
 - [`INVALID_STREAM_DELETE_SELECTION`](../data-stream/INVALID_STREAM_DELETE_SELECTION.md) — the same rule for `sf data360 delete`.
