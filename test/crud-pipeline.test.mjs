@@ -105,6 +105,7 @@ const graph = {
   },
 };
 const all = () => [graph, ir(), transform(), mapping, stream()];
+const pair = () => [graph, ir()];
 
 const run = async (command) => {
   const previous = process.exitCode;
@@ -370,6 +371,52 @@ test('preview reports items whose earlier-phase parent is created as planned', a
     'auth',
     'graph-preview:1800',
   ]);
+});
+
+test('a graph on the unified DMO of a selected IR waits for that IR to publish', async () => {
+  // The chunk C live shape: one IR and one graph rooted on its unified DMO, graph listed first.
+  const flags = {
+    metadata: ['native-data-graph:Graph', 'identity-resolution:Individual_A1b2'],
+    'transform-operation': undefined,
+  };
+  assert.deepEqual(
+    planDeployStages(pair(), { nativeRoute: false }).map((stage) => stage.phase),
+    ['P3', 'P4'],
+  );
+  const deployed = harness(pair(), flags);
+  const result = await run(deployed.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(deployed.calls.slice(-4), [
+    'ir-execute',
+    'ir-published',
+    'auth',
+    'graph-deploy:1800',
+  ]);
+  // An IR that does not reach PUBLISHED stops the graph before any graph call.
+  const unsettled = harness(pair(), flags);
+  unsettled.command.executeIdentityResolution = async () => {
+    unsettled.calls.push('ir-execute');
+    return {
+      family: 'identity-resolution',
+      route: { apiVersion: '68.0', operation: 'identity-resolutions.post' },
+      outcome: 'failed',
+      mutation: 'unknown',
+      diagnostics: [],
+    };
+  };
+  const stopped = await run(unsettled.command);
+  assert.notEqual(stopped.status, 'success');
+  assert.equal(unsettled.calls.at(-1), 'ir-execute');
+  assert.ok(!unsettled.calls.some((call) => call.startsWith('graph-')));
+  // Preview: a new IR makes the graph's parent (the unified DMO) planned; no graph read.
+  const previewed = harness(pair(), { ...flags, preview: true });
+  const preview = await run(previewed.command);
+  assert.equal(preview.status, 'success', JSON.stringify(preview.diagnostics));
+  assert.deepEqual(previewed.calls, ['ir-preflight']);
+  const graphItem = preview.result.items.find((item) => item.family === 'data-graph');
+  assert.equal(graphItem.outcome, 'planned-dependencies');
+  assert.equal(graphItem.diagnostics[0].code, 'DEPENDENCIES_PLANNED');
+  assert.match(graphItem.diagnostics[0].message, /identity-resolution:individual_a1b2/u);
 });
 
 test('a DLO file naming the landing DLO of a new stream is refused before any write', async () => {

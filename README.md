@@ -388,7 +388,9 @@ Retrieve, deploy and delete accept auto or API68; any other version is `INVALID_
 file as written (root, related objects, fields, schedule) and needs
 `--allow-processing`. Salesforce adjusts what it stores: it adds the key-qualifier
 field to related objects and can report a different node `type` (a unified root reads
-`derived`), so retrieve after a create to get the stored form. Preview is read-only and,
+`derived`), so retrieve after a create to get the stored form. On a unified (derived)
+root Salesforce also renames the root object (devName and label) and its fields
+(devNames); retrieve after the create and keep the retrieved file. Preview is read-only and,
 because no API answer exists there, checks the root: a missing root DMO is
 `DATA_GRAPH_ROOT_NOT_FOUND`; for a derived (unified) root it reads the IR rulesets and
 reports `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, or the owning

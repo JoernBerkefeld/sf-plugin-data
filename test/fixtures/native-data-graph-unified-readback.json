@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "kind": "native-data-graph",
+  "apiVersion": "68.0",
+  "definition": {
+    "name": "CliGraphCP_6419",
+    "label": "CliGraphCP_6419",
+    "description": "CRUD pipeline chunk C fixture",
+    "dataspaceName": "default",
+    "primaryObjectName": "UnifiedssotIndividual6419__dlm",
+    "type": "NONE",
+    "sourceObject": {
+      "name": "UnifiedssotIndividual6419__dlm",
+      "devName": "CliGraphCP_6419_UnifiedssotIndividual6419",
+      "label": "Unified Individual 6419",
+      "jsonPath": "$",
+      "path": [],
+      "type": "derived",
+      "fragmentDMOName": "Dg_7Oge_SyntheticFragment_FRAGMENT__dlm",
+      "referenceDeveloperName": "UnifiedIndividual",
+      "projectedName": "UnifiedssotIndividual6419__dlm",
+      "recencyCriteria": [],
+      "fields": [
+        {
+          "devName": "CliGraphCP_6419_UnifiedssotInd_UOSYkdZV",
+          "sourceFieldName": "ssot__Id__c",
+          "dataType": "Text",
+          "isKeyColumn": true,
+          "isProjected": true,
+          "usageTag": "NONE",
+          "isDGRootKeyField": false,
+          "fieldRoles": []
+        },
+        {
+          "devName": "CliGraphCP_6419_UnifiedssotInd_DNWgHfVD",
+          "sourceFieldName": "ssot__FirstName__c",
+          "dataType": "Text",
+          "isKeyColumn": false,
+          "isProjected": true,
+          "usageTag": "NONE",
+          "isDGRootKeyField": false,
+          "fieldRoles": []
+        },
+        {
+          "devName": "CliGraphCP_6419_UnifiedssotInd_XCHZDFKV",
+          "sourceFieldName": "ssot__LastName__c",
+          "dataType": "Text",
+          "isKeyColumn": false,
+          "isProjected": true,
+          "usageTag": "NONE",
+          "isDGRootKeyField": false,
+          "fieldRoles": []
+        }
+      ],
+      "relatedObjects": []
+    },
+    "idDmoName": "CliGraphCP_6419_1794590165109_ID__dlm",
+    "valuesDmoName": "CliGraphCP_6419_1794590166126_VALUE__dlm",
+    "dayZeroMappingDevName": "Dg_CliGraphCP_6419_1794590181215",
+    "dayZeroTransformDevName": "Dg_CliGraphCP_6419_1794590181215",
+    "fullRefreshConfig": {
+      "schedule": {
+        "frequency": 7,
+        "timeGranularity": "Day"
+      }
+    },
+    "incrementalRefreshConfig": {
+      "enabled": false
+    }
+  }
+}

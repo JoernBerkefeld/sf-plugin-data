@@ -1,3 +1,60 @@
+# Chunk C: IR + graph in one deploy (live); graph create confirmed on derived roots — 2026-11-13
+
+Chunk C of the CRUD pipeline plan. Version stays 0.1.0.
+
+- Offline: Q2/M3 were already in place (B1/B2). New test in `test/crud-pipeline.test.mjs`:
+  IR + graph only (graph listed first, `primaryObjectName` = derived unified DMO) plans
+  P3 → P4; the graph runs only after the IR executor returned (PUBLISHED); an IR that does
+  not settle stops the graph before any graph call; preview reports the graph
+  `planned-dependencies` / `DEPENDENCIES_PLANNED` naming the IR, with no graph read. No
+  source change.
+- Live (`isolated-source`, org 00Daj000010xkZNEAY verified), scratch `F:/Temp/clive-UlhauX`:
+  - Fixtures: IR **`Individual_6419`** (label "CliIR probe 6419", Individual, secondary
+    `ssot__Individual__dlm`, `doesRunAutomatically: false`, modelled on `Individual_9a99`)
+    and native graph **`CliGraphCP_6419`** on `UnifiedssotIndividual6419__dlm` (derived
+    root; Id key, FirstName, LastName; 7-day schedule).
+  - Zero-write shape preview of the same graph on `UnifiedssotIndividual9a99__dlm`: exit 0
+    create, `DATA_GRAPH_OWNER` (22 s).
+  - One-command preview: exit 0 in 105 s; IR create, graph `planned-dependencies`.
+  - One-command deploy (`--allow-processing`, no `--async`): exit 1 in 703 s
+    (17:04:21Z–17:16:04Z). IR `created` / `confirmed-created` (PUBLISHED), then the graph
+    POST (generated names stamped 17:16:05Z): graph `failed` / `unknown`,
+    `DATA_GRAPH_CREATE_UNCONFIRMED` (response check), `DEPLOY_EXECUTION_FAILED`. Phase order
+    IR → PUBLISHED → graph is proven live.
+  - Readback (retrieve, exit 0): IR identical to the authored file; graph exists with its
+    generated DMOs/mapping/transform. Salesforce replaced the authored sourceObject devName
+    (`CliGraphCP_6419_Ind` → `CliGraphCP_6419_UnifiedssotIndividual6419`), label
+    (`Unified Individual` → `Unified Individual 6419`) and field devNames
+    (`CliGraphCP_6419_F0..F2` → `CliGraphCP_6419_UnifiedssotInd_<8 chars>`). That is why
+    `nativeGraphCreateEcho` → `observeNativeDataGraph` (authored settings must already
+    hold) refused the response although the graph was created. The comparison already
+    ignored root/field devNames and matched fields by `sourceFieldName`; only the root
+    label differed.
+- Fix (user chose fix + one more live create): `nativeGraphAssignedTypes` in
+  `src/services/native-data-graph-crd.ts` takes the root `label` and `devName` from the
+  create response when the echoed root type is `derived`; everything else is still
+  compared. New `test/native-data-graph-unified-root.test.mjs` (5 tests, sanitized
+  fixtures `test/fixtures/native-data-graph-unified-*.json`): create confirmed, retrieved
+  file redeploys `unchanged`, missing field / changed field setting / changed graph label
+  still fail, a non-derived root still compares its label exactly. README: keep the
+  retrieved file after a create on a unified root (the authored file would plan an update
+  that PUTs the authored label back).
+- Live proof (scratch `F:/Temp/cgraph2-c6o2n2`): graph **`CliGraphCP_bc80`** (same shape,
+  same unified DMO) created / confirmed-created, exit 0 in 220 s (20:04:28Z–20:08:08Z);
+  read-back again carries Salesforce's names; `--preview` of the retrieved file is
+  `unchanged` (`DATA_GRAPH_OWNER`).
+  - Verification DB: `data360:crud-pipeline.ir-graph-create.api68` (verified).
+
+Handover for D (pipeline delete + Git delete):
+
+- In the org now: IR `Individual_6419` (PUBLISHED, owns `UnifiedssotIndividual6419__dlm`)
+  and graphs `CliGraphCP_6419` and `CliGraphCP_bc80` on that DMO. Delete all three in one
+  command through the new pipeline delete (graphs first, then IR); use the read-back files
+  in `F:/Temp/clive-UlhauX/rb` and `F:/Temp/cgraph2-c6o2n2/rb`. Confirm absence (graph item
+  not found + SOQL 0; IR not found by name, absent from the list, unified DMO
+  `ITEM_NOT_FOUND`).
+- Delete constraint from earlier evidence: IR delete returns `deletion-processing` and reads
+  `DELETING` for about 3.5 min.
 # Deploy phases P0 streams, P2 transform, P4 graphs; mixed refusals removed — 2026-11-13
 
 Chunk B2 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.

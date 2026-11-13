@@ -155,7 +155,8 @@ async function nativeGraphMetadataStatus(
 /**
  * Take the node types the API assigned on create. A recorded API68 create sent `standard` for a
  * unified root and the echo read `derived` (2026-11-12); later reads keep the assigned type, so
- * the created graph is compared with the assigned types, matched by node path.
+ * the created graph is compared with the assigned types, matched by node path. A `derived`
+ * (unified DMO) root also takes its assigned node devName and label.
  * @param {NativeDataGraphDocument} document Exact native intent.
  * @param {unknown} echoed Untrusted echoed root node.
  * @returns {NativeDataGraphDocument} Detached intent carrying the assigned node types.
@@ -177,7 +178,19 @@ function nativeGraphAssignedTypes(
         children.find((entry: unknown) => graphRecord(entry).jsonPath === child.jsonPath),
       );
   };
-  visit(graphRecord(result.definition.sourceObject), echoed);
+  const top = graphRecord(result.definition.sourceObject);
+  visit(top, echoed);
+  // A unified DMO root (assigned `derived`) gets Salesforce's own node devName and label on
+  // create (recorded live at API68, 2026-11-13); every other authored setting must still hold.
+  const echo = graphRecord(echoed);
+  if (echo.type === 'derived') {
+    graphText(echo.label);
+    top.label = echo.label;
+    if (Object.hasOwn(echo, 'devName')) {
+      graphText(echo.devName);
+      top.devName = echo.devName;
+    }
+  }
   return validateNativeDataGraphDocument(result);
 }
 
