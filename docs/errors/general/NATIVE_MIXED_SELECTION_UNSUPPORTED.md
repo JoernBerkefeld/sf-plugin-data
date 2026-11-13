@@ -1,6 +1,6 @@
 # `NATIVE_MIXED_SELECTION_UNSUPPORTED`
 
-> Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs, and never through --changed-since. Deploy other families in a separate run.
+> Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs. Deploy other families in a separate run.
 
 |              |                                  |
 | ------------ | -------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The selection contains a mapping or a relationship together with a family outside the native group (for example a Segment, calculated insight or identity resolution), or a native selection was combined with `--changed-since`. Mappings and relationships run on the native route, which deploys DLOs, then DMOs, then mappings, then relationships in that order and does not include other families.
+The selection contains a mapping or a relationship together with a family outside the native group (for example a Segment, calculated insight or identity resolution). Mappings and relationships run on the native route, which deploys DLOs, then DMOs, then mappings, then relationships in that order and does not include other families.
 
 ## Why the plugin stops
 
@@ -19,8 +19,7 @@ The native route checks that each parent is ready before deploying the items tha
 ## How to fix
 
 1. Deploy the DLO, DMO, mapping and relationship files in one run.
-2. Deploy Segment, calculated insight, identity resolution and other files in a second run.
-3. Select mappings and relationships explicitly with `--source-dir` or `-m`, not with `--changed-since`.
+2. Deploy Segment, calculated insight, identity resolution and other files in a second run. With `--changed-since`, narrow the range (or commit separately) so each run holds one group.
 
 ## Example output
 
@@ -28,7 +27,7 @@ The native route checks that each parent is ready before deploying the items tha
 Deploy execution: blocked (NATIVE_MIXED_SELECTION_UNSUPPORTED). No automatic retry or rollback performed.
 Deployed: 0 (0 created / 0 updated / 0 failed)
 NATIVE_MIXED_SELECTION_UNSUPPORTED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
-Hint: Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs, and never through --changed-since. Deploy other families in a separate run.
+Hint: Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs. Deploy other families in a separate run.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/NATIVE_MIXED_SELECTION_UNSUPPORTED.md
 ```
 

@@ -232,6 +232,8 @@ export type DeployEnvelope = {
       sourceDir: string[];
       metadata: string[];
       changedSince?: string;
+      /** Files deleted in the Git range: reported, never deleted by deploy. */
+      deletions?: Array<{ family: string; apiName: string; path: string }>;
     };
     items: Array<
       | ((
@@ -287,7 +289,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes, destructive reconciliation and Git selection are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection. Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. Mapping stays outside Git selection. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Graph Git and mixed-family selections are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Batches containing Segment, CI or IR inputs preflight the whole selection before the first write; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. --async (IR only) returns as soon as Salesforce accepts an IR create or update (creation-processing / update-processing, mutation acknowledged-processing) instead of waiting minutes for PUBLISHED: publish, settings and generated outputs are not confirmed; rerun the same deploy to check (IDENTITY_RESOLUTION_NOT_SETTLED while in flight, unchanged once settled). Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes and destructive reconciliation are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection (every family; files deleted in the range are reported in result.selection.deletions and never deleted by deploy; transforms stay refused there because --transform-operation is not accepted with it). Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Graph mixed-family selections are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Batches containing Segment, CI or IR inputs preflight the whole selection before the first write; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. --async (IR only) returns as soon as Salesforce accepts an IR create or update (creation-processing / update-processing, mutation acknowledged-processing) instead of waiting minutes for PUBLISHED: publish, settings and generated outputs are not confirmed; rerun the same deploy to check (IDENTITY_RESOLUTION_NOT_SETTLED while in flight, unchanged once settled). Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -322,7 +324,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
     'changed-since': Flags.string({
       summary:
-        'Select canonical DMO, JSON Segment/paired CI and IR Git changes since the merge base with a commit reference.',
+        'Select canonical plugin files of every family changed since the merge base with a commit reference; deleted files are reported, not deleted.',
       exclusive: ['source-dir', 'metadata'],
     }),
     'allow-processing': Flags.boolean({
@@ -652,6 +654,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             ? `Deploy preview: ${status}${code ? ` (${code})` : ''}. No deployment executed.`
             : `Deploy execution: ${status}${code ? ` (${code})` : ''}. No automatic retry or rollback performed.`,
         );
+        for (const deletion of envelope.result.selection.deletions ?? [])
+          this.log(
+            `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes).`,
+          );
         for (const item of envelope.result.items) {
           const family =
             families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo';
@@ -756,11 +762,19 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       let gitCalculatedInsights: GitDeploySelection['calculatedInsights'];
       let gitSegments: GitDeploySelection['segments'];
       let gitIdentityResolutions: GitDeploySelection['identityResolutions'];
+      let gitCaptured: GitDeploySelection['capturedInputs'];
       if (changedSince !== undefined) {
         envelope.result.selection.changedSince = changedSince;
         const selected = await this.selectGitInputs({ cwd, ref: changedSince });
         envelope.provenance.git = selected.provenance;
+        if (selected.deletions?.length)
+          envelope.result.selection.deletions = selected.deletions.map((deletion) => ({
+            family: deletion.family,
+            apiName: deletion.identity.apiName,
+            path: deletion.path,
+          }));
         if (selected.paths.length === 0) return finish('success');
+        gitCaptured = selected.capturedInputs ?? [];
         sourceDirectories = selected.paths;
         gitDlos = selected.dlos;
         gitCalculatedInsights = selected.calculatedInsights;
@@ -772,6 +786,21 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      // Bind every resolved input, of every family, to the bytes the Git selection admitted.
+      if (gitCaptured) {
+        if (resolvedInputs.length !== gitCaptured.length)
+          throw new GitSelectionError('INVALID_GIT_SELECTION');
+        for (const input of resolvedInputs)
+          if (
+            !gitCaptured.some(
+              (captured) =>
+                captured.path === input.path &&
+                captured.inputDigest === input.inputDigest &&
+                JSON.stringify(captured.document) === JSON.stringify(input.document),
+            )
+          )
+            throw new GitSelectionError('INVALID_GIT_SELECTION');
+      }
       if (
         flags.async &&
         !resolvedInputs.some((input) => input.document.kind === 'identity-resolution')
@@ -950,12 +979,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       )
         return finish('blocked', 'INVALID_WAIT_TIMEOUT_SCOPE');
       if (graphInputs.length > 0) {
-        if (
-          graphInputs.length !== 1 ||
-          resolvedInputs.length !== 1 ||
-          changedSince !== undefined ||
-          flags.draft
-        )
+        if (graphInputs.length !== 1 || resolvedInputs.length !== 1 || flags.draft)
           return finish('blocked', 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
         try {
           operationApiVersion(flags['api-version'], 'data-graph');
@@ -1077,7 +1101,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         (input): input is DataStreamDeployInput => input.document.kind === 'data-stream',
       );
       if (streamInputs.length > 0) {
-        if (streamInputs.length !== resolvedInputs.length || changedSince !== undefined)
+        if (streamInputs.length !== resolvedInputs.length)
           return finish('blocked', 'DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED');
         let version: string;
         try {
@@ -1161,16 +1185,16 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input.document.kind === 'relationship' ||
           input.document.kind === 'dlo',
       );
-      // A native DMO selected by Git, or beside Segment/CI/IR inputs, joins the ordered
-      // dependency batch below; mappings, relationships and all-native explicit selections stay
-      // on this route.
+      // A native DLO/DMO-only Git selection, or one beside Segment/CI/IR inputs, joins the ordered
+      // dependency batch below; selections with a mapping or relationship (explicit or Git) and
+      // all-native explicit selections stay on this route.
       if (
         nativeInputs.some(
           (input) => input.document.kind === 'mapping' || input.document.kind === 'relationship',
         ) ||
         (nativeInputs.length === resolvedInputs.length && changedSince === undefined)
       ) {
-        if (nativeInputs.length !== resolvedInputs.length || changedSince !== undefined)
+        if (nativeInputs.length !== resolvedInputs.length)
           return finish('blocked', 'NATIVE_MIXED_SELECTION_UNSUPPORTED');
         let version: string;
         try {
@@ -2357,8 +2381,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           code: error.code,
           message:
             error.code === 'BLOCKED_GIT_LIFECYCLE'
-              ? 'Git selection blocks DMO or Segment member renames/deletions and a relevant untracked addition combined with any tracked worktree deletion. Stage intended changes to permit Git-inferred rename detection, then resolve unsupported lifecycle changes. Git cannot guarantee historical rename intent.'
-              : 'Git selection failed. Use a valid commit reference and canonical DMO files or single Segment JSON artifacts under the configured package directory with matching identities and unchanged admitted bytes.',
+              ? 'Git selection blocks renames, conflicts, unstaged or unidentifiable deletions of plugin files, half-deleted calculated insight pairs and a relevant untracked addition combined with any tracked worktree deletion. Stage intended changes to permit Git-inferred rename detection, then resolve unsupported lifecycle changes. Git cannot guarantee historical rename intent.'
+              : 'Git selection failed. Use a valid commit reference and canonical files under data360/ (DLO, DMO, mapping, relationship, data stream, data transform) or the configured package directory (data graph, identity resolution, calculated insight, Segment JSON) with matching identities and unchanged admitted bytes.',
           retryable: false,
         });
         return finish('blocked');

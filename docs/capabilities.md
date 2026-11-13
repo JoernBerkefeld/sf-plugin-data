@@ -8,7 +8,8 @@ structural only (closed keys, names, tree and join shape, default data space, ro
 `primaryObjectName`); the root is bound by the document's own `primaryObjectName`.
 Lowercase API values are stored as `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`; node `type`
 stays lowercase. All six graphs in `isolated-source` retrieve at `auto` and preview
-`unchanged` on route 68.0. Git and mixed-family selections are refused.
+`unchanged` on route 68.0. Mixed-family selections are refused; a `--changed-since` range
+whose only change is one graph deploys it.
 
 Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
 generated names (empty names on a non-ready read are not authored values), then `ready`
@@ -27,8 +28,8 @@ between `creating` and `ready`, which settlement accepts. Update sends the autho
 change in one PUT (label, description, schedule, incremental refresh, added fields and
 related objects, joins, field settings); only name, data space, root object and node
 object/path/type changes are refused. Omitted fields and branches are kept. Identical
-deploy is zero-write `unchanged`. Preview is read-only. Native Git selection, mixed
-families and cascade are unsupported. Preview (only) checks the root DMO and, for a derived
+deploy is zero-write `unchanged`. Preview is read-only. Mixed families and cascade are
+unsupported. Preview (only) checks the root DMO and, for a derived
 root, its IR owner via `GET /ssot/identity-resolutions` (`DATA_GRAPH_ROOT_NOT_FOUND`,
 `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, info `DATA_GRAPH_OWNER`).
 
@@ -706,9 +707,8 @@ Field-level delete,
   change, both pairs dropped by Salesforce, 28 seconds), a custom field of a standard
   DMO in two orgs, and unmapped fields in a second org.
 
-Git selection (`--changed-since`) uses the native DMO file. A native DMO changed
-since a Git reference, or selected beside Segment/CI/Graph/IR inputs, joins the
-ordered batch. Prerequisites are checked, not pulled in: each must be selected
+Git selection (`--changed-since`) uses the native DMO file. A native DMO selected
+beside Segment/CI/IR inputs, explicitly or through Git, joins the ordered batch. Prerequisites are checked, not pulled in: each must be selected
 explicitly or already exist in the target. On retrieve, a DMO beside other families
 is read at the native version while each other family keeps its own version rule.
 
@@ -812,20 +812,22 @@ cross-org support.
 
 ## Bounded Git deployment selection
 
-`deploy --changed-since <ref>` is exclusive with metadata/source-dir. For DMOs it
-selects current native `data360/dmo/<ApiName>__dlm.dmo-meta.json` files, admitted
-through the existing input resolver; a selected native DMO joins the ordered batch
-on the native route. The other selectable families are
-described in the [Git workflow](git-workflow.md). Repository-root resolution, unique
-merge-base/HEAD changes, index, worktree and untracked selection are local. Relevant
-rename/delete blocks the whole selection, regardless of diff.renames configuration.
-Git inference is not historical rename-intent proof. A relevant untracked DMO
-addition plus any tracked worktree deletion blocks conservatively; staging intended
-changes permits Git rename inference, not unsupported lifecycle deployment. Empty
-selection succeeds before downstream target inspection/services, without changing
-core parse-time auth. Optional Git provenance records commits, not file-byte hashes
-or executable plans. Reports, CI delivery, exact-byte binding and
-SQL companion selection remain unimplemented; roadmap chunk 6 is partial.
+`deploy --changed-since <ref>` is exclusive with metadata/source-dir. It selects current
+canonical files of every family (DLO, DMO, mapping, relationship, data stream, data
+transform, data graph, identity resolution, calculated insight, Segment JSON), admitted
+through the existing input resolver with byte capture, and routes them as explicit
+selections of the same families: mixes the explicit routes refuse stay refused, and a
+data transform is refused because `--transform-operation` is not accepted with Git
+selection. Files deleted in the range become delete candidates (family and identity
+from the merge-base content; relationship source DMO and transform API name included),
+reported in `result.selection.deletions` and never deleted by deploy. A path deleted and
+re-added is not a delete. Repository-root resolution, unique merge-base/HEAD changes,
+index, worktree and untracked selection are local. Renames, conflicts, unstaged deletions, deleted
+files of no known family and half-deleted calculated insight pairs block the whole selection,
+regardless of diff.renames configuration. Git inference is not historical rename-intent
+proof. A relevant untracked addition plus any tracked worktree deletion blocks
+conservatively. Empty selection succeeds before downstream target inspection/services,
+without changing core parse-time auth. File list: [Git workflow](git-workflow.md).
 
 ## Shared gates
 

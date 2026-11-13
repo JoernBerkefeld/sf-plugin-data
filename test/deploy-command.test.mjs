@@ -14,6 +14,17 @@ const input = (name = 'Preview__dlm') => ({
   path: `data360/dmo/${name}.dmo-meta.json`,
   document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: name } },
 });
+/**
+ * Wrap the resolver read at this moment so its result also becomes the Git capture.
+ * @param {Function} current Resolver assigned when the property is read.
+ * @param {object[]} captured Capture array handed to deploy by the Git mock.
+ * @returns {Function} Resolver that mirrors its result into the capture.
+ */
+const mirrored = (current, captured) => async (options) => {
+  const resolved = await current(options);
+  captured.splice(0, captured.length, ...resolved);
+  return resolved;
+};
 const invocation = (overrides = {}) => {
   const command = Object.create(Deploy.prototype);
   const calls = [];
@@ -41,9 +52,20 @@ const invocation = (overrides = {}) => {
   command.config = { pjson: { version: '2.151.7' } };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
+  // These tests exercise the batch, not Git byte binding: the Git capture mirrors whatever the
+  // (possibly overridden) resolver returns, filled in when deploy resolves the selection.
+  const captured = [];
   command.selectGitInputs = async () => ({
     paths: ['authored.dmo-meta.json'],
+    capturedInputs: captured,
     provenance: { requestedRef: 'main' },
+  });
+  let resolver;
+  Object.defineProperty(command, 'resolveInputs', {
+    get: () => mirrored(resolver, captured),
+    set: (value) => {
+      resolver = value;
+    },
   });
   command.resolveInputs = async (options) => {
     calls.push('inputs');

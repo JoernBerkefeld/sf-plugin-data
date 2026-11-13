@@ -1,53 +1,79 @@
 # Git workflow status
 
-## Ingestion API DLO exact selection
+## Git selection (`--changed-since`)
 
-`--changed-since` recognizes canonical
-`<package>/main/default/data360/ingestionDlos/Name__dll.ingestionDlo.json` files.
-The complete immutable document and SHA256 digest are captured independently of
-other families, then checked against resolved inputs before target reliance and
-through execution. Deletion/rename, noncanonical location, duplicate identity or
-changed bytes block the selection. No historical rename guarantee is implied.
-Exact selector/file modes use the same reader. Use auto for mixed API65/API67
-selection; incompatible numeric versions block before family services. Source
-schema PUT legitimately changes target state: local/Git input checks stay separate
-from pending-batch binding and executor phase-aware target preservation. Both
-write routes and mutation stage remain visible; raw receipts are not Git content.
+`sf data360 deploy --changed-since <ref>` selects the plugin files that changed between
+the unique merge base of `<ref>` and HEAD, plus staged, unstaged and untracked changes.
+It resolves the repository root even from a nested directory and is exclusive with
+`--metadata` and `--source-dir`.
 
-## Graph exact file selection
+Selected files, by family (each file's content identity must equal its file name):
 
-`--changed-since` includes canonical
-`<package>/main/default/data360/dataGraphs/ApiName.dataGraph.json` members, with
-configured/default source package resolution. Git capture retains the original
-immutable Graph document and SHA256 byte digest. Public deploy rebinds path,
-identity, content and digest before target reads and revalidates throughout the
-invocation. Deletions, renames, noncanonical paths and ambiguous inbound moves
-block the whole selection. No historical rename guarantee or saved-plan contract
-is implied. Exact `data-graph:ApiName` and explicit file modes use the same reader.
+| Family | Canonical file |
+| --- | --- |
+| DLO | `data360/dlo/<Name>__dll.dlo-meta.json` |
+| DMO | `data360/dmo/<Name>__dlm.dmo-meta.json` |
+| Mapping | `data360/mapping/<Name>.mapping-meta.json` |
+| Relationship | `data360/relationship/<Name>.relationship-meta.json` |
+| Data stream | `data360/data-stream/<Name>.data-stream-meta.json` |
+| Data transform | `data360/dataTransforms/<Name>.dataTransform.json` |
+| Data graph | `<package>/main/default/data360/dataGraphs/<Name>.native-dataGraph.json` |
+| Identity resolution | `<package>/main/default/data360/identityResolution/<Name>.identityResolution.json` |
+| Calculated insight | `<package>/main/default/mktCalcInsightObjectDefs/<Name>.mktCalcInsightObjectDef-meta.xml` and `<package>/main/default/data360/calculatedInsights/<Name>__cio.calculatedInsight.json` (either member selects the pair) |
+| Segment | `<package>/main/default/data360/segments/<Name>.segment.json` |
 
-Graph requires auto or numeric67; mixed legacy selections require auto. Complete
-preview and all-pending fresh dependency/owner/input admission precede every mixed
-write. Update effects require `--allow-processing`; unchanged is zero mutation.
-Raw Graph/transform bodies and poll observations remain private, never Git artifacts
-or public results. Installed/live zero-write acceptance remains separately scoped.
+The first six live under the repository root; the others under the default package
+directory from `sfdx-project.json` (`force-app` when absent). A changed file of a known
+family in another place, an invalid document or Segment XML refuses the whole selection
+(`INVALID_GIT_SELECTION`). Each admitted file's bytes are captured and checked again
+before the target is read and before each write.
 
-## Calculated insight pair selection
+Where a selection goes:
 
-`--changed-since` includes canonical calculated insight XML/JSON pairs under the
-configured source package. Either member's change coalesces to one CI component;
-both must remain present and correlated. The selector captures immutable CI
-admissions separately from Segment and IR, and the public command checks captured
-path, companion path, complete document and two-file digest against resolved input.
-Every captured/resolved pair is byte-revalidated before preview completion and
-before sequential execution. Missing/divergent/noncanonical pairs and either-member
-rename/deletion block the complete selection. This is invocation-local byte binding,
-not a persisted approved plan or a guarantee of historical rename intent.
+- DLO/DMO only, or with Segment, calculated insight or identity resolution: the
+  ordered dependency batch.
+- Native files with at least one mapping or relationship (DLO, DMO, mapping,
+  relationship only): the native route (DLO, DMO, mapping, relationship).
+- One data graph alone: the graph route (default wait budget; `--wait-timeout` is not
+  accepted with `--changed-since`).
+- Data streams alone: the stream route.
+- Data transform: refused (`INVALID_TRANSFORM_SELECTION`), because a transform deploy
+  needs `--transform-operation`, which is not accepted with `--changed-since`.
+- Any other mix (for example a graph or stream with other families) is refused with that
+  family's mixed-selection code.
 
-CI preview is read-only. Deployment preserves complete-selection preflight, explicit
-processing acknowledgement, all-pending target binding/effects re-admission before
-mixed writes, bounded independent settlement and stop-on-unknown/no-replay behavior.
-CI creation remains unsupported. Hosted offline tests do not
-perform Salesforce acceptance; fresh live zero-write evidence remains separately scoped.
+### Deleted files
+
+A file present at the merge base and absent from the working tree now, with the
+deletion committed or staged (`git rm`), is a delete candidate. An unstaged deletion of a
+plugin file blocks (`BLOCKED_GIT_LIFECYCLE`): Git cannot see where an unstaged file moved. Its family and identity come from the merge-base content (`git show
+<base>:<path>`), not from the file name; a relationship candidate also carries its
+source DMO and a data transform its API name from that content. A path deleted and then
+added again (in the index or working tree) is not a delete. A deleted file of no known
+family in a `data360` folder, or one calculated insight pair member deleted without the
+other, blocks the selection (`BLOCKED_GIT_LIFECYCLE`). A file added after the merge base
+and deleted again is ignored.
+
+Deploy does not delete: candidates are listed in `result.selection.deletions` (family,
+API name, path) and as `Not deleted: <family>:<name>` lines, and nothing is written for
+them. Delete components in the org with `sf data360 delete`.
+
+### What blocks
+
+Renames, copies and merge conflicts of plugin files block the whole selection
+(`BLOCKED_GIT_LIFECYCLE`). Rename detection is on regardless of `diff.renames`, but
+Git-inferred renames do not prove historical intent. A new untracked plugin file
+combined with **any tracked worktree deletion** also blocks, including an unrelated
+deletion: Git cannot infer an inbound move to an untracked destination. Stage intended
+changes so Git can detect renames.
+
+A valid empty selection succeeds without target inspection, preflight or execution
+(existing Salesforce parse-time authentication still applies). Optional
+`provenance.git` records the repository root, requested ref and resolved
+reference/HEAD/merge-base commits. Nonempty selections use the same preflight and
+execution as explicit selections of the same families. Preview remains advisory.
+
+## Repository and release
 
 Current npm identity and local directory are `sf-plugin-data`; the repository is
 [`JoernBerkefeld/sf-plugin-data`](https://github.com/JoernBerkefeld/sf-plugin-data).
@@ -69,38 +95,7 @@ deploy that approved commit with fresh whole-selection preflight. Preview is
 advisory, not an executable saved plan or a promise of identical future actions.
 Never expose org credentials to untrusted pull-request code.
 
-## Native DMO file selection
-
-`sf data360 deploy --changed-since <ref> --preview` selects current native DMO
-files, `data360/dmo/ApiName__dlm.dmo-meta.json`, relative to the Git repository
-root, even from a nested working directory. It is exclusive with
-`--metadata` and `--source-dir`. Selection includes changes from the unique merge
-base to HEAD, staged/unstaged edits and relevant untracked files. Each file's
-document identity must exactly match its filename. A selected native DMO joins the
-ordered batch on the native route (default/auto API 68), also beside Segment,
-calculated insight, Graph or Identity Resolution inputs. Native mappings are not
-selected by Git. The other families selected by `--changed-since` are described in
-the sections above.
-
-DMOs use only `data360/dmo/<ApiName>__dlm.dmo-meta.json`.
-
-Relevant renames and deletions block the whole selection. Explicit Git rename
-detection is enabled regardless of repository configuration and inspects both
-endpoints, but Git-inferred renames cannot establish historical intent. A relevant
-untracked DMO addition combined with **any tracked worktree deletion** also blocks,
-including an unrelated deletion: Git cannot infer an inbound move to an untracked
-destination. Stage intended changes to permit Git-inferred rename detection, then
-resolve unsupported lifecycle changes. This conservative ambiguity policy is intentional.
-
-A valid empty selection succeeds without downstream target inspection, preflight
-or execution. Existing Salesforce core parse-time authentication behavior remains;
-this is not an authentication-free invocation guarantee. Selection failures return
-blocked diagnostics. Optional `provenance.git` records repository root, requested
-ref and resolved reference/HEAD/merge-base commits; it is not exact-byte binding.
-Nonempty selections use the same preflight and execution as explicit selections
-of the same families. Preview remains advisory.
-
-Deployment jobs, report files, exact-byte/approved-commit binding and approval-bound execution
+Deployment jobs, report files, approved-commit binding and approval-bound execution
 remain deferred. This implements only the Git-selection portion of roadmap chunk 6. No repository, branch protection, remote or npm publisher is
 configured automatically. Release publication requires separate explicit approval
 and verified hosted trusted-publisher configuration. Hosted publication uses npm

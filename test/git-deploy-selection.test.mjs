@@ -132,7 +132,10 @@ for (const member of ['path']) {
 for (const member of ['path']) {
   for (const phase of ['committed', 'index', 'worktree']) {
     for (const action of ['delete', 'rename']) {
-      test(`Segment ${member} ${phase} ${action} blocks otherwise valid DMO`, async () => {
+      // A committed or staged deletion is a delete candidate; a worktree deletion beside an
+      // untracked addition and every rename still block.
+      const blocks = action === 'rename' || phase === 'worktree';
+      test(`Segment ${member} ${phase} ${action} ${blocks ? 'blocks' : 'is a delete candidate beside'} otherwise valid DMO`, async () => {
         const cwd = await fixture();
         const p = await segment(cwd);
         const base = await commit(cwd, p.path, p.path);
@@ -149,6 +152,15 @@ for (const member of ['path']) {
           );
         if (phase === 'committed') await commit(cwd);
         await put(cwd, relative('Added'), document('Added'));
+        if (!blocks) {
+          const selected = await selectGitDeployInputs({ cwd, ref: base });
+          assert.deepEqual(selected.paths, [path.join(cwd, relative('Added'))]);
+          assert.deepEqual(
+            selected.deletions.map((deletion) => [deletion.family, deletion.identity.apiName]),
+            [['segment', 'Audience']],
+          );
+          return;
+        }
         await assert.rejects(
           selectGitDeployInputs({ cwd, ref: base }),
           refusal('BLOCKED_GIT_LIFECYCLE'),
@@ -166,17 +178,6 @@ for (const member of ['path']) {
     assert.deepEqual(selected.paths, [path.join(cwd, relative('Added'))]);
   });
 }
-
-test('a changed native data graph file refuses the Git selection instead of being dropped', async () => {
-  const cwd = await fixture();
-  await put(cwd, 'force-app/main/default/data360/dataGraphs/Example.native-dataGraph.json', {
-    kind: 'native-data-graph',
-  });
-  await assert.rejects(
-    selectGitDeployInputs({ cwd, ref: 'HEAD' }),
-    refusal('INVALID_GIT_SELECTION'),
-  );
-});
 
 test('legacy Segment XML Git selection refuses rather than discovering or rewriting JSON', async () => {
   const cwd = await fixture();
@@ -345,7 +346,7 @@ for (const phase of ['committed', 'index', 'worktree']) {
 }
 
 for (const phase of ['committed', 'index', 'worktree']) {
-  test(`Git selector blocks ${phase} relevant deletion despite another valid addition`, async () => {
+  test(`Git selector ${phase === 'worktree' ? 'blocks' : 'carries'} ${phase} relevant deletion beside another valid addition`, async () => {
     const cwd = await fixture();
     await put(cwd, relative('Removed'), document('Removed'));
     const base = await commit(cwd, relative('Removed'));
@@ -353,9 +354,19 @@ for (const phase of ['committed', 'index', 'worktree']) {
     await put(cwd, relative('Added'), document('Added'));
     if (phase !== 'worktree') await git(cwd, 'add', '--', relative('Removed'), relative('Added'));
     if (phase === 'committed') await commit(cwd);
-    await assert.rejects(
-      selectGitDeployInputs({ cwd, ref: base }),
-      refusal('BLOCKED_GIT_LIFECYCLE'),
+    if (phase === 'worktree') {
+      // An untracked addition beside a worktree deletion may be an undetected rename.
+      await assert.rejects(
+        selectGitDeployInputs({ cwd, ref: base }),
+        refusal('BLOCKED_GIT_LIFECYCLE'),
+      );
+      return;
+    }
+    const selected = await selectGitDeployInputs({ cwd, ref: base });
+    assert.deepEqual(selected.paths, [path.join(cwd, relative('Added'))]);
+    assert.deepEqual(
+      selected.deletions.map((deletion) => [deletion.family, deletion.identity.apiName]),
+      [['dmo', 'Removed__dlm']],
     );
   });
 }

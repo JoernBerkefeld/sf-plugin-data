@@ -1,3 +1,45 @@
+# Git selection admits every family; deleted files become delete candidates — 2026-11-13
+
+Chunk A of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.
+
+- `src/artifacts/git-deploy-selection.ts`: `--changed-since` now admits canonical DLO, DMO,
+  mapping, relationship, data stream, data transform (repository-root `data360/`) and data
+  graph, IR, CI, Segment JSON (package directory) files. One family table drives canonical
+  path checks; admission goes through `readDeployInputs` and every admitted input is
+  returned in `capturedInputs` (bytes + digest). The native graph refusal is gone.
+- Deleted files: a watched path (known suffix or any `data360` folder) deleted in a
+  committed or staged change and absent now becomes a `GitDeleteCandidate` in
+  `deletions` (`family`, absolute `path`, `identity` and `baseDigest` from
+  `git ls-tree` + `git cat-file blob` at the merge base, `sourceObjectName` for
+  relationships; a transform's API name is `definition.name`). Validation:
+  `admitDeletedArtifact` in `read-deploy-input.ts` (family validator, content identity
+  must equal the canonical name). A path deleted and present again is not a delete (it
+  must then be in the changed set, else block); added-then-deleted inside the range is
+  ignored. Blocks (`BLOCKED_GIT_LIFECYCLE`): unknown kind at a deleted path, one CI pair
+  member deleted without the other, an unstaged worktree deletion of a watched file
+  (Git cannot see where it moved), renames/copies/conflicts, and the existing untracked
+  addition + any worktree deletion rule. Invalid base content: `INVALID_GIT_SELECTION`.
+- `deploy.ts`: deletions are reported in `result.selection.deletions` and as
+  `Not deleted: <family>:<name> …` lines; never executed (chunk D). Every resolved
+  input of every family must match `capturedInputs` (same count; path, digest, document)
+  or the run blocks before target access. Removed the
+  `--changed-since` conditions from the graph, stream and native-route refusals, so a
+  Git range holding one graph, only streams, or native files with a mapping/relationship
+  reaches that route; mixed selections keep their refusals until chunk B. Transforms stay
+  refused via Git (`INVALID_TRANSFORM_SELECTION`): `--transform-operation` is not accepted
+  with `--changed-since`.
+- Docs: `docs/git-workflow.md` rewritten to current behaviour (stale ingestionDlo / API67
+  graph / CI sections removed), README and `docs/capabilities.md` Git paragraphs, hints and
+  pages of `BLOCKED_GIT_LIFECYCLE`, `INVALID_GIT_SELECTION`,
+  `NATIVE_GRAPH_SELECTION_UNSUPPORTED`, `NATIVE_MIXED_SELECTION_UNSUPPORTED`,
+  `DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED` (code name kept; chunk B2 removes it).
+  No new codes.
+- Tests: `test/git-deploy-selection-families.test.mjs` (admission per family, deletion
+  candidates per family committed/staged, base identity, re-added path, added-then-deleted,
+  unknown kind, mismatched base identity, unstaged deletion, renames);
+  `git-deploy-selection.test.mjs`, `dlo-command.test.mjs` updated for delete candidates;
+  command tests for the deletion report, capture drift and a Git stream-only route.
+
 # Error-code catalogue: CLI hint and reference page per code — 2026-11-13
 
 Every plugin error code now has a short hint and a long reference page. Version stays 0.1.0;

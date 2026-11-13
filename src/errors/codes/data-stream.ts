@@ -11,7 +11,7 @@ export const hints: Readonly<Record<string, string>> = {
   DATA_STREAM_DELETE_UNCONFIRMED:
     'The stream delete stopped on an unexpected error. If the result says mutation unknown, inspect the stream and its DLO in the org before you run the delete again.',
   DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED:
-    'Data stream files must be deployed on their own. Select only data-stream files or data-stream:ApiName members, without --changed-since or other families.',
+    'Data stream files must be deployed on their own. Select only data-stream files or data-stream:ApiName members, or a --changed-since range with only streams.',
   DATA_STREAM_REQUEST_UNCONFIRMED:
     'The stream deploy stopped on an unexpected error. If the result says mutation unknown, inspect the stream in the org before you deploy again.',
   DATA_STREAM_RETRIEVE_FAILED:

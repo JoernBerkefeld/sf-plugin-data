@@ -254,6 +254,7 @@ test('a native DMO changed since a Git reference joins the ordered batch with it
     {
       selectGitInputs: async () => ({
         paths: inputs.map((input) => input.path),
+        capturedInputs: inputs,
         segments,
         provenance: { requestedRef: 'main' },
       }),
@@ -276,6 +277,7 @@ test('a native DMO changed since a Git reference joins the ordered batch with it
     {
       selectGitInputs: async () => ({
         paths: inputs.filter((input) => input.document.kind === 'dmo').map((input) => input.path),
+        capturedInputs: inputs.filter((input) => input.document.kind === 'dmo'),
         provenance: { requestedRef: 'main' },
       }),
     },

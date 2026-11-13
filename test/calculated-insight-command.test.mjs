@@ -737,6 +737,7 @@ test('native68 Git paired selection preserves captured admission and draft inten
   h.flags['changed-since'] = 'main';
   h.command.selectGitInputs = async () => ({
     paths: h.inputs.map((input) => input.path),
+    capturedInputs: h.inputs,
     calculatedInsights: h.inputs,
     segments: [],
     identityResolutions: [],
@@ -908,6 +909,7 @@ test('CI captured Git selection proceeds through public preview with unchanged a
   delete flags['source-dir'];
   command.selectGitInputs = async () => ({
     paths: [inputs[0].path],
+    capturedInputs: inputs,
     calculatedInsights: inputs,
     segments: [],
     identityResolutions: [],

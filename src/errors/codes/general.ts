@@ -5,7 +5,7 @@ export const hints: Readonly<Record<string, string>> = {
   AUTHENTICATION_FAILED:
     'Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.',
   BLOCKED_GIT_LIFECYCLE:
-    'The Git changes include a rename or deletion of a deployable file, which --changed-since cannot deploy. Stage renames so Git can detect them, or deploy the files with --source-dir or -m.',
+    'The Git changes include a rename, a conflict or a deleted file the plugin cannot identify. Stage renames so Git can detect them, or deploy the files with --source-dir or -m.',
   DELETE_FAILED:
     'The delete stopped for a reason without a more specific code. Read the message, check the item outcome and inspect the target before trying again; nothing is retried.',
   DEPLOY_EXECUTION_BLOCKED:
@@ -57,7 +57,7 @@ export const hints: Readonly<Record<string, string>> = {
   NATIVE_INVENTORY_UNCONFIRMED:
     'The list of DLOs or DMOs from the org could not be confirmed complete, so nothing was retrieved. Retrieve exact members with -m dmo:<Name> or -m dlo:<Name>, or rerun later.',
   NATIVE_MIXED_SELECTION_UNSUPPORTED:
-    'Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs, and never through --changed-since. Deploy other families in a separate run.',
+    'Mappings and relationships deploy only together with DLO, DMO, mapping and relationship inputs. Deploy other families in a separate run.',
   NATIVE_PARENT_SETTLEMENT_UNCONFIRMED:
     'A parent DLO or DMO was written but could not be confirmed ready, so dependent items were not deployed. Wait, check the parent with deploy --preview, then rerun.',
   NATIVE_RETRIEVE_FAILED:

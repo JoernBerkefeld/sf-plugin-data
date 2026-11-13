@@ -278,7 +278,7 @@ test('DLO preview and execution report portable reordered fields unchanged with 
   assert.deepEqual(calls, []);
 });
 
-test('native DLO Git selection uses root JSON and blocks deletion', async () => {
+test('native DLO Git selection uses root JSON and reports a staged deletion', async () => {
   const cwd = await scratch();
   const receipt = await writeDloDocument(document, cwd, false);
   const git = (...arguments_) =>
@@ -293,9 +293,16 @@ test('native DLO Git selection uses root JSON and blocks deletion', async () => 
   assert.deepEqual(selected.paths, [receipt.path]);
   assert.equal(selected.dlos.length, 1);
   git('rm', '-f', path.relative(cwd, receipt.path));
-  await assert.rejects(selectGitDeployInputs({ cwd, ref: 'HEAD' }), {
-    code: 'BLOCKED_GIT_LIFECYCLE',
-  });
+  const deleted = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.deepEqual(deleted.paths, []);
+  assert.deepEqual(
+    deleted.deletions.map((deletion) => [
+      deletion.family,
+      deletion.identity.apiName,
+      deletion.path,
+    ]),
+    [['dlo', name, receipt.path]],
+  );
 });
 test('retrieve saves native DLO file through public command and reports native68 route', async () => {
   const cwd = await scratch();

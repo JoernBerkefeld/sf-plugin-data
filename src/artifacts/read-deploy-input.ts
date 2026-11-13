@@ -1160,3 +1160,91 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     throw new DeployInputError('UNSAFE_SOURCE');
   }
 }
+
+export type DeletedArtifactKind =
+  | 'dmo'
+  | 'dlo'
+  | 'mapping'
+  | 'relationship'
+  | 'data-stream'
+  | 'data-transform'
+  | 'data-graph'
+  | 'identity-resolution'
+  | 'calculated-insight'
+  | 'segment';
+
+/**
+ * Admit bytes of a file read from a Git revision (no worktree file exists) by the family
+ * validator, and take the identity from the content, which must agree with the canonical name.
+ * @param {DeletedArtifactKind} kind Family derived from the canonical path.
+ * @param {string} name Canonical name derived from the path.
+ * @param {Buffer} bytes Exact revision bytes (the JSON member).
+ * @param {Buffer} [xml] Calculated insight XML member bytes from the same revision.
+ * @returns {object} Content identity, plus the source DMO of a relationship.
+ */
+export function admitDeletedArtifact(
+  kind: DeletedArtifactKind,
+  name: string,
+  bytes: Buffer,
+  xml?: Buffer,
+): { identity: { dataSpace: string; apiName: string }; sourceObjectName?: string } {
+  try {
+    const value = strictJson(decode(bytes));
+    let identity: { dataSpace: string; apiName: string };
+    let sourceObjectName: string | undefined;
+    switch (kind) {
+      case 'dmo': {
+        ({ identity } = validateNativeDmoDocument(value));
+        break;
+      }
+      case 'dlo': {
+        ({ identity } = validateDloDocument(value));
+        break;
+      }
+      case 'mapping': {
+        ({ identity } = validateNativeMappingDocument(value));
+        break;
+      }
+      case 'relationship': {
+        const document = validateNativeRelationshipDocument(value);
+        identity = document.identity;
+        sourceObjectName = document.spec.sourceObjectName;
+        break;
+      }
+      case 'data-stream': {
+        ({ identity } = validateDataStreamDocument(value));
+        break;
+      }
+      case 'data-transform': {
+        const document = validateDataTransformDocument(value);
+        identity = { dataSpace: 'default', apiName: document.definition.name as string };
+        break;
+      }
+      case 'data-graph': {
+        const document = validateNativeDataGraphDocument(value);
+        identity = { dataSpace: 'default', apiName: document.definition.name as string };
+        break;
+      }
+      case 'identity-resolution': {
+        ({ identity } = validateIdentityResolutionDocument(value));
+        break;
+      }
+      case 'calculated-insight': {
+        if (!xml) throw new Error('Missing pair');
+        ({ identity } = validateCalculatedInsightPair(value, decode(xml), name.slice(0, -5)));
+        break;
+      }
+      case 'segment': {
+        ({ identity } = validateSegmentDocument(value));
+        break;
+      }
+    }
+    if (identity.apiName !== name) throw new Error('Identity mismatch');
+    return {
+      identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
+      ...(sourceObjectName === undefined ? {} : { sourceObjectName }),
+    };
+  } catch {
+    throw new DeployInputError('INVALID_SOURCE');
+  }
+}

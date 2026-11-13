@@ -536,3 +536,22 @@ test('public command plus real strict inputs and lifecycle verifies repeat witho
   assert.equal(updated.result.result.items[0].mutation, 'confirmed-updated');
   assert.equal(fixture.counts(), 2);
 });
+
+test('a Git selection holding only a stream reaches the stream route with its captured bytes', async () => {
+  const { command, calls, input } = invocation({
+    metadata: undefined,
+    'changed-since': 'HEAD',
+    preview: true,
+  });
+  command.selectGitInputs = async () => ({
+    paths: [input.path],
+    provenance: {},
+    capturedInputs: [structuredClone(input)],
+  });
+  const { result, code } = await run(command);
+  assert.equal(code, 0);
+  assert.equal(result.status, 'success');
+  assert.ok(calls.includes('auth'));
+  assert.ok(calls.includes('preview'));
+  assert.equal(result.result.items[0].identity.apiName, 'Proposed');
+});

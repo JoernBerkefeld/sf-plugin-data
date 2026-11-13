@@ -13,6 +13,10 @@ const provenance = {
   headCommit: 'b'.repeat(40),
   mergeBase: 'c'.repeat(40),
 };
+const selectedInput = (file) => ({
+  path: file,
+  document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Selected__dlm' } },
+});
 const invocation = (overrides = {}, paths = [selectedPath]) => {
   const calls = [];
   const flags = {
@@ -40,17 +44,12 @@ const invocation = (overrides = {}, paths = [selectedPath]) => {
   command.selectGitInputs = async (options) => {
     calls.push('git');
     assert.deepEqual(options, { cwd: process.cwd(), ref: 'main' });
-    return { paths, provenance };
+    return { paths, provenance, capturedInputs: paths.map((file) => selectedInput(file)) };
   };
   command.resolveInputs = async (options) => {
     calls.push('inputs');
     assert.deepEqual(options, { cwd: process.cwd(), sourceDir: paths, metadata: undefined });
-    return [
-      {
-        path: paths[0],
-        document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Selected__dlm' } },
-      },
-    ];
+    return [selectedInput(paths[0])];
   };
   command.captureInput = async () => 'synthetic-dmo-digest';
   const client = {};
@@ -147,6 +146,7 @@ for (const preview of [true, false]) {
     command.selectGitInputs = async () => ({
       paths: [selectedPath],
       provenance,
+      capturedInputs: [selectedInput(selectedPath), segment],
       segments: [segment],
     });
     command.resolveInputs = async (options) => [...(await resolve(options)), segment];
@@ -193,6 +193,7 @@ for (const drift of ['digest', 'missing', 'companion', 'verification']) {
     command.selectGitInputs = async () => ({
       paths: [selectedPath],
       provenance,
+      capturedInputs: [selectedInput(selectedPath), captured],
       segments: [captured],
     });
     const resolve = command.resolveInputs;
@@ -243,5 +244,113 @@ for (const code of ['INVALID_GIT_SELECTION', 'BLOCKED_GIT_LIFECYCLE']) {
       assert.match(result.diagnostics.errors[0].message, /any tracked worktree deletion/u);
       assert.match(result.diagnostics.errors[0].message, /Stage intended changes/u);
     }
+  });
+}
+
+for (const human of [false, true]) {
+  test(`Git deletions are reported, never deleted, with no target work human=${human}`, async () => {
+    const { command, calls } = invocation({ preview: false, 'target-org': undefined }, []);
+    const lines = [];
+    command.jsonEnabled = () => !human;
+    command.log = (line) => lines.push(line);
+    command.selectGitInputs = async () => {
+      calls.push('git');
+      return {
+        paths: [],
+        provenance,
+        deletions: [
+          {
+            family: 'relationship',
+            path: 'data360/relationship/Rel.relationship-meta.json',
+            identity: { dataSpace: 'default', apiName: 'Rel' },
+            sourceObjectName: 'A__dlm',
+            baseDigest: 'e'.repeat(64),
+          },
+        ],
+      };
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'success');
+    assert.equal(exitCode, undefined);
+    assert.deepEqual(calls, ['git']);
+    assert.deepEqual(result.result.items, []);
+    assert.deepEqual(result.result.selection.deletions, [
+      {
+        family: 'relationship',
+        apiName: 'Rel',
+        path: 'data360/relationship/Rel.relationship-meta.json',
+      },
+    ]);
+    if (human)
+      assert.ok(
+        lines.includes(
+          'Not deleted: relationship:Rel (file deleted in the Git range; deploy never deletes).',
+        ),
+      );
+  });
+}
+
+for (const drift of ['digest', 'missing']) {
+  test(`Git-selected mapping ${drift} capture drift blocks before target access`, async () => {
+    const { command, calls } = invocation({ preview: false });
+    const mapping = {
+      path: 'data360/mapping/Map.mapping-meta.json',
+      inputDigest: 'a'.repeat(64),
+      document: { kind: 'mapping', identity: { dataSpace: 'default', apiName: 'Map' } },
+    };
+    command.selectGitInputs = async () => ({
+      paths: [mapping.path],
+      provenance,
+      capturedInputs: drift === 'missing' ? [] : [{ ...mapping, inputDigest: 'b'.repeat(64) }],
+    });
+    command.resolveInputs = async () => {
+      calls.push('inputs');
+      return [mapping];
+    };
+    const { result } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_GIT_SELECTION');
+    assert.deepEqual(calls, ['inputs']);
+  });
+}
+
+for (const drift of ['digest', 'document', 'count']) {
+  test(`Git DLO + mapping selection whose DLO ${drift} changed after selection blocks before target access`, async () => {
+    const { command, calls } = invocation({ preview: false });
+    const dlo = {
+      path: 'data360/dlo/Source__dll.dlo-meta.json',
+      inputDigest: 'a'.repeat(64),
+      document: { kind: 'dlo', identity: { dataSpace: 'default', apiName: 'Source__dll' } },
+    };
+    const mapping = {
+      path: 'data360/mapping/Map.mapping-meta.json',
+      inputDigest: 'c'.repeat(64),
+      document: { kind: 'mapping', identity: { dataSpace: 'default', apiName: 'Map' } },
+    };
+    command.selectGitInputs = async () => ({
+      paths: [dlo.path, mapping.path],
+      provenance,
+      capturedInputs: [dlo, mapping],
+      dlos: [dlo],
+    });
+    command.resolveInputs = async () => {
+      calls.push('inputs');
+      if (drift === 'count') return [dlo, mapping, selectedInput(selectedPath)];
+      return [
+        drift === 'digest'
+          ? { ...dlo, inputDigest: 'b'.repeat(64) }
+          : {
+              ...dlo,
+              document: { ...dlo.document, identity: { ...dlo.document.identity, dataSpace: 'x' } },
+            },
+        mapping,
+      ];
+    };
+    command.verifyDloInput = async () => assert.fail('DLO route reached');
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(exitCode, 1);
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_GIT_SELECTION');
+    assert.deepEqual(calls, ['inputs']);
   });
 }

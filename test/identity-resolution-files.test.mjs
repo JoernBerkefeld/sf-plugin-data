@@ -230,6 +230,7 @@ for (const preview of [true, false]) {
       const input = { path: 'ir', document: document(), inputDigest: 'a'.repeat(64) };
       command.selectGitInputs = async () => ({
         paths: ['ir'],
+        capturedInputs: [input],
         identityResolutions: [input],
         provenance: {},
       });

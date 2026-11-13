@@ -131,6 +131,7 @@ test('a Git-selected Segment keeps its provenance, is never expanded and blocks 
     command.jsonEnabled = () => true;
     command.selectGitInputs = async () => ({
       paths: [roots[0].path],
+      capturedInputs: roots,
       segments: roots,
       provenance: { requestedRef: 'main' },
     });
