@@ -114,6 +114,7 @@ for (const preview of [true, false])
     assert.equal(result.status, 'blocked');
     assert.deepEqual(writes(events), []);
     assert.deepEqual(result.result.items[0], {
+      family: 'dlo',
       identity: { dataSpace: 'default', apiName: dlo },
       operation: preview ? 'preview' : 'delete',
       outcome: 'blocked',
@@ -311,6 +312,7 @@ test('an uncovered dependent of a later DLO blocks the whole command before any 
   assert.deepEqual(writes(events), []);
   assert.deepEqual(result.result.items, [
     {
+      family: 'dlo',
       identity: { dataSpace: 'default', apiName: dlo },
       operation: 'delete',
       outcome: 'blocked',

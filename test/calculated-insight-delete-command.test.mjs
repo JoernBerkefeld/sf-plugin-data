@@ -250,7 +250,6 @@ for (const overrides of [
   { 'source-dir': 'other.dmo.json' },
   { metadata: ['calculated-insight:Foreign__cio'] },
   { metadata: ['calculated-insight:*'] },
-  { metadata: ['calculated-insight:SyntheticDelete__cio', 'dlo:Other__dll'] },
   { 'delete-dlo': true },
   { metadata: ['dlo:Other__dll'] },
   { metadata: ['data-stream:Other'] },

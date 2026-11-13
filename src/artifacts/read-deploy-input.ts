@@ -1180,68 +1180,91 @@ export type DeletedArtifactKind =
  * @param {string} name Canonical name derived from the path.
  * @param {Buffer} bytes Exact revision bytes (the JSON member).
  * @param {Buffer} [xml] Calculated insight XML member bytes from the same revision.
- * @returns {object} Content identity, plus the source DMO of a relationship.
+ * @returns {object} Content identity and the validated base document (deeply frozen), plus the
+ * source DMO of a relationship.
  */
 export function admitDeletedArtifact(
   kind: DeletedArtifactKind,
   name: string,
   bytes: Buffer,
   xml?: Buffer,
-): { identity: { dataSpace: string; apiName: string }; sourceObjectName?: string } {
+): {
+  identity: { dataSpace: string; apiName: string };
+  document: DeployInput['document'];
+  sourceObjectName?: string;
+} {
   try {
     const value = strictJson(decode(bytes));
     let identity: { dataSpace: string; apiName: string };
+    let document: DeployInput['document'];
     let sourceObjectName: string | undefined;
     switch (kind) {
       case 'dmo': {
-        ({ identity } = validateNativeDmoDocument(value));
+        document = validateNativeDmoDocument(value);
+        ({ identity } = document);
         break;
       }
       case 'dlo': {
-        ({ identity } = validateDloDocument(value));
+        document = validateDloDocument(value);
+        ({ identity } = document);
         break;
       }
       case 'mapping': {
-        ({ identity } = validateNativeMappingDocument(value));
+        document = validateNativeMappingDocument(value);
+        ({ identity } = document);
         break;
       }
       case 'relationship': {
-        const document = validateNativeRelationshipDocument(value);
-        identity = document.identity;
-        sourceObjectName = document.spec.sourceObjectName;
+        const relationship = validateNativeRelationshipDocument(value);
+        document = relationship;
+        identity = relationship.identity;
+        sourceObjectName = relationship.spec.sourceObjectName;
         break;
       }
       case 'data-stream': {
-        ({ identity } = validateDataStreamDocument(value));
+        document = validateDataStreamDocument(value);
+        ({ identity } = document);
         break;
       }
       case 'data-transform': {
-        const document = validateDataTransformDocument(value);
-        identity = { dataSpace: 'default', apiName: document.definition.name as string };
+        const transform = validateDataTransformDocument(value);
+        document = transform;
+        identity = { dataSpace: 'default', apiName: transform.definition.name as string };
         break;
       }
       case 'data-graph': {
-        const document = validateNativeDataGraphDocument(value);
-        identity = { dataSpace: 'default', apiName: document.definition.name as string };
+        const graph = validateNativeDataGraphDocument(value);
+        document = graph;
+        identity = { dataSpace: 'default', apiName: graph.definition.name as string };
         break;
       }
       case 'identity-resolution': {
-        ({ identity } = validateIdentityResolutionDocument(value));
+        document = validateIdentityResolutionDocument(value);
+        ({ identity } = document);
         break;
       }
       case 'calculated-insight': {
         if (!xml) throw new Error('Missing pair');
-        ({ identity } = validateCalculatedInsightPair(value, decode(xml), name.slice(0, -5)));
+        document = validateCalculatedInsightPair(value, decode(xml), name.slice(0, -5));
+        ({ identity } = document);
         break;
       }
       case 'segment': {
-        ({ identity } = validateSegmentDocument(value));
+        document = validateSegmentDocument(value);
+        ({ identity } = document);
         break;
       }
     }
     if (identity.apiName !== name) throw new Error('Identity mismatch');
+    const freeze = (target: object): void => {
+      for (const child of Object.values(target))
+        if (child && typeof child === 'object') freeze(child as object);
+      Object.freeze(target);
+    };
+    freeze(document);
     return {
       identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
+      document,
       ...(sourceObjectName === undefined ? {} : { sourceObjectName }),
     };
   } catch {

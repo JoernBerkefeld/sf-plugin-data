@@ -255,7 +255,7 @@ test('a changed family file outside its canonical folder refuses the selection',
 });
 
 for (const phase of ['committed', 'index']) {
-  for (const [family, { file, value, apiName }] of Object.entries(families)) {
+  for (const [family, { kind, file, value, apiName }] of Object.entries(families)) {
     test(`${phase} deletion of a ${family} file is a delete candidate from base content`, async () => {
       const cwd = await fixture();
       await put(cwd, file, value);
@@ -278,6 +278,9 @@ for (const phase of ['committed', 'index']) {
         family === 'relationship' ? value.spec.sourceObjectName : undefined,
       );
       assert.ok(Object.isFrozen(selected.deletions));
+      // The base document travels with the candidate, deeply frozen.
+      assert.equal(deletion.document.kind, kind);
+      assert.ok(Object.isFrozen(deletion.document));
     });
   }
 }

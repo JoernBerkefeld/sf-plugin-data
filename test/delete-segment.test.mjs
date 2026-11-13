@@ -301,9 +301,8 @@ test('public delete selects exact JSON, routes native68 and prints exact process
   assert.ok(h.logs.includes('deleted segment Audience (server is still processing)'));
   assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
 });
-test('public Segment delete refuses mixed/legacy/mismatched scope or source before service', async () => {
+test('public Segment delete refuses legacy/mismatched scope or source before service', async () => {
   for (const overrides of [
-    { metadata: ['segment:Audience', 'dlo:Other__dll'] },
     { 'api-version': '65.0' },
     { dataspace: 'other' },
     { 'source-dir': 'Audience.marketSegmentDefinition-meta.xml' },

@@ -11,6 +11,7 @@ import type { DloClient } from '../transport/dlo-rest.js';
 import { bindDataTransformDlos } from './preflight-data-transform-deploy.js';
 import type { DataTransformPrerequisites } from './preflight-data-transform-deploy.js';
 import { retrieveDataTransform } from './retrieve-data-transform.js';
+import { replaceExplanation } from './operation-diagnostic.js';
 
 export type DataTransformDeleteOptions = {
   targetId: string;
@@ -75,6 +76,31 @@ export async function listDataTransformInventory(
     if (inventory.length === total) return inventory;
   }
   throw new DataTransformError('INCOMPLETE_TRANSFORM_INVENTORY');
+}
+
+/**
+ * Resolve the target ID of a data transform from its API name (a transform deleted in a Git range
+ * has no --transform-target-id): read the complete inventory and require exactly one entry whose
+ * name matches, ignoring case. Read-only.
+ * @param {DataTransformClient} client Fixed API68/default adapter.
+ * @param {string} name API name from the authored definition.
+ * @returns {Promise<string>} The one matching target ID.
+ */
+export async function resolveDataTransformTargetId(
+  client: DataTransformClient,
+  name: string,
+): Promise<string> {
+  const inventory = await listDataTransformInventory(client);
+  const matches = inventory.filter((row) => row.name.toLowerCase() === name.toLowerCase());
+  if (matches.length !== 1) {
+    const error = new DataTransformError('TRANSFORM_TARGET_NOT_RESOLVED');
+    replaceExplanation(
+      error,
+      `The org has ${matches.length === 0 ? 'no data transform' : `${matches.length} data transforms`} named ${name}, so the transform deleted in the Git range cannot be resolved to one target ID. Nothing was deleted.`,
+    );
+    throw error;
+  }
+  return matches[0].id;
 }
 
 /**

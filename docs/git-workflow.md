@@ -60,8 +60,43 @@ other, blocks the selection (`BLOCKED_GIT_LIFECYCLE`). A file added after the me
 and deleted again is ignored.
 
 Deploy does not delete: candidates are listed in `result.selection.deletions` (family,
-API name, path) and as `Not deleted: <family>:<name>` lines, and nothing is written for
-them. Delete components in the org with `sf data360 delete`.
+API name, path) and as `Not deleted: <family>:<name>` lines that name the matching
+`sf data360 delete --changed-since <ref> --confirm-delete` command, and nothing is
+written for them.
+
+### Deleting with `sf data360 delete --changed-since`
+
+`sf data360 delete --changed-since <ref>` takes the same Git selection and deletes the
+components of the files deleted in the range; files changed or added in the range are
+not part of a delete. It is exclusive with `--metadata` and `--source-dir` and refuses
+`--transform-target-id` (`INVALID_TRANSFORM_DELETE_SELECTION`) and `--delete-dlo`
+(`INVALID_STREAM_DELETE_SELECTION`). Execution always needs `--confirm-delete`
+(`DESTRUCTIVE_CONFIRMATION_REQUIRED` otherwise, before any org call), even for one
+family; `--preview` runs without it.
+
+- The candidates run through the same phases as any delete, in reverse order: graphs,
+  then identity resolution, calculated insights and Segments (a dependent before what it
+  needs), then data transforms, then relationships, mappings, DMOs and DLOs, then data
+  streams. Each phase starts only after the previous one settled.
+- Every family runs from its merge-base document with the checks of an explicit delete.
+  Right before each phase, and before each write of a source-backed family, every
+  candidate path must still be absent; a file present again blocks
+  (`BLOCKED_GIT_LIFECYCLE`). Each candidate's data space must equal the requested one
+  (`INVALID_SCOPE`).
+- A relationship takes its source DMO from the base content; no local file is read.
+- A data transform has no target ID in the range: its API name from the base content is
+  looked up in the complete transform list (ignoring case) and must match exactly one
+  transform, otherwise nothing is deleted (`TRANSFORM_TARGET_NOT_RESOLVED`).
+- A stream file deleted together with the file of its landing DLO is one stream delete
+  that also deletes that DLO; the DLO is never deleted on its own. A stream deleted
+  alone keeps its DLO.
+- A custom DMO deleted together with its last mapping is deleted alone; Salesforce
+  removes the mapping with it and the mapping item reports `removedWith` the DMO.
+- No local file is listed or removed: the files are already gone.
+- A range without deleted plugin files succeeds without any org call.
+
+`result.selection.changedSince` and `provenance.git` record the reference and the
+resolved commits.
 
 ### What blocks
 
@@ -69,8 +104,11 @@ Renames, copies and merge conflicts of plugin files block the whole selection
 (`BLOCKED_GIT_LIFECYCLE`). Rename detection is on regardless of `diff.renames`, but
 Git-inferred renames do not prove historical intent. A new untracked plugin file
 combined with **any tracked worktree deletion** also blocks, including an unrelated
-deletion: Git cannot infer an inbound move to an untracked destination. Stage intended
-changes so Git can detect renames.
+deletion: Git cannot infer an inbound move to an untracked destination. A file of one
+component deleted at one stage (for example committed) while a file of the same
+component is added under a different path at another stage (index, working tree or
+untracked) is a rename Git cannot pair; it blocks too, since it would delete and create
+the same component. Stage intended changes so Git can detect renames.
 
 A valid empty selection succeeds without target inspection, preflight or execution
 (existing Salesforce parse-time authentication still applies). Optional

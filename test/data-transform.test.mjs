@@ -1375,7 +1375,6 @@ for (const flags of [
   { metadata: ['data-transform'] },
   { metadata: ['data-transform:SyntheticTransform', 'data-transform:SyntheticTransform'] },
   { metadata: ['data-transform:SyntheticTransform', 'data-transform:Other'] },
-  { metadata: ['data-transform:SyntheticTransform', 'dlo:Source__dll'] },
   { metadata: ['data-transform:Other'] },
 ])
   test(`public Transform delete rejects before auth ${JSON.stringify(flags)}`, async () => {

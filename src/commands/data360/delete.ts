@@ -1,4 +1,13 @@
-import { deleteDataTransform } from '../../services/delete-data-transform.js';
+import {
+  deleteDataTransform,
+  resolveDataTransformTargetId,
+} from '../../services/delete-data-transform.js';
+import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
+import type {
+  GitDeleteCandidate,
+  GitDeploySelection,
+} from '../../artifacts/git-deploy-selection.js';
+import type { NativeRelationshipDocument } from '../../artifacts/native-relationship-document.js';
 import {
   createDataTransformClient,
   createDataTransformDloReader,
@@ -120,21 +129,248 @@ import {
   preflightDeleteDataStream,
   executeDeleteDataStream,
 } from '../../services/command-native-data-stream.js';
+import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
+import type { DeployInput } from '../../artifacts/read-deploy-input.js';
+import {
+  crudPhase,
+  inputKey,
+  planDeleteStages,
+  runCrudStages,
+  selectedDependents,
+} from '../../services/crud-plan.js';
+import type { CrudStage, CrudStageResult, PlanInput } from '../../services/crud-plan.js';
+
+/** Plugin family of one delete selector (its `family:` prefix). */
+export type DeleteFamily =
+  | 'data-transform'
+  | 'segment'
+  | 'identity-resolution'
+  | 'data-graph'
+  | 'calculated-insight'
+  | 'data-stream'
+  | 'dlo'
+  | 'dmo'
+  | 'mapping'
+  | 'relationship';
+
+/** Families deleted from an exact --source-dir input. */
+const sourceFamilies: ReadonlySet<DeleteFamily> = new Set([
+  'data-transform',
+  'segment',
+  'identity-resolution',
+  'data-graph',
+  'calculated-insight',
+]);
+const nativeFamilies: ReadonlySet<DeleteFamily> = new Set([
+  'dlo',
+  'dmo',
+  'mapping',
+  'relationship',
+]);
+/** The --source-dir value a source family needs; a graph accepts its file or a folder. */
+const sourcePatterns: Partial<Record<DeleteFamily, RegExp>> = {
+  segment: /\.segment\.json$/u,
+  'identity-resolution': /\.identityResolution\.json$/u,
+  'calculated-insight': /\.(?:calculatedInsight\.json|mktCalcInsightObjectDef-meta\.xml)$/u,
+  'data-graph': /./u,
+};
+const developerName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
+
+/**
+ * Family of an exact `family:Name` delete selector.
+ * @param {string} selector Raw -m value.
+ * @returns {DeleteFamily | undefined} The family; undefined for anything not exact.
+ */
+function deleteFamily(selector: string): DeleteFamily | undefined {
+  const index = selector.indexOf(':');
+  if (index === -1) return undefined;
+  const family = selector.slice(0, index);
+  const name = selector.slice(index + 1);
+  switch (family) {
+    case 'data-transform':
+    case 'segment':
+    case 'data-graph':
+    case 'data-stream': {
+      return developerName.test(name) ? family : undefined;
+    }
+    case 'identity-resolution': {
+      return identityResolutionName.test(name) ? family : undefined;
+    }
+    case 'calculated-insight': {
+      return /^[A-Za-z][A-Za-z0-9_]*__cio$/u.test(name) ? family : undefined;
+    }
+    case 'dlo': {
+      return dloName.test(name) ? family : undefined;
+    }
+    case 'dmo': {
+      return nativeDmoName.test(name) ? family : undefined;
+    }
+    case 'mapping': {
+      return nativeMappingName.test(name) ? family : undefined;
+    }
+    case 'relationship': {
+      return nativeRelationshipName.test(name) ? family : undefined;
+    }
+    default: {
+      return undefined;
+    }
+  }
+}
+
+/**
+ * The refusal for a selector that is not exact, in the code of the family it names.
+ * @param {string} selector Raw -m value.
+ * @returns {Error} Coded refusal.
+ */
+function selectorError(selector: string): Error {
+  if (selector === 'data-transform' || selector.startsWith('data-transform:'))
+    return new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
+  if (selector === 'data-stream' || selector.startsWith('data-stream:'))
+    return new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
+  return new DloError('INVALID_SELECTION');
+}
+
+/**
+ * Name part of an exact selector.
+ * @param {string} selector Exact `family:Name` selector.
+ * @returns {string} The name.
+ */
+function selectorName(selector: string): string {
+  return selector.slice(selector.indexOf(':') + 1);
+}
+
+/**
+ * Native delete order inside P1. Dependents go first: relationships (which need their DMOs),
+ * mappings, then DMOs (which take their mappings along), then DLOs.
+ * @param {string} selector Exact native selector.
+ * @returns {number} Rank.
+ */
+function nativeOrder(selector: string): number {
+  return selector.startsWith('relationship:')
+    ? 0
+    : selector.startsWith('mapping:')
+      ? 1
+      : selector.startsWith('dmo:')
+        ? 2
+        : 3;
+}
+
+/**
+ * Read-only: the landing DLO a data stream owns, read from the stream itself.
+ * @param {string} apiName Exact stream name.
+ * @param {object} clients Native stream readers.
+ * @returns {Promise<string | undefined>} The linked DLO name.
+ */
+async function readStreamLinkedDlo(
+  apiName: string,
+  clients: Parameters<typeof retrieveNativeDataStream>[1],
+): Promise<string | undefined> {
+  const document = await retrieveNativeDataStream(apiName, clients);
+  return document.spec.newDlo.name;
+}
+
+type AdmittedSource = { input: DeployInput; desired: unknown };
+type DeletePlanInput = PlanInput & {
+  selector: string;
+  source?: AdmittedSource;
+  /** Selected with --changed-since: the file deleted in the Git range, read from the base. */
+  git?: GitDeleteCandidate;
+  /** A transform deleted in the Git range: its target ID, resolved by name during admission. */
+  transformTargetId?: string;
+};
+type StageStatus = 'success' | 'blocked' | 'failed';
+
+/**
+ * Validate one --source-dir input and name the selector it answers.
+ * @param {DeployInput} input Resolved input.
+ * @returns {{family: DeleteFamily, selector: string, desired: unknown}} Admitted source.
+ */
+function admitSourceInput(input: DeployInput): {
+  family: DeleteFamily;
+  selector: string;
+  desired: unknown;
+} {
+  switch (input.document.kind) {
+    case 'data-transform': {
+      const transform = input as DataTransformDeployInput;
+      const desired = validateDataTransformDocument(transform.document);
+      return {
+        family: 'data-transform',
+        selector: `data-transform:${String(transform.document.definition.name)}`,
+        desired,
+      };
+    }
+    case 'segment': {
+      const desired = validateSegmentDocument((input as SegmentDeployInput).document);
+      return { family: 'segment', selector: `segment:${desired.identity.apiName}`, desired };
+    }
+    case 'identity-resolution': {
+      const desired = nativeIdentityResolutionDocument(
+        (input as IdentityResolutionDeployInput).document,
+      );
+      return {
+        family: 'identity-resolution',
+        selector: `identity-resolution:${desired.identity.apiName}`,
+        desired,
+      };
+    }
+    case 'calculated-insight': {
+      const desired = validateCalculatedInsightDocument(
+        (input as CalculatedInsightDeployInput).document,
+      );
+      // Only a configuration without a publish schedule is deletable.
+      if (desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED')
+        throw new DloError('INVALID_SELECTION');
+      return {
+        family: 'calculated-insight',
+        selector: `calculated-insight:${desired.identity.apiName}`,
+        desired,
+      };
+    }
+    case 'native-data-graph': {
+      const graph = input as NativeDataGraphDeployInput;
+      return {
+        family: 'data-graph',
+        selector: `data-graph:${String(graph.document.definition.name)}`,
+        desired: graph.document,
+      };
+    }
+    default: {
+      throw new DloError('INVALID_SELECTION');
+    }
+  }
+}
 
 export type DeleteEnvelope = {
   contract: 'sf-data360-delete';
   contractVersion: '1.0.0';
   status: 'success' | 'blocked' | 'failed';
   metadata: { operation: 'delete'; preview: boolean; apiVersion: string; plugin: typeof plugin };
-  provenance: { command: 'sf data360 delete'; generatedAt: string };
+  provenance: {
+    command: 'sf data360 delete';
+    generatedAt: string;
+    /** --changed-since: the resolved commits of the Git range. */
+    git?: GitDeploySelection['provenance'];
+  };
   diagnostics: {
     warnings: string[];
     errors: Array<{ code: string; message: string; retryable: false }>;
   };
   result: {
+    /** --changed-since: the requested reference; the items are the files deleted in the range. */
+    selection?: { changedSince: string };
     items: Array<{
+      /** Plugin family of the item, as in its selector. */
+      family: DeleteFamily;
       identity: { dataSpace: string; apiName: string };
       operation: 'preview' | 'delete' | 'delete-field';
+      /**
+       * Selector of the item whose deletion removes this one too (a stream's landing DLO, the last
+       * mapping of a DMO); no request is sent for this item, and it reports the owner's outcome.
+       */
+      removedWith?: string;
+      /** Preview: why the item is planned rather than checked. */
+      diagnostics?: Array<{ code: string; message: string }>;
       deleteDlo?: boolean;
       /** Field-level delete: the DMO fields named with --field. */
       fields?: string[];
@@ -176,6 +412,7 @@ export type DeleteEnvelope = {
         | 'deletion-processing'
         | 'deletion-unconfirmed'
         | 'unchanged'
+        | 'planned-dependencies'
         | 'blocked'
         | 'failed';
       mutation:
@@ -207,7 +444,8 @@ type FieldDeleteFlags = {
   'api-version'?: string;
   dataspace?: string;
   'output-dir'?: string;
-  'source-dir'?: string;
+  'source-dir'?: string | string[];
+  'changed-since'?: string;
   'confirm-delete'?: boolean;
   'transform-target-id'?: string;
   'delete-dlo'?: boolean;
@@ -298,7 +536,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or mappings.';
   public static readonly description =
-    "Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:ObjectApiName requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching owner that is not PUBLISHING or DELETING. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. Graph selections cannot mix families or cascade. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, --api-version auto (68.0) or 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI cannot mix families or use --delete-dlo; no cascade, compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Stream selections cannot mix with other families. Definition deletion is noninteractive and requires no processing acknowledgement. Non-CI explicit type:ApiName selections retain execution without confirmation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:Name) runs first in the batch, before mappings, DMOs and DLOs, and needs the local file data360/relationship/<Name>.relationship-meta.json in the current project to learn the source DMO. The relationships of the source DMO are listed: a relationship with that name must carry the binding of the file; when the name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH and nothing is deleted; when neither is present the result is unchanged. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id. Local files: after a confirmed deletion (deleted, or a DLO, DMO, segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time and never a folder: data360/dlo, data360/dmo, data360/relationship and data360/data-stream files under the current directory (with --delete-dlo also the linked DLO's file), the mapping file of that name or the one whose binding matches, and the --source-dir file of a Transform, Segment, IR or Graph (both members of a CI pair). Links, hard-linked files and paths outside the project's data360 folder or the given --source-dir file are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
+    "One delete can carry any mix of families. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then the transform, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A selection spanning more than one phase needs --confirm-delete (DESTRUCTIVE_CONFIRMATION_REQUIRED otherwise). --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity comes from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). It always needs --confirm-delete (--preview runs without it), takes no -m, --source-dir, --transform-target-id or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name to exactly one target ID (TRANSFORM_TARGET_NOT_RESOLVED otherwise); a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without reading it. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO. Each source-backed family (Transform, Segment, IR, CI, Graph) needs its own --source-dir file. Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:ObjectApiName requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching owner that is not PUBLISHING or DELETING. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, --api-version auto (68.0) or 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI never cascades; no compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Definition deletion is noninteractive and requires no processing acknowledgement. Native DLO/DMO/mapping/relationship and stream selections that stay in one phase run without confirmation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:Name) runs first in the batch, before mappings, DMOs and DLOs, and needs the local file data360/relationship/<Name>.relationship-meta.json in the current project to learn the source DMO. The relationships of the source DMO are listed: a relationship with that name must carry the binding of the file; when the name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH and nothing is deleted; when neither is present the result is unchanged. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --changed-since, --delete-dlo or --transform-target-id. Local files: after a confirmed deletion (deleted, or a DLO, DMO, segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time and never a folder: data360/dlo, data360/dmo, data360/relationship and data360/data-stream files under the current directory (with --delete-dlo also the linked DLO's file), the mapping file of that name or the one whose binding matches, and the --source-dir file of a Transform, Segment, IR or Graph (both members of a CI pair). Links, hard-linked files and paths outside the project's data360 folder or the given --source-dir file are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -308,7 +546,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       char: 'm',
       multiple: true,
       multipleNonGreedy: true,
-      required: true,
+      exclusive: ['changed-since'],
       summary:
         'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:ObjectApiName or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm (alone with --field), mapping:ApiName or relationship:Name (reads data360/relationship/Name.relationship-meta.json).',
     }),
@@ -322,12 +560,21 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'source-dir': Flags.string({
       char: 'd',
-      summary: 'Transform, Segment, IR, CI or native Graph: one exact local source expectation.',
+      multiple: true,
+      multipleNonGreedy: true,
+      summary:
+        'Transform, Segment, IR, CI or native Graph: the exact local file of each selected one (a Graph also from a folder); repeatable.',
+      exclusive: ['changed-since'],
+    }),
+    'changed-since': Flags.string({
+      summary:
+        'Delete in the org the components whose canonical plugin files were deleted since the merge base with a commit reference; needs --confirm-delete (not with --preview).',
+      exclusive: ['source-dir', 'metadata'],
     }),
     'confirm-delete': Flags.boolean({
       default: false,
       summary:
-        'Transform, Segment, IR, CI, native Graph or --field: explicitly acknowledge destructive deletion.',
+        'Transform, Segment, IR, CI, native Graph, --field, or a selection spanning more than one phase: explicitly acknowledge destructive deletion.',
     }),
     'transform-target-id': Flags.string({
       summary: 'Transform-only exact native dataTransformId to delete (required).',
@@ -361,7 +608,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected nativeGraphContext = nativeDataGraphReadContext;
   protected nativeGraphClient = createDataGraphClient;
   protected operateNativeGraph = operateNativeDataGraph;
+  protected verifyNativeDataGraphInput = verifyNativeDataGraphInputDigest;
   protected resolveInputs = readDeployInputs;
+  protected selectGitInputs = selectGitDeployInputs;
   protected deleteIdentityResolution = deleteIdentityResolution;
   protected deleteSegment = deleteSegment;
   protected verifySegmentInput = verifySegmentInputDigest;
@@ -381,6 +630,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       connectionOptions: { version: '68.0' },
     });
   };
+  // Read-only: the landing DLO a selected stream owns, when its DLO is selected too.
+  protected readStreamLinkedDlo = readStreamLinkedDlo;
   protected preflightDeleteDataStream = preflightDeleteDataStream;
   protected executeDeleteDataStream = executeDeleteDataStream;
   protected createDataStreamClients = async (
@@ -467,12 +718,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       !selector.startsWith('dmo:') ||
       !nativeDmoName.test(selector.slice(4)) ||
       flags['source-dir'] !== undefined ||
+      flags['changed-since'] !== undefined ||
       flags['delete-dlo'] ||
       flags['transform-target-id'] !== undefined
     )
       return refuse(
         'INVALID_FIELD_DELETE_SELECTION',
-        '--field removes fields from exactly one -m dmo:<Name__dlm> and cannot be combined with another selector, --source-dir, --delete-dlo or --transform-target-id; --output-dir is valid only with --field. No org call was made.',
+        '--field removes fields from exactly one -m dmo:<Name__dlm> and cannot be combined with another selector, --source-dir, --changed-since, --delete-dlo or --transform-target-id; --output-dir is valid only with --field. No org call was made.',
       );
     if (flags.field.some((name) => !nativeDmoFieldName.test(name)))
       return refuse(
@@ -494,6 +746,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const requestScope = flags.dataspace;
     const root = path.resolve(flags['output-dir'] ?? process.cwd());
     const item: DeleteItem = {
+      family: 'dmo',
       identity: { dataSpace: requestScope ?? 'default', apiName },
       operation: flags.preview ? 'preview' : 'delete-field',
       fields,
@@ -631,6 +884,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    * @param {DeleteEnvelope} envelope Envelope receiving the item.
    * @param {Map<DeleteItem, string>} selectorsByItem Human labels.
    * @param {Function} track Registers the item's local file for removal or preview.
+   * @param {NativeRelationshipDocument} [baseDocument] Git delete: the file's base content, used
+   * instead of the (deleted) local file.
    * @returns {Promise<void>} Resolves when the item settled; throws to stop the batch.
    */
   private async deleteOneRelationship(
@@ -642,9 +897,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     envelope: DeleteEnvelope,
     selectorsByItem: Map<DeleteItem, string>,
     track: (item: DeleteItem, candidates: LocalFileCandidate[]) => Promise<void>,
+    baseDocument?: NativeRelationshipDocument,
   ): Promise<void> {
     const apiName = selector.slice('relationship:'.length);
     const item: DeleteItem = {
+      family: 'relationship',
       identity: { dataSpace: requestScope ?? 'default', apiName },
       operation: preview ? 'preview' : 'delete',
       outcome: 'blocked',
@@ -663,7 +920,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         `${apiName}.relationship-meta.json`,
       );
       try {
-        await lstat(file);
+        if (baseDocument === undefined) await lstat(file);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         const missing = new NativeRelationshipError('RELATIONSHIP_FILE_REQUIRED');
@@ -673,7 +930,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         );
         throw missing;
       }
-      const { document } = await readRelationshipInput(file);
+      let document = baseDocument;
+      if (document === undefined) ({ document } = await readRelationshipInput(file));
       const base = (this.createRelationshipClient ?? createRelationshipClient)(
         target,
         version,
@@ -758,6 +1016,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     };
     const selectorsByItem = new Map<DeleteEnvelope['result']['items'][number], string>();
     const keepLocalFiles = flags['keep-local-files'];
+    const changedSince = flags['changed-since'];
+    // A file deleted in the Git range is already gone: no local file is listed or removed.
+    const gitMode = changedSince !== undefined;
     const projectData = path.join(process.cwd(), 'data360');
     // The local files of each item; removed once its deletion is confirmed.
     const localFiles = new Map<DeleteItem, LocalFileCandidate[]>();
@@ -765,10 +1026,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       path: path.join(projectData, ...segments),
       boundary: projectData,
     });
+    const sourceDirectories = ((): string[] => {
+      const given = flags['source-dir'] as string | string[] | undefined;
+      return given === undefined ? [] : Array.isArray(given) ? given : [given];
+    })();
     // The input files of a --source-dir family, only when --source-dir names one of them exactly.
     const sourceFiles = (paths: string[]): LocalFileCandidate[] => {
-      const given = path.resolve(process.cwd(), flags['source-dir'] ?? '');
-      if (paths.some((file) => samePath(file, given)))
+      if (gitMode) return [];
+      const given = sourceDirectories.map((value) => path.resolve(process.cwd(), value));
+      if (paths.some((file) => given.some((value) => samePath(file, value))))
         return paths.map((file) => ({ path: file, boundary: file, exact: true as const }));
       envelope.diagnostics.warnings.push(
         `--source-dir names a folder, not the file; no local file is removed for ${paths.map((file) => path.basename(file)).join(', ')}.`,
@@ -776,6 +1042,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       return [];
     };
     const track = async (item: DeleteItem, candidates: LocalFileCandidate[]): Promise<void> => {
+      if (gitMode) return;
       if (item.operation !== 'preview') {
         localFiles.set(item, candidates);
         return;
@@ -815,9 +1082,29 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
+        if (gitMode && envelope.result.items.length === 0 && envelope.status === 'success')
+          this.log('No plugin file was deleted in the Git range; nothing to delete.');
         for (const item of envelope.result.items) {
           if (item.fields) {
             for (const line of fieldDeleteLines(item)) this.log(line);
+            continue;
+          }
+          if (item.removedWith) {
+            this.log(
+              item.operation === 'preview'
+                ? `Planned removal with ${item.removedWith}: ${selectorsByItem.get(item)}.`
+                : ['deleted', 'deletion-processing'].includes(item.outcome)
+                  ? `removed with ${item.removedWith}: ${selectorsByItem.get(item)}`
+                  : `Not removed (${item.removedWith} ${item.outcome}): ${selectorsByItem.get(item)}.`,
+            );
+            for (const file of item.removedLocalFiles ?? [])
+              if (file.outcome === 'removed') this.log(`removed local file ${file.path}`);
+            continue;
+          }
+          if (item.outcome === 'planned-dependencies') {
+            this.log(`Planned after its dependents: ${selectorsByItem.get(item)}.`);
+            for (const diagnostic of item.diagnostics ?? [])
+              this.log(`${diagnostic.code}: ${diagnostic.message}`);
             continue;
           }
           const action =
@@ -872,25 +1159,92 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       }
       return envelope;
     };
+    const pushError = (error: unknown): void => {
+      if (error instanceof GitSelectionError) {
+        envelope.diagnostics.errors.push({
+          code: error.code,
+          message:
+            error.code === 'BLOCKED_GIT_LIFECYCLE'
+              ? // Raised before a phase starts, after earlier phases may already have deleted items.
+                envelope.result.items.some(
+                  (item) => item.outcome === 'deleted' || item.mutation === 'confirmed-deleted',
+                )
+                ? 'A file deleted in the Git range is present again, so this phase and the later ones did not start. The items listed before it were deleted. Stage or resolve the change, then rerun; items already deleted report unchanged.'
+                : 'The Git range holds a change the delete cannot take as a deletion: a rename (also one split across commit, index and worktree), a conflict, an unstaged deletion of a plugin file, a deleted file of no known family, a half-deleted calculated insight pair, or a deleted file that is present again. Nothing was deleted; stage or resolve the change, then rerun.'
+              : 'Git selection failed. Use a valid commit reference and run the delete inside the Git repository; deleted files must be canonical plugin files whose base content is valid. Nothing was deleted.',
+          retryable: false,
+        });
+        return;
+      }
+      envelope.diagnostics.errors.push({
+        code:
+          error instanceof DeployInputError ||
+          error instanceof DloError ||
+          error instanceof NativeDmoError ||
+          error instanceof NativeMappingError ||
+          error instanceof NativeRelationshipError ||
+          error instanceof DataStreamError ||
+          error instanceof DataTransformError
+            ? error.code
+            : 'DELETE_FAILED',
+        message: operationDiagnostic(
+          error,
+          'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+        ),
+        retryable: false,
+      });
+    };
+    const warn = (text: string): void => {
+      if (!envelope.diagnostics.warnings.includes(text)) envelope.diagnostics.warnings.push(text);
+    };
     try {
       if (flags.field?.length || flags['output-dir'] !== undefined) {
         await this.deleteDmoFields(flags, envelope);
         return finish();
       }
-      if (
-        flags.metadata?.some(
-          (selector) => selector === 'data-transform' || selector.startsWith('data-transform:'),
-        )
-      ) {
-        const targetId = flags['transform-target-id'];
+      // Admission: every check below runs before the first org call.
+      if (gitMode) {
+        if (flags.metadata !== undefined || flags['source-dir'] !== undefined)
+          throw new DloError('INVALID_SELECTION');
+        // A transform deleted in the range resolves its ID by name; streams follow their DLO file.
+        if (flags['transform-target-id'] !== undefined)
+          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
+        if (flags['delete-dlo']) throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
+      }
+      let gitDeletions: readonly GitDeleteCandidate[] = [];
+      if (changedSince !== undefined) {
+        envelope.result.selection = { changedSince };
+        const selected = await this.selectGitInputs({ cwd: process.cwd(), ref: changedSince });
+        envelope.provenance.git = selected.provenance;
+        gitDeletions = selected.deletions ?? [];
+        if (gitDeletions.length === 0) {
+          envelope.status = 'success';
+          return await finish();
+        }
+      }
+      const gitBySelector = new Map(
+        gitDeletions.map((candidate) => [
+          `${candidate.family}:${candidate.identity.apiName}`,
+          candidate,
+        ]),
+      );
+      const selectors = gitMode ? [...gitBySelector.keys()] : (flags.metadata ?? []);
+      for (const selector of selectors) if (!deleteFamily(selector)) throw selectorError(selector);
+      if (selectors.length === 0) throw new DloError('INVALID_SELECTION');
+      const familyOf = (selector: string): DeleteFamily => deleteFamily(selector) as DeleteFamily;
+      const has = (family: DeleteFamily): boolean =>
+        selectors.some((selector) => familyOf(selector) === family);
+      const sourceSelectors = selectors.filter((selector) =>
+        sourceFamilies.has(familyOf(selector)),
+      );
+      const targetId = flags['transform-target-id'];
+      if (has('data-transform')) {
         if (
-          flags.metadata.length !== 1 ||
-          !/^data-transform:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(flags.metadata[0]) ||
-          flags['delete-dlo'] ||
-          typeof flags['source-dir'] !== 'string' ||
-          !flags['source-dir'].endsWith('.dataTransform.json') ||
-          typeof targetId !== 'string' ||
-          !dataTransformId.test(targetId)
+          !gitMode &&
+          (selectors.filter((selector) => familyOf(selector) === 'data-transform').length !== 1 ||
+            !sourceDirectories.some((value) => value.endsWith('.dataTransform.json')) ||
+            typeof targetId !== 'string' ||
+            !dataTransformId.test(targetId))
         )
           throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
         if (
@@ -898,305 +1252,200 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           effectiveScope !== 'default'
         )
           throw new DataTransformError('INVALID_TRANSFORM_SCOPE');
-        const snapshot = JSON.stringify(flags);
-        const inputs = await this.resolveInputs({
-          cwd: process.cwd(),
-          sourceDir: [flags['source-dir']],
-        });
-        if (inputs.length !== 1 || inputs[0].document.kind !== 'data-transform')
-          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
-        const input = inputs[0] as DataTransformDeployInput;
-        const name = input.document.definition.name as string;
-        if (flags.metadata[0] !== `data-transform:${name}`)
-          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
-        const desired = validateDataTransformDocument(input.document);
-        const verifyInput = async (): Promise<void> => {
-          if (JSON.stringify(flags) !== snapshot)
-            throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
-          await this.verifyDataTransformInput(input);
-        };
-        await verifyInput();
-        const item: DeleteEnvelope['result']['items'][number] = {
-          identity: { dataSpace: 'default', apiName: name },
-          operation: flags.preview ? 'preview' : 'delete',
-          outcome: 'blocked',
-          mutation: 'not-attempted',
-          routes: flags.preview
-            ? [
-                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
-                { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
-              ]
-            : [
-                { operation: 'data-transform.delete', apiVersion: '68.0', transport: 'native' },
-                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
-                { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
-              ],
-        };
-        selectorsByItem.set(item, flags.metadata[0]);
-        envelope.result.items.push(item);
-        envelope.metadata.apiVersion = '68.0';
-        let dispatched = false;
-        try {
-          const connection = await this.resolveConnection(flags['target-org']);
-          const username = connection.getUsername();
-          if (!username) throw new DloError('TARGET_ORG_REQUIRED');
-          await verifyInput();
-          const base = this.createDataTransformClient(connection, '68.0', 'default');
-          const client = {
-            ...base,
-            delete: async (value: string): Promise<void> => {
-              dispatched = true;
-              await base.delete(value);
-            },
-          };
-          envelope.diagnostics.warnings.push(
-            'Transform definition deletion only. Settlement uses bounded visible inventory and preserved source/output DLOs; exhaustive external-consumer exclusion is not established. No DLO, run, schedule or data cleanup; no retry, atomic concurrency guarantee or fallback.',
-          );
-          const result = await this.deleteDataTransform(
-            desired,
-            client,
-            this.createDataTransformDloReader(connection),
-            {
-              targetId,
-              preview: flags.preview,
-              confirmDelete: flags['confirm-delete'] === true,
-              verifyInput,
-            },
-          );
-          item.outcome = result.outcome === 'preview' ? 'delete' : result.outcome;
-          item.mutation = result.mutation;
-          if (result.prerequisitesPreserved) item.prerequisitesPreserved = true;
-          await track(item, sourceFiles([input.path]));
-          if (result.outcome === 'deletion-unconfirmed') {
-            envelope.status = 'failed';
-            envelope.diagnostics.errors.push({
-              code: 'TRANSFORM_DELETE_UNCONFIRMED',
-              message:
-                'DELETE outcome is not confirmed. Do not replay; reconcile by reading the Transform inventory before any further action.',
-              retryable: false,
-            });
-          } else envelope.status = result.outcome === 'blocked' ? 'blocked' : 'success';
-          if (result.outcome === 'blocked')
-            envelope.diagnostics.errors.push({
-              code: 'TRANSFORM_DELETE_CONFIRMATION_REQUIRED',
-              message: 'Pass --confirm-delete to delete; nothing was changed.',
-              retryable: false,
-            });
-          return finish();
-        } catch (error) {
-          item.outcome = dispatched ? 'failed' : 'blocked';
-          item.mutation = dispatched ? 'unknown' : 'not-attempted';
-          envelope.status = dispatched ? 'failed' : 'blocked';
-          throw error;
+      } else if (targetId !== undefined) throw new DloError('INVALID_SELECTION');
+      if (flags['delete-dlo'] && !has('data-stream'))
+        throw new DataStreamError('STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION');
+      if (new Set(sourceSelectors).size !== sourceSelectors.length)
+        throw new DloError('INVALID_SELECTION');
+      if (!gitMode)
+        for (const selector of sourceSelectors) {
+          const pattern = sourcePatterns[familyOf(selector)];
+          if (pattern && !sourceDirectories.some((value) => pattern.test(value)))
+            throw new DloError('INVALID_SELECTION');
         }
-      }
-      if (flags['transform-target-id'] !== undefined) throw new DloError('INVALID_SELECTION');
+      if (sourceSelectors.length === 0 && sourceDirectories.length > 0)
+        throw new DloError('INVALID_SELECTION');
       if (
-        flags.metadata?.some(
-          (selector) => selector === 'segment' || selector.startsWith('segment:'),
-        )
-      ) {
-        if (
-          flags.metadata.length !== 1 ||
-          !/^segment:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(flags.metadata[0]) ||
-          flags['delete-dlo'] ||
-          typeof flags['source-dir'] !== 'string' ||
-          !flags['source-dir'].endsWith('.segment.json')
-        )
-          throw new DloError('INVALID_SELECTION');
-        if (
-          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
-          effectiveScope !== 'default'
-        )
-          throw new DloError('INVALID_SCOPE');
-        const snapshot = JSON.stringify(flags);
-        const inputs = await this.resolveInputs({
-          cwd: process.cwd(),
-          sourceDir: [flags['source-dir']],
-        });
-        if (inputs.length !== 1 || inputs[0].document.kind !== 'segment')
-          throw new DloError('INVALID_SELECTION');
-        const input = inputs[0] as SegmentDeployInput;
-        const desired = validateSegmentDocument(input.document);
-        if (flags.metadata[0] !== `segment:${desired.identity.apiName}`)
-          throw new DloError('INVALID_SELECTION');
-        const verifyInput = async (): Promise<void> => {
-          if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
-          await this.verifySegmentInput(input);
-        };
-        await verifyInput();
-        const connection = await this.resolveConnection(flags['target-org']);
-        await verifyInput();
-        envelope.metadata.apiVersion = '68.0';
-        envelope.diagnostics.warnings.push(
-          'Segment definition deletion only. Selected source compatibility is checked; exhaustive external-consumer exclusion and physical membership/output cleanup remain unverified. No shared DMO is deleted.',
-        );
-        const result = await this.deleteSegment(
-          desired,
-          connection,
-          { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
-          'default',
-          { preview: flags.preview, confirmDelete: flags['confirm-delete'] === true, verifyInput },
-        );
-        const item = {
-          ...result,
-          identity: desired.identity,
-          operation: flags.preview ? ('preview' as const) : ('delete' as const),
-          routes: [
-            { operation: 'segments.delete', apiVersion: '68.0', transport: 'native' as const },
-            { operation: 'segments.get', apiVersion: '68.0', transport: 'native' as const },
-            { operation: 'dependency.read', apiVersion: '68.0', transport: 'native' as const },
-            {
-              operation: 'dependency.metadata',
-              apiVersion: '68.0',
-              transport: 'metadata' as const,
-            },
-          ],
-        };
-        envelope.result.items.push(item);
-        selectorsByItem.set(item, flags.metadata[0]);
-        await track(item, sourceFiles([input.path]));
-        envelope.status =
-          result.outcome === 'failed'
-            ? 'failed'
-            : result.outcome === 'blocked'
-              ? 'blocked'
-              : 'success';
-        envelope.diagnostics.errors.push(
-          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
-        );
-        return finish();
-      }
-      if (
-        flags.metadata?.some(
-          (selector) =>
-            selector === 'identity-resolution' || selector.startsWith('identity-resolution:'),
-        )
-      ) {
-        if (
-          flags.metadata.length !== 1 ||
-          !identityResolutionName.test(flags.metadata[0].slice('identity-resolution:'.length)) ||
-          flags['delete-dlo'] ||
-          typeof flags['source-dir'] !== 'string' ||
-          !flags['source-dir'].endsWith('.identityResolution.json')
-        )
-          throw new DloError('INVALID_SELECTION');
-        if (
-          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
-          effectiveScope !== 'default'
-        )
-          throw new DloError('INVALID_SCOPE');
-        const snapshot = JSON.stringify(flags);
-        const inputs = await this.resolveInputs({
-          cwd: process.cwd(),
-          sourceDir: [flags['source-dir']],
-        });
-        if (inputs.length !== 1 || inputs[0].document.kind !== 'identity-resolution')
-          throw new DloError('INVALID_SELECTION');
-        const input = inputs[0] as IdentityResolutionDeployInput;
-        const desired = nativeIdentityResolutionDocument(input.document);
-        if (flags.metadata[0] !== `identity-resolution:${desired.identity.apiName}`)
-          throw new DloError('INVALID_SELECTION');
-        const verifyInput = async (): Promise<void> => {
-          if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
-          await this.verifyIdentityResolutionInput(input);
-        };
-        await verifyInput();
-        const connection = await this.resolveConnection(flags['target-org']);
-        await verifyInput();
-        envelope.metadata.apiVersion = '68.0';
-        envelope.diagnostics.warnings.push(
-          'IR owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified; no generated DMO or source DMO/DLO is manually deleted.',
-        );
-        const result = await this.deleteIdentityResolution(
-          desired,
-          connection,
-          { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
-          'default',
-          {
-            preview: flags.preview,
-            confirmDelete: flags['confirm-delete'] === true,
-            verifyInput,
-          },
-        );
-        const item = {
-          ...result,
-          identity: desired.identity,
-          operation: flags.preview ? ('preview' as const) : ('delete' as const),
-          routes: [
-            {
-              operation: 'identity-resolutions.delete',
-              apiVersion: '68.0',
-              transport: 'native' as const,
-            },
-            {
-              operation: 'identity-resolutions.get',
-              apiVersion: '68.0',
-              transport: 'native' as const,
-            },
-            { operation: 'dependency.get', apiVersion: '68.0', transport: 'native' as const },
-            {
-              operation: 'dependency.metadata',
-              apiVersion: '68.0',
-              transport: 'metadata' as const,
-            },
-          ],
-        };
-        envelope.result.items.push(item);
-        selectorsByItem.set(item, flags.metadata[0]);
-        await track(item, sourceFiles([input.path]));
-        envelope.status =
-          result.outcome === 'failed'
-            ? 'failed'
-            : result.outcome === 'blocked'
-              ? 'blocked'
-              : 'success';
-        envelope.diagnostics.errors.push(
-          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
-        );
-        return finish();
-      }
-      if (
-        flags.metadata?.some(
-          (selector) => selector === 'data-graph' || selector.startsWith('data-graph:'),
-        )
-      ) {
-        if (
-          flags.metadata.length !== 1 ||
-          !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(flags.metadata[0]) ||
-          flags['delete-dlo'] ||
-          !flags['source-dir']
-        )
-          throw new DloError('INVALID_SELECTION');
+        (has('segment') || has('identity-resolution') || has('calculated-insight')) &&
+        (!['auto', '68.0'].includes(flags['api-version'] ?? 'auto') || effectiveScope !== 'default')
+      )
+        throw new DloError('INVALID_SCOPE');
+      if (has('data-graph')) {
         try {
           operationApiVersion(flags['api-version'] ?? 'auto', 'data-graph');
         } catch {
           throw new DloError('INVALID_SCOPE');
         }
         if (effectiveScope !== 'default') throw new DloError('INVALID_SCOPE');
-        const inputs = await this.resolveInputs({
+      }
+      const streamSelectors = Object.freeze(
+        // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh selection within the ES2022 library target.
+        [...new Set(selectors.filter((selector) => familyOf(selector) === 'data-stream'))].sort(),
+      );
+      let streamVersion = '68.0';
+      if (streamSelectors.length > 0) {
+        if (effectiveScope !== 'default') throw new DataStreamError('INVALID_STREAM_BINDING');
+        streamVersion = dataStreamApiVersion(flags['api-version']);
+      }
+      const nativeSelectors = [
+        ...new Set(selectors.filter((selector) => nativeFamilies.has(familyOf(selector)))),
+      ];
+      let nativeVersion = '68.0';
+      if (nativeSelectors.length > 0)
+        try {
+          nativeVersion = nativeApiVersion(flags['api-version']);
+        } catch {
+          throw new DloError('INVALID_SCOPE');
+        }
+      const snapshot = JSON.stringify(flags);
+      // Each source family selector is backed by exactly one --source-dir input, and every input
+      // is named by a selector.
+      const admitted = new Map<string, AdmittedSource>();
+      // A file deleted in the range names its component in its own (base) data space.
+      for (const candidate of gitDeletions)
+        if (candidate.identity.dataSpace !== effectiveScope) throw new DloError('INVALID_SCOPE');
+      const familyError = (family: DeleteFamily): Error =>
+        family === 'data-transform'
+          ? new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION')
+          : new DloError('INVALID_SELECTION');
+      if (gitMode)
+        // The base document stands in for the file: the same family checks as --source-dir.
+        for (const [selector, candidate] of gitBySelector) {
+          if (!sourceFamilies.has(candidate.family)) continue;
+          const input = {
+            path: candidate.path,
+            ...(candidate.companionPath === undefined
+              ? {}
+              : { companionPath: candidate.companionPath }),
+            document: candidate.document,
+            inputDigest: candidate.baseDigest,
+          } as DeployInput;
+          const source = admitSourceInput(input);
+          if (source.selector !== selector) throw familyError(source.family);
+          admitted.set(selector, { input, desired: source.desired });
+        }
+      else if (sourceSelectors.length > 0) {
+        for (const input of await this.resolveInputs({
           cwd: process.cwd(),
-          sourceDir: [flags['source-dir']],
-        });
-        if (inputs.length !== 1 || inputs[0].document.kind !== 'native-data-graph')
-          throw new DloError('INVALID_SELECTION');
-        const input = inputs[0] as NativeDataGraphDeployInput;
-        const name = input.document.definition.name as string;
-        if (flags.metadata[0] !== `data-graph:${name}`) throw new DloError('INVALID_SELECTION');
-        const snapshot = JSON.stringify(flags);
+          sourceDir: sourceDirectories,
+        })) {
+          const source = admitSourceInput(input);
+          if (!sourceSelectors.includes(source.selector) || admitted.has(source.selector))
+            throw familyError(source.family);
+          admitted.set(source.selector, { input, desired: source.desired });
+        }
+        for (const selector of sourceSelectors)
+          if (!admitted.has(selector)) throw familyError(familyOf(selector));
+      }
+      const planInputs: DeletePlanInput[] = [
+        ...[...admitted].map(([selector, source]) => ({
+          path: source.input.path,
+          document: source.input.document,
+          selector,
+          source,
+          ...(gitBySelector.has(selector) ? { git: gitBySelector.get(selector) } : {}),
+        })),
+        ...[...streamSelectors, ...nativeSelectors].map((selector) => ({
+          path: selector,
+          selector,
+          document: { kind: familyOf(selector), identity: { apiName: selectorName(selector) } },
+          ...(gitBySelector.has(selector) ? { git: gitBySelector.get(selector) } : {}),
+        })),
+      ];
+      // A Git delete, or a delete that spans more than one phase, is never an implicit
+      // destructive run.
+      if (
+        !flags.preview &&
+        flags['confirm-delete'] !== true &&
+        (gitMode || new Set(planInputs.map((input) => crudPhase(input))).size > 1)
+      ) {
+        const error = new DloError('DESTRUCTIVE_CONFIRMATION_REQUIRED');
+        replaceExplanation(
+          error,
+          gitMode
+            ? 'Files deleted in the Git range are deleted in the org only with --confirm-delete. Check the selection with --preview, then rerun with --confirm-delete. Nothing was deleted.'
+            : 'This delete spans more than one phase (streams, native DLO/DMO/mapping/relationship, transforms, identity resolution/calculated insight/Segment, graphs). Check it with --preview, then rerun with --confirm-delete. Nothing was deleted.',
+        );
+        throw error;
+      }
+      // Right before each stage: a file deleted in the range must still be gone.
+      const stillDeleted = async (candidate: GitDeleteCandidate | undefined): Promise<void> => {
+        if (candidate === undefined) return;
+        for (const file of [candidate.path, candidate.companionPath])
+          if (file !== undefined && (await localFilePresent(file)))
+            throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
+      };
+      let connection: Connection | undefined;
+      const connect = async (): Promise<Connection> => {
+        connection ??= await this.resolveConnection(flags['target-org']);
+        return connection;
+      };
+      let username: string | undefined;
+      const resolveUsername = async (): Promise<string> => {
+        username ??= await this.resolveTarget(flags['target-org']);
+        return username;
+      };
+      // A transform deleted in the Git range has no --transform-target-id: its name from the base
+      // content must match exactly one transform in the org. Resolved here (read-only, preview
+      // too), so a refusal comes before any phase deletes anything.
+      for (const input of planInputs)
+        if (input.git && familyOf(input.selector) === 'data-transform') {
+          const target = await connect();
+          if (!target.getUsername()) throw new DloError('TARGET_ORG_REQUIRED');
+          input.transformTargetId = await resolveDataTransformTargetId(
+            this.createDataTransformClient(target, '68.0', 'default'),
+            selectorName(input.selector),
+          );
+        }
+      let streamClients: Parameters<typeof executeDeleteDataStream>[1] | undefined;
+      const streamClientsFor = async (): Promise<Parameters<typeof executeDeleteDataStream>[1]> => {
+        streamClients ??= await this.createDataStreamClients(
+          await resolveUsername(),
+          streamVersion,
+        );
+        return streamClients;
+      };
+      // A selected stream owns its landing DLO: when both are selected, the stream is deleted
+      // with --delete-dlo semantics and the DLO is never deleted on its own (read-only lookup).
+      const pairedDlo = new Map<string, string>();
+      if (streamSelectors.length > 0 && nativeSelectors.some((value) => value.startsWith('dlo:')))
+        for (const selector of streamSelectors) {
+          const linked = await (this.readStreamLinkedDlo ?? readStreamLinkedDlo)(
+            selectorName(selector),
+            await streamClientsFor(),
+          );
+          const dlo = nativeSelectors.find(
+            (value) =>
+              value.startsWith('dlo:') &&
+              typeof linked === 'string' &&
+              selectorName(value).toLowerCase() === linked.toLowerCase(),
+          );
+          if (dlo) pairedDlo.set(selectorName(selector), dlo);
+        }
+      const pairedSelectors = new Set(pairedDlo.values());
+      const stageInputs = planInputs.filter((input) => !pairedSelectors.has(input.selector));
+      const stages = planDeleteStages(stageInputs);
+      const dependents = selectedDependents(stageInputs);
+      const keyOfSelector = new Map(planInputs.map((input) => [input.selector, inputKey(input)]));
+
+      const runGraph = async (entry: DeletePlanInput): Promise<StageStatus> => {
+        const input = entry.source?.input as NativeDataGraphDeployInput;
+        const name = selectorName(entry.selector);
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
-          await verifyNativeDataGraphInputDigest(input);
+          await (entry.git
+            ? stillDeleted(entry.git)
+            : (this.verifyNativeDataGraphInput ?? verifyNativeDataGraphInputDigest)(input));
         };
         await verifyInput();
-        const connection = await this.resolveConnection(flags['target-org']);
-        const context = await this.nativeGraphContext(connection, 'default');
+        const target = await connect();
+        const context = await this.nativeGraphContext(target, 'default');
         envelope.metadata.apiVersion = '68.0';
-        envelope.diagnostics.warnings.push(nativeGraphLimitations);
+        warn(nativeGraphLimitations);
         const result = await this.operateNativeGraph(
           input.document,
           context,
-          this.nativeGraphClient(connection, '68.0', 'default'),
+          this.nativeGraphClient(target, '68.0', 'default'),
           {
             operation: 'delete',
             preview: flags.preview,
@@ -1204,7 +1453,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             verifyInput,
           },
         );
-        const item: DeleteEnvelope['result']['items'][number] = {
+        const item: DeleteItem = {
+          family: 'data-graph',
           identity: { dataSpace: 'default', apiName: name },
           operation: flags.preview ? 'preview' : 'delete',
           outcome:
@@ -1228,15 +1478,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           routes: [{ operation: 'data-graph.delete', apiVersion: '68.0', transport: 'native' }],
         };
         envelope.result.items.push(item);
-        selectorsByItem.set(item, flags.metadata[0]);
+        selectorsByItem.set(item, entry.selector);
         await track(item, sourceFiles([input.path]));
-        envelope.status =
+        const status =
           result.outcome === 'failed'
             ? 'failed'
             : result.outcome === 'blocked'
               ? 'blocked'
               : 'success';
-        if (result.outcome === 'failed' || result.outcome === 'blocked')
+        if (status !== 'success')
           envelope.diagnostics.errors.push({
             code: 'DELETE_FAILED',
             message: operationDiagnostic(
@@ -1245,54 +1495,228 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             ),
             retryable: false,
           });
-        return finish();
-      }
-      const ciSelection = flags.metadata?.some(
-        (selector) =>
-          selector === 'calculated-insight' || selector.startsWith('calculated-insight:'),
-      );
-      if (ciSelection) {
-        if (
-          flags.metadata.length !== 1 ||
-          !/^calculated-insight:[A-Za-z][A-Za-z0-9_]*__cio$/u.test(flags.metadata[0]) ||
-          flags['delete-dlo']
-        )
-          throw new DloError('INVALID_SELECTION');
-        if (
-          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
-          effectiveScope !== 'default'
-        )
-          throw new DloError('INVALID_SCOPE');
-        const source = flags['source-dir'];
-        if (
-          typeof source !== 'string' ||
-          !source ||
-          !/\.(?:calculatedInsight\.json|mktCalcInsightObjectDef-meta\.xml)$/u.test(source)
-        )
-          throw new DloError('INVALID_SELECTION');
-        const snapshot = JSON.stringify(flags);
-        const inputs = await this.resolveInputs({ cwd: process.cwd(), sourceDir: [source] });
-        if (inputs.length !== 1 || inputs[0].document.kind !== 'calculated-insight')
-          throw new DloError('INVALID_SELECTION');
-        const input = inputs[0] as CalculatedInsightDeployInput;
-        const desired = validateCalculatedInsightDocument(input.document);
-        if (
-          flags.metadata[0] !== `calculated-insight:${desired.identity.apiName}` ||
-          desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED'
-        )
-          throw new DloError('INVALID_SELECTION');
+        return status;
+      };
+
+      const runTransform = async (entry: DeletePlanInput): Promise<StageStatus> => {
+        const input = entry.source?.input as DataTransformDeployInput;
+        const desired = entry.source?.desired as ReturnType<typeof validateDataTransformDocument>;
+        const name = selectorName(entry.selector);
         const verifyInput = async (): Promise<void> => {
-          if (JSON.stringify(flags) !== snapshot) throw new DloError('CI_INPUT_DRIFT');
-          await this.verifyCalculatedInsightInput(input);
+          if (JSON.stringify(flags) !== snapshot)
+            throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
+          await (entry.git ? stillDeleted(entry.git) : this.verifyDataTransformInput(input));
         };
         await verifyInput();
-        const connection = await this.resolveConnection(flags['target-org']);
-        const context = this.calculatedInsightContext(connection, 'default');
+        const item: DeleteItem = {
+          family: 'data-transform',
+          identity: { dataSpace: 'default', apiName: name },
+          operation: flags.preview ? 'preview' : 'delete',
+          outcome: 'blocked',
+          mutation: 'not-attempted',
+          routes: flags.preview
+            ? [
+                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+                { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
+              ]
+            : [
+                { operation: 'data-transform.delete', apiVersion: '68.0', transport: 'native' },
+                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+                { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
+              ],
+        };
+        selectorsByItem.set(item, entry.selector);
+        envelope.result.items.push(item);
+        envelope.metadata.apiVersion = '68.0';
+        let dispatched = false;
+        try {
+          const target = await connect();
+          if (!target.getUsername()) throw new DloError('TARGET_ORG_REQUIRED');
+          await verifyInput();
+          const base = this.createDataTransformClient(target, '68.0', 'default');
+          const client = {
+            ...base,
+            delete: async (value: string): Promise<void> => {
+              dispatched = true;
+              await base.delete(value);
+            },
+          };
+          warn(
+            'Transform definition deletion only. Settlement uses bounded visible inventory and preserved source/output DLOs; exhaustive external-consumer exclusion is not established. No DLO, run, schedule or data cleanup; no retry, atomic concurrency guarantee or fallback.',
+          );
+          const result = await this.deleteDataTransform(
+            desired,
+            client,
+            this.createDataTransformDloReader(target),
+            {
+              // A transform deleted in the Git range: the ID resolved during admission.
+              targetId: entry.transformTargetId ?? (targetId as string),
+              preview: flags.preview,
+              confirmDelete: flags['confirm-delete'] === true,
+              verifyInput,
+            },
+          );
+          item.outcome = result.outcome === 'preview' ? 'delete' : result.outcome;
+          item.mutation = result.mutation;
+          if (result.prerequisitesPreserved) item.prerequisitesPreserved = true;
+          await track(item, sourceFiles([input.path]));
+          if (result.outcome === 'deletion-unconfirmed') {
+            envelope.diagnostics.errors.push({
+              code: 'TRANSFORM_DELETE_UNCONFIRMED',
+              message:
+                'DELETE outcome is not confirmed. Do not replay; reconcile by reading the Transform inventory before any further action.',
+              retryable: false,
+            });
+            return 'failed';
+          }
+          if (result.outcome === 'blocked') {
+            envelope.diagnostics.errors.push({
+              code: 'TRANSFORM_DELETE_CONFIRMATION_REQUIRED',
+              message: 'Pass --confirm-delete to delete; nothing was changed.',
+              retryable: false,
+            });
+            return 'blocked';
+          }
+          return 'success';
+        } catch (error) {
+          item.outcome = dispatched ? 'failed' : 'blocked';
+          item.mutation = dispatched ? 'unknown' : 'not-attempted';
+          envelope.status = dispatched ? 'failed' : 'blocked';
+          throw error;
+        }
+      };
+
+      // Record an owner-family result (Segment, IR, CI) as its item; map it to the stage status.
+      const settleOwner = async (
+        result: { outcome: string; diagnostics: Array<{ code: string; message: string }> },
+        item: DeleteItem,
+        selector: string,
+        files: LocalFileCandidate[],
+      ): Promise<StageStatus> => {
+        envelope.result.items.push(item);
+        selectorsByItem.set(item, selector);
+        await track(item, files);
+        envelope.diagnostics.errors.push(
+          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
+        );
+        return result.outcome === 'failed'
+          ? 'failed'
+          : result.outcome === 'blocked'
+            ? 'blocked'
+            : 'success';
+      };
+
+      const runSegment = async (entry: DeletePlanInput): Promise<StageStatus> => {
+        const input = entry.source?.input as SegmentDeployInput;
+        const desired = entry.source?.desired as ReturnType<typeof validateSegmentDocument>;
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
+          await (entry.git ? stillDeleted(entry.git) : this.verifySegmentInput(input));
+        };
+        await verifyInput();
+        const target = await connect();
+        await verifyInput();
+        envelope.metadata.apiVersion = '68.0';
+        warn(
+          'Segment definition deletion only. Selected source compatibility is checked; exhaustive external-consumer exclusion and physical membership/output cleanup remain unverified. No shared DMO is deleted.',
+        );
+        const result = await this.deleteSegment(
+          desired,
+          target,
+          { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
+          'default',
+          { preview: flags.preview, confirmDelete: flags['confirm-delete'] === true, verifyInput },
+        );
+        const item = {
+          ...result,
+          family: 'segment' as const,
+          identity: desired.identity,
+          operation: flags.preview ? ('preview' as const) : ('delete' as const),
+          routes: [
+            { operation: 'segments.delete', apiVersion: '68.0', transport: 'native' as const },
+            { operation: 'segments.get', apiVersion: '68.0', transport: 'native' as const },
+            { operation: 'dependency.read', apiVersion: '68.0', transport: 'native' as const },
+            {
+              operation: 'dependency.metadata',
+              apiVersion: '68.0',
+              transport: 'metadata' as const,
+            },
+          ],
+        };
+        return settleOwner(result, item, entry.selector, sourceFiles([input.path]));
+      };
+
+      const runIdentityResolution = async (entry: DeletePlanInput): Promise<StageStatus> => {
+        const input = entry.source?.input as IdentityResolutionDeployInput;
+        const desired = entry.source?.desired as ReturnType<
+          typeof nativeIdentityResolutionDocument
+        >;
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
+          await (entry.git ? stillDeleted(entry.git) : this.verifyIdentityResolutionInput(input));
+        };
+        await verifyInput();
+        const target = await connect();
+        await verifyInput();
+        envelope.metadata.apiVersion = '68.0';
+        warn(
+          'IR owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified; no generated DMO or source DMO/DLO is manually deleted.',
+        );
+        const result = await this.deleteIdentityResolution(
+          desired,
+          target,
+          { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
+          'default',
+          {
+            preview: flags.preview,
+            confirmDelete: flags['confirm-delete'] === true,
+            verifyInput,
+          },
+        );
+        const item = {
+          ...result,
+          family: 'identity-resolution' as const,
+          identity: desired.identity,
+          operation: flags.preview ? ('preview' as const) : ('delete' as const),
+          routes: [
+            {
+              operation: 'identity-resolutions.delete',
+              apiVersion: '68.0',
+              transport: 'native' as const,
+            },
+            {
+              operation: 'identity-resolutions.get',
+              apiVersion: '68.0',
+              transport: 'native' as const,
+            },
+            { operation: 'dependency.get', apiVersion: '68.0', transport: 'native' as const },
+            {
+              operation: 'dependency.metadata',
+              apiVersion: '68.0',
+              transport: 'metadata' as const,
+            },
+          ],
+        };
+        return settleOwner(result, item, entry.selector, sourceFiles([input.path]));
+      };
+
+      const runCalculatedInsight = async (entry: DeletePlanInput): Promise<StageStatus> => {
+        const input = entry.source?.input as CalculatedInsightDeployInput;
+        const desired = entry.source?.desired as ReturnType<
+          typeof validateCalculatedInsightDocument
+        >;
+        const verifyInput = async (): Promise<void> => {
+          if (JSON.stringify(flags) !== snapshot) throw new DloError('CI_INPUT_DRIFT');
+          await (entry.git ? stillDeleted(entry.git) : this.verifyCalculatedInsightInput(input));
+        };
+        await verifyInput();
+        const target = await connect();
+        const context = this.calculatedInsightContext(target, 'default');
         await verifyInput();
         this.calculatedInsightObservations = [];
         const result = await this.deleteCalculatedInsight(
           desired,
-          connection,
+          target,
           { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
           'default',
           {
@@ -1307,6 +1731,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         );
         const item = {
           ...result,
+          family: 'calculated-insight' as const,
           identity: desired.identity,
           operation: flags.preview ? ('preview' as const) : ('delete' as const),
           routes: [
@@ -1333,38 +1758,16 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             },
           ],
         };
-        envelope.result.items.push(item);
-        selectorsByItem.set(item, flags.metadata[0]);
-        await track(item, sourceFiles([input.path, input.companionPath]));
-        envelope.status =
-          result.outcome === 'failed'
-            ? 'failed'
-            : result.outcome === 'blocked'
-              ? 'blocked'
-              : 'success';
-        envelope.diagnostics.errors.push(
-          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
+        return settleOwner(
+          result,
+          item,
+          entry.selector,
+          sourceFiles([input.path, input.companionPath]),
         );
-        return finish();
-      }
-      if (flags['source-dir'] !== undefined || flags['confirm-delete'])
-        throw new DloError('INVALID_SELECTION');
-      const streamSelection = flags.metadata?.some(
-        (selector) => selector === 'data-stream' || selector.startsWith('data-stream:'),
-      );
-      if (streamSelection) {
-        if (
-          !flags.metadata.every((selector) =>
-            /^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(selector),
-          )
-        )
-          throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
-        if (effectiveScope !== 'default') throw new DataStreamError('INVALID_STREAM_BINDING');
-        const version = dataStreamApiVersion(flags['api-version']);
-        envelope.metadata.apiVersion = version;
-        // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh selection within the ES2022 library target.
-        const selected = Object.freeze([...new Set(flags.metadata)].sort());
-        const snapshot = JSON.stringify({
+      };
+
+      const streamSnapshot = (): string =>
+        JSON.stringify({
           metadata: flags.metadata,
           version: flags['api-version'],
           scope: flags.dataspace,
@@ -1372,382 +1775,504 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           preview: flags.preview,
           target: flags['target-org'],
         });
+      // The stream's file, and when its DLO goes too, the file of that DLO.
+      const streamFiles = (
+        apiName: string,
+        deleteDlo: boolean,
+        dlo: unknown,
+      ): LocalFileCandidate[] => [
+        inProject('data-stream', `${apiName}.data-stream-meta.json`),
+        ...(deleteDlo && typeof dlo === 'string' && dloName.test(dlo)
+          ? [inProject('dlo', `${dlo}.dlo-meta.json`)]
+          : []),
+      ];
+      const runStreams = async (selected: string[]): Promise<StageStatus> => {
+        envelope.metadata.apiVersion = streamVersion;
+        const expected = streamSnapshot();
         const verifyInput = async (): Promise<void> => {
-          if (
-            JSON.stringify({
-              metadata: flags.metadata,
-              version: flags['api-version'],
-              scope: flags.dataspace,
-              cascade: flags['delete-dlo'],
-              preview: flags.preview,
-              target: flags['target-org'],
-            }) !== snapshot
-          )
-            throw new DataStreamError('STREAM_DELETE_INPUT_DRIFT');
+          if (streamSnapshot() !== expected) throw new DataStreamError('STREAM_DELETE_INPUT_DRIFT');
         };
         await verifyInput();
-        const target = await this.resolveTarget(flags['target-org']);
-        const clients = await this.createDataStreamClients(target, version);
-        // The stream's file, and with --delete-dlo the file of the linked DLO deleted with it.
-        const streamFiles = (apiName: string, dlo: unknown): LocalFileCandidate[] => [
-          inProject('data-stream', `${apiName}.data-stream-meta.json`),
-          ...(flags['delete-dlo'] && typeof dlo === 'string' && dloName.test(dlo)
-            ? [inProject('dlo', `${dlo}.dlo-meta.json`)]
-            : []),
-        ];
+        const clients = await streamClientsFor();
         for (const selector of selected) {
-          const apiName = selector.slice('data-stream:'.length);
-          const item: DeleteEnvelope['result']['items'][number] = {
+          const apiName = selectorName(selector);
+          const ownedDlo = pairedDlo.get(apiName);
+          const deleteDlo = flags['delete-dlo'] === true || ownedDlo !== undefined;
+          const item: DeleteItem = {
+            family: 'data-stream',
             identity: { apiName, dataSpace: 'default' },
             operation: flags.preview ? 'preview' : 'delete',
             outcome: 'blocked',
             mutation: 'not-attempted',
-            deleteDlo: flags['delete-dlo'] === true,
+            deleteDlo,
             routes: [
-              { operation: 'data-stream.delete', transport: 'native', apiVersion: version },
-              { operation: 'dlo.get', transport: 'native', apiVersion: version },
-              { operation: 'dependency.read', transport: 'native', apiVersion: version },
+              { operation: 'data-stream.delete', transport: 'native', apiVersion: streamVersion },
+              { operation: 'dlo.get', transport: 'native', apiVersion: streamVersion },
+              { operation: 'dependency.read', transport: 'native', apiVersion: streamVersion },
             ],
           };
           selectorsByItem.set(item, selector);
           envelope.result.items.push(item);
+          // The selected landing DLO is reported with the stream's outcome; no separate call.
+          const reportOwnedDlo = (): void => {
+            if (ownedDlo === undefined) return;
+            const owned: DeleteItem = {
+              family: 'dlo',
+              identity: { dataSpace: 'default', apiName: selectorName(ownedDlo) },
+              operation: item.operation,
+              outcome: item.outcome,
+              mutation: item.mutation,
+              removedWith: selector,
+            };
+            selectorsByItem.set(owned, ownedDlo);
+            envelope.result.items.push(owned);
+          };
           await verifyInput();
-          const options = { deleteDlo: flags['delete-dlo'] === true, verifyInput };
+          const options = { deleteDlo, verifyInput };
           if (flags.preview) {
             const preview = await this.preflightDeleteDataStream(apiName, clients, options);
             await verifyInput();
             item.outcome = preview.outcome;
             await track(
               item,
-              streamFiles(apiName, 'targetDloName' in preview ? preview.targetDloName : undefined),
+              streamFiles(
+                apiName,
+                deleteDlo,
+                'targetDloName' in preview ? preview.targetDloName : undefined,
+              ),
             );
+            reportOwnedDlo();
           } else {
             const result = await this.executeDeleteDataStream(apiName, clients, options);
             item.outcome = result.outcome;
             item.mutation = result.mutation;
             if ('targetApiName' in result) item.targetApiName = result.targetApiName;
             if ('targetDloName' in result) item.targetDloName = result.targetDloName;
-            await track(item, streamFiles(apiName, item.targetDloName));
+            await track(item, streamFiles(apiName, deleteDlo, item.targetDloName));
+            reportOwnedDlo();
             if (result.outcome !== 'deleted') {
-              envelope.status = result.outcome;
               envelope.diagnostics.errors.push(...result.diagnostics);
-              return finish();
+              return result.outcome;
             }
           }
         }
-        envelope.status = 'success';
-        return finish();
-      }
-      if (flags['delete-dlo'])
-        throw new DataStreamError('STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION');
-      if (
-        !flags.metadata?.length ||
-        flags.metadata.some(
-          (value) =>
-            !(value.startsWith('dlo:') && dloName.test(value.slice(4))) &&
-            !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))) &&
-            !(value.startsWith('mapping:') && nativeMappingName.test(value.slice(8))) &&
-            !(value.startsWith('relationship:') && nativeRelationshipName.test(value.slice(13))),
-        )
-      )
-        throw new DloError('INVALID_SELECTION');
-      let version: string;
-      try {
-        version = nativeApiVersion(flags['api-version']);
-      } catch {
-        throw new DloError('INVALID_SCOPE');
-      }
-      // Dependents go first: relationships (which need their DMOs), mappings, then DMOs (which
-      // take their mappings along), then DLOs.
-      const familyOrder = (selector: string): number =>
-        selector.startsWith('relationship:')
-          ? 0
-          : selector.startsWith('mapping:')
-            ? 1
-            : selector.startsWith('dmo:')
-              ? 2
-              : 3;
-      // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the ES2022 library target.
-      const selectors = [...new Set(flags.metadata)].sort(
-        (a, b) => familyOrder(a) - familyOrder(b),
-      );
-      const target = await this.resolveTarget(flags['target-org']);
-      // A DLO dependent is covered when this command deletes it: its DMO, or every mapping
-      // between the DLO and that DMO.
-      const coveredBySelection =
-        (dlo: string) =>
-        async (dependent: DloDependent): Promise<boolean> => {
-          if (dependent.componentType !== 'DataModelObject') return false;
-          if (selectors.includes(`dmo:${dependent.name}`)) return true;
-          if (!nativeDmoName.test(dependent.name)) return false;
-          let names: string[] = [];
-          try {
-            const reader = (this.createMappingClient ?? createMappingClient)(
-              target,
-              version,
-              undefined,
-              requestScope,
-              this.createMappingSender(target, version),
+        return 'success';
+      };
+
+      const runNative = async (selected: string[]): Promise<StageStatus> => {
+        const version = nativeVersion;
+        // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the ES2022 library target.
+        const ordered = [...selected].sort((a, b) => nativeOrder(a) - nativeOrder(b));
+        const target = await resolveUsername();
+        // A DLO dependent is covered when this command deletes it: its DMO, or every mapping
+        // between the DLO and that DMO.
+        const coveredBySelection =
+          (dlo: string) =>
+          async (dependent: DloDependent): Promise<boolean> => {
+            if (dependent.componentType !== 'DataModelObject') return false;
+            if (nativeSelectors.includes(`dmo:${dependent.name}`)) return true;
+            if (!nativeDmoName.test(dependent.name)) return false;
+            let names: string[] = [];
+            try {
+              const reader = (this.createMappingClient ?? createMappingClient)(
+                target,
+                version,
+                undefined,
+                requestScope,
+                this.createMappingSender(target, version),
+              );
+              names = unwrapNativeMappingCollection(
+                await reader.list(dependent.name, dlo),
+                requestScope,
+              ).map((entry) => String(entry.developerName));
+            } catch {
+              return false;
+            }
+            return (
+              names.length > 0 && names.every((name) => nativeSelectors.includes(`mapping:${name}`))
             );
-            names = unwrapNativeMappingCollection(
-              await reader.list(dependent.name, dlo),
-              requestScope,
-            ).map((entry) => String(entry.developerName));
-          } catch {
-            return false;
-          }
-          return names.length > 0 && names.every((name) => selectors.includes(`mapping:${name}`));
-        };
-      // Every selected DLO's dependents are checked before the command's first write.
-      const admittedDependents = new Map<string, DloDependent[]>();
-      for (const selector of selectors.filter((value) => value.startsWith('dlo:'))) {
-        const name = selector.slice(4);
-        try {
-          admittedDependents.set(
-            name,
-            await admitDloDependents(
-              name,
-              this.createDloNativeDeleteClient(target, version) as DloDeleteClient,
-              coveredBySelection(name),
-            ),
-          );
-        } catch (error) {
-          // An absent DLO has nothing to check; the item loop reports it unchanged.
-          if (
-            error instanceof DloError &&
-            error.code === 'DLO_HTTP_ERROR' &&
-            error.status === 404
-          ) {
-            admittedDependents.set(name, []);
-            continue;
-          }
-          const blocked: DeleteEnvelope['result']['items'][number] = {
-            identity: { dataSpace: effectiveScope, apiName: name },
-            operation: flags.preview ? 'preview' : 'delete',
-            outcome: 'blocked',
-            mutation: 'not-attempted',
           };
-          selectorsByItem.set(blocked, selector);
-          envelope.result.items.push(blocked);
-          throw error;
-        }
-      }
-      for (const selector of selectors) {
-        if (selector.startsWith('relationship:')) {
-          await this.deleteOneRelationship(
-            selector,
-            target,
-            version,
-            flags.preview,
-            requestScope,
-            envelope,
-            selectorsByItem,
-            track,
-          );
-          continue;
-        }
-        const native = selector.startsWith('dmo:');
-        const mapping = selector.startsWith('mapping:');
-        const apiName = selector.slice(selector.indexOf(':') + 1);
-        const baseClient = mapping
-          ? (this.createMappingClient ?? createMappingClient)(
-              target,
-              version,
-              undefined,
-              requestScope,
-              this.createMappingSender(target, version),
-            )
-          : native
-            ? this.createDmoNativeDeleteClient(target, version)
-            : this.createDloNativeDeleteClient(target, version);
-        let dispatched = false;
-        // Salesforce's own 4xx answer to the DELETE means nothing was deleted.
-        let refusal: unknown;
-        const client = mapping
-          ? baseClient
-          : {
-              ...baseClient,
-              delete: async (id: string): Promise<void> => {
-                dispatched = true;
-                try {
-                  await (baseClient as ReturnType<typeof createDloClient>).delete(id);
-                } catch (error) {
-                  const status = (error as { status?: unknown }).status;
-                  if (
-                    (error instanceof DloError || error instanceof NativeDmoError) &&
-                    error.code.endsWith('_HTTP_ERROR') &&
-                    typeof status === 'number' &&
-                    status >= 400 &&
-                    status < 500
-                  )
-                    refusal = error;
-                  throw error;
-                }
-              },
-            };
-        const item: DeleteEnvelope['result']['items'][number] = {
-          identity: { dataSpace: effectiveScope, apiName },
-          operation: flags.preview ? 'preview' : 'delete',
-          outcome: 'blocked',
-          mutation: 'not-attempted',
-        };
-        selectorsByItem.set(item, selector);
-        envelope.result.items.push(item);
-        try {
-          if (mapping) {
-            const mappingBase = baseClient as ReturnType<typeof createMappingClient>;
-            // The first read of the mapping names its binding, which finds a hand-written file.
-            let firstRead: unknown;
-            const mappingClient = {
-              ...client,
-              get: async (name: string): Promise<unknown> => {
-                const value = await mappingBase.get(name);
-                if (name === apiName && firstRead === undefined) firstRead = value;
-                return value;
-              },
-              remove: async (name: string): Promise<void> => {
-                dispatched = true;
-                await mappingBase.remove(name);
-              },
-            } as ReturnType<typeof createMappingClient>;
-            // The DMO read uses the bound single-attempt GET client.
-            const dependencies = { target: this.createDmoNativeDeleteClient(target, version) };
-            // The file named after the mapping, otherwise the one whose binding matches it.
-            const mappingFiles = async (): Promise<LocalFileCandidate[]> => {
-              const canonical = inProject('mapping', `${apiName}.mapping-meta.json`);
-              try {
-                const found = await mappingLocalFile(
-                  normalizeNativeMapping(firstRead, requestScope),
-                  process.cwd(),
-                );
-                return [{ path: found.path, boundary: projectData }];
-              } catch {
-                // Without a readable binding or folder only the canonical name is considered.
-                return [canonical];
-              }
-            };
-            if (flags.preview) {
-              await (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
-                apiName,
-                mappingClient,
-                dependencies,
-                requestScope,
-              );
-              item.plan = [{ operation: 'delete', apiName }];
-              item.outcome = 'delete';
-            } else
-              await (this.deleteMapping ?? deleteNativeMapping)(
-                apiName,
-                mappingClient,
-                dependencies,
-                requestScope,
-              );
-            await track(item, await mappingFiles());
-          } else {
-            const definitionClient = client as ReturnType<typeof createDloClient>;
-            // Dependents were admitted before the first write; execution waits for them to clear.
-            if (!native && !flags.preview)
-              await waitForDloDependents(
-                apiName,
-                baseClient as DloDeleteClient,
-                admittedDependents.get(apiName) ?? [],
-              );
-            if (flags.preview) {
-              const document = await (native
-                ? (this.retrieveDmo ?? previewDeleteNativeDmo)(
-                    apiName,
-                    definitionClient,
-                    requestScope,
-                  )
-                : this.retrieveDlo(apiName, definitionClient, requestScope));
-              item.identity = document.identity;
-              item.outcome = 'delete';
-            } else {
-              const receipt = await (native
-                ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, requestScope)
-                : this.deleteDlo(apiName, definitionClient, requestScope));
-              item.identity.dataSpace = receipt.dataSpace;
-              if ('processing' in receipt && receipt.processing) {
-                // DLO/DMO read back in a DELETING state: acknowledged, server still processing.
-                item.outcome = 'deletion-processing';
-                item.mutation = 'acknowledged-processing';
-              }
-            }
-            await track(
-              item,
-              native
-                ? [inProject('dmo', `${apiName}.dmo-meta.json`)]
-                : [inProject('dlo', `${apiName}.dlo-meta.json`)],
+        // Every DLO of this stage has its dependents checked before the stage's first write.
+        const admittedDependents = new Map<string, DloDependent[]>();
+        for (const selector of ordered.filter((value) => value.startsWith('dlo:'))) {
+          const name = selector.slice(4);
+          try {
+            admittedDependents.set(
+              name,
+              await admitDloDependents(
+                name,
+                this.createDloNativeDeleteClient(target, version) as DloDeleteClient,
+                coveredBySelection(name),
+              ),
             );
-            if (item.outcome === 'deletion-processing') continue;
+          } catch (error) {
+            // An absent DLO has nothing to check; the item loop reports it unchanged.
+            if (
+              error instanceof DloError &&
+              error.code === 'DLO_HTTP_ERROR' &&
+              error.status === 404
+            ) {
+              admittedDependents.set(name, []);
+              continue;
+            }
+            const blocked: DeleteItem = {
+              family: 'dlo',
+              identity: { dataSpace: effectiveScope, apiName: name },
+              operation: flags.preview ? 'preview' : 'delete',
+              outcome: 'blocked',
+              mutation: 'not-attempted',
+            };
+            selectorsByItem.set(blocked, selector);
+            envelope.result.items.push(blocked);
+            throw error;
           }
-          item.outcome = flags.preview ? 'delete' : 'deleted';
-          if (!flags.preview) item.mutation = 'confirmed-deleted';
-        } catch (error) {
-          if (
-            !dispatched &&
-            (error instanceof DloError ||
-              error instanceof NativeDmoError ||
-              error instanceof NativeMappingError) &&
-            !mapping &&
-            ['DLO_HTTP_ERROR', 'DMO_HTTP_ERROR'].includes(error.code) &&
-            error.status === 404
-          ) {
-            item.outcome = 'unchanged';
-            continue;
-          }
-          if (
-            dispatched &&
-            ((error instanceof DloError && error.code === 'DLO_DELETE_NOT_CONFIRMED') ||
-              (error instanceof NativeDmoError && error.code === 'DMO_DELETE_NOT_CONFIRMED'))
-          ) {
-            const noun = native ? 'DMO' : 'DLO';
-            item.outcome = 'deletion-unconfirmed';
-            item.mutation = 'acknowledged';
-            envelope.status = 'failed';
-            envelope.diagnostics.errors.push({
-              code: error.code,
-              message:
-                error.status === 200
-                  ? `Salesforce acknowledged the DELETE, but the ${noun} was still readable afterwards. Do not replay; read the ${noun} again before any further action.`
-                  : operationDiagnostic(
-                      error,
-                      `Salesforce acknowledged the DELETE, but its absence could not be confirmed. Do not replay; read the ${noun} again before any further action.`,
-                    ),
-              retryable: false,
-            });
-            return finish();
-          }
-          item.outcome = dispatched ? 'failed' : 'blocked';
-          item.mutation =
-            refusal !== undefined && refusal === error
-              ? 'rejected'
-              : dispatched
-                ? 'unknown'
-                : 'not-attempted';
-          envelope.status = dispatched ? 'failed' : 'blocked';
-          throw error;
         }
-      }
-      envelope.status = 'success';
-    } catch (error) {
-      envelope.diagnostics.errors.push({
-        code:
-          error instanceof DeployInputError ||
-          error instanceof DloError ||
-          error instanceof NativeDmoError ||
-          error instanceof NativeMappingError ||
-          error instanceof NativeRelationshipError ||
-          error instanceof DataStreamError ||
-          error instanceof DataTransformError
-            ? error.code
-            : 'DELETE_FAILED',
-        message: operationDiagnostic(
-          error,
-          'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
-        ),
-        retryable: false,
+        // The last mapping of a custom DMO selected with that DMO goes with the DMO delete.
+        const withDmo: Array<{ item: DeleteItem; files: LocalFileCandidate[] }> = [];
+        const settleWithDmo = async (): Promise<void> => {
+          for (const entry of withDmo) {
+            const owner = envelope.result.items.find(
+              (candidate) =>
+                selectorsByItem.get(candidate)?.toLowerCase() ===
+                entry.item.removedWith?.toLowerCase(),
+            );
+            if (owner) {
+              entry.item.outcome = owner.outcome;
+              entry.item.mutation = owner.mutation;
+            }
+            await track(entry.item, entry.files);
+          }
+        };
+        try {
+          for (const selector of ordered) {
+            if (selector.startsWith('relationship:')) {
+              await this.deleteOneRelationship(
+                selector,
+                target,
+                version,
+                flags.preview,
+                requestScope,
+                envelope,
+                selectorsByItem,
+                track,
+                gitBySelector.get(selector)?.document as NativeRelationshipDocument | undefined,
+              );
+              continue;
+            }
+            const native = selector.startsWith('dmo:');
+            const mapping = selector.startsWith('mapping:');
+            const apiName = selector.slice(selector.indexOf(':') + 1);
+            const baseClient = mapping
+              ? (this.createMappingClient ?? createMappingClient)(
+                  target,
+                  version,
+                  undefined,
+                  requestScope,
+                  this.createMappingSender(target, version),
+                )
+              : native
+                ? this.createDmoNativeDeleteClient(target, version)
+                : this.createDloNativeDeleteClient(target, version);
+            let dispatched = false;
+            // Salesforce's own 4xx answer to the DELETE means nothing was deleted.
+            let refusal: unknown;
+            const client = mapping
+              ? baseClient
+              : {
+                  ...baseClient,
+                  delete: async (id: string): Promise<void> => {
+                    dispatched = true;
+                    try {
+                      await (baseClient as ReturnType<typeof createDloClient>).delete(id);
+                    } catch (error) {
+                      const status = (error as { status?: unknown }).status;
+                      if (
+                        (error instanceof DloError || error instanceof NativeDmoError) &&
+                        error.code.endsWith('_HTTP_ERROR') &&
+                        typeof status === 'number' &&
+                        status >= 400 &&
+                        status < 500
+                      )
+                        refusal = error;
+                      throw error;
+                    }
+                  },
+                };
+            const item: DeleteItem = {
+              family: mapping ? 'mapping' : native ? 'dmo' : 'dlo',
+              identity: { dataSpace: effectiveScope, apiName },
+              operation: flags.preview ? 'preview' : 'delete',
+              outcome: 'blocked',
+              mutation: 'not-attempted',
+            };
+            selectorsByItem.set(item, selector);
+            envelope.result.items.push(item);
+            try {
+              if (mapping) {
+                const mappingBase = baseClient as ReturnType<typeof createMappingClient>;
+                // The first read of the mapping names its binding, which finds a hand-written file.
+                let firstRead: unknown;
+                const mappingClient = {
+                  ...client,
+                  get: async (name: string): Promise<unknown> => {
+                    const value = await mappingBase.get(name);
+                    if (name === apiName && firstRead === undefined) firstRead = value;
+                    return value;
+                  },
+                  remove: async (name: string): Promise<void> => {
+                    dispatched = true;
+                    await mappingBase.remove(name);
+                  },
+                } as ReturnType<typeof createMappingClient>;
+                // The DMO read uses the bound single-attempt GET client.
+                const dependencies = { target: this.createDmoNativeDeleteClient(target, version) };
+                // The file named after the mapping, otherwise the one whose binding matches it.
+                const mappingFiles = async (): Promise<LocalFileCandidate[]> => {
+                  const canonical = inProject('mapping', `${apiName}.mapping-meta.json`);
+                  try {
+                    const found = await mappingLocalFile(
+                      normalizeNativeMapping(firstRead, requestScope),
+                      process.cwd(),
+                    );
+                    return [{ path: found.path, boundary: projectData }];
+                  } catch {
+                    // Without a readable binding or folder only the canonical name is considered.
+                    return [canonical];
+                  }
+                };
+                // The selected DMO this mapping is the last mapping of, if the guard refused it.
+                const ownerDmo = (error: unknown): string | undefined => {
+                  if (
+                    dispatched ||
+                    !(error instanceof NativeMappingError) ||
+                    error.code !== 'MAPPING_LAST_MAPPING_DELETE_BLOCKED'
+                  )
+                    return undefined;
+                  let dmo: string;
+                  try {
+                    dmo = normalizeNativeMapping(firstRead, requestScope).spec
+                      .targetEntityDeveloperName;
+                  } catch {
+                    return undefined;
+                  }
+                  return nativeSelectors.find(
+                    (value) => value.toLowerCase() === `dmo:${dmo}`.toLowerCase(),
+                  );
+                };
+                try {
+                  if (flags.preview) {
+                    await (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
+                      apiName,
+                      mappingClient,
+                      dependencies,
+                      requestScope,
+                    );
+                    item.plan = [{ operation: 'delete', apiName }];
+                    item.outcome = 'delete';
+                  } else
+                    await (this.deleteMapping ?? deleteNativeMapping)(
+                      apiName,
+                      mappingClient,
+                      dependencies,
+                      requestScope,
+                    );
+                } catch (error) {
+                  const owner = ownerDmo(error);
+                  if (owner === undefined) throw error;
+                  item.removedWith = owner;
+                  withDmo.push({ item, files: await mappingFiles() });
+                  continue;
+                }
+                await track(item, await mappingFiles());
+              } else {
+                const definitionClient = client as ReturnType<typeof createDloClient>;
+                // Dependents were admitted before the first write; execution waits for them to clear.
+                if (!native && !flags.preview)
+                  await waitForDloDependents(
+                    apiName,
+                    baseClient as DloDeleteClient,
+                    admittedDependents.get(apiName) ?? [],
+                  );
+                if (flags.preview) {
+                  const document = await (native
+                    ? (this.retrieveDmo ?? previewDeleteNativeDmo)(
+                        apiName,
+                        definitionClient,
+                        requestScope,
+                      )
+                    : this.retrieveDlo(apiName, definitionClient, requestScope));
+                  item.identity = document.identity;
+                  item.outcome = 'delete';
+                } else {
+                  const receipt = await (native
+                    ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, requestScope)
+                    : this.deleteDlo(apiName, definitionClient, requestScope));
+                  item.identity.dataSpace = receipt.dataSpace;
+                  if ('processing' in receipt && receipt.processing) {
+                    // DLO/DMO read back in a DELETING state: acknowledged, server still processing.
+                    item.outcome = 'deletion-processing';
+                    item.mutation = 'acknowledged-processing';
+                  }
+                }
+                await track(
+                  item,
+                  native
+                    ? [inProject('dmo', `${apiName}.dmo-meta.json`)]
+                    : [inProject('dlo', `${apiName}.dlo-meta.json`)],
+                );
+                if (item.outcome === 'deletion-processing') continue;
+              }
+              item.outcome = flags.preview ? 'delete' : 'deleted';
+              if (!flags.preview) item.mutation = 'confirmed-deleted';
+            } catch (error) {
+              if (
+                !dispatched &&
+                (error instanceof DloError ||
+                  error instanceof NativeDmoError ||
+                  error instanceof NativeMappingError) &&
+                !mapping &&
+                ['DLO_HTTP_ERROR', 'DMO_HTTP_ERROR'].includes(error.code) &&
+                error.status === 404
+              ) {
+                item.outcome = 'unchanged';
+                continue;
+              }
+              if (
+                dispatched &&
+                ((error instanceof DloError && error.code === 'DLO_DELETE_NOT_CONFIRMED') ||
+                  (error instanceof NativeDmoError && error.code === 'DMO_DELETE_NOT_CONFIRMED'))
+              ) {
+                const noun = native ? 'DMO' : 'DLO';
+                item.outcome = 'deletion-unconfirmed';
+                item.mutation = 'acknowledged';
+                envelope.diagnostics.errors.push({
+                  code: error.code,
+                  message:
+                    error.status === 200
+                      ? `Salesforce acknowledged the DELETE, but the ${noun} was still readable afterwards. Do not replay; read the ${noun} again before any further action.`
+                      : operationDiagnostic(
+                          error,
+                          `Salesforce acknowledged the DELETE, but its absence could not be confirmed. Do not replay; read the ${noun} again before any further action.`,
+                        ),
+                  retryable: false,
+                });
+                return 'failed';
+              }
+              item.outcome = dispatched ? 'failed' : 'blocked';
+              item.mutation =
+                refusal !== undefined && refusal === error
+                  ? 'rejected'
+                  : dispatched
+                    ? 'unknown'
+                    : 'not-attempted';
+              envelope.status = dispatched ? 'failed' : 'blocked';
+              throw error;
+            }
+          }
+        } finally {
+          await settleWithDmo();
+        }
+        return 'success';
+      };
+
+      // One stage: items whose selected dependents an earlier preview stage plans to delete are
+      // reported as planned; the rest run through their family's executor.
+      const runStage = async (
+        stage: CrudStage<DeletePlanInput>,
+        planned: ReadonlySet<string>,
+      ): Promise<CrudStageResult> => {
+        const before = envelope.result.items.length;
+        envelope.status = 'blocked';
+        let status: StageStatus = 'success';
+        try {
+          for (const input of stage.inputs) await stillDeleted(input.git);
+          const ready: DeletePlanInput[] = [];
+          for (const input of stage.inputs) {
+            const waiting = flags.preview
+              ? (dependents.get(input) ?? []).filter((key) => planned.has(key))
+              : [];
+            if (waiting.length === 0) {
+              ready.push(input);
+              continue;
+            }
+            const item: DeleteItem = {
+              family: familyOf(input.selector),
+              identity: {
+                dataSpace: nativeFamilies.has(familyOf(input.selector))
+                  ? effectiveScope
+                  : 'default',
+                apiName: selectorName(input.selector),
+              },
+              operation: 'preview',
+              outcome: 'planned-dependencies',
+              mutation: 'not-attempted',
+              diagnostics: [
+                {
+                  code: 'DEPENDENCIES_PLANNED',
+                  message: `Selected dependent ${waiting.join(', ')} is deleted earlier in this delete and must settle before this item is checked; no existence or delete outcome is asserted.`,
+                },
+              ],
+            };
+            selectorsByItem.set(item, input.selector);
+            envelope.result.items.push(item);
+          }
+          if (stage.phase === 'P1') {
+            if (ready.length > 0) status = await runNative(ready.map((input) => input.selector));
+          } else if (stage.phase === 'P0') {
+            if (ready.length > 0) status = await runStreams(ready.map((input) => input.selector));
+          } else
+            for (const input of ready) {
+              const family = familyOf(input.selector);
+              status =
+                family === 'data-graph'
+                  ? await runGraph(input)
+                  : family === 'data-transform'
+                    ? await runTransform(input)
+                    : family === 'segment'
+                      ? await runSegment(input)
+                      : family === 'identity-resolution'
+                        ? await runIdentityResolution(input)
+                        : await runCalculatedInsight(input);
+              if (status !== 'success') break;
+            }
+        } catch (error) {
+          pushError(error);
+          // A handler marks the envelope failed when its request was sent before the error.
+          status = (envelope.status as StageStatus) === 'failed' ? 'failed' : 'blocked';
+        }
+        const added = envelope.result.items.slice(before);
+        const processing = added.filter((item) => item.outcome === 'deletion-processing');
+        // A later phase starts only after this one settled; accepted-but-processing has not.
+        if (
+          status === 'success' &&
+          !flags.preview &&
+          stage !== stages.at(-1) &&
+          processing.length > 0
+        ) {
+          envelope.diagnostics.errors.push({
+            code: 'DELETE_PHASE_NOT_SETTLED',
+            message: `Salesforce accepted the deletion of ${processing.map((item) => selectorsByItem.get(item)).join(', ')} and is still processing it, so the later phases of this delete were not started. Rerun the same delete once it reads absent; items already deleted report unchanged.`,
+            retryable: false,
+          });
+          status = 'blocked';
+        }
+        return {
+          status,
+          planned: added
+            .filter((item) => item.outcome === 'delete' || item.outcome === 'planned-dependencies')
+            .flatMap((item) => {
+              const key = keyOfSelector.get(selectorsByItem.get(item) ?? '');
+              return key ? [key] : [];
+            }),
+        };
+      };
+      // Preview runs every stage read-only, even after a blocked one; execution stops there.
+      const outcome = await runCrudStages(stages, runStage, {
+        continueAfterBlocked: flags.preview,
       });
+      envelope.status = outcome.status;
+    } catch (error) {
+      pushError(error);
     }
     return finish();
   }

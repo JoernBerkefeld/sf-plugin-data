@@ -163,7 +163,6 @@ for (const overrides of [
   { metadata: ['identity-resolution:*'] },
   { metadata: ['identity-resolution:Individual_ABCDE'] },
   { metadata: ['identity-resolution:Individual_B'] },
-  { metadata: ['identity-resolution:Individual_A1b2', 'dlo:Other__dll'] },
   { metadata: ['identity-resolution:Individual_A1b2', 'identity-resolution:Individual_A1b2'] },
   { 'delete-dlo': true },
 ])

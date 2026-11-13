@@ -29,7 +29,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_STREAM_CONNECTION:
     'The connection name used to list streams is not a valid developer name. Fix spec.connectionName so it starts with a letter and uses only letters, digits and underscores.',
   INVALID_STREAM_DELETE_SELECTION:
-    'Data stream deletion needs only exact data-stream:ApiName selectors. Remove other families and bare data-stream from -m, then rerun the delete.',
+    'A data stream is selected for deletion as exact data-stream:ApiName, and --delete-dlo is not taken with --changed-since. Fix -m or the flags, then rerun the delete.',
   INVALID_STREAM_DELETE_SURVIVOR:
     'A DLO that should stay after the stream delete could not be checked. This is an internal guard; rerun the delete and report it if it happens again.',
   INVALID_STREAM_DLO:

@@ -36,6 +36,10 @@ export type GitDeleteCandidate = Readonly<{
   /** Absolute path the file had (the XML member for a calculated insight). */
   path: string;
   identity: Readonly<{ dataSpace: string; apiName: string }>;
+  /** Calculated insight only: absolute path of the JSON member. */
+  companionPath?: string;
+  /** The validated base document (deeply frozen); the delete runs from it, not from a file. */
+  document: DeployInput['document'];
   /** Relationship source DMO, from the base content. */
   sourceObjectName?: string;
   /** SHA-256 of the base bytes. */
@@ -314,6 +318,17 @@ async function revisionBytes(
 }
 
 /**
+ * Family and API name of a document, case-insensitive; graphs and transforms carry their name in
+ * the definition.
+ * @param {DeployInput['document']} document Validated document.
+ * @returns {string} Key such as `dmo:person__dlm`.
+ */
+function identityKey(document: DeployInput['document']): string {
+  const value = document as { identity?: { apiName?: unknown }; definition?: { name?: unknown } };
+  return `${document.kind}:${String(value.identity?.apiName ?? value.definition?.name)}`.toLowerCase();
+}
+
+/**
  * Turn deleted paths into delete candidates identified from merge-base content.
  * @param {object} context Repository, merge base and package directory.
  * @param {string} context.repositoryRoot Absolute repository root.
@@ -387,7 +402,9 @@ async function deleteCandidates(
       Object.freeze({
         family: kind,
         path: absolute(members[0]),
+        ...(kind === 'calculated-insight' ? { companionPath: absolute(members[1]) } : {}),
         identity: Object.freeze(admitted.identity),
+        document: admitted.document,
         ...(admitted.sourceObjectName === undefined
           ? {}
           : { sourceObjectName: admitted.sourceObjectName }),
@@ -504,6 +521,11 @@ export async function selectGitDeployInputs(options: {
         input.document.kind === 'calculated-insight',
     );
     const dlos = inputs.filter((input): input is DloDeployInput => input.document.kind === 'dlo');
+    // A delete and an add of one identity at different paths (a rename split across commit,
+    // index and worktree, which Git cannot pair) would delete and create the same component.
+    const current = new Set(inputs.map((input) => identityKey(input.document)));
+    if (deletions.some((deletion) => current.has(identityKey(deletion.document))))
+      throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
     return {
       ...(dlos.length > 0 ? { dlos: Object.freeze(dlos) } : {}),
       ...(calculatedInsights.length > 0

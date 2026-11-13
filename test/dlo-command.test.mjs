@@ -174,6 +174,7 @@ for (const preview of [true, false])
       assert.deepEqual(writes, preview || dataspace ? [] : [[id]]);
       assert.equal(result.status, dataspace ? 'blocked' : 'success');
       assert.deepEqual(result.result.items[0], {
+        family: 'dlo',
         identity: { dataSpace: dataspace ?? 'Team', apiName: name },
         operation: preview ? 'preview' : 'delete',
         outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',

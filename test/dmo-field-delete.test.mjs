@@ -954,9 +954,9 @@ test('whole-DMO delete without --field keeps its behaviour and never touches the
   assert.equal(result.result.items[0].operation, 'delete');
   assert.equal(result.result.items[0].fields, undefined);
   assert.deepEqual(lines, ['Delete: success.', `deleted dmo ${dmoName}`]);
-  // --confirm-delete stays refused for a whole native selection.
+  // --confirm-delete is accepted (and not needed) for a whole native selection.
   const confirmed = await run(org, { 'confirm-delete': true }, seams);
-  assert.equal(confirmed.result.diagnostics.errors[0].code, 'INVALID_SELECTION');
+  assert.equal(confirmed.result.status, 'success');
 });
 
 test('a hand-written mapping file is found by its binding and refreshed under its own name', async () => {

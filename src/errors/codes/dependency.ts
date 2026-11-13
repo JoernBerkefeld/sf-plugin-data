@@ -1,7 +1,7 @@
 /** CLI hints for Dependency error codes. Long-form pages: docs/errors/dependency/<CODE>.md */
 export const hints: Readonly<Record<string, string>> = {
   DEPENDENCIES_PLANNED:
-    'A parent of this item is created earlier in the same deploy, so the preview cannot compare the item yet. No action is needed; the deploy checks it after the parent settles.',
+    'A parent of this item is created earlier in the same deploy, or a dependent is deleted earlier in the same delete, so the preview does not check the item yet. No action is needed.',
   DEPENDENCY_ACQUISITION_FAILED:
     'A selected DMO or segment, or an object a segment uses, could not be read from the org. Check the names and your access, then rerun the retrieve.',
   DEPENDENCY_CLOSURE_UNSUPPORTED:

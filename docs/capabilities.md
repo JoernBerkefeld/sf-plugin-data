@@ -1,3 +1,47 @@
+## Delete phases — 2026-11-13
+
+One delete may hold any mix of families, selected with `-m` (source-backed families also
+need their `--source-dir` file each; `--source-dir` is repeatable). Delete runs the deploy
+phases in reverse: P4 data graphs, P3 identity resolution, calculated insight and Segment
+(every dependent in an earlier stage than the component it needs, including a graph, CI or
+Segment on the unified/link DMO of a selected ruleset), P2 the data transform, P1
+relationships, mappings, DMOs and DLOs (in that order), P0 data streams. Each family keeps
+its own delete checks. A phase starts only after every item of the previous one settled; a
+blocked, failed or unconfirmed item stops the run, and an item Salesforce accepted but still
+processes (`deletion-processing`) stops the later phases (`DELETE_PHASE_NOT_SETTLED`;
+rerun the same delete once it reads absent). A selection spanning more than one phase needs
+`--confirm-delete`, checked before any org call (`DESTRUCTIVE_CONFIRMATION_REQUIRED`).
+Every item carries `family`.
+
+- Preview runs every phase read-only (also after a blocked phase). An item whose selected
+  dependents an earlier phase plans to delete is reported `planned-dependencies`
+  (`DEPENDENCIES_PLANNED`, naming the dependents) without being read: an IR beside a graph
+  on its unified DMO, a DMO beside a graph on it, a DLO beside a transform reading it.
+- A stream and its landing DLO both selected: one stream delete with `--delete-dlo`
+  semantics (the stream's linked DLO is looked up read-only before any write). The DLO is
+  never deleted on its own; its item reports `removedWith: data-stream:<Name>` and the
+  stream's outcome.
+- A DMO and its last mapping both selected: the mapping guard
+  (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`, before any write) hands the mapping to the DMO.
+  Only the DMO is deleted; the mapping item reports `removedWith: dmo:<Name>` and the DMO's
+  outcome, and its local file is removed with it. No read confirms the mapping's absence
+  separately: deleting a custom DMO removes its last mapping (observed at API68), while
+  that mapping's own delete fails with an internal error. Without the DMO in the selection the last
+  mapping stays refused.
+- `--changed-since <ref>`: the components of the canonical plugin files deleted in the
+  range (committed or staged) are deleted through the same phases; changed and added files
+  are not part of a delete. Exclusive with `-m`/`--source-dir`; `--transform-target-id`
+  and `--delete-dlo` are refused. Execution always needs `--confirm-delete`; preview does
+  not. Each family runs from its merge-base document (identity from content), every
+  deleted path must still be absent right before each phase and before each source-family
+  write (`BLOCKED_GIT_LIFECYCLE`), and each candidate's data space must equal the requested
+  one. A relationship takes its source DMO from the base content; a data transform resolves
+  its target ID by name from the complete transform list, ignoring case, and is refused
+  unless exactly one transform matches (`TRANSFORM_TARGET_NOT_RESOLVED`). A deleted stream
+  file plus its landing DLO file is one stream delete with that DLO. No local file is
+  listed or removed. A rename split across commit, index and worktree (one component
+  deleted at one path, added at another) blocks the selection before any org call.
+
 ## Deploy phases — 2026-11-13
 
 One deploy may hold any mix of families. They run in phases: P0 data streams, P1 native
@@ -592,7 +636,8 @@ Native mapping targets, decided from the same raw read:
     (`MAPPING_LAST_MAPPING_DELETE_BLOCKED`). Salesforce does not delete it (Metadata
     API: internal error; native DELETE: HTTP 500). The message names the DMO and the
     way out, `sf data360 delete --metadata dmo:<Dmo__dlm>`, which removes the mapping
-    with the DMO. The last mapping of a standard DMO is deleted; the DMO stays
+    with the DMO. Selected together with that DMO, the mapping is reported
+    `removedWith` the DMO instead. The last mapping of a standard DMO is deleted; the DMO stays
     enabled with its generated `KQ_Id__c` field and no mapped fields.
   - `--preview` is read-only and reports the single planned step `delete`.
   - The deployment is sent once and never retried. Not confirmed by Salesforce:
@@ -844,8 +889,10 @@ through the existing input resolver with byte capture, and routes them as explic
 selections of the same families and runs them in the same phases; a data transform
 is refused because `--transform-operation` is not accepted with Git selection. Files deleted in the range become delete candidates (family and identity
 from the merge-base content; relationship source DMO and transform API name included),
-reported in `result.selection.deletions` and never deleted by deploy. A path deleted and
-re-added is not a delete. Repository-root resolution, unique merge-base/HEAD changes,
+reported in `result.selection.deletions` and never deleted by deploy (`delete
+--changed-since` deletes them). A path deleted and re-added is not a delete; one
+component deleted at one path and added at another across commit, index and worktree
+blocks. Repository-root resolution, unique merge-base/HEAD changes,
 index, worktree and untracked selection are local. Renames, conflicts, unstaged deletions, deleted
 files of no known family and half-deleted calculated insight pairs block the whole selection,
 regardless of diff.renames configuration. Git inference is not historical rename-intent

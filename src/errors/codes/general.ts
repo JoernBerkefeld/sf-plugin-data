@@ -5,9 +5,11 @@ export const hints: Readonly<Record<string, string>> = {
   AUTHENTICATION_FAILED:
     'Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.',
   BLOCKED_GIT_LIFECYCLE:
-    'The Git changes include a rename, a conflict or a deleted file the plugin cannot identify. Stage renames so Git can detect them, or deploy the files with --source-dir or -m.',
+    'The Git changes include a rename (also one split across commit, index and worktree), a conflict or a deleted file the plugin cannot identify. Stage renames so Git can detect them, or select the files with --source-dir or -m.',
   DELETE_FAILED:
     'The delete stopped for a reason without a more specific code. Read the message, check the item outcome and inspect the target before trying again; nothing is retried.',
+  DELETE_PHASE_NOT_SETTLED:
+    'Salesforce is still processing a deletion of this run, so the later phases were not started. Wait until it reads absent, then rerun the same delete.',
   DEPLOY_EXECUTION_BLOCKED:
     'At least one item was blocked, so the deploy stopped before or between writes. Read the item lines above for the reason, fix it, then rerun the same deploy.',
   DEPLOY_EXECUTION_FAILED:
@@ -19,7 +21,7 @@ export const hints: Readonly<Record<string, string>> = {
   DEPLOY_PREVIEW_FAILED:
     'The preview could not finish. Read the message for the cause, such as session, selection or target access, fix it and run the preview again. Nothing was written.',
   DESTRUCTIVE_CONFIRMATION_REQUIRED:
-    'Deleting this component needs explicit confirmation. Check the target with --preview first, then rerun the delete with --confirm-delete.',
+    'This delete needs explicit confirmation: a Segment, IR or CI, a selection spanning more than one phase, or a delete with --changed-since. Check it with --preview first, then rerun the delete with --confirm-delete.',
   DUPLICATE_IDENTITY:
     'Two selected files describe the same component. Keep one file per component in the selection, for example by narrowing --source-dir, then rerun.',
   EXECUTION_UNCONFIRMED:

@@ -5,7 +5,7 @@ export const hints: Readonly<Record<string, string>> = {
   INCOMPLETE_TRANSFORM_INVENTORY:
     'The list of data transforms in the org could not be read completely and consistently. Nothing was deleted; rerun the delete when the org is not changing transforms.',
   INVALID_TRANSFORM_DELETE_SELECTION:
-    'A transform delete needs one --metadata data-transform:Name, --source-dir pointing at its .dataTransform.json file, and --transform-target-id. Fix the flags and rerun.',
+    'A delete takes at most one data-transform:Name, with a --source-dir value naming its .dataTransform.json file and --transform-target-id; with --changed-since, no --transform-target-id. Fix the flags and rerun.',
   INVALID_TRANSFORM_DEPLOY_SELECTION:
     'A transform deploy needs --transform-operation create, or update with a valid --transform-target-id. Do not pass a target ID with create. Fix the flags and rerun.',
   INVALID_TRANSFORM_FLAG_SCOPE:
@@ -56,6 +56,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The transform definition was written and verified, but Data Cloud is still processing it. Check its status in Data Cloud before relying on its output.',
   TRANSFORM_TARGET_DRIFT:
     'The transform in the org differs from the local file or changed during the run. Nothing was changed; retrieve it again, review the difference, then rerun.',
+  TRANSFORM_TARGET_NOT_RESOLVED:
+    'A data transform deleted in the Git range is found in the org by its name, and exactly one transform must match. Nothing was deleted; check the transforms with that name in Data Cloud, then delete it with -m and --transform-target-id.',
   TRANSFORM_VALIDATION_FAILED:
     'Salesforce validation rejected the new data transform, or its answer could not be read. Nothing was created; check the definition and DLOs in Data Cloud, then rerun.',
   TRANSFORM_WRITE_IDENTITY_MISMATCH:

@@ -1,6 +1,6 @@
 # `INVALID_STREAM_DELETE_SELECTION`
 
-> Data stream deletion needs only exact data-stream:ApiName selectors. Remove other families and bare data-stream from -m, then rerun the delete.
+> A data stream is selected for deletion as exact data-stream:ApiName, and --delete-dlo is not taken with --changed-since. Fix -m or the flags, then rerun the delete.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,24 +10,25 @@
 
 ## What it means
 
-A delete selection that contains any `data-stream` selector must contain only exact `data-stream:<ApiName>` selectors. This code means the selection also contained another family (such as `dlo:` or `dmo:`), the bare `data-stream` type without a name, or a stream name that is not a valid developer name.
+Each stream in a delete is named exactly as `data-stream:<ApiName>`. This code means `-m` held the bare `data-stream` type without a name, or a stream name that is not a valid developer name. Other families may be selected in the same delete; streams run in the last phase.
+
+It also means `--delete-dlo` was passed with `--changed-since`. There the deleted files decide: a stream whose landing DLO file was deleted in the same range is deleted together with that DLO, otherwise the DLO is kept.
 
 ## Why the plugin stops
 
-Stream deletion has its own checks and can delete the linked DLO. Mixing it with other deletions, or deleting every stream by type, would make the scope unclear, so the plugin refuses the selection before reading the org.
+Stream deletion has its own checks and can delete the linked DLO. Deleting every stream by type would make the scope unclear, so the plugin refuses the selection before reading the org.
 
 ## How to fix
 
 1. List each stream explicitly: `sf data360 delete -o <org> -m data-stream:<ApiName>`.
-2. Delete other components in a separate run.
-3. Add `--delete-dlo` only if the stream's linked DLO should be deleted as well.
+2. Add `--delete-dlo` only if the stream's linked DLO should be deleted as well, or select that DLO in the same delete (`-m dlo:<Name>__dll`), which deletes it with the stream. With `--changed-since`, drop `--delete-dlo` and delete the DLO file in the same range instead.
 
 ## Example output
 
 ```text
 Delete: blocked.
 INVALID_STREAM_DELETE_SELECTION: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.
-Hint: Data stream deletion needs only exact data-stream:ApiName selectors. Remove other families and bare data-stream from -m, then rerun the delete.
+Hint: A data stream is selected for deletion as exact data-stream:ApiName, and --delete-dlo is not taken with --changed-since. Fix -m or the flags, then rerun the delete.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/INVALID_STREAM_DELETE_SELECTION.md
 ```
 

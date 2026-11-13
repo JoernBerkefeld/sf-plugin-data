@@ -1,3 +1,164 @@
+# Chunk D2: Git delete with `--changed-since` — 2026-11-13
+
+Chunk D2 of the CRUD pipeline plan (Q3, M1, M2). Builds on the uncommitted D1 work.
+Version stays 0.1.0; nothing committed, no org touched.
+
+- `sf data360 delete --changed-since <ref>`: the selection is `selectGitDeployInputs`
+  (the deploy selection, no separate helper); only its `deletions` are used, changed and
+  added files are ignored. Exclusive with `-m`/`--source-dir` (oclif `exclusive` plus an
+  in-run `INVALID_SELECTION`); `--transform-target-id` → `INVALID_TRANSFORM_DELETE_SELECTION`,
+  `--delete-dlo` → `INVALID_STREAM_DELETE_SELECTION`, `--field` → the existing
+  `INVALID_FIELD_DELETE_SELECTION`; `-m` is no longer `required` (an empty selection is
+  `INVALID_SELECTION`). Execution always needs `--confirm-delete`, also single-phase
+  (`DESTRUCTIVE_CONFIRMATION_REQUIRED`, Git wording); preview does not. A range without
+  deletions is success without org calls. Envelope: `result.selection.changedSince`,
+  `provenance.git`.
+- Candidates become D1 plan inputs (`DeletePlanInput.git`): selector
+  `<family>:<apiName>` from base content; source families (graph, IR, CI, Segment,
+  transform) are admitted by `admitSourceInput` from the base document (input
+  `{ path, companionPath?, document, inputDigest: baseDigest }`); native and stream
+  inputs are synthesized like `-m`. Each candidate's data space must equal the effective
+  scope (`INVALID_SCOPE`).
+- M1: `admitDeletedArtifact` now also returns the validated, deeply frozen base
+  `document`; `GitDeleteCandidate` carries it plus `companionPath` (CI JSON member).
+  Source-family `verifyInput` and the start of every stage check the candidate path(s)
+  are still absent (`stillDeleted` → `BLOCKED_GIT_LIFECYCLE`). Local-file listing and
+  removal are skipped in Git mode (`track` and `sourceFiles` return early).
+  `deleteOneRelationship` takes the base document instead of reading the local file.
+  Transform: new `resolveDataTransformTargetId(client, name)` in
+  `delete-data-transform.ts` reuses `listDataTransformInventory` (no new read route),
+  matches names ignoring case and refuses unless exactly one matches (new
+  `TRANSFORM_TARGET_NOT_RESOLVED`); duplicate exact names are already refused by the
+  inventory (`INCOMPLETE_TRANSFORM_INVENTORY`). Unknown kind at a deleted path and
+  re-added paths: unchanged chunk A behaviour.
+- Rename split: `selectGitDeployInputs` refuses (`BLOCKED_GIT_LIFECYCLE`) when a delete
+  candidate and a current input share family + API name (case-insensitive). This also
+  applies to deploy. Since canonical paths derive from the name, only a letter-case
+  change reaches this check; on a case-insensitive file system (Windows) the existing
+  "deleted path present again but not selected" check blocks first.
+- M2: D1 logic unchanged and reached by Git selections (stream + landing DLO → one stream
+  delete with the DLO; DMO + last mapping → DMO only). Docs now state the DMO case as
+  proven (verification DB `data360:dmo.native-create-update-breadth.api68`).
+- Deploy: the `Not deleted:` line now names
+  `sf data360 delete --changed-since <ref> --confirm-delete after a --preview`; deploy
+  stays non-destructive. Flag summary and description mention the delete command.
+- Codes: new `TRANSFORM_TARGET_NOT_RESOLVED` (data-transform; page, index). Hints/pages
+  updated: `BLOCKED_GIT_LIFECYCLE` (split rename; delete command), `DESTRUCTIVE_CONFIRMATION_REQUIRED`
+  (Git delete), `INVALID_TRANSFORM_DELETE_SELECTION`, `INVALID_STREAM_DELETE_SELECTION`,
+  `INVALID_FIELD_DELETE_SELECTION` (page text).
+- Tests: new `test/crud-delete-git.test.mjs` (17, real temp repos under `os.tmpdir()`,
+  owned evidence retained, mocked executors): graph + IR → graph then IR; confirmation
+  required (single phase, no org call); preview without confirmation (IR planned); re-added
+  path; unknown kind; rename split (untracked and index); transform name → ID with 0/1/2
+  matches; stream + landing DLO → one stream delete; relationship source DMO from base
+  (preview and execute); a file present again before its phase blocks it; four flag
+  refusals. `git-deploy-selection-families` asserts the frozen base document;
+  `git-deploy-command` expects the new `Not deleted:` text. Full suite 2855 (2853 pass,
+  2 skipped, 0 fail); lint 0 warnings; build green.
+- Docs: README "Delete what a Git range deleted" and Git selection paragraph,
+  `docs/capabilities.md` delete phases and Git selection, `docs/git-workflow.md`
+  "Deleting with `sf data360 delete --changed-since`" and the split-rename block.
+
+- Review (Gate 4) must-fixes 1 and 3 fixed: a Git-deleted transform's target ID is
+  resolved during admission (after the confirmation gate, before any phase, preview
+  included), so 0 or 2+ matches block before any delete; a `BLOCKED_GIT_LIFECYCLE` raised
+  at a later stage says the items listed before it were deleted. Full suite 2856 (2854
+  pass, 2 skipped).
+- Live (`isolated-source`, org 00Daj000010xkZNEAY verified), scratch `F:/Temp/cdel-WtQrww`:
+  one `sf data360 delete` of `CliGraphCP_6419`, `CliGraphCP_bc80` and `Individual_6419`
+  (read-back files). Preview exit 0: graphs delete, IR `planned-dependencies`. Delete exit 0
+  (21:21:51Z–21:24:06Z): both graphs deleted / confirmed-deleted, then the IR
+  deletion-processing / acknowledged-processing. Afterwards GET of both graphs, the IR and
+  `UnifiedssotIndividual6419__dlm` return NOT_FOUND; the IR list no longer has it.
+  Verification DB: `data360:crud-pipeline.mixed-delete-graph-ir.api68` (verified). All chunk C
+  fixtures are gone.
+
+Handover:
+
+- Open decision for the user (review must-fix 2): a rerun of a `--changed-since` delete
+  after its transform was already deleted finds 0 matches and blocks
+  (`TRANSFORM_TARGET_NOT_RESOLVED`), so the rerun cannot finish. Option: report 0 matches
+  as `unchanged` / `not-attempted` (2+ stays refused). Deviates from the recorded
+  "exactly one match" decision, so not changed yet.
+- Nice-to-haves from review (not applied): re-check a restored paired landing DLO file in
+  P0; lighter stream → DLO lookup (base document names `spec.newDlo.name`; a missing
+  stream as "not paired"); Git-mode CI and Segment execute tests.
+
+# Chunk D1: one delete across families, reverse phase order — 2026-11-13
+
+Chunk D1 of the CRUD pipeline plan (`--source-dir` / `--metadata` deletes). Version stays
+0.1.0; nothing committed, no org touched.
+
+- `src/services/crud-plan.ts`: `planDeleteStages(inputs)` emits P4 graphs → P3 (split by
+  height: an input runs in a later stage than every selected dependent; dependents come
+  from references plus the derived IR unified/link-DMO edges) → P2 → P1 → P0.
+  `selectedDependents(inputs)` maps each input to the keys of the selected inputs that need
+  it. `inputKey` falls back to `definition.name` (graphs, transforms).
+- `src/commands/data360/delete.ts`: the early-return single-family branches are now family
+  handlers (`runGraph`, `runIdentityResolution`, `runCalculatedInsight`, `runSegment`,
+  `runTransform`, `runNative`, `runStreams`) dispatched by one `runCrudStages` call through
+  `runStage`. Admission before any org call: exact selectors per family, at most one
+  transform (with its file and `--transform-target-id`), `--delete-dlo` needs a stream,
+  each source family needs its own `--source-dir` value (now repeatable; a graph also takes
+  a folder), every source input must be named by a selector and vice versa, family scope
+  checks, and `--confirm-delete` for a selection spanning more than one phase
+  (`DESTRUCTIVE_CONFIRMATION_REQUIRED`). `--confirm-delete` is no longer refused beside
+  native/stream selectors. Native-only and stream-only single-phase deletes still run
+  without it. Single-family runs keep their item shapes, codes and call order, plus
+  `family` on every item.
+- Settlement: a stage's blocked/failed/unconfirmed item stops the run (preview runs every
+  stage). `deletion-processing` in a stage that has later stages stops them with new code
+  `DELETE_PHASE_NOT_SETTLED` (blocked); as the last stage it is success (IR after graph).
+- Preview: an item whose selected dependents an earlier stage reports `delete` (or planned)
+  is pushed as `planned-dependencies` with `DEPENDENCIES_PLANNED` and is not read. Within P1
+  the existing DLO-dependent coverage is unchanged.
+- M2 stream + DLO: when both a stream and DLO selectors are present, the stream's linked
+  DLO is read first (seam `readStreamLinkedDlo`, `retrieveNativeDataStream`, read-only,
+  before any write). A matching DLO selector leaves P1; the stream runs with
+  `deleteDlo: true`, the DLO item (`removedWith: data-stream:<Name>`) mirrors the stream's
+  outcome/mutation; the DLO file goes with the stream's files.
+- M2 DMO + last mapping: when the mapping guard throws `MAPPING_LAST_MAPPING_DELETE_BLOCKED`
+  before any dispatch and the mapping's target DMO (from its first read) is selected, the
+  mapping item gets `removedWith: dmo:<Name>` and, after the stage, the DMO item's
+  outcome/mutation; its local file is tracked like a confirmed item. No mapping request,
+  no separate absence read. Proven by existing live evidence (verification DB
+  `data360:dmo.native-create-update-breadth.api68`, API68): deleting a custom DMO removes
+  its last mapping, while the mapping's own delete fails with an internal error (HTTP 500).
+- Codes: new `DELETE_PHASE_NOT_SETTLED` (general; page, index). Hints/pages rewritten:
+  `DESTRUCTIVE_CONFIRMATION_REQUIRED` (multi-phase), `DEPENDENCIES_PLANNED` (delete preview
+  too), `INVALID_STREAM_DELETE_SELECTION` (no "other families"),
+  `INVALID_TRANSFORM_DELETE_SELECTION` (at most one transform, beside other families).
+  No code removed: the mixed refusals used `INVALID_SELECTION` /
+  `INVALID_STREAM_DELETE_SELECTION` / `INVALID_TRANSFORM_DELETE_SELECTION`, which stay
+  for their remaining causes.
+- Tests: new `test/crud-delete-pipeline.test.mjs` (19): planner order incl. Segment → CI →
+  IR heights; full mixed run graph → IR → transform → mapping → DMO → DLO → stream with
+  `family` on each item; failed graph / blocked IR / unconfirmed transform stop later
+  phases; graph before IR (IR starts only after the graph returned, IR processing as last
+  phase = success); processing IR stops a later DMO (`DELETE_PHASE_NOT_SETTLED`); preview
+  planned IR and DMO (no read); blocked graph preview lets the IR read; stream + landing
+  DLO (execute and preview) and stream with an unrelated DLO; DMO + last mapping (execute
+  and preview) and the unselected-DMO refusal; multi-phase confirmation and admission
+  refusals. Obsolete mixed-refusal cases removed from the IR, CI and Segment suites; DLO
+  dependency items expect `family`; whole-DMO delete accepts `--confirm-delete`.
+  Also updated: DLO/DMO command item shapes (`family`), the transform+DLO refusal case
+  removed. Full suite 2838 (2836 pass, 2 skipped, 0 fail); lint 0 warnings; build green.
+- Docs: README "One delete across families" (+ local files, DLO and mapping notes),
+  `docs/capabilities.md` "Delete phases".
+
+Handover for D2 (Git delete, `--changed-since`):
+
+- Feed Git-deleted candidates into the same `planInputs` (`DeletePlanInput`: `path`,
+  `selector`, `document`, optional `source` with `input`/`desired`). Source families need
+  `admitSourceInput`-equivalent validation from the base-revision content (M1); native and
+  stream candidates are synthesized from their selector like `-m` today. Local-file
+  removal must be skipped for those candidates (no worktree file).
+- `--source-dir`/`-m` admission lives at the top of the `try` in `run()`; the
+  `--changed-since` flag does not exist on delete yet.
+- Live D proof still open: delete `CliGraphCP_6419`, `CliGraphCP_bc80` and
+  `Individual_6419` in one command (graphs first); expect the IR as `deletion-processing`
+  (last stage, success).
+
 # Chunk C: IR + graph in one deploy (live); graph create confirmed on derived roots — 2026-11-13
 
 Chunk C of the CRUD pipeline plan. Version stays 0.1.0.

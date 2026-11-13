@@ -3,9 +3,9 @@ export type PlanInput = { path: string; document: { kind: string } };
 import type { IdentityResolutionDocument } from '../artifacts/identity-resolution-document.js';
 
 /**
- * Deploy phases in create order. P0: data streams (each creates its landing DLO). P1: native DLO,
+ * Phases in create order. P0: data streams (each creates its landing DLO). P1: native DLO,
  * DMO, mapping, relationship. P2: data transforms. P3: identity resolution, calculated insight,
- * Segment. P4: data graphs.
+ * Segment. P4: data graphs. Delete runs them in reverse.
  */
 export type CrudPhase = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
 export type CrudStage<T extends PlanInput = PlanInput> = { phase: CrudPhase; inputs: T[] };
@@ -254,10 +254,86 @@ export function inputDependencies(input: PlanInput, edges: Map<string, string[]>
  * @returns {string} Component key.
  */
 export function inputKey(input: PlanInput): string {
+  const document = input.document as {
+    identity?: { apiName?: unknown };
+    definition?: { name?: unknown };
+  };
+  // Graphs and transforms carry their name in the definition, not in an identity block.
   return componentKey(
     input.document.kind,
-    String((input.document as { identity?: { apiName?: unknown } }).identity?.apiName),
+    String(document.identity?.apiName ?? document.definition?.name),
   );
+}
+
+/**
+ * Selected dependents of each input: the inputs whose references (or derived IR edges) name it.
+ * @param {PlanInput[]} inputs Whole selection.
+ * @returns {Map<PlanInput, string[]>} Input to the component keys of the selected inputs that need it.
+ */
+export function selectedDependents<T extends PlanInput>(inputs: T[]): Map<T, string[]> {
+  const edges = identityResolutionEdges(inputs);
+  const byKey = new Map(inputs.map((input) => [inputKey(input), input]));
+  const dependents = new Map<T, string[]>();
+  for (const input of inputs)
+    for (const key of inputDependencies(input, edges)) {
+      const parent = byKey.get(key);
+      if (!parent || parent === input) continue;
+      const known = dependents.get(parent) ?? [];
+      if (!known.includes(inputKey(input))) dependents.set(parent, [...known, inputKey(input)]);
+    }
+  return dependents;
+}
+
+/**
+ * Split a delete selection into ordered stages, the reverse of the deploy order: P4 graphs, then
+ * the P3 batch with every dependent in an earlier stage than the identity resolution, calculated
+ * insight or Segment it needs (unified-DMO edges included), then P2 transforms, P1 native inputs
+ * and P0 streams.
+ * @param {PlanInput[]} inputs Whole delete selection.
+ * @returns {CrudStage[]} Non-empty stages in run order.
+ */
+export function planDeleteStages<T extends PlanInput>(inputs: T[]): Array<CrudStage<T>> {
+  const stages: Array<CrudStage<T>> = [];
+  const of = (phase: CrudPhase): T[] => inputs.filter((input) => crudPhase(input) === phase);
+  const graphs = of('P4');
+  if (graphs.length > 0) stages.push({ phase: 'P4', inputs: graphs });
+  const batch = of('P3');
+  const dependents = selectedDependents(batch);
+  const byKey = new Map(batch.map((input) => [inputKey(input), input]));
+  // Height: the longest chain of selected dependents above an input. An input with no selected
+  // dependent goes first; every input runs in a later stage than all of its dependents.
+  const heights = new Map<T, number>();
+  const visiting = new Set<T>();
+  const height = (input: T): number => {
+    const known = heights.get(input);
+    if (known !== undefined) return known;
+    // A cycle is refused by the family checks; never recurse forever here.
+    if (visiting.has(input)) return 0;
+    visiting.add(input);
+    let result = 0;
+    for (const key of dependents.get(input) ?? []) {
+      const dependent = byKey.get(key);
+      if (dependent) result = Math.max(result, height(dependent) + 1);
+    }
+    visiting.delete(input);
+    heights.set(input, result);
+    return result;
+  };
+  const grouped = new Map<number, T[]>();
+  for (const input of batch) {
+    const value = height(input);
+    grouped.set(value, [...(grouped.get(value) ?? []), input]);
+  }
+  const tallest = batch.length === 0 ? -1 : Math.max(...grouped.keys());
+  for (let value = 0; value <= tallest; value++) {
+    const group = grouped.get(value);
+    if (group) stages.push({ phase: 'P3', inputs: group });
+  }
+  for (const phase of ['P2', 'P1', 'P0'] as const) {
+    const group = of(phase);
+    if (group.length > 0) stages.push({ phase, inputs: group });
+  }
+  return stages;
 }
 
 /**
