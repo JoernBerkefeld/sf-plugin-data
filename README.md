@@ -162,6 +162,12 @@ Model Object (DMO) is the separate model that receives mapped fields. Use this o
    being mapped must already exist. Check the actual landing DLO name after stream
    creation; generated target names need not match the proposed names.
 
+Salesforce ignores the authored name of a new Ingestion API stream: it names the
+stream `<connection>_<event>_<8 hex>` and the landing DLO after it. Deploy reports
+that name as `targetApiName`. Retrieve the stream by that name and keep the
+retrieved file; deploying the authored file again is blocked because the name no
+longer matches.
+
 Run stream commands separately from DMO and mapping commands. The native mixed
 DLO → DMO → mapping deploy order does **not** include Data Streams. For the exact
 DMO and mapping document contracts, see [Public DMO workflow](#public-dmo-workflow)
