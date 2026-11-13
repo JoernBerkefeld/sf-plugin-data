@@ -1,3 +1,42 @@
+# Error-code catalogue: CLI hint and reference page per code — 2026-11-13
+
+Every plugin error code now has a short hint and a long reference page. Version stays 0.1.0;
+nothing committed.
+
+- `src/errors/codes/<family>.ts`: one `hints` record (CODE -> hint) per family; 12 families
+  (general, dmo, dlo, mapping, relationship, data-stream, data-transform,
+  calculated-insight, segment, identity-resolution, data-graph, dependency).
+- `src/errors/registry.ts`: `errorCodeInfo(code)` -> family, hint and docs URL
+  (`blob/v<version>/docs/errors/<family>/<CODE>.md`, same pattern as eslint-plugin-sfmc;
+  tag v0.1.0 predates `docs/errors`, so the links resolve from the next released version,
+  whose new tag will contain `docs/errors`). `annotateDiagnostics(envelope)` adds `hint`
+  and `docs` to every `{code, message}` object anywhere in a command result (top-level
+  errors, item diagnostics, preflight diagnostics); objects without a `message`, such as
+  per-file removal entries, are left as they are. `formatDiagnostic(d, prefix)` prints
+  `CODE: message`, `Hint: …` (left out when the message already is the hint) and `Docs: …`.
+- Wiring: the single `finish` of retrieve, deploy, delete and publish calls
+  `annotateDiagnostics` and logs through `formatDiagnostic`. Publish human output now
+  prints every diagnostic (before, only those mentioning HTTP 429/503). Nothing else in
+  those commands moved.
+- Identity resolution: a file whose identity has `logicalName` is refused by the exact-key
+  check as an invalid file (`UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION`), and a file
+  without `spec.trustedSources` deploys like one with an empty list, the same handling
+  as empty `filters` (omitted, or `[]` when the existing ruleset has entries). Their two
+  special codes are gone.
+- Messages: Salesforce's own detail from `operationDiagnostic` stays in `message`. The
+  identity-resolution preflight and executor used one generic sentence for every code;
+  they now use that code's hint.
+- Docs: `docs/errors/<family>/<CODE>.md` (title, hint, property table, What it means,
+  Why the plugin stops, How to fix, Example output, Related codes) and the index
+  `docs/errors/README.md`. Extend a page freely; keep the `> hint` line equal to the
+  registry hint.
+- Tests (`test/error-codes.test.mjs`): every quoted SCREAMING_SNAKE literal in `src`
+  (outside `src/errors`) must be registered or listed in `NOT_PLUGIN_CODES` (API enum
+  values and Salesforce-side codes); every registered code must still appear in `src`;
+  every code has a page with the standard sections, and every page has a code; the index
+  lists every code; JSON and human rendering.
+- Adding a code: add the hint to its family file, write the page, add the index line.
+
 # IR deploy `--async`: return once Salesforce accepts the write — 2026-11-12
 
 Opt-in `sf data360 deploy --async` for Identity Resolution create (POST) and update
@@ -3052,8 +3091,8 @@ rebuild/validate/gaps. No live org calls/mutations or repeated qualification her
 - `IdentityResolutionDocument` remains schemaVersion 1 / kind identity-resolution,
   but now strictly requires `identity:{dataSpace:'default',apiName:string}`.
   The exact-key discriminator is the smallest compatibility break: old top-level
-  identity.logicalName (alone OR alongside apiName) explicitly throws
-  `LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED`; no migration or reinterpretation.
+  identity.logicalName (alone OR alongside apiName) fails the exact-key check and is
+  refused as an invalid file; no migration or reinterpretation.
   Output identities strictly use `{owner:{kind:'identity-resolution',
 dataSpace:'default',apiName},entity:{kind:'dmo',dataSpace:'default',apiName},role}`.
   Twelve ordered owner+space+entity+role references remain; generated names and

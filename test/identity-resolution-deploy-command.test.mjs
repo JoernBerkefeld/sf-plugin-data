@@ -512,17 +512,17 @@ test('public CREATE binding succeeds with exact absence and compatible inputs bu
   assert.equal(gets, 1);
 });
 
-test('legacy IR documents require explicit migration before any target access', async () => {
+test('an IR document without trustedSources reaches preflight as authored', async () => {
   const input = ir();
   delete input.document.spec.trustedSources;
-  const { command, calls } = setup({}, [input]);
-  const result = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(
-    result.diagnostics.errors[0].code,
-    'IDENTITY_RESOLUTION_TRUSTED_SOURCES_MIGRATION_REQUIRED',
-  );
-  assert.deepEqual(calls, []);
+  const { command } = setup({}, [input]);
+  let seen;
+  command.preflightIdentityResolution = async (document) => {
+    seen = document;
+    throw new Error('stop after admission');
+  };
+  await run(command);
+  assert.deepEqual(seen, input.document);
 });
 
 test('public FirstName case-sensitive and automatic-run settings reach preflight as authored', async () => {

@@ -251,14 +251,14 @@ test('IR projects both observed reconciliation variants losslessly and detaches 
   }
 });
 
-test('IR legacy arbitrary logicalName artifacts are explicitly refused, never reinterpreted', () => {
+test('IR identity with a logicalName key is refused as an invalid file, never reinterpreted', () => {
   const document = project().candidate;
   for (const keepApiName of [false, true]) {
     const legacy = structuredClone(document);
     legacy.identity.logicalName = 'ArbitraryOwner';
     if (!keepApiName) delete legacy.identity.apiName;
     assert.throws(() => validateIdentityResolutionDocument(legacy), {
-      code: 'LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED',
+      code: 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION',
     });
   }
 });

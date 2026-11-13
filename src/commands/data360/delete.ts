@@ -38,6 +38,7 @@ import { deleteCalculatedInsight } from '../../services/delete-calculated-insigh
 import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
 import { operationDiagnostic, replaceExplanation } from '../../services/operation-diagnostic.js';
+import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 import {
   nativeDmoFieldName,
   nativeDmoName,
@@ -811,6 +812,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const finish = async (): Promise<DeleteEnvelope> => {
       await removeConfirmedFiles();
       if (envelope.status !== 'success') process.exitCode = 1;
+      annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
         for (const item of envelope.result.items) {
@@ -866,7 +868,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             }
         }
         for (const diagnostic of envelope.diagnostics.errors)
-          this.log(`${diagnostic.code}: ${diagnostic.message}`);
+          this.log(formatDiagnostic(diagnostic));
       }
       return envelope;
     };

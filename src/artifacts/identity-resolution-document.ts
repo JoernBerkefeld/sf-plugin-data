@@ -168,12 +168,6 @@ function text(value: unknown, empty = false): void {
 export function validateIdentityResolutionDocument(value: unknown): IdentityResolutionDocument {
   json(value);
   const root = record(value, ['schemaVersion', 'kind', 'identity', 'spec']);
-  if (
-    root.identity &&
-    typeof root.identity === 'object' &&
-    Object.hasOwn(root.identity, 'logicalName')
-  )
-    throw new IdentityResolutionError('LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED');
   const identity = record(root.identity, ['dataSpace', 'apiName']);
   requireValid(
     root.schemaVersion === 1 &&

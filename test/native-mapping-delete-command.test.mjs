@@ -1,6 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { errorCodeInfo } from '../lib/errors/registry.js';
 import Delete from '../lib/commands/data360/delete.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { deleteNativeMapping } from '../lib/services/native-mapping.js';
@@ -201,7 +202,9 @@ test('human deletion prints one identified action for each item, DMOs before DLO
             'deleted dmo Second__dlm',
             'Failed: dlo:First__dll; mutation: unknown.',
             // Human output names the stop reason, not only rate-limit diagnostics.
-            'DELETE_FAILED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+            `DELETE_FAILED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.
+Hint: ${errorCodeInfo('DELETE_FAILED').hint}
+Docs: ${errorCodeInfo('DELETE_FAILED').docs}`,
           ]
         : ['deleted dmo Second__dlm', 'deleted dlo First__dll', 'deleted dlo Third__dll'],
     );

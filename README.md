@@ -318,6 +318,22 @@ validation. Reduce request frequency and try later; effective limits can vary
 with load and change. Inspect the target before rerunning a write whose outcome
 is unknown. The plugin does not automatically replay the write.
 
+### Error codes
+
+Every diagnostic carries a plugin error code such as `IDENTITY_RESOLUTION_NOT_SETTLED`.
+Human output prints the code and message, then a short hint and a link to the code's
+reference page:
+
+```text
+IDENTITY_RESOLUTION_NOT_SETTLED: <message, including Salesforce's own detail when there is one>
+Hint: <what went wrong and what to do>
+Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v<version>/docs/errors/identity-resolution/IDENTITY_RESOLUTION_NOT_SETTLED.md
+```
+
+With `--json`, each diagnostic has the same `hint` and `docs` fields next to `code` and
+`message`. The links point at the release tag of the installed version. The full list,
+grouped by family, is in [docs/errors/README.md](docs/errors/README.md).
+
 ## Native DLO definition workflow
 
 The DLO workflow uses native Data Cloud API 68 through authenticated
@@ -2600,8 +2616,8 @@ match criteria, object reconciliation defaults, ordered source priorities and ex
 field overrides. An empty field-override list resets those fields to object inheritance;
 source order is meaningful and is not sorted away. Dependencies are rebound to verified
 target-local DMOs, fields and mapped DLO sources, rather than replaying source IDs or
-guessing generated output names. Legacy artifacts without an explicit `trustedSources`
-field require fresh native retrieval before deployment.
+guessing generated output names. A file without `trustedSources` is deployed like one
+with an empty list.
 
 Refused locally, because PATCH cannot carry the change: changing `configurationType` or
 the secondary DMO of an existing ruleset (`blocked-changes`). Emptying filters or trusted

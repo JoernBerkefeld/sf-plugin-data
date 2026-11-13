@@ -9,6 +9,7 @@ import {
 } from '../../transport/connect-diagnostic.js';
 import { retrieveNativeDataGraph } from '../../services/command-native-data-graph.js';
 import { operationDiagnostic } from '../../services/operation-diagnostic.js';
+import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 import { dataStreamApiVersion, nativeApiVersion } from '../../transport/api-version.js';
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import { writeDataStreamDocument } from '../../artifacts/write-data-stream.js';
@@ -427,6 +428,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           retryable: false,
         });
       if (status !== 'success') process.exitCode = 1;
+      annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
         const groups = new Set([
@@ -437,7 +439,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           diagnostic: RetrieveEnvelope['diagnostics']['errors'][number],
         ): void => {
           this.log(
-            `${diagnostic.identity ? `${errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: ` : ''}${diagnostic.code}: ${diagnostic.message}`,
+            formatDiagnostic(
+              diagnostic,
+              diagnostic.identity
+                ? `${errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: `
+                : '',
+            ),
           );
         };
         for (const family of groups) {

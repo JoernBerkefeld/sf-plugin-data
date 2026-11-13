@@ -187,7 +187,7 @@ test('native IR preflight rejection reaches execution result without attempting 
   const result = await h.run();
   assert.equal(result.mutation, 'not-attempted');
   assert.equal(h.writes.length, 0);
-  assert.match(result.diagnostics[0].message, /HTTP 500.*IR deployment blocked/u);
+  assert.match(result.diagnostics[0].message, /HTTP 500.*could not be verified before the write/u);
   assert.doesNotMatch(JSON.stringify(result), /unclear private body/u);
 });
 

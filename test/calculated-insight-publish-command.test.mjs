@@ -10,6 +10,7 @@ import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-do
 import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
 import { publishCalculatedInsight } from '../lib/services/publish-calculated-insight.js';
 import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { errorCodeInfo } from '../lib/errors/registry.js';
 import {
   readDeployInputs,
   verifyCalculatedInsightInputDigest,
@@ -334,17 +335,26 @@ for (const status of [429, 503])
         else assert.equal(output.filter((line) => line.includes(message)).length, 1);
       });
 
-test('publish ordinary blocked human output remains unchanged', async () => {
-  const h = await harness({ 'allow-processing': false });
-  const output = [];
-  h.command.jsonEnabled = () => false;
-  h.command.log = (line) => output.push(line);
-  await run(h.command);
-  assert.deepEqual(output, [
-    'Publish: blocked.',
-    'blocked: SyntheticPublish__cio; mutation: not-attempted.',
-  ]);
-});
+for (const code of ['PROCESSING_ACKNOWLEDGEMENT_REQUIRED', 'CI_ADMISSION_FAILED'])
+  test(`publish blocked human output prints ${code} with hint and docs`, async () => {
+    const h = await harness({ 'allow-processing': code === 'CI_ADMISSION_FAILED' });
+    if (code === 'CI_ADMISSION_FAILED')
+      h.context.get = async () => {
+        throw new Error('Synthetic admission read failure');
+      };
+    const output = [];
+    h.command.jsonEnabled = () => false;
+    h.command.log = (line) => output.push(line);
+    const { result } = await run(h.command);
+    const { hint, docs } = errorCodeInfo(code);
+    const [diagnostic] = result.diagnostics.errors;
+    assert.equal(diagnostic.code, code);
+    assert.deepEqual(output, [
+      'Publish: blocked.',
+      'blocked: SyntheticPublish__cio; mutation: not-attempted.',
+      `${code}: ${diagnostic.message}\nHint: ${hint}\nDocs: ${docs}`,
+    ]);
+  });
 
 test('publish help preserves separate lifecycle and no scheduling guarantees', () => {
   assert.deepEqual(Publish.aliases, ['datacloud:publish', 'd360:publish', 'dc:publish']);

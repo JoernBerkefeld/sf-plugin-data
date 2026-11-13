@@ -12,6 +12,7 @@ import { publishCalculatedInsight } from '../../services/publish-calculated-insi
 import type { CalculatedInsightPublishResult } from '../../services/publish-calculated-insight.js';
 import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
 import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
+import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 
 export type PublishEnvelope = {
   contract: 'sf-data360-publish';
@@ -175,13 +176,12 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       });
     }
     if (envelope.status !== 'success') process.exitCode = 1;
+    annotateDiagnostics(envelope);
     if (!this.jsonEnabled()) {
       this.log(`Publish${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
       for (const item of envelope.result.items)
         this.log(`${item.outcome}: ${item.identity.apiName}; mutation: ${item.mutation}.`);
-      for (const diagnostic of envelope.diagnostics.errors)
-        if (/HTTP (?:429|503)/u.test(diagnostic.message))
-          this.log(`${diagnostic.code}: ${diagnostic.message}`);
+      for (const diagnostic of envelope.diagnostics.errors) this.log(formatDiagnostic(diagnostic));
     }
     return envelope;
   }

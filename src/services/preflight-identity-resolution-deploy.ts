@@ -14,18 +14,15 @@ import type {
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { bindIdentityResolutionDependencies } from './bind-identity-resolution-dependencies.js';
+import { errorCodeInfo } from '../errors/registry.js';
 
 /**
  * Admit a complete authored definition for the native68 route; the API decides its settings.
- * Legacy artifacts must be explicitly migrated by retrieval, never silently normalized.
  * @param {unknown} value Complete portable definition.
  * @returns {IdentityResolutionDocument} Detached native68 definition.
  */
 export function nativeIdentityResolutionDocument(value: unknown): IdentityResolutionDocument {
-  const document = validateIdentityResolutionDocument(value);
-  if (!Object.hasOwn(document.spec, 'trustedSources'))
-    throw new Error('IDENTITY_RESOLUTION_TRUSTED_SOURCES_MIGRATION_REQUIRED');
-  return document;
+  return validateIdentityResolutionDocument(value);
 }
 
 /**
@@ -330,7 +327,9 @@ export async function preflightNativeIdentityResolutionDeploy(
       /^(?:IDENTITY_RESOLUTION_[A-Z0-9_]+|INVALID_SCOPE)$/u.test(error.message)
         ? error.message
         : 'IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED';
-    const fallback = 'Native68 IR deployment admission is incomplete or unqualified.';
+    const fallback =
+      errorCodeInfo(code)?.hint ??
+      'The identity resolution deployment did not pass the plugin checks.';
     retainConnectDiagnostic(result, getConnectDiagnostic(error));
     result.diagnostics = [
       {

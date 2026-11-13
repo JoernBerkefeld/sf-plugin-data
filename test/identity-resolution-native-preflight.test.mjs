@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { errorCodeInfo } from '../lib/errors/registry.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import {
   bindNativeIdentityResolutionPrecreate,
@@ -77,7 +78,11 @@ test('native68 API rejection survives target wrapping without qualifying absence
     result.diagnostics[0].message,
     /HTTP 400.*FUNCTIONALITY_NOT_ENABLED: trustedSources/u,
   );
-  assert.match(result.diagnostics[0].message, /admission is incomplete/u);
+  assert.ok(
+    result.diagnostics[0].message.endsWith(
+      errorCodeInfo('IDENTITY_RESOLUTION_TARGET_UNQUALIFIED').hint,
+    ),
+  );
 });
 
 test('native68 FirstName case-sensitive input is sent as authored; the API decides', async () => {
@@ -151,21 +156,26 @@ test('native68 preflight blocks changes PATCH cannot carry and writes over in-fl
   assert.equal(automatic.outcome, 'update');
 });
 
-test('native68 source migration and unsupported names stop before reads', async () => {
-  for (const variant of ['legacy', 'name']) {
-    const h = harness();
-    if (variant === 'legacy') delete h.desired.spec.trustedSources;
-    if (variant === 'name') h.desired.identity.apiName = 'Individual_TooLong';
-    const preview = await h.run();
-    assert.equal(preview.outcome, 'blocked');
-    assert.equal(
-      preview.diagnostics[0].code,
-      variant === 'legacy'
-        ? 'IDENTITY_RESOLUTION_TRUSTED_SOURCES_MIGRATION_REQUIRED'
-        : 'IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED',
-    );
-    assert.deepEqual(h.calls, { inputs: 0, gets: 0 });
-  }
+test('native68 unsupported names stop before reads', async () => {
+  const h = harness();
+  h.desired.identity.apiName = 'Individual_TooLong';
+  const preview = await h.run();
+  assert.equal(preview.outcome, 'blocked');
+  assert.equal(preview.diagnostics[0].code, 'IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED');
+  assert.deepEqual(h.calls, { inputs: 0, gets: 0 });
+});
+
+test('native68 admits a file without trustedSources like an empty list', async () => {
+  const h = harness();
+  delete h.desired.spec.trustedSources;
+  assert.deepEqual(nativeIdentityResolutionDocument(h.desired), h.desired);
+  const preview = await h.run();
+  assert.notEqual(preview.outcome, 'blocked', JSON.stringify(preview.diagnostics));
+  for (const build of [buildNativeIdentityResolutionCreate, buildNativeIdentityResolutionUpdate])
+    assert.equal(Object.hasOwn(build(h.desired), 'trustedSources'), false);
+  const existing = structuredClone(h.desired);
+  existing.spec.trustedSources = [{ name: 'First__dll' }];
+  assert.deepEqual(buildNativeIdentityResolutionUpdate(h.desired, existing).trustedSources, []);
 });
 
 test('native68 admits supported configuration deltas while identical settings are unchanged', async () => {

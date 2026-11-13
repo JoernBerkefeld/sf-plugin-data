@@ -92,14 +92,14 @@ for (const configured of [false, true]) {
   });
 }
 
-test('IR legacy identity is refused by writer and file/Git admission without reinterpretation', async () => {
+test('IR logicalName identity is refused by writer and file/Git admission without reinterpretation', async () => {
   const cwd = await fixture();
   const value = document();
   const legacy = structuredClone(value);
   legacy.identity = { dataSpace: 'default', logicalName: 'Individual_A1b2' };
   await assert.rejects(
     writeIdentityResolutionDocument(legacy, cwd, false),
-    rejects('LEGACY_IDENTITY_RESOLUTION_IDENTITY_UNSUPPORTED'),
+    rejects('UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION'),
   );
   const receipt = await writeIdentityResolutionDocument(value, cwd, false);
   await writeFile(receipt.path, JSON.stringify(legacy));

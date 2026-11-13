@@ -17,6 +17,7 @@ import {
   bindIdentityResolutionDependencies,
   verifyIdentityResolutionOutputs,
 } from './bind-identity-resolution-dependencies.js';
+import { errorCodeInfo } from '../errors/registry.js';
 // Native68 retained CREATE was still PUBLISHING at ~78s and PUBLISHED by ~257s.
 // Leave room for independently observed ~31s output binding; this is not an API SLA.
 export const nativeIdentityResolutionPollBudget = Object.freeze({
@@ -100,7 +101,8 @@ export async function executeNativeIdentityResolutionDeploy(
             code,
             message: attempted
               ? `${acknowledged ? 'IR write acknowledged; settlement unconfirmed' : 'IR write acknowledgement unconfirmed'} (${failureReason}). Stop the batch; inspect the exact target. No retry or rollback was performed.`
-              : 'IR deployment blocked by input, scope, effects or target verification.',
+              : (errorCodeInfo(code)?.hint ??
+                'The identity resolution deployment was blocked by the plugin checks; nothing was written.'),
           },
         ]
       : [],

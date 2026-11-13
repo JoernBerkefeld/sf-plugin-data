@@ -1,6 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { errorCodeInfo } from '../lib/errors/registry.js';
 import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -577,6 +578,8 @@ test('preview names the removal and its dropped pairs and writes nothing', async
       code: 'DMO_FIELD_REMOVAL_PLANNED',
       message:
         'Fields missing from the file are removed with one Metadata API destructive change: Note__c. Salesforce drops the mapping pairs of Note__c together with the field(s), so the selected mapping files find them already gone.',
+      hint: errorCodeInfo('DMO_FIELD_REMOVAL_PLANNED').hint,
+      docs: errorCodeInfo('DMO_FIELD_REMOVAL_PLANNED').docs,
     },
   ]);
   // Preview reads the target as it is now, where the pair still exists.

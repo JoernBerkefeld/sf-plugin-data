@@ -2,6 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
+import { errorCodeInfo } from '../lib/errors/registry.js';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
@@ -110,6 +111,8 @@ test('mixed DLO acquisition failure stays in its human group without changing JS
           'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.',
         retryable: false,
         identity: { dataSpace: 'default', apiName: 'Broken__dll' },
+        hint: errorCodeInfo('RETRIEVE_FAILED').hint,
+        docs: errorCodeInfo('RETRIEVE_FAILED').docs,
       },
     ]);
     assert.deepEqual(
@@ -122,7 +125,9 @@ test('mixed DLO acquisition failure stays in its human group without changing JS
         ? []
         : [
             'Retrieve: failed.',
-            `dlo:Broken__dll: RETRIEVE_FAILED: ${result.diagnostics.errors[0].message}`,
+            `dlo:Broken__dll: RETRIEVE_FAILED: ${result.diagnostics.errors[0].message}
+Hint: ${errorCodeInfo('RETRIEVE_FAILED').hint}
+Docs: ${errorCodeInfo('RETRIEVE_FAILED').docs}`,
             'Downloaded dlo: 0',
             'Downloaded segment:Audience (retrieved).',
             'Downloaded segment: 1',
@@ -157,6 +162,8 @@ test('non-DMO output failure uses document kind and excludes failure from human 
           'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.',
         retryable: false,
         identity: { dataSpace: 'default', apiName: 'Audience' },
+        hint: errorCodeInfo('OUTPUT_FAILED').hint,
+        docs: errorCodeInfo('OUTPUT_FAILED').docs,
       },
     ]);
     assert.deepEqual(
@@ -171,7 +178,9 @@ test('non-DMO output failure uses document kind and excludes failure from human 
             'Retrieve: failed.',
             'Downloaded dmo:Sample__dlm (retrieved).',
             'Downloaded dmo: 1',
-            `segment:Audience: OUTPUT_FAILED: ${result.diagnostics.errors[0].message}`,
+            `segment:Audience: OUTPUT_FAILED: ${result.diagnostics.errors[0].message}
+Hint: ${errorCodeInfo('OUTPUT_FAILED').hint}
+Docs: ${errorCodeInfo('OUTPUT_FAILED').docs}`,
             'Downloaded segment: 0',
           ],
     );
