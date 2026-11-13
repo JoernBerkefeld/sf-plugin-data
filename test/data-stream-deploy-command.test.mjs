@@ -167,13 +167,17 @@ for (const flags of [
     assert.deepEqual(calls, []);
   });
 
-test('mixed/Git/nondefault document and local digest drift stop before authentication', async () => {
+test('new-stream landing-DLO collision, Git, nondefault document and digest drift stop before writes', async () => {
   for (const mode of ['mixed', 'git', 'space', 'digest']) {
     const { command, calls, input } = invocation(
       mode === 'git' ? { metadata: undefined, 'changed-since': 'HEAD' } : {},
     );
+    // A DLO file naming a new stream's landing DLO is refused before any write (M2 collision).
     if (mode === 'mixed')
-      command.resolveInputs = async () => [input, { path: 'other', document: { kind: 'dlo' } }];
+      command.resolveInputs = async () => [
+        input,
+        { path: 'other', document: { kind: 'dlo', identity: { apiName: 'proposed__dll' } } },
+      ];
     if (mode === 'git')
       command.selectGitInputs = async () => ({ paths: ['stream'], provenance: {} });
     if (mode === 'space') input.document.identity.dataSpace = 'other';
@@ -184,7 +188,12 @@ test('mixed/Git/nondefault document and local digest drift stop before authentic
     const { result, code } = await run(command);
     assert.equal(code, 1);
     assert.notEqual(result.status, 'success');
-    assert.ok(!calls.includes('auth'));
+    assert.ok(!calls.includes('execute'));
+    if (mode === 'mixed') {
+      // The check follows the stream's read-only preflight (create), before any write.
+      assert.equal(result.diagnostics.errors[0].code, 'DATA_STREAM_DLO_COLLISION');
+      assert.deepEqual(calls, ['verify', 'auth', 'verify', 'preview']);
+    } else assert.ok(!calls.includes('auth'));
     assert.doesNotMatch(JSON.stringify(result), /private-token/u);
   }
 });

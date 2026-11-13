@@ -34,4 +34,3 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 ## Related codes
 
 - [`STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION`](../data-stream/STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION.md) — `--delete-dlo` was used without a stream selector.
-- [`DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED`](../data-stream/DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED.md) — the same rule for deploy.

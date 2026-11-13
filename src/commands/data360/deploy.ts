@@ -69,6 +69,7 @@ import {
   unwrapNativeDmo,
 } from '../../artifacts/native-dmo-document.js';
 import { isDeepStrictEqual } from 'node:util';
+import path from 'node:path';
 import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
@@ -125,12 +126,16 @@ import { plugin as packageMetadata } from '../../plugin.js';
 import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
 import type { GitDeploySelection } from '../../artifacts/git-deploy-selection.js';
 import {
+  componentKey,
   crudPhase,
   identityResolutionEdges,
   inputDependencies,
   inputKey,
   planDeployStages,
   runCrudStages,
+  streamDloCollisions,
+  streamLandingDlo,
+  transformDloNames,
 } from '../../services/crud-plan.js';
 import type { CrudStageResult } from '../../services/crud-plan.js';
 import {
@@ -191,7 +196,13 @@ const rank = (input: DeployInput): number =>
         : 3;
 
 type PlannedDependencyFamily =
-  'identity-resolution' | 'calculated-insight' | 'segment' | 'dlo' | 'dmo';
+  | 'identity-resolution'
+  | 'calculated-insight'
+  | 'segment'
+  | 'dlo'
+  | 'dmo'
+  | 'data-transform'
+  | 'data-graph';
 
 type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
   family?:
@@ -326,7 +337,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   public static readonly summary =
     'Deploy explicit authored Data360 configuration or preview without writes.';
   public static readonly description =
-    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert, mixed/Git selection or run/schedule writes. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Stream-only selections support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes and destructive reconciliation are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection (every family; files deleted in the range are reported in result.selection.deletions and never deleted by deploy; transforms stay refused there because --transform-operation is not accepted with it). Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A selection with a mapping or relationship may also hold IR, CI and Segment inputs: they run afterwards in the ordered batch, only once every native item settled; preview reports items whose parent an earlier phase creates as planned-dependencies (DEPENDENCIES_PLANNED). An IR runs before a CI or Segment that uses its unified or link DMO (name derived from the ruleset file), and those start only after the IR is PUBLISHED. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. Graph mixed-family selections are blocked. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Each phase stage preflights all of its own items before its first write: a batch of Segment, CI or IR inputs (with DLO/DMO beside them when no mapping or relationship is selected) is preflighted as a whole, and an IR dependent stage only after the IR is PUBLISHED; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. In a selection that also holds a mapping or relationship, only the local checks of the IR/CI/Segment inputs (version, data space, file shape, dependency identities and order) run before the native writes; their Git snapshot, prerequisite and target checks run in their later stage, so a blocker there can follow earlier native writes, which stay reported. Preview runs every stage read-only, also after a blocked one. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. --async (IR only) returns as soon as Salesforce accepts an IR create or update (creation-processing / update-processing, mutation acknowledged-processing) instead of waiting minutes for PUBLISHED: publish, settings and generated outputs are not confirmed; rerun the same deploy to check (IDENTITY_RESOLUTION_NOT_SETTLED while in flight, unchanged once settled). --async is refused when the selection holds a graph, CI or Segment on the unified DMO of that IR (IDENTITY_RESOLUTION_ASYNC_DEPENDENTS). Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
+    'Exact data-transform:Name deploys one canonical data360/dataTransforms/Name.dataTransform.json using auto/API68/default only, with explicit --transform-operation create|update and exact --transform-target-id for update. GET-only preview leaves server validation pending; create does not prove absence. Changed execution requires --allow-processing. Updates change label/description only; no upsert or run/schedule writes. A deploy takes at most one transform, named exactly (data-transform:Name or its file, never through a directory); it may share the deploy with other families. Exact data-stream:ApiName deploys canonical data360/data-stream/ApiName.data-stream-meta.json using auto/API68 and default space only. Streams support guarded PK-only create, additive existing-source Text mappings or unchanged; create/update requires --allow-processing. Labels, source/schema changes and destructive reconciliation are unsupported. Omitted additive mappings never remove target fields. Generated target identities are independently resolved; mismatching label intent blocks. Requires explicit files/directories OR exact family:ApiName selectors OR --changed-since Git selection (every family; files deleted in the range are reported in result.selection.deletions and never deleted by deploy; transforms stay refused there because --transform-operation is not accepted with it). Canonical native DLO/DMO/mapping/relationship JSON defaults to API68 (auto); numeric pins >=61 are retained without upgrade. Any mix of families runs in phases: data streams, then native DLO/DMO/mapping/relationship, then the data transform, then IR/CI/Segment, then data graphs; a phase starts only after every item of the previous phase settled, and the first blocked or failed item stops the run. A DLO file named like the landing DLO of a stream this deploy creates is refused after the read-only comparison of that stream and before any write (DATA_STREAM_DLO_COLLISION); beside an existing stream it deploys and Salesforce decides. Native mixed selections execute DLO then DMO then mapping then relationship, independently settling parents before mapping and relationship dependency checks. A selection with a mapping or relationship may also hold IR, CI and Segment inputs: they run afterwards in the ordered batch, only once every native item settled; preview reports items whose parent an earlier phase creates as planned-dependencies (DEPENDENCIES_PLANNED; MAPPING_DEPENDENCIES_PLANNED for a mapping): a mapping or transform on the landing DLO of a stream preview creates, items on a DLO or DMO the native phase creates, and a graph on a DMO or IR output created earlier. An IR runs before a CI or Segment that uses its unified or link DMO (name derived from the ruleset file), and those start only after the IR is PUBLISHED. A relationship (relationship:Name, data360/relationship/Name.relationship-meta.json) is matched to the org by its binding (source and target DMO and field), not by its generated name: absent is created with one POST and read back until ACTIVE, present with equal cardinality and owner is unchanged, and a different cardinality or owner is refused with RELATIONSHIP_CHANGE_UNSUPPORTED (no update route exists; delete and deploy again). Deploy never deletes relationships. Both DMOs must be mapped; otherwise Salesforce answers 400 and that answer is reported. Mapping uses exact mapping:ApiName from data360/mapping/ApiName.mapping-meta.json, unique target binding lookup and server-generated target names; create and unchanged repeats are supported; desired-state updates at native API 61 and up remove the authored pairs the file drops, one at a time, then add the new pairs in one batch; any data type, same-name or not, and one source onto several targets are sent as listed and Salesforce decides (preview names pairs of different data types with MAPPING_FIELD_TYPES_DIFFER). The key pair, its key-qualifier pair and the system pairs are never removed (MAPPING_PROTECTED_PAIR_REQUIRED when a file drops one; MAPPING_PROTECTED_LAYOUT_UNPROVEN when the key pair cannot be identified). Generated/key pairs and retained selectors are protected. A pair is removed even when another mapping of the same DMO targets the same field; the field stays mapped until the last such pair is gone. The mapping target is a custom DMO or a standard DMO (creationType Standard); platform-generated and namespaced custom DMOs are refused (MAPPING_TARGET_UNSUPPORTED). On a standard DMO the generated system and key qualifier pairs are recognised from the target read and never sent, and the first mapping onto a DMO that is not yet enabled activates it permanently: preview and create carry the notice MAPPING_ACTIVATES_STANDARD_DMO without changing outcome or exit status. Qualification is limited to empty custom fixtures; populated-data behavior is not established. Preview never writes and reports planned dependencies without claiming nonexistent parents are ready. A native DMO changed since a Git reference or selected beside Segment/CI/IR inputs joins the ordered batch on the native route. Prerequisites are checked, never pulled in: each must be selected explicitly or already exist in the target. Native DMO target-name lookup selects confirmed-404 POST or existing-name PATCH with independent GET confirmation. A custom DMO field missing from the file blocks the update unless --allow-field-removal is set; then one Metadata API destructive change for CustomField removes those fields after the PATCH, and readback confirms their absence. A mapped field is removed only when the same selection contains every mapping holding its pair and each mapping file omits that pair; all-native selections check this before the first write (DMO_FIELD_REMOVAL_MAPPED otherwise), then remove the field in the DMO position with one Metadata API destructive change. Salesforce drops the mapping pairs of the field with it; reads before and after confirm that exactly those pairs went and nothing else changed (DMO_FIELD_REMOVAL_SIDE_EFFECT otherwise), and the mappings deployed afterwards find the pairs already gone. The primary key and generated fields are never removed. An existing standard DMO (creationType Standard) takes custom-field additions, label edits and removals plus object label and description changes only: its standard and system fields are never sent or removed, may be absent from the file and must match the target when listed (UNSUPPORTED_DMO_FIELD_CHANGE); a new field must be a plain custom field (UNSUPPORTED_DMO_FIELD_ADDITION); its category is ignored and its label is sent only when it differs. Platform-generated DMOs and new namespaced names are refused (UNSUPPORTED_DMO_TARGET). Native DLOs use dlo:Name__dll from data360/dlo/Name__dll.dlo-meta.json. Target lookup selects PATCH by target ID, or POST only on confirmed HTTP404; auth/permission/lookup failures stop. Preview is read-only; native DLO deploy does not require --allow-processing. Inventory is unavailable. Graph artifacts (*.native-dataGraph.json) use native API68 (auto or explicit 68.0; other versions are rejected) and default space: confirmed absence creates with --allow-processing; qualified NONE label/description and additive fields/recursive children update with independent ready confirmation. Omitted existing fields/branches are retained; root, keys, joins and settings changes block. Identical ready configuration is unchanged without acknowledgement. --wait-timeout sets the native Graph invocation budget in integer seconds (default 1800); readiness retries wait at least 20 seconds with stderr progress. Processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load. In a mixed deploy graphs run last; a graph whose root or related object is the unified or link DMO of a selected IR starts only after that IR is PUBLISHED. --wait-timeout applies to every graph and needs at least one graph in the selection. Calculated insights use auto or numeric68/default (no other version); paired NOT_SCHEDULED configuration: --draft creates or edits DRAFT without publication; without --draft only existing ACTIVE qualified expression edits are admitted. State conversion and arbitrary SQL/schema/label/schedule changes are blocked. CI create/update requires --allow-processing; identical deploy is read-only without acknowledgement. Native68 uses fixed API65 Metadata and dependency reads; input XML is local paired ownership, not a SOAP write. Publication is never implicit. Repeated selections coalesce. Bare types and implicit deploy-all are forbidden. Preview is strictly read-only. Each phase stage preflights all of its own items before its first write: a batch of Segment, CI or IR inputs (with DLO/DMO beside them when no mapping or relationship is selected) is preflighted as a whole, and an IR dependent stage only after the IR is PUBLISHED; all-native DLO/DMO/mapping execution admits each ordered item only after earlier parents settle. In a selection that also holds a mapping or relationship, only the local checks of the IR/CI/Segment inputs (version, data space, file shape, dependency identities and order) run before the native writes; their Git snapshot, prerequisite and target checks run in their later stage, so a blocker there can follow earlier native writes, which stay reported. Preview runs every stage read-only, also after a blocked one. Existing Segment labels/descriptions execute sequentially with fresh checks and qualified readback. Segment uses one portable *.segment.json with auto/API68 or explicit65 in default space. Segment acquisition uses native runtime JSON only; separate same-version DMO detail and Metadata reads validate dependency compatibility. Existing label/description and qualified forward empty-audience selected-ID IS NOT NULL updates require --allow-processing; identical configuration is unchanged without acknowledgement. Segment XML is unsupported input. Bounded absent-target Segment CREATE supports auto/API68 in default space and requires --allow-processing. Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks. Native IR uses auto or numeric68/default: confirmed exact absence supports CREATE with --allow-processing acknowledging processing and generated-output provisioning; existing settled owners support complete matching and reconciliation PATCH with --allow-processing or read-only identical no-op without acknowledgement. Ordered source priorities, object defaults and explicit field overrides are preserved; fields:[] restores inheritance. Automatic run, explicit run and delete are unsupported; no API67 fallback is attempted. --async (IR only) returns as soon as Salesforce accepts an IR create or update (creation-processing / update-processing, mutation acknowledged-processing) instead of waiting minutes for PUBLISHED: publish, settings and generated outputs are not confirmed; rerun the same deploy to check (IDENTITY_RESOLUTION_NOT_SETTLED while in flight, unchanged once settled). --async is refused when the selection holds a graph, CI or Segment on the unified DMO of that IR (IDENTITY_RESOLUTION_ASYNC_DEPENDENTS). Selections mixing IR with other non-native families require auto. Other changes block before writes. Stops on first blocked or failed item; no retry or rollback. No local report/artifact writes.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -376,7 +387,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     }),
     'transform-operation': Flags.string({
       options: ['create', 'update'],
-      summary: 'Transform-only explicit create or exact-ID update; never upsert.',
+      summary:
+        'Explicit create or exact-ID update of the one selected data transform; never upsert.',
     }),
     'transform-target-id': Flags.string({
       summary:
@@ -390,7 +402,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     'wait-timeout': Flags.integer({
       min: 1,
       summary:
-        'Native Graph-only invocation wait budget in seconds; default 1800, no write retries.',
+        'Wait budget in seconds for each selected native data graph; default 1800, no write retries.',
     }),
     draft: Flags.boolean({
       default: false,
@@ -411,6 +423,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   protected nativeGraphContext = nativeDataGraphReadContext;
   protected nativeGraphClient = createDataGraphClient;
   protected operateNativeGraph = operateNativeDataGraph;
+  protected verifyNativeDataGraphInput = verifyNativeDataGraphInputDigest;
   protected preflightDataStream = preflightDataStream;
   protected executeDataStream = executeDataStream;
   protected verifyDataStreamInput = verifyDataStreamInputDigest;
@@ -787,8 +800,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         (flags['transform-operation'] !== undefined || flags['transform-target-id'] !== undefined)
       )
         return finish('blocked', 'INVALID_TRANSFORM_SELECTION');
-      if (flags['wait-timeout'] !== undefined && changedSince !== undefined)
-        return finish('blocked', 'INVALID_WAIT_TIMEOUT_SCOPE');
       if (
         changedSince !== undefined &&
         (flags['source-dir'] !== undefined || flags.metadata !== undefined)
@@ -858,16 +869,26 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       )
         return finish('blocked', 'INVALID_TRANSFORM_FLAG_SCOPE');
       if (transformInputs.length > 0) {
+        // --transform-operation and --transform-target-id address exactly one transform, named by
+        // a data-transform: member or its .dataTransform.json file (a directory never selects it);
+        // --changed-since does not accept those flags, so a transform changed in a Git range blocks.
+        const members = (flags.metadata ?? []).filter((member) =>
+          member.startsWith('data-transform:'),
+        );
+        const named =
+          members.length === 1 ||
+          (transformInputs.length === 1 &&
+            (flags['source-dir'] ?? []).some(
+              (entry) =>
+                entry.endsWith('.dataTransform.json') &&
+                path.resolve(cwd, entry) === path.resolve(cwd, transformInputs[0].path),
+            ));
         if (
           transformInputs.length !== 1 ||
-          resolvedInputs.length !== 1 ||
+          members.length > 1 ||
           changedSince !== undefined ||
           flags.draft ||
-          flags['wait-timeout'] !== undefined ||
-          (flags.metadata !== undefined && flags.metadata.length !== 1) ||
-          (flags['source-dir'] !== undefined &&
-            (flags['source-dir'].length !== 1 ||
-              !flags['source-dir'][0].endsWith('.dataTransform.json')))
+          !named
         )
           return finish('blocked', 'INVALID_TRANSFORM_SELECTION');
         if (!['auto', '68.0'].includes(flags['api-version']) || effectiveScope !== 'default')
@@ -879,123 +900,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             (typeof transformTargetId !== 'string' || !dataTransformId.test(transformTargetId)))
         )
           return finish('blocked', 'INVALID_TRANSFORM_DEPLOY_SELECTION');
-        const input = transformInputs[0];
-        families.set(input.path, 'data-transform');
-        const identity = {
-          dataSpace: 'default',
-          apiName: input.document.definition.name as string,
-        };
-        const selection =
-          transformOperation === 'create'
-            ? { operation: 'create' as const }
-            : { operation: 'update' as const, targetId: transformTargetId! };
-        const routes: ExecutionItem['routes'] = [
-          { operation: 'data-transform.deploy', apiVersion: '68.0', transport: 'native' },
-          { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
-        ];
-        let dispatched = false;
-        try {
-          const verifyInput = async (): Promise<void> => this.verifyDataTransformInput(input);
-          await verifyInput();
-          const injected = flags['target-org'] as unknown;
-          const org =
-            injected && typeof injected === 'object'
-              ? (injected as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
-              : await this.resolveTargetOrg(flags['target-org']);
-          if (!org?.getUsername()) return finish('blocked', 'TARGET_ORG_REQUIRED');
-          envelope.provenance.targetOrgId = org.getOrgId();
-          envelope.metadata.soapApiVersion = '68.0';
-          const connection = org.getConnection('68.0');
-          const client = this.createDataTransformClient(connection, '68.0', 'default');
-          const dlos = this.createDataTransformDloReader(connection);
-          if (flags.preview) {
-            const plan = await this.preflightDataTransform(
-              input.document,
-              selection,
-              client,
-              dlos,
-              { skipServerValidation: true },
-            );
-            await verifyInput();
-            envelope.result.items.push({
-              family: 'data-transform',
-              outcome: plan.operation,
-              identity,
-              routes,
-              operation: 'preview',
-              path: input.path,
-              diagnostics: [
-                {
-                  code: 'TRANSFORM_PREVIEW_LIMITATIONS',
-                  message:
-                    'GET-only preview; server validation pending. Explicit create does not prove name absence; the create-only POST arbitrates collisions.',
-                },
-              ],
-            });
-          } else {
-            const result = await this.executeDataTransform(
-              input.document,
-              selection,
-              client,
-              dlos,
-              {
-                verifyInput,
-                onDispatch: () => {
-                  dispatched = true;
-                },
-                allowProcessing: flags['allow-processing'] === true,
-              },
-            );
-            if (result.serverProcessing) processingDlos.add(input.path);
-            envelope.result.items.push({
-              ...(result.serverProcessing ? { serverProcessing: true as const } : {}),
-              family: 'data-transform',
-              identity,
-              routes,
-              operation: 'execute',
-              path: input.path,
-              outcome:
-                result.operation === 'create'
-                  ? 'created'
-                  : result.operation === 'update'
-                    ? 'updated'
-                    : 'unchanged',
-              mutation:
-                result.operation === 'create'
-                  ? 'confirmed-created'
-                  : result.operation === 'update'
-                    ? 'confirmed-updated'
-                    : 'not-attempted',
-              diagnostics: result.serverProcessing
-                ? [
-                    {
-                      code: 'TRANSFORM_SERVER_PROCESSING',
-                      message:
-                        'Definition independently verified; server is still processing. Computation completion is not established.',
-                    },
-                  ]
-                : [],
-            });
-          }
-          return finish('success');
-        } catch (error) {
-          if (!flags.preview)
-            envelope.result.items.push({
-              family: 'data-transform',
-              identity,
-              routes,
-              operation: 'execute',
-              path: input.path,
-              outcome: 'failed',
-              mutation: dispatched ? 'unknown' : 'not-attempted',
-              diagnostics: [],
-            });
-          return finish(
-            dispatched ? 'failed' : 'blocked',
-            error instanceof DataTransformError ? error.code : 'TRANSFORM_DEPLOY_FAILED',
-            error,
-          );
-        }
       }
       if (
         flags.draft &&
@@ -1005,7 +909,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           resolvedInputs.some((input) => input.document.kind !== 'calculated-insight'))
       )
         return finish('blocked', 'INVALID_DRAFT_SCOPE');
-      for (const input of resolvedInputs) families.set(input.path, input.document.kind);
+      for (const input of resolvedInputs)
+        families.set(
+          input.path,
+          input.document.kind === 'native-data-graph' ? 'data-graph' : input.document.kind,
+        );
       if (resolvedInputs.length === 0 && changedSince === undefined)
         return finish('blocked', 'INVALID_SELECTION');
       const graphInputs = resolvedInputs.filter(
@@ -1013,201 +921,34 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       );
       if (
         flags['wait-timeout'] !== undefined &&
-        (graphInputs.length !== 1 ||
-          resolvedInputs.length !== 1 ||
+        (graphInputs.length === 0 ||
           !Number.isSafeInteger(flags['wait-timeout']) ||
           flags['wait-timeout'] < 1)
       )
         return finish('blocked', 'INVALID_WAIT_TIMEOUT_SCOPE');
       if (graphInputs.length > 0) {
-        if (graphInputs.length !== 1 || resolvedInputs.length !== 1 || flags.draft)
-          return finish('blocked', 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
         try {
           operationApiVersion(flags['api-version'], 'data-graph');
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
         if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-        const input = graphInputs[0];
-        families.set(input.path, 'data-graph');
-        const snapshot = JSON.stringify(flags);
-        const verifyInput = async (): Promise<void> => {
-          if (JSON.stringify(flags) !== snapshot) throw new Error('Input drift');
-          await verifyNativeDataGraphInputDigest(input);
-        };
-        await verifyInput();
-        const org = await this.resolveTargetOrg(flags['target-org']);
-        if (!org) return finish('blocked', 'TARGET_ORG_REQUIRED');
-        const connection = org.getConnection('68.0');
-        const context = await this.nativeGraphContext(connection, 'default');
-        envelope.provenance.targetOrgId = context.orgId;
-        envelope.metadata.soapApiVersion = '68.0';
-        envelope.diagnostics.warnings.push(nativeGraphLimitations);
-        const result = await this.operateNativeGraph(
-          input.document,
-          context,
-          this.nativeGraphClient(connection, '68.0', 'default'),
-          {
-            operation: 'deploy',
-            preview: flags.preview,
-            confirmed: flags['allow-processing'] === true,
-            waitTimeoutSeconds: flags['wait-timeout'] ?? 1800,
-            progress: (message) => {
-              // oclif logToStderr suppresses output in JSON mode; progress must remain visible.
-              process.stderr.write(`${message}\n`);
-            },
-            verifyInput,
-          },
-        );
-        const identity = {
-          dataSpace: 'default',
-          apiName: input.document.definition.name as string,
-        };
-        const routes = [
-          { operation: 'data-graph.deploy', apiVersion: '68.0', transport: 'native' as const },
-        ];
-        if (flags.preview)
-          envelope.result.items.push({
-            identity,
-            path: input.path,
-            family: 'data-graph' as const,
-            operation: 'preview',
-            outcome:
-              result.outcome === 'create'
-                ? 'create'
-                : result.outcome === 'update'
-                  ? 'update'
-                  : result.outcome === 'unchanged'
-                    ? 'unchanged'
-                    : 'blocked',
-            target:
-              result.outcome === 'create'
-                ? 'absent'
-                : result.outcome === 'unchanged' || result.outcome === 'update'
-                  ? 'present'
-                  : 'unknown',
-            absenceProof: 'none',
-            diagnostics: result.diagnostics ?? [],
-            routes,
-          });
-        else
-          envelope.result.items.push({
-            identity,
-            path: input.path,
-            family: 'data-graph',
-            operation: 'execute',
-            outcome:
-              result.outcome === 'created'
-                ? 'created'
-                : result.outcome === 'updated'
-                  ? 'updated'
-                  : result.outcome === 'unchanged'
-                    ? 'unchanged'
-                    : result.outcome === 'failed'
-                      ? 'failed'
-                      : 'blocked',
-            mutation:
-              result.mutation === 'confirmed-created'
-                ? 'confirmed-created'
-                : result.mutation === 'confirmed-updated'
-                  ? 'confirmed-updated'
-                  : result.mutation === 'unknown'
-                    ? 'unknown'
-                    : 'not-attempted',
-            diagnostics: result.failedCheck
-              ? [
-                  {
-                    code: 'DATA_GRAPH_CREATE_UNCONFIRMED',
-                    message: `The create request was sent but ${result.failedCheck === 'deadline' ? '--wait-timeout ran out before the graph was confirmed' : `the ${result.failedCheck} check could not confirm the graph`}; it may exist. Retrieve it or deploy again to reconcile.`,
-                  },
-                ]
-              : [],
-            routes,
-          });
-        return finish(
-          result.outcome === 'blocked'
-            ? 'blocked'
-            : result.outcome === 'failed'
-              ? 'failed'
-              : 'success',
-          result.outcome === 'blocked' || result.outcome === 'failed'
-            ? flags.preview
-              ? 'DEPLOY_PREVIEW_FAILED'
-              : 'DEPLOY_EXECUTION_FAILED'
-            : undefined,
-          result,
-        );
       }
       const streamInputs = resolvedInputs.filter(
         (input): input is DataStreamDeployInput => input.document.kind === 'data-stream',
       );
+      let streamVersion = '68.0';
       if (streamInputs.length > 0) {
-        if (streamInputs.length !== resolvedInputs.length)
-          return finish('blocked', 'DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED');
-        let version: string;
         try {
-          version = dataStreamApiVersion(flags['api-version']);
-          if (
-            effectiveScope !== 'default' ||
-            streamInputs.some((input) => input.document.identity.dataSpace !== 'default')
-          )
-            return finish('blocked', 'INVALID_SCOPE');
+          streamVersion = dataStreamApiVersion(flags['api-version']);
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
-        const verify = async (): Promise<void> => {
-          for (const input of streamInputs)
-            await (this.verifyDataStreamInput ?? verifyDataStreamInputDigest)(input);
-        };
-        await verify();
-        const injected = flags['target-org'] as unknown;
-        const org =
-          injected && typeof injected === 'object'
-            ? (injected as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
-            : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
-        if (!org?.getUsername()) return finish('blocked', 'TARGET_ORG_REQUIRED');
-        envelope.provenance.targetOrgId = org.getOrgId();
-        envelope.metadata.soapApiVersion = version;
-        const clients = this.createDataStreamClients(
-          org.getConnection(version),
-          org.getUsername()!,
-          version,
-        );
-        for (const input of streamInputs) {
-          await verify();
-          const routes: ExecutionItem['routes'] = [
-            { operation: 'data-stream.deploy', apiVersion: version, transport: 'native' },
-            { operation: 'dlo.get', apiVersion: version, transport: 'native' },
-            { operation: 'connection.read', apiVersion: version, transport: 'native' },
-          ];
-          if (flags.preview) {
-            const preview = await this.preflightDataStream(input.document, clients);
-            await verify();
-            envelope.result.items.push({
-              ...preview,
-              routes,
-              identity: input.document.identity,
-              operation: 'preview',
-              path: input.path,
-            });
-          } else {
-            const result = await this.executeDataStream(input.document, clients, {
-              allowProcessing: flags['allow-processing'] === true,
-              verifyInput: verify,
-            });
-            envelope.result.items.push({
-              ...result,
-              routes,
-              identity: input.document.identity,
-              operation: 'execute',
-              path: input.path,
-            });
-            if (result.outcome === 'blocked' || result.outcome === 'failed')
-              return finish(result.outcome);
-          }
-        }
-        await verify();
-        return finish('success');
+        if (
+          effectiveScope !== 'default' ||
+          streamInputs.some((input) => input.document.identity.dataSpace !== 'default')
+        )
+          return finish('blocked', 'INVALID_SCOPE');
       }
       const legacyInputs = resolvedInputs.filter(
         (
@@ -1216,18 +957,23 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           DeployInput,
           | NativeDataGraphDeployInput
           | import('../../artifacts/read-deploy-input.js').DataTransformDeployInput
+          | DataStreamDeployInput
         > =>
-          input.document.kind !== 'native-data-graph' && input.document.kind !== 'data-transform',
+          input.document.kind !== 'native-data-graph' &&
+          input.document.kind !== 'data-transform' &&
+          input.document.kind !== 'data-stream',
       );
       const isP1 = (input: DeployInput): boolean => crudPhase(input) === 'P1';
       // Selections with a mapping or relationship (explicit or Git) and all-native explicit
       // selections run their P1 inputs (DLO, DMO, mapping, relationship) on the native route as
       // the first stage; P3 inputs (IR, CI, Segment) follow in the dependency batch. A native
       // DLO/DMO-only Git selection, or one beside P3 inputs only, stays in the batch as before.
+      // A transform reads and writes DLOs, so selected DLOs must settle before it (P1 before P2).
       const nativeRoute =
         legacyInputs.some(
           (input) => input.document.kind === 'mapping' || input.document.kind === 'relationship',
         ) ||
+        transformInputs.length > 0 ||
         (legacyInputs.every((input) => isP1(input)) && changedSince === undefined);
       const edges = identityResolutionEdges(legacyInputs);
       const stageResult = (
@@ -1241,6 +987,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       });
       const runNativeStage = async (
         nativeInputs: typeof legacyInputs,
+        earlier: ReadonlySet<string>,
       ): Promise<CrudStageResult> => {
         let version: string;
         try {
@@ -1299,7 +1046,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         const hasMappings = nativeInputs.some(
           (input) => input.document.kind === 'mapping' || input.document.kind === 'relationship',
         );
-        const plannedParents = new Set<string>();
+        // Lower-case component keys planned for creation: by earlier stages (a stream's landing
+        // DLO) and by this stage.
+        const plannedParents = new Set<string>(earlier);
         // Field removal beside mappings. Every selected DMO is admitted read-only before the first
         // write of the batch: a mapped field it omits must lose all its pairs through selected
         // mapping files, otherwise the whole batch is refused. An admitted DMO removes such a
@@ -1375,14 +1124,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 : undefined;
             const planned =
               spec &&
-              (plannedParents.has(`dlo:${spec.sourceEntityDeveloperName}`) ||
-                plannedParents.has(`dmo:${spec.targetEntityDeveloperName}`));
+              (plannedParents.has(componentKey('dlo', spec.sourceEntityDeveloperName)) ||
+                plannedParents.has(componentKey('dmo', spec.targetEntityDeveloperName)));
             if (kind === 'relationship') {
               const binding = (input.document as NativeRelationshipDocument).spec;
               // A DMO this batch creates cannot be listed yet; nothing is asserted about it.
               const relationshipPreview =
-                plannedParents.has(`dmo:${binding.sourceObjectName}`) ||
-                plannedParents.has(`dmo:${binding.targetObjectName}`)
+                plannedParents.has(componentKey('dmo', binding.sourceObjectName)) ||
+                plannedParents.has(componentKey('dmo', binding.targetObjectName))
                   ? {
                       family: 'relationship' as const,
                       outcome: 'planned-dependencies' as const,
@@ -1457,9 +1206,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               // Later preview stages still run; hand on what this stage plans so far.
               return {
                 ...stageResult('blocked'),
-                planned: [...plannedParents].map((key) => key.toLowerCase()),
+                planned: [...plannedParents],
               };
-            if (preview.outcome === 'create') plannedParents.add(`${kind}:${identity.apiName}`);
+            if (preview.outcome === 'create')
+              plannedParents.add(componentKey(kind, identity.apiName));
             continue;
           }
           // Each executor independently admits and settles this item before the next dependency read.
@@ -1583,7 +1333,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         }
         await verify();
         // Preview: parents this stage plans to create; later stages report dependents as planned.
-        return { status: 'success', planned: [...plannedParents].map((key) => key.toLowerCase()) };
+        return { status: 'success', planned: [...plannedParents] };
       };
       const runBatchStage = async (
         stageInputs: typeof legacyInputs,
@@ -1615,10 +1365,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             | DataStreamDeployInput
             | NativeDataGraphDeployInput
             | import('../../artifacts/read-deploy-input.js').DataTransformDeployInput
-          > =>
-            input.document.kind !== 'mapping' &&
-            input.document.kind !== 'relationship' &&
-            input.document.kind !== 'data-stream',
+          > => input.document.kind !== 'mapping' && input.document.kind !== 'relationship',
         );
         // Native DMO items keep the native version rule (auto is 68.0), not another family's pin.
         const admitVersion = (input: (typeof admitted)[number]): void => {
@@ -2486,19 +2233,384 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : {}),
         };
       };
-      const stages = planDeployStages(legacyInputs, { nativeRoute });
+      const runStreamStage = async (
+        streamInputs: DataStreamDeployInput[],
+      ): Promise<CrudStageResult> => {
+        const version = streamVersion;
+        const verify = async (): Promise<void> => {
+          for (const input of streamInputs)
+            await (this.verifyDataStreamInput ?? verifyDataStreamInputDigest)(input);
+        };
+        await verify();
+        const injected = flags['target-org'] as unknown;
+        const org =
+          injected && typeof injected === 'object'
+            ? (injected as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
+            : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
+        if (!org?.getUsername()) return stageResult('blocked', 'TARGET_ORG_REQUIRED');
+        envelope.provenance.targetOrgId = org.getOrgId();
+        envelope.metadata.soapApiVersion = version;
+        const clients = this.createDataStreamClients(
+          org.getConnection(version),
+          org.getUsername()!,
+          version,
+        );
+        const created: string[] = [];
+        // A new stream creates and owns its landing DLO: a selected DLO file of the same name
+        // would write that object a second time. P0 is the first stage, so this read-only
+        // check refuses the pair before any write. An existing stream's DLO file is a normal
+        // sibling and Salesforce decides.
+        const colliding = new Set(
+          streamDloCollisions(resolvedInputs).map((name) => name.toLowerCase()),
+        );
+        for (const input of streamInputs) {
+          const landing = streamLandingDlo(input);
+          if (!landing || !colliding.has(landing.toLowerCase())) continue;
+          await verify();
+          const check = await this.preflightDataStream(input.document, clients);
+          if (check.outcome !== 'create') continue;
+          envelope.diagnostics.warnings.push(
+            `DLO ${landing} is the landing DLO of new data stream ${input.document.identity.apiName}; remove the DLO file from the selection.`,
+          );
+          return stageResult('blocked', 'DATA_STREAM_DLO_COLLISION');
+        }
+        for (const input of streamInputs) {
+          await verify();
+          const routes: ExecutionItem['routes'] = [
+            { operation: 'data-stream.deploy', apiVersion: version, transport: 'native' },
+            { operation: 'dlo.get', apiVersion: version, transport: 'native' },
+            { operation: 'connection.read', apiVersion: version, transport: 'native' },
+          ];
+          if (flags.preview) {
+            const preview = await this.preflightDataStream(input.document, clients);
+            await verify();
+            envelope.result.items.push({
+              ...preview,
+              routes,
+              identity: input.document.identity,
+              operation: 'preview',
+              path: input.path,
+            });
+            // The landing DLO does not exist before the stream is created.
+            const landing = streamLandingDlo(input);
+            if (preview.outcome === 'create' && landing) created.push(componentKey('dlo', landing));
+          } else {
+            const result = await this.executeDataStream(input.document, clients, {
+              allowProcessing: flags['allow-processing'] === true,
+              verifyInput: verify,
+            });
+            envelope.result.items.push({
+              ...result,
+              routes,
+              identity: input.document.identity,
+              operation: 'execute',
+              path: input.path,
+            });
+            if (result.outcome === 'blocked' || result.outcome === 'failed')
+              return stageResult(result.outcome);
+          }
+        }
+        await verify();
+        return { status: 'success', planned: created };
+      };
+      const runTransformStage = async (
+        input: DataTransformDeployInput,
+        planned: ReadonlySet<string>,
+      ): Promise<CrudStageResult> => {
+        const identity = {
+          dataSpace: 'default',
+          apiName: input.document.definition.name as string,
+        };
+        const selection =
+          transformOperation === 'create'
+            ? { operation: 'create' as const }
+            : { operation: 'update' as const, targetId: transformTargetId! };
+        const routes: ExecutionItem['routes'] = [
+          { operation: 'data-transform.deploy', apiVersion: '68.0', transport: 'native' },
+          { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
+        ];
+        let dispatched = false;
+        try {
+          const verifyInput = async (): Promise<void> => this.verifyDataTransformInput(input);
+          await verifyInput();
+          // A DLO this transform reads or writes is created earlier in this preview: it cannot be
+          // bound yet, so the transform is reported as planned instead of compared.
+          const parents = transformDloNames(input)
+            .map((name) => componentKey('dlo', name))
+            .filter((key) => planned.has(key));
+          if (flags.preview && parents.length > 0) {
+            envelope.result.items.push({
+              family: 'data-transform',
+              outcome: 'planned-dependencies',
+              target: 'unknown',
+              absenceProof: 'none',
+              diagnostics: [
+                {
+                  code: 'DEPENDENCIES_PLANNED',
+                  message: `Selected parent ${parents.join(', ')} is created earlier in this deploy and must settle before this item is compared; no existence or write outcome is asserted.`,
+                },
+              ],
+              identity,
+              operation: 'preview',
+              path: input.path,
+            });
+            return stageResult('success');
+          }
+          const injected = flags['target-org'] as unknown;
+          const org =
+            injected && typeof injected === 'object'
+              ? (injected as Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'>)
+              : await this.resolveTargetOrg(flags['target-org']);
+          if (!org?.getUsername()) return stageResult('blocked', 'TARGET_ORG_REQUIRED');
+          envelope.provenance.targetOrgId = org.getOrgId();
+          envelope.metadata.soapApiVersion = '68.0';
+          const connection = org.getConnection('68.0');
+          const client = this.createDataTransformClient(connection, '68.0', 'default');
+          const dlos = this.createDataTransformDloReader(connection);
+          if (flags.preview) {
+            const plan = await this.preflightDataTransform(
+              input.document,
+              selection,
+              client,
+              dlos,
+              { skipServerValidation: true },
+            );
+            await verifyInput();
+            envelope.result.items.push({
+              family: 'data-transform',
+              outcome: plan.operation,
+              identity,
+              routes,
+              operation: 'preview',
+              path: input.path,
+              diagnostics: [
+                {
+                  code: 'TRANSFORM_PREVIEW_LIMITATIONS',
+                  message:
+                    'GET-only preview; server validation pending. Explicit create does not prove name absence; the create-only POST arbitrates collisions.',
+                },
+              ],
+            });
+          } else {
+            const result = await this.executeDataTransform(
+              input.document,
+              selection,
+              client,
+              dlos,
+              {
+                verifyInput,
+                onDispatch: () => {
+                  dispatched = true;
+                },
+                allowProcessing: flags['allow-processing'] === true,
+              },
+            );
+            if (result.serverProcessing) processingDlos.add(input.path);
+            envelope.result.items.push({
+              ...(result.serverProcessing ? { serverProcessing: true as const } : {}),
+              family: 'data-transform',
+              identity,
+              routes,
+              operation: 'execute',
+              path: input.path,
+              outcome:
+                result.operation === 'create'
+                  ? 'created'
+                  : result.operation === 'update'
+                    ? 'updated'
+                    : 'unchanged',
+              mutation:
+                result.operation === 'create'
+                  ? 'confirmed-created'
+                  : result.operation === 'update'
+                    ? 'confirmed-updated'
+                    : 'not-attempted',
+              diagnostics: result.serverProcessing
+                ? [
+                    {
+                      code: 'TRANSFORM_SERVER_PROCESSING',
+                      message:
+                        'Definition independently verified; server is still processing. Computation completion is not established.',
+                    },
+                  ]
+                : [],
+            });
+          }
+          return stageResult('success');
+        } catch (error) {
+          if (!flags.preview)
+            envelope.result.items.push({
+              family: 'data-transform',
+              identity,
+              routes,
+              operation: 'execute',
+              path: input.path,
+              outcome: 'failed',
+              mutation: dispatched ? 'unknown' : 'not-attempted',
+              diagnostics: [],
+            });
+          return stageResult(
+            dispatched ? 'failed' : 'blocked',
+            error instanceof DataTransformError ? error.code : 'TRANSFORM_DEPLOY_FAILED',
+            error,
+          );
+        }
+      };
+      const runGraphStage = async (
+        graphs: NativeDataGraphDeployInput[],
+        planned: ReadonlySet<string>,
+      ): Promise<CrudStageResult> => {
+        const snapshot = JSON.stringify(flags);
+        const graphEdges = identityResolutionEdges(resolvedInputs);
+        let target:
+          | {
+              connection: Connection;
+              context: Awaited<ReturnType<typeof nativeDataGraphReadContext>>;
+            }
+          | undefined;
+        for (const input of graphs) {
+          const verifyInput = async (): Promise<void> => {
+            if (JSON.stringify(flags) !== snapshot) throw new Error('Input drift');
+            await (this.verifyNativeDataGraphInput ?? verifyNativeDataGraphInputDigest)(input);
+          };
+          await verifyInput();
+          const identity = {
+            dataSpace: 'default',
+            apiName: input.document.definition.name as string,
+          };
+          const routes = [
+            { operation: 'data-graph.deploy', apiVersion: '68.0', transport: 'native' as const },
+          ];
+          // A root or related DMO (or the IR that creates it) is created earlier in this preview:
+          // the graph is reported as planned instead of compared against a target without it.
+          const parents = inputDependencies(input, graphEdges).filter((key) => planned.has(key));
+          if (flags.preview && parents.length > 0) {
+            envelope.result.items.push({
+              family: 'data-graph',
+              outcome: 'planned-dependencies',
+              target: 'unknown',
+              absenceProof: 'none',
+              diagnostics: [
+                {
+                  code: 'DEPENDENCIES_PLANNED',
+                  message: `Selected parent ${parents.join(', ')} is created earlier in this deploy and must settle before this item is compared; no existence or write outcome is asserted.`,
+                },
+              ],
+              identity,
+              operation: 'preview',
+              path: input.path,
+              routes,
+            });
+            continue;
+          }
+          if (!target) {
+            const org = await this.resolveTargetOrg(flags['target-org']);
+            if (!org) return stageResult('blocked', 'TARGET_ORG_REQUIRED');
+            const connection = org.getConnection('68.0');
+            const context = await this.nativeGraphContext(connection, 'default');
+            envelope.provenance.targetOrgId = context.orgId;
+            envelope.metadata.soapApiVersion = '68.0';
+            envelope.diagnostics.warnings.push(nativeGraphLimitations);
+            target = { connection, context };
+          }
+          const { connection, context } = target;
+          const result = await this.operateNativeGraph(
+            input.document,
+            context,
+            this.nativeGraphClient(connection, '68.0', 'default'),
+            {
+              operation: 'deploy',
+              preview: flags.preview,
+              confirmed: flags['allow-processing'] === true,
+              waitTimeoutSeconds: flags['wait-timeout'] ?? 1800,
+              progress: (message) => {
+                // oclif logToStderr suppresses output in JSON mode; progress must remain visible.
+                process.stderr.write(`${message}\n`);
+              },
+              verifyInput,
+            },
+          );
+          if (flags.preview)
+            envelope.result.items.push({
+              identity,
+              path: input.path,
+              family: 'data-graph' as const,
+              operation: 'preview',
+              outcome:
+                result.outcome === 'create'
+                  ? 'create'
+                  : result.outcome === 'update'
+                    ? 'update'
+                    : result.outcome === 'unchanged'
+                      ? 'unchanged'
+                      : 'blocked',
+              target:
+                result.outcome === 'create'
+                  ? 'absent'
+                  : result.outcome === 'unchanged' || result.outcome === 'update'
+                    ? 'present'
+                    : 'unknown',
+              absenceProof: 'none',
+              diagnostics: result.diagnostics ?? [],
+              routes,
+            });
+          else
+            envelope.result.items.push({
+              identity,
+              path: input.path,
+              family: 'data-graph',
+              operation: 'execute',
+              outcome:
+                result.outcome === 'created'
+                  ? 'created'
+                  : result.outcome === 'updated'
+                    ? 'updated'
+                    : result.outcome === 'unchanged'
+                      ? 'unchanged'
+                      : result.outcome === 'failed'
+                        ? 'failed'
+                        : 'blocked',
+              mutation:
+                result.mutation === 'confirmed-created'
+                  ? 'confirmed-created'
+                  : result.mutation === 'confirmed-updated'
+                    ? 'confirmed-updated'
+                    : result.mutation === 'unknown'
+                      ? 'unknown'
+                      : 'not-attempted',
+              diagnostics: result.failedCheck
+                ? [
+                    {
+                      code: 'DATA_GRAPH_CREATE_UNCONFIRMED',
+                      message: `The create request was sent but ${result.failedCheck === 'deadline' ? '--wait-timeout ran out before the graph was confirmed' : `the ${result.failedCheck} check could not confirm the graph`}; it may exist. Retrieve it or deploy again to reconcile.`,
+                    },
+                  ]
+                : [],
+              routes,
+            });
+          if (result.outcome === 'blocked' || result.outcome === 'failed')
+            return stageResult(
+              result.outcome,
+              flags.preview ? 'DEPLOY_PREVIEW_FAILED' : 'DEPLOY_EXECUTION_FAILED',
+              result,
+            );
+        }
+        return stageResult('success');
+      };
+      const stages = planDeployStages(resolvedInputs, { nativeRoute });
       if (stages.length === 0) {
         if (changedSince === undefined) return finish('blocked', 'INVALID_SELECTION');
         // An empty Git admission still checks its captured snapshots in the batch.
         stages.push({ phase: 'P3', inputs: [] });
       }
-      // A P3 stage after a native P1 stage must be admissible before the first P1 write: its
-      // version, data space and every local (no org access) file and dependency shape check.
-      if (stages[0]?.phase === 'P1' && stages.length > 1) {
+      // A P3 stage after an earlier writing stage (P0 streams, P1 native, P2 transform) must be
+      // admissible before that first write: its version, data space and every local (no org
+      // access) file and dependency shape check.
+      if (stages[0]?.phase !== 'P3' && stages.some((stage) => stage.phase === 'P3')) {
         try {
           if (effectiveScope !== 'default') throw new Error('INVALID_SCOPE');
           for (const input of legacyInputs)
-            if (!isP1(input))
+            if (crudPhase(input) === 'P3')
               operationApiVersion(
                 flags['api-version'],
                 input.document.kind as Parameters<typeof operationApiVersion>[1],
@@ -2506,7 +2618,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         } catch {
           return finish('blocked', 'INVALID_SCOPE');
         }
-        const later = legacyInputs.filter((input) => !isP1(input));
+        const later = legacyInputs.filter((input) => crudPhase(input) === 'P3');
         try {
           for (const input of later) {
             if (input.document.kind === 'identity-resolution')
@@ -2539,9 +2651,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       const outcome = await runCrudStages(
         stages,
         async (stage, planned) =>
-          stage.phase === 'P1'
-            ? runNativeStage(stage.inputs)
-            : runBatchStage(stage.inputs, planned),
+          stage.phase === 'P0'
+            ? runStreamStage(stage.inputs as DataStreamDeployInput[])
+            : stage.phase === 'P1'
+              ? runNativeStage(stage.inputs as typeof legacyInputs, planned)
+              : stage.phase === 'P2'
+                ? runTransformStage(stage.inputs[0] as DataTransformDeployInput, planned)
+                : stage.phase === 'P4'
+                  ? runGraphStage(stage.inputs as NativeDataGraphDeployInput[], planned)
+                  : runBatchStage(stage.inputs as typeof legacyInputs, planned),
         { continueAfterBlocked: flags.preview },
       );
       return finish(outcome.status, outcome.code, outcome.error);

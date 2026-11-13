@@ -36,4 +36,3 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 ## Related codes
 
 - [`BLOCKED_GIT_LIFECYCLE`](../general/BLOCKED_GIT_LIFECYCLE.md) — the Git changes include a rename, a conflict or an unidentifiable deletion.
-- [`DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED`](../data-stream/DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED.md) — data streams must be deployed on their own, also through Git.

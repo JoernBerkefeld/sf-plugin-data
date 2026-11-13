@@ -3,11 +3,11 @@ export type PlanInput = { path: string; document: { kind: string } };
 import type { IdentityResolutionDocument } from '../artifacts/identity-resolution-document.js';
 
 /**
- * Deploy phases in create order. P1: native DLO, DMO, mapping, relationship. P3: identity
- * resolution, calculated insight, Segment. Streams (P0), transforms (P2) and graphs (P4) still
- * use their own single-family routes.
+ * Deploy phases in create order. P0: data streams (each creates its landing DLO). P1: native DLO,
+ * DMO, mapping, relationship. P2: data transforms. P3: identity resolution, calculated insight,
+ * Segment. P4: data graphs.
  */
-export type CrudPhase = 'P1' | 'P3';
+export type CrudPhase = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
 export type CrudStage<T extends PlanInput = PlanInput> = { phase: CrudPhase; inputs: T[] };
 export type CrudStageResult = {
   status: 'success' | 'blocked' | 'failed';
@@ -34,10 +34,13 @@ export function componentKey(kind: string, apiName: string): string {
 /**
  * Phase of one admitted deploy input.
  * @param {PlanInput} input Admitted input.
- * @returns {CrudPhase | undefined} P1 or P3; undefined for families outside the pipeline.
+ * @returns {CrudPhase | undefined} The phase; undefined for an unknown kind.
  */
 export function crudPhase(input: PlanInput): CrudPhase | undefined {
   const kind = input.document.kind;
+  if (kind === 'data-stream') return 'P0';
+  if (kind === 'data-transform') return 'P2';
+  if (kind === 'native-data-graph') return 'P4';
   if (kind === 'dlo' || kind === 'dmo' || kind === 'mapping' || kind === 'relationship')
     return 'P1';
   if (kind === 'identity-resolution' || kind === 'calculated-insight' || kind === 'segment')
@@ -127,7 +130,64 @@ function references(input: PlanInput): Array<[string, string]> {
       'dmo',
       name,
     ]);
+  if (document.kind === 'data-transform')
+    return transformDloNames(input).map((name) => ['dlo', name]);
   return [];
+}
+
+/**
+ * DLOs a data transform reads and writes: the `load` dataset and the `outputD360` target.
+ * @param {PlanInput} input Data transform input.
+ * @returns {string[]} DLO names found in the definition; a malformed file yields fewer or none.
+ */
+export function transformDloNames(input: PlanInput): string[] {
+  const definition = (input.document as { definition?: { definition?: { nodes?: unknown } } })
+    .definition?.definition;
+  const nodes = definition?.nodes;
+  if (!nodes || typeof nodes !== 'object') return [];
+  const names: string[] = [];
+  for (const node of Object.values(nodes as Record<string, unknown>)) {
+    const record = (node ?? {}) as { action?: unknown; parameters?: Record<string, unknown> };
+    const name =
+      record.action === 'load'
+        ? (record.parameters?.dataset as { name?: unknown } | undefined)?.name
+        : record.action === 'outputD360'
+          ? record.parameters?.name
+          : undefined;
+    if (typeof name === 'string') names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Name of the DLO a data stream creates and owns (`spec.newDlo.name`).
+ * @param {PlanInput} input Data stream input.
+ * @returns {string | undefined} The landing DLO name.
+ */
+export function streamLandingDlo(input: PlanInput): string | undefined {
+  const name = (input.document as { spec?: { newDlo?: { name?: unknown } } }).spec?.newDlo?.name;
+  return typeof name === 'string' ? name : undefined;
+}
+
+/**
+ * Selected DLO files that name the landing DLO of a selected data stream. The stream creates and
+ * owns that DLO, so deploying both would write one object from two files.
+ * @param {PlanInput[]} inputs Whole admitted selection.
+ * @returns {string[]} Colliding DLO API names, as written in the DLO files.
+ */
+export function streamDloCollisions(inputs: PlanInput[]): string[] {
+  const landing = new Set(
+    inputs
+      .filter((input) => input.document.kind === 'data-stream')
+      .map((input) => streamLandingDlo(input)?.toLowerCase())
+      .filter((name): name is string => name !== undefined),
+  );
+  return inputs
+    .filter((input) => input.document.kind === 'dlo')
+    .map((input) =>
+      String((input.document as { identity?: { apiName?: unknown } }).identity?.apiName),
+    )
+    .filter((name) => landing.has(name.toLowerCase()));
 }
 
 /**
@@ -201,11 +261,13 @@ export function inputKey(input: PlanInput): string {
 }
 
 /**
- * Split an admitted selection into ordered stages. With `nativeRoute`, P1 inputs form one
- * stage on the native route first; otherwise they stay in the P3 dependency batch as before.
- * The batch is split further so that an input needing a selected IR's unified DMO (directly
- * or through another selected input) runs in a later stage than that IR.
- * @param {PlanInput[]} inputs P1 and P3 inputs.
+ * Split an admitted selection into ordered stages: P0 streams, P1 native inputs, P2 transforms,
+ * the P3 dependency batch and P4 graphs. With `nativeRoute`, P1 inputs form one stage on the
+ * native route; otherwise they stay in the P3 dependency batch. The batch is split further so
+ * that an input needing a selected IR's unified DMO (directly or through another selected input)
+ * runs in a later stage than that IR. Graphs come last, so a graph on a selected IR's unified DMO
+ * starts only after that IR settled.
+ * @param {PlanInput[]} inputs Whole admitted selection.
  * @param {object} options Routing choice.
  * @param {boolean} options.nativeRoute Run P1 inputs on the native route as their own stage.
  * @returns {CrudStage[]} Non-empty stages in run order.
@@ -215,10 +277,16 @@ export function planDeployStages<T extends PlanInput>(
   options: { nativeRoute: boolean },
 ): Array<CrudStage<T>> {
   const stages: Array<CrudStage<T>> = [];
-  const native = options.nativeRoute ? inputs.filter((input) => crudPhase(input) === 'P1') : [];
+  const of = (phase: CrudPhase): T[] => inputs.filter((input) => crudPhase(input) === phase);
+  const streams = of('P0');
+  if (streams.length > 0) stages.push({ phase: 'P0', inputs: streams });
+  const native = options.nativeRoute ? of('P1') : [];
   if (native.length > 0) stages.push({ phase: 'P1', inputs: native });
-  const batch = inputs.filter((input) => !native.includes(input));
-  if (batch.length === 0) return stages;
+  const transforms = of('P2');
+  if (transforms.length > 0) stages.push({ phase: 'P2', inputs: transforms });
+  const batch = inputs.filter(
+    (input) => (crudPhase(input) === 'P1' || crudPhase(input) === 'P3') && !native.includes(input),
+  );
   const edges = identityResolutionEdges(batch);
   const byKey = new Map(batch.map((input) => [inputKey(input), input]));
   const levels = new Map<T, number>();
@@ -247,11 +315,13 @@ export function planDeployStages<T extends PlanInput>(
     const value = level(input);
     grouped.set(value, [...(grouped.get(value) ?? []), input]);
   }
-  const deepest = Math.max(...grouped.keys());
+  const deepest = batch.length === 0 ? -1 : Math.max(...grouped.keys());
   for (let value = 0; value <= deepest; value++) {
     const group = grouped.get(value);
     if (group) stages.push({ phase: 'P3', inputs: group });
   }
+  const graphs = of('P4');
+  if (graphs.length > 0) stages.push({ phase: 'P4', inputs: graphs });
   return stages;
 }
 

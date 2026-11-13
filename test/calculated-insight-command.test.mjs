@@ -747,8 +747,8 @@ test('native68 Git paired selection preserves captured admission and draft inten
   assert.equal(result.status, 'success');
   assert.equal(result.result.items[0].outcome, 'create');
 });
-test('native68 mixed unqualified family and draft unrelated family reject before authentication', async () => {
-  for (const draft of [false, true]) {
+test('draft beside an unrelated family rejects before authentication', async () => {
+  for (const draft of [true]) {
     const h = await deploy({ 'api-version': '68.0', draft });
     h.command.resolveInputs = async () => [
       ...h.inputs,

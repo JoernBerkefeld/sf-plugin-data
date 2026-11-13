@@ -28,23 +28,24 @@ family in another place, an invalid document or Segment XML refuses the whole se
 (`INVALID_GIT_SELECTION`). Each admitted file's bytes are captured and checked again
 before the target is read and before each write.
 
-Where a selection goes:
+The selected files run in phases, like an explicit selection; each phase starts only
+after every item of the previous one settled:
 
-- DLO/DMO only, or with Segment, calculated insight or identity resolution: the
-  ordered dependency batch.
-- Native files with at least one mapping or relationship: the native route (DLO, DMO,
-  mapping, relationship) first; Segment, calculated insight and identity resolution
-  files in the same range follow in the ordered dependency batch once the native items
-  settled.
-- Inside the batch, an identity resolution runs before a calculated insight or Segment
-  on its unified DMO, which start only once the ruleset is published.
-- One data graph alone: the graph route (default wait budget; `--wait-timeout` is not
-  accepted with `--changed-since`).
-- Data streams alone: the stream route.
-- Data transform: refused (`INVALID_TRANSFORM_SELECTION`), because a transform deploy
-  needs `--transform-operation`, which is not accepted with `--changed-since`.
-- Any other mix (for example a graph or stream with other families) is refused with that
-  family's mixed-selection code.
+1. Data streams.
+2. Native DLO, DMO, mapping and relationship files (the native route when a mapping or
+   relationship is in the range; DLO/DMO files beside Segment, calculated insight or
+   identity resolution files only join the ordered dependency batch instead).
+3. Identity resolution, calculated insight and Segment files in the ordered dependency
+   batch; an identity resolution runs before a calculated insight or Segment on its
+   unified DMO, which start only once the ruleset is published.
+4. Data graphs, after the ruleset whose unified DMO they use is published.
+   `--wait-timeout` applies to each graph and is refused when the range holds none.
+
+A data transform changed in the range is refused (`INVALID_TRANSFORM_SELECTION`): a
+transform deploy needs `--transform-operation`, which is not accepted with
+`--changed-since`. Deploy it with an explicit selection. A DLO file named like the
+landing DLO of a stream in the range that does not exist in the target yet is refused
+before any write (`DATA_STREAM_DLO_COLLISION`).
 
 ### Deleted files
 

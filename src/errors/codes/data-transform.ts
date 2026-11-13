@@ -17,7 +17,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_TRANSFORM_SCOPE:
     'Data transforms are only supported with API version auto or 68.0 in the default data space. Remove other --api-version or data space values and rerun.',
   INVALID_TRANSFORM_SELECTION:
-    'A data transform must be deployed alone: one .dataTransform.json file, no --changed-since, --draft or --wait-timeout, and no other components. Narrow the selection and rerun.',
+    'A deploy takes at most one data transform, named exactly by -m data-transform:<Name> or its .dataTransform.json file, and not with --changed-since or --draft. Narrow the selection and rerun.',
   INVALID_TRANSFORM_TARGET_ID:
     'The data transform record ID has the wrong format. Use the 18-character ID starting with 1dt from the org, then rerun.',
   PARTIAL_TRANSFORM_OUTPUT:

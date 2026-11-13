@@ -45,7 +45,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_STANDARD_RETRIEVE:
     'The Salesforce CLI retrieve that fetches the source XML returned output the plugin could not use. Run sf project retrieve start for the same member to see the error, then rerun.',
   INVALID_WAIT_TIMEOUT_SCOPE:
-    '--wait-timeout applies only to a deploy of exactly one data graph, given in whole seconds. Remove it, or select a single data graph without --changed-since.',
+    '--wait-timeout applies only when the selection holds a data graph and must be whole seconds. Remove it, or select at least one data graph.',
   LOCAL_FILE_REMOVAL_FAILED:
     'The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.',
   LOCAL_REFRESH_FAILED:

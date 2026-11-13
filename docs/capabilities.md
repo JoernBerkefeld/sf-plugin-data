@@ -1,16 +1,24 @@
-## Deploy phases (native + dependency batch) — 2026-11-13
+## Deploy phases — 2026-11-13
 
-One deploy may hold phase 1 (DLO, DMO, mapping, relationship) and phase 3 (identity
-resolution, calculated insight, Segment) files. With a mapping or relationship in the
-selection, phase 1 runs on the native route first; phase 3 starts only after every phase 1
-item settled, and a blocked, failed or unknown item stops the run. DLO/DMO files beside
-phase 3 files only stay in the ordered batch. Inside phase 3, a calculated insight or
-Segment on an identity resolution's unified or link DMO (name derived from the ruleset
-file) runs after that ruleset is `PUBLISHED`. Before the first phase 1 write, phase 3
-inputs pass their local file, version and dependency checks. Preview runs every phase read-only (also after a blocked phase) and
-reports items whose parents an earlier phase creates as `planned-dependencies`
-(`DEPENDENCIES_PLANNED`). Data streams, data transforms and data graphs still deploy
-alone. Verified offline with mocked executors only; no live mixed run yet.
+One deploy may hold any mix of families. They run in phases: P0 data streams, P1 native
+DLO/DMO/mapping/relationship, P2 the data transform, P3 identity resolution, calculated
+insight and Segment, P4 data graphs. A phase starts only after every item of the previous
+one settled, and a blocked, failed or unknown item stops the run. With a mapping,
+relationship or transform in the selection, P1 runs on the native route; DLO/DMO files
+beside P3 files only stay in the ordered batch. A calculated insight, Segment or graph on
+an identity resolution's unified or link DMO (name derived from the ruleset file) runs
+after that ruleset is `PUBLISHED`. Before the first write, P3 inputs pass their local
+file, version and dependency checks and the stream, transform and graph scope is checked.
+A deploy takes at most one transform, named exactly (`INVALID_TRANSFORM_SELECTION`); a
+DLO file named like the landing DLO of a stream the deploy creates is refused after the
+stream's read-only comparison, before any write (`DATA_STREAM_DLO_COLLISION`); beside an
+existing stream it deploys. `--wait-timeout` applies to every selected graph and needs
+one. Preview runs every phase read-only (also after a blocked phase) and reports items
+whose parents an earlier phase creates as `planned-dependencies` (`DEPENDENCIES_PLANNED`,
+`MAPPING_DEPENDENCIES_PLANNED`): a mapping or transform on a new stream's landing DLO, a
+graph on a new DMO or ruleset output. Live (isolated-source, 2026-11-13): one
+`--changed-since` deploy of an existing probe stream, DMO and mapping reported all three
+`unchanged` with no write. The IR + graph create in one deploy is not yet run live.
 
 ## Public native Data Graph CRUD
 
@@ -22,8 +30,8 @@ structural only (closed keys, names, tree and join shape, default data space, ro
 `primaryObjectName`); the root is bound by the document's own `primaryObjectName`.
 Lowercase API values are stored as `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`; node `type`
 stays lowercase. All six graphs in `isolated-source` retrieve at `auto` and preview
-`unchanged` on route 68.0. Mixed-family selections are refused; a `--changed-since` range
-whose only change is one graph deploys it.
+`unchanged` on route 68.0. Deploy runs graphs as the last phase of any selection,
+explicit or `--changed-since`.
 
 Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
 generated names (empty names on a non-ready read are not authored values), then `ready`
@@ -42,8 +50,8 @@ between `creating` and `ready`, which settlement accepts. Update sends the autho
 change in one PUT (label, description, schedule, incremental refresh, added fields and
 related objects, joins, field settings); only name, data space, root object and node
 object/path/type changes are refused. Omitted fields and branches are kept. Identical
-deploy is zero-write `unchanged`. Preview is read-only. Mixed families and cascade are
-unsupported. Preview (only) checks the root DMO and, for a derived
+deploy is zero-write `unchanged`. Preview is read-only. Cascade is unsupported.
+Preview (only) checks the root DMO and, for a derived
 root, its IR owner via `GET /ssot/identity-resolutions` (`DATA_GRAPH_ROOT_NOT_FOUND`,
 `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, info `DATA_GRAPH_OWNER`).
 
@@ -833,9 +841,8 @@ cross-org support.
 canonical files of every family (DLO, DMO, mapping, relationship, data stream, data
 transform, data graph, identity resolution, calculated insight, Segment JSON), admitted
 through the existing input resolver with byte capture, and routes them as explicit
-selections of the same families: mixes the explicit routes refuse stay refused, and a
-data transform is refused because `--transform-operation` is not accepted with Git
-selection. Files deleted in the range become delete candidates (family and identity
+selections of the same families and runs them in the same phases; a data transform
+is refused because `--transform-operation` is not accepted with Git selection. Files deleted in the range become delete candidates (family and identity
 from the merge-base content; relationship source DMO and transform API name included),
 reported in `result.selection.deletions` and never deleted by deploy. A path deleted and
 re-added is not a delete. Repository-root resolution, unique merge-base/HEAD changes,

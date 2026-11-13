@@ -133,11 +133,6 @@ const dmo = {
   path: 'Example__dlm.dmo-meta.json',
   document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } },
 };
-// A native Graph cannot join a mixed-family batch.
-const graph = {
-  path: 'Synthetic.native-dataGraph.json',
-  document: { schemaVersion: 1, kind: 'native-data-graph', apiVersion: '68.0', definition: {} },
-};
 const preview = (family, outcome = 'update') => ({
   ...(family === 'identity-resolution'
     ? {
@@ -297,7 +292,6 @@ test('IR numeric65/latest/unsupported mixed numeric67 block all writes before ta
     [{ 'api-version': 'latest' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '67.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '69.0' }, [ir()], 'INVALID_SCOPE'],
-    [{ 'api-version': '68.0' }, [ir(), graph], 'NATIVE_GRAPH_SELECTION_UNSUPPORTED'],
     [{ dataspace: 'other' }, [ir()], 'INVALID_SCOPE'],
   ]) {
     const { command, calls } = setup(flags, selected);

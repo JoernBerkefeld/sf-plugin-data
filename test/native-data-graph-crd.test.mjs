@@ -1519,7 +1519,7 @@ test('public Graph create that cannot be confirmed names the failed check on the
 });
 
 for (const selection of ['other-family', 'git'])
-  test(`public Graph wait budget rejects ${selection} before auth or Git work`, async () => {
+  test(`public Graph wait budget rejects ${selection} without a graph before auth`, async () => {
     const command = Object.create(Deploy.prototype);
     command.parse = async () => ({
       flags: {
@@ -1530,8 +1530,14 @@ for (const selection of ['other-family', 'git'])
       },
     });
     command.jsonEnabled = () => true;
-    command.resolveInputs = async () => [{ path: 'synthetic', document: { kind: 'dmo' } }];
-    command.selectGitInputs = async () => assert.fail('unsupported wait flag precedes Git work');
+    const input = { path: 'synthetic', document: { kind: 'dmo' }, inputDigest: 'captured' };
+    command.resolveInputs = async () => [input];
+    // A Git range is admitted first; the flag is refused once no graph is in it.
+    command.selectGitInputs = async () => ({
+      paths: ['synthetic'],
+      provenance: {},
+      capturedInputs: [input],
+    });
     command.resolveTargetOrg = async () => assert.fail('unsupported wait flag precedes auth');
     const result = await command.run();
     assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');

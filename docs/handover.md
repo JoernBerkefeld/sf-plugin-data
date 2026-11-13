@@ -1,3 +1,79 @@
+# Deploy phases P0 streams, P2 transform, P4 graphs; mixed refusals removed — 2026-11-13
+
+Chunk B2 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.
+
+- `src/services/crud-plan.ts`: `CrudPhase` is `P0`–`P4`; `crudPhase` maps `data-stream` →
+  P0, `data-transform` → P2, `native-data-graph` → P4. `planDeployStages` takes the
+  whole selection and emits P0 → P1 (native route) → P2 → P3 levels (batch, unchanged)
+  → P4. New pure helpers: `transformDloNames(input)` (load
+  dataset + `outputD360` target; also feeds `references`, so `inputDependencies` of a
+  transform holds `dlo:` keys), `streamLandingDlo(input)` (`spec.newDlo.name`),
+  `streamDloCollisions(inputs)` (selected DLO files named like a stream's landing DLO,
+  case-insensitive).
+- `deploy.ts`: the stream, transform and graph single-family routes are now the stage
+  handlers `runStreamStage(inputs)`, `runTransformStage(input, planned)` and
+  `runGraphStage(inputs, planned)`; one `runCrudStages` call dispatches every phase.
+  Single-family runs keep their outcomes, codes and call order. Before any target
+  access: transform admission (exactly one transform, at most one `data-transform:`
+  member, named by member or by its file path when `--source-dir` is used, no
+  `--changed-since`/`--draft` → `INVALID_TRANSFORM_SELECTION`; scope and operation flags
+  as before), graph scope (`INVALID_SCOPE`) and stream scope (`INVALID_SCOPE`). M2
+  (`DATA_STREAM_DLO_COLLISION`, warning names DLO and stream) runs at the start of P0,
+  before any write: a stream whose landing DLO matches a selected DLO file is
+  preflighted and refused only when the outcome is `create`; an existing stream's DLO
+  file deploys in P1 (the API decides). A transform is named by exactly one
+  `data-transform:` member, or by its own file path in `--source-dir`. `--wait-timeout` needs ≥ 1 graph
+  in the selection (explicit or Git; the early `--changed-since` refusal is gone) and
+  applies to each graph. `nativeRoute` is also set when a transform is selected (DLOs
+  settle before the transform). The P3 local admission now runs whenever a P0/P1/P2 stage
+  precedes a P3 stage. `runNativeStage(inputs, earlier)` seeds its planned set from
+  earlier stages (lower-case `componentKey`s), so a mapping on a stream's new landing DLO
+  is `MAPPING_DEPENDENCIES_PLANNED`. Preview: stream `create` plans `dlo:<newDlo>`; a
+  transform whose DLO is planned and a graph whose `inputDependencies` (root/related DMO,
+  IR edge) are planned are `planned-dependencies` / `DEPENDENCIES_PLANNED` without target
+  reads. New seam `verifyNativeDataGraphInput`.
+- Codes: `DATA_STREAM_MIXED_OR_GIT_SELECTION_UNSUPPORTED` removed (code, page, index,
+  links); new `DATA_STREAM_DLO_COLLISION` (page, index). `NATIVE_GRAPH_SELECTION_UNSUPPORTED`
+  stays for retrieve only (one `data-graph:<Name>` per retrieve); deploy no longer emits
+  it; hint/page rewritten. Hints/pages of `INVALID_TRANSFORM_SELECTION` and
+  `INVALID_WAIT_TIMEOUT_SCOPE` describe the new rules. Kept narrow refusal: a transform in
+  a `--changed-since` range, because `--transform-operation` is not accepted with it.
+- Tests: new `test/crud-pipeline.test.mjs` (6): phase planning + helpers; full mixed run
+  stream → mapping → transform → IR (PUBLISHED) → graph with `--wait-timeout`; failed
+  stream / blocked transform stop later stages; preview planned parents (mapping and
+  transform on a new landing DLO, graph on a new IR output) and compared parents when they
+  exist; M2: new stream + DLO file refused before any write (execute and preview),
+  existing stream + its DLO file deploys; transform member beside `--source-dir` files
+  accepted; transform selection and wait-timeout refusals.
+  Updated obsolete refusal tests in IR, CI, stream and graph suites. Full suite 2816
+  (2814 pass, 2 skipped).
+- Live (`isolated-source`, org 00Daj000010xkZNEAY verified, zero writes): scratch Git
+  project `F:/Temp/b2live-4mzOLz` with probe stream
+  `PublicIngestion1793211653953_ProbeRecord_E8A1BD6C`, DMO `MapX1793780574451s__dlm` and
+  mapping `MapX1793780574451s_map_MapX1793780574451s_1793780832090` retrieved and
+  committed; `deploy --changed-since <base> --preview` exit 0 (stream/DMO unchanged,
+  mapping noop), then `deploy --changed-since <base>` exit 0 in 34 s, all three
+  `unchanged` / `not-attempted`. Readback: DataStream LastModifiedDate 2026-10-28; DMO and
+  mapping re-retrieve unchanged. Side finding: re-retrieving the stream reorders
+  `observed.mappings` (file differs only in order). Verification DB:
+  `data360:crud-pipeline.git-mixed-unchanged.api68`.
+
+Handover for C (IR + graph live):
+
+- Edge and ordering are in place: `identityResolutionEdges` covers graphs; P4 runs after
+  every P3 level, and the IR executor returns only once `PUBLISHED` (without `--async`;
+  Q4 guard refuses `--async` with a graph on the IR output). Preview reports the graph as
+  planned when the IR is a create.
+- Resume point: live run of the approved IR (`Individual_<4hex>`, label "CliIR probe
+  <hex>") + graph (`CliGraphCP_<hex>`) on its unified DMO in one deploy with
+  `--allow-processing` (and `--wait-timeout` if needed); then record evidence. The graph
+  stage resolves the org via `resolveTargetOrg` once per stage and reuses one graph
+  context for all graphs.
+- Constraints: phases sequential; preview runs every stage; no new refusals for mixes;
+  transforms via Git stay refused; P3 local checks and stream/transform/graph scope run
+  before the first write. Chunk D (pipeline delete + Git delete) is untouched:
+  `delete.ts` still has its single-family branches.
+
 # Deploy phases P1 + P3 through `crud-plan.ts`; IR unified-DMO edges; `--async` guard — 2026-11-13
 
 Chunk B1 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed. Offline only

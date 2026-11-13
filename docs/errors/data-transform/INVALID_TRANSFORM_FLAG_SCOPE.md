@@ -35,4 +35,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 ## Related codes
 
 - [`INVALID_TRANSFORM_DEPLOY_SELECTION`](../data-transform/INVALID_TRANSFORM_DEPLOY_SELECTION.md) — the transform flags themselves are incomplete or contradictory.
-- [`INVALID_TRANSFORM_SELECTION`](../data-transform/INVALID_TRANSFORM_SELECTION.md) — the transform is selected together with inputs it cannot be combined with.
+- [`INVALID_TRANSFORM_SELECTION`](../data-transform/INVALID_TRANSFORM_SELECTION.md) — the selection does not name exactly one transform.

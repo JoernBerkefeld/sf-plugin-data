@@ -1,6 +1,6 @@
 # `INVALID_TRANSFORM_SELECTION`
 
-> A data transform must be deployed alone: one .dataTransform.json file, no --changed-since, --draft or --wait-timeout, and no other components. Narrow the selection and rerun.
+> A deploy takes at most one data transform, named exactly by -m data-transform:<Name> or its .dataTransform.json file, and not with --changed-since or --draft. Narrow the selection and rerun.
 
 |              |                                            |
 | ------------ | ------------------------------------------ |
@@ -10,17 +10,17 @@
 
 ## What it means
 
-The selection mixes a data transform with things it cannot be combined with. For deploy this means more than one transform, a transform together with other component types, `--changed-since` together with the transform flags, `--draft`, `--wait-timeout`, more than one `--metadata` value, or a `--source-dir` that is not exactly one `.dataTransform.json` file. It also fires when a transform name or ID does not have a valid format.
+For deploy: the selection holds more than one data transform, more than one `data-transform:` member, a transform that is not named exactly (a `--source-dir` directory instead of its `.dataTransform.json` file), a transform changed in a `--changed-since` range, or `--draft`. The transform flags themselves are refused together with `--changed-since`. A transform may share the deploy with other families; it runs after streams and native DLO/DMO/mapping/relationship items and before identity resolution, calculated insights, Segments and graphs. For retrieve it fires when a transform name or ID does not have a valid format.
 
 ## Why the plugin stops
 
-A transform deploy is a single, explicitly chosen create or update. Combining it with other inputs would make the order and outcome of writes harder to prove, so the plugin accepts only one transform per run.
+`--transform-operation` and `--transform-target-id` describe one explicitly chosen create or update. They cannot address several transforms, and `--changed-since` does not accept them, so a transform must be named in the command.
 
 ## How to fix
 
-1. Select exactly one transform: `--source-dir data360/dataTransforms/<Name>.dataTransform.json` or `--metadata data-transform:<Name>`.
-2. Remove `--changed-since`, `--draft` and `--wait-timeout`.
-3. Deploy other components in a separate run.
+1. Name exactly one transform: `--source-dir data360/dataTransforms/<Name>.dataTransform.json` or `--metadata data-transform:<Name>`; other families may be selected beside it.
+2. Deploy a transform changed in a Git range with an explicit selection instead of `--changed-since`, and remove `--draft`.
+3. Deploy further transforms in separate runs.
 4. Rerun the command.
 
 ## Example output
@@ -29,7 +29,7 @@ A transform deploy is a single, explicitly chosen create or update. Combining it
 Deploy execution: blocked (INVALID_TRANSFORM_SELECTION). No automatic retry or rollback performed.
 Deployed: 0 (0 created / 0 updated / 0 failed)
 INVALID_TRANSFORM_SELECTION: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
-Hint: A data transform must be deployed alone: one .dataTransform.json file, no --changed-since, --draft or --wait-timeout, and no other components. Narrow the selection and rerun.
+Hint: A deploy takes at most one data transform, named exactly by -m data-transform:<Name> or its .dataTransform.json file, and not with --changed-since or --draft. Narrow the selection and rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/INVALID_TRANSFORM_SELECTION.md
 ```
 

@@ -487,7 +487,7 @@ for (const flags of [
   { 'wait-timeout': 1 },
   { 'changed-since': 'HEAD' },
   { metadata: ['data-transform:SyntheticTransform', 'data-transform:Other'] },
-  { 'source-dir': ['data360/dataTransforms'] },
+  { metadata: undefined, 'source-dir': ['data360/dataTransforms'] },
 ])
   test(`public Transform rejects before auth ${JSON.stringify(flags)}`, async () => {
     const { result, h } = await deployTransform(flags);
