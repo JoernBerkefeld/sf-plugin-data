@@ -28,6 +28,11 @@ export const nativeIdentityResolutionPollBudget = Object.freeze({
 export type NativeIdentityResolutionExecutionOptions = {
   allowProcessing: boolean;
   allowGeneratedOutputProvisioning: boolean;
+  /**
+   * Return once Salesforce accepts the write, without settlement reads. A later identical
+   * deploy is the status check: NOT_SETTLED while in flight, unchanged once settled.
+   */
+  async?: boolean;
   verifyInput: () => Promise<void>;
   verifyDependencies?: typeof bindIdentityResolutionDependencies;
   verifyOutputs?: typeof verifyIdentityResolutionOutputs;
@@ -40,8 +45,20 @@ export type NativeIdentityResolutionDeployExecution = {
     apiVersion: '68.0';
     operation: 'identity-resolutions.post' | 'identity-resolutions.patch';
   };
-  outcome: 'unchanged' | 'blocked' | 'created' | 'updated' | 'failed';
-  mutation: 'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'unknown';
+  outcome:
+    | 'unchanged'
+    | 'blocked'
+    | 'created'
+    | 'updated'
+    | 'creation-processing'
+    | 'update-processing'
+    | 'failed';
+  mutation:
+    | 'not-attempted'
+    | 'confirmed-created'
+    | 'confirmed-updated'
+    | 'acknowledged-processing'
+    | 'unknown';
   diagnostics: Array<{ code: string; message: string }>;
 };
 
@@ -378,6 +395,21 @@ export async function executeNativeIdentityResolutionDeploy(
       (baseline && response.id !== undefined && response.id !== baseline.expectations.native.id)
     )
       throw new Error('Mutation identity mismatch');
+    // Async: the validated acceptance is the whole result; settlement stays unconfirmed.
+    // Without a later GET, the echo itself must name this ruleset, not just look plausible.
+    if (options.async === true) {
+      const namesRuleset =
+        response.objectApiName === desired.identity.apiName ||
+        (!creating &&
+          baseline !== undefined &&
+          response.id !== undefined &&
+          response.id === baseline.expectations.native.id);
+      if (!namesRuleset) throw new Error('Mutation identity mismatch');
+      return result(
+        creating ? 'creation-processing' : 'update-processing',
+        'acknowledged-processing',
+      );
+    }
     const compare = (raw: unknown): IdentityResolutionProjection => {
       const observed = raw as Record<string, unknown>;
       if (

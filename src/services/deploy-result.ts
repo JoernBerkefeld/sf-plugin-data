@@ -8,8 +8,22 @@ export type DeployPreviewResult = {
 
 /** Per-item execution outcome with explicit mutation evidence, shared by the deploy routes. */
 export type DeployExecutionResult = {
-  outcome: 'unchanged' | 'blocked' | 'created' | 'failed' | 'updated' | 'not-attempted';
-  mutation: 'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'unknown' | 'rejected';
+  outcome:
+    | 'unchanged'
+    | 'blocked'
+    | 'created'
+    | 'failed'
+    | 'updated'
+    | 'creation-processing'
+    | 'update-processing'
+    | 'not-attempted';
+  mutation:
+    | 'not-attempted'
+    | 'confirmed-created'
+    | 'confirmed-updated'
+    | 'acknowledged-processing'
+    | 'unknown'
+    | 'rejected';
   preflight?: DeployPreviewResult;
   diagnostics: Array<{ code: string; message: string }>;
 };

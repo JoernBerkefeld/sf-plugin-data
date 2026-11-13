@@ -605,3 +605,83 @@ test('Git IR snapshots cannot disappear or be rebound to changed bytes before ro
     assert.deepEqual(calls, []);
   }
 });
+
+test('--async passes through to IR execution and reports accepted-but-processing items', async () => {
+  for (const human of [false, true]) {
+    const { command, calls } = setup({ async: true });
+    const logs = [];
+    command.jsonEnabled = () => !human;
+    command.log = (line) => logs.push(line);
+    command.preflightIdentityResolution = async () => createPreview();
+    command.executeIdentityResolution = async (_, __, ___, ____, options) => {
+      assert.equal(options.async, true);
+      await options.verifyInput();
+      calls.push('create');
+      return {
+        family: 'identity-resolution',
+        route: createPreview().route,
+        outcome: 'creation-processing',
+        mutation: 'acknowledged-processing',
+        diagnostics: [],
+      };
+    };
+    const result = await run(command);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result.items[0].outcome, 'creation-processing');
+    assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
+    assert.ok(calls.includes('create'));
+    if (human) {
+      assert.ok(
+        logs.some((line) =>
+          /^creation-processing identity-resolution Individual_A1b2 \(accepted; publish not confirmed/u.test(
+            line,
+          ),
+        ),
+        logs.join('\n'),
+      );
+      assert.ok(logs.some((line) => line.endsWith('; accepted, still processing: 1')));
+    }
+  }
+});
+
+test('default deploy never asks IR execution to skip settlement', async () => {
+  const { command } = setup();
+  let seen;
+  const execute = command.executeIdentityResolution;
+  command.executeIdentityResolution = async (...arguments_) => {
+    seen = arguments_[4];
+    return execute(...arguments_);
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(Object.hasOwn(seen, 'async'), false);
+});
+
+test('--async without an IR in the selection is refused before any target access', async () => {
+  const { command, calls } = setup({ async: true }, [dmo]);
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'INVALID_ASYNC_SCOPE');
+  assert.deepEqual(calls, []);
+});
+
+test('rerun of an async IR while PUBLISHING is blocked with NOT_SETTLED and writes nothing', async () => {
+  for (const async of [false, true]) {
+    const { command, calls } = setup({ async });
+    command.preflightIdentityResolution = async () => ({
+      ...preview('identity-resolution', 'blocked'),
+      requiredEffects: [],
+      diagnostics: [
+        {
+          code: 'IDENTITY_RESOLUTION_NOT_SETTLED',
+          message: 'Native68 IR deployment admission is incomplete or unqualified.',
+        },
+      ],
+    });
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    const codes = JSON.stringify(result);
+    assert.match(codes, /IDENTITY_RESOLUTION_NOT_SETTLED/u);
+    assert.ok(!calls.some((call) => call.includes('write')));
+  }
+});

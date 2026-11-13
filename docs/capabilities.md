@@ -58,6 +58,29 @@ the `1ir…` ID check before DELETE; configuration type or secondary DMO changes
 DELETE while `PUBLISHING`/`DELETING` (`IDENTITY_RESOLUTION_NOT_SETTLED`). Run statistics
 are not part of the file. The API 67 IR routes are gone.
 
+By default deploy waits after a create or update until the ruleset is `PUBLISHED`
+with equal settings and verified generated outputs. `deploy --async` (IR only;
+`INVALID_ASYNC_SCOPE` without an IR) runs all checks before the write, sends the one
+POST/PATCH, requires the immediate answer to name the ruleset (API name, or the
+existing ID on PATCH) and returns `creation-processing` /
+`update-processing` with mutation `acknowledged-processing`, exit 0, with no
+settlement reads. `--changed-since` with no IR in the change set is also
+`INVALID_ASYNC_SCOPE` (exit 1); with `--preview` the flag has no effect.
+
+- Helps: no wait for publishing (one to four minutes after the write) or for the
+  checks after it; several rulesets can be deployed in a row and checked later.
+- Does not save the checks before the write, which take most of the time: live, an
+  `--async` create took 570 s (default create 695 s; a read-only `unchanged` rerun
+  663 s).
+- Hurts: no confirmation that publishing succeeded, the settings stuck or the
+  outputs exist; dependent steps run right after fail (a Data Graph on the unified
+  DMO needs a `PUBLISHED` owner, preview reports `DATA_GRAPH_OWNER_NOT_PUBLISHED`);
+  rerunning the same file is refused with `IDENTITY_RESOLUTION_NOT_SETTLED` until it
+  settles; a failed publish looks like a slow one until you rerun.
+- Status check: deploy the same file again (full checks, so as slow as a deploy).
+  `IDENTITY_RESOLUTION_NOT_SETTLED` = still publishing; `unchanged` = settled as
+  written with verified outputs.
+
 ## Data stream reference reads on native API 68
 
 Data stream retrieve, deploy and delete read connections (`/ssot/connections` list, by id

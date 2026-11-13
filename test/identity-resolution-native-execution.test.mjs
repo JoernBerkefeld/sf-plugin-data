@@ -692,3 +692,138 @@ for (const method of ['createIdentityResolution', 'patchIdentityResolution'])
     await assert.rejects(new ConnectClient(h.connection, nativeSelection)[method](h.desired));
     assert.equal(h.writes.length, 0);
   });
+
+test('native async CREATE reports the accepted write without settlement reads; rerun is the status check', async () => {
+  const h = harness();
+  h.options.async = true;
+  let readsAtWrite;
+  let outputsAtWrite;
+  h.echo = () => {
+    readsAtWrite = h.gets;
+    outputsAtWrite = h.outputs;
+    h.raw.rulesetStatus = 'PUBLISHING';
+    return { id: h.raw.id, objectApiName: h.raw.objectApiName, rulesetStatus: 'PUBLISHING' };
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'creation-processing');
+  assert.equal(result.mutation, 'acknowledged-processing');
+  assert.equal(result.route.operation, 'identity-resolutions.post');
+  assert.deepEqual(result.diagnostics, []);
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.writes[0].method, 'POST');
+  // No settlement read or output verification followed the write.
+  assert.equal(h.gets, readsAtWrite);
+  assert.equal(h.outputs, outputsAtWrite);
+  assert.equal(h.outputs, 0);
+  const getsAtWrite = h.gets;
+
+  // Rerun while PUBLISHING: preflight refuses with NOT_SETTLED, nothing is written.
+  delete h.echo;
+  const { preflightNativeIdentityResolutionDeploy } =
+    await import('../lib/services/preflight-identity-resolution-deploy.js');
+  const pending = await preflightNativeIdentityResolutionDeploy(
+    h.desired,
+    h.connection,
+    nativeSelection,
+    'default',
+    { verifyDependencies: async () => {} },
+  );
+  assert.equal(pending.outcome, 'blocked');
+  assert.equal(pending.diagnostics[0].code, 'IDENTITY_RESOLUTION_NOT_SETTLED');
+  const rerunPending = await h.run();
+  assert.equal(rerunPending.outcome, 'blocked');
+  assert.equal(rerunPending.mutation, 'not-attempted');
+  assert.equal(h.writes.length, 1);
+  assert.ok(h.gets > getsAtWrite);
+
+  // Rerun once settled with equal settings: unchanged, no write, outputs verified.
+  h.raw.rulesetStatus = 'PUBLISHED';
+  const settled = await h.run();
+  assert.equal(settled.outcome, 'unchanged');
+  assert.equal(settled.mutation, 'not-attempted');
+  assert.equal(h.writes.length, 1);
+  assert.ok(h.outputs > 0);
+});
+
+test('native async UPDATE returns after the validated PATCH acknowledgement only', async () => {
+  const h = harness(false);
+  h.options.async = true;
+  h.desired.spec.description = 'New description';
+  let readsAtWrite;
+  let outputsAtWrite;
+  h.echo = () => {
+    readsAtWrite = h.gets;
+    outputsAtWrite = h.outputs;
+    return { id: h.raw.id, rulesetStatus: 'PUBLISHING' };
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'update-processing');
+  assert.equal(result.mutation, 'acknowledged-processing');
+  assert.equal(result.route.operation, 'identity-resolutions.patch');
+  assert.equal(h.writes.length, 1);
+  assert.equal(h.writes[0].method, 'PATCH');
+  assert.equal(h.gets, readsAtWrite);
+  assert.equal(h.outputs, outputsAtWrite);
+});
+
+test('native async write still refuses a malformed or mismatched acknowledgement', async () => {
+  for (const echo of [
+    () => [],
+    () => ({ unrelated: true }),
+    () => ({ id: 'x', objectApiName: 'Individual_Other' }),
+    () => ({ id: 'x', rulesetStatus: 'FAILED' }),
+    // Plausible but anonymous: nothing in the echo names this ruleset.
+    () => ({ rulesetStatus: 'PUBLISHING' }),
+    () => ({ id: 'x' }),
+  ]) {
+    const h = harness();
+    h.options.async = true;
+    h.echo = echo;
+    const result = await h.run();
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(result.diagnostics[0].code, 'IDENTITY_RESOLUTION_NATIVE68_MUTATION_UNCONFIRMED');
+    assert.equal(h.writes.length, 1);
+  }
+});
+
+test('native async UPDATE requires the echo to name the baseline ruleset', async () => {
+  for (const echo of [() => ({ rulesetStatus: 'PUBLISHING' }), () => ({})]) {
+    const h = harness(false);
+    h.options.async = true;
+    h.desired.spec.description = 'New description';
+    h.echo = echo;
+    const result = await h.run();
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'unknown');
+    assert.equal(h.writes.length, 1);
+  }
+  const h = harness(false);
+  h.options.async = true;
+  h.desired.spec.description = 'New description';
+  h.echo = () => ({ objectApiName: h.raw.objectApiName, rulesetStatus: 'PUBLISHING' });
+  const named = await h.run();
+  assert.equal(named.outcome, 'update-processing');
+});
+
+test('native default CREATE without async still waits for PUBLISHED and outputs', async () => {
+  const h = harness();
+  let reads = 0;
+  h.echo = () => ({ id: h.raw.id, rulesetStatus: 'PUBLISHING' });
+  h.ownerRead = () => {
+    if (!h.afterWrite)
+      throw {
+        statusCode: 404,
+        name: 'ITEM_NOT_FOUND',
+        errorCode: 'ITEM_NOT_FOUND',
+        data: { errorCode: 'ITEM_NOT_FOUND', message: 'Absent' },
+      };
+    reads++;
+    return { ...structuredClone(h.raw), rulesetStatus: reads < 3 ? 'PUBLISHING' : 'PUBLISHED' };
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'created');
+  assert.equal(result.mutation, 'confirmed-created');
+  assert.ok(reads >= 3);
+  assert.equal(h.outputs, 1);
+});

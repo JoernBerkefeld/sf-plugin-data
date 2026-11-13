@@ -2618,6 +2618,57 @@ is conservatively `unknown` and stops the batch without automatic retry or rollb
 Inspect that exact target before deciding what to do next. This is not an SLA or a
 zero-effects/draft guarantee, and no explicit run or profile-computation claim is made.
 
+#### Return without waiting: `--async`
+
+After the write, deploy waits until Salesforce reports the ruleset `PUBLISHED` and
+then checks the settings and generated outputs again. With `--async`, deploy runs
+every check before the write as usual, sends the one POST or PATCH, checks that
+Salesforce's immediate answer names this ruleset (its API name, or on an update
+its existing ID), and returns without that wait:
+
+```sh
+sf data360 deploy --source-dir force-app/main/default/data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --allow-processing --async --json
+```
+
+The item reports `creation-processing` or `update-processing` with mutation
+`acknowledged-processing` (the same mutation word as an IR delete that is still
+running), the command exits 0, and human output ends with
+`accepted, still processing: 1`. `--async` applies to Identity Resolution only; a
+selection without an IR is refused with `INVALID_ASYNC_SCOPE`. That includes
+`--changed-since` when the change set holds no IR: the command exits 1, so drop
+`--async` for such runs. Other items in the same batch still wait as usual. With
+`--preview`, `--async` changes nothing, because preview never writes.
+
+How it helps:
+
+- The command does not wait for publishing (observed one to four minutes after the
+  write) or for the checks after it.
+- You can deploy several rulesets one after another and check them all later.
+
+What it does not save: the checks before the write (dependencies, the absent or
+current ruleset, generated outputs) run either way and take most of the time. Live
+on one org, an `--async` create took 570 s and returned `creation-processing`; the
+ruleset was `PUBLISHED` about a minute later. A plain create of a similar ruleset
+took 695 s, and a rerun that only read and reported `unchanged` took 663 s.
+
+How it can hurt:
+
+- Nothing confirms that publishing succeeded, that the settings stuck, or that the
+  unified and link DMOs were created. `acknowledged-processing` only means Salesforce
+  accepted the request.
+- Steps that need the published ruleset fail if you run them right away. For
+  example, a Data Graph on the unified DMO needs a `PUBLISHED` owner; its preview
+  reports `DATA_GRAPH_OWNER_NOT_PUBLISHED` until then.
+- Deploying the same file again is refused with `IDENTITY_RESOLUTION_NOT_SETTLED`
+  (exit 1, nothing written) while the ruleset is `PUBLISHING`.
+- A publish that fails looks like a slow one until you run deploy again.
+
+To check the result, run the same deploy again (with or without `--async`); this
+rerun runs the full checks, so it takes as long as a deploy.
+`IDENTITY_RESOLUTION_NOT_SETTLED` means it is still publishing. `unchanged` means it
+settled with the file's settings and its generated outputs were verified. Any other
+answer means it did not settle as written; retrieve the ruleset and inspect it.
+
 Installed API68 source-org acceptance covers full-settings CREATE, exact canonical
 retrieval and a zero-write unchanged repeat with 12 stable output bindings. Separate
 qualified native PATCH evidence covers matching, object defaults, ordered source

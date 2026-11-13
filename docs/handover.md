@@ -1,3 +1,45 @@
+# IR deploy `--async`: return once Salesforce accepts the write — 2026-11-12
+
+Opt-in `sf data360 deploy --async` for Identity Resolution create (POST) and update
+(PATCH). Default (waiting) behaviour unchanged. Version stays 0.1.0; nothing committed.
+
+- `execute-native-identity-resolution-deploy.ts`: option `async`. All pre-write checks
+  run as before; after the one write the immediate answer is validated as before, and
+  with `--async` it must also positively name this ruleset (`objectApiName` equal to the
+  API name, or on PATCH `id` equal to the baseline ID), because no later GET confirms it.
+  An answer like `{rulesetStatus:'PUBLISHING'}` or `{id:'x'}` alone is `failed` /
+  `unknown`. Then it returns without settlement reads.
+- Vocabulary mirrors IR delete: outcome `creation-processing` / `update-processing`,
+  mutation `acknowledged-processing`. A new outcome (not `created`) so no consumer that
+  checks `outcome === 'created'` or `mutation === 'confirmed-*'` mistakes it for
+  confirmed. Envelope status `success`, exit 0; human line
+  `creation-processing identity-resolution <name> (accepted; publish not confirmed - …)`
+  and summary suffix `; accepted, still processing: N`.
+- `--async` without an IR in the selection: `INVALID_ASYNC_SCOPE`, before target access.
+  This also hits `--changed-since` when the change set has no IR (exit 1; known, left
+  as is). `--async --preview` is accepted and has no effect.
+  Mixed batches: only IR items skip the wait.
+- Rerun is the status check (existing code, now tested): preflight refuses `PUBLISHING`
+  with `IDENTITY_RESOLUTION_NOT_SETTLED` (blocked, nothing written); once `PUBLISHED`
+  with equal settings it is `unchanged` after output verification.
+- Tests: 4 executor (async create + rerun NOT_SETTLED/unchanged, async PATCH, malformed
+  acknowledgements, default still polls) and 4 command (pass-through + human/JSON,
+  default never sets async, scope refusal, NOT_SETTLED rerun).
+
+Live, `isolated-source` (00Daj000010xkZNEAY), auto/API 68, IR creates 1 of 1, synthetic
+`Individual_0fda` (copy of `Individual_9a99`, auto-run off):
+
+- Preview exit 0 `create`. `--allow-processing --async` exit 0 `creation-processing` /
+  `acknowledged-processing` in **570 s**; independent GET about a minute later:
+  `PUBLISHED`. Immediate plain rerun exit 0 `unchanged` in **663 s** (NOT_SETTLED not
+  observed live: already published). Earlier default create of a similar ruleset: 695 s.
+- Finding: the time is in the plugin's own pre-write reads (dependency, owner and output
+  checks), not the PUBLISHED wait; `--async` saves only the post-write part (here about
+  2 min). Docs say so. Speeding up those reads is a separate follow-up.
+- Delete exit 0 `deletion-processing` in 85 s; cleanup confirmation in the verification
+  DB entry. Evidence `F:/Temp/irasync-btHfFO`. Verification DB:
+  `data360:identity-resolution.deploy-async.api68`.
+
 # Data stream reads on native API 68; the API 67 tool layer is gone — 2026-11-12
 
 Package F1 of `.claude/plans/sf_plugin_data_native68_graph_ir_20261112.plan.md`, the last
