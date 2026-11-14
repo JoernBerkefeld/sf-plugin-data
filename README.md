@@ -344,6 +344,9 @@ After a confirmed deletion `sf data360 delete` removes the deleted component's l
 file at its canonical path, found by name (no folder is searched): on outcome `deleted` (mutation `confirmed-deleted`) and on
 `deletion-processing` (mutation `acknowledged-processing`: Salesforce accepted the
 deletion and is finishing it). Pass `--keep-local-files` to keep the files.
+The name in the file path and in the result is the org's spelling when the org matched
+the selector ignoring case (`-m data-transform:copy` deletes `Copy` and removes
+`Copy.dataTransform.json`); a component the org does not have keeps the selector's spelling.
 
 | Family                                                                                 | File removed                                                                                                                     |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |

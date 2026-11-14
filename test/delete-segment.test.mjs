@@ -314,6 +314,79 @@ test('public Segment delete refuses legacy/mismatched scope or source before ser
     assert.deepEqual(h.calls, []);
   }
 });
+/**
+ * A public delete over the real by-name read and the real service; only the API68 transport
+ * and the dependency binding are replaced.
+ * @param {boolean} preview Preview flag.
+ * @returns {object} Command and observed traffic.
+ */
+function endToEnd(preview) {
+  const traffic = { gets: [], deletes: 0, values: [] };
+  let gone = false;
+  const connection = {
+    instanceUrl: 'https://synthetic.my.salesforce.com',
+    getApiVersion: () => '68.0',
+    getUsername: () => 'target',
+    request: async (request, options) => {
+      assert.equal(options.retry.maxRetries, 0);
+      if (request.method === 'DELETE') {
+        traffic.deletes++;
+        gone = true;
+        return options.noContentResponse;
+      }
+      assert.equal(request.method, 'GET');
+      traffic.gets.push(request.url);
+      if (gone) throw absent();
+      // The exact API68 GET response by name.
+      return { segments: [runtime()] };
+    },
+  };
+  const command = Object.create(Delete.prototype);
+  command.parse = async () => ({
+    flags: { metadata: ['segment:Audience'], preview, 'keep-local-files': true },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveConnection = async () => connection;
+  command.deleteSegment = (value, ...rest) => {
+    traffic.values.push(structuredClone(value));
+    return deleteSegment(value, ...rest.slice(0, 3), {
+      ...rest[3],
+      bind: async (desired) => [{ targetId: 'dmo-id', identity: desired.spec.segmentOn }],
+      delay: async () => {},
+    });
+  };
+  return { command, traffic };
+}
+test('public Segment delete by name: the org-read definition passes the service input check and deletes', async () => {
+  const h = endToEnd(false);
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  // The service received the projection of the exact GET, equal to the authored document.
+  assert.deepEqual(h.traffic.values, [document()]);
+  assert.equal(h.traffic.deletes, 1);
+  assert.ok(
+    h.traffic.gets.every(
+      (url) =>
+        url === 'https://synthetic.my.salesforce.com/services/data/v68.0/ssot/segments/Audience',
+    ),
+  );
+  const [item] = result.result.items;
+  assert.deepEqual(
+    [item.identity.apiName, item.outcome, item.mutation],
+    ['Audience', 'deleted', 'confirmed-deleted'],
+  );
+});
+test('public Segment preview by name runs the real read and service without a DELETE', async () => {
+  const h = endToEnd(true);
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(h.traffic.deletes, 0);
+  assert.deepEqual(h.traffic.values, [document()]);
+  assert.deepEqual(
+    [result.result.items[0].outcome, result.result.items[0].mutation],
+    ['delete', 'not-attempted'],
+  );
+});
 test('public Segment delete of a name the org does not have is unchanged without the service', async () => {
   const h = invocation({ metadata: ['segment:Other'] });
   const result = await run(h.command);

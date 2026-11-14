@@ -1567,6 +1567,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         entry: DeletePlanInput,
       ): { desired: unknown; transformTargetId?: string } =>
         entry.source as { desired: unknown; transformTargetId?: string };
+      // The org's spelling of a transform or graph name (a by-name read may match ignoring
+      // case); the item and the local files use it, as the delete never renames anything.
+      const definitionName = (desired: unknown, fallback: string): string => {
+        const name = (desired as { definition?: { name?: unknown } }).definition?.name;
+        return typeof name === 'string' && name !== '' ? name : fallback;
+      };
       // A source-family component the org does not have: nothing to delete, no request sent.
       const reportAbsent = (entry: DeletePlanInput): StageStatus => {
         const item: DeleteItem = {
@@ -1583,7 +1589,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
 
       const runGraph = async (entry: DeletePlanInput): Promise<StageStatus> => {
         const { desired } = desiredOf(entry);
-        const name = selectorName(entry.selector);
+        const name = definitionName(desired, selectorName(entry.selector));
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
           await stillDeleted(entry.git);
@@ -1651,7 +1657,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
 
       const runTransform = async (entry: DeletePlanInput): Promise<StageStatus> => {
         const { desired, transformTargetId } = desiredOf(entry);
-        const name = selectorName(entry.selector);
+        const name = definitionName(desired, selectorName(entry.selector));
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot)
             throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
@@ -1796,7 +1802,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           result,
           item,
           entry.selector,
-          await sourceFiles('segment', selectorName(entry.selector)),
+          await sourceFiles('segment', desired.identity.apiName),
         );
       };
 
@@ -1854,7 +1860,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           result,
           item,
           entry.selector,
-          await sourceFiles('identity-resolution', selectorName(entry.selector)),
+          await sourceFiles('identity-resolution', desired.identity.apiName),
         );
       };
 
@@ -1919,7 +1925,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           result,
           item,
           entry.selector,
-          await sourceFiles('calculated-insight', selectorName(entry.selector)),
+          await sourceFiles('calculated-insight', desired.identity.apiName),
         );
       };
 

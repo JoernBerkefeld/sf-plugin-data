@@ -32,7 +32,9 @@ rerun the same delete once it reads absent). A `-m` delete needs no confirmation
 - Local files after a confirmed deletion are removed at their canonical paths by name:
   `data360/dataTransforms/<Name>.dataTransform.json` under the current directory; the
   Segment, IR, graph file and both CI members under the default package directory of
-  `sfdx-project.json`. `--keep-local-files` keeps them.
+  `sfdx-project.json`. `--keep-local-files` keeps them. The name in those paths and in the
+  result item is the org's spelling when the read matched ignoring case (absent: the
+  selector's spelling).
 
 - Preview runs every phase read-only (also after a blocked phase). An item whose selected
   dependents an earlier phase plans to delete is reported `planned-dependencies`

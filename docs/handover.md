@@ -3,6 +3,11 @@
 Chunk E of the CRUD pipeline plan (user decision 2026-11-14, plus the relationship selector
 decision of the same day). Version stays 0.1.0. Committed as 5a9b989; live read-only preview in `data360:delete-by-name.preview-mixed.api68`.
 
+- Live by-name Segment delete (`isolated-source`, org 00Daj000010xkZNEAY verified, scratch
+  `F:/Temp/csegE-zseOuH`): probe `CliSegDel_b255` created, then `-m segment:CliSegDel_b255`
+  preview (local file listed), delete `deleted` / `confirmed-deleted` in 10 s with the local
+  file removed, GET `ITEM_NOT_FOUND`, repeat `unchanged`. Verification DB:
+  `data360:delete-by-name.segment-execute.api68`.
 - Several transforms in one delete (user decision 2026-11-14): allowed; each is resolved by
   name and deleted on its own in P2. Test: `one delete takes several transforms and deletes
   each in P2` (test/crud-delete-pipeline.test.mjs).
@@ -84,6 +89,16 @@ Handover:
   preview by name blocked on item 400 + metadata 200 (no executor, no later DMO phase),
   graph item 400 with another body blocked; relationship delete and preview `unchanged`
   on list 404 `ITEM_NOT_FOUND`, still blocked on 404 `NOT_FOUND`, 400 and 500.
+- Follow-up (same day, user decision: the delete never changes the org's spelling): after a
+  case-insensitive match the item `identity.apiName` and the canonical local file paths use
+  the org definition's name (transform/graph `definition.name`, Segment/IR/CI
+  `identity.apiName`), like the relationship path; absent components keep the selector
+  spelling, Git mode the base-content name. Tests (test/delete-local-files.test.mjs):
+  `data-transform:copy` with org `Copy` and `data-graph:graph` with org `Graph` (delete and
+  preview). New Segment end-to-end tests (test/delete-segment.test.mjs) without the
+  `readDeleteSource` seam: the exact API68 GET projected by `projectSegment` feeds the real
+  `deleteSegment` (only transport, binding and delay replaced); its input check accepts the
+  org-read candidate, one DELETE confirms; preview sends no DELETE.
 
 # Chunk D2: Git delete with `--changed-since` — 2026-11-13
 

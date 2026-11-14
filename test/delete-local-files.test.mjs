@@ -431,6 +431,85 @@ test('a data stream deletion removes its file, and with --delete-dlo the linked 
   ]);
 });
 
+/**
+ * Write one file of the default package directory (no sfdx-project.json: force-app).
+ * @param {string} root Project root.
+ * @param {string[]} segments Path below force-app/main/default/data360.
+ * @returns {Promise<string>} Absolute file path.
+ */
+async function packageFile(root, ...segments) {
+  const file = path.join(root, 'force-app', 'main', 'default', 'data360', ...segments);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, '{}\n');
+  return file;
+}
+
+test('a transform matched ignoring case uses the org spelling for the item and its file', async () => {
+  const root = await scratch();
+  const file = await projectFile(root, 'dataTransforms', 'Copy.dataTransform.json');
+  const reads = [];
+  const { command: run } = command(
+    { metadata: ['data-transform:copy'] },
+    {
+      resolveConnection: async () => ({ getUsername: () => 'target' }),
+      // The by-name read matches ignoring case and returns the org's definition.
+      readDeleteSource: async (family, name) => {
+        reads.push(`${family}:${name}`);
+        return {
+          desired: { kind: 'data-transform', definition: { name: 'Copy' } },
+          transformTargetId: '1dt000000000001AAA',
+        };
+      },
+      createDataTransformClient: () => ({ delete: async () => {} }),
+      createDataTransformDloReader: () => ({}),
+      deleteDataTransform: async (desired) => {
+        assert.equal(desired.definition.name, 'Copy');
+        return { outcome: 'deleted', mutation: 'confirmed-deleted' };
+      },
+    },
+  );
+  const { result } = await inProject(root, run);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(reads, ['data-transform:copy']);
+  const [item] = result.result.items;
+  assert.equal(item.identity.apiName, 'Copy');
+  assert.deepEqual(item.removedLocalFiles, [{ path: file, outcome: 'removed' }]);
+  assert.equal(await exists(file), false);
+});
+
+test('a graph matched ignoring case uses the org spelling for the item and its file', async () => {
+  const root = await scratch();
+  const file = await packageFile(root, 'dataGraphs', 'Graph.native-dataGraph.json');
+  const seams = {
+    resolveConnection: async () => ({ getUsername: () => 'target' }),
+    readDeleteSource: async () => ({
+      desired: { kind: 'native-data-graph', definition: { name: 'Graph' } },
+    }),
+    nativeGraphContext: async () => ({}),
+    nativeGraphClient: () => ({}),
+    operateNativeGraph: async (desired, _context, _client, options) => {
+      assert.equal(desired.definition.name, 'Graph');
+      return options.preview
+        ? { outcome: 'delete', mutation: 'not-attempted' }
+        : { outcome: 'deleted', mutation: 'confirmed-deleted' };
+    },
+  };
+  const preview = await inProject(
+    root,
+    command({ metadata: ['data-graph:graph'], preview: true }, seams).command,
+  );
+  assert.equal(preview.result.result.items[0].identity.apiName, 'Graph');
+  assert.deepEqual(preview.result.result.items[0].localFiles, [{ path: file, exists: true }]);
+  const { result } = await inProject(
+    root,
+    command({ metadata: ['data-graph:graph'] }, seams).command,
+  );
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.items[0].identity.apiName, 'Graph');
+  assert.deepEqual(result.result.items[0].removedLocalFiles, [{ path: file, outcome: 'removed' }]);
+  assert.equal(await exists(file), false);
+});
+
 test('delete help names the default removal and the keep flag', () => {
   assert.match(Delete.description, /removed by default/u);
   assert.match(Delete.description, /LOCAL_FILE_REMOVAL_FAILED/u);
