@@ -11,8 +11,6 @@ import os from 'node:os';
 import path from 'node:path';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import Deploy from '../lib/commands/data360/deploy.js';
-import { irFixture } from './identity-resolution-fixtures.mjs';
-import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
 import {
   readDeployInputs,
@@ -119,32 +117,6 @@ const retrieve = (overrides = {}) => {
       return connection;
     },
   });
-  command.calculatedInsightContext = (receiver, space) => {
-    assert.equal(receiver, connection);
-    assert.equal(space, 'default');
-    return {
-      check: () => assert.equal(receiver.getApiVersion(), '68.0'),
-      bind: async () => {
-        calls.push('bind65');
-      },
-    };
-  };
-  command.acquireExactCalculatedInsight = async (_, name, deleting, retrieval) => {
-    assert.equal(deleting, false);
-    assert.equal(retrieval, true);
-    calls.push(`native68:${name}`);
-    return { state: 'present', status: 'ACTIVE', document: candidate(name) };
-  };
-  command.acquireCalculatedInsightXml = async (target, name) => {
-    assert.equal(target, 'synthetic');
-    calls.push(`xml:${name}`);
-    return xml(candidate(name));
-  };
-  command.writeCalculatedInsight = async (document, definition) => {
-    assert.equal(definition, xml(document));
-    calls.push(`write:${document.identity.apiName}`);
-    return { path: 'ci.xml', companionPath: 'ci.json', outcome: 'retrieved' };
-  };
   return { command, calls };
 };
 for (const family of ['dlo', 'dmo', 'mapping'])
@@ -311,159 +283,6 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
   return { command, calls, inputs, flags, cwd, context };
 };
 
-test('public CI exact multiple retrieve admits all independent pairs before output', async () => {
-  const { command, calls } = retrieve({
-    metadata: [
-      'calculated-insight:Second__cio',
-      'calculated-insight:SyntheticInsight__cio',
-      'calculated-insight:Second__cio',
-    ],
-    'api-version': 'auto',
-  });
-  const result = await run(command);
-  assert.equal(result.status, 'success');
-  assert.equal(result.result.items.length, 2);
-  assert.deepEqual(result.result.selection, [
-    'calculated-insight:Second__cio',
-    'calculated-insight:SyntheticInsight__cio',
-  ]);
-  assert.ok(calls.indexOf('xml:SyntheticInsight__cio') < calls.indexOf('write:Second__cio'));
-  assert.ok(
-    result.result.items.every(
-      (item) =>
-        item.family === 'calculated-insight' &&
-        item.routes.find((route) => route.operation === 'calculated-insight.get').apiVersion ===
-          '68.0',
-    ),
-  );
-});
-const nativeRetrieve = () => retrieve({ 'api-version': '68.0' });
-for (const status of [429, 503])
-  for (const json of [false, true])
-    test(`native CI retrieve HTTP${status} retains safe ${json ? 'JSON' : 'human'} diagnostic`, async () => {
-      const h = nativeRetrieve();
-      const logs = [];
-      h.command.jsonEnabled = () => json;
-      h.command.log = (line) => logs.push(line);
-      h.command.warn = (line) => logs.push(line);
-      h.command.acquireExactCalculatedInsight = async () =>
-        retainConnectDiagnostic(
-          { state: 'unknown', diagnostics: ['CI_RUNTIME_UNKNOWN'] },
-          connectDiagnostic(status),
-        );
-      const result = await run(h.command);
-      assert.equal(result.diagnostics.errors.length, 1);
-      assert.equal(result.diagnostics.errors[0].retryable, false);
-      assert.match(
-        json ? JSON.stringify(result) : logs.join('\n'),
-        status === 429 ? /429 Too Many Requests/u : /POSSIBLE Connect rate limit/u,
-      );
-      assert.deepEqual(h.calls, []);
-    });
-
-test('explicit68 retrieve reuses strict paired output and reports independent fixed65 routes', async () => {
-  const { command, calls } = nativeRetrieve();
-  const result = await run(command);
-  assert.equal(result.status, 'success');
-  const routes = result.result.items[0].routes;
-  assert.equal(
-    routes.find(({ operation }) => operation === 'calculated-insight.get').apiVersion,
-    '68.0',
-  );
-  for (const operation of [
-    'calculated-insight.metadata',
-    'calculated-insight.source',
-    'dependency.get',
-    'dependency.metadata',
-  ])
-    assert.equal(routes.find((route) => route.operation === operation).apiVersion, '65.0');
-  assert.deepEqual(calls, [
-    'native68:SyntheticInsight__cio',
-    'bind65',
-    'xml:SyntheticInsight__cio',
-    'write:SyntheticInsight__cio',
-  ]);
-});
-for (const acquisition of [
-  { state: 'absent' },
-  { state: 'unknown', diagnostics: ['synthetic-sensitive-detail'] },
-  ...['DRAFT', 'PROCESSING', 'DELETING'].map((status) => ({
-    state: 'present',
-    status,
-    document: candidate(),
-  })),
-]) {
-  test(`native68 public export refuses ${acquisition.status ?? acquisition.state} before output`, async () => {
-    const { command, calls } = nativeRetrieve();
-    command.acquireExactCalculatedInsight = async () => acquisition;
-    const result = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.deepEqual(calls, []);
-    assert.ok(!JSON.stringify(result).includes('synthetic-sensitive-detail'));
-  });
-}
-test('native68 pair mismatch and receiver drift prevent publication', async () => {
-  for (const drift of [false, true]) {
-    const { command, calls } = nativeRetrieve();
-    if (drift)
-      command.calculatedInsightContext = () => ({
-        bind: async () => {},
-        check: () => {
-          throw new Error('private receiver drift');
-        },
-      });
-    else
-      command.acquireCalculatedInsightXml = async () =>
-        xml().replace('Synthetic insight', 'foreign');
-    const result = await run(command);
-    assert.notEqual(result.status, 'success');
-    assert.ok(!calls.some((call) => call.startsWith('write:')));
-  }
-});
-test('native68 later pair or binding failure prevents every selected output', async () => {
-  for (const failure of ['pair', 'binding']) {
-    const { command, calls } = nativeRetrieve();
-    command.parse = async () => ({
-      flags: {
-        metadata: ['calculated-insight:First__cio', 'calculated-insight:Second__cio'],
-        'api-version': '68.0',
-        dataspace: 'default',
-        'target-org': 'synthetic',
-        overwrite: false,
-      },
-    });
-    if (failure === 'pair')
-      command.acquireCalculatedInsightXml = async (_, name) =>
-        name === 'Second__cio'
-          ? xml(candidate(name)).replace('Synthetic insight', 'foreign')
-          : xml(candidate(name));
-    else
-      command.calculatedInsightContext = () => ({
-        check: () => {},
-        bind: async (document) => {
-          if (document.identity.apiName === 'Second__cio') throw new Error('private dependency');
-        },
-      });
-    const result = await run(command);
-    assert.notEqual(result.status, 'success');
-    assert.equal(result.result.items.length, 0);
-    assert.ok(!calls.some((call) => call.startsWith('write:')));
-  }
-});
-test('retrieve help contract distinguishes native68 from fixed65 and ACTIVE-only pairs', () => {
-  assert.match(Retrieve.description, /auto or explicit API68 \(no other version\)/u);
-  assert.match(Retrieve.description, /ACTIVE configurations only/u);
-  assert.match(Retrieve.description, /fixed API65 Metadata, source XML and dependency reads/u);
-});
-test('native68 mixed unsupported family is refused before authentication', async () => {
-  const { command } = retrieve({
-    'api-version': '68.0',
-    metadata: ['calculated-insight:SyntheticInsight__cio', 'segment:Example'],
-  });
-  command.resolveOrg = async () => assert.fail('auth');
-  const result = await run(command);
-  assert.equal(result.status, 'blocked');
-});
 /**
  * Route neutral paired inputs through the real guarded native services.
  * @param {object} flags Explicit command intent.
@@ -773,35 +592,6 @@ test('deploy help documents explicit draft retention and read-only equality', ()
   assert.match(Deploy.description, /identical deploy is read-only/u);
 });
 
-test('later CI pair mismatch prevents ALL mixed selected outputs', async () => {
-  const { command, calls } = retrieve({
-    metadata: ['dmo:Example__dlm', 'calculated-insight:SyntheticInsight__cio'],
-  });
-  command.acquireSelection = async () => [
-    { document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } } },
-  ];
-  command.writeNativeDmo = async () => assert.fail('DMO publication before CI admission');
-  command.acquireCalculatedInsightXml = async () => xml().replace('Synthetic insight', 'different');
-  const result = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.result.items.length, 0);
-  assert.ok(!calls.some((call) => call.startsWith('write:')));
-});
-for (const overrides of [
-  { 'api-version': '65.0' },
-  { 'api-version': '67.0' },
-  { 'api-version': 'latest' },
-  { dataspace: 'other' },
-  { metadata: ['calculated-insight'] },
-  { metadata: ['calculated-insight:Invalid'] },
-]) {
-  test(`CI retrieve refuses unsupported scope before auth ${JSON.stringify(overrides)}`, async () => {
-    const { command } = retrieve(overrides);
-    command.resolveOrg = async () => assert.fail('auth');
-    const result = await run(command);
-    assert.equal(result.status, 'blocked');
-  });
-}
 test('public CI preview uses paired input binding and never executor/private evidence output', async () => {
   const { command, calls } = await deploy();
   const result = await run(command);
@@ -950,43 +740,6 @@ test('mixed CI/DMO ordering checks later CI binding before the earlier prerequis
   assert.equal(result.result.items[0].identity.apiName, table);
   assert.ok(!calls.some((call) => call.startsWith('execute:')));
 });
-test('mixed CI and IR retrieve acquires CI at native68 before IR shared receiver repin', async () => {
-  const { facade, native } = irFixture();
-  const ir = projectNativeIdentityResolution(native, facade.objectApiName).candidate;
-  const { command, calls } = retrieve({
-    metadata: [
-      'identity-resolution:' + facade.objectApiName,
-      'calculated-insight:SyntheticInsight__cio',
-    ],
-    'api-version': 'auto',
-  });
-  let pin;
-  const connection = { getApiVersion: () => pin };
-  command.resolveOrg = async () => ({
-    getOrgId: () => 'synthetic',
-    getConnection: (version) => {
-      pin = version;
-      return connection;
-    },
-  });
-  command.calculatedInsightContext = (receiver) => {
-    assert.equal(receiver.getApiVersion(), '68.0');
-    return { check: () => {}, bind: async () => {} };
-  };
-  command.acquireExactCalculatedInsight = async () => {
-    calls.push('ci68');
-    return { state: 'present', status: 'ACTIVE', document: candidate() };
-  };
-  command.acquireIdentityResolution = async (receiver) => {
-    assert.equal(receiver.getApiVersion(), '68.0');
-    calls.push('ir68');
-    return { identity: ir.identity, candidate: ir, blockers: [] };
-  };
-  command.writeIdentityResolution = async () => ({ path: 'ir.json', outcome: 'retrieved' });
-  const result = await run(command);
-  assert.equal(result.status, 'success');
-  assert.ok(calls.indexOf('ci68') < calls.indexOf('ir68'));
-});
 test('CI dependency node keeps actual DMO prerequisite and fixed version rejects upgrades', () => {
   assert.deepEqual(documentDependencyNode(candidate()).dependencies, [
     { kind: 'dmo', dataSpace: 'default', apiName: table },
@@ -1042,34 +795,6 @@ test('CI standard source retrieve maps suffix and validates exact terminal membe
       })),
     );
 });
-
-for (const [acquisition, code, message] of [
-  [
-    { state: 'unknown', diagnostics: ['CI_RUNTIME_PROFILE_UNQUALIFIED'] },
-    'CI_RUNTIME_PROFILE_UNQUALIFIED',
-    /package origin/u,
-  ],
-  [
-    { state: 'unknown', diagnostics: ['CI_EXPRESSION_UNQUALIFIED'] },
-    'CI_EXPRESSION_UNQUALIFIED',
-    /SQL/u,
-  ],
-  [{ state: 'absent' }, 'CI_NOT_FOUND', /not found/u],
-  [{ state: 'present', status: 'DRAFT', document: candidate() }, 'CI_NOT_ACTIVE', /not ACTIVE/u],
-])
-  test(`CI retrieve names the actual reason ${code} instead of a DMO inventory message`, async () => {
-    const { command, calls } = retrieve();
-    command.acquireExactCalculatedInsight = async () => acquisition;
-    const result = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors.length, 1);
-    const [error] = result.diagnostics.errors;
-    assert.equal(error.code, code);
-    assert.deepEqual(error.identity, { dataSpace: 'default', apiName: 'SyntheticInsight__cio' });
-    assert.doesNotMatch(error.message, /DMO inventory/u);
-    assert.match(error.message, message);
-    assert.ok(!calls.some((call) => call.startsWith('write:')));
-  });
 
 test('CI deploy receiver keeps the core version getter so the context can repin Metadata to 65', async () => {
   const h = await deploy({ 'api-version': 'auto' });

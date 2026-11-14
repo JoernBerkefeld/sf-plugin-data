@@ -211,13 +211,12 @@ version, `65.0` included, is refused with `INVALID_SCOPE`. Default space only. T
 XML/JSON pair format is unchanged. Standard XML, Metadata and DMO prerequisite
 reads keep their own fixed routes.
 
-Retrieve exports one exact ACTIVE calculated insight, including one that has run and
-one with a read-only `SYSTEM_MANAGED` schedule. It refuses packaged insights
-(`isFromPackage: true`) and insights with schedule history or a source-CI link
-(`CI_RUNTIME_PROFILE_UNQUALIFIED`). The artifact holds only the qualified SQL
-expression shapes, so other expressions are refused with `CI_ATTRIBUTION_UNQUALIFIED`;
-that format limit is open. Retrieve errors name the component and the reason
-(`CI_NOT_FOUND`, `CI_NOT_ACTIVE`, `CI_RUNTIME_PROFILE_UNQUALIFIED`, …).
+Retrieve reads the API 68 GET only and writes every insight it names, whatever its
+status, schedule or SQL: `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json`
+(the GET body minus status, run history, record links and the SQL-derived dimensions and
+measures) and `<Name>__cio.calculatedInsight-meta.sql` (the expression as plain SQL;
+Salesforce returns it HTML-escaped). Bare `-m calculated-insight` lists every insight.
+Deploy, publish and delete below still read the old XML/JSON pair (plan chunks E1b, E2).
 
 Deploy, publish and delete admit only never-run insights with schedule
 `NOT_SCHEDULED`; whether run or scheduled ones are safe to write is untested and

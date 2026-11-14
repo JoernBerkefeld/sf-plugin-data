@@ -10,7 +10,7 @@
 
 ## What it means
 
-Both the native Data 360 read and the Metadata API read report that no calculated insight with this API name exists in the target org.
+The API 68 read of the calculated insight answered `ITEM_NOT_FOUND`: no calculated insight with this API name exists in the target org.
 
 ## Why the plugin stops
 
@@ -34,5 +34,4 @@ Downloaded calculated-insight: 0
 
 ## Related codes
 
-- [`CI_NOT_ACTIVE`](../calculated-insight/CI_NOT_ACTIVE.md) — the calculated insight exists but is not ACTIVE.
-- [`CI_METADATA_AMBIGUOUS`](../calculated-insight/CI_METADATA_AMBIGUOUS.md) — only one of the two reads found it.
+- [`CI_RUNTIME_UNKNOWN`](../calculated-insight/CI_RUNTIME_UNKNOWN.md) — the read failed without a clear not-found answer.

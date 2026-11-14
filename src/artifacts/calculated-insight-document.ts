@@ -1,8 +1,12 @@
+import {
+  CalculatedInsightError,
+  calculatedInsightName,
+} from './native-calculated-insight-document.js';
 import { isDeepStrictEqual } from 'node:util';
 
 // eslint-disable-next-line unicorn/no-null -- The native API distinguishes wire null from omitted fields.
 const wireNull = null;
-export const calculatedInsightName = /^[A-Za-z][A-Za-z0-9_]{0,194}__cio$/u;
+
 const objectName = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${objectName}.ssot__DeviceId__c`;
 const application = `${objectName}.ssot__SoftwareApplicationId__c`;
@@ -91,14 +95,6 @@ export type CalculatedInsightUpdateDelta =
       expected: CalculatedInsightDocument;
       observations: CalculatedInsightProjection['observations'];
     };
-
-/** Payload-free refusal; never include SQL or response content in diagnostics. */
-export class CalculatedInsightError extends Error {
-  public constructor(public readonly code: string) {
-    super('Calculated insight configuration could not be admitted.');
-    this.name = 'CalculatedInsightError';
-  }
-}
 
 /**
  * Admit exactly the recorded keys, refusing incomplete or unknown configuration.
@@ -537,3 +533,8 @@ export function buildCalculatedInsightUpdateDelta(
     return { status: 'blocked', blockers: [error.code] };
   }
 }
+
+export {
+  CalculatedInsightError,
+  calculatedInsightName,
+} from './native-calculated-insight-document.js';

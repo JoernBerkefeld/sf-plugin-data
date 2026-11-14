@@ -1,3 +1,22 @@
+# Chunk E1a: calculated insight retrieve as JSON plus SQL file — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk E1a (user decision: "as returned", SQL in a
+second file, mcdev query style).
+
+- Retrieve writes `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json` (API
+  68 GET body with key names and enums as returned, minus status/run fields, dimensions,
+  measures, sourceCiId/Name, creationType, subType) and `...-meta.sql` (expression,
+  HTML-unescaped, byte-exact). Under the project root, not the sfdx package dir.
+- Shared helper `src/artifacts/code-fields.ts` (`splitCodeFields`/`joinCodeFields`,
+  `codeFilePath`), ready for Segment `spec.models[].sql` (chunk S).
+- Bare `-m calculated-insight` lists every insight. Removed CI_INVENTORY_UNQUALIFIED,
+  CI_NOT_ACTIVE; the other CI refusals stay with the old pair module until E2.
+- **CI deploy, publish and delete still read the old XML/JSON pair and do not work on the
+  new files until E1b/E2.**
+- Live zero-write (isolated-source 00Daj000010xkZNEAY, 22:10-22:11Z): all three insights
+  retrieved (two were refused by the old gates), repeat all `unchanged`; SQL file holds
+  `>=` and `'APP_OPEN'`. Evidence F:/Temp/cie1a-live-3274fabd(.run1.json, .run2.json).
+
 # Chunk F (non-CI part): API 68 DMO reads, start version 68 — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk F, without the calculated-insight files.

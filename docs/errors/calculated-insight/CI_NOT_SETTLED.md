@@ -34,4 +34,4 @@ Downloaded calculated-insight: 0
 
 ## Related codes
 
-- [`CI_NOT_ACTIVE`](../calculated-insight/CI_NOT_ACTIVE.md) — the calculated insight is a draft or still processing.
+- [`CI_UNEXPECTED_STATE`](../calculated-insight/CI_UNEXPECTED_STATE.md) — the status changed unexpectedly after a write.

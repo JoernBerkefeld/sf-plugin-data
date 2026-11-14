@@ -22,8 +22,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The calculated insight in the org has a different API name or data space than selected. Nothing was written or sent; check the selector and the pair, then rerun.',
   CI_INPUT_DRIFT:
     'The delete options changed while the command was running, so nothing was deleted. Rerun the delete once with the intended flags.',
-  CI_INVENTORY_UNQUALIFIED:
-    'Retrieving all calculated insights at once is not supported. Select each one with -m calculated-insight:Name__cio.',
   CI_METADATA_AMBIGUOUS:
     'The Metadata API definition of the calculated insight is missing or does not match the native read. Nothing was written or sent; check the calculated insight in the org and rerun.',
   CI_METADATA_MISMATCH:
@@ -32,8 +30,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The deploy request was sent but the plugin could not confirm the result. Do not resend; preview or retrieve the calculated insight to see its state first.',
   CI_NON_EXPRESSION_CHANGE:
     'The pair changes more than the SQL expression of an existing calculated insight. Only the expression can be updated; set the other fields back to the org values.',
-  CI_NOT_ACTIVE:
-    'The calculated insight is not ACTIVE; it is a draft or still processing. Publish it or wait for processing to finish, then rerun the retrieve.',
   CI_NOT_FOUND:
     'The calculated insight does not exist in the target org. Check the API name and the target org, then rerun the retrieve.',
   CI_NOT_SETTLED:

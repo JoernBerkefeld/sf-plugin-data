@@ -486,8 +486,8 @@ for (const selector of ['identity-resolution:Individual_x', 'calculated-insight:
     command.acquireIdentityResolution = async () => {
       throw new Error('private-token');
     };
-    command.calculatedInsightContext = () => ({ bind: async () => {}, check: () => {} });
-    command.acquireExactCalculatedInsight = async () => {
+    command.createCalculatedInsightClient = () => ({});
+    command.acquireCalculatedInsight = async () => {
       throw new Error('private-token');
     };
     const { result, exitCode } = await run(command);

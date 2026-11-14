@@ -47,15 +47,14 @@ import path from 'node:path';
 import {
   calculatedInsightName,
   CalculatedInsightError,
-  validateCalculatedInsightPair,
-} from '../../artifacts/calculated-insight-document.js';
-import type { CalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
+} from '../../artifacts/native-calculated-insight-document.js';
+import type { NativeCalculatedInsight } from '../../artifacts/native-calculated-insight-document.js';
 import {
-  calculatedInsightReadContext,
-  acquireExactCalculatedInsight,
-} from '../../services/retrieve-calculated-insight.js';
-import { retrieveCalculatedInsightSourceMetadata } from '../../transport/project-metadata.js';
-import { writeCalculatedInsightDocument } from '../../artifacts/write-calculated-insight.js';
+  listCalculatedInsightNames,
+  retrieveNativeCalculatedInsight,
+} from '../../services/native-calculated-insight.js';
+import { createCalculatedInsightClient } from '../../transport/calculated-insight-rest.js';
+import { writeNativeCalculatedInsightDocument } from '../../artifacts/write-native-calculated-insight.js';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, Org, StateAggregator } from '@salesforce/core';
 import { operationApiVersion, resolveApiVersion } from '../../transport/api-version.js';
@@ -138,23 +137,9 @@ export type RetrieveEnvelope = {
 /** Name the actual reason a calculated insight was not exported. */
 const calculatedInsightRetrieveMessages: Record<string, string> = {
   CI_NOT_FOUND: 'The calculated insight was not found in the target org; no files were written.',
-  CI_NOT_ACTIVE:
-    'The calculated insight is not ACTIVE (draft, processing or deleting); only ACTIVE calculated insights are retrieved.',
-  CI_RUNTIME_PROFILE_UNQUALIFIED:
-    'The calculated insight has a package origin, query dialect, schedule time zone, schedule history or source-CI link that the artifact cannot represent; no files were written.',
-  CI_EXPRESSION_UNQUALIFIED:
-    'The calculated insight SQL is outside what the calculated insight artifact can represent; no files were written.',
-  CI_CONFIGURATION_UNQUALIFIED:
-    'The calculated insight settings or schema are outside what the calculated insight artifact can represent; no files were written.',
-  CI_SCHEMA_UNQUALIFIED:
-    'The calculated insight dimensions or measures are outside what the calculated insight artifact can represent; no files were written.',
-  CI_ATTRIBUTION_UNQUALIFIED:
-    'The calculated insight field attribution is outside what the calculated insight artifact can represent; no files were written.',
-  CI_METADATA_MISMATCH:
-    'The calculated insight runtime and Metadata API definitions disagree; no files were written.',
-  CI_METADATA_AMBIGUOUS:
-    'The calculated insight Metadata API definition is missing or ambiguous; no files were written.',
   CI_RUNTIME_UNKNOWN: 'The calculated insight could not be read; no files were written.',
+  CI_IDENTITY_CHANGED:
+    'The calculated insight the org returned has a different API name or data space; no files were written.',
 };
 
 const retrieveFamilies = [
@@ -279,7 +264,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve any mix of Data360 DLOs, DMOs, mappings, relationships, data streams, data transforms, data graphs, Segments, calculated insights and identity resolution configuration.';
   public static readonly description =
-    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto or 68.0 in default space (other versions are refused) and writes one portable data360/segments/<Name>.segment.json per segment with its DBT SQL models as Salesforce returns them; segments without refresh schedule, with a 90-day lookback and without parameters only. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is not available and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. Calculated insights use the API68 GET only (auto or 68.0, default space): -m calculated-insight:ApiName__cio retrieves that insight and bare -m calculated-insight every insight the API lists, whatever its status, schedule or SQL; each is written as data360/calculatedInsights/<ApiName>.calculatedInsight-meta.json (the GET body as returned, without status, run history, source-CI links, creation type, sub type and the dimensions and measures Salesforce derives from the SQL) plus its SQL as plain text in <ApiName>.calculatedInsight-meta.sql. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto or 68.0 in default space (other versions are refused) and writes one portable data360/segments/<Name>.segment.json per segment with its DBT SQL models as Salesforce returns them; segments without refresh schedule, with a 90-day lookback and without parameters only. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is not available and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -302,7 +287,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; bare dlo is every DLO the API lists; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); data-stream:ApiName, data-transform:Name, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName are exact-only.',
+        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; bare dlo is every DLO the API lists; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); data-stream:ApiName, data-transform:Name, segment:ApiName, data-graph:ApiName and identity-resolution:ExactObjectApiName are exact-only; calculated-insight:ApiName__cio, or bare calculated-insight for every insight.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -382,10 +367,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     );
   protected writeRelationship = writeNativeRelationshipDocument;
   protected writeDataGraph = writeDataGraphDocument;
-  protected calculatedInsightContext = calculatedInsightReadContext;
-  protected acquireExactCalculatedInsight = acquireExactCalculatedInsight;
-  protected acquireCalculatedInsightXml = retrieveCalculatedInsightSourceMetadata;
-  protected writeCalculatedInsight = writeCalculatedInsightDocument;
+  protected createCalculatedInsightClient = createCalculatedInsightClient;
+  protected acquireCalculatedInsight = retrieveNativeCalculatedInsight;
+  protected listCalculatedInsightNames = listCalculatedInsightNames;
+  protected writeCalculatedInsight = writeNativeCalculatedInsightDocument;
   protected acquireIdentityResolution = retrieveIdentityResolution;
   protected writeIdentityResolution = writeIdentityResolutionDocument;
   protected acquireSegment = retrieveSegment;
@@ -978,7 +963,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
     const dloSelectors = selectors.filter((value) => value === 'dlo' || value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
-    const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
+    const ciSelectors = selectors.filter((value) => inGroup('calculated-insight', value));
     const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
     const dmoSelectors = selectors.filter(
@@ -989,7 +974,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         !value.startsWith('relationship:') &&
         !value.startsWith('segment:') &&
         !value.startsWith('identity-resolution:') &&
-        !value.startsWith('calculated-insight:'),
+        !inGroup('calculated-insight', value),
     );
     const hasDmos = dmoSelectors.length > 0;
     let effectiveVersion: string;
@@ -1017,12 +1002,15 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           throw new NativeRelationshipError('INVALID_SELECTION');
       }
       family = 'calculated-insight';
-      if (selectors.includes('calculated-insight'))
-        throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
       if (ciSelectors.length > 0) {
         operationApiVersion(flags['api-version'], 'calculated-insight');
         if (effectiveScope !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
-        if (ciSelectors.some((value) => !calculatedInsightName.test(value.slice(19))))
+        if (
+          ciSelectors.some(
+            (value) =>
+              value !== 'calculated-insight' && !calculatedInsightName.test(value.slice(19)),
+          )
+        )
           throw new CalculatedInsightError('INVALID_SELECTION');
       }
       family = 'identity-resolution';
@@ -1342,49 +1330,50 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 )
               : [];
           const calculatedInsights: Array<{
-            document: CalculatedInsightDocument;
-            definitionXml: string;
+            document: {
+              kind: 'calculated-insight';
+              identity: { dataSpace: string; apiName: string };
+            };
+            insight: NativeCalculatedInsight;
           }> = [];
-          // Complete every CI admission before any selected output and before IR repins the receiver.
-          // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
-          for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
-            try {
-              const ciConnection = org.getConnection('68.0');
-              const context = this.calculatedInsightContext(ciConnection, effectiveScope);
-              // Retrieval is read-only: run history and a SYSTEM_MANAGED schedule are admitted.
-              const exact = await this.acquireExactCalculatedInsight(context, apiName, false, true);
-              if (exact.state !== 'present' || exact.status !== 'ACTIVE')
-                throw retainConnectDiagnostic(
-                  new CalculatedInsightError(
-                    exact.state === 'unknown'
-                      ? (exact.diagnostics.find((code) => /^CI_[A-Z_]+$/u.test(code)) ??
-                          'CI_ACQUISITION_FAILED')
-                      : exact.state === 'absent'
-                        ? 'CI_NOT_FOUND'
-                        : 'CI_NOT_ACTIVE',
-                  ),
-                  getConnectDiagnostic(exact),
+          if (ciSelectors.length > 0) {
+            // Every CI is read before any selected output (API 68 GET only).
+            const ciConnection = org.getConnection('68.0');
+            const ciNames = ciSelectors
+              .filter((value) => value !== 'calculated-insight')
+              .map((value) => value.slice(19));
+            // Bare calculated-insight: every insight the API lists in the data space.
+            if (ciSelectors.includes('calculated-insight'))
+              try {
+                ciNames.push(
+                  ...(await this.listCalculatedInsightNames(ciConnection, effectiveScope)),
                 );
-              if (
-                exact.document.identity.apiName !== apiName ||
-                exact.document.identity.dataSpace !== 'default'
-              )
-                throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-              await context.bind(exact.document);
-              const target = flags['target-org'] ?? ciConnection.getUsername();
-              if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
-              const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
-              const document = validateCalculatedInsightPair(
-                exact.document,
-                definitionXml,
-                apiName.slice(0, -5),
-              );
-              context.check();
-              calculatedInsights.push({ document, definitionXml });
-            } catch (error: unknown) {
-              diagnose(error, apiName, 'calculated-insight');
-              reported = error;
-              throw error;
+              } catch (error: unknown) {
+                diagnose(error, undefined, 'calculated-insight');
+                reported = error;
+                throw error;
+              }
+            const client = this.createCalculatedInsightClient(ciConnection, '68.0', effectiveScope);
+            // eslint-disable-next-line unicorn/no-array-sort -- Deterministic CI order on a new array.
+            for (const apiName of [...new Set(ciNames)].sort()) {
+              try {
+                const insight = await this.acquireCalculatedInsight(
+                  client,
+                  apiName,
+                  effectiveScope,
+                );
+                calculatedInsights.push({
+                  document: {
+                    kind: 'calculated-insight',
+                    identity: { dataSpace: insight.dataSpace, apiName },
+                  },
+                  insight,
+                });
+              } catch (error: unknown) {
+                diagnose(error, apiName, 'calculated-insight');
+                reported = error;
+                throw error;
+              }
             }
           }
           const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
@@ -1439,10 +1428,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             const { document } = entry;
             try {
               const receipt =
-                document.kind === 'calculated-insight'
+                'insight' in entry
                   ? await this.writeCalculatedInsight(
-                      document,
-                      'definitionXml' in entry ? entry.definitionXml : '',
+                      entry.insight,
                       outputDirectory,
                       flags.overwrite,
                     )
@@ -1484,34 +1472,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                                     : versions.soapNumeric,
                                 transport: 'native' as const,
                               },
-                              ...(document.kind === 'calculated-insight'
-                                ? [
-                                    {
-                                      operation: `${document.kind}.metadata`,
-                                      apiVersion: '65.0',
-                                      transport: 'metadata' as const,
-                                    },
-                                  ]
-                                : []),
-                              ...(document.kind === 'calculated-insight'
-                                ? [
-                                    {
-                                      operation: 'calculated-insight.source',
-                                      apiVersion: '65.0',
-                                      transport: 'metadata' as const,
-                                    },
-                                    {
-                                      operation: 'dependency.get',
-                                      apiVersion: '65.0',
-                                      transport: 'native' as const,
-                                    },
-                                    {
-                                      operation: 'dependency.metadata',
-                                      apiVersion: '65.0',
-                                      transport: 'metadata' as const,
-                                    },
-                                  ]
-                                : []),
                             ],
                     }
                   : {}),
