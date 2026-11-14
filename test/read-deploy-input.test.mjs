@@ -10,7 +10,6 @@ import {
   readDeployInputs,
   verifyDataTransformInputDigest,
 } from '../lib/artifacts/read-deploy-input.js';
-import Deploy from '../lib/commands/data360/deploy.js';
 import { writeDataTransformDocument } from '../lib/artifacts/write-data-transform.js';
 
 const fixture = (apiName = 'Preview_Item__dlm') => ({
@@ -150,32 +149,20 @@ test('Transform duplicate identities and hardlinked canonical files fail closed'
   await assert.rejects(readDeployInputs({ cwd, sourceDir: [file] }), refusal('UNSAFE_SOURCE'));
 });
 
-test('Transform source admission requires explicit operation before authentication', async () => {
+test('a directory or several members admit several transforms', async () => {
   const cwd = await root();
   await writeDataTransformDocument(transform(), cwd, false);
-  const inputs = await readDeployInputs({ cwd, metadata: ['data-transform:SyntheticTransform'] });
-  for (const preview of [true, false]) {
-    const command = Object.create(Deploy.prototype);
-    command.parse = async () => ({
-      flags: { metadata: ['data-transform:SyntheticTransform'], 'api-version': 'auto', preview },
-    });
-    command.jsonEnabled = () => true;
-    command.log = () => {};
-    command.resolveInputs = async () => inputs;
-    command.resolveTargetOrg = async () => {
-      assert.fail('Authentication must not occur');
-    };
-    const previousExitCode = process.exitCode;
-    let result;
-    try {
-      result = await command.run();
-    } finally {
-      process.exitCode = previousExitCode;
-    }
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors[0].code, 'INVALID_TRANSFORM_DEPLOY_SELECTION');
-    assert.deepEqual(result.result.items, []);
-  }
+  await writeDataTransformDocument(transform('SecondTransform'), cwd, false);
+  const byDirectory = await readDeployInputs({ cwd, sourceDir: ['data360/dataTransforms'] });
+  const byMember = await readDeployInputs({
+    cwd,
+    metadata: ['data-transform:SyntheticTransform', 'data-transform:SecondTransform'],
+  });
+  for (const inputs of [byDirectory, byMember])
+    assert.deepEqual(inputs.map((input) => input.document.definition.name).toSorted(), [
+      'SecondTransform',
+      'SyntheticTransform',
+    ]);
 });
 
 // All newly created OS-temp fixtures are retained; no recursive cleanup.

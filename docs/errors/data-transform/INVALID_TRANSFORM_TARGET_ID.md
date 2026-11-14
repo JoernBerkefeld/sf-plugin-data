@@ -1,6 +1,6 @@
 # `INVALID_TRANSFORM_TARGET_ID`
 
-> The data transform record ID has the wrong format. Use the 18-character ID starting with 1dt from the org, then rerun.
+> A data transform record ID does not have the expected format (1dt followed by 15 letters or digits). Nothing was changed; check the transform in Data Cloud, then rerun.
 
 |              |                                          |
 | ------------ | ---------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-An update or delete was about to be sent for a transform ID that is not `1dt` followed by 15 letters or digits. A deploy checks the `--transform-target-id` flag earlier and a delete takes the ID from the transform list, so this code is normally a second line of defence.
+An update or delete was about to be sent for a transform ID that is not `1dt` followed by 15 letters or digits. Deploy and delete take the ID from the transform list, so this code is normally a second line of defence.
 
 ## Why the plugin stops
 
@@ -18,9 +18,8 @@ Updates and deletes are sent to a URL built from the ID. The plugin never builds
 
 ## How to fix
 
-1. Look up the transform record ID in Data Cloud or from the `id` of a previous retrieve.
-2. Pass it unchanged with `--transform-target-id`.
-3. Rerun the command.
+1. Check the transform in Data Cloud; a list entry with an unexpected ID points to an org or plugin problem.
+2. Rerun the command; if it repeats, report it with the command you ran.
 
 ## Example output
 
@@ -29,11 +28,11 @@ Deploy execution: blocked (INVALID_TRANSFORM_TARGET_ID). No automatic retry or r
 Failed: data-transform:Orders_Copy; mutation: not-attempted.
 Deployed: 0 (0 created / 0 updated / 1 failed)
 INVALID_TRANSFORM_TARGET_ID: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
-Hint: The data transform record ID has the wrong format. Use the 18-character ID starting with 1dt from the org, then rerun.
+Hint: A data transform record ID does not have the expected format (1dt followed by 15 letters or digits). Nothing was changed; check the transform in Data Cloud, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/INVALID_TRANSFORM_TARGET_ID.md
 ```
 
 ## Related codes
 
-- [`INVALID_TRANSFORM_DEPLOY_SELECTION`](../data-transform/INVALID_TRANSFORM_DEPLOY_SELECTION.md) — the deploy flags are missing or contradictory.
+- [`INCOMPLETE_TRANSFORM_INVENTORY`](../data-transform/INCOMPLETE_TRANSFORM_INVENTORY.md) — the transform list itself could not be read completely.
 - [`INVALID_TRANSFORM_DELETE_SELECTION`](../data-transform/INVALID_TRANSFORM_DELETE_SELECTION.md) — the delete selector does not name one transform exactly.

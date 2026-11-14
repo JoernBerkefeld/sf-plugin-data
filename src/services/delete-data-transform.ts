@@ -1,3 +1,4 @@
+import { setTimeout as wait } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
 import {
   DataTransformError,
@@ -18,7 +19,14 @@ export type DataTransformDeleteOptions = {
   preview?: boolean;
   confirmDelete: boolean;
   verifyInput: () => Promise<void>;
+  /** Clock and sleep for the settlement poll; tests inject fakes. */
+  now?: () => number;
+  delay?: (milliseconds: number) => Promise<void>;
 };
+
+/** Salesforce keeps listing a deleted transform for about 10-25 seconds (live, 2026-11-14). */
+const SETTLE_BUDGET_MS = 60_000;
+const SETTLE_INTERVAL_MS = 5000;
 export type DataTransformDeleteResult = {
   operation: 'delete';
   targetId: string;
@@ -80,7 +88,7 @@ export async function listDataTransformInventory(
 
 /**
  * Resolve the target ID of a data transform from its API name: read the complete inventory and
- * take the one entry whose name matches, ignoring case. Read-only.
+ * take the one entry whose name matches, ignoring case. Read-only; used by delete and deploy.
  * @param {DataTransformClient} client Fixed API68/default adapter.
  * @param {string} name API name of the selected transform.
  * @returns {Promise<string | undefined>} The one matching target ID; undefined when none matches.
@@ -95,7 +103,7 @@ export async function resolveDataTransformTargetId(
     const error = new DataTransformError('TRANSFORM_TARGET_NOT_RESOLVED');
     replaceExplanation(
       error,
-      `The org has ${matches.length} data transforms named ${name} (ignoring case), so the name does not resolve to one target ID. Nothing was deleted.`,
+      `The org has ${matches.length} data transforms named ${name} (ignoring case), so the name does not resolve to one target ID. Nothing was changed.`,
     );
     throw error;
   }
@@ -199,14 +207,23 @@ export async function deleteDataTransform(
     return result('deletion-unconfirmed', 'unknown');
   }
   try {
-    check();
-    const after = await listDataTransformInventory(client, check);
+    // The list keeps the transform for a while after the DELETE: poll it, bounded.
+    const now = options.now ?? Date.now;
+    const delay = options.delay ?? (async (milliseconds: number) => wait(milliseconds));
+    const deadline = now() + SETTLE_BUDGET_MS;
+    let listed = true;
+    for (;;) {
+      check();
+      const after = await listDataTransformInventory(client, check);
+      listed = after.some((row) => row.id === targetId || row.name === desired.definition.name);
+      if (!listed || now() >= deadline) break;
+      await delay(Math.min(SETTLE_INTERVAL_MS, Math.max(0, deadline - now())));
+    }
     const retained = preservation(await bindDataTransformDlos(desired, dlos));
     check();
     if (!isDeepStrictEqual(prerequisites, retained))
       return result('deletion-unconfirmed', 'acknowledged');
-    if (after.some((row) => row.id === targetId || row.name === desired.definition.name))
-      return result('deletion-unconfirmed', 'acknowledged', true);
+    if (listed) return result('deletion-unconfirmed', 'acknowledged', true);
     return result('deleted', 'confirmed-deleted', true);
   } catch {
     return result('deletion-unconfirmed', 'acknowledged');

@@ -10,7 +10,7 @@
 
 ## What it means
 
-The create or update returned a response, but its `id` is not a valid transform ID, its `name` differs from your file, or, for an update, the ID differs from `--transform-target-id`.
+The create or update returned a response, but its `id` is not a valid transform ID, its `name` differs from your file, or, for an update, the ID differs from the one found by name.
 
 ## Why the plugin stops
 

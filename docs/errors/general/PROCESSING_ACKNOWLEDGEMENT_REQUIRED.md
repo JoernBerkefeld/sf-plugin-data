@@ -39,6 +39,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 
 ## Related codes
 
-- [`TRANSFORM_PROCESSING_ACKNOWLEDGMENT_REQUIRED`](../data-transform/TRANSFORM_PROCESSING_ACKNOWLEDGMENT_REQUIRED.md) — the same consent for data transforms.
 - [`IDENTITY_RESOLUTION_EFFECT_ACKNOWLEDGEMENT_REQUIRED`](../identity-resolution/IDENTITY_RESOLUTION_EFFECT_ACKNOWLEDGEMENT_REQUIRED.md) — the identity resolution side of this consent.
 - [`DEPLOY_EXECUTION_BLOCKED`](../general/DEPLOY_EXECUTION_BLOCKED.md) — the summary code of the blocked batch.

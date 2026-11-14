@@ -34,5 +34,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`INVALID_TRANSFORM_SELECTION`](../data-transform/INVALID_TRANSFORM_SELECTION.md) — the selection itself cannot be combined with a transform.
+- [`INVALID_TRANSFORM_SELECTION`](../data-transform/INVALID_TRANSFORM_SELECTION.md) — the transform name or record ID has an invalid format.
 - [`INVALID_TRANSFORM_DELETE_SELECTION`](../data-transform/INVALID_TRANSFORM_DELETE_SELECTION.md) — delete flags do not form a valid transform selection.

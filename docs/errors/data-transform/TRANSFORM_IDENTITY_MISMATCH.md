@@ -1,6 +1,6 @@
 # `TRANSFORM_IDENTITY_MISMATCH`
 
-> The transform read from the org does not match the requested name or ID. For an update, check that --transform-target-id belongs to the transform named in the file, then rerun.
+> The transform read from the org does not match the requested name or ID, for example a name that differs only in letter case. Use the name exactly as in the org, then rerun.
 
 |              |                                                                              |
 | ------------ | ---------------------------------------------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin asked for one transform and either the response carried a different or invalid ID or name, or, for an update, the record at `--transform-target-id` has a different API name than the transform in your file.
+The plugin asked for one transform and the response carried a different or invalid ID or name. For deploy, the transform found by name (ignoring letter case) has an API name that differs from the name in your file, for example `Orders_Copy` in the file and `orders_copy` in the org.
 
 ## Why the plugin stops
 
@@ -18,10 +18,9 @@ Writing or saving under the wrong identity would update a different transform or
 
 ## How to fix
 
-1. Look up the transform in Data Cloud and note its record ID and API name.
-2. For deploy, pass the record ID of the transform whose name matches the file.
-3. For retrieve, check that the name in `--metadata data-transform:<Name>` is spelled exactly as in the org.
-4. Rerun the command.
+1. Look up the transform in Data Cloud and note its API name.
+2. Use that name exactly, in the file (`definition.name` and the file name) or in `--metadata data-transform:<Name>`.
+3. Rerun the command.
 
 ## Example output
 
@@ -30,11 +29,12 @@ Deploy execution: blocked (TRANSFORM_IDENTITY_MISMATCH). No automatic retry or r
 Failed: data-transform:Orders_Copy; mutation: not-attempted.
 Deployed: 0 (0 created / 0 updated / 1 failed)
 TRANSFORM_IDENTITY_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
-Hint: The transform read from the org does not match the requested name or ID. For an update, check that --transform-target-id belongs to the transform named in the file, then rerun.
+Hint: The transform read from the org does not match the requested name or ID, for example a name that differs only in letter case. Use the name exactly as in the org, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/TRANSFORM_IDENTITY_MISMATCH.md
 ```
 
 ## Related codes
 
 - [`TRANSFORM_DELETE_IDENTITY_MISMATCH`](../data-transform/TRANSFORM_DELETE_IDENTITY_MISMATCH.md) — the ID and name are not paired in the transform list.
+- [`TRANSFORM_TARGET_NOT_RESOLVED`](../data-transform/TRANSFORM_TARGET_NOT_RESOLVED.md) — the name matches more than one transform.
 - [`TRANSFORM_WRITE_IDENTITY_MISMATCH`](../data-transform/TRANSFORM_WRITE_IDENTITY_MISMATCH.md) — the write response names a different transform.

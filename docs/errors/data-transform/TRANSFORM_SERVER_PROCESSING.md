@@ -35,4 +35,4 @@ Deployed: 1 (1 created / 0 updated / 0 failed)
 
 ## Related codes
 
-- [`TRANSFORM_PROCESSING_ACKNOWLEDGMENT_REQUIRED`](../data-transform/TRANSFORM_PROCESSING_ACKNOWLEDGMENT_REQUIRED.md) — the flag that accepts this processing before the write.
+- [`TRANSFORM_READBACK_MISMATCH`](../data-transform/TRANSFORM_READBACK_MISMATCH.md) — the definition read back after the write differs from the file.

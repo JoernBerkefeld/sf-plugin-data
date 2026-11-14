@@ -18,13 +18,12 @@ import type { DataTransformDeploySelection } from './preflight-data-transform-de
  * Freshly preflight, send exactly once, then independently verify the acknowledged definition.
  * An error after dispatch is not absence or permission to replay; processing is not run success.
  * @param {unknown} value Portable input artifact.
- * @param {DataTransformDeploySelection} selection Explicit create-only or identity-bound update.
+ * @param {DataTransformDeploySelection} selection Create, or update of the target resolved by name.
  * @param {DataTransformClient} client Native transform adapter.
  * @param {DloClient} dlos Shared native prerequisite adapter.
  * @param {object} [options] Input verification and mutation boundary notification.
  * @param {() => Promise<void>} [options.verifyInput] Reverify captured local bytes.
  * @param {() => void} [options.onDispatch] Notify immediately before invoking the write.
- * @param {boolean} [options.allowProcessing] Explicit processing acknowledgment when provided.
  * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', observation: DataTransformObservation, serverProcessing?: true}>} Independently observed definition, never computation completion.
  */
 export async function executeDataTransformDeploy(
@@ -35,7 +34,6 @@ export async function executeDataTransformDeploy(
   options: {
     verifyInput?: () => Promise<void>;
     onDispatch?: () => void;
-    allowProcessing?: boolean;
   } = {},
 ): Promise<{
   operation: 'create' | 'update' | 'unchanged';
@@ -47,8 +45,6 @@ export async function executeDataTransformDeploy(
     await options.verifyInput?.();
     return { operation: 'unchanged', observation: plan.current! };
   }
-  if (options.allowProcessing === false)
-    throw new DataTransformError('TRANSFORM_PROCESSING_ACKNOWLEDGMENT_REQUIRED');
   const prerequisites = await bindDataTransformDlos(plan.document, dlos);
   if (
     !isDeepStrictEqual(

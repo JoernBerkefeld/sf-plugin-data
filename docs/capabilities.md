@@ -97,7 +97,7 @@ beside P3 files only stay in the ordered batch. A calculated insight, Segment or
 an identity resolution's unified or link DMO (name derived from the ruleset file) runs
 after that ruleset is `PUBLISHED`. Before the first write, P3 inputs pass their local
 file, version and dependency checks and the stream, transform and graph scope is checked.
-A deploy takes at most one transform, named exactly (`INVALID_TRANSFORM_SELECTION`); a
+A deploy takes any number of transforms, each created or updated by name; a
 DLO file named like the landing DLO of a stream the deploy creates is refused after the
 stream's read-only comparison, before any write (`DATA_STREAM_DLO_COLLISION`); beside an
 existing stream it deploys. `--wait-timeout` applies to every selected graph and needs
@@ -920,8 +920,7 @@ cross-org support.
 canonical files of every family (DLO, DMO, mapping, relationship, data stream, data
 transform, data graph, identity resolution, calculated insight, Segment JSON), admitted
 through the existing input resolver with byte capture, and routes them as explicit
-selections of the same families and runs them in the same phases; a data transform
-is refused because `--transform-operation` is not accepted with Git selection. Files deleted in the range become delete candidates (family and identity
+selections of the same families and runs them in the same phases, data transforms included. Files deleted in the range become delete candidates (family and identity
 from the merge-base content; relationship source DMO and transform API name included),
 reported in `result.selection.deletions` and never deleted by deploy (`delete
 --changed-since` deletes them). A path deleted and re-added is not a delete; one

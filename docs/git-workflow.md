@@ -41,9 +41,8 @@ after every item of the previous one settled:
 4. Data graphs, after the ruleset whose unified DMO they use is published.
    `--wait-timeout` applies to each graph and is refused when the range holds none.
 
-A data transform changed in the range is refused (`INVALID_TRANSFORM_SELECTION`): a
-transform deploy needs `--transform-operation`, which is not accepted with
-`--changed-since`. Deploy it with an explicit selection. A DLO file named like the
+A data transform changed in the range is created or updated by name in the transform
+phase. A DLO file named like the
 landing DLO of a stream in the range that does not exist in the target yet is refused
 before any write (`DATA_STREAM_DLO_COLLISION`).
 

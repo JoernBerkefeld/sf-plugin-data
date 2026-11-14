@@ -1,3 +1,26 @@
+# Chunk C: data transforms create or update by name — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk C.
+
+- Deploy looks each transform up by name in the complete list (`resolveDataTransformTarget`):
+  absent → create, one match → update or `unchanged`, 2+ → `TRANSFORM_TARGET_NOT_RESOLVED`.
+  The authored file is sent as written. `--transform-operation`, `--transform-target-id` and
+  `--allow-processing` for transforms are gone, as are INVALID_TRANSFORM_DEPLOY_SELECTION,
+  INVALID_TRANSFORM_FLAG_SCOPE, TRANSFORM_PROCESSING_ACKNOWLEDGMENT_REQUIRED and
+  UNSUPPORTED_TRANSFORM_LOGIC_CHANGE (Salesforce accepted a changed output DLO live).
+- Several transforms per deploy (P2, one after another, stop at the first failure);
+  transforms take part in `--changed-since`.
+- Delete polls the transform list for up to 60 s after the DELETE (was one read, which
+  always ended `TRANSFORM_DELETE_UNCONFIRMED` because Salesforce lists it 10-25 s longer).
+- Live (isolated-source 00Daj000010xkZNEAY, 16:23-16:45Z): create, update, logic change,
+  unchanged, two in one deploy, `--changed-since HEAD~1` selecting only the changed one,
+  one-command delete of transform + DLOs confirmed. Evidence
+  F:/Temp/sfdata-chunkC-b76e68-c34533ee/_out, F:/Temp/sfdata-chunkC2-6afa45-ee881b1d/_out.
+  All Cli* probes deleted.
+- Open: still local shape gates in `buildDataTransformInput` / `bindDataTransformDlos`
+  (one load/output, one PK mapping, ACTIVE Other DLOs in default, schedule/type);
+  retrieve of a missing transform reports generic `TRANSFORM_RETRIEVE_FAILED`, not not-found.
+
 # Chunk B: every listed DLO retrieves — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk B.

@@ -17,7 +17,7 @@ The plugin could not turn the flags into a selection it supports. Common causes:
 - a `--source-dir` value with wildcards, `..` or a drive-relative path;
 - a selector whose file is at a different path or names a different component than expected;
 - `--changed-since` combined with `--source-dir` or `-m`, or a selection that finds no files;
-- options that belong to another family, such as `--transform-target-id` without a data transform.
+- options that belong to another family, such as `--wait-timeout` without a data graph.
 
 ## Why the plugin stops
 

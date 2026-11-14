@@ -1,7 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
   DataTransformError,
-  dataTransformId,
   serializeDataTransformDocument,
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
@@ -81,9 +80,10 @@ export async function bindDataTransformDlos(
 }
 
 /**
- * Preflight explicit create-only or positively identity-bound update; never infer absence.
+ * Preflight a create, or an update of the target the deploy resolved by name. The authored
+ * definition is sent as written; Salesforce decides on any logic change.
  * @param {unknown} value Portable artifact.
- * @param {DataTransformDeploySelection} selection Explicit operation and target ID for update.
+ * @param {DataTransformDeploySelection} selection Create, or update with the resolved target ID.
  * @param {DataTransformClient} client Native API68 transform transport.
  * @param {Pick<DloClient, 'get'>} dlos Existing native DLO adapter.
  * @param {object} [options] Preview-only native validation control.
@@ -98,21 +98,11 @@ export async function preflightDataTransformDeploy(
   options: { skipServerValidation?: boolean } = {},
 ): Promise<DataTransformDeployPlan> {
   const document = validateDataTransformDocument(value);
-  if (
-    !selection ||
-    !['create', 'update'].includes(selection.operation) ||
-    Object.keys(selection).length !== (selection.operation === 'create' ? 1 : 2)
-  )
-    throw new DataTransformError('INVALID_TRANSFORM_DEPLOY_SELECTION');
   let current: DataTransformObservation | undefined;
   if (selection.operation === 'update') {
-    if (typeof selection.targetId !== 'string' || !dataTransformId.test(selection.targetId))
-      throw new DataTransformError('INVALID_TRANSFORM_TARGET_ID');
     current = await retrieveDataTransform(selection.targetId, client);
     if (current.document.definition.name !== document.definition.name)
       throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
-    if (!isDeepStrictEqual(current.document.definition.definition, document.definition.definition))
-      throw new DataTransformError('UNSUPPORTED_TRANSFORM_LOGIC_CHANGE');
   }
   const prerequisites = await bindDataTransformDlos(document, dlos);
   if (
@@ -120,7 +110,7 @@ export async function preflightDataTransformDeploy(
     serializeDataTransformDocument(current.document) === serializeDataTransformDocument(document)
   )
     return { operation: 'unchanged', document, targetId: current.targetId, current, prerequisites };
-  // Update keeps the proven-identical logic, and the validation endpoint rejects an existing owner's own output (live-observed), so only create is validated.
+  // The validation endpoint rejects an existing owner's own output (live-observed), so only create is validated.
   if (selection.operation === 'create' && !options.skipServerValidation) {
     const validation = await client.validate(document.definition);
     if (

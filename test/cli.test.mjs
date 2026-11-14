@@ -284,8 +284,10 @@ test('README separates bounded public Transform commands from native zero-row qu
       assert.ok(section.includes(text), text);
   }
   assert.ok(transform.includes('were removed after the experiment'));
-  assert.match(transform, /sf data360 deploy.*--transform-operation create/u);
-  assert.match(transform, /GET 404 never becomes create/u);
+  assert.match(transform, /sf data360 deploy -m data-transform:Example --target-org/u);
+  assert.match(transform, /no match sends one create POST, one match updates that record/u);
+  assert.match(transform, /`--allow-processing` is not needed/u);
+  assert.doesNotMatch(transform, /--transform-operation|--transform-target-id/u);
   assert.match(transform, /server validation remains\s+pending/u);
   assert.match(
     transform,
@@ -524,6 +526,9 @@ for (const command of topics.flatMap((topic) => [
       for (const flag of ['--source-dir', '--transform-target-id'])
         assert.ok(!result.stdout.includes(flag), flag);
     }
+    if (command.endsWith(' deploy'))
+      for (const flag of ['--transform-operation', '--transform-target-id'])
+        assert.ok(!result.stdout.includes(flag), flag);
     if (command.endsWith(' publish')) {
       for (const flag of [
         '--source-dir',

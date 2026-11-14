@@ -136,7 +136,6 @@ const harness = (inputs, flags = {}) => {
       'api-version': 'auto',
       'allow-processing': true,
       metadata: ['data-transform:Copy', 'data-stream:Feed'],
-      'transform-operation': 'create',
       'target-org': org,
       ...flags,
     },
@@ -187,6 +186,8 @@ const harness = (inputs, flags = {}) => {
   command.verifyDataTransformInput = async () => {};
   command.createDataTransformClient = () => ({});
   command.createDataTransformDloReader = () => ({});
+  // No transform of that name exists in the org: create.
+  command.resolveDataTransformTarget = async () => {};
   command.preflightDataTransform = async () => {
     calls.push('transform-preflight');
     return { operation: 'create' };
@@ -377,7 +378,6 @@ test('a graph on the unified DMO of a selected IR waits for that IR to publish',
   // The chunk C live shape: one IR and one graph rooted on its unified DMO, graph listed first.
   const flags = {
     metadata: ['native-data-graph:Graph', 'identity-resolution:Individual_A1b2'],
-    'transform-operation': undefined,
   };
   assert.deepEqual(
     planDeployStages(pair(), { nativeRoute: false }).map((stage) => stage.phase),
@@ -422,7 +422,6 @@ test('a graph on the unified DMO of a selected IR waits for that IR to publish',
 test('a DLO file naming the landing DLO of a new stream is refused before any write', async () => {
   const flags = {
     metadata: ['data-stream:Feed', 'dlo:Feed__dll'],
-    'transform-operation': undefined,
   };
   for (const preview of [false, true]) {
     const { command, calls } = harness([stream('FEED__dll'), landingDlo], { ...flags, preview });
@@ -461,25 +460,34 @@ test('a DLO file naming the landing DLO of a new stream is refused before any wr
   assert.deepEqual(existing.calls, ['stream-preflight', 'stream-execute', 'dlo-execute']);
 });
 
-test('transform flags address exactly one named transform', async () => {
-  for (const [inputs, flags] of [
-    [[transform(), transform('Other')], {}],
-    [[transform(), mapping], { metadata: ['data-transform:Copy', 'data-transform:Other'] }],
-    [[transform(), mapping], { metadata: undefined, 'source-dir': ['data360'] }],
+test('several transforms, by member or directory, run one after another in P2', async () => {
+  for (const flags of [
+    { metadata: ['data-transform:Copy', 'data-transform:Other'] },
+    { metadata: undefined, 'source-dir': ['data360'] },
   ]) {
-    const { command, calls } = harness(inputs, flags);
+    const { command, calls } = harness([transform(), transform('Other'), mapping], flags);
+    const names = [];
+    command.resolveDataTransformTarget = async (_client, name) => {
+      names.push(name);
+      return name === 'Other' ? '1dt000000000001AAA' : undefined;
+    };
+    command.executeDataTransform = async (document, selection) => {
+      calls.push(`transform-execute:${document.definition.name}:${selection.operation}`);
+      return { operation: selection.operation };
+    };
     const result = await run(command);
-    assert.equal(result.diagnostics.errors[0].code, 'INVALID_TRANSFORM_SELECTION');
-    assert.deepEqual(calls, []);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(names, ['Copy', 'Other']);
+    assert.deepEqual(calls, [
+      'mapping-execute',
+      'transform-execute:Copy:create',
+      'transform-execute:Other:update',
+    ]);
+    assert.deepEqual(
+      result.result.items.map((item) => item.outcome),
+      ['created', 'created', 'updated'],
+    );
   }
-  // An exact member names the transform also beside --source-dir files of other families.
-  const beside = harness([transform(), mapping], {
-    metadata: ['data-transform:Copy'],
-    'source-dir': [mapping.path],
-  });
-  const named = await run(beside.command);
-  assert.equal(named.status, 'success', JSON.stringify(named.diagnostics));
-  assert.deepEqual(beside.calls, ['mapping-execute', 'transform-execute']);
   // --wait-timeout needs a graph in the selection, explicit or Git.
   const { command, calls } = harness([transform(), mapping], { 'wait-timeout': 60 });
   const result = await run(command);

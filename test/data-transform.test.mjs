@@ -379,7 +379,13 @@ const dlo = (name) => ({
 const harness = () => {
   const calls = [];
   let saved = runtime();
+  // The org's transform list: empty until a test sets an existing transform.
+  let listed = [];
   const client = {
+    list: async (offset = 0) => {
+      calls.push(['list', offset]);
+      return { totalSize: listed.length, dataTransforms: structuredClone(listed) };
+    },
     get: async (selection) => {
       calls.push(['get', selection]);
       return structuredClone(saved);
@@ -394,6 +400,11 @@ const harness = () => {
     },
     create: async (body) => {
       calls.push(['create', structuredClone(body)]);
+      // A create under another name reads back as that transform.
+      if (body.name !== saved.name) {
+        saved = runtime();
+        saved.name = saved.definition.name = body.name;
+      }
       return { id, name: body.name, status: 'PROCESSING' };
     },
     update: async (target, body) => {
@@ -412,6 +423,10 @@ const harness = () => {
     dlos: { get: async (name) => dlo(name) },
     set: (value) => {
       saved = value;
+      listed = [{ id, name: value.name }];
+    },
+    list: (rows) => {
+      listed = rows;
     },
   };
 };
@@ -432,8 +447,8 @@ async function deployTransform(flags = {}, h = harness(), configure = () => {}) 
     flags: {
       metadata: ['data-transform:SyntheticTransform'],
       'api-version': 'auto',
-      'transform-operation': 'create',
-      'allow-processing': true,
+      // Transforms never need --allow-processing.
+      'allow-processing': false,
       preview: false,
       ...flags,
     },
@@ -473,21 +488,12 @@ async function deployTransform(flags = {}, h = harness(), configure = () => {}) 
 }
 
 for (const flags of [
-  { 'transform-operation': undefined },
-  { 'transform-operation': 'upsert' },
-  { 'transform-target-id': id },
-  { 'transform-operation': 'update' },
-  { 'transform-operation': 'update', 'transform-target-id': '1dtBAD' },
-  { 'transform-operation': 'update', 'transform-target-id': '1dl000000000001AAA' },
   { dataspace: 'other' },
   { 'api-version': '67.0' },
   { 'api-version': '69.0' },
   { 'api-version': 'latest' },
   { draft: true },
   { 'wait-timeout': 1 },
-  { 'changed-since': 'HEAD' },
-  { metadata: ['data-transform:SyntheticTransform', 'data-transform:Other'] },
-  { metadata: undefined, 'source-dir': ['data360/dataTransforms'] },
 ])
   test(`public Transform rejects before auth ${JSON.stringify(flags)}`, async () => {
     const { result, h } = await deployTransform(flags);
@@ -495,67 +501,146 @@ for (const flags of [
     assert.deepEqual(h.calls, []);
   });
 
-for (const kind of ['dlo', 'dmo', 'segment', 'mapping', 'data-stream', 'native-data-graph'])
-  test(`Transform flags rejected on ${kind}`, async () => {
-    const { result, h } = await deployTransform({}, harness(), (command) => {
-      command.resolveInputs = async () => [{ path: 'other.json', document: { kind } }];
-    });
-    assert.equal(result.diagnostics.errors[0].code, 'INVALID_TRANSFORM_FLAG_SCOPE');
-    assert.deepEqual(h.calls, []);
-  });
+test('the removed transform flags are not deploy flags', () => {
+  assert.equal(Deploy.flags['transform-operation'], undefined);
+  assert.equal(Deploy.flags['transform-target-id'], undefined);
+});
 
-for (const operation of ['create', 'update'])
+for (const existing of [false, true])
   for (const version of ['auto', '68.0'])
-    test(`public Transform GET-only preview ${operation}/${version}`, async () => {
+    test(`public Transform GET-only preview ${existing ? 'update' : 'create'}/${version}`, async () => {
       const h = harness();
-      const current = runtime();
-      current.description = 'Old';
-      current.definition.description = 'Old';
-      h.set(current);
-      const { result } = await deployTransform(
-        {
-          preview: true,
-          'allow-processing': false,
-          'api-version': version,
-          'transform-operation': operation,
-          ...(operation === 'update' ? { 'transform-target-id': id } : {}),
-        },
-        h,
-      );
+      if (existing) {
+        const current = runtime();
+        current.description = 'Old';
+        current.definition.description = 'Old';
+        h.set(current);
+      }
+      const { result } = await deployTransform({ preview: true, 'api-version': version }, h);
       assert.equal(result.status, 'success');
-      assert.equal(result.result.items[0].outcome, operation);
+      assert.equal(result.result.items[0].outcome, existing ? 'update' : 'create');
       assert.match(result.result.items[0].diagnostics[0].message, /server validation pending/u);
-      assert.ok(h.calls.every(([op]) => ['auth', 'get', 'schedule'].includes(op)));
+      assert.ok(h.calls.every(([op]) => ['auth', 'list', 'get', 'schedule'].includes(op)));
     });
 
-test('public Transform confirms create, exact-ID update, unchanged and processing evidence', async () => {
+test('public Transform deploys by name: create, update, unchanged, without --allow-processing', async () => {
   const created = await deployTransform();
+  assert.equal(created.result.status, 'success', JSON.stringify(created.result.diagnostics));
+  assert.equal(created.result.result.items[0].outcome, 'created');
   assert.equal(created.result.result.items[0].mutation, 'confirmed-created');
   assert.equal(created.result.result.items[0].serverProcessing, true);
   assert.equal(created.h.calls.filter(([op]) => op === 'create').length, 1);
+  assert.equal(created.h.calls.filter(([op]) => op === 'update').length, 0);
   assert.match(created.result.result.items[0].diagnostics[0].message, /not established/u);
+  // The name is listed in the org (ignoring case): the deploy updates that target.
   const h = harness();
   const current = runtime();
   current.description = 'Old';
   current.definition.description = 'Old';
   h.set(current);
-  const flags = { 'transform-operation': 'update', 'transform-target-id': id };
-  const updated = await deployTransform(flags, h);
+  h.list([{ id, name: 'SYNTHETICTRANSFORM' }]);
+  const updated = await deployTransform({}, h);
+  assert.equal(updated.result.status, 'success');
+  assert.equal(updated.result.result.items[0].outcome, 'updated');
   assert.equal(updated.result.result.items[0].mutation, 'confirmed-updated');
   assert.equal(h.calls.find(([op]) => op === 'update')[1], id);
+  assert.equal(h.calls.filter(([op]) => op === 'create').length, 0);
   h.calls.length = 0;
-  const repeat = await deployTransform({ ...flags, 'allow-processing': false }, h);
+  const repeat = await deployTransform({}, h);
   assert.equal(repeat.result.result.items[0].outcome, 'unchanged');
-  assert.ok(h.calls.every(([op]) => ['auth', 'get', 'schedule'].includes(op)));
+  assert.equal(repeat.result.result.items[0].mutation, 'not-attempted');
+  assert.ok(h.calls.every(([op]) => ['auth', 'list', 'get', 'schedule'].includes(op)));
 });
 
-test('public Transform processing refusal and pre/post dispatch failures stay truthful', async () => {
-  const denied = await deployTransform({ 'allow-processing': false });
-  assert.equal(denied.result.result.items[0].mutation, 'not-attempted');
-  assert.equal(
-    denied.h.calls.some(([op]) => op === 'create'),
-    false,
+test('public Transform name matching two transforms is refused before any write', async () => {
+  const h = harness();
+  h.list([
+    { id, name: 'SyntheticTransform' },
+    { id: '1dt000000000002AAA', name: 'syntheticTransform' },
+  ]);
+  const { result } = await deployTransform({}, h);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_NOT_RESOLVED');
+  assert.match(result.diagnostics.errors[0].message, /Nothing was changed/u);
+  assert.equal(result.result.items[0].mutation, 'not-attempted');
+  assert.ok(h.calls.every(([op]) => ['auth', 'list'].includes(op)));
+  // Preview reports the same refusal.
+  const preview = await deployTransform({ preview: true }, h);
+  assert.equal(preview.result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_NOT_RESOLVED');
+});
+
+test('public Transform deploys several transforms one after another', async () => {
+  const h = harness();
+  const { result } = await deployTransform(
+    { metadata: ['data-transform:SyntheticTransform', 'data-transform:SecondTransform'] },
+    h,
+    (command) => {
+      const resolve = command.resolveInputs;
+      command.resolveInputs = async () => {
+        const inputs = await resolve();
+        const second = structuredClone(inputs[0]);
+        second.document.definition.name = 'SecondTransform';
+        second.path = 'second';
+        return [...inputs, second];
+      };
+      command.verifyDataTransformInput = async () => {};
+    },
   );
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(
+    result.result.items.map((item) => [item.identity.apiName, item.outcome]),
+    [
+      ['SyntheticTransform', 'created'],
+      ['SecondTransform', 'created'],
+    ],
+  );
+  assert.deepEqual(
+    h.calls.filter(([op]) => op === 'create').map(([, body]) => body.name),
+    ['SyntheticTransform', 'SecondTransform'],
+  );
+  // The first that does not succeed stops the later ones.
+  const stopped = harness();
+  stopped.client.validate = async () => {
+    stopped.calls.push(['validate']);
+    return { issues: [{ message: 'refused' }] };
+  };
+  const blocked = await deployTransform({}, stopped, (command) => {
+    const resolve = command.resolveInputs;
+    command.resolveInputs = async () => {
+      const inputs = await resolve();
+      return [...inputs, { ...inputs[0], path: 'second' }];
+    };
+  });
+  assert.equal(blocked.result.status, 'blocked');
+  assert.equal(blocked.result.result.items.length, 1);
+  assert.equal(stopped.calls.filter(([op]) => op === 'validate').length, 1);
+});
+
+test('public Transform deploys a transform selected by --changed-since', async () => {
+  const h = harness();
+  const { result } = await deployTransform(
+    { metadata: undefined, 'changed-since': 'main' },
+    h,
+    (command, file) => {
+      command.selectGitInputs = async ({ ref }) => {
+        assert.equal(ref, 'main');
+        return command.resolveInputs().then((inputs) => ({
+          provenance: { mergeBase: 'synthetic' },
+          paths: [file],
+          capturedInputs: inputs,
+        }));
+      };
+    },
+  );
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.selection.changedSince, 'main');
+  assert.deepEqual(
+    result.result.items.map((item) => [item.family, item.outcome]),
+    [['data-transform', 'created']],
+  );
+});
+
+test('public Transform pre/post dispatch failures stay truthful', async () => {
   for (const phase of ['validate', 'create', 'get', 'schedule']) {
     const h = harness();
     h.client[phase] = async () => {
@@ -574,10 +659,8 @@ test('public Transform processing refusal and pre/post dispatch failures stay tr
   h.client.get = async () => {
     throw Object.assign(new Error('404'), { statusCode: 404 });
   };
-  const missing = await deployTransform(
-    { 'transform-operation': 'update', 'transform-target-id': id },
-    h,
-  );
+  h.list([{ id, name: 'SyntheticTransform' }]);
+  const missing = await deployTransform({}, h);
   assert.equal(missing.result.result.items[0].mutation, 'not-attempted');
   assert.equal(
     h.calls.some(([op]) => op === 'create' || op === 'update'),
@@ -594,12 +677,8 @@ test('public Transform processing refusal and pre/post dispatch failures stay tr
 for (const phase of ['validation', 'final-prerequisite', 'preview', 'unchanged'])
   test(`public Transform real byte drift during ${phase} prevents dispatch`, async () => {
     const h = harness();
-    const flags =
-      phase === 'preview'
-        ? { preview: true }
-        : phase === 'unchanged'
-          ? { 'transform-operation': 'update', 'transform-target-id': id }
-          : {};
+    if (phase === 'unchanged') h.set(runtime());
+    const flags = phase === 'preview' ? { preview: true } : {};
     const { result } = await deployTransform(flags, h, (_command, file) => {
       const drift = async () => appendFile(file, ' ');
       if (phase === 'validation')
@@ -622,24 +701,6 @@ for (const phase of ['validation', 'final-prerequisite', 'preview', 'unchanged']
       false,
     );
     if (phase !== 'preview') assert.equal(result.result.items[0].mutation, 'not-attempted');
-  });
-
-for (const mode of ['mixed', 'multiple'])
-  test(`public Transform refuses ${mode} admitted inputs before auth`, async () => {
-    const { result, h } = await deployTransform({}, harness(), (command) => {
-      const resolve = command.resolveInputs;
-      command.resolveInputs = async () => {
-        const inputs = await resolve();
-        return [
-          ...inputs,
-          mode === 'mixed'
-            ? { path: 'other', document: { kind: 'dlo' } }
-            : { ...inputs[0], path: 'other' },
-        ];
-      };
-    });
-    assert.equal(result.status, 'blocked');
-    assert.deepEqual(h.calls, []);
   });
 
 test('public Transform post-dispatch prerequisite failure is unknown and human evidence is honest', async () => {
@@ -684,13 +745,7 @@ for (const field of ['label', 'description', 'schedule'])
     if (field === 'schedule')
       h.client.schedule = async () =>
         scheduleChanged ? { ...schedule(), type: 'Daily', frequency: 'DAILY' } : schedule();
-    const { result } = await deployTransform(
-      {
-        'transform-operation': 'update',
-        'transform-target-id': id,
-      },
-      h,
-    );
+    const { result } = await deployTransform({}, h);
     assert.equal(reads, 4);
     assert.equal(result.status, 'blocked');
     assert.equal(result.result.items[0].mutation, 'not-attempted');
@@ -709,24 +764,17 @@ test('public Transform refuses target drift during awaited final input verificat
   current.definition.description = 'Original';
   h.set(current);
   let verifications = 0;
-  const { result } = await deployTransform(
-    {
-      'transform-operation': 'update',
-      'transform-target-id': id,
-    },
-    h,
-    (command) => {
-      command.verifyDataTransformInput = async (input) => {
-        await verifyDataTransformInputDigest(input);
-        if (++verifications === 2) {
-          await Promise.resolve();
-          current.label = 'Concurrent edit';
-          current.definition.label = 'Concurrent edit';
-          h.set(current);
-        }
-      };
-    },
-  );
+  const { result } = await deployTransform({}, h, (command) => {
+    command.verifyDataTransformInput = async (input) => {
+      await verifyDataTransformInputDigest(input);
+      if (++verifications === 2) {
+        await Promise.resolve();
+        current.label = 'Concurrent edit';
+        current.definition.label = 'Concurrent edit';
+        h.set(current);
+      }
+    };
+  });
   assert.equal(verifications, 2);
   assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_DRIFT');
   assert.equal(result.result.items[0].mutation, 'not-attempted');
@@ -942,21 +990,21 @@ test('Transform execution detects validation-time target drift and independent r
   assert.equal(result.serverProcessing, true);
 });
 
-test('Transform deploy refuses logic replacement and incomplete mapped primary keys', async () => {
+test('Transform update sends changed logic as written and surfaces Salesforce refusal; incomplete keys refused', async () => {
   const h = harness();
   const changed = document();
   changed.definition.definition.nodes.OUTPUT0.parameters.name = 'OtherOutput__dll';
+  h.client.update = async (target, body) => {
+    h.calls.push(['update', target, structuredClone(body)]);
+    throw new Error('Salesforce: output object cannot be changed');
+  };
   await assert.rejects(
     executeDataTransformDeploy(changed, { operation: 'update', targetId: id }, h.client, h.dlos),
-    /UNSUPPORTED_TRANSFORM_LOGIC_CHANGE/u,
+    /output object cannot be changed/u,
   );
-  for (const selection of [
-    {},
-    { operation: 'upsert' },
-    { operation: 'update', targetId: 'SyntheticTransform' },
-    { operation: 'create', targetId: id },
-  ])
-    await assert.rejects(preflightDataTransformDeploy(document(), selection, h.client, h.dlos));
+  const sent = h.calls.filter(([op]) => op === 'update');
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0][2], changed.definition);
   const missingKey = harness();
   missingKey.dlos.get = async (name) => {
     const value = dlo(name);
@@ -1107,9 +1155,65 @@ const deleteHarness = () => {
     h.calls.push(['delete', targetId]);
     deleted = true;
   };
-  h.options = { targetId: id, confirmDelete: true, verifyInput: async () => {} };
+  // Virtual clock: the settlement poll sleeps without real waiting.
+  let clock = 0;
+  h.sleeps = [];
+  h.options = {
+    targetId: id,
+    confirmDelete: true,
+    verifyInput: async () => {},
+    now: () => clock,
+    delay: async (milliseconds) => {
+      h.sleeps.push(milliseconds);
+      clock += milliseconds;
+    },
+  };
   return h;
 };
+
+test('Transform deletion polls the list until the transform is gone, within a bound', async () => {
+  // Listed for two reads after the DELETE (as Salesforce does for ~10-25 s), then absent.
+  const lagging = deleteHarness();
+  let reads = 0;
+  let deleted = false;
+  lagging.client.delete = async (targetId) => {
+    lagging.calls.push(['delete', targetId]);
+    deleted = true;
+  };
+  lagging.client.list = async () => {
+    lagging.calls.push(['list']);
+    const gone = deleted && ++reads > 2;
+    return { totalSize: gone ? 0 : 1, dataTransforms: gone ? [] : [{ id, name: input().name }] };
+  };
+  const confirmed = await deleteDataTransform(
+    document(),
+    lagging.client,
+    lagging.dlos,
+    lagging.options,
+  );
+  assert.equal(confirmed.outcome, 'deleted');
+  assert.equal(confirmed.mutation, 'confirmed-deleted');
+  assert.deepEqual(lagging.sleeps, [5000, 5000]);
+  assert.equal(lagging.calls.filter(([op]) => op === 'delete').length, 1);
+  // Still listed after the bound: unconfirmed, never replayed.
+  const stuck = deleteHarness();
+  stuck.client.delete = async (targetId) => {
+    stuck.calls.push(['delete', targetId]);
+  };
+  const unconfirmed = await deleteDataTransform(
+    document(),
+    stuck.client,
+    stuck.dlos,
+    stuck.options,
+  );
+  assert.equal(unconfirmed.outcome, 'deletion-unconfirmed');
+  assert.equal(unconfirmed.mutation, 'acknowledged');
+  assert.equal(
+    stuck.sleeps.reduce((sum, value) => sum + value, 0),
+    60_000,
+  );
+  assert.equal(stuck.calls.filter(([op]) => op === 'delete').length, 1);
+});
 
 test('Transform deletion previews zero writes, requires confirmation and independently settles one DELETE', async () => {
   for (const [options, outcome, writes] of [
@@ -1331,7 +1435,13 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
       ...flags,
     },
   });
-  command.deleteDataTransform = deleteDataTransform;
+  // The settlement poll uses the harness's virtual clock.
+  command.deleteDataTransform = async (value, client, dlos, options) =>
+    deleteDataTransform(value, client, dlos, {
+      ...options,
+      now: h.options.now,
+      delay: h.options.delay,
+    });
   command.resolveConnection = async () => {
     h.calls.push(['auth']);
     return { getUsername: () => 'offline' };
@@ -1473,28 +1583,6 @@ test('Transform delete service refuses target or schedule changed during final a
       false,
     );
   }
-});
-
-test('Transform delete leaves still-visible inventory unconfirmed without polling or re-deleting', async () => {
-  const h = deleteHarness();
-  let reads = 0;
-  let sent = false;
-  h.client.delete = async () => {
-    h.calls.push(['delete']);
-    sent = true;
-  };
-  h.client.list = async () => {
-    const present = !sent || ++reads < 3;
-    return {
-      totalSize: present ? 1 : 0,
-      dataTransforms: present ? [{ id, name: input().name }] : [],
-    };
-  };
-  const result = await deleteDataTransform(document(), h.client, h.dlos, h.options);
-  assert.equal(result.outcome, 'deletion-unconfirmed');
-  assert.equal(result.mutation, 'acknowledged');
-  assert.equal(reads, 1);
-  assert.equal(h.calls.filter(([op]) => op === 'delete').length, 1);
 });
 
 test('public Transform delete refuses an org definition changed during final prerequisite reads', async () => {
