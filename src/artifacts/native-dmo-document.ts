@@ -203,7 +203,7 @@ export function unwrapNativeDmo(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Normalize API65 output type names and retain generated field definitions, not runtime IDs.
+ * Map the read field `type` to the authored `dataType` and keep definition fields, not runtime IDs.
  * @param {unknown} value Direct native response.
  * @param {string} [dataSpace] Optional expected observed scope.
  * @returns {NativeDmoDocument} Portable definition with authoritative observed scope.

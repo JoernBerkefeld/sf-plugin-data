@@ -85,13 +85,7 @@ function fixture() {
       },
       _propagators: [],
       metadata: {
-        async read(type, names) {
-          assert.notEqual(this._conn, connection);
-          assert.equal(this._conn._refreshDelegate, undefined);
-          assert.equal(type, 'CustomObject');
-          assert.deepEqual(names, ['ssot__Individual__dlm']);
-          return [{ fullName: names[0] }];
-        },
+        read: () => assert.fail('no Metadata read'),
       },
       _transport: {
         httpRequest(request, options) {
@@ -136,7 +130,6 @@ test('concrete Graph context independently verifies org then uses exact API68/de
   await context.dataSpace();
   assert.deepEqual(await context.root('ssot__Individual__dlm'), {
     detail: { synthetic: true },
-    metadata: [{ fullName: 'ssot__Individual__dlm' }],
   });
   assert.deepEqual(
     f.calls.map((r) => r.url),
@@ -156,9 +149,8 @@ test('concrete Graph context independently verifies org then uses exact API68/de
 test('Graph context reads the requested root object and refuses unsafe names', async () => {
   const f = fixture();
   const context = await nativeDataGraphReadContext(f.connection, 'default');
-  f.connection.metadata.read = async (type, names) => names.map((fullName) => ({ fullName }));
   const unified = await context.root('UnifiedssotIndividualMkt__dlm');
-  assert.deepEqual(unified.metadata, [{ fullName: 'UnifiedssotIndividualMkt__dlm' }]);
+  assert.deepEqual(unified, { detail: { synthetic: true } });
   assert.equal(
     f.calls.at(-1).url,
     `${origin}/services/data/v68.0/ssot/data-model-objects/UnifiedssotIndividualMkt__dlm?dataspace=default`,
@@ -196,10 +188,9 @@ test('Graph and SOQL HTTP503 both retain normalized display evidence', async () 
 
 for (const statusCode of [429, 503])
   for (const html of [false, true])
-    test(`root HTTP${statusCode} html=${html} retains safe evidence before Metadata`, async () => {
+    test(`root HTTP${statusCode} html=${html} retains safe evidence`, async () => {
       const f = fixture();
       const context = await nativeDataGraphReadContext(f.connection, 'default');
-      f.connection.metadata.read = async () => assert.fail('no Metadata after rejected root');
       f.setResult({
         statusCode,
         ...(html

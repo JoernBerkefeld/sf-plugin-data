@@ -1,3 +1,28 @@
+# Chunk F (non-CI part): API 68 DMO reads, start version 68 — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk F, without the calculated-insight files.
+
+- IR dependency binding and the graph root binding no longer read the DMO through the
+  Metadata API; they use the native API 68 DMO (and DLO) detail they already read. IR keys
+  are the fields with `isPrimaryKey: true`. Live read-only (isolated-source
+  00Daj000010xkZNEAY): the API 68 `isPrimaryKey` set equals the Metadata
+  `primaryIndexOrder` 1 set, and name, data space and creation type match, on four DMOs
+  (standard, derived, custom); evidence F:/Temp/chunkF-evidence. IR deploy/delete routes
+  drop the `dependency.metadata` entry.
+- Deploy and retrieve open their connection at 68.0; the `auto` batch version is 68.0 for
+  every family (was 65.0 unless only Segment/CI/native DMO). Retrieve reports `.metadata`
+  routes for CI only.
+- `services/read-metadata.ts` stays: `retrieve-calculated-insight.ts` and
+  `bind-calculated-insight-dependencies.ts` still call it (CI chunk), and so the
+  `MetadataReadError` import in `retrieve.ts` stays too.
+- Live (21:40-21:45Z, `CliF_2ca50d` DLO, DMO, mapping): created, mapping added, repeat
+  unchanged, every request at v68.0 (request trace); existing IR `Individual_9a99` deploy
+  preview binds with no diagnostics; probes deleted and confirmed 404. Evidence
+  F:/Temp/cliF_live_2ca50d.
+- Open (pre-existing): a repeat delete naming a mapping that is already gone stops with
+  `MAPPING_HTTP_ERROR` 404 instead of `unchanged`; delete takes only the server mapping
+  name while deploy matches by binding.
+
 # Chunk D: Segment on API 68 only, gates removed — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk D.

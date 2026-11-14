@@ -428,7 +428,7 @@ test('actual core initialization and fixed command routes never discover or save
               assert.equal(await flag.parse('offline-unconfigured-synthetic', {}, {}), 'offline-unconfigured-synthetic');
               assert.equal(requests.length, before, 'inert target flag must not authenticate');
               org = await command.resolveTargetOrg('offline-unconfigured-synthetic');
-              assert.equal(org.getConnection().getApiVersion(), '65.0');
+              assert.equal(org.getConnection().getApiVersion(), '68.0');
               assert.equal(requests.length, before, 'explicit auth must not discover');
             }
             command.parse = async () => ({ flags: {

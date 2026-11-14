@@ -4,7 +4,7 @@ One retrieve may hold any mix of selectors: `dlo`, `dmo`, `mapping`, `relationsh
 `data-stream:`, `data-transform:`, `data-graph:` (several), `calculated-insight:`,
 `identity-resolution:` and `segment:`, plus the existing type-inventory forms. Every family's
 selector, version and data-space checks run before any org read; one refusal blocks the
-whole run; with several families selected its diagnostic names the family (for example `--api-version 65.0` with a
+whole run; with several families selected its diagnostic names the family (for example `--api-version 67.0` with a
 transform, which reads at API 68 only). The families then run one after another: DLO, DMO,
 mapping, relationship, Segment, calculated insight and identity resolution first, then data
 streams, data transforms and data graphs. Each keeps its own rules (inventory refusals,
@@ -409,19 +409,11 @@ select the family-specific routes described in each section.
 
 ## dlo: unimplemented
 
-Internal `retrieveDlo(connection, apiName, apiVersion, dataSpace)` now acquires one
-exact non-namespaced custom `__dll` detail with explicit numeric API65/default
-scope and matching connection version before HTTP. The existing guarded GET
-transport disables refresh, retry and redirects using an operation-local receiver.
-The detached `dlo-acquisition` snapshot is always `incomplete`: generated replay,
-external bindings, lineage and detail collection completeness remain unqualified.
-Unknown configuration, generated fields and observation metadata are retained;
-unknown keys add a blocker. Explicit default-space evidence is required; filtered
-or multiple spaces remain retained and blocked, not silently treated as portable.
-No stream/lineage acquisition, public artifact, deploy admission or CLI wiring exists.
-An empty field collection is diagnostic only, never proof of portable empty data.
+Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
+numeric pin of 61 and up) through the guarded GET transport without refresh, retry or
+redirects. Stream/connector bindings, lineage and generated replay remain unqualified.
 
-The unused internal API65 raw-page DLO evidence inventory helper and its
+The unused internal raw-page DLO evidence inventory helper and its
 incomplete-evidence type have been removed. Native DLO inventory is
 `listNativeNames`: it takes every DLO the list pages return (live, `totalSize` can exceed
 the entries returned) and retrieve binds each to the data space it reads in, so a DLO in
@@ -430,9 +422,8 @@ retrieval behavior; the historical evidence below does not qualify ingestion,
 stream/connector bindings, lineage or generated replay.
 
 API68 official-reference annotations mark list/detail routes available from API60;
-that reference availability is not live API65 qualification.
-Official routes are documented from API60, but this internal read does not qualify
-API65 create/update/delete or connector-specific behavior. The current reference
+that reference availability is not live qualification at every version, nor of
+connector-specific behavior. The current reference
 marks DLO `dataSource` and atomic `dataModelObjectConfig` inputs as API67-only.
 [Official DLO reference](https://developer.salesforce.com/docs/data/connectapi/references/spec#tag/Data-Lake-Objects).
 
@@ -944,7 +935,7 @@ This does not change API-version discovery or the separate Metadata/SOAP guard.
 - [x] Read-only authenticated Connect REST transport, structured errors and redaction.
       Broader resource contracts remain pending.
 - [x] Native DMO route as described in the dmo section above. The items formerly
-      listed here for the API 65 DMO adapter (deploy preflight, common projector,
+      listed here for the Metadata API DMO adapter (deploy preflight, common projector,
       file writer, DMO pagination, relationship acquisition, field join
       and request mappers) were removed together with that adapter.
 - [ ] Qualified logical references and verified data-space binding.

@@ -143,17 +143,6 @@ const root = () => ({
       usageTag: index === 1 ? 'KeyQualifier' : 'None',
     })),
   },
-  metadata: [
-    {
-      fullName: 'ssot__Individual__dlm',
-      mktDataModelAttributes: { dataSpaceName: 'default', creationType: 'Standard' },
-      fields: fields.map((fullName, index) => ({
-        fullName,
-        type: 'Text',
-        mktDataModelFieldAttributes: { primaryIndexOrder: index === 0 ? '1' : '0' },
-      })),
-    },
-  ],
 });
 const missing = () => ({
   status: 400,
@@ -1861,14 +1850,7 @@ test('native update revalidation accepts reordered root field inventories withou
       { name: 'ssot__BirthDate__c', type: 'DateTime', isMapped: true },
       { name: 'ssot__BirthDt__c', type: 'Date' },
     );
-    value.metadata[0].fields.push(
-      { fullName: 'ssot__BirthDate__c', type: 'DateTime' },
-      { fullName: 'ssot__BirthDt__c', type: 'Date' },
-    );
-    if (++reads > 1) {
-      value.detail.fields.reverse();
-      value.metadata[0].fields.reverse();
-    }
+    if (++reads > 1) value.detail.fields.reverse();
     return value;
   };
   assert.deepEqual(await operateNativeDataGraph(desired, f.context, f.client, f.intent), {
@@ -2061,14 +2043,8 @@ for (const [label, change] of Object.entries({
   other: (r) => {
     r.detail.name = 'UnifiedssotIndividualMkt__dlm';
   },
-  metadataName: (r) => {
-    r.metadata[0].fullName = 'Other__dlm';
-  },
-  creationType: (r) => {
-    r.metadata[0].mktDataModelAttributes.creationType = 'Derived';
-  },
   scope: (r) => {
-    r.metadata[0].mktDataModelAttributes.dataSpaceName = 'other';
+    r.detail.dataSpaceName = 'other';
   },
   duplicate: (r) => {
     r.detail.fields.push(r.detail.fields[0]);
@@ -3071,8 +3047,6 @@ function unifiedRoot(seen) {
     const r = root();
     r.detail.name = rootName;
     r.detail.creationType = 'Derived';
-    r.metadata[0].fullName = rootName;
-    r.metadata[0].mktDataModelAttributes.creationType = 'Derived';
     return r;
   };
 }

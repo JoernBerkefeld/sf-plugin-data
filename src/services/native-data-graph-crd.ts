@@ -26,8 +26,8 @@ export type NativeGraphContext = {
   metadata: (name: string) => Promise<NativeGraphRead>;
   inventory: () => Promise<NativeGraphRead>;
   query: (name: string) => Promise<NativeGraphRead>;
-  /** Read the named primary object (DMO) detail and its Metadata record. */
-  root: (name: string) => Promise<{ detail: unknown; metadata: unknown }>;
+  /** Read the named primary object's native API 68 DMO detail. */
+  root: (name: string) => Promise<{ detail: unknown }>;
   dataSpace?: () => Promise<NativeGraphRead>;
   /** Read the identity resolution list (deploy preview owner check only). */
   identityResolutions?: () => Promise<NativeGraphRead>;
@@ -70,20 +70,12 @@ export async function bindNativeGraphRoot(
   const acquired = structuredClone(await context.root(rootName));
   context.check();
   const detail = graphRecord(acquired.detail);
-  graphRequire(Array.isArray(acquired.metadata) && acquired.metadata.length === 1);
-  const metadata = graphRecord(acquired.metadata[0]);
-  const attributes = graphRecord(metadata.mktDataModelAttributes);
   graphText(detail.creationType);
   graphRequire(
-    detail.name === rootName &&
-      detail.dataSpaceName === 'default' &&
-      detail.isEnabled === true &&
-      metadata.fullName === detail.name &&
-      attributes.dataSpaceName === 'default' &&
-      attributes.creationType === detail.creationType,
+    detail.name === rootName && detail.dataSpaceName === 'default' && detail.isEnabled === true,
   );
   graphText(detail.id);
-  graphRequire(Array.isArray(detail.fields) && Array.isArray(metadata.fields));
+  graphRequire(Array.isArray(detail.fields));
   const index = (values: unknown[], key: string): Map<string, Record<string, unknown>> => {
     const map = new Map<string, Record<string, unknown>>();
     for (const value of values) {
@@ -94,9 +86,8 @@ export async function bindNativeGraphRoot(
     }
     return map;
   };
-  // These field inventories are keyed sets, not ordered projections. Preserve every property.
+  // The field inventory is a keyed set, not an ordered projection. Preserve every property.
   detail.fields = orderedRootFields(index(detail.fields, 'name'));
-  metadata.fields = orderedRootFields(index(metadata.fields, 'fullName'));
   return {
     id: detail.id,
     creationType: detail.creationType,

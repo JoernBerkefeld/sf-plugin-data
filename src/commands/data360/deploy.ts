@@ -160,7 +160,7 @@ const resolveTargetOrg = async (
     const username = target ? state.aliases.resolveUsername(target) : undefined;
     const connection = await Connection.create({
       authInfo: await AuthInfo.create({ username }),
-      connectionOptions: { version: '65.0' },
+      connectionOptions: { version: '68.0' },
     });
     // Org.create would probe org traits through another unversioned connection.
     return {
@@ -1619,14 +1619,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       apiVersion: '68.0',
                       transport: 'native',
                     },
-                    {
-                      operation:
-                        irAdmissions.get(input.path)?.outcome === 'create'
-                          ? 'dependency.metadata'
-                          : 'dependency-and-output.metadata',
-                      apiVersion: '68.0',
-                      transport: 'metadata',
-                    },
                     ...(irAdmissions.get(input.path)?.outcome === 'create'
                       ? [
                           {
@@ -1676,15 +1668,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                           transport: 'native',
                         },
                       ]
-                    : flags['api-version'] === 'auto'
-                      ? [
-                          {
-                            operation: `${input.document.kind}.deploy`,
-                            apiVersion: '65.0',
-                            transport: 'native',
-                          },
-                        ]
-                      : undefined;
+                    : undefined;
         const injectedOrg = flags['target-org'] as unknown;
         const org =
           injectedOrg && typeof injectedOrg === 'object'
@@ -1694,18 +1678,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
         if (!org) return stageResult('blocked', 'TARGET_ORG_REQUIRED');
         envelope.provenance.targetOrgId = org.getOrgId();
-        // Batches of only Segments, CIs and native DMOs default to 68.0; other families keep 65.0.
-        const batchVersion =
-          flags['api-version'] === 'auto'
-            ? inputs.every(
-                (input) =>
-                  input.document.kind === 'segment' ||
-                  input.document.kind === 'calculated-insight' ||
-                  isNativeDmoInput(input),
-              )
-              ? '68.0'
-              : '65.0'
-            : flags['api-version'];
+        // auto is 68.0; each family below still pins its own version.
+        const batchVersion = flags['api-version'] === 'auto' ? '68.0' : flags['api-version'];
         const selection: ApiVersionSelection = Object.freeze({
           requested: batchVersion,
           restSelector: `v${batchVersion}`,

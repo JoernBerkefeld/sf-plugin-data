@@ -400,7 +400,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const username = target ? state.aliases.resolveUsername(target) : undefined;
     const connection = await Connection.create({
       authInfo: await AuthInfo.create({ username }),
-      connectionOptions: { version: '65.0' },
+      connectionOptions: { version: '68.0' },
     });
     // Org.create also probes org traits using another unversioned connection; avoid it.
     return {
@@ -1462,8 +1462,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 document.kind === 'calculated-insight'
                   ? { family: document.kind }
                   : {}),
-                ...(flags['api-version'] === 'auto' ||
-                document.kind === 'segment' ||
+                ...(document.kind === 'segment' ||
                 document.kind === 'identity-resolution' ||
                 document.kind === 'calculated-insight'
                   ? {
@@ -1482,20 +1481,18 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                                 apiVersion:
                                   document.kind === 'calculated-insight'
                                     ? '68.0'
-                                    : document.kind === 'segment'
-                                      ? versions.soapNumeric
-                                      : '65.0',
+                                    : versions.soapNumeric,
                                 transport: 'native' as const,
                               },
-                              ...(document.kind === 'segment'
-                                ? []
-                                : [
+                              ...(document.kind === 'calculated-insight'
+                                ? [
                                     {
                                       operation: `${document.kind}.metadata`,
                                       apiVersion: '65.0',
                                       transport: 'metadata' as const,
                                     },
-                                  ]),
+                                  ]
+                                : []),
                               ...(document.kind === 'calculated-insight'
                                 ? [
                                     {

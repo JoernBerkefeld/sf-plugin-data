@@ -11,7 +11,6 @@ import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
-import { readDmoMetadata } from './read-metadata.js';
 import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 
 export type IdentityResolutionOutputBinding = {
@@ -20,7 +19,7 @@ export type IdentityResolutionOutputBinding = {
   targetId: string;
   creationType?: string;
 };
-type Acquisition = { detail: unknown; metadata: unknown };
+type Acquisition = { detail: unknown };
 type Acquire = (name: string, kind?: 'dlo') => Promise<Acquisition>;
 
 /**
@@ -32,7 +31,7 @@ function requireProof(condition: unknown): asserts condition {
 }
 
 /**
- * Read a record without interpreting absent or array-shaped responses as metadata.
+ * Read a record without accepting absent or array-shaped responses.
  * @param {unknown} value Untrusted response data.
  * @returns {Record<string, unknown>} Required record.
  */
@@ -59,22 +58,16 @@ function scope(
 }
 
 /**
- * Use an operation-local API68 receiver without mutating the caller's connection or Metadata client.
+ * Read the native API 68 DMO or DLO detail.
  * @param {IdentityResolutionTargetConnection} connection Existing family connection.
  * @returns {Acquire} Native68 reader.
  */
 function reader(connection: IdentityResolutionTargetConnection): Acquire {
-  return async (name, kind) => {
-    const receiver = Object.create(connection) as Parameters<typeof readDmoMetadata>[0];
-    Object.defineProperty(receiver, 'version', { value: '68.0' });
-    Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
-    return {
-      detail: await new ConnectClient(connection, '68.0').get(
-        `/services/data/v68.0/ssot/${kind === 'dlo' ? 'data-lake-objects' : 'data-model-objects'}/${name}`,
-      ),
-      metadata: await readDmoMetadata(receiver, name),
-    };
-  };
+  return async (name, kind) => ({
+    detail: await new ConnectClient(connection, '68.0').get(
+      `/services/data/v68.0/ssot/${kind === 'dlo' ? 'data-lake-objects' : 'data-model-objects'}/${name}`,
+    ),
+  });
 }
 
 /**
@@ -98,9 +91,9 @@ function fields(value: unknown, key: string): Map<string, Record<string, unknown
 }
 
 /**
- * Correlate exact object/space and referenced fields in independent REST and Metadata reads.
- * Field types and keys are recorded as observed; the API decides what it accepts.
- * @param {Acquisition} acquired Independent raw representations.
+ * Check the object's identity, data space and referenced fields in its native API 68 detail.
+ * Field types and primary keys are recorded as observed; the API decides what it accepts.
+ * @param {Acquisition} acquired Native DMO detail.
  * @param {string} name Exact expected DMO name.
  * @param {string[]} required Fields the definition references.
  * @returns {object} Private target identity, referenced fields and observed keys.
@@ -116,32 +109,19 @@ function compatible(
   keys: string[];
 } {
   const detail = record(acquired.detail);
-  requireProof(Array.isArray(acquired.metadata) && acquired.metadata.length === 1);
-  const metadata = record(acquired.metadata[0]);
-  const attributes = record(metadata.mktDataModelAttributes);
   requireProof(
     detail.name === name &&
-      metadata.fullName === name &&
       detail.dataSpaceName === 'default' &&
-      attributes.dataSpaceName === 'default' &&
       typeof detail.id === 'string' &&
       detail.id.trim().length > 0,
   );
   const rawFields = fields(detail.fields, 'name');
-  const metaFields = fields(metadata.fields, 'fullName');
   const verified = required.map((apiName) => {
-    requireProof(rawFields.has(apiName) && metaFields.has(apiName));
+    requireProof(rawFields.has(apiName));
     return { apiName, dataType: rawFields.get(apiName)?.type };
   });
-  const keys = [...metaFields.entries()]
-    .filter(([, field]) => {
-      const bag = field.mktDataModelFieldAttributes;
-      return Boolean(
-        bag &&
-        typeof bag === 'object' &&
-        (bag as Record<string, unknown>).primaryIndexOrder === '1',
-      );
-    })
+  const keys = [...rawFields.entries()]
+    .filter(([, field]) => field.isPrimaryKey === true)
     .map(([key]) => key);
   return { id: detail.id as string, creationType: detail.creationType, fields: verified, keys };
 }
@@ -152,7 +132,7 @@ function compatible(
  * @param {IdentityResolutionTargetConnection} connection Command-owned API68 connection.
  * @param {ApiVersionSelection} selection Explicit API68 family route.
  * @param {string} dataSpace Explicit normalized default space; omissions never default.
- * @param {Function} acquire Independent detail and Metadata acquisition seam.
+ * @param {Function} acquire Native API 68 detail acquisition seam.
  * @returns {Promise<{fingerprint: string}>} Stable ordered target-local identity/required-field/key digest.
  */
 export async function bindIdentityResolutionDependencies(
@@ -204,20 +184,6 @@ export async function bindIdentityResolutionDependencies(
             typeof raw.id === 'string' &&
             raw.id.trim().length > 0,
         );
-        requireProof(Array.isArray(acquired.metadata) && acquired.metadata.length === 1);
-        const metadata = record(acquired.metadata[0]);
-        requireProof(metadata.fullName === source.apiName);
-        const rawFields = fields(raw.dataLakeFieldInfoRepresentation ?? raw.fields, 'name');
-        const metaFields = fields(metadata.fields, 'fullName');
-        requireProof(rawFields.size === metaFields.size);
-        for (const [name, field] of rawFields) {
-          const metadataType = metaFields.get(name)?.type;
-          // Native DLO Boolean fields are represented as Checkbox in Metadata reads.
-          requireProof(
-            metadataType === field.dataType ||
-              (field.dataType === 'Boolean' && metadataType === 'Checkbox'),
-          );
-        }
         sources.push({
           identity: source,
           targetId: raw.id,
@@ -251,7 +217,7 @@ export async function bindIdentityResolutionDependencies(
  * @param {object[]} outputs Ordered target-owner-returned names and logical owner/entity/role identities.
  * @param {IdentityResolutionTargetConnection} connection Command-owned connection.
  * @param {ApiVersionSelection} selection Explicit family route.
- * @param {Function} acquire Independent detail and Metadata acquisition seam.
+ * @param {Function} acquire Native API 68 detail acquisition seam.
  * @param {Function} acquireOwner Independent native target owner acquisition seam.
  * @returns {Promise<IdentityResolutionOutputBinding[]>} Independently verified private target bindings.
  */

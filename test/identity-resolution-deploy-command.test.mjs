@@ -227,7 +227,7 @@ test('IR auto mixed preview is read-only and reports operation versions and publ
   assert.deepEqual(result.result.items[1].requiredEffects, ['processing']);
   assert.deepEqual(
     result.result.items[1].routes.map(({ apiVersion }) => apiVersion),
-    ['68.0', '68.0', '68.0', '68.0'],
+    ['68.0', '68.0', '68.0'],
   );
   assert.ok(!calls.some((call) => call.includes('write')));
 });

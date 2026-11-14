@@ -10,9 +10,9 @@
 
 ## What it means
 
-Before it writes a ruleset, the plugin checks every object the ruleset refers to in the target org: the secondary DMO, the DMOs named in the reconciliation rules and the fields used in the match rules. For an existing ruleset it also checks the unified and link objects the ruleset creates. Each object is read twice (Data Cloud and Metadata API) and both reads must agree.
+Before it writes a ruleset, the plugin checks every object the ruleset refers to in the target org: the secondary DMO, the DMOs named in the reconciliation rules and the fields used in the match rules. For an existing ruleset it also checks the unified and link objects the ruleset creates. Each object is read once through the Data Cloud API (version 68.0).
 
-This code means one of those checks failed: an object or field is missing, a field name appears twice, the two reads disagree, or a generated object does not belong to this ruleset.
+This code means one of those checks failed: an object or field is missing, a field name appears twice, an object is in another data space, or a generated object does not belong to this ruleset.
 
 ## Why the plugin stops
 

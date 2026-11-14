@@ -109,25 +109,18 @@ function fixture(name, index = 0, role) {
       id: `target-local-${index}`,
       dataSpaceName: 'default',
       creationType,
-      fields: required.map((field) => ({ name: field, type: 'Text' })),
+      fields: required.map((field) => ({
+        name: field,
+        type: 'Text',
+        ...(field === 'ssot__Id__c' ? { isPrimaryKey: true } : {}),
+      })),
     },
-    metadata: [
-      {
-        fullName: name,
-        mktDataModelAttributes: { dataSpaceName: 'default', creationType },
-        fields: required.map((field) => ({
-          fullName: field,
-          type: 'Text',
-          mktDataModelFieldAttributes: field === 'ssot__Id__c' ? { primaryIndexOrder: '1' } : {},
-        })),
-      },
-    ],
   };
 }
 /**
  * Build independent synthetic source DLO evidence.
  * @param {string} name Logical DLO API identity.
- * @returns {object} Native and Metadata definition evidence.
+ * @returns {object} Native definition evidence.
  */
 function sourceFixture(name) {
   return {
@@ -140,7 +133,6 @@ function sourceFixture(name) {
       dataSpaceInfo: [{ name: 'default' }],
       fields: [{ name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true }],
     },
-    metadata: [{ fullName: name, fields: [{ fullName: 'Id__c', type: 'Text' }] }],
   };
 }
 
@@ -151,7 +143,7 @@ test('native binding reuses only completed raw pairs within one invocation, pres
   const reads = new Map();
   let drift = false;
   let reject = false;
-  const failure = new Error('Synthetic Metadata acquisition failure');
+  const failure = new Error('Synthetic acquisition failure');
   const acquire = async (name) => {
     reads.set(name, (reads.get(name) ?? 0) + 1);
     if (reject && name === 'SyntheticLead__dll') throw failure;
@@ -238,11 +230,6 @@ test('expanded native binding checks every rule, override and ordered real targe
       )
         continue;
       result.detail.fields.push({ name: field.apiName, type: 'Text' });
-      result.metadata[0].fields.push({
-        fullName: field.apiName,
-        type: 'Text',
-        mktDataModelFieldAttributes: {},
-      });
     }
     return result;
   };
@@ -271,14 +258,7 @@ test('expanded native binding checks every rule, override and ordered real targe
       if (name.endsWith('__dll')) f.detail.name = 'Wrong__dll';
     },
     (f, name) => {
-      if (name.endsWith('__dll')) f.metadata = [];
-    },
-    (f, name) => {
-      if (name.endsWith('__dll'))
-        f.metadata[0].fields.push(structuredClone(f.metadata[0].fields[0]));
-    },
-    (f, name) => {
-      if (name.endsWith('__dll')) f.metadata[0].fields[0].type = 'Number';
+      if (name.endsWith('__dll')) f.detail.status = 'INACTIVE';
     },
     (f, name) => {
       if (!name.endsWith('__dll'))
@@ -304,11 +284,11 @@ test('expanded native binding checks every rule, override and ordered real targe
     );
 });
 /**
- * Model the observed 78-field native wrapper and separately ordered Metadata inventory.
+ * Model the observed 78-field native DLO wrapper.
  * @param {string} name Synthetic source DLO name.
  * @returns {object} Detached live-shaped schema evidence without captured org data.
  */
-function booleanSourceFixture(name) {
+function wideSourceFixture(name) {
   const result = sourceFixture(name);
   const fields = result.detail.fields;
   fields.push({
@@ -324,77 +304,34 @@ function booleanSourceFixture(name) {
       dataType: index % 2 === 0 ? 'Text' : 'Number',
       isPrimaryKey: false,
     });
-  result.metadata[0].fields = fields
-    .map(({ name: fullName, dataType }) => ({
-      fullName,
-      type: dataType === 'Boolean' ? 'Checkbox' : dataType,
-    }))
-    .toReversed();
   result.detail.dataLakeFieldInfoRepresentation = fields;
   delete result.detail.fields;
   result.detail = { dataLakeObjects: [result.detail] };
   return result;
 }
 
-test('native68 source binding admits only observed Boolean/Checkbox correspondence without rewriting evidence or fingerprints', async () => {
+test('native68 source binding reads the wrapped DLO detail without rewriting evidence', async () => {
   const raw = expandedNativeIrFixture();
   const expanded = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
   const conn = { ...connection, getApiVersion: () => '68.0' };
-  const evidence = booleanSourceFixture('SyntheticLead__dll');
+  const evidence = wideSourceFixture('SyntheticLead__dll');
   const snapshot = structuredClone(evidence);
   const bind = (change = () => {}, document = expanded, scope = nativeSelection) =>
     bindIdentityResolutionDependencies(document, conn, scope, 'default', async (name) => {
       if (!name.endsWith('__dll')) return inputRead(name);
-      const result = name === 'SyntheticLead__dll' ? evidence : booleanSourceFixture(name);
+      const result = name === 'SyntheticLead__dll' ? evidence : wideSourceFixture(name);
       change(result);
       return result;
     });
   const first = await bind();
   assert.match(first.fingerprint, /^[a-f0-9]{64}$/u);
   assert.equal(evidence.detail.dataLakeObjects[0].dataLakeFieldInfoRepresentation.length, 78);
-  assert.equal(evidence.metadata[0].fields.length, 78);
   assert.deepEqual(evidence, snapshot);
-  const exactBoolean = await bind((result) => {
-    result.metadata[0].fields.find((field) => field.fullName === 'IdentityIsAMatch__c').type =
-      'Boolean';
-  });
-  assert.deepEqual(exactBoolean, first);
-  assert.equal(
-    evidence.detail.dataLakeObjects[0].dataLakeFieldInfoRepresentation[1].dataType,
-    'Boolean',
-  );
-  Object.assign(evidence, structuredClone(snapshot));
   const changedNative = await bind((result) => {
-    result.detail.dataLakeObjects[0].dataLakeFieldInfoRepresentation[1].dataType = 'Checkbox';
+    result.detail.dataLakeObjects[0].dataLakeFieldInfoRepresentation[1].dataType = 'Text';
   });
   assert.notEqual(changedNative.fingerprint, first.fingerprint);
-  for (const [nativeType, metadataType] of [
-    ['Boolean', 'Text'],
-    ['Boolean', 'Number'],
-    ['Text', 'Checkbox'],
-    ['Number', 'Checkbox'],
-    ['Checkbox', 'Boolean'],
-    ['boolean', 'Checkbox'],
-    ['Boolean', 'checkbox'],
-  ]) {
-    Object.assign(evidence, structuredClone(snapshot));
-    await assert.rejects(
-      bind((result) => {
-        result.detail.dataLakeObjects[0].dataLakeFieldInfoRepresentation[1].dataType = nativeType;
-        result.metadata[0].fields.find((field) => field.fullName === 'IdentityIsAMatch__c').type =
-          metadataType;
-      }),
-      { code: 'IDENTITY_RESOLUTION_BINDING_UNQUALIFIED' },
-    );
-  }
   for (const mutate of [
-    (result) => result.metadata[0].fields.pop(),
-    (result) => {
-      result.metadata[0].fields[0].fullName = 'Different__c';
-    },
-    (result) => {
-      result.metadata[0].fullName = 'Wrong__dll';
-    },
     (result) => {
       result.detail.dataLakeObjects[0].dataSpaceInfo = [{ name: 'other' }];
     },
@@ -463,7 +400,6 @@ test('IR input fingerprints are stable, fresh and target-local, ignoring unrelat
       async (name) => {
         const f = await inputRead(name);
         f.detail.fields.reverse();
-        f.metadata[0].fields.reverse();
         return f;
       },
     ),
@@ -471,7 +407,7 @@ test('IR input fingerprints are stable, fresh and target-local, ignoring unrelat
   );
 });
 
-test('IR input keys accept unrelated Lookup fields without attribute bags, retaining explicit Text key proof', async () => {
+test('IR input keys ignore unrelated Lookup fields, retaining the Text primary key', async () => {
   const first = await bindIdentityResolutionDependencies(
     document,
     connection,
@@ -488,9 +424,8 @@ test('IR input keys accept unrelated Lookup fields without attribute bags, retai
     async (name) => {
       reads++;
       const f = await inputRead(name);
-      f.detail.fields[0].isPrimaryKey = true;
-      f.metadata[0].fields.unshift({ fullName: 'RelatedRecord__c', type: 'Lookup' });
-      f.metadata[0].fields.push({ fullName: 'OtherRelatedRecord__c', type: 'Lookup' });
+      f.detail.fields.unshift({ name: 'RelatedRecord__c', type: 'Lookup' });
+      f.detail.fields.push({ name: 'OtherRelatedRecord__c', type: 'Lookup' });
       return f;
     },
   );
@@ -498,59 +433,23 @@ test('IR input keys accept unrelated Lookup fields without attribute bags, retai
   assert.deepEqual(proof, first);
 });
 
-const inputAttributeFailures = {
-  missingRequiredTextBag: (f) => {
-    delete f.metadata[0].fields[0].mktDataModelFieldAttributes;
-  },
-  missingMatchTextBag: (f) => {
-    if (f.metadata[0].fields.length > 1) delete f.metadata[0].fields[1].mktDataModelFieldAttributes;
-  },
-  missingUnrelatedTextBag: (f) => {
-    f.metadata[0].fields.push({ fullName: 'Unrelated__c', type: 'Text' });
-  },
-  missingUnknownTypeBag: (f) => {
-    f.metadata[0].fields.push({ fullName: 'Unrelated__c', type: 'Unknown' });
-  },
-  missingTypeAndBag: (f) => {
-    f.metadata[0].fields.push({ fullName: 'Unrelated__c' });
+const inputKeyEvidence = {
+  unrelatedWithoutType: (f) => {
+    f.detail.fields.push({ name: 'Unrelated__c' });
   },
   duplicatePrimary: (f) => {
-    f.metadata[0].fields.push({
-      fullName: 'AnotherKey__c',
-      type: 'Text',
-      mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
-    });
+    f.detail.fields.push({ name: 'AnotherKey__c', type: 'Text', isPrimaryKey: true });
   },
   lookupPrimary: (f) => {
-    f.metadata[0].fields.push({
-      fullName: 'RelatedRecord__c',
-      type: 'Lookup',
-      mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
-    });
+    f.detail.fields.push({ name: 'RelatedRecord__c', type: 'Lookup', isPrimaryKey: true });
   },
-  numericPrimary: (f) => {
-    f.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder = 1;
+  nonBooleanPrimary: (f) => {
+    f.detail.fields[0].isPrimaryKey = 'true';
   },
 };
-for (const [name, value] of Object.entries({
-  // eslint-disable-next-line unicorn/no-null -- Null is an explicitly malformed Metadata bag regression.
-  null: null,
-  array: [],
-  string: '1',
-  number: 1,
-  boolean: false,
-  undefined,
-}))
-  inputAttributeFailures[`malformedLookupBag-${name}`] = (f) => {
-    f.metadata[0].fields.push({
-      fullName: 'RelatedRecord__c',
-      type: 'Lookup',
-      mktDataModelFieldAttributes: value,
-    });
-  };
-// Keys, attribute bags and field types are recorded as observed; the API decides.
-for (const [name, change] of Object.entries(inputAttributeFailures))
-  test(`IR input attribute evidence is recorded, not refused: ${name}`, async () => {
+// Keys and field types are recorded as observed; the API decides.
+for (const [name, change] of Object.entries(inputKeyEvidence))
+  test(`IR input key evidence is recorded, not refused: ${name}`, async () => {
     const proof = await bindIdentityResolutionDependencies(
       document,
       connection,
@@ -558,7 +457,7 @@ for (const [name, change] of Object.entries(inputAttributeFailures))
       'default',
       async (apiName) => {
         const f = await inputRead(apiName);
-        f.metadata[0].fields.push({ fullName: 'AllowedRelationship__c', type: 'Lookup' });
+        f.detail.fields.push({ name: 'AllowedRelationship__c', type: 'Lookup' });
         change(f);
         return f;
       },
@@ -568,25 +467,22 @@ for (const [name, change] of Object.entries(inputAttributeFailures))
 
 const inputFailures = {
   missing: (f) => {
-    f.metadata = [];
+    f.detail = undefined;
   },
   ambiguous: (f) => {
-    f.metadata.push(structuredClone(f.metadata[0]));
+    f.detail = [f.detail, structuredClone(f.detail)];
   },
   duplicateField: (f) => {
     f.detail.fields.push(structuredClone(f.detail.fields[0]));
-  },
-  duplicateMetaField: (f) => {
-    f.metadata[0].fields.push(structuredClone(f.metadata[0].fields[0]));
   },
   wrongSpace: (f) => {
     f.detail.dataSpaceName = 'other';
   },
   missingSpace: (f) => {
-    delete f.metadata[0].mktDataModelAttributes.dataSpaceName;
+    delete f.detail.dataSpaceName;
   },
   wrongName: (f) => {
-    f.metadata[0].fullName = 'Wrong__dlm';
+    f.detail.name = 'Wrong__dlm';
   },
   missingField: (f) => {
     f.detail.fields = f.detail.fields.slice(0, 1);
@@ -612,16 +508,13 @@ for (const [name, change] of Object.entries(inputFailures))
     );
   });
 
-test('IR input fields need presence in both reads; any type and key are recorded', async () => {
+test('IR input fields need presence in the native read; any type and key are recorded', async () => {
   for (const change of [
     (f) => {
       if (f.detail.fields.length > 1) f.detail.fields[1].type = 'Email';
     },
     (f) => {
-      f.metadata[0].fields[0].type = 'Number';
-    },
-    (f) => {
-      delete f.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder;
+      f.detail.fields[0].type = 'Number';
     },
     (f) => {
       f.detail.fields[0].isPrimaryKey = false;
@@ -643,7 +536,7 @@ test('IR input fields need presence in both reads; any type and key are recorded
   await assert.rejects(
     bindIdentityResolutionDependencies(document, connection, selection, 'default', async (name) => {
       const f = await inputRead(name);
-      if (f.metadata[0].fields.length > 1) f.metadata[0].fields.splice(1, 1);
+      if (f.detail.fields.length > 1) f.detail.fields.splice(1, 1);
       return f;
     }),
   );
@@ -686,9 +579,7 @@ test('IR outputs bind by name, space and ID only; creation type and fields are o
     async (apiName) => {
       const f = await outputRead(apiName);
       f.detail.creationType = 'Custom';
-      f.metadata[0].mktDataModelAttributes.creationType = 'Custom';
       f.detail.fields = [{ name: 'Other__c', type: 'Number' }];
-      f.metadata[0].fields = [{ fullName: 'Other__c', type: 'Number' }];
       return f;
     },
     acquireOwner,
@@ -876,12 +767,12 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
   ['68.0', '68.0', nativeSelection, false],
   ['68.0', '68.0', nativeSelection, true],
 ])
-  test(`IR default binding uses core API${dependencyVersion} REST and SOAP without mutating API${ownerVersion} connection (expanded: ${expanded})`, async () => {
+  test(`IR default binding uses core API${dependencyVersion} REST without mutating API${ownerVersion} connection (expanded: ${expanded})`, async () => {
     const raw = expandedNativeIrFixture();
     const bindingDocument = expanded
       ? projectNativeIdentityResolution(raw, raw.objectApiName).candidate
       : document;
-    const acquisitions = { rest: new Map(), metadata: new Map() };
+    const acquisitions = { rest: new Map() };
     const core = Object.create(Connection.prototype);
     Object.assign(core, {
       instanceUrl: 'https://synthetic.example',
@@ -912,46 +803,23 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
         reads++;
         assert.equal(options.retry.maxRetries, 0);
         assert.throws(() => options.followRedirect(), /failed/u);
-        let body;
-        let type;
-        if (request.method === 'GET') {
-          const name = request.url.split('/').at(-1);
-          assert.ok(
-            request.url.includes(
-              `/services/data/v${dependencyVersion}/ssot/${name.endsWith('__dll') ? 'data-lake-objects' : 'data-model-objects'}/`,
-            ),
-          );
-          acquisitions.rest.set(name, (acquisitions.rest.get(name) ?? 0) + 1);
-          body = JSON.stringify(
-            name.endsWith('__dll')
-              ? sourceFixture(name).detail
-              : fixture(
-                  name,
-                  document.spec.reconciliationRules.findIndex(
-                    (rule) => rule.entity.apiName === name,
-                  ),
-                ).detail,
-          );
-          type = 'application/json';
-        } else {
-          assert.equal(request.method, 'POST');
-          assert.equal(
-            request.url,
-            `https://synthetic.example/services/Soap/m/${dependencyVersion}`,
-          );
-          assert.match(request.body, /<readMetadata>/u);
-          const name = /<fullNames>([^<]+)<\/fullNames>/u.exec(request.body)[1];
-          acquisitions.metadata.set(name, (acquisitions.metadata.get(name) ?? 0) + 1);
-          const f = (name.endsWith('__dll') ? sourceFixture(name) : fixture(name)).metadata[0];
-          const fieldXml = f.fields
-            .map(
-              (field) =>
-                `<fields><fullName>${field.fullName}</fullName><type>Text</type><mktDataModelFieldAttributes><definitionCreationType>Standard</definitionCreationType>${field.fullName === 'ssot__Id__c' ? '<primaryIndexOrder>1</primaryIndexOrder>' : ''}</mktDataModelFieldAttributes></fields>`,
-            )
-            .join('');
-          body = `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"><soapenv:Body><readMetadataResponse xmlns="http://soap.sforce.com/2006/04/metadata"><result><records xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="CustomObject"><fullName>${name}</fullName><mktDataModelAttributes><dataSpaceName>default</dataSpaceName></mktDataModelAttributes>${fieldXml}</records></result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`;
-          type = 'text/xml';
-        }
+        assert.equal(request.method, 'GET');
+        const name = request.url.split('/').at(-1);
+        assert.ok(
+          request.url.includes(
+            `/services/data/v${dependencyVersion}/ssot/${name.endsWith('__dll') ? 'data-lake-objects' : 'data-model-objects'}/`,
+          ),
+        );
+        acquisitions.rest.set(name, (acquisitions.rest.get(name) ?? 0) + 1);
+        const body = JSON.stringify(
+          name.endsWith('__dll')
+            ? sourceFixture(name).detail
+            : fixture(
+                name,
+                document.spec.reconciliationRules.findIndex((rule) => rule.entity.apiName === name),
+              ).detail,
+        );
+        const type = 'application/json';
         const pending = Promise.resolve({
           statusCode: 200,
           headers: { 'content-type': type },
@@ -981,7 +849,7 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
       assert.equal(acquired.size, names.length);
       for (const name of names) assert.equal(acquired.get(name), 1);
     }
-    assert.equal(reads, names.length * 2);
+    assert.equal(reads, names.length);
     assert.equal(core.getApiVersion(), ownerVersion);
     assert.equal(core.metadata, originalMetadata);
     assert.equal(core.metadata._conn, core);

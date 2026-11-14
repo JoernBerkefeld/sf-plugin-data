@@ -72,13 +72,6 @@ const root = () => {
       isEnabled: true,
       fields: fields.map((field) => ({ name: field, type: 'Text' })),
     },
-    metadata: [
-      {
-        fullName: rootName,
-        mktDataModelAttributes: { dataSpaceName: 'default', creationType: 'Derived' },
-        fields: fields.map((fullName) => ({ fullName, type: 'Text' })),
-      },
-    ],
   };
 };
 

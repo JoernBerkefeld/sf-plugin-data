@@ -1844,11 +1844,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               transport: 'native' as const,
             },
             { operation: 'dependency.get', apiVersion: '68.0', transport: 'native' as const },
-            {
-              operation: 'dependency.metadata',
-              apiVersion: '68.0',
-              transport: 'metadata' as const,
-            },
           ],
         };
         return settleOwner(
