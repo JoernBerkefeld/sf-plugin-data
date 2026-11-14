@@ -1,8 +1,11 @@
 # Chunk E: delete by name, no --confirm-delete — 2026-11-14
 
 Chunk E of the CRUD pipeline plan (user decision 2026-11-14, plus the relationship selector
-decision of the same day). Version stays 0.1.0; nothing committed, no org touched.
+decision of the same day). Version stays 0.1.0. Committed as 5a9b989; live read-only preview in `data360:delete-by-name.preview-mixed.api68`.
 
+- Several transforms in one delete (user decision 2026-11-14): allowed; each is resolved by
+  name and deleted on its own in P2. Test: `one delete takes several transforms and deletes
+  each in P2` (test/crud-delete-pipeline.test.mjs).
 - `sf data360 delete` selects by name with `-m` only. `-d`/`--source-dir` and
   `--transform-target-id` are removed from the command. `--confirm-delete` has
   `dependsOn: ['changed-since']` (oclif refuses it beside `-m`) and is required only for a

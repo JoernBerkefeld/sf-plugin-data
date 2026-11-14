@@ -539,3 +539,30 @@ for (const [name, flags, code] of [
     assert.equal(result.diagnostics.errors[0].code, code);
     assert.deepEqual(h.calls, []);
   });
+
+test('one delete takes several transforms and deletes each in P2', async () => {
+  const second = transform();
+  second.path = 'Copy2.dataTransform.json';
+  second.document = {
+    ...second.document,
+    definition: { ...second.document.definition, name: 'Copy2', label: 'Copy2' },
+  };
+  const h = harness([transform(), second], {
+    metadata: ['data-transform:Copy', 'data-transform:Copy2'],
+  });
+  const deleted = [];
+  h.command.deleteDataTransform = async (desired) => {
+    deleted.push(desired.definition.name);
+    return { outcome: 'deleted', mutation: 'confirmed-deleted' };
+  };
+  const result = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.deepEqual(deleted, ['Copy', 'Copy2']);
+  assert.deepEqual(
+    byFamily(result, 'data-transform').map((item) => [item.identity.apiName, item.outcome]),
+    [
+      ['Copy', 'deleted'],
+      ['Copy2', 'deleted'],
+    ],
+  );
+});
