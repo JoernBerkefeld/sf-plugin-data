@@ -422,9 +422,10 @@ No stream/lineage acquisition, public artifact, deploy admission or CLI wiring e
 An empty field collection is diagnostic only, never proof of portable empty data.
 
 The unused internal API65 raw-page DLO evidence inventory helper and its
-incomplete-evidence type have been removed. Current native DLO inventory remains
-in `listNativeNames`, using the guarded GET transport and bounded offset/count
-reconciliation. This internal cleanup changes no public command or native
+incomplete-evidence type have been removed. Native DLO inventory is
+`listNativeNames`: it takes every DLO the list pages return (live, `totalSize` can exceed
+the entries returned) and retrieve binds each to the data space it reads in, so a DLO in
+several data spaces retrieves too. This internal cleanup changes no public command or native
 retrieval behavior; the historical evidence below does not qualify ingestion,
 stream/connector bindings, lineage or generated replay.
 

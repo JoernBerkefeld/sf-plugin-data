@@ -279,7 +279,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve any mix of Data360 DLOs, DMOs, mappings, relationships, data streams, data transforms, data graphs, Segments, calculated insights and identity resolution configuration.';
   public static readonly description =
-    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -302,7 +302,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); data-stream:ApiName, data-transform:Name, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName are exact-only.',
+        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; bare dlo is every DLO the API lists; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); data-stream:ApiName, data-transform:Name, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName are exact-only.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -887,7 +887,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     ? await this.acquireDlo(
                         apiName,
                         this.createDloClient(target, version),
-                        requestScope,
+                        // The scope it is read in binds a DLO that belongs to several spaces.
+                        effectiveScope,
                       )
                     : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
                         apiName,
@@ -975,13 +976,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     // The family whose check runs, named in a refusal beside other groups.
     let family: RetrieveFamily = label;
     if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
-    const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
+    const dloSelectors = selectors.filter((value) => value === 'dlo' || value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
     const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
     const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
     const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
     const dmoSelectors = selectors.filter(
       (value) =>
+        value !== 'dlo' &&
         !value.startsWith('dlo:') &&
         !value.startsWith('mapping:') &&
         !value.startsWith('relationship:') &&
@@ -993,9 +995,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     let effectiveVersion: string;
     try {
       family = 'dlo';
-      if (selectors.includes('dlo')) return { refusal: 'DLO_INVENTORY_UNSUPPORTED', family };
       if (dloSelectors.length > 0) {
-        if (dloSelectors.some((value) => !dloName.test(value.slice(4))))
+        if (dloSelectors.some((value) => value !== 'dlo' && !dloName.test(value.slice(4))))
           return { refusal: 'INVALID_SELECTION', family };
         if (!['68.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
           return { refusal: 'INVALID_SCOPE', family };
@@ -1163,14 +1164,24 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           envelope.metadata.soapApiVersion ??= versions.soapNumeric;
           // Definition-only members are independent; retain successes across read/output failures.
 
-          const dlos = [...new Set(dloSelectors.map((value) => value.slice(4)))];
+          let dlos = dloSelectors.filter((value) => value !== 'dlo').map((value) => value.slice(4));
+          // Bare dlo: every DLO the API lists, read before any file is written.
+          if (dloSelectors.includes('dlo'))
+            dlos.push(
+              ...(await this.listNativeNames(org.getConnection('68.0'), '68.0', 'dlo', 'default')),
+            );
+          dlos = [...new Set(dlos)];
           dlos.sort();
           for (const apiName of dlos) {
             try {
               const target =
                 flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
               if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
-              const document = await this.acquireDlo(apiName, this.createDloClient(target, '68.0'));
+              const document = await this.acquireDlo(
+                apiName,
+                this.createDloClient(target, '68.0'),
+                'default',
+              );
               const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
               envelope.result.items.push({
                 identity: { dataSpace: 'default', apiName },

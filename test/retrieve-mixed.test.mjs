@@ -5,6 +5,7 @@ import Retrieve from '../lib/commands/data360/retrieve.js';
 import { errorCodeInfo } from '../lib/errors/registry.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { irFixture } from './identity-resolution-fixtures.mjs';
+import { DloError } from '../lib/artifacts/dlo-document.js';
 
 const fallback =
   'Retrieval did not complete. Check selection, authenticated org, service capability and output path.';
@@ -531,4 +532,51 @@ test('a throw escaping one group fails that group and the merged envelope is sti
     [['RETRIEVE_FAILED', 'data-stream', undefined]],
   );
   assert.doesNotMatch(JSON.stringify(result), /private-token/u);
+});
+
+test('bare dlo beside identity resolution retrieves every listed DLO; a failing one is its own diagnostic', async () => {
+  const { command, calls } = invocation(['dlo', 'identity-resolution:Individual_A1b2']);
+  command.listNativeNames = async (connection, version, family, scope) => {
+    assert.equal(connection.pinned(), '68.0');
+    assert.deepEqual([version, family, scope], ['68.0', 'dlo', 'default']);
+    return ['Zeta_Home__dll', 'Broken__dll', 'Account_Home__dll'];
+  };
+  command.createDloClient = (target, version) => {
+    assert.deepEqual([target, version], ['synthetic', '68.0']);
+    return {};
+  };
+  command.acquireDlo = async (apiName) => {
+    calls.push(`dlo:${apiName}`);
+    if (apiName === 'Broken__dll') throw new DloError('DLO_HTTP_ERROR', 404);
+    return { kind: 'dlo', identity: { dataSpace: 'default', apiName } };
+  };
+  command.writeDlo = async (document) => ({
+    path: `${document.identity.apiName}.json`,
+    outcome: 'retrieved',
+  });
+  const { result, exitCode } = await run(command);
+  assert.equal(result.status, 'failed');
+  assert.equal(exitCode, 1);
+  assert.deepEqual(
+    result.result.items.map((item) => label(item)),
+    ['dlo:Account_Home__dll', 'dlo:Zeta_Home__dll', 'identity-resolution:Individual_A1b2'],
+  );
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ code, identity }) => [code, identity?.apiName]),
+    [['DLO_HTTP_ERROR', 'Broken__dll']],
+  );
+  assert.deepEqual(result.result.selection, [
+    'dlo:Account_Home__dll',
+    'dlo:Broken__dll',
+    'dlo:Zeta_Home__dll',
+    'identity-resolution:Individual_A1b2',
+  ]);
+  assert.deepEqual(
+    calls.filter((call) => call.startsWith('dlo:')),
+    ['dlo:Account_Home__dll', 'dlo:Broken__dll', 'dlo:Zeta_Home__dll'],
+  );
+});
+
+test('the removed DLO inventory refusal code is no longer registered', () => {
+  assert.equal(errorCodeInfo('DLO_INVENTORY_UNSUPPORTED'), undefined);
 });

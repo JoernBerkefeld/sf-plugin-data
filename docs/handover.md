@@ -1,3 +1,18 @@
+# Chunk B: every listed DLO retrieves — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk B.
+
+- Bare `-m dlo`, alone or beside other families, and a retrieve with no `-m` list every DLO
+  the API returns and retrieve each. `DLO_INVENTORY_UNSUPPORTED` is gone.
+- `listNativeNames` no longer requires the entries to add up to `totalSize`: live in
+  isolated-source the list reports 100 but returns 98 (the page at offset 20 holds 18 and
+  still links on). Paging follows `offset + limit < totalSize`; wrapper checks stay.
+- Retrieve passes its data space (`--dataspace` or `default`) to `normalizeDlo`, so a DLO in
+  several data spaces (`StaticCurrencyRates_Home__dll`) retrieves under that space.
+- Live zero-write `-m dlo` (00Daj000010xkZNEAY, 2026-11-14): 98 selected, 98 retrieved,
+  0 errors; evidence F:/Temp/dloinv2-qgXBzq.json.
+- Open: a listing failure in the mixed path reports `RETRIEVE_FAILED` without identity (as DMO).
+
 # Chunk A: mapping export removed, stream mapping order stable — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk A.

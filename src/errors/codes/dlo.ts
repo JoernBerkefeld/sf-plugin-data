@@ -18,8 +18,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce still lists the dependents this command deleted, so the DLO itself was not deleted. Wait until its dependency list is empty, then rerun the delete.',
   DLO_HTTP_ERROR:
     'Salesforce answered a DLO request with an HTTP error. Read the status and API detail in the message, fix access, name or input, then rerun.',
-  DLO_INVENTORY_UNSUPPORTED:
-    'Retrieving every DLO with a bare -m dlo is not supported. Name each one as -m dlo:<Name>__dll.',
   DLO_REQUEST_UNCONFIRMED:
     'A DLO request ended without a readable answer from Salesforce. Check the org connection, inspect the target if a write was sent, then rerun.',
   DLO_TARGET_IDENTITY_MISMATCH:

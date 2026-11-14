@@ -10,8 +10,10 @@ import {
 } from '../artifacts/native-mapping-document.js';
 
 /**
- * Read complete native inventories using only documented offset pagination.
- * Unknown wrappers, repeated identities and a full last permitted page block publication.
+ * Read native inventories using only documented offset pagination: every entry the API returns.
+ * A paged DLO answer may hold fewer entries than its offset range (Salesforce leaves some out);
+ * the range up to totalSize is read and nothing is added. Unknown wrappers, repeated identities
+ * and a full last permitted page block publication.
  * @param {Connection} connection Authenticated command-owned connection.
  * @param {string} version Admitted numeric native version.
  * @param {'dlo' | 'dmo'} family Inventory family.
@@ -32,6 +34,8 @@ export async function listNativeNames(
   const names: string[] = [];
   let totalSize: number | undefined;
   let pagedWrapper: boolean | undefined;
+  // Paged DLO answers: whether the offset range continues past this page.
+  let more = false;
   const pageUrl = (offset: number): string =>
     `/services/data/v${version}/ssot/${resource}?limit=${limit}&offset=${offset}&orderBy=ASC`;
   for (let offset = 0; offset <= 2000; offset += limit) {
@@ -60,9 +64,10 @@ export async function listNativeNames(
       )
         throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
       totalSize = wrapper.totalSize;
-      const more = offset + entries.length < totalSize;
+      // Salesforce may return fewer entries than a page's offset range; the range decides.
+      more = offset + limit < totalSize;
       if (
-        (more && (entries.length === 0 || wrapper.nextPageUrl !== pageUrl(offset + limit))) ||
+        (more && wrapper.nextPageUrl !== pageUrl(offset + limit)) ||
         (!more &&
           Object.hasOwn(wrapper, 'nextPageUrl') &&
           wrapper.nextPageUrl !== null &&
@@ -108,10 +113,8 @@ export async function listNativeNames(
       seen.add(identity);
       if (spaces.includes(requestScope ?? 'default')) names.push(item.name);
     }
-    if (paged ? offset + entries.length === totalSize : entries.length < limit) {
-      // Offset arithmetic does not prove that earlier short pages returned every entry.
-      if (paged && seen.size !== totalSize)
-        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    // Every page up to totalSize was read; what the API returned is the inventory.
+    if (paged ? !more : entries.length < limit) {
       names.sort();
       return names;
     }

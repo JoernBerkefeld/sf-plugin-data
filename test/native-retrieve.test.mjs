@@ -5,7 +5,9 @@ import Retrieve from '../lib/commands/data360/retrieve.js';
 import { nativeApiVersion } from '../lib/transport/api-version.js';
 import { listNativeNames, listNativeMappingNames } from '../lib/services/select-native-retrieve.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
+import { DloError } from '../lib/artifacts/dlo-document.js';
 import { createDloClient } from '../lib/transport/dlo-rest.js';
+import { retrieveNativeDlo } from '../lib/services/native-dlo.js';
 import { createDmoClient } from '../lib/transport/dmo-rest.js';
 import {
   createMappingClient,
@@ -114,26 +116,50 @@ for (const totalSize of [0, 20, 21, 78])
     );
   });
 
-for (const shortOffsets of [[20, 40], [20]])
-  test(`short DLO pages traverse continuations but cannot claim complete78 ${shortOffsets}`, async () => {
+for (const shortOffsets of [[20, 40], [20], [60]])
+  test(`short DLO pages keep what the API returned ${shortOffsets}`, async () => {
     const offsets = [];
-    await assert.rejects(
-      listNativeNames(
-        connection(async ({ url }) => {
-          const offset = Number(new URL(url).searchParams.get('offset'));
-          offsets.push(offset);
-          const page = dloPage(offset, 78);
-          if (shortOffsets.includes(offset)) page.dataLakeObjects.splice(18);
-          if (offset === 60) delete page.nextPageUrl;
-          return page;
-        }),
-        '68.0',
-        'dlo',
-      ),
-      { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
+    const returned = [];
+    const names = await listNativeNames(
+      connection(async ({ url }) => {
+        const offset = Number(new URL(url).searchParams.get('offset'));
+        offsets.push(offset);
+        const page = dloPage(offset, 78);
+        if (shortOffsets.includes(offset)) page.dataLakeObjects.splice(-2);
+        if (offset === 60) delete page.nextPageUrl;
+        returned.push(...page.dataLakeObjects);
+        return page;
+      }),
+      '68.0',
+      'dlo',
     );
     assert.deepEqual(offsets, [0, 20, 40, 60]);
+    assert.deepEqual(
+      names,
+      returned
+        .filter((item) => item.dataSpaceInfo[0].name === 'default')
+        .map((item) => item.name)
+        .toSorted(),
+    );
   });
+
+// Live shape (isolated-source, API68): totalSize 100, the page at offset 20 holds 18 entries
+// and still links the next page; the last page is full and has no nextPageUrl.
+test('DLO inventory lists the 98 entries of a 100-total answer with a short page', async () => {
+  const names = await listNativeNames(
+    connection(async ({ url }) => {
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      const page = dloPage(offset, 100);
+      for (const item of page.dataLakeObjects) item.dataSpaceInfo = [{ name: 'default' }];
+      if (offset === 20) page.dataLakeObjects.splice(18);
+      if (offset === 80) delete page.nextPageUrl;
+      return page;
+    }),
+    '68.0',
+    'dlo',
+  );
+  assert.equal(names.length, 98);
+});
 
 for (const total of [0, 1, 20, 21, 78])
   for (const terminal of ['omitted', 'empty', 'null'])
@@ -573,6 +599,66 @@ for (const metadata of [
     assert.ok(result.result.items.every((item) => item.routes[0].transport === 'native'));
   });
 
+for (const metadata of [['dlo'], undefined])
+  test(`${metadata ? 'bare dlo' : 'omitted selectors'} retrieve every listed DLO; a failing one is its own diagnostic`, async () => {
+    const command = invocation({ metadata });
+    const listed = ['Zeta_Home__dll', 'Account_Home__dll', 'Broken__dll', 'Probe__dll'];
+    command.listNativeNames = async (_, version, family, scope) => {
+      assert.equal(version, '68.0');
+      assert.equal(scope, 'default');
+      return family === 'dlo' ? listed : ['Target__dlm'];
+    };
+    const reads = [];
+    command.acquireDlo = async (apiName) => {
+      reads.push(apiName);
+      if (apiName === 'Broken__dll') throw new DloError('INVALID_DLO_DOCUMENT');
+      return { kind: 'dlo', identity: { dataSpace: 'default', apiName } };
+    };
+    const result = await run(command);
+    assert.deepEqual(reads, listed.toSorted());
+    assert.deepEqual(
+      result.result.items
+        .filter((item) => item.family === 'dlo')
+        .map((item) => item.identity.apiName),
+      ['Account_Home__dll', 'Probe__dll', 'Zeta_Home__dll'],
+    );
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => [error.code, error.identity.apiName]),
+      [['INVALID_DLO_DOCUMENT', 'Broken__dll']],
+    );
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(
+      result.result.selection.filter((value) => value.startsWith('dlo:')),
+      listed.toSorted().map((name) => `dlo:${name}`),
+    );
+    if (!metadata) assert.equal(result.result.items.length, 5);
+  });
+
+for (const metadata of [['dlo'], ['dlo:Rates_Home__dll'], undefined])
+  test(`a DLO in two data spaces retrieves under default ${JSON.stringify(metadata)}`, async () => {
+    // No --dataspace: the run reads in default, which binds one of the two memberships.
+    const command = invocation({ metadata, dataspace: undefined });
+    command.listNativeNames = async (_, __, family) =>
+      family === 'dlo' ? ['Rates_Home__dll'] : ['Target__dlm'];
+    command.acquireDlo = retrieveNativeDlo;
+    command.createDloClient = () => ({
+      get: async () => ({
+        name: 'Rates_Home__dll',
+        id: '1dlaj00000Ae4VNAAZ',
+        label: 'Rates',
+        category: 'Other',
+        dataSpaceInfo: [{ name: 'default' }, { name: 'dataspace2' }],
+        dataLakeFieldInfoRepresentation: [
+          { name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true },
+        ],
+      }),
+    });
+    const result = await run(command);
+    assert.deepEqual(result.diagnostics.errors, []);
+    const dlo = result.result.items.find((item) => item.family === 'dlo');
+    assert.deepEqual(dlo.identity, { dataSpace: 'default', apiName: 'Rates_Home__dll' });
+  });
+
 test('public mapping inventory uses owned connection while artifact acquisition retains CLI client', async () => {
   const command = invocation({ metadata: ['mapping'], 'api-version': '61.0' });
   const requests = [];
@@ -656,7 +742,8 @@ for (const scope of [undefined, 'Team'])
       ['acquireNativeMapping', 'mapping'],
     ])
       command[method] = async (apiName, _client, actual) => {
-        assert.equal(actual, scope);
+        // A DLO is always read in the effective scope, binding one of several memberships.
+        assert.equal(actual, kind === 'dlo' ? (scope ?? 'default') : scope);
         return { kind, identity: { dataSpace: scope ?? 'default', apiName } };
       };
     const result = await run(command);
