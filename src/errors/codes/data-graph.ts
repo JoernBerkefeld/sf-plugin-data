@@ -3,7 +3,7 @@ export const hints: Readonly<Record<string, string>> = {
   DATA_GRAPH_CREATE_UNCONFIRMED:
     'The graph create request was sent, but the graph could not be confirmed in time. It may exist: retrieve it or rerun the same deploy before changing anything.',
   DATA_GRAPH_INVENTORY_UNQUALIFIED:
-    'Retrieving all data graphs at once is not supported. Name one graph with --metadata data-graph:<Name>.',
+    'Retrieving all data graphs at once is not supported. Name each graph with --metadata data-graph:<Name>; repeat it for several.',
   DATA_GRAPH_OWNER:
     'The graph root is a unified DMO created by the named identity resolution ruleset, which is published. No action is needed.',
   DATA_GRAPH_OWNER_NOT_FOUND:

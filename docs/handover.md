@@ -1,3 +1,19 @@
+# Chunk A: mapping export removed, stream mapping order stable — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk A.
+
+- Removed the Metadata API 65 mapping export (`retrieve-mapping.ts`, `projectMapping`,
+  `retrieveMappingSourceMetadata`) and the 15 mapping codes only it emitted. Mappings use the
+  native API 68 route only.
+- Retrieve sorts a stream's `observed.mappings` by target field, source field, formula
+  (`sortedStreamMappings` in `native-data-stream.ts`); deploy already compares them
+  order-insensitively. Live: two retrieves of
+  `PublicIngestion1793211653953_ProbeRecord_E8A1BD6C` into one folder in isolated-source
+  (00Daj000010xkZNEAY), second `unchanged` (14:57Z).
+- Mixed retrieve: a throw escaping one group in a multi-group run becomes that group's failed
+  outcome (`RETRIEVE_FAILED`, `family`); an IR acquisition throw now carries identity and family.
+- Unused, left alone: `write-mapping-definition.ts` `writeMappingDefinition`.
+
 # Retrieve takes any mix of families — 2026-11-14
 
 Plan `sf_plugin_data_retrieve_mixed_20261114.plan.md`. Version stays 0.1.0.

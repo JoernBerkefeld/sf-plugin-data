@@ -23,7 +23,6 @@ const documentationRoot = path.join(root, 'docs', 'errors');
 const NOT_PLUGIN_CODES = new Set([
   'ANSI_SQL',
   'CALCULATED_METRIC',
-  'DLO_PRIMARY_QUALIFIER_CORRELATION_UNVERIFIED',
   'INGEST_API',
   'INTERNAL_ERROR',
   'INVALID_SESSION_ID',

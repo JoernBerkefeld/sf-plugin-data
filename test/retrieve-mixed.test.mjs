@@ -476,3 +476,59 @@ test('an org failure of one group beside others leaves the other groups retrieve
   );
   assert.equal(result.provenance.sourceOrgId, 'graph-org');
 });
+
+for (const selector of ['identity-resolution:Individual_x', 'calculated-insight:Insight__cio'])
+  test(`a ${selector.split(':')[0]} throw beside another group is reported for that component`, async () => {
+    const { command, lines } = invocation([selector, 'data-stream:Alpha']);
+    command.jsonEnabled = () => false;
+    command.acquireIdentityResolution = async () => {
+      throw new Error('private-token');
+    };
+    command.calculatedInsightContext = () => ({ bind: async () => {}, check: () => {} });
+    command.acquireExactCalculatedInsight = async () => {
+      throw new Error('private-token');
+    };
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'failed');
+    assert.equal(exitCode, 1);
+    assert.deepEqual(
+      result.result.items.map((item) => label(item)),
+      ['data-stream:Alpha'],
+    );
+    assert.deepEqual(
+      result.diagnostics.errors.map(({ code, identity }) => [code, identity]),
+      [['RETRIEVE_FAILED', { dataSpace: 'default', apiName: selector.split(':')[1] }]],
+    );
+    assert.ok(lines.some((line) => line.startsWith(`${selector}: RETRIEVE_FAILED: `)));
+    assert.doesNotMatch(JSON.stringify(result), /private-token/u);
+  });
+
+test('a throw escaping one group fails that group and the merged envelope is still returned', async () => {
+  const { command } = invocation(['dmo:Sample__dlm', 'data-stream:Alpha']);
+  let groups = 0;
+  const resolve = command.resolveOrg;
+  command.resolveOrg = async (...arguments_) => {
+    groups += 1;
+    const org = await resolve(...arguments_);
+    if (groups === 1) return org;
+    return {
+      ...org,
+      getConnection: () => {
+        throw new Error('private-token');
+      },
+    };
+  };
+  const { result, exitCode } = await run(command);
+  assert.equal(result.status, 'failed');
+  assert.equal(exitCode, 1);
+  assert.deepEqual(
+    result.result.items.map((item) => label(item)),
+    ['dmo:Sample__dlm'],
+  );
+  assert.deepEqual(result.result.selection, ['dmo:Sample__dlm', 'data-stream:Alpha']);
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ code, family, identity }) => [code, family, identity]),
+    [['RETRIEVE_FAILED', 'data-stream', undefined]],
+  );
+  assert.doesNotMatch(JSON.stringify(result), /private-token/u);
+});

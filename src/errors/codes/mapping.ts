@@ -1,23 +1,13 @@
 /** CLI hints for Mapping error codes. Long-form pages: docs/errors/mapping/<CODE>.md */
 export const hints: Readonly<Record<string, string>> = {
-  AMBIGUOUS_MAPPING_PAIRS:
-    "A mapping read at API 65 has a malformed or repeated field pair, so its pairs cannot be told apart. Check the mapping's field pairs in Data Cloud Setup.",
   AMBIGUOUS_MAPPING_TARGET:
     "More than one mapping in the org matches the same name or the same source DLO and target DMO, so the plugin cannot tell which one is meant. Inspect the DMO's mappings in the org.",
-  AMBIGUOUS_PREREQUISITE_EVIDENCE:
-    'The Metadata API did not return exactly one definition for the source or target object of a mapping. Check that the object exists once in the org, then rerun.',
-  AMBIGUOUS_PREREQUISITE_FIELDS:
-    'The source or target object of a mapping lists the same field twice, or a field without a name, so its fields could not be matched. Check the fields of the object in the org.',
-  EVIDENCE_READ_FAILED:
-    'The plugin could not read everything needed to export this mapping definition. Check the org session and that the mapping and its objects exist, then rerun.',
   INVALID_DEFINITION:
     'The mapping definition read from the org does not have the expected form, so it was not written. Check the mapping in the org, or retrieve it with -m mapping:<ApiName>.',
   INVALID_MAPPING_BINDING:
     'A mapping lookup was asked for a DMO or DLO name that is not a valid Name__dlm or Name__dll API name. Check the source and target object names of the mapping.',
   INVALID_MAPPING_BODY:
     "The mapping write request the plugin built did not have the expected shape, so it was not sent. Check the mapping file's pairs; if the file is valid, report the problem.",
-  INVALID_MAPPING_CONFIGURATION:
-    'A mapping read at API 65 was not a single object where one was expected. Check the mapping in Data Cloud Setup and read it with sf data360 retrieve instead.',
   INVALID_MAPPING_DOCUMENT:
     'The mapping file, or the mapping read from the org, does not match the mapping format. Check schemaVersion, kind, identity, the __dll and __dlm names and that fieldMappings is not empty.',
   INVALID_MAPPING_FIELD:
@@ -26,14 +16,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The mapping API name is not valid: it must start with a letter and use only letters, digits and underscores, at most 240 characters. Correct the mapping name.',
   INVALID_MAPPING_RESPONSE:
     'Salesforce answered a mapping request with a body the plugin could not read as a mapping. Rerun the command; if it repeats, inspect the mapping in the org.',
-  INVALID_MAPPING_RUNTIME:
-    'A mapping read at API 65 is not ACTIVE, has an unexpected name or object binding, or has no pairs or too many. Check the mapping in Data Cloud Setup.',
-  INVALID_MAPPING_XML:
-    "The mapping's Metadata API XML read at API 65 is too large, contains declarations, or is not one ObjectSourceTargetMap element. Check the mapping in Data Cloud Setup.",
-  INVALID_PREREQUISITE_EVIDENCE:
-    'A read of the source or target object of a mapping returned no usable record. Check that the object exists and that you can read it, then rerun.',
-  INVALID_PREREQUISITE_FIELDS:
-    'The source or target object of a mapping returned no field list, or more than 4096 fields. Check the object and its fields in the org, then rerun.',
   MAPPING_ACTIVATES_STANDARD_DMO:
     'This is the first mapping onto a standard DMO, and creating it enables that DMO permanently. Deleting the mapping later does not undo that; continue only if intended.',
   MAPPING_DATASPACE_COLLISION:
@@ -66,8 +48,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Retrieving all mappings is not supported together with the other selected families. Select mappings by name (mapping:<Name>) or retrieve mapping in its own run.',
   MAPPING_LAST_MAPPING_DELETE_BLOCKED:
     'Salesforce does not delete the last mapping of a custom DMO. Delete the DMO instead (sf data360 delete --metadata dmo:<Name>__dlm), which removes its mapping too.',
-  MAPPING_PAIR_MISMATCH:
-    'A mapping read at API 65 has Metadata API XML whose pairs or objects do not match its runtime detail. Check the mapping in Data Cloud Setup.',
   MAPPING_PARENTS_REQUIRED:
     "The plugin had no way to read the mapping's source DLO and target DMO, so it could not leave out generated pairs. This is a plugin fault; report it with the command you ran.",
   MAPPING_PARENT_CHANGED:
@@ -96,18 +76,8 @@ export const hints: Readonly<Record<string, string>> = {
     "The DMO's mappings changed between planning and the first write, so nothing was removed. Rerun the command to plan again against the current org.",
   PARTIAL_MAPPING_OUTPUT:
     'The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve with --overwrite.',
-  PREREQUISITE_FIELD_CORRELATION_FAILED:
-    'The two reads of the source or target object of a mapping list different fields, or a mapped field is missing. Check the fields of the object in the org, then rerun.',
-  PREREQUISITE_IDENTITY_MISMATCH:
-    'A read of the source or target object of a mapping returned a different object name than requested. Check the API name of the object in the org, then rerun.',
-  UNKNOWN_MAPPING_CONFIGURATION:
-    'A mapping read at API 65 has keys the plugin does not know, or lacks keys it needs. Check the mapping in Data Cloud Setup and read it with sf data360 retrieve instead.',
-  UNKNOWN_MAPPING_XML:
-    "The mapping's Metadata API XML read at API 65 has elements the plugin does not know, repeats one, or lacks one it needs. Check the mapping in Data Cloud Setup.",
   UNSUPPORTED_MAPPING_DATASPACE:
     'Salesforce reported the mapping in a different data space than the one this command works in. Rerun with that data space in --dataspace, or select a mapping of this data space.',
   UNSUPPORTED_MAPPING_SELECTION:
     'The target org value cannot be passed on safely: it is empty, starts with a dash or contains control characters. Pass a valid alias or username with --target-org.',
-  UNSUPPORTED_MAPPING_SEMANTICS:
-    'A mapping read at API 65 uses pair options the plugin does not handle, such as filters or formula sources. Check the mapping in Data Cloud Setup.',
 };

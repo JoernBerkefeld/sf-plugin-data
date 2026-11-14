@@ -279,7 +279,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve any mix of Data360 DLOs, DMOs, mappings, relationships, data streams, data transforms, data graphs, Segments, calculated insights and identity resolution configuration.';
   public static readonly description =
-    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run with its family named. The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -1050,13 +1050,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       effectiveVersion =
         dloSelectors.length === selectors.length && dloSelectors.length > 0
           ? '68.0'
-          : mappingSelectors.length === selectors.length && selectors.length > 0
-            ? '65.0'
-            : sharedFamily
-              ? operationApiVersion(flags['api-version'], sharedFamily)
-              : hasDmos
-                ? nativeApiVersion(flags['api-version'])
-                : operationApiVersion(flags['api-version'], 'dlo');
+          : sharedFamily
+            ? operationApiVersion(flags['api-version'], sharedFamily)
+            : hasDmos || mappingSelectors.length > 0
+              ? nativeApiVersion(flags['api-version'])
+              : operationApiVersion(flags['api-version'], 'dlo');
     } catch (error: unknown) {
       return {
         refusal:
@@ -1199,9 +1197,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           mappings.sort();
           for (const apiName of mappings) {
             try {
-              const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
-              if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
               const version = nativeApiVersion(flags['api-version']);
+              const target = flags['target-org'] ?? org.getConnection(version).getUsername();
+              if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
               const document = await this.acquireNativeMapping(
                 apiName,
                 this.createMappingClient(target, version, undefined, requestScope),
@@ -1389,28 +1387,34 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               ...new Set(irSelectors.map((value) => value.slice(20))),
               // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
             ].sort()) {
-              const acquired = await this.acquireIdentityResolution(
-                irConnection,
-                apiName,
-                irVersion,
-                effectiveScope,
-              );
-              if (acquired.blockers.length > 0 || !acquired.candidate)
-                throw retainConnectDiagnostic(
-                  new IdentityResolutionError(
-                    acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
-                  ),
-                  getConnectDiagnostic(acquired),
+              try {
+                const acquired = await this.acquireIdentityResolution(
+                  irConnection,
+                  apiName,
+                  irVersion,
+                  effectiveScope,
                 );
-              const document = validateIdentityResolutionDocument(acquired.candidate);
-              if (
-                acquired.identity.apiName !== apiName ||
-                acquired.identity.dataSpace !== effectiveScope ||
-                document.identity.apiName !== apiName ||
-                document.identity.dataSpace !== effectiveScope
-              )
-                throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
-              identityResolutions.push({ document });
+                if (acquired.blockers.length > 0 || !acquired.candidate)
+                  throw retainConnectDiagnostic(
+                    new IdentityResolutionError(
+                      acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
+                    ),
+                    getConnectDiagnostic(acquired),
+                  );
+                const document = validateIdentityResolutionDocument(acquired.candidate);
+                if (
+                  acquired.identity.apiName !== apiName ||
+                  acquired.identity.dataSpace !== effectiveScope ||
+                  document.identity.apiName !== apiName ||
+                  document.identity.dataSpace !== effectiveScope
+                )
+                  throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
+                identityResolutions.push({ document });
+              } catch (error: unknown) {
+                diagnose(error, apiName, 'identity-resolution');
+                reported = error;
+                throw error;
+              }
             }
           }
           const entries = [...selected, ...calculatedInsights, ...identityResolutions];
@@ -1638,7 +1642,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       outputDirectory,
     };
     const groups = groupSelectors(flags.metadata ?? []);
-    const plans: Array<{ family: RetrieveFamily; run: () => Promise<GroupOutcome> }> = [];
+    const plans: Array<{
+      family: RetrieveFamily;
+      members: string[];
+      run: () => Promise<GroupOutcome>;
+    }> = [];
     // Validate every group before any org access; the first refusal blocks the whole run.
     for (const [group, members] of groups) {
       const plan =
@@ -1653,7 +1661,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         return groups.length === 1
           ? finish('blocked', plan.refusal)
           : finish('blocked', plan.refusal, undefined, plan.family);
-      plans.push(plan);
+      plans.push({ ...plan, members });
     }
     if (plans.length === 1) {
       const outcome = await plans[0].run();
@@ -1664,7 +1672,13 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const selection: string[] = [];
     // Each group resolves its own org connection, so no API version pin leaks between groups.
     for (const plan of plans) {
-      const outcome = await plan.run();
+      let outcome: GroupOutcome;
+      try {
+        outcome = await plan.run();
+      } catch (error: unknown) {
+        // A throw that escapes one group fails that group only; the other groups still run.
+        outcome = { status: 'failed', selection: plan.members, code: 'RETRIEVE_FAILED', error };
+      }
       statuses.push(outcome.status);
       selection.push(...outcome.selection);
       if (outcome.code)

@@ -1,6 +1,8 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { Connection } from '@salesforce/core';
 import { PassThrough } from 'node:stream';
@@ -23,6 +25,7 @@ import {
 } from '../lib/services/native-data-stream.js';
 
 import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
+import { writeDataStreamDocument } from '../lib/artifacts/write-data-stream.js';
 
 test('binding drift explains event availability without exposing connection IDs', async () => {
   const { clients, schemas } = reads();
@@ -380,9 +383,32 @@ test('production binding and retrieve accept only the observed five-mapping perm
   const bound = await resolveDataStreamBinding(selected, scenario.clients);
   assert.deepEqual(bound.target, before);
   const document = await retrieveNativeDataStream(scenario.target.name, scenario.clients);
-  assert.deepEqual(document.observed.mappings, scenario.detail.mappings);
+  assert.deepEqual(
+    document.observed.mappings.map((entry) => entry.targetFieldName),
+    ['DataSource', 'DataSourceObject', 'ProbeExtra', 'ProbeId', 'ProbeValue'],
+  );
   assert.deepEqual(document.spec.additiveFieldMappings, []);
   assert.deepEqual(scenario.target, before);
+});
+
+test('two native mapping orders of one stream write identical bytes', async () => {
+  const scenario = reorderedMappingReads();
+  const root = await mkdtemp(path.join(os.tmpdir(), 'stream-order-'));
+  const first = await writeDataStreamDocument(
+    await retrieveNativeDataStream(scenario.target.name, scenario.clients),
+    root,
+    false,
+  );
+  const bytes = await readFile(first.path);
+  scenario.detail.mappings.reverse();
+  const second = await writeDataStreamDocument(
+    await retrieveNativeDataStream(scenario.target.name, scenario.clients),
+    root,
+    false,
+  );
+  assert.equal(first.outcome, 'retrieved');
+  assert.equal(second.outcome, 'unchanged');
+  assert.deepEqual(await readFile(second.path), bytes);
 });
 
 for (const [label, mutate] of Object.entries({

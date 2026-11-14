@@ -32,5 +32,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/m
 
 ## Related codes
 
-- [`EVIDENCE_READ_FAILED`](../mapping/EVIDENCE_READ_FAILED.md) — the same export routine could not read all its inputs.
 - [`OUTPUT_FAILED`](../general/OUTPUT_FAILED.md) — the file could not be written.

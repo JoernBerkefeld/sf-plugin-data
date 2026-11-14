@@ -50,6 +50,35 @@ function sameStreamMappings(left: unknown, right: unknown): boolean {
 }
 
 /**
+ * Order a native mapping inventory by target field, then source field, then formula.
+ * Comparisons stay order-insensitive (sameStreamMappings); this only makes retrieved bytes stable.
+ * @param {unknown[]} mappings Native mapping inventory.
+ * @returns {unknown[]} Sorted copy.
+ */
+export function sortedStreamMappings(mappings: unknown[]): unknown[] {
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort a copied array within the existing ES2022 library target.
+  return [...mappings].sort((left, right) => {
+    const a = streamMappingKey(left);
+    const b = streamMappingKey(right);
+    for (let index = 0; index < a.length; index++)
+      if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+    return 0;
+  });
+}
+
+/**
+ * The sort key of one native stream mapping.
+ * @param {unknown} value Native mapping entry.
+ * @returns {string[]} Target field, source field and formula; absent parts are empty.
+ */
+function streamMappingKey(value: unknown): string[] {
+  const entry = (value && typeof value === 'object' ? value : {}) as Json;
+  return [entry.targetFieldName, entry.sourceFieldName, entry.formula].map((part) =>
+    typeof part === 'string' ? part : '',
+  );
+}
+
+/**
  * Compare snapshots allowing only observed native mapping inventory permutations.
  * All other properties and arrays, including unknown fields, remain strictly compared.
  * @param {unknown} left Native stream or lifecycle plan snapshot.
@@ -519,7 +548,8 @@ export async function retrieveNativeDataStream(
       ),
     },
     observed: {
-      mappings: raw.mappings,
+      // Salesforce lists stream mappings in varying order; sort so one org state writes one file.
+      mappings: sortedStreamMappings(raw.mappings as unknown[]),
       sourceFields: raw.sourceFields,
       dloFields,
       actualDloName: dlo.name,

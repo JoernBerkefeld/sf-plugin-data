@@ -127,25 +127,10 @@ export async function retrieveCalculatedInsightSourceMetadata(
 }
 
 /**
- * Retrieve one exact standard mapping definition without deploying or rewriting XML.
- * @param {string} targetOrg Explicit authenticated alias or username.
- * @param {string} apiName Exact returned mapping developer name.
- * @param {MetadataRunner} runner Installed CLI or synthetic seam.
- * @returns {Promise<string>} Independently retrieved standard source XML bytes.
- */
-export async function retrieveMappingSourceMetadata(
-  targetOrg: string,
-  apiName: string,
-  runner: MetadataRunner = runProjectMetadata,
-): Promise<string> {
-  return retrieveExactMetadata(targetOrg, apiName, 'mapping', runner);
-}
-
-/**
  * Execute one allowlisted standard Metadata retrieve and validate its terminal member receipt.
  * @param {string} targetOrg Explicit authenticated target.
  * @param {string} apiName Exact standard member name.
- * @param {'calculated-insight' | 'mapping'} family Allowlisted source family.
+ * @param {'calculated-insight'} family Allowlisted source family.
  * @param {MetadataRunner} runner Installed CLI or synthetic seam.
  * @param {string} apiVersion Explicit numeric version; non-Segment families retain API65.
  * @returns {Promise<string>} Exact bounded XML.
@@ -153,7 +138,7 @@ export async function retrieveMappingSourceMetadata(
 async function retrieveExactMetadata(
   targetOrg: string,
   apiName: string,
-  family: 'calculated-insight' | 'mapping',
+  family: 'calculated-insight',
   runner: MetadataRunner,
   apiVersion = '65.0',
 ): Promise<string> {
@@ -163,7 +148,6 @@ async function retrieveExactMetadata(
       'mktCalcInsightObjectDefs',
       'mktCalcInsightObjectDef',
     ],
-    mapping: ['ObjectSourceTargetMap', 'objectSourceTargetMaps', 'objectSourceTargetMap'],
   } as const;
   const [type, directory, extension] = grammar[family];
   const suffix = `.${extension}-meta.xml`;

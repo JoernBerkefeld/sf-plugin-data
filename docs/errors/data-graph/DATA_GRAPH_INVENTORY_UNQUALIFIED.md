@@ -1,6 +1,6 @@
 # `DATA_GRAPH_INVENTORY_UNQUALIFIED`
 
-> Retrieving all data graphs at once is not supported. Name one graph with --metadata data-graph:<Name>.
+> Retrieving all data graphs at once is not supported. Name each graph with --metadata data-graph:<Name>; repeat it for several.
 
 |              |                                         |
 | ------------ | --------------------------------------- |
@@ -18,10 +18,10 @@ The plugin retrieves exactly what you name. It does not list and export every gr
 
 ## How to fix
 
-Name the graph:
+Name each graph:
 
 ```text
-sf data360 retrieve --metadata data-graph:CustomerGraph
+sf data360 retrieve --metadata data-graph:CustomerGraph --metadata data-graph:OrderGraph
 ```
 
 ## Example output
@@ -29,7 +29,7 @@ sf data360 retrieve --metadata data-graph:CustomerGraph
 ```text
 Retrieve: blocked (DATA_GRAPH_INVENTORY_UNQUALIFIED).
 DATA_GRAPH_INVENTORY_UNQUALIFIED: Retrieval did not complete. Check selection, authenticated org, service capability and output path.
-Hint: Retrieving all data graphs at once is not supported. Name one graph with --metadata data-graph:<Name>.
+Hint: Retrieving all data graphs at once is not supported. Name each graph with --metadata data-graph:<Name>; repeat it for several.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-graph/DATA_GRAPH_INVENTORY_UNQUALIFIED.md
 ```
 

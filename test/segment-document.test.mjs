@@ -1,16 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  writeFile,
-  symlink,
-  link,
-  rename,
-  unlink,
-} from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, symlink, link, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -22,7 +13,6 @@ import {
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { retrieveSegment, projectSegment } from '../lib/services/retrieve-segment.js';
 import { apiDiagnostic, getConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
-import { retrieveMappingSourceMetadata } from '../lib/transport/project-metadata.js';
 const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
 const candidate = () => ({
   schemaVersion: 1,
@@ -359,65 +349,3 @@ test('generic404 is not absence proof and latest refuses before request', async 
   assert.equal(result.candidate, undefined);
   await assert.rejects(retrieveSegment(connection, 'Audience', 'latest', 'default'));
 });
-for (const version of ['65.0']) {
-  test(`shared mapping CLI boundary retains scratch and API${version} project and retrieve version`, async () => {
-    const output = await retrieveMappingSourceMetadata(
-      'synthetic',
-      'Audience',
-      async (arguments_, cwd) => {
-        assert.deepEqual(arguments_, [
-          'project',
-          'retrieve',
-          'start',
-          '--metadata',
-          'ObjectSourceTargetMap:Audience',
-          '--target-org',
-          'synthetic',
-          '--api-version',
-          version,
-          '--wait',
-          '5',
-          '--json',
-        ]);
-        assert.equal(path.dirname(cwd), os.tmpdir());
-        assert.equal(
-          JSON.parse(await readFile(path.join(cwd, 'sfdx-project.json'), 'utf8')).sourceApiVersion,
-          version,
-        );
-        const directory = path.join(cwd, 'force-app', 'main', 'default', 'objectSourceTargetMaps');
-        await mkdir(directory, { recursive: true });
-        await writeFile(
-          path.join(directory, 'Audience.objectSourceTargetMap-meta.xml'),
-          '<mapping/>',
-        );
-        return {
-          exitCode: 0,
-          stdout: JSON.stringify({
-            status: 0,
-            result: {
-              done: true,
-              success: true,
-              status: 'Succeeded',
-              files: [{ type: 'ObjectSourceTargetMap', fullName: 'Audience', state: 'Created' }],
-            },
-          }),
-        };
-      },
-    );
-    assert.equal(output, '<mapping/>');
-  });
-}
-for (const result of [
-  { done: false, success: true, status: 'InProgress' },
-  { done: true, success: false, status: 'Failed' },
-  { done: true, success: true, status: 'Succeeded', files: [] },
-  { done: true, success: true, status: 'Succeeded', messages: ['warning'] },
-]) {
-  test(`standard transport refuses unsupported result ${JSON.stringify(result)}`, async () =>
-    assert.rejects(
-      retrieveMappingSourceMetadata('synthetic', 'Audience', async () => ({
-        exitCode: 0,
-        stdout: JSON.stringify({ status: 0, result }),
-      })),
-    ));
-}

@@ -197,7 +197,8 @@ The canonical file is
 `data360/data-stream/ExampleStream.data-stream-meta.json`. Keep its strict document
 shape, identity, connection, event, labels, primary key and read-only `observed`
 content intact. Use the retrieved actual labels rather than assuming the original
-creation proposal still matches the target.
+creation proposal still matches the target. Retrieve writes `observed.mappings` sorted by
+target field, then source field, so retrieving an unchanged stream again is `unchanged`.
 
 **Modification example only, not a complete deployable document:** append this
 entry to `spec.additiveFieldMappings`, retaining any existing entries:

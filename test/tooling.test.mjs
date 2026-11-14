@@ -113,7 +113,9 @@ test('capability checklist accurately distinguishes bounded DMO retrieval from g
           ? '## dmo: native route, bounded live verification'
           : family === 'data-graph'
             ? '## data-graph: native API 68 route'
-            : `## ${family}: unimplemented`,
+            : family === 'mapping'
+              ? '## mapping: native API 68 route'
+              : `## ${family}: unimplemented`,
       ),
       family,
     );

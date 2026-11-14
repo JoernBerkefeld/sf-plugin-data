@@ -875,24 +875,10 @@ Not qualified:
 - [ ] Standard and data-bearing DMOs, non-default data spaces, other API versions,
       cardinalities other than ManyToOne.
 
-## mapping: unimplemented operational semantics; exact definition-only export available
+## mapping: native API 68 route
 
-- [x] Public exact `mapping:ApiName` opaque XML retrieval, sorted unique members,
-      default space, default/65.0/auto fixed Metadata API65 with requested version retained.
-- [x] Configured `objectSourceTargetMaps/<name>.objectSourceTargetMap-meta.xml`, exact
-      bytes, unchanged repeat, explicit differing-file overwrite and path/link safeguards.
-- [x] Definition-only/non-operational-deploy classification; independent per-member
-      failure continuation and payload-free mapping labels. No semantic/KQ inference.
-- [x] Retrieve syntax/version/inventory/dependency refusals before auth. Local deploy
-      XML refusal before target use/mutation, not before authentication. Git XML non-admission:
-      mapping-only selects no inputs, mixed changes select only supported operational inputs.
-- [x] Installed source-only exact mapping export acceptance: independent standard API65
-      XML equality, configured source root, retrieved/unchanged repeat, auto actual65,
-      duplicate deduplication, definition-only classification, local deploy-input refusal
-      before target use (not authentication) and Git non-admission. Seven total org-facing
-      CLI invocations including children, four Metadata operations; zero writes/processing/target calls.
-      Multiple distinct members/failure continuation remain synthetic-only. No semantic
-      PK/KQ compatibility or cross-org operational deploy acceptance. Retrieve remains Partial/API.
+- [x] Mappings retrieve, deploy and delete on the native route (default/auto API 68, numeric
+      pins from 61 kept); see the README CRUD table. There is no Metadata API mapping export.
 - [ ] Record official endpoints, versions, pagination and inventory scope.
 - [ ] Preserve deterministic source/target identity, fields and qualifier mappings.
 - [ ] Verify replacement/update semantics cannot silently remove existing mappings.
