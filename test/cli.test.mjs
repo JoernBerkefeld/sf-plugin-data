@@ -142,13 +142,16 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'MAPPING_DELETE_SIDE_EFFECT',
     'MAPPING_DELETION_UNCONFIRMED',
     'DMO `Count__c`/`Gamma__c` fields',
-    'An already-absent mapping is conservatively blocked without writes',
-    'unchanged-on-404 handling applies only to native DLO/DMO deletion',
+    'A mapping whose own read answers `404` is already gone: it reports `unchanged`',
+    'the org mapping is found the way deploy finds it, by the file',
+    'reports the org name as `targetApiName`',
     'non-last native DELETE HTTP `204`',
   ])
     assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
   for (const obsolete of [
     'There is no public plugin Delete command',
+    'An already-absent mapping is conservatively blocked without writes',
+    'unchanged-on-404 handling applies only to native DLO/DMO deletion',
     'Only the `default` data space is supported.',
     'Installed creation/reconciliation acceptance is API68;',
     'Exact API65/default opaque XML export only',

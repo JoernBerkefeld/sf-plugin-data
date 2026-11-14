@@ -2,15 +2,17 @@
 
 > The deletion was sent, but the mapping could still be read after the plugin's checks. Do not repeat the delete at once; read the mapping again later to see if it is gone.
 
-|              |                               |
-| ------------ | ----------------------------- |
-| **Family**   | Mapping                       |
-| **Commands** | `sf data360 delete`           |
-| **Outcome**  | `failed` — mutation `unknown` |
+|              |                                                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Mapping                                                                                                                |
+| **Commands** | `sf data360 delete`                                                                                                    |
+| **Outcome**  | `failed` — mutation `unknown`; for a mapping removed with its DMO, `deletion-unconfirmed` with mutation `acknowledged` |
 
 ## What it means
 
 The destructive deployment was reported successful, but over six reads spaced five seconds apart the mapping was still returned by Salesforce.
+
+The same code is reported for the last mapping of a custom DMO deleted together with that DMO (`removedWith` the DMO): the DMO deletion was confirmed, but the mapping's own reads afterwards still returned it, or could not be completed.
 
 ## Why the plugin stops
 

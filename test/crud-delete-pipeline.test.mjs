@@ -5,6 +5,7 @@ import Delete from '../lib/commands/data360/delete.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { crudPhase, planDeleteStages } from '../lib/services/crud-plan.js';
+import { confirmNativeMappingAbsent } from '../lib/services/native-mapping.js';
 import { nativeIrFixture } from './identity-resolution-fixtures.mjs';
 
 // Selection: graph Graph on the unified DMO of IR Individual_A1b2; transform Copy reads
@@ -178,7 +179,14 @@ const harness = (inputs, flags = {}) => {
   };
   // P1 native.
   command.createMappingSender = () => ({});
-  command.createMappingClient = () => ({ get: async (name) => mappingRaw(name) });
+  // A DMO deletion takes its mappings along: they read 404 afterwards, unless a test keeps them.
+  command.createMappingClient = () => ({
+    get: async (name) => {
+      if (!h.keepMappings && h.calls.some((call) => call.startsWith('dmo:')))
+        throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+      return mappingRaw(name);
+    },
+  });
   const mappingStep = async (kind, name, client) => {
     await client.get(name);
     if (h.lastMapping) throw new NativeMappingError('MAPPING_LAST_MAPPING_DELETE_BLOCKED');
@@ -443,6 +451,36 @@ for (const preview of [false, true])
     assert.equal(mapping.mutation, dmo.mutation);
     assert.equal(mapping.outcome, preview ? 'delete' : 'deleted');
   });
+
+test('a mapping removed with its DMO that stays readable is unconfirmed', async () => {
+  const h = harness([], { metadata: ['mapping:Feed_map', 'dmo:Person__dlm'] });
+  h.lastMapping = true;
+  h.keepMappings = true;
+  let reads = 0;
+  h.command.confirmMappingAbsent = (name, client, scope) => {
+    reads++;
+    return confirmNativeMappingAbsent(name, client, scope, {
+      attempts: 2,
+      delayMs: 0,
+      sleep: async () => {},
+    });
+  };
+  const result = await run(h.command);
+  assert.equal(result.status, 'failed');
+  assert.equal(reads, 1);
+  assert.deepEqual(h.calls, ['dmo:Person__dlm']);
+  const [mapping, dmo] = result.result.items;
+  assert.deepEqual([dmo.outcome, dmo.mutation], ['deleted', 'confirmed-deleted']);
+  assert.deepEqual(
+    [mapping.outcome, mapping.mutation, mapping.removedWith],
+    ['deletion-unconfirmed', 'acknowledged', 'dmo:Person__dlm'],
+  );
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => error.code),
+    ['MAPPING_DELETION_UNCONFIRMED'],
+  );
+  assert.match(result.diagnostics.errors[0].message, /still readable afterwards/u);
+});
 
 test('the last mapping of a DMO that is not selected stays refused', async () => {
   const h = harness([], {

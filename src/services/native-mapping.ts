@@ -181,11 +181,12 @@ function checkBinding(expected: NativeMappingDocument, actual: NativeMappingDocu
 
 /**
  * Resolve a unique exact pair through filtered inventory, never source-name 404 fallback.
+ * Deploy and delete both find the org mapping of an authored file this way, by its binding.
  * @param {NativeMappingDocument} desired Logical binding.
  * @param {MappingClient} client Target mapping transport.
  * @returns {Promise<NativeMappingDocument | undefined>} Verified detail or confirmed absence.
  */
-async function resolveTarget(
+export async function resolveNativeMappingTarget(
   desired: NativeMappingDocument,
   client: MappingClient,
 ): Promise<NativeMappingDocument | undefined> {
@@ -463,7 +464,7 @@ export async function preflightNativeMapping(
     dependencies,
   );
   const notices = typeDifferences.length > 0 ? { typeDifferences } : {};
-  const target = await resolveTarget(desired, client);
+  const target = await resolveNativeMappingTarget(desired, client);
   if (target) {
     // Pairs Salesforce generated stay part of the mapping when the file does not list them;
     // retrieve leaves out exactly these (generatedMappingPairs uses the same predicate).
@@ -1062,4 +1063,36 @@ export async function deleteNativeMapping(
     return { apiName };
   }
   throw new NativeMappingError('MAPPING_DELETION_UNCONFIRMED');
+}
+
+/**
+ * Confirm by its own reads that a mapping is gone after another deletion removed it (the last
+ * mapping of a custom DMO goes with the DMO). Only the typed 404 counts as absence.
+ * @param {string} apiName Exact org mapping name.
+ * @param {MappingClient} client Mapping reader.
+ * @param {string} [requestScope] Optional request scope.
+ * @param {NativeMappingDeleteSettle} [settle] Bounded readback budget.
+ * @returns {Promise<boolean>} True once a read answers 404; false while it stays readable.
+ */
+export async function confirmNativeMappingAbsent(
+  apiName: string,
+  client: Pick<MappingClient, 'get'>,
+  requestScope?: string,
+  settle: NativeMappingDeleteSettle = defaultMappingDeleteSettle,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < settle.attempts; attempt++) {
+    if (attempt > 0) await settle.sleep(settle.delayMs);
+    try {
+      await retrieveNativeMapping(apiName, client as MappingClient, requestScope);
+    } catch (error) {
+      if (
+        error instanceof NativeMappingError &&
+        error.code === 'MAPPING_HTTP_ERROR' &&
+        error.status === 404
+      )
+        return true;
+      throw error;
+    }
+  }
+  return false;
 }

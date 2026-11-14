@@ -1,3 +1,22 @@
+# Chunk M: mapping delete by authored name, repeat delete unchanged — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk M (user: "Fix em").
+
+- A mapping whose GET answers the typed 404 is `unchanged` on delete (was a blocking
+  `MAPPING_HTTP_ERROR`).
+- `-m mapping:<Name>` with a valid local `data360/mapping/<Name>.mapping-meta.json` (or the
+  base content with `--changed-since`) resolves the org mapping by binding through deploy's
+  `resolveNativeMappingTarget`; the item carries `targetApiName`. No match `unchanged`, 2+
+  `AMBIGUOUS_MAPPING_TARGET`. Without a valid file the name is the exact org name.
+- A mapping removed with its DMO is read again (bounded poll) and reported `deleted` only on
+  404, otherwise `deletion-unconfirmed` (it used to copy the DMO outcome unread).
+- Live (isolated-source 00Daj000010xkZNEAY, 22:43-22:47Z, `CliM_d35b56`): delete by authored
+  name, repeat `unchanged`, exact server name from an empty folder `unchanged`, mapping +
+  DMO + two DLOs in one run with the mapping confirmed 404 after the DMO DELETE, repeat all
+  `unchanged`; all probes 404. Evidence F:/Temp/cliM_live_d35b56.
+- Open: delete by authored name reuses deploy's resolver, so a non-ACTIVE mapping is
+  refused (`MAPPING_TARGET_NOT_SETTLED`); the exact org name still works.
+
 # Chunk E1a: calculated insight retrieve as JSON plus SQL file — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk E1a (user decision: "as returned", SQL in a

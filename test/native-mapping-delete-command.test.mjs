@@ -1,6 +1,10 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { errorCodeInfo } from '../lib/errors/registry.js';
 import Delete from '../lib/commands/data360/delete.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
@@ -399,4 +403,172 @@ test('public delete transport failure remains unknown and stops a non-mapping ba
   assert.equal(result.result.items.length, 1);
   assert.equal(result.result.items[0].mutation, 'unknown');
   assert.equal(writes, 1);
+});
+
+test('a mapping that reads 404 is unchanged and the delete continues', async () => {
+  for (const preview of [false, true]) {
+    const command = invocation({ metadata: ['mapping:Generated_123', 'dlo:Later__dll'], preview });
+    const f = mappingFixture(command);
+    f.client.get = async () => {
+      throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+    };
+    const dlos = [];
+    command.createDloNativeDeleteClient = () => ({
+      dependencies: async () => ({ dependencies: [], totalSize: 0 }),
+    });
+    command.retrieveDlo = async (name) => ({ identity: { dataSpace: 'default', apiName: name } });
+    command.deleteDlo = async (name) => {
+      dlos.push(name);
+      return { dataSpace: 'default' };
+    };
+    const result = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(
+      result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
+      [
+        ['mapping', 'unchanged', 'not-attempted'],
+        ['dlo', preview ? 'delete' : 'deleted', preview ? 'not-attempted' : 'confirmed-deleted'],
+      ],
+    );
+    assert.deepEqual(dlos, preview ? [] : ['Later__dll']);
+    assert.deepEqual(result.diagnostics.errors, []);
+  }
+});
+
+test('a mapping read failing with another status still stops the delete', async () => {
+  const command = invocation({ metadata: ['mapping:Generated_123'] });
+  const f = mappingFixture(command);
+  f.client.get = async () => {
+    throw new NativeMappingError('MAPPING_HTTP_ERROR', 403);
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'MAPPING_HTTP_ERROR');
+  assert.deepEqual(f.calls, []);
+});
+
+/**
+ * Run a delete inside a fresh project under the verified OS temp directory.
+ * @param {object} command Delete command.
+ * @param {Record<string, object>} mappings Authored mapping files by name.
+ * @returns {Promise<{result: object, root: string}>} Result and project root.
+ */
+const runInProject = async (command, mappings) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'data360-mapping-authored-'));
+  await writeFile(path.join(root, '.run-owner'), randomUUID());
+  await mkdir(path.join(root, 'data360', 'mapping'), { recursive: true });
+  for (const [name, document] of Object.entries(mappings))
+    await writeFile(
+      path.join(root, 'data360', 'mapping', `${name}.mapping-meta.json`),
+      JSON.stringify(document),
+    );
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    return { result: await run(command), root };
+  } finally {
+    process.chdir(cwd);
+  }
+};
+const authored = (apiName) => ({
+  schemaVersion: 1,
+  kind: 'mapping',
+  identity: { apiName, dataSpace: 'default' },
+  spec: {
+    sourceEntityDeveloperName: 'Source__dll',
+    targetEntityDeveloperName: 'Target__dlm',
+    fieldMappings: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Id__c' }],
+  },
+});
+
+for (const preview of [false, true])
+  test(`an authored mapping name resolves to the org mapping by its binding preview=${preview}`, async () => {
+    const command = invocation({ metadata: ['mapping:Authored_1'], preview });
+    const f = mappingFixture(command);
+    const lists = [];
+    const list = f.client.list;
+    f.client.list = async (dmo, dlo) => {
+      lists.push([dmo, dlo]);
+      // The binding lookup filters by DLO; the surroundings read lists the whole DMO.
+      return dlo === undefined ? list() : { objectSourceTargetMaps: [structuredClone(f.selected)] };
+    };
+    const { result, root } = await runInProject(command, { Authored_1: authored('Authored_1') });
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.deepEqual(lists[0], ['Target__dlm', 'Source__dll']);
+    const [item] = result.result.items;
+    assert.equal(item.identity.apiName, 'Authored_1');
+    assert.equal(item.targetApiName, 'Generated_123');
+    assert.deepEqual(f.calls, preview ? [] : [['remove', 'Generated_123']]);
+    const file = path.join(root, 'data360', 'mapping', 'Authored_1.mapping-meta.json');
+    if (preview) {
+      assert.deepEqual(item.plan, [{ operation: 'delete', apiName: 'Generated_123' }]);
+      assert.deepEqual(item.localFiles, [{ path: file, exists: true }]);
+    } else {
+      assert.equal(item.mutation, 'confirmed-deleted');
+      assert.deepEqual(item.removedLocalFiles, [{ path: file, outcome: 'removed' }]);
+    }
+  });
+
+test('an authored mapping whose binding the org does not have is unchanged', async () => {
+  const command = invocation({ metadata: ['mapping:Authored_1'] });
+  const f = mappingFixture(command);
+  f.client.list = async (_dmo, dlo) => {
+    assert.equal(dlo, 'Source__dll');
+    throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+  };
+  f.client.get = async () => assert.fail('no exact-name read for an authored mapping');
+  const { result } = await runInProject(command, { Authored_1: authored('Authored_1') });
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(f.calls, []);
+  const [item] = result.result.items;
+  assert.deepEqual([item.outcome, item.mutation], ['unchanged', 'not-attempted']);
+  assert.equal(item.removedLocalFiles, undefined);
+});
+
+test('an authored mapping whose binding matches two org mappings is refused before any write', async () => {
+  const command = invocation({
+    metadata: ['dmo:Other__dlm', 'mapping:Authored_1', 'dlo:Later__dll'],
+  });
+  const f = mappingFixture(command);
+  f.client.list = async () => ({
+    objectSourceTargetMaps: [
+      structuredClone(f.selected),
+      { ...structuredClone(f.selected), developerName: 'Generated_456' },
+    ],
+  });
+  command.deleteDmo = command.deleteDlo = async () => assert.fail('nothing is deleted');
+  command.createDloNativeDeleteClient = () => ({
+    dependencies: async () => assert.fail('the mapping is resolved before the DLO is admitted'),
+  });
+  const { result } = await runInProject(command, { Authored_1: authored('Authored_1') });
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => error.code),
+    ['AMBIGUOUS_MAPPING_TARGET'],
+  );
+  assert.deepEqual(
+    result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
+    [['mapping', 'blocked', 'not-attempted']],
+  );
+});
+
+test('a mapping file that is not a valid mapping names no binding: the exact name is used', async () => {
+  const command = invocation({ metadata: ['mapping:Generated_123'], 'keep-local-files': true });
+  const f = mappingFixture(command);
+  const lists = [];
+  const list = f.client.list;
+  f.client.list = async (dmo, dlo) => {
+    lists.push(dlo);
+    return list();
+  };
+  const { result } = await runInProject(command, {
+    Generated_123: { ...authored('Generated_123'), kind: 'dmo' },
+  });
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(f.calls, [['remove', 'Generated_123']]);
+  // No binding lookup: only the DMO's own mapping lists of the deletion.
+  assert.ok(lists.every((dlo) => dlo === undefined));
+  assert.equal(result.result.items[0].targetApiName, undefined);
 });

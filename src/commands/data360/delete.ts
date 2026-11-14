@@ -119,12 +119,17 @@ import {
   NativeMappingError,
   normalizeNativeMapping,
   unwrapNativeMappingCollection,
+  validateNativeMappingDocument,
 } from '../../artifacts/native-mapping-document.js';
+import type { NativeMappingDocument } from '../../artifacts/native-mapping-document.js';
 import { createMappingClient } from '../../transport/mapping-rest.js';
 import {
+  confirmNativeMappingAbsent,
   deleteNativeMapping,
   preflightDeleteNativeMapping,
+  resolveNativeMappingTarget,
 } from '../../services/native-mapping.js';
+import { lstat, readFile } from 'node:fs/promises';
 import {
   nativeApiVersion,
   dataStreamApiVersion,
@@ -657,7 +662,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or mappings.';
   public static readonly description =
-    "One delete can carry any mix of families, each named exactly with -m. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then data transforms, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A -m delete needs no confirmation flag: check the selection with --preview first. Before the first delete, the current definition of each selected transform, Segment, IR, CI and graph is read from the org by its name (read-only); one the org does not have reports unchanged. A transform name resolves to its target ID through the complete transform list: no match is unchanged, two or more matches (ignoring case) are refused with TRANSFORM_TARGET_NOT_RESOLVED. --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity and definition come from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). A --changed-since delete needs --confirm-delete (--preview runs without it; --confirm-delete is accepted only with --changed-since), takes no -m or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name like a -m one; a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without checking it further. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO. data-transform:Name uses auto/API68/default space. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. segment:Name uses auto/API68/default. Fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. identity-resolution:ObjectApiName uses auto/API68/default space and deletes a present owner that is not PUBLISHING or DELETING. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. data-graph:Name uses auto/API68/default. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. calculated-insight:Name__cio uses --api-version auto (68.0) or 68.0 and default space. Only a NOT_SCHEDULED, never-run DRAFT or ACTIVE configuration is deletable. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI never cascades; no compute, storage or credits guarantee. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:SourceDmo__dlm:Name; a bare relationship:Name is refused with INVALID_SELECTION) runs first in its phase, before mappings, DMOs and DLOs. The relationships of the named source DMO are listed and the name is looked up ignoring letter case: no match is unchanged, two matches are refused (AMBIGUOUS_RELATIONSHIP_TARGET), and a match whose source object is another DMO is refused (RELATIONSHIP_TARGET_BINDING_MISMATCH). In a --changed-since delete the source DMO and binding come from the deleted file, and when its name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --changed-since or --delete-dlo. Local files: after a confirmed deletion (deleted, or a DLO, DMO, Segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time at its canonical path and never a folder: data360/dlo, data360/dmo, data360/relationship, data360/data-stream and data360/dataTransforms files under the current directory (with --delete-dlo also the linked DLO's file), the mapping file of that name or the one whose binding matches, and the Segment, IR and Graph file and both members of a CI pair under the default package directory of sfdx-project.json (force-app/main/default without one). Links, hard-linked files and paths outside those folders are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
+    "One delete can carry any mix of families, each named exactly with -m. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then data transforms, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A -m delete needs no confirmation flag: check the selection with --preview first. Before the first delete, the current definition of each selected transform, Segment, IR, CI and graph is read from the org by its name (read-only); one the org does not have reports unchanged. A transform name resolves to its target ID through the complete transform list: no match is unchanged, two or more matches (ignoring case) are refused with TRANSFORM_TARGET_NOT_RESOLVED. --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity and definition come from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). A --changed-since delete needs --confirm-delete (--preview runs without it; --confirm-delete is accepted only with --changed-since), takes no -m or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name like a -m one; a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without checking it further. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO; it reports deleted only once its own read answers 404 after the DMO deletion, otherwise deletion-unconfirmed (MAPPING_DELETION_UNCONFIRMED). data-transform:Name uses auto/API68/default space. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. segment:Name uses auto/API68/default. Fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. identity-resolution:ObjectApiName uses auto/API68/default space and deletes a present owner that is not PUBLISHING or DELETING. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. data-graph:Name uses auto/API68/default. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. calculated-insight:Name__cio uses --api-version auto (68.0) or 68.0 and default space. Only a NOT_SCHEDULED, never-run DRAFT or ACTIVE configuration is deletable. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI never cascades; no compute, storage or credits guarantee. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:SourceDmo__dlm:Name; a bare relationship:Name is refused with INVALID_SELECTION) runs first in its phase, before mappings, DMOs and DLOs. The relationships of the named source DMO are listed and the name is looked up ignoring letter case: no match is unchanged, two matches are refused (AMBIGUOUS_RELATIONSHIP_TARGET), and a match whose source object is another DMO is refused (RELATIONSHIP_TARGET_BINDING_MISMATCH). In a --changed-since delete the source DMO and binding come from the deleted file, and when its name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. A mapping:Name with a valid local data360/mapping/Name.mapping-meta.json file (with --changed-since, the deleted file's base content) is found in the org the way deploy finds it: by the file's source DLO and target DMO, whatever Salesforce named it (the org name is reported as targetApiName). No org mapping with that binding is unchanged; two or more are refused with AMBIGUOUS_MAPPING_TARGET before any write. Otherwise the exact name is read, and a mapping that reads absent (404) reports unchanged. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --changed-since or --delete-dlo. Local files: after a confirmed deletion (deleted, or a DLO, DMO, Segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time at its canonical path and never a folder: data360/dlo, data360/dmo, data360/relationship, data360/data-stream and data360/dataTransforms files under the current directory (with --delete-dlo also the linked DLO's file), the mapping file of that name or the one whose binding matches, and the Segment, IR and Graph file and both members of a CI pair under the default package directory of sfdx-project.json (force-app/main/default without one). Links, hard-linked files and paths outside those folders are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -771,6 +776,27 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     openBoundSsot(target, version);
   protected preflightDeleteMapping = preflightDeleteNativeMapping;
   protected deleteMapping = deleteNativeMapping;
+  // A mapping removed with its DMO reports deleted only once its own read answers 404.
+  protected confirmMappingAbsent = confirmNativeMappingAbsent;
+  /**
+   * The authored mapping file of that name, if one is there: its binding names the org mapping.
+   * @param {string} file Canonical path data360/mapping/<name>.mapping-meta.json.
+   * @returns {Promise<NativeMappingDocument | undefined>} The validated file; undefined without a valid one.
+   */
+  protected async readAuthoredMapping(file: string): Promise<NativeMappingDocument | undefined> {
+    try {
+      const stat = await lstat(file);
+      if (!stat.isFile()) return undefined;
+    } catch {
+      return undefined;
+    }
+    // A file that is not a valid mapping names no binding; the selector is then the exact name.
+    try {
+      return validateNativeMappingDocument(JSON.parse(await readFile(file, 'utf8')) as unknown);
+    } catch {
+      return undefined;
+    }
+  }
   protected createRelationshipClient = createRelationshipClient;
   protected preflightDeleteRelationship = preflightDeleteNativeRelationship;
   protected deleteRelationship = deleteNativeRelationship;
@@ -1245,7 +1271,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 ? `Planned removal with ${item.removedWith}: ${selectorsByItem.get(item)}.`
                 : ['deleted', 'deletion-processing'].includes(item.outcome)
                   ? `removed with ${item.removedWith}: ${selectorsByItem.get(item)}`
-                  : `Not removed (${item.removedWith} ${item.outcome}): ${selectorsByItem.get(item)}.`,
+                  : item.outcome === 'deletion-unconfirmed'
+                    ? `Removal with ${item.removedWith} unconfirmed: ${selectorsByItem.get(item)}.`
+                    : `Not removed (${item.removedWith} ${item.outcome}): ${selectorsByItem.get(item)}.`,
             );
             for (const file of item.removedLocalFiles ?? [])
               if (file.outcome === 'removed') this.log(`removed local file ${file.path}`);
@@ -2017,6 +2045,47 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the ES2022 library target.
         const ordered = [...selected].sort((a, b) => nativeOrder(a) - nativeOrder(b));
         const target = await resolveUsername();
+        const mappingReader = (): ReturnType<typeof createMappingClient> =>
+          (this.createMappingClient ?? createMappingClient)(
+            target,
+            version,
+            undefined,
+            requestScope,
+            this.createMappingSender(target, version),
+          );
+        // Like deploy, an authored mapping (the file of that name, or with --changed-since its base
+        // content) names the org mapping by its binding, whatever Salesforce named it; absent when
+        // the org has no mapping with that binding. Resolved before the stage's first write.
+        const orgMappingNames = new Map<string, string>();
+        const absentMappings = new Set<string>();
+        for (const selector of ordered.filter((value) => value.startsWith('mapping:'))) {
+          const name = selector.slice(selector.indexOf(':') + 1);
+          try {
+            const binding = gitMode
+              ? (gitBySelector.get(selector)?.document as NativeMappingDocument | undefined)
+              : await this.readAuthoredMapping(
+                  path.join(projectData, 'mapping', `${name}.mapping-meta.json`),
+                );
+            if (binding === undefined) continue;
+            if (binding.identity.dataSpace !== effectiveScope)
+              throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
+            const found = await resolveNativeMappingTarget(binding, mappingReader());
+            if (found) orgMappingNames.set(selector, found.identity.apiName);
+            else absentMappings.add(selector);
+          } catch (error) {
+            const blocked: DeleteItem = {
+              family: 'mapping',
+              identity: { dataSpace: effectiveScope, apiName: name },
+              operation: flags.preview ? 'preview' : 'delete',
+              outcome: 'blocked',
+              mutation: 'not-attempted',
+            };
+            selectorsByItem.set(blocked, selector);
+            envelope.result.items.push(blocked);
+            throw error;
+          }
+        }
+        const resolvedMappings = new Set(orgMappingNames.values());
         // A DLO dependent is covered when this command deletes it: its DMO, or every mapping
         // between the DLO and that DMO.
         const coveredBySelection =
@@ -2027,22 +2096,18 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             if (!nativeDmoName.test(dependent.name)) return false;
             let names: string[] = [];
             try {
-              const reader = (this.createMappingClient ?? createMappingClient)(
-                target,
-                version,
-                undefined,
-                requestScope,
-                this.createMappingSender(target, version),
-              );
               names = unwrapNativeMappingCollection(
-                await reader.list(dependent.name, dlo),
+                await mappingReader().list(dependent.name, dlo),
                 requestScope,
               ).map((entry) => String(entry.developerName));
             } catch {
               return false;
             }
             return (
-              names.length > 0 && names.every((name) => nativeSelectors.includes(`mapping:${name}`))
+              names.length > 0 &&
+              names.every(
+                (name) => nativeSelectors.includes(`mapping:${name}`) || resolvedMappings.has(name),
+              )
             );
           };
         // Every DLO of this stage has its dependents checked before the stage's first write.
@@ -2081,7 +2146,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           }
         }
         // The last mapping of a custom DMO selected with that DMO goes with the DMO delete.
-        const withDmo: Array<{ item: DeleteItem; files: LocalFileCandidate[] }> = [];
+        // No request deletes it; a confirmed DMO deletion counts for it only once its own read
+        // answers 404, otherwise it is unconfirmed.
+        const withDmo: Array<{
+          item: DeleteItem;
+          files: LocalFileCandidate[];
+          name: string;
+          reader: ReturnType<typeof createMappingClient>;
+        }> = [];
+        let withDmoUnconfirmed = false;
         const settleWithDmo = async (): Promise<void> => {
           for (const entry of withDmo) {
             const owner = envelope.result.items.find(
@@ -2092,6 +2165,30 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             if (owner) {
               entry.item.outcome = owner.outcome;
               entry.item.mutation = owner.mutation;
+            }
+            if (entry.item.mutation === 'confirmed-deleted') {
+              let absent = false;
+              let failure: unknown;
+              try {
+                absent = await (this.confirmMappingAbsent ?? confirmNativeMappingAbsent)(
+                  entry.name,
+                  entry.reader,
+                  requestScope,
+                );
+              } catch (error) {
+                failure = error;
+              }
+              if (!absent) {
+                withDmoUnconfirmed = true;
+                entry.item.outcome = 'deletion-unconfirmed';
+                entry.item.mutation = 'acknowledged';
+                const text = `${owner ? selectorsByItem.get(owner) : 'The DMO'} was deleted, but mapping ${entry.name} ${failure === undefined ? 'was still readable afterwards' : 'could not be read back'}. Do not replay; read the mapping again before any further action.`;
+                envelope.diagnostics.errors.push({
+                  code: 'MAPPING_DELETION_UNCONFIRMED',
+                  message: failure === undefined ? text : operationDiagnostic(failure, text),
+                  retryable: false,
+                });
+              }
             }
             await track(entry.item, entry.files);
           }
@@ -2160,16 +2257,25 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             };
             selectorsByItem.set(item, selector);
             envelope.result.items.push(item);
+            // The first read of the mapping names its binding, which finds a hand-written file.
+            let firstRead: unknown;
+            // The org mapping: the one the authored binding resolved to, otherwise the exact name.
+            const resolved = orgMappingNames.get(selector);
+            const orgName = resolved ?? apiName;
             try {
               if (mapping) {
+                if (absentMappings.has(selector)) {
+                  // No org mapping has the authored binding: nothing to delete.
+                  item.outcome = 'unchanged';
+                  continue;
+                }
+                if (orgName !== apiName) item.targetApiName = orgName;
                 const mappingBase = baseClient as ReturnType<typeof createMappingClient>;
-                // The first read of the mapping names its binding, which finds a hand-written file.
-                let firstRead: unknown;
                 const mappingClient = {
                   ...client,
                   get: async (name: string): Promise<unknown> => {
                     const value = await mappingBase.get(name);
-                    if (name === apiName && firstRead === undefined) firstRead = value;
+                    if (name === orgName && firstRead === undefined) firstRead = value;
                     return value;
                   },
                   remove: async (name: string): Promise<void> => {
@@ -2182,6 +2288,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 // The file named after the mapping, otherwise the one whose binding matches it.
                 const mappingFiles = async (): Promise<LocalFileCandidate[]> => {
                   const canonical = inProject('mapping', `${apiName}.mapping-meta.json`);
+                  // The authored file whose binding named the org mapping.
+                  if (resolved !== undefined) return [canonical];
                   try {
                     const found = await mappingLocalFile(
                       normalizeNativeMapping(firstRead, requestScope),
@@ -2215,16 +2323,16 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 try {
                   if (flags.preview) {
                     await (this.preflightDeleteMapping ?? preflightDeleteNativeMapping)(
-                      apiName,
+                      orgName,
                       mappingClient,
                       dependencies,
                       requestScope,
                     );
-                    item.plan = [{ operation: 'delete', apiName }];
+                    item.plan = [{ operation: 'delete', apiName: orgName }];
                     item.outcome = 'delete';
                   } else
                     await (this.deleteMapping ?? deleteNativeMapping)(
-                      apiName,
+                      orgName,
                       mappingClient,
                       dependencies,
                       requestScope,
@@ -2233,7 +2341,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   const owner = ownerDmo(error);
                   if (owner === undefined) throw error;
                   item.removedWith = owner;
-                  withDmo.push({ item, files: await mappingFiles() });
+                  withDmo.push({
+                    item,
+                    files: await mappingFiles(),
+                    name: orgName,
+                    reader: mappingBase,
+                  });
                   continue;
                 }
                 await track(item, await mappingFiles());
@@ -2290,6 +2403,18 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 item.outcome = 'unchanged';
                 continue;
               }
+              // The mapping's own first read answered 404: it is already gone, like a DLO or DMO.
+              if (
+                mapping &&
+                !dispatched &&
+                firstRead === undefined &&
+                error instanceof NativeMappingError &&
+                error.code === 'MAPPING_HTTP_ERROR' &&
+                error.status === 404
+              ) {
+                item.outcome = 'unchanged';
+                continue;
+              }
               if (
                 dispatched &&
                 ((error instanceof DloError && error.code === 'DLO_DELETE_NOT_CONFIRMED') ||
@@ -2324,6 +2449,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           }
         } finally {
           await settleWithDmo();
+        }
+        if (withDmoUnconfirmed) {
+          envelope.status = 'failed';
+          return 'failed';
         }
         return 'success';
       };

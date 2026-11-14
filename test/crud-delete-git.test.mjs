@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import Delete from '../lib/commands/data360/delete.js';
 import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
+import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { nativeIrFixture } from './identity-resolution-fixtures.mjs';
 
@@ -179,6 +180,19 @@ const files = {
   relationship: [
     'data360/relationship/A_BRef_map_B_Id.relationship-meta.json',
     relationshipDocument,
+  ],
+  mapping: [
+    'data360/mapping/Example_map_1.mapping-meta.json',
+    {
+      schemaVersion: 1,
+      kind: 'mapping',
+      identity: { apiName: 'Example_map_1', dataSpace: 'default' },
+      spec: {
+        sourceEntityDeveloperName: 'Example_Probe__dll',
+        targetEntityDeveloperName: 'Example__dlm',
+        fieldMappings: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Key__c' }],
+      },
+    },
   ],
 };
 
@@ -468,6 +482,55 @@ test('a stream and its landing DLO deleted in the range are one stream delete wi
     ],
   );
 });
+
+const mappingRaw = (developerName) => ({
+  developerName,
+  sourceEntityDeveloperName: 'Example_Probe__dll',
+  targetEntityDeveloperName: 'Example__dlm',
+  status: 'ACTIVE',
+  fieldMappings: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Key__c' }],
+});
+for (const [label, names, expected] of [
+  ['one match', ['Example_map_1794692582238'], 'mapping:Example_map_1794692582238'],
+  ['no match', [], 'unchanged'],
+  ['two matches', ['Example_map_1794692582238', 'Example_map_1794692582239'], 'blocked'],
+])
+  test(`a mapping deleted in the range resolves the org mapping by its binding: ${label}`, async () => {
+    const { cwd, base } = await repository(['mapping']);
+    const h = harness(cwd, { 'changed-since': base });
+    h.command.createMappingSender = () => ({});
+    h.command.createMappingClient = () => ({
+      list: async (dmo, dlo) => {
+        h.calls.push(`mapping-list:${dmo}:${dlo}`);
+        if (names.length === 0) throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        return { objectSourceTargetMaps: names.map((name) => mappingRaw(name)) };
+      },
+      get: async (name) => mappingRaw(name),
+    });
+    h.command.deleteMapping = async (name) => {
+      h.calls.push(`mapping:${name}`);
+      return { apiName: name };
+    };
+    const result = await run(h.command);
+    const [item] = result.result.items;
+    assert.deepEqual(h.calls.slice(0, 2), ['git', 'mapping-list:Example__dlm:Example_Probe__dll']);
+    if (expected === 'blocked') {
+      assert.equal(result.status, 'blocked');
+      assert.deepEqual(codes(result), ['AMBIGUOUS_MAPPING_TARGET']);
+      assert.equal(h.calls.length, 2);
+      return;
+    }
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.equal(item.identity.apiName, 'Example_map_1');
+    if (expected === 'unchanged') {
+      assert.deepEqual([item.outcome, item.mutation], ['unchanged', 'not-attempted']);
+      assert.equal(h.calls.length, 2);
+      return;
+    }
+    assert.equal(item.targetApiName, names[0]);
+    assert.equal(item.outcome, 'deleted');
+    assert.equal(h.calls.at(-1), expected);
+  });
 
 test('a relationship deleted in the range takes its source DMO from the base content', async () => {
   const { cwd, base } = await repository(['relationship']);

@@ -2,17 +2,18 @@
 
 > More than one mapping in the org matches the same name or the same source DLO and target DMO, so the plugin cannot tell which one is meant. Inspect the DMO's mappings in the org.
 
-|              |                                            |
-| ------------ | ------------------------------------------ |
-| **Family**   | Mapping                                    |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` |
-| **Outcome**  | `blocked` — nothing was changed            |
+|              |                                                                 |
+| ------------ | --------------------------------------------------------------- |
+| **Family**   | Mapping                                                         |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete` |
+| **Outcome**  | `blocked` — nothing was changed                                 |
 
 ## What it means
 
 The plugin looks up mappings through the list of mappings of a DMO. Here that lookup was not unique:
 
 - During `sf data360 deploy`, the org has more than one mapping from the file's source DLO onto its target DMO.
+- During `sf data360 delete` of `mapping:<Name>` with a local `data360/mapping/<Name>.mapping-meta.json` file (or, with `--changed-since`, a deleted one), the org has more than one mapping with that file's source DLO and target DMO. Nothing in the delete was written.
 - During `sf data360 retrieve` of all mappings, the same mapping name was listed with different content under different DMOs.
 
 ## Why the plugin stops
@@ -23,7 +24,7 @@ Updating or saving a mapping that cannot be identified uniquely could change or 
 
 1. Open the target DMO in Data Cloud Setup and list its mappings.
 2. Find the mappings that bind the same source DLO, or that share a name.
-3. Remove the duplicate you do not need, for example with `sf data360 delete --metadata mapping:<Name>`.
+3. Remove the duplicate you do not need, for example with `sf data360 delete --metadata mapping:<Name>` and its exact org name, run where no mapping file of that name exists.
 4. Rerun the command.
 
 ## Example output

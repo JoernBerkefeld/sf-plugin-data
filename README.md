@@ -308,8 +308,10 @@ sf data360 delete -o target -m data-graph:ExampleGraph -m identity-resolution:In
 - A custom DMO selected together with its last mapping: only the DMO is deleted, which
   removes the mapping (observed at API68: deleting the DMO removes its last mapping, while
   Salesforce does not delete that mapping on its own). The mapping item reports
-  `removedWith: dmo:<Name>` and the DMO's outcome; no separate request or read is made
-  for it.
+  `removedWith: dmo:<Name>` and the DMO's outcome; no delete request is sent for it.
+  After a confirmed DMO deletion the mapping is read again (the same bounded polling as a
+  mapping deletion): only a `404` keeps it `deleted`/`confirmed-deleted`; a mapping that
+  stays readable is `deletion-unconfirmed` with `MAPPING_DELETION_UNCONFIRMED`.
 
 #### Delete what a Git range deleted
 
@@ -1953,11 +1955,19 @@ this way, whatever pairs it holds, including pairs onto standard fields (for exa
 `Name__c` to `ssot__Name__c`) and mappings onto standard DMOs. Deletion is admitted
 at every native API version from `61.0`; default/`auto` is `68.0`.
 
+- **Which mapping.** When `data360/mapping/<Name>.mapping-meta.json` is a valid mapping
+  file, `<Name>` is the authored name: the org mapping is found the way deploy finds it, by the file's
+  source DLO and target DMO, whatever name Salesforce gave it (for example
+  `Name_1` against the org's `Name_1794692582238`). The result item keeps the authored
+  name and reports the org name as `targetApiName`. No org mapping with that binding is
+  `unchanged`; two or more are refused with `AMBIGUOUS_MAPPING_TARGET` before any write
+  of the command. A `--changed-since` delete takes the binding from the deleted file's
+  base content. Without such a file, `<Name>` is the exact org name.
 - **Reads before the write.** The plugin reads the mapping, all mappings of its target
   DMO and the DMO itself. The selected mapping must be among the DMO's mappings
-  (`MAPPING_INVENTORY_UNCONFIRMED` otherwise). An already-absent mapping is
-  conservatively blocked without writes; unchanged-on-404 handling applies only to
-  native DLO/DMO deletion.
+  (`MAPPING_INVENTORY_UNCONFIRMED` otherwise). A mapping whose own read answers `404`
+  is already gone: it reports `unchanged` with mutation `not-attempted`, like a DLO or
+  DMO, and the delete continues.
 - **The one refusal.** The last mapping of a custom DMO is refused before any write
   with `MAPPING_LAST_MAPPING_DELETE_BLOCKED`. Salesforce does not delete it: its
   Metadata API answers with an internal error and its native DELETE with HTTP `500`.
