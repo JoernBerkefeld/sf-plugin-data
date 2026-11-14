@@ -1312,7 +1312,8 @@ test('Transform delete acknowledgment is not settlement and never authorizes mut
 });
 
 /**
- * Run the public delete command with offline native adapters and real immutable input admission.
+ * Run the public delete command with offline native adapters, inside a project holding the
+ * transform's canonical local file. The definition and target ID are read from the org by name.
  * @param {object} flags Flag overrides.
  * @param {object} h Delete harness.
  * @param {Function} configure Optional command/input fault injection.
@@ -1321,24 +1322,15 @@ test('Transform delete acknowledgment is not settlement and never authorizes mut
 async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure = () => {}) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'transform-delete-command-'));
   const published = await writeDataTransformDocument(document(), cwd, false);
-  const inputs = await readDeployInputs({ cwd, sourceDir: [published.path] });
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: {
       metadata: ['data-transform:SyntheticTransform'],
-      'source-dir': published.path,
-      'transform-target-id': id,
-      'confirm-delete': true,
       'delete-dlo': false,
       preview: false,
       ...flags,
     },
   });
-  command.resolveInputs = async (request) => {
-    h.calls.push(['resolve']);
-    return request.sourceDir.length === 1 ? inputs : [];
-  };
-  command.verifyDataTransformInput = verifyDataTransformInputDigest;
   command.deleteDataTransform = deleteDataTransform;
   command.resolveConnection = async () => {
     h.calls.push(['auth']);
@@ -1355,27 +1347,23 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
   command.log = () => {};
   configure(command, published.path);
   const exit = process.exitCode;
+  const previous = process.cwd();
+  process.chdir(cwd);
   try {
-    return { result: await command.run(), h };
+    return { result: await command.run(), h, file: published.path };
   } finally {
+    process.chdir(previous);
     process.exitCode = exit;
   }
 }
 
 for (const flags of [
-  { 'transform-target-id': undefined },
-  { 'transform-target-id': '1dtBAD' },
-  { 'transform-target-id': '1dl000000000001AAA' },
-  { 'source-dir': undefined },
-  { 'source-dir': 'data360/dataTransforms' },
   { 'delete-dlo': true },
   { dataspace: 'other' },
   { 'api-version': '67.0' },
   { 'api-version': 'latest' },
   { metadata: ['data-transform'] },
   { metadata: ['data-transform:SyntheticTransform', 'data-transform:SyntheticTransform'] },
-  { metadata: ['data-transform:SyntheticTransform', 'data-transform:Other'] },
-  { metadata: ['data-transform:Other'] },
 ])
   test(`public Transform delete rejects before auth ${JSON.stringify(flags)}`, async () => {
     const { result, h } = await deleteTransformCommand(flags);
@@ -1386,8 +1374,8 @@ for (const flags of [
     );
   });
 
-test('public Transform delete: preview GET-only, unconfirmed blocked, confirmed one DELETE', async () => {
-  const preview = await deleteTransformCommand({ preview: true, 'confirm-delete': false });
+test('public Transform delete by name: preview GET-only, then one DELETE without --confirm-delete', async () => {
+  const preview = await deleteTransformCommand({ preview: true });
   assert.equal(preview.result.status, 'success');
   assert.equal(preview.result.result.items[0].outcome, 'delete');
   assert.equal(preview.result.result.items[0].operation, 'preview');
@@ -1395,19 +1383,51 @@ test('public Transform delete: preview GET-only, unconfirmed blocked, confirmed 
     preview.h.calls.some(([op]) => op === 'delete'),
     false,
   );
-  const blocked = await deleteTransformCommand({ 'confirm-delete': false });
-  assert.equal(blocked.result.status, 'blocked');
-  assert.equal(blocked.result.result.items[0].mutation, 'not-attempted');
-  assert.equal(
-    blocked.h.calls.some(([op]) => op === 'delete'),
-    false,
-  );
+  assert.deepEqual(preview.result.result.items[0].localFiles, [
+    { path: preview.file, exists: true },
+  ]);
   const done = await deleteTransformCommand();
   assert.equal(done.result.status, 'success');
   assert.equal(done.result.result.items[0].outcome, 'deleted');
   assert.equal(done.result.result.items[0].mutation, 'confirmed-deleted');
   assert.equal(done.result.result.items[0].prerequisitesPreserved, true);
   assert.equal(done.h.calls.filter(([op]) => op === 'delete').length, 1);
+  // The target ID came from the transform list; the canonical local file is removed.
+  assert.ok(done.h.calls.some((call) => call[0] === 'delete' && call[1] === id));
+  assert.deepEqual(done.result.result.items[0].removedLocalFiles, [
+    { path: done.file, outcome: 'removed' },
+  ]);
+});
+
+test('public Transform delete of a name the org does not have is unchanged, also beside another', async () => {
+  const { result, h } = await deleteTransformCommand({
+    metadata: ['data-transform:SyntheticTransform', 'data-transform:Other'],
+  });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(
+    result.result.items.map((item) => [item.identity.apiName, item.outcome, item.mutation]),
+    [
+      ['SyntheticTransform', 'deleted', 'confirmed-deleted'],
+      ['Other', 'unchanged', 'not-attempted'],
+    ],
+  );
+  assert.equal(h.calls.filter(([op]) => op === 'delete').length, 1);
+});
+
+test('public Transform delete refuses a name two transforms share ignoring case', async () => {
+  const h = deleteHarness();
+  h.client.list = async () => ({
+    totalSize: 2,
+    dataTransforms: [
+      { id, name: input().name },
+      { id: '1dt000000000002AAA', name: input().name.toUpperCase() },
+    ],
+  });
+  const { result } = await deleteTransformCommand({}, h);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_NOT_RESOLVED');
+  assert.deepEqual(result.result.items, []);
+  assert.equal(h.calls.filter(([op]) => op === 'delete').length, 0);
 });
 
 test('public Transform delete reports unconfirmed settlement and unknown HTTP outcome nonzero without replay', async () => {
@@ -1455,15 +1475,6 @@ test('Transform delete service refuses target or schedule changed during final a
   }
 });
 
-test('Transform flags are rejected on other delete families', async () => {
-  const { result, h } = await deleteTransformCommand({ metadata: ['dlo:Source__dll'] });
-  assert.equal(result.status, 'blocked');
-  assert.equal(
-    h.calls.some(([op]) => ['auth', 'delete'].includes(op)),
-    false,
-  );
-});
-
 test('Transform delete leaves still-visible inventory unconfirmed without polling or re-deleting', async () => {
   const h = deleteHarness();
   let reads = 0;
@@ -1486,17 +1497,19 @@ test('Transform delete leaves still-visible inventory unconfirmed without pollin
   assert.equal(h.calls.filter(([op]) => op === 'delete').length, 1);
 });
 
-test('public Transform delete refuses real byte drift during final prerequisite reads', async () => {
+test('public Transform delete refuses an org definition changed during final prerequisite reads', async () => {
   const h = deleteHarness();
-  let file;
   let reads = 0;
   h.dlos.get = async (name) => {
-    if (++reads === 4) await appendFile(file, ' ');
+    if (++reads === 4) {
+      const raw = runtime();
+      raw.label = 'Changed';
+      raw.definition.label = 'Changed';
+      h.set(raw);
+    }
     return dlo(name);
   };
-  const { result } = await deleteTransformCommand({}, h, (_command, source) => {
-    file = source;
-  });
+  const { result } = await deleteTransformCommand({}, h);
   assert.equal(result.status, 'blocked');
   assert.equal(result.result.items[0].mutation, 'not-attempted');
   assert.equal(h.calls.filter(([op]) => op === 'delete').length, 0);

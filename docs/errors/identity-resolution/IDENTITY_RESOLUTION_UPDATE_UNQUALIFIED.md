@@ -19,7 +19,7 @@ An update would leave those fields as they are in the org, so the ruleset would 
 ## How to fix
 
 - To keep the existing ruleset: set `configurationType` and `secondaryDmo` back to the values in the org (retrieve it to see them), then deploy.
-- To really change them: delete the ruleset with `sf data360 delete --confirm-delete`, wait until it is gone, then deploy the file as a new ruleset.
+- To really change them: delete the ruleset with `sf data360 delete -m identity-resolution:<Name>`, wait until it is gone, then deploy the file as a new ruleset.
 
 ## Example output
 

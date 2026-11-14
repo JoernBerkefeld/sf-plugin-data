@@ -27,7 +27,7 @@ Salesforce accepts some of these edits and silently ignores them, and rejects ot
 
 1. Retrieve the DMO from the target org into a scratch folder and compare the field named in the message.
 2. Copy the org's value for that property back into your file.
-3. To remove a custom field on purpose, add `--allow-field-removal` (preview first) or use `sf data360 delete -m dmo:<Name>__dlm --field <Field>__c --confirm-delete`.
+3. To remove a custom field on purpose, add `--allow-field-removal` (preview first) or use `sf data360 delete -m dmo:<Name>__dlm --field <Field>__c`.
 4. To change a data type, add a new field instead.
 
 ## Example output

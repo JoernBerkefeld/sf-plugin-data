@@ -10,6 +10,7 @@ import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import { writeNativeRelationshipDocument } from '../lib/artifacts/write-native-relationship.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { NativeRelationshipError } from '../lib/artifacts/native-relationship-document.js';
+import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 
 const spec = {
   sourceObjectName: 'A__dlm',
@@ -20,6 +21,8 @@ const spec = {
   relationshipOwner: 'DataCloud',
 };
 const name = 'A_BRef_map_B_Id_1';
+// A delete names the source DMO and the relationship.
+const selector = `relationship:A__dlm:${name}`;
 const relationship = {
   schemaVersion: 1,
   kind: 'relationship',
@@ -204,7 +207,7 @@ async function deleteFixture(options = {}) {
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: {
-      metadata: options.metadata ?? [`relationship:${name}`],
+      metadata: options.metadata ?? [selector],
       preview: options.preview ?? false,
     },
   });
@@ -241,17 +244,64 @@ async function inProject(fixture) {
   }
 }
 
-test('delete refuses a relationship without its local file and names the expected path', async () => {
+for (const value of [
+  `relationship:${name}`,
+  'relationship:A__dlm',
+  `relationship:A__dlm:${name}:extra`,
+  `relationship:A:${name}`,
+  'relationship:',
+])
+  test(`delete refuses the selector ${value} before any org call, naming the colon form`, async () => {
+    const fixture = await deleteFixture({ metadata: [value] });
+    const result = await inProject(fixture);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_SELECTION');
+    assert.match(result.diagnostics.errors[0].message, /relationship:<SourceDmo__dlm>:<Name>/u);
+    assert.deepEqual(fixture.client.calls, []);
+    assert.deepEqual(fixture.order, []);
+  });
+
+test('delete by name needs no local file: the source DMO comes from the selector', async () => {
   const fixture = await deleteFixture({ file: false });
   const result = await inProject(fixture);
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.diagnostics.errors[0].code, 'RELATIONSHIP_FILE_REQUIRED');
-  assert.ok(
-    result.diagnostics.errors[0].message.includes(
-      path.join(fixture.cwd, 'data360', 'relationship', `${name}.relationship-meta.json`),
-    ),
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(
+    [result.result.items[0].identity.apiName, result.result.items[0].outcome],
+    [name, 'deleted'],
   );
-  assert.deepEqual(fixture.client.calls, []);
+  assert.deepEqual(fixture.client.calls, [
+    'list:A__dlm:0',
+    'list:A__dlm:0',
+    `remove:${name}`,
+    'list:A__dlm:0',
+  ]);
+});
+
+test('delete finds the name ignoring case and deletes the exact org name', async () => {
+  const fixture = await deleteFixture({ metadata: [`relationship:A__dlm:${name.toUpperCase()}`] });
+  const result = await inProject(fixture);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.ok(fixture.client.calls.includes(`remove:${name}`));
+  assert.equal(result.result.items[0].identity.apiName, name);
+});
+
+test('delete refuses a name two relationships share ignoring case', async () => {
+  const fixture = await deleteFixture({
+    entries: [wire(), wire({ name: name.toUpperCase(), sourceFieldName: 'Other__c' })],
+  });
+  const result = await inProject(fixture);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'AMBIGUOUS_RELATIONSHIP_TARGET');
+  assert.ok(!fixture.client.calls.some((call) => call.startsWith('remove')));
+});
+
+test('delete refuses a relationship whose source is another DMO than the selector names', async () => {
+  const fixture = await deleteFixture({ metadata: [`relationship:B__dlm:${name}`] });
+  const result = await inProject(fixture);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'RELATIONSHIP_TARGET_BINDING_MISMATCH');
+  assert.match(result.diagnostics.errors[0].message, /relationship:A__dlm:A_BRef_map_B_Id_1/u);
+  assert.ok(!fixture.client.calls.some((call) => call.startsWith('remove')));
 });
 
 test('delete is unchanged when the relationship is absent and previews read-only', async () => {
@@ -266,15 +316,20 @@ test('delete is unchanged when the relationship is absent and previews read-only
   const preview = await deleteFixture({ preview: true });
   const planned = await inProject(preview);
   assert.equal(planned.result.items[0].outcome, 'delete');
-  assert.deepEqual(preview.client.calls, ['list:A__dlm:0']);
+  assert.deepEqual(preview.client.calls, ['list:A__dlm:0', 'list:A__dlm:0']);
 });
 
 test('delete sends one DELETE, confirms absence and runs before mappings', async () => {
-  const fixture = await deleteFixture({ metadata: ['mapping:Map_1', `relationship:${name}`] });
+  const fixture = await deleteFixture({ metadata: ['mapping:Map_1', selector] });
   const result = await inProject(fixture);
   assert.equal(result.status, 'success', JSON.stringify(result));
   assert.deepEqual(fixture.order, ['relationship', 'mapping']);
-  assert.deepEqual(fixture.client.calls, ['list:A__dlm:0', `remove:${name}`, 'list:A__dlm:0']);
+  assert.deepEqual(fixture.client.calls, [
+    'list:A__dlm:0',
+    'list:A__dlm:0',
+    `remove:${name}`,
+    'list:A__dlm:0',
+  ]);
   assert.deepEqual(
     [result.result.items[0].outcome, result.result.items[0].mutation],
     ['deleted', 'confirmed-deleted'],
@@ -282,7 +337,7 @@ test('delete sends one DELETE, confirms absence and runs before mappings', async
 });
 
 test('a 4xx answer to the DELETE is a rejected mutation and stops the batch', async () => {
-  const fixture = await deleteFixture({ metadata: [`relationship:${name}`, 'mapping:Map_1'] });
+  const fixture = await deleteFixture({ metadata: [selector, 'mapping:Map_1'] });
   fixture.client.remove = async () => {
     fixture.client.calls.push('remove');
     throw new NativeRelationshipError('RELATIONSHIP_HTTP_ERROR', 400);
@@ -296,3 +351,55 @@ test('a 4xx answer to the DELETE is a rejected mutation and stops the batch', as
   assert.equal(result.diagnostics.errors[0].code, 'RELATIONSHIP_HTTP_ERROR');
   assert.deepEqual(fixture.order, ['relationship']);
 });
+
+/**
+ * The relationship list of a DMO that does not exist, as the bound sender reports it.
+ * @param {number} status HTTP status.
+ * @param {string} errorCode Native error code.
+ * @returns {Error} Relationship transport error with its retained API detail.
+ */
+const listError = (status, errorCode) =>
+  retainConnectDiagnostic(
+    new NativeRelationshipError('RELATIONSHIP_HTTP_ERROR', status),
+    apiDiagnostic(status, {
+      errorCode,
+      message: 'No record exists for DMO with Developer name : A__dlm',
+    }),
+  );
+
+for (const preview of [false, true])
+  test(`delete${preview ? ' preview' : ''} is unchanged when the source DMO itself does not exist`, async () => {
+    const fixture = await deleteFixture({ preview });
+    fixture.client.list = async (dmoName, offset) => {
+      fixture.client.calls.push(`list:${dmoName}:${offset}`);
+      throw listError(404, 'ITEM_NOT_FOUND');
+    };
+    const result = await inProject(fixture);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(
+      [result.result.items[0].outcome, result.result.items[0].mutation],
+      ['unchanged', 'not-attempted'],
+    );
+    assert.deepEqual(fixture.client.calls, ['list:A__dlm:0']);
+  });
+
+for (const [status, errorCode] of [
+  [404, 'NOT_FOUND'],
+  [400, 'ITEM_NOT_FOUND'],
+  [500, 'ITEM_NOT_FOUND'],
+])
+  test(`delete preview still blocks on a relationship list HTTP ${status} ${errorCode}`, async () => {
+    const fixture = await deleteFixture({ preview: true });
+    fixture.client.list = async () => {
+      throw listError(status, errorCode);
+    };
+    const result = await inProject(fixture);
+    assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'RELATIONSHIP_HTTP_ERROR');
+    assert.match(result.diagnostics.errors[0].message, /Preview stopped; nothing was deleted\./u);
+    assert.deepEqual(
+      [result.result.items[0].outcome, result.result.items[0].mutation],
+      ['blocked', 'not-attempted'],
+    );
+    assert.ok(!fixture.client.calls.some((call) => call.startsWith('remove')));
+  });

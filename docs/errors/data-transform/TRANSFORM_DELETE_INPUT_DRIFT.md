@@ -1,6 +1,6 @@
 # `TRANSFORM_DELETE_INPUT_DRIFT`
 
-> The delete inputs or the local transform file changed while the command was running. Nothing was deleted; stop other edits to the file and rerun.
+> The delete inputs or the transform definition changed while the command was running. Nothing was deleted; wait until nobody is editing the transform, then rerun.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin captures the flags, the target ID and the contents of the `.dataTransform.json` file at the start and checks them again between every step. One of them changed before the DELETE was sent.
+The plugin captures the flags, the resolved target ID and the transform definition it read from the org (with `--changed-since`: the base content of the deleted file) at the start and checks them again between every step. One of them changed before the DELETE was sent.
 
 ## Why the plugin stops
 
@@ -18,8 +18,8 @@ All org checks were made against the inputs as they were at the start. If they c
 
 ## How to fix
 
-1. Close editors, formatters or sync tools that may write to the transform file.
-2. Rerun the same `sf data360 delete` command.
+1. Wait until nobody is editing the transform or running other commands against it.
+2. Rerun the same `sf data360 delete` command, starting with `--preview`.
 
 ## Example output
 
@@ -27,11 +27,11 @@ All org checks were made against the inputs as they were at the start. If they c
 Delete: blocked.
 Blocked: data-transform:Orders_Copy; mutation: not-attempted.
 TRANSFORM_DELETE_INPUT_DRIFT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.
-Hint: The delete inputs or the local transform file changed while the command was running. Nothing was deleted; stop other edits to the file and rerun.
+Hint: The delete inputs or the transform definition changed while the command was running. Nothing was deleted; wait until nobody is editing the transform, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/TRANSFORM_DELETE_INPUT_DRIFT.md
 ```
 
 ## Related codes
 
-- [`TRANSFORM_TARGET_DRIFT`](../data-transform/TRANSFORM_TARGET_DRIFT.md) — the transform in the org differs from the file or changed during the run.
+- [`TRANSFORM_TARGET_DRIFT`](../data-transform/TRANSFORM_TARGET_DRIFT.md) — the transform in the org changed during the run.
 - [`TRANSFORM_PREREQUISITE_DRIFT`](../data-transform/TRANSFORM_PREREQUISITE_DRIFT.md) — the source or output DLO changed during the run.

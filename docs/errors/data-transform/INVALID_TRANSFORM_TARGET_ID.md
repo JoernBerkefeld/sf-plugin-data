@@ -10,7 +10,7 @@
 
 ## What it means
 
-An update or delete was about to be sent for a transform ID that is not `1dt` followed by 15 letters or digits. The command checks the `--transform-target-id` flag earlier, so this code is normally a second line of defence.
+An update or delete was about to be sent for a transform ID that is not `1dt` followed by 15 letters or digits. A deploy checks the `--transform-target-id` flag earlier and a delete takes the ID from the transform list, so this code is normally a second line of defence.
 
 ## Why the plugin stops
 
@@ -36,4 +36,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 ## Related codes
 
 - [`INVALID_TRANSFORM_DEPLOY_SELECTION`](../data-transform/INVALID_TRANSFORM_DEPLOY_SELECTION.md) — the deploy flags are missing or contradictory.
-- [`INVALID_TRANSFORM_DELETE_SELECTION`](../data-transform/INVALID_TRANSFORM_DELETE_SELECTION.md) — the delete flags are missing or contradictory.
+- [`INVALID_TRANSFORM_DELETE_SELECTION`](../data-transform/INVALID_TRANSFORM_DELETE_SELECTION.md) — the delete selector does not name one transform exactly.

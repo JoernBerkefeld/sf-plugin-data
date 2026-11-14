@@ -10,10 +10,6 @@ import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-do
 import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
 import { deleteCalculatedInsight } from '../lib/services/delete-calculated-insight.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
-import {
-  readDeployInputs,
-  verifyCalculatedInsightInputDigest,
-} from '../lib/artifacts/read-deploy-input.js';
 
 // eslint-disable-next-line unicorn/no-null -- Neutral wire profile retains explicit null settings.
 const nil = null;
@@ -84,10 +80,13 @@ const runtime = (status = 'DRAFT') => ({
 });
 const run = async (command) => {
   const previous = process.exitCode;
+  const cwd = process.cwd();
   process.exitCode = undefined;
+  if (command.projectRoot) process.chdir(command.projectRoot);
   try {
     return { result: await command.run(), exit: process.exitCode };
   } finally {
+    process.chdir(cwd);
     process.exitCode = previous;
   }
 };
@@ -99,23 +98,21 @@ const harness = async (overrides = {}) => {
   const pair = await writeCalculatedInsightDocument(desired, xml, root, false);
   const flags = {
     metadata: ['calculated-insight:SyntheticDelete__cio'],
-    'source-dir': pair.path,
     'api-version': '68.0',
     preview: false,
-    'confirm-delete': true,
     ...overrides,
   };
   const command = Object.create(Delete.prototype);
+  command.projectRoot = root;
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
-  command.resolveInputs = readDeployInputs;
-  command.verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
   const calls = { auth: 0, writes: 0, reads: 0 };
   let absent = false;
   let status = 'DRAFT';
   const connection = {
     instanceUrl: 'https://synthetic.my.salesforce.com',
     getApiVersion: () => '68.0',
+    getUsername: () => 'target',
   };
   command.resolveConnection = async () => {
     calls.auth++;
@@ -186,7 +183,7 @@ for (const active of [false, true])
     assert.equal(result.status, 'success');
     assert.equal(exit, undefined);
     assert.equal(h.calls.writes, 1);
-    assert.equal(h.calls.reads, 3);
+    assert.equal(h.calls.reads, 4);
     const [item] = result.result.items;
     assert.equal(item.outcome, 'deleted');
     assert.equal(item.mutation, 'confirmed-deleted');
@@ -206,35 +203,44 @@ for (const active of [false, true])
       ],
     );
     assert.doesNotMatch(JSON.stringify(result), /SELECT|private-local-id|lastRunDateTime/u);
-    // Both members of the CI pair are its own source files and are removed after the deletion.
-    assert.equal(item.removedLocalFiles.length, 2);
+    // Both members of the CI pair, at their canonical paths, are removed after the deletion.
+    assert.deepEqual(
+      item.removedLocalFiles.map((file) => file.path),
+      [h.pair.path, h.pair.companionPath],
+    );
     assert.ok(item.removedLocalFiles.every((file) => file.outcome === 'removed'));
     for (const file of item.removedLocalFiles)
       await assert.rejects(lstat(file.path), { code: 'ENOENT' });
     await h.restore();
-    h.flags['confirm-delete'] = false;
     const repeat = await run(h.command);
     assert.equal(repeat.result.result.items[0].outcome, 'unchanged');
     assert.equal(h.calls.writes, 1);
   });
 for (const absent of [false, true])
-  test(`CI read-only ${absent ? 'dual absent noop' : 'preview'} requires no confirmation`, async () => {
-    const h = await harness({ preview: !absent, 'confirm-delete': false });
+  test(`CI read-only ${absent ? 'dual absent noop' : 'preview'} is read-only`, async () => {
+    const h = await harness({ preview: !absent });
     if (absent) h.absent();
     const { result } = await run(h.command);
     assert.equal(result.status, 'success');
     assert.equal(h.calls.writes, 0);
     assert.equal(result.result.items[0].outcome, absent ? 'unchanged' : 'delete');
   });
-for (const confirmation of [false, undefined, 'true'])
-  test(`CI mutation requires explicit boolean confirmation ${confirmation}`, async () => {
-    const h = await harness({ 'confirm-delete': confirmation });
-    const { result, exit } = await run(h.command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exit, 1);
-    assert.equal(h.calls.writes, 0);
-    assert.equal(result.diagnostics.errors[0].code, 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
-  });
+test('CI delete by name needs no --confirm-delete and reads the definition from the org', async () => {
+  const h = await harness();
+  assert.equal(h.flags['confirm-delete'], undefined);
+  // The local pair is not an input: a changed file does not stop the delete.
+  await writeFile(h.pair.companionPath, 'not the org definition');
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(h.calls.writes, 1);
+});
+test('CI delete of a name the org reads as another CI is blocked without a write', async () => {
+  const h = await harness({ metadata: ['calculated-insight:Foreign__cio'] });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(h.calls.writes, 0);
+  assert.equal(result.diagnostics.errors[0].code, 'CI_IDENTITY_CHANGED');
+});
 for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
   test(`CI delete rejects pin ${pin} before auth`, async () => {
     const h = await harness({ 'api-version': pin });
@@ -244,11 +250,6 @@ for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
   });
 for (const overrides of [
   { dataspace: 'other' },
-  { 'source-dir': undefined },
-  { 'source-dir': 'folder' },
-  { 'source-dir': '*.calculatedInsight.json' },
-  { 'source-dir': 'other.dmo.json' },
-  { metadata: ['calculated-insight:Foreign__cio'] },
   { metadata: ['calculated-insight:*'] },
   { 'delete-dlo': true },
   { metadata: ['dlo:Other__dll'] },
@@ -261,31 +262,12 @@ for (const overrides of [
     assert.equal(result.status, 'blocked');
     assert.equal(h.calls.auth, 0);
   });
-test('CI deletion accepts JSON companion', async () => {
-  const h = await harness();
-  h.flags['source-dir'] = h.pair.companionPath;
-  const { result } = await run(h.command);
-  assert.equal(result.status, 'success');
-  assert.equal(h.calls.writes, 1);
-});
-for (const member of ['path', 'companionPath'])
-  test(`CI pair byte drift ${member} blocks deletion`, async () => {
-    const h = await harness();
-    const bind = h.context.bind;
-    h.context.bind = async () => {
-      await writeFile(h.pair[member], 'private changed input');
-      return bind();
-    };
-    const { result } = await run(h.command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(h.calls.writes, 0);
-  });
 for (const drift of ['flags', 'receiver', 'target', 'unknown'])
   test(`CI deletion ${drift} fails closed`, async () => {
     const h = await harness();
     if (drift === 'flags')
       h.command.resolveConnection = async () => {
-        h.flags['confirm-delete'] = false;
+        h.flags['keep-local-files'] = true;
         return h.connection;
       };
     if (drift === 'receiver') h.connection.getApiVersion = () => '65.0';
@@ -310,9 +292,8 @@ for (const drift of ['flags', 'receiver', 'target', 'unknown'])
   });
 test('CI delete help discloses paired destructive boundary without changing aliases', () => {
   assert.deepEqual(Delete.aliases, ['datacloud:delete', 'd360:delete', 'dc:delete']);
-  assert.match(Delete.description, /--confirm-delete/u);
   assert.match(Delete.description, /reads remain API65/u);
-  assert.match(Delete.description, /already dual-absent targets are read-only/u);
+  assert.match(Delete.description, /never-run DRAFT or ACTIVE configuration is deletable/u);
 });
 
 for (const pin of [undefined, 'auto'])

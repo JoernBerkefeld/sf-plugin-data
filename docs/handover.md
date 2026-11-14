@@ -1,3 +1,87 @@
+# Chunk E: delete by name, no --confirm-delete — 2026-11-14
+
+Chunk E of the CRUD pipeline plan (user decision 2026-11-14, plus the relationship selector
+decision of the same day). Version stays 0.1.0; nothing committed, no org touched.
+
+- `sf data360 delete` selects by name with `-m` only. `-d`/`--source-dir` and
+  `--transform-target-id` are removed from the command. `--confirm-delete` has
+  `dependsOn: ['changed-since']` (oclif refuses it beside `-m`) and is required only for a
+  `--changed-since` real run (preview without it). `-m` real runs pass `confirmDelete: true` /
+  `confirmed: true` to the family executors; their signatures and guards are unchanged.
+  The multi-phase confirmation rule is gone; `DESTRUCTIVE_CONFIRMATION_REQUIRED` stays for
+  Git (and inside the Segment/IR/CI executors).
+- Org reads replace the files (`readDeleteSource`, a protected seam over module function
+  `readOrgSource` in `delete.ts`), during admission before any delete, preview too:
+  transform via `resolveDataTransformTargetId` (complete inventory, name ignoring case;
+  now returns `undefined` for 0 matches, 2+ → `TRANSFORM_TARGET_NOT_RESOLVED`) then
+  `retrieveDataTransform(id)`; Segment and IR by exact GET + `projectSegment` /
+  `projectNativeIdentityResolution` (only 404 `ITEM_NOT_FOUND` is absence); CI by
+  `acquireExactCalculatedInsight` (DRAFT/ACTIVE deletable; `unknown` throws its
+  `CalculatedInsightError` code); graph by the context item GET +
+  `nativeDataGraphDocumentFromResponse`; absence is `proveNativeDataGraphAbsent` (new
+  export in `native-data-graph-crd.ts`, extracted from `acquireNativeDataGraph`, which now
+  calls it): item 400 "Data Graph not found with name X" + metadata 404
+  `METADATA_ERROR_ENTITY_NOTFOUND` + complete inventory without the name + empty SOQL.
+  `pending` (e.g. metadata 200) or `unknown` throws a retained diagnostic before any delete. Absent → item `unchanged` / `not-attempted`, no executor call
+  (`reportAbsent`). Git mode still uses the base content as the definition; a Git
+  transform with 0 matches is now `unchanged` / `not-attempted` (also on rerun), 2+ refused.
+- Relationship: selector `relationship:<SourceDmo__dlm>:<Name>` (split on the first colon
+  for the family, then DMO/name; other part counts → `INVALID_SELECTION` with a message
+  naming the form). New `findNativeRelationshipByName` in `native-relationship.ts` lists the
+  source DMO (existing `listNativeRelationships`), matches the name ignoring case: 0 →
+  `unchanged` (also the list's exact HTTP 404 with one `ITEM_NOT_FOUND` error: the source
+  DMO does not exist; live finding, so reruns after the DMO delete finish), 2+ → `AMBIGUOUS_RELATIONSHIP_TARGET`, source object ≠ selector DMO →
+  `RELATIONSHIP_TARGET_BINDING_MISMATCH`; the found entry becomes the document for the
+  existing preflight/delete (guards incl. `RELATIONSHIP_NAME_MISMATCH` unchanged). No local
+  file read. Git mode keeps `relationship:<Name>` from the base content. Retrieve/deploy
+  selectors are untouched (delete has its own parser). Messages naming a delete command
+  use the colon form.
+- Local files: canonical paths by name, no folder search: transforms
+  `data360/dataTransforms/<Name>.dataTransform.json` under the cwd; Segment, IR, graph and
+  both CI members under `segmentSourceRoot(cwd)` (default package dir of
+  `sfdx-project.json`, `force-app/main/default` without one; unresolvable → warning, no
+  removal). Mapping keeps its existing binding lookup. `--keep-local-files` unchanged.
+- `pushError` maps `SegmentError`, `IdentityResolutionError`, `CalculatedInsightError` codes.
+- Codes removed (registry, page, index): `TRANSFORM_DELETE_CONFIRMATION_REQUIRED`,
+  `DMO_FIELD_DELETE_CONFIRMATION_REQUIRED`, `RELATIONSHIP_FILE_REQUIRED`. Hints/pages
+  updated: `DESTRUCTIVE_CONFIRMATION_REQUIRED`, `INVALID_FIELD_DELETE_SELECTION`,
+  `INVALID_TRANSFORM_DELETE_SELECTION`, `TRANSFORM_DELETE_IDENTITY_MISMATCH`,
+  `TRANSFORM_DELETE_INPUT_DRIFT`, `TRANSFORM_TARGET_NOT_RESOLVED`,
+  `SEGMENT_DELETE_ADMISSION_FAILED`, `IDENTITY_RESOLUTION_DELETE_ADMISSION_FAILED`,
+  `RELATIONSHIP_FILE_IDENTITY_MISMATCH`, `RELATIONSHIP_TARGET_BINDING_MISMATCH`,
+  `RELATIONSHIP_CHANGE_UNSUPPORTED`; page text of further delete-related pages.
+- Tests: CI/IR/transform/segment/graph command tests read from mocked org seams instead of
+  files; new: `-m` alone deletes each family (pipeline + per-family), absent source
+  families `unchanged` without executor call, transform 0 matches `unchanged` and 2+
+  refused (`-m` and Git), relationship colon selector (deletes by name, case-insensitive,
+  0 unchanged, 2+ refused, wrong source DMO refused, five malformed forms refused), parser
+  refuses `-d`/`--source-dir`/`--transform-target-id` and `-m … --confirm-delete`,
+  `--changed-since` still needs `--confirm-delete`. Removed as obsolete (file-input
+  behaviour): CI pair byte drift ×2, CI JSON-companion selection, IR file byte drift ×3,
+  transform file byte drift (replaced by org-definition drift), the multi-phase
+  confirmation test, CI/IR/field "confirmation required" tests, source-dir/folder
+  refusals. Full suite 2847 (2845 pass, 2 skipped, 0 fail); lint 0 warnings; build green.
+- Docs: README (delete overview, Git delete, local files table, graph/CI/IR/Segment/
+  transform/relationship/field examples), `docs/capabilities.md`, `docs/git-workflow.md`,
+  `docs/artifact-format.md`, error pages; command help, flag summaries and deploy help
+  (Segment delete sentence).
+
+Handover:
+
+- Not live-verified: the zero-write `sf data360 delete --preview` by name on existing probe
+  fixtures (plan item) is still open; no org was touched in this chunk.
+- sfmc.guide pages still show the removed forms (report only, not edited): see the
+  coordinator report.
+- Nice-to-have not done: mapping local-file removal still searches the mapping folder by
+  binding (existing behaviour, not changed).
+- Follow-up fixes (same day): graph by-name absence now uses the four-read proof (above);
+  a missing source DMO makes a relationship delete `unchanged`; the generic stop message
+  of a `--preview` says "Preview stopped; nothing was deleted." instead of "Deletion
+  stopped". Tests: `proveNativeDataGraphAbsent` absent/pending/unknown, graph delete and
+  preview by name blocked on item 400 + metadata 200 (no executor, no later DMO phase),
+  graph item 400 with another body blocked; relationship delete and preview `unchanged`
+  on list 404 `ITEM_NOT_FOUND`, still blocked on 404 `NOT_FOUND`, 400 and 500.
+
 # Chunk D2: Git delete with `--changed-since` — 2026-11-13
 
 Chunk D2 of the CRUD pipeline plan (Q3, M1, M2). Builds on the uncommitted D1 work.
@@ -68,8 +152,10 @@ Version stays 0.1.0; nothing committed, no org touched.
   one `sf data360 delete` of `CliGraphCP_6419`, `CliGraphCP_bc80` and `Individual_6419`
   (read-back files). Preview exit 0: graphs delete, IR `planned-dependencies`. Delete exit 0
   (21:21:51Z–21:24:06Z): both graphs deleted / confirmed-deleted, then the IR
-  deletion-processing / acknowledged-processing. Afterwards GET of both graphs, the IR and
-  `UnifiedssotIndividual6419__dlm` return NOT_FOUND; the IR list no longer has it.
+  deletion-processing / acknowledged-processing. Afterwards the plugin's graph read answers
+  "Data Graph not found" for both graphs; with `?dataspace=default` the IR and
+  `UnifiedssotIndividual6419__dlm` read `ITEM_NOT_FOUND` and the IR list no longer has the
+  IR (native ssot GETs without `?dataspace` answer NOT_FOUND for anything and prove nothing).
   Verification DB: `data360:crud-pipeline.mixed-delete-graph-ir.api68` (verified). All chunk C
   fixtures are gone.
 

@@ -332,7 +332,7 @@ test('a hand-written mapping file is found by the binding of the deleted mapping
   assert.equal(await exists(unrelated), true);
 });
 
-test('a confirmed relationship deletion removes the relationship file it read', async () => {
+test('a confirmed relationship deletion removes its canonical local file', async () => {
   const root = await scratch();
   const spec = {
     sourceObjectName: 'A__dlm',
@@ -366,7 +366,7 @@ test('a confirmed relationship deletion removes the relationship file it read', 
     },
   ];
   const { command: run } = command(
-    { metadata: [`relationship:${name}`] },
+    { metadata: [`relationship:A__dlm:${name}`] },
     {
       createRelationshipSender: () => ({}),
       createRelationshipClient: () => ({

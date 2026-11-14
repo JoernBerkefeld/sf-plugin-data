@@ -7,19 +7,19 @@ import os from 'node:os';
 import path from 'node:path';
 import Delete from '../lib/commands/data360/delete.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
-import {
-  readDeployInputs,
-  verifyIdentityResolutionInputDigest,
-} from '../lib/artifacts/read-deploy-input.js';
 import { deleteIdentityResolution } from '../lib/services/delete-identity-resolution.js';
 import { nativeIrFixture } from './identity-resolution-fixtures.mjs';
 
+// Runs inside the project: the local file is found at its canonical path under the cwd.
 const run = async (command) => {
   const previous = process.exitCode;
+  const cwd = process.cwd();
   process.exitCode = undefined;
+  if (command.projectRoot) process.chdir(command.projectRoot);
   try {
     return { result: await command.run(), exit: process.exitCode };
   } finally {
+    process.chdir(cwd);
     process.exitCode = previous;
   }
 };
@@ -29,22 +29,26 @@ const harness = async (overrides = {}, shape = () => {}) => {
   const raw = { ...nativeIrFixture(), id: '1ir000000000001AAA' };
   shape(raw);
   const desired = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
-  const directory = path.join(root, 'main', 'default', 'data360', 'identityResolution');
+  const directory = path.join(
+    root,
+    'force-app',
+    'main',
+    'default',
+    'data360',
+    'identityResolution',
+  );
   await mkdir(directory, { recursive: true });
   const file = path.join(directory, `${desired.identity.apiName}.identityResolution.json`);
   await writeFile(file, `${JSON.stringify(desired)}\n`);
   const flags = {
     metadata: [`identity-resolution:${desired.identity.apiName}`],
-    'source-dir': file,
     preview: false,
-    'confirm-delete': true,
     ...overrides,
   };
   const command = Object.create(Delete.prototype);
+  command.projectRoot = root;
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
-  command.resolveInputs = readDeployInputs;
-  command.verifyIdentityResolutionInput = verifyIdentityResolutionInputDigest;
   const calls = { auth: 0, writes: 0, reads: 0 };
   const h = { command, flags, calls, raw, file, absent: false, logs: [] };
   command.log = (line) => h.logs.push(line);
@@ -62,7 +66,7 @@ const harness = async (overrides = {}, shape = () => {}) => {
       }
       assert.equal(request.method, 'GET');
       calls.reads++;
-      if (calls.reads === 4 && request.url.endsWith(`/${raw.id}`) && h.onFinalIdRead)
+      if (calls.reads === 5 && request.url.endsWith(`/${raw.id}`) && h.onFinalIdRead)
         await h.onFinalIdRead();
       if (h.absent)
         throw {
@@ -106,7 +110,6 @@ const harness = async (overrides = {}, shape = () => {}) => {
 };
 for (const version of [undefined, 'auto', '68.0'])
   test(`public IR delete resolves ${version} to native68 and repeat is unchanged`, async () => {
-    // --keep-local-files leaves the source file, so the repeat reads it again.
     const h = await harness({ 'api-version': version, 'keep-local-files': true });
     const { result, exit } = await run(h.command);
     assert.deepEqual(
@@ -118,7 +121,6 @@ for (const version of [undefined, 'auto', '68.0'])
     assert.equal(result.metadata.apiVersion, '68.0');
     assert.equal(result.result.items[0].mutation, 'confirmed-deleted');
     assert.equal(h.calls.writes, 1);
-    h.flags['confirm-delete'] = false;
     const repeat = await run(h.command);
     assert.equal(repeat.result.result.items[0].outcome, 'unchanged');
     assert.equal(h.calls.writes, 1);
@@ -135,18 +137,31 @@ test('public IR delete of an automatic ruleset with a longer name reaches the on
   assert.equal(result.result.items[0].mutation, 'confirmed-deleted');
   assert.equal(h.calls.writes, 1);
 });
-for (const mode of ['preview', 'absent', 'unconfirmed'])
-  test(`public IR ${mode} confirmation behavior`, async () => {
-    const h = await harness({ preview: mode === 'preview', 'confirm-delete': false });
+for (const mode of ['preview', 'absent'])
+  test(`public IR ${mode} is read-only`, async () => {
+    const h = await harness({ preview: mode === 'preview' });
     h.absent = mode === 'absent';
     const { result, exit } = await run(h.command);
-    assert.equal(result.status, mode === 'unconfirmed' ? 'blocked' : 'success');
-    assert.equal(exit, mode === 'unconfirmed' ? 1 : undefined);
+    assert.equal(result.status, 'success');
+    assert.equal(exit, undefined);
     assert.equal(h.calls.writes, 0);
-    assert.equal(
-      result.result.items[0].outcome,
-      mode === 'preview' ? 'delete' : mode === 'absent' ? 'unchanged' : 'blocked',
-    );
+    assert.equal(result.result.items[0].outcome, mode === 'preview' ? 'delete' : 'unchanged');
+    assert.equal(result.result.items[0].mutation, 'not-attempted');
+  });
+test('public IR delete by name needs no --confirm-delete and ignores the local file', async () => {
+  const h = await harness();
+  assert.equal(h.flags['confirm-delete'], undefined);
+  await writeFile(h.file, 'not the org definition');
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(h.calls.writes, 1);
+});
+for (const name of ['Individual_ABCDE', 'Individual_B'])
+  test(`public IR ${name} that the org reads as another ruleset is blocked without a write`, async () => {
+    const h = await harness({ metadata: [`identity-resolution:${name}`] });
+    const { result } = await run(h.command);
+    assert.equal(result.status, 'blocked');
+    assert.equal(h.calls.writes, 0);
   });
 for (const pin of ['65.0', '67.0', '69.0', 'latest'])
   test(`public IR rejects ${pin} before auth`, async () => {
@@ -157,12 +172,8 @@ for (const pin of ['65.0', '67.0', '69.0', 'latest'])
   });
 for (const overrides of [
   { dataspace: 'other' },
-  { 'source-dir': undefined },
-  { 'source-dir': 'folder' },
   { metadata: ['identity-resolution'] },
   { metadata: ['identity-resolution:*'] },
-  { metadata: ['identity-resolution:Individual_ABCDE'] },
-  { metadata: ['identity-resolution:Individual_B'] },
   { metadata: ['identity-resolution:Individual_A1b2', 'identity-resolution:Individual_A1b2'] },
   { 'delete-dlo': true },
 ])
@@ -173,35 +184,29 @@ for (const overrides of [
     assert.equal(h.calls.auth, 0);
     assert.equal(h.calls.writes, 0);
   });
-for (const drift of ['bytes', 'confirmation', 'both'])
+for (const drift of ['flags'])
   test(`public IR final ID read ${drift} drift blocks before DELETE`, async () => {
     const h = await harness();
     let finalIdReads = 0;
     h.onFinalIdRead = async () => {
       finalIdReads++;
-      if (drift !== 'confirmation') await writeFile(h.file, 'changed');
-      if (drift !== 'bytes') h.flags['confirm-delete'] = false;
+      h.flags['keep-local-files'] = true;
     };
     const { result, exit } = await run(h.command);
     assert.equal(finalIdReads, 1);
-    assert.equal(h.calls.reads, 4);
+    assert.equal(h.calls.reads, 5);
     assert.equal(result.status, 'blocked');
     assert.equal(exit, 1);
     assert.equal(result.result.items[0].outcome, 'blocked');
     assert.equal(result.result.items[0].mutation, 'not-attempted');
     assert.equal(h.calls.writes, 0);
   });
-for (const drift of ['bytes', 'flags', 'source', 'target'])
+for (const drift of ['flags', 'target'])
   test(`public IR ${drift} drift is zero-write`, async () => {
     const h = await harness();
-    if (drift === 'bytes') h.bind = () => writeFile(h.file, 'changed');
     if (drift === 'flags')
       h.onAuth = () => {
-        h.flags['confirm-delete'] = false;
-      };
-    if (drift === 'source')
-      h.bind = () => {
-        h.flags['source-dir'] = 'other.identityResolution.json';
+        h.flags['keep-local-files'] = true;
       };
     if (drift === 'target')
       h.bind = () => {

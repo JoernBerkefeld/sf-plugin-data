@@ -67,11 +67,18 @@ const transform = () => ({
     },
   },
 });
-const sourceFiles = [
-  'Graph.native-dataGraph.json',
-  'Individual_A1b2.identityResolution.json',
-  'Copy.dataTransform.json',
-];
+/**
+ * Selector of a synthetic source-family definition.
+ * @param {object} input Definition with its path.
+ * @param {object} input.document The definition.
+ * @returns {string} Selector.
+ */
+const selectorOf = ({ document }) =>
+  document.kind === 'native-data-graph'
+    ? `data-graph:${document.definition.name}`
+    : document.kind === 'data-transform'
+      ? `data-transform:${document.definition.name}`
+      : `${document.kind}:${document.identity.apiName}`;
 const everything = [
   'data-graph:Graph',
   'identity-resolution:Individual_A1b2',
@@ -102,12 +109,12 @@ const run = async (command) => {
 
 /**
  * Delete command with every family executor mocked; calls are recorded in order.
- * @param {object[]} inputs --source-dir inputs.
+ * @param {object[]} inputs Definitions the org holds for the source-family selectors.
  * @param {object} [flags] Flag overrides.
  * @returns {object} Command, call ledger and knobs.
  */
 const harness = (inputs, flags = {}) => {
-  const h = { calls: [], outcome: {}, linked: {}, lastMapping: false };
+  const h = { calls: [], reads: [], outcome: {}, linked: {}, lastMapping: false };
   const done = (preview, key, fallback = 'deleted') =>
     preview
       ? { outcome: 'delete', mutation: 'not-attempted' }
@@ -120,23 +127,35 @@ const harness = (inputs, flags = {}) => {
   command.parse = async () => ({
     flags: {
       preview: false,
-      'confirm-delete': true,
       'keep-local-files': true,
       metadata: everything,
-      'source-dir': sourceFiles,
-      'transform-target-id': '1dt000000000001AAA',
       ...flags,
     },
   });
   command.jsonEnabled = () => true;
-  command.resolveInputs = async () => inputs;
+  // Source-family definitions come from the org by name; a name the org lacks is absent.
+  const org = new Map(inputs.map((input) => [selectorOf(input), input.document]));
+  command.readDeleteSource = async (family, name) => {
+    const selector = `${family}:${name}`;
+    h.reads.push(selector);
+    assert.equal(
+      h.calls.some((call) => !call.startsWith('stream-link') && call !== 'auth'),
+      false,
+      'definitions are read before any delete',
+    );
+    return org.has(selector)
+      ? {
+          desired: org.get(selector),
+          ...(family === 'data-transform' ? { transformTargetId: '1dt000000000001AAA' } : {}),
+        }
+      : { absent: true };
+  };
   command.resolveConnection = async () => {
     h.calls.push('auth');
     return { getUsername: () => 'target' };
   };
   command.resolveTarget = async () => 'target';
   // P4 graphs.
-  command.verifyNativeDataGraphInput = async () => {};
   command.nativeGraphContext = async () => ({});
   command.nativeGraphClient = () => ({});
   command.operateNativeGraph = async (document, _context, _client, options) => {
@@ -144,13 +163,11 @@ const harness = (inputs, flags = {}) => {
     return done(options.preview, 'graph');
   };
   // P3 identity resolution.
-  command.verifyIdentityResolutionInput = async () => {};
   command.deleteIdentityResolution = async (desired, _connection, _version, _space, options) => {
     h.calls.push(`ir:${desired.identity.apiName}`);
     return { ...done(options.preview, 'ir'), diagnostics: [] };
   };
   // P2 transform.
-  command.verifyDataTransformInput = async () => {};
   command.createDataTransformClient = () => ({ delete: async () => {} });
   command.createDataTransformDloReader = () => ({});
   command.deleteDataTransform = async (_desired, _client, _reader, options) => {
@@ -299,8 +316,6 @@ test('a graph on the unified DMO of a selected IR is deleted before that IR', as
   // The graph is listed after the IR; the IR starts only after the graph returned.
   const h = harness([ir(), graph()], {
     metadata: ['identity-resolution:Individual_A1b2', 'data-graph:Graph'],
-    'source-dir': sourceFiles.slice(0, 2),
-    'transform-target-id': undefined,
   });
   let graphSettled = false;
   const operate = h.command.operateNativeGraph;
@@ -327,8 +342,6 @@ test('a graph on the unified DMO of a selected IR is deleted before that IR', as
 test('a still-processing deletion stops the later phases', async () => {
   const h = harness([ir()], {
     metadata: ['identity-resolution:Individual_A1b2', 'dmo:Person__dlm'],
-    'source-dir': [sourceFiles[1]],
-    'transform-target-id': undefined,
   });
   h.outcome.ir = { outcome: 'deletion-processing', mutation: 'acknowledged-processing' };
   const result = await run(h.command);
@@ -343,10 +356,7 @@ test('a still-processing deletion stops the later phases', async () => {
 test('preview reports items whose selected dependents an earlier phase deletes as planned', async () => {
   const h = harness([graph(), ir()], {
     preview: true,
-    'confirm-delete': false,
     metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2', `dmo:${unified}`],
-    'source-dir': sourceFiles.slice(0, 2),
-    'transform-target-id': undefined,
   });
   const result = await run(h.command);
   assert.equal(result.status, 'success');
@@ -370,8 +380,6 @@ test('a blocked graph preview leaves the IR to its own preview check', async () 
   const h = harness([graph(), ir()], {
     preview: true,
     metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2'],
-    'source-dir': sourceFiles.slice(0, 2),
-    'transform-target-id': undefined,
   });
   const operate = h.command.operateNativeGraph;
   h.command.operateNativeGraph = async (...arguments_) => ({
@@ -392,8 +400,6 @@ for (const preview of [false, true])
     const h = harness([], {
       preview,
       metadata: ['dlo:Feed__dll', 'data-stream:Feed', 'dlo:Other__dll'],
-      'source-dir': undefined,
-      'transform-target-id': undefined,
     });
     h.linked.Feed = 'Feed__dll';
     const result = await run(h.command);
@@ -413,8 +419,6 @@ for (const preview of [false, true])
 test('a stream whose landing DLO is not selected keeps it', async () => {
   const h = harness([], {
     metadata: ['dlo:Other__dll', 'data-stream:Feed'],
-    'source-dir': undefined,
-    'transform-target-id': undefined,
   });
   h.linked.Feed = 'Feed__dll';
   const result = await run(h.command);
@@ -427,8 +431,6 @@ for (const preview of [false, true])
     const h = harness([], {
       preview,
       metadata: ['mapping:Feed_map', 'dmo:Person__dlm'],
-      'source-dir': undefined,
-      'transform-target-id': undefined,
     });
     h.lastMapping = true;
     const result = await run(h.command);
@@ -446,8 +448,6 @@ for (const preview of [false, true])
 test('the last mapping of a DMO that is not selected stays refused', async () => {
   const h = harness([], {
     metadata: ['mapping:Feed_map'],
-    'source-dir': undefined,
-    'transform-target-id': undefined,
   });
   h.lastMapping = true;
   const result = await run(h.command);
@@ -456,31 +456,72 @@ test('the last mapping of a DMO that is not selected stays refused', async () =>
   assert.equal(result.diagnostics.errors[0].code, 'MAPPING_LAST_MAPPING_DELETE_BLOCKED');
 });
 
-test('a delete spanning more than one phase needs --confirm-delete before any org call', async () => {
-  const h = harness([], {
-    'confirm-delete': false,
-    metadata: ['dmo:Person__dlm', 'data-stream:Feed'],
-    'source-dir': undefined,
-    'transform-target-id': undefined,
-  });
+test('-m alone deletes across phases without --confirm-delete', async () => {
+  const h = harness(all());
   const result = await run(h.command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.diagnostics.errors[0].code, 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
-  assert.deepEqual(h.calls, []);
-  assert.deepEqual(result.result.items, []);
+  assert.equal(result.status, 'success');
+  // Each source family read once, by name, before the first delete.
+  assert.deepEqual(h.reads, [
+    'data-graph:Graph',
+    'identity-resolution:Individual_A1b2',
+    'data-transform:Copy',
+  ]);
+  assert.equal(result.diagnostics.errors.length, 0);
 });
 
+for (const [family, selector] of [
+  ['data-graph', 'data-graph:Graph'],
+  ['identity-resolution', 'identity-resolution:Individual_A1b2'],
+  ['data-transform', 'data-transform:Copy'],
+  ['segment', 'segment:Audience'],
+  ['calculated-insight', 'calculated-insight:Score__cio'],
+])
+  test(`-m ${family} the org does not have is unchanged without an executor call`, async () => {
+    const h = harness([], { metadata: [selector] });
+    h.command.deleteSegment = async () => assert.fail('no segment call');
+    h.command.deleteCalculatedInsight = async () => assert.fail('no CI call');
+    const result = await run(h.command);
+    assert.equal(result.status, 'success');
+    assert.deepEqual(
+      h.calls.filter((call) => call !== 'auth'),
+      [],
+    );
+    assert.deepEqual(
+      result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
+      [[family, 'unchanged', 'not-attempted']],
+    );
+  });
+
+for (const family of ['segment', 'calculated-insight'])
+  test(`-m alone deletes a ${family} with the definition read from the org`, async () => {
+    const document =
+      family === 'segment'
+        ? { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' }, spec: {} }
+        : {
+            kind: 'calculated-insight',
+            identity: { dataSpace: 'default', apiName: 'Score__cio' },
+            spec: {},
+          };
+    const h = harness([{ path: 'x', document }], { metadata: [selectorOf({ document })] });
+    const executor = async (desired, _connection, _version, _space, options) => {
+      assert.equal(desired, document);
+      assert.equal(options.confirmDelete, true);
+      h.calls.push(`${family}:${desired.identity.apiName}`);
+      return { outcome: 'deleted', mutation: 'confirmed-deleted', diagnostics: [] };
+    };
+    h.command.deleteSegment = executor;
+    h.command.deleteCalculatedInsight = executor;
+    h.command.calculatedInsightContext = () => ({});
+    const result = await run(h.command);
+    assert.equal(result.status, 'success');
+    assert.equal(result.result.items[0].outcome, 'deleted');
+    assert.deepEqual(
+      h.calls.filter((call) => call !== 'auth'),
+      [`${family}:${document.identity.apiName}`],
+    );
+  });
+
 for (const [name, flags, code] of [
-  [
-    'a source family without its file',
-    { metadata: ['identity-resolution:Individual_A1b2', 'dmo:Person__dlm'], 'source-dir': [] },
-    'INVALID_SELECTION',
-  ],
-  [
-    'a source file no selector names',
-    { metadata: ['data-graph:Graph', 'dmo:Person__dlm'], 'source-dir': sourceFiles.slice(0, 2) },
-    'INVALID_SELECTION',
-  ],
   [
     '--delete-dlo without a stream',
     { 'delete-dlo': true },
@@ -489,11 +530,10 @@ for (const [name, flags, code] of [
 ])
   test(`mixed delete refuses ${name} before any org call`, async () => {
     const h = harness([graph(), ir()], {
-      'transform-target-id': undefined,
       metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2'],
-      'source-dir': sourceFiles.slice(0, 2),
       ...flags,
     });
+    h.command.readDeleteSource = async () => assert.fail('no org read');
     const result = await run(h.command);
     assert.equal(result.status, 'blocked');
     assert.equal(result.diagnostics.errors[0].code, code);

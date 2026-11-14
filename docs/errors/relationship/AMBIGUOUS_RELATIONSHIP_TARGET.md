@@ -19,7 +19,7 @@ The plugin would have to guess which relationship the file stands for. A wrong g
 ## How to fix
 
 1. Retrieve the source DMO's relationships with `sf data360 retrieve -m relationship:<SourceDmo__dlm> --output-dir <scratch>`.
-2. Decide which relationship to keep and delete the others with `sf data360 delete -m relationship:<Name>`.
+2. Decide which relationship to keep and delete the others with `sf data360 delete -m relationship:<SourceDmo__dlm>:<Name>`.
 3. Rerun the command.
 
 ## Example output

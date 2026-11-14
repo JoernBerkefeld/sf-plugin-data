@@ -35,4 +35,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 ## Related codes
 
 - [`INCOMPLETE_TRANSFORM_INVENTORY`](../data-transform/INCOMPLETE_TRANSFORM_INVENTORY.md) — the same list check, failing before the DELETE was sent.
-- [`TRANSFORM_DELETE_CONFIRMATION_REQUIRED`](../data-transform/TRANSFORM_DELETE_CONFIRMATION_REQUIRED.md) — the delete was not confirmed, so nothing was sent.
+- [`TRANSFORM_TARGET_NOT_RESOLVED`](../data-transform/TRANSFORM_TARGET_NOT_RESOLVED.md) — the name matched more than one transform, so nothing was sent.

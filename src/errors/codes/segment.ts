@@ -25,7 +25,7 @@ export const hints: Readonly<Record<string, string>> = {
   SEGMENT_DEFINITION_UPDATE_UNQUALIFIED:
     'The file changes the existing segment beyond what can be updated: only the label, the description, or appending the IS NOT NULL condition on the selected field. Revert the rest.',
   SEGMENT_DELETE_ADMISSION_FAILED:
-    'The checks before the segment delete failed, so nothing was deleted. Retrieve the segment again so the --source-dir file matches the org, then preview the delete.',
+    'The checks before the segment delete failed, so nothing was deleted. Read the message, check the segment and its source DMO in Data Cloud, then preview the delete again.',
   SEGMENT_DELETION_UNCONFIRMED:
     'The segment delete was sent, but the plugin could not confirm that the segment is gone. Check the segment in the org before any further delete; nothing is retried.',
   SEGMENT_DEPENDENCY_ACQUISITION_FAILED:

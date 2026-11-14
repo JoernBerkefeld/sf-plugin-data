@@ -14,37 +14,48 @@ import {
 } from '../../transport/data-transform-rest.js';
 import {
   DataTransformError,
-  dataTransformId,
   validateDataTransformDocument,
 } from '../../artifacts/data-transform-document.js';
-import { verifyDataTransformInputDigest } from '../../artifacts/read-deploy-input.js';
+import { retrieveDataTransform } from '../../services/retrieve-data-transform.js';
 import type { DataTransformDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteSegment } from '../../services/delete-segment.js';
-import { validateSegmentDocument } from '../../artifacts/segment-document.js';
-import { verifySegmentInputDigest } from '../../artifacts/read-deploy-input.js';
+import { SegmentError, validateSegmentDocument } from '../../artifacts/segment-document.js';
+import { projectSegment } from '../../services/retrieve-segment.js';
 import type { SegmentDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteIdentityResolution } from '../../services/delete-identity-resolution.js';
 import { nativeIdentityResolutionDocument } from '../../services/preflight-identity-resolution-deploy.js';
-import { identityResolutionName } from '../../artifacts/identity-resolution-document.js';
-import { verifyIdentityResolutionInputDigest } from '../../artifacts/read-deploy-input.js';
+import {
+  IdentityResolutionError,
+  identityResolutionName,
+  projectNativeIdentityResolution,
+} from '../../artifacts/identity-resolution-document.js';
 import type { IdentityResolutionDeployInput } from '../../artifacts/read-deploy-input.js';
 import {
   operateNativeDataGraph,
   nativeGraphLimitations,
 } from '../../services/command-native-data-graph.js';
 import { nativeDataGraphReadContext } from '../../services/native-data-graph-context.js';
+import { proveNativeDataGraphAbsent } from '../../services/native-data-graph-crd.js';
 import { createDataGraphClient } from '../../transport/data-graph-rest.js';
-import { verifyNativeDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
+import { nativeDataGraphDocumentFromResponse } from '../../artifacts/native-data-graph-document.js';
 import type { NativeDataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
-import {
-  DeployInputError,
-  readDeployInputs,
-  verifyCalculatedInsightInputDigest,
-} from '../../artifacts/read-deploy-input.js';
+import { DeployInputError } from '../../artifacts/read-deploy-input.js';
 import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
-import { validateCalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
+import {
+  CalculatedInsightError,
+  validateCalculatedInsightDocument,
+} from '../../artifacts/calculated-insight-document.js';
 import { deleteCalculatedInsight } from '../../services/delete-calculated-insight.js';
-import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
+import {
+  acquireExactCalculatedInsight,
+  calculatedInsightReadContext,
+} from '../../services/retrieve-calculated-insight.js';
+import { segmentSourceRoot } from '../../artifacts/write-segment.js';
+import { ConnectError } from '../../transport/connect-client.js';
+import {
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from '../../transport/connect-diagnostic.js';
 import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
 import { operationDiagnostic, replaceExplanation } from '../../services/operation-diagnostic.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
@@ -55,17 +66,17 @@ import {
 } from '../../artifacts/native-dmo-document.js';
 import { writeNativeDmoDocument } from '../../artifacts/write-native-dmo.js';
 import { writeNativeMappingDocument } from '../../artifacts/write-native-mapping.js';
-import { lstat } from 'node:fs/promises';
 import {
   NativeRelationshipError,
   nativeRelationshipName,
+  relationshipDmoName,
 } from '../../artifacts/native-relationship-document.js';
 import { createRelationshipClient } from '../../transport/relationship-rest.js';
 import {
   deleteNativeRelationship,
+  findNativeRelationshipByName,
   preflightDeleteNativeRelationship,
 } from '../../services/native-relationship.js';
-import { readRelationshipInput } from '../../artifacts/read-deploy-input.js';
 import {
   dmoFieldLocalFiles,
   executeDmoFieldDelete,
@@ -74,7 +85,7 @@ import {
   planDmoFieldDelete,
   refreshDmoFieldFiles,
 } from '../../services/delete-dmo-field.js';
-import { localFilePresent, removeLocalFiles, samePath } from '../../services/local-file-removal.js';
+import { localFilePresent, removeLocalFiles } from '../../services/local-file-removal.js';
 import type { LocalFileCandidate } from '../../services/local-file-removal.js';
 import type {
   DmoFieldDeleteClients,
@@ -132,7 +143,6 @@ import {
 import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
 import type { DeployInput } from '../../artifacts/read-deploy-input.js';
 import {
-  crudPhase,
   inputKey,
   planDeleteStages,
   runCrudStages,
@@ -153,7 +163,7 @@ export type DeleteFamily =
   | 'mapping'
   | 'relationship';
 
-/** Families deleted from an exact --source-dir input. */
+/** Families whose definition a delete reads from the org by name (from the base file with Git). */
 const sourceFamilies: ReadonlySet<DeleteFamily> = new Set([
   'data-transform',
   'segment',
@@ -167,21 +177,15 @@ const nativeFamilies: ReadonlySet<DeleteFamily> = new Set([
   'mapping',
   'relationship',
 ]);
-/** The --source-dir value a source family needs; a graph accepts its file or a folder. */
-const sourcePatterns: Partial<Record<DeleteFamily, RegExp>> = {
-  segment: /\.segment\.json$/u,
-  'identity-resolution': /\.identityResolution\.json$/u,
-  'calculated-insight': /\.(?:calculatedInsight\.json|mktCalcInsightObjectDef-meta\.xml)$/u,
-  'data-graph': /./u,
-};
 const developerName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 
 /**
  * Family of an exact `family:Name` delete selector.
  * @param {string} selector Raw -m value.
+ * @param {boolean} [git] Selector built from a file deleted in a Git range.
  * @returns {DeleteFamily | undefined} The family; undefined for anything not exact.
  */
-function deleteFamily(selector: string): DeleteFamily | undefined {
+function deleteFamily(selector: string, git = false): DeleteFamily | undefined {
   const index = selector.indexOf(':');
   if (index === -1) return undefined;
   const family = selector.slice(0, index);
@@ -209,7 +213,18 @@ function deleteFamily(selector: string): DeleteFamily | undefined {
       return nativeMappingName.test(name) ? family : undefined;
     }
     case 'relationship': {
-      return nativeRelationshipName.test(name) ? family : undefined;
+      // -m names the source DMO too (relationship:<SourceDmo__dlm>:<Name>); a file deleted in a
+      // Git range carries it in its base content, so its selector is relationship:<Name>.
+      const parts = name.split(':');
+      return git
+        ? parts.length === 1 && nativeRelationshipName.test(name)
+          ? family
+          : undefined
+        : parts.length === 2 &&
+            relationshipDmoName.test(parts[0]) &&
+            nativeRelationshipName.test(parts[1])
+          ? family
+          : undefined;
     }
     default: {
       return undefined;
@@ -227,16 +242,22 @@ function selectorError(selector: string): Error {
     return new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
   if (selector === 'data-stream' || selector.startsWith('data-stream:'))
     return new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
-  return new DloError('INVALID_SELECTION');
+  const error = new DloError('INVALID_SELECTION');
+  if (selector === 'relationship' || selector.startsWith('relationship:'))
+    replaceExplanation(
+      error,
+      'A relationship is deleted as -m relationship:<SourceDmo__dlm>:<Name>, naming its source DMO and its exact name. Nothing was deleted.',
+    );
+  return error;
 }
 
 /**
- * Name part of an exact selector.
+ * Name part of an exact selector (of relationship:<SourceDmo__dlm>:<Name>, the relationship name).
  * @param {string} selector Exact `family:Name` selector.
  * @returns {string} The name.
  */
 function selectorName(selector: string): string {
-  return selector.slice(selector.indexOf(':') + 1);
+  return selector.slice(selector.lastIndexOf(':') + 1);
 }
 
 /**
@@ -269,19 +290,122 @@ async function readStreamLinkedDlo(
   return document.spec.newDlo.name;
 }
 
-type AdmittedSource = { input: DeployInput; desired: unknown };
+/**
+ * A source-family component read before any delete: its definition, or `absent` when the org has
+ * none of that name. A transform also carries the target ID its name resolved to.
+ */
+type AdmittedSource =
+  { absent?: false; desired: unknown; transformTargetId?: string } | { absent: true };
 type DeletePlanInput = PlanInput & {
   selector: string;
   source?: AdmittedSource;
   /** Selected with --changed-since: the file deleted in the Git range, read from the base. */
   git?: GitDeleteCandidate;
-  /** A transform deleted in the Git range: its target ID, resolved by name during admission. */
-  transformTargetId?: string;
 };
 type StageStatus = 'success' | 'blocked' | 'failed';
 
 /**
- * Validate one --source-dir input and name the selector it answers.
+ * Document kind of a source family, as the plan names it.
+ * @param {DeleteFamily} family Source family.
+ * @returns {string} The document kind.
+ */
+const documentKind = (family: DeleteFamily): string =>
+  family === 'data-graph' ? 'native-data-graph' : family;
+
+/**
+ * Read-only: the current definition of one source-family component, read from the org by name.
+ * A transform name must match exactly one transform (ignoring case); none is absent.
+ * @param {DeleteFamily} family Source family of the selector.
+ * @param {string} name Exact name from the selector.
+ * @param {Connection} connection API68 connection of the target org.
+ * @param {object} readers Command seams used for the transform, CI and graph reads.
+ * @param {Function} readers.transformClient Transform client factory.
+ * @param {Function} readers.ciContext CI read context factory.
+ * @param {Function} readers.graphContext Native graph read context factory.
+ * @returns {Promise<AdmittedSource>} The definition, or absent.
+ */
+async function readOrgSource(
+  family: DeleteFamily,
+  name: string,
+  connection: Connection,
+  readers: {
+    transformClient: typeof createDataTransformClient;
+    ciContext: typeof calculatedInsightReadContext;
+    graphContext: typeof nativeDataGraphReadContext;
+  },
+): Promise<AdmittedSource> {
+  // Segment and IR: an exact GET; only ITEM_NOT_FOUND is absence.
+  const exact = async (route: string): Promise<unknown> => {
+    try {
+      return await new ConnectClient(connection, '68.0').get(route);
+    } catch (error) {
+      if (
+        error instanceof ConnectError &&
+        error.statusCode === 404 &&
+        error.nativeCode === 'ITEM_NOT_FOUND'
+      )
+        return undefined;
+      throw error;
+    }
+  };
+  switch (family) {
+    case 'data-transform': {
+      const client = readers.transformClient(connection, '68.0', 'default');
+      const targetId = await resolveDataTransformTargetId(client, name);
+      if (targetId === undefined) return { absent: true };
+      const observed = await retrieveDataTransform(targetId, client);
+      return { desired: observed.document, transformTargetId: targetId };
+    }
+    case 'segment': {
+      const raw = await exact(`/services/data/v68.0/ssot/segments/${name}`);
+      return raw === undefined
+        ? { absent: true }
+        : { desired: projectSegment(raw, name).candidate };
+    }
+    case 'identity-resolution': {
+      const raw = await exact(`/services/data/v68.0/ssot/identity-resolutions/${name}`);
+      return raw === undefined
+        ? { absent: true }
+        : { desired: projectNativeIdentityResolution(raw, name).candidate };
+    }
+    case 'calculated-insight': {
+      // The exact read admits every deletable state (DRAFT and ACTIVE), not only ACTIVE.
+      const acquired = await acquireExactCalculatedInsight(
+        readers.ciContext(connection, 'default'),
+        name,
+      );
+      if (acquired.state === 'absent') return { absent: true };
+      if (acquired.state === 'unknown')
+        throw retainConnectDiagnostic(
+          new CalculatedInsightError(acquired.diagnostics[0]),
+          getConnectDiagnostic(acquired),
+        );
+      return { desired: acquired.document };
+    }
+    default: {
+      const context = await readers.graphContext(connection, 'default');
+      const read = await context.get(name);
+      if (read.status === 200) return { desired: nativeDataGraphDocumentFromResponse(read.body) };
+      // HTTP400 alone is never absence: the item, metadata, inventory and SOQL reads must agree.
+      const proof = await proveNativeDataGraphAbsent(context, name, read);
+      if (proof.state === 'absent') return { absent: true };
+      const error = retainConnectDiagnostic(
+        new Error('Native Graph read unavailable'),
+        getConnectDiagnostic(proof) ?? getConnectDiagnostic(read),
+      );
+      if (proof.state === 'pending')
+        replaceExplanation(
+          error,
+          `The Data Graph ${name} reads as not found, but its metadata, the graph inventory or SOQL still holds it: it is still being created or removed. Nothing was deleted; rerun once it has settled.`,
+        );
+      throw error;
+    }
+  }
+}
+
+/**
+ * Validate the base content of one source-family file deleted in a Git range and name the
+ * selector it answers.
  * @param {DeployInput} input Resolved input.
  * @returns {{family: DeleteFamily, selector: string, desired: unknown}} Admitted source.
  */
@@ -444,10 +568,7 @@ type FieldDeleteFlags = {
   'api-version'?: string;
   dataspace?: string;
   'output-dir'?: string;
-  'source-dir'?: string | string[];
   'changed-since'?: string;
-  'confirm-delete'?: boolean;
-  'transform-target-id'?: string;
   'delete-dlo'?: boolean;
 };
 
@@ -536,7 +657,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or mappings.';
   public static readonly description =
-    "One delete can carry any mix of families. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then the transform, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A selection spanning more than one phase needs --confirm-delete (DESTRUCTIVE_CONFIRMATION_REQUIRED otherwise). --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity comes from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). It always needs --confirm-delete (--preview runs without it), takes no -m, --source-dir, --transform-target-id or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name to exactly one target ID (TRANSFORM_TARGET_NOT_RESOLVED otherwise); a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without reading it. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO. Each source-backed family (Transform, Segment, IR, CI, Graph) needs its own --source-dir file. Exact data-transform:Name requires one matching .dataTransform.json --source-dir, exact --transform-target-id, auto/API68/default space and --confirm-delete. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. Exact segment:Name requires one matching .segment.json --source-dir, auto/API68/default and --confirm-delete. Preview performs zero writes; fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. Exact identity-resolution:ObjectApiName requires one matching .identityResolution.json --source-dir, auto/API68/default space and --confirm-delete for a present matching owner that is not PUBLISHING or DELETING. Preview and verified absent targets are read-only without confirmation. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. Exact data-graph:Name uses auto/API68/default with one matching native Graph --source-dir artifact and --confirm-delete. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. Exact calculated-insight:Name__cio requires one matching --source-dir paired XML or JSON member, --api-version auto (68.0) or 68.0 and default space. Only exact matching NOT_SCHEDULED, never-run DRAFT/ACTIVE configuration is deletable; --confirm-delete explicitly acknowledges destructive CI deletion. CI --preview and already dual-absent targets are read-only without confirmation. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI never cascades; no compute, storage or credits guarantee. Other families retain their existing confirmation behavior. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Definition deletion is noninteractive and requires no processing acknowledgement. Native DLO/DMO/mapping/relationship and stream selections that stay in one phase run without confirmation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:Name) runs first in the batch, before mappings, DMOs and DLOs, and needs the local file data360/relationship/<Name>.relationship-meta.json in the current project to learn the source DMO. The relationships of the source DMO are listed: a relationship with that name must carry the binding of the file; when the name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH and nothing is deleted; when neither is present the result is unchanged. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c and --confirm-delete removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --source-dir, --changed-since, --delete-dlo or --transform-target-id. Local files: after a confirmed deletion (deleted, or a DLO, DMO, segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time and never a folder: data360/dlo, data360/dmo, data360/relationship and data360/data-stream files under the current directory (with --delete-dlo also the linked DLO's file), the mapping file of that name or the one whose binding matches, and the --source-dir file of a Transform, Segment, IR or Graph (both members of a CI pair). Links, hard-linked files and paths outside the project's data360 folder or the given --source-dir file are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
+    "One delete can carry any mix of families, each named exactly with -m. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then data transforms, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A -m delete needs no confirmation flag: check the selection with --preview first. Before the first delete, the current definition of each selected transform, Segment, IR, CI and graph is read from the org by its name (read-only); one the org does not have reports unchanged. A transform name resolves to its target ID through the complete transform list: no match is unchanged, two or more matches (ignoring case) are refused with TRANSFORM_TARGET_NOT_RESOLVED. --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity and definition come from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). A --changed-since delete needs --confirm-delete (--preview runs without it; --confirm-delete is accepted only with --changed-since), takes no -m or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name like a -m one; a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without checking it further. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO. data-transform:Name uses auto/API68/default space. Preview is GET-only. A guarded exact CUSTOM/BATCH/ACTIVE unscheduled target is deleted with one native DELETE; settlement needs complete bounded inventory omission of both ID and name plus preserved source/output DLOs, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. segment:Name uses auto/API68/default. Fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. identity-resolution:ObjectApiName uses auto/API68/default space and deletes a present owner that is not PUBLISHING or DELETING. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. data-graph:Name uses auto/API68/default. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. calculated-insight:Name__cio uses --api-version auto (68.0) or 68.0 and default space. Only a NOT_SCHEDULED, never-run DRAFT or ACTIVE configuration is deletable. Native CI DELETE/read uses API68; independent Metadata and dependency reads remain API65. Bounded independent runtime and Metadata absence is required, not a mutation echo. CI never cascades; no compute, storage or credits guarantee. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68/default space only. The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:SourceDmo__dlm:Name; a bare relationship:Name is refused with INVALID_SELECTION) runs first in its phase, before mappings, DMOs and DLOs. The relationships of the named source DMO are listed and the name is looked up ignoring letter case: no match is unchanged, two matches are refused (AMBIGUOUS_RELATIONSHIP_TARGET), and a match whose source object is another DMO is refused (RELATIONSHIP_TARGET_BINDING_MISMATCH). In a --changed-since delete the source DMO and binding come from the deleted file, and when its name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion applies to custom DMOs only; standard, namespaced and platform-generated DMOs are refused with UNSUPPORTED_DMO_TARGET, in the preview as well. Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c removes the named custom fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: custom or standard DMO only (platform-generated DMOs are refused); every field must exist, be custom, not the primary key and not generated, so the standard and system fields of a standard DMO are never removed; every mapping pair targeting a named field is collected, and a mapped field whose pair cannot be identified is refused. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --changed-since or --delete-dlo. Local files: after a confirmed deletion (deleted, or a DLO, DMO, Segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time at its canonical path and never a folder: data360/dlo, data360/dmo, data360/relationship, data360/data-stream and data360/dataTransforms files under the current directory (with --delete-dlo also the linked DLO's file), the mapping file of that name or the one whose binding matches, and the Segment, IR and Graph file and both members of a CI pair under the default package directory of sfdx-project.json (force-app/main/default without one). Links, hard-linked files and paths outside those folders are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -548,7 +669,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multipleNonGreedy: true,
       exclusive: ['changed-since'],
       summary:
-        'Exact data-transform:Name (source and --transform-target-id required), segment:Name, identity-resolution:ObjectApiName or calculated-insight:Name__cio (source required), data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm (alone with --field), mapping:ApiName or relationship:Name (reads data360/relationship/Name.relationship-meta.json).',
+        'Exact data-transform:Name, segment:Name, identity-resolution:ObjectApiName, calculated-insight:Name__cio, data-graph:Name, data-stream:ApiName, dlo:Name__dll, dmo:Name__dlm (alone with --field), mapping:ApiName or relationship:SourceDmo__dlm:Name; repeatable.',
     }),
     'api-version': Flags.string({
       summary: 'Native numeric route >=61, default/auto68.',
@@ -558,26 +679,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       summary: 'Optional native data space; --data-space is a compatibility alias.',
     }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
-    'source-dir': Flags.string({
-      char: 'd',
-      multiple: true,
-      multipleNonGreedy: true,
-      summary:
-        'Transform, Segment, IR, CI or native Graph: the exact local file of each selected one (a Graph also from a folder); repeatable.',
-      exclusive: ['changed-since'],
-    }),
     'changed-since': Flags.string({
       summary:
         'Delete in the org the components whose canonical plugin files were deleted since the merge base with a commit reference; needs --confirm-delete (not with --preview).',
-      exclusive: ['source-dir', 'metadata'],
+      exclusive: ['metadata'],
     }),
     'confirm-delete': Flags.boolean({
-      default: false,
+      dependsOn: ['changed-since'],
       summary:
-        'Transform, Segment, IR, CI, native Graph, --field, or a selection spanning more than one phase: explicitly acknowledge destructive deletion.',
-    }),
-    'transform-target-id': Flags.string({
-      summary: 'Transform-only exact native dataTransformId to delete (required).',
+        'With --changed-since only: delete the components of the files deleted in the Git range. Not needed with --preview.',
     }),
     'delete-dlo': Flags.boolean({
       default: false,
@@ -588,7 +698,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Field-level delete: exact custom field Name__c to remove from the one selected dmo:Name__dlm, together with its mapping pairs; repeatable. Requires --confirm-delete.',
+        'Field-level delete: exact custom field Name__c to remove from the one selected dmo:Name__dlm, together with its mapping pairs; repeatable.',
     }),
     'output-dir': Flags.directory({
       exists: false,
@@ -604,18 +714,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected deleteDataTransform = deleteDataTransform;
   protected createDataTransformClient = createDataTransformClient;
   protected createDataTransformDloReader = createDataTransformDloReader;
-  protected verifyDataTransformInput = verifyDataTransformInputDigest;
   protected nativeGraphContext = nativeDataGraphReadContext;
   protected nativeGraphClient = createDataGraphClient;
   protected operateNativeGraph = operateNativeDataGraph;
-  protected verifyNativeDataGraphInput = verifyNativeDataGraphInputDigest;
-  protected resolveInputs = readDeployInputs;
   protected selectGitInputs = selectGitDeployInputs;
   protected deleteIdentityResolution = deleteIdentityResolution;
   protected deleteSegment = deleteSegment;
-  protected verifySegmentInput = verifySegmentInputDigest;
-  protected verifyIdentityResolutionInput = verifyIdentityResolutionInputDigest;
-  protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
   protected calculatedInsightContext = calculatedInsightReadContext;
   protected deleteCalculatedInsight = deleteCalculatedInsight;
   protected calculatedInsightObservations: CalculatedInsightObservation[] = [];
@@ -701,6 +805,25 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     return username;
   };
   /**
+   * Read-only: a -m source-family component's current definition, read from the org by name.
+   * @param {DeleteFamily} family Source family of the selector.
+   * @param {string} name Exact name from the selector.
+   * @param {Connection} connection API68 connection of the target org.
+   * @returns {Promise<AdmittedSource>} The definition, or absent.
+   */
+  protected async readDeleteSource(
+    family: DeleteFamily,
+    name: string,
+    connection: Connection,
+  ): Promise<AdmittedSource> {
+    return readOrgSource(family, name, connection, {
+      transformClient: this.createDataTransformClient ?? createDataTransformClient,
+      ciContext: this.calculatedInsightContext ?? calculatedInsightReadContext,
+      graphContext: this.nativeGraphContext ?? nativeDataGraphReadContext,
+    });
+  }
+
+  /**
    * Field-level delete: remove the named custom fields from one DMO, their mapping pairs first,
    * then refresh the project files that already exist. Never throws; the envelope is completed.
    * @param {FieldDeleteFlags} flags Parsed flags.
@@ -717,14 +840,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       flags.metadata?.length !== 1 ||
       !selector.startsWith('dmo:') ||
       !nativeDmoName.test(selector.slice(4)) ||
-      flags['source-dir'] !== undefined ||
       flags['changed-since'] !== undefined ||
-      flags['delete-dlo'] ||
-      flags['transform-target-id'] !== undefined
+      flags['delete-dlo']
     )
       return refuse(
         'INVALID_FIELD_DELETE_SELECTION',
-        '--field removes fields from exactly one -m dmo:<Name__dlm> and cannot be combined with another selector, --source-dir, --changed-since, --delete-dlo or --transform-target-id; --output-dir is valid only with --field. No org call was made.',
+        '--field removes fields from exactly one -m dmo:<Name__dlm> and cannot be combined with another selector, --changed-since or --delete-dlo; --output-dir is valid only with --field. No org call was made.',
       );
     if (flags.field.some((name) => !nativeDmoFieldName.test(name)))
       return refuse(
@@ -760,11 +881,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       ],
     };
     envelope.result.items.push(item);
-    if (!flags.preview && flags['confirm-delete'] !== true)
-      return refuse(
-        'DMO_FIELD_DELETE_CONFIRMATION_REQUIRED',
-        'Pass --confirm-delete to delete the field(s) together with their mapping pairs; nothing was changed.',
-      );
     const fieldError = (error: unknown, nextAction: string): void =>
       refuse(
         error instanceof DloError ||
@@ -874,9 +990,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   }
 
   /**
-   * Delete or preview one relationship by name. The local relationship file names the source DMO
-   * whose inventory proves presence before, and absence after, the single DELETE.
-   * @param {string} selector Exact relationship:Name selector.
+   * Delete or preview one relationship by name. The source DMO, named in the selector (or with
+   * Git in the deleted file's base content), is listed to find it before, and to confirm its
+   * absence after, the single DELETE.
+   * @param {string} selector Exact relationship:SourceDmo__dlm:Name (Git: relationship:Name) selector.
    * @param {string} target Resolved username.
    * @param {string} version Native API version.
    * @param {boolean} preview Read-only when true.
@@ -884,8 +1001,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    * @param {DeleteEnvelope} envelope Envelope receiving the item.
    * @param {Map<DeleteItem, string>} selectorsByItem Human labels.
    * @param {Function} track Registers the item's local file for removal or preview.
-   * @param {NativeRelationshipDocument} [baseDocument] Git delete: the file's base content, used
-   * instead of the (deleted) local file.
+   * @param {NativeRelationshipDocument} [baseDocument] Git delete: the file's base content.
    * @returns {Promise<void>} Resolves when the item settled; throws to stop the batch.
    */
   private async deleteOneRelationship(
@@ -899,10 +1015,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     track: (item: DeleteItem, candidates: LocalFileCandidate[]) => Promise<void>,
     baseDocument?: NativeRelationshipDocument,
   ): Promise<void> {
-    const apiName = selector.slice('relationship:'.length);
+    const [sourceDmo, selectedName] =
+      baseDocument === undefined
+        ? selector.slice('relationship:'.length).split(':')
+        : [baseDocument.spec.sourceObjectName, baseDocument.identity.apiName];
     const item: DeleteItem = {
       family: 'relationship',
-      identity: { dataSpace: requestScope ?? 'default', apiName },
+      identity: { dataSpace: requestScope ?? 'default', apiName: selectedName },
       operation: preview ? 'preview' : 'delete',
       outcome: 'blocked',
       mutation: 'not-attempted',
@@ -913,25 +1032,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     // Salesforce's own 4xx answer to the DELETE means nothing was deleted.
     let refusal: unknown;
     try {
-      const file = path.join(
-        process.cwd(),
-        'data360',
-        'relationship',
-        `${apiName}.relationship-meta.json`,
-      );
-      try {
-        if (baseDocument === undefined) await lstat(file);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        const missing = new NativeRelationshipError('RELATIONSHIP_FILE_REQUIRED');
-        replaceExplanation(
-          missing,
-          `Deleting ${selector} needs the local file ${file}, which names the source DMO; retrieve it with sf data360 retrieve --metadata relationship:<SourceDmo__dlm>. Nothing was deleted.`,
-        );
-        throw missing;
-      }
-      let document = baseDocument;
-      if (document === undefined) ({ document } = await readRelationshipInput(file));
       const base = (this.createRelationshipClient ?? createRelationshipClient)(
         target,
         version,
@@ -958,6 +1058,27 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           }
         },
       };
+      // -m: the relationship as the org lists it under its source DMO; none of that name is absent.
+      const document =
+        baseDocument ??
+        (await findNativeRelationshipByName(sourceDmo, selectedName, client, requestScope));
+      if (document === undefined) {
+        item.outcome = 'unchanged';
+        return;
+      }
+      const apiName = document.identity.apiName;
+      item.identity.apiName = apiName;
+      const files = [
+        {
+          path: path.join(
+            process.cwd(),
+            'data360',
+            'relationship',
+            `${apiName}.relationship-meta.json`,
+          ),
+          boundary: path.join(process.cwd(), 'data360'),
+        },
+      ];
       if (preview) {
         const plan = await (this.preflightDeleteRelationship ?? preflightDeleteNativeRelationship)(
           apiName,
@@ -966,7 +1087,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           requestScope,
         );
         item.outcome = plan.present ? 'delete' : 'unchanged';
-        await track(item, [{ path: file, boundary: path.join(process.cwd(), 'data360') }]);
+        await track(item, files);
         return;
       }
       const result = await (this.deleteRelationship ?? deleteNativeRelationship)(
@@ -977,7 +1098,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       );
       item.outcome = result.outcome;
       if (result.outcome === 'deleted') item.mutation = 'confirmed-deleted';
-      await track(item, [{ path: file, boundary: path.join(process.cwd(), 'data360') }]);
+      await track(item, files);
     } catch (error) {
       item.outcome = dispatched ? 'failed' : 'blocked';
       item.mutation =
@@ -1026,20 +1147,49 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       path: path.join(projectData, ...segments),
       boundary: projectData,
     });
-    const sourceDirectories = ((): string[] => {
-      const given = flags['source-dir'] as string | string[] | undefined;
-      return given === undefined ? [] : Array.isArray(given) ? given : [given];
-    })();
-    // The input files of a --source-dir family, only when --source-dir names one of them exactly.
-    const sourceFiles = (paths: string[]): LocalFileCandidate[] => {
+    // The canonical local files of a transform, Segment, IR, CI (both members) or graph, by name.
+    // Segment, IR, CI and graph files live in the default package directory of sfdx-project.json.
+    let packageBase: Promise<string> | undefined;
+    const sourceFiles = async (
+      family: DeleteFamily,
+      name: string,
+    ): Promise<LocalFileCandidate[]> => {
       if (gitMode) return [];
-      const given = sourceDirectories.map((value) => path.resolve(process.cwd(), value));
-      if (paths.some((file) => given.some((value) => samePath(file, value))))
-        return paths.map((file) => ({ path: file, boundary: file, exact: true as const }));
-      envelope.diagnostics.warnings.push(
-        `--source-dir names a folder, not the file; no local file is removed for ${paths.map((file) => path.basename(file)).join(', ')}.`,
-      );
-      return [];
+      if (family === 'data-transform')
+        return [inProject('dataTransforms', `${name}.dataTransform.json`)];
+      let base: string;
+      try {
+        base = await (packageBase ??= segmentSourceRoot(process.cwd()));
+      } catch {
+        envelope.diagnostics.warnings.push(
+          `The package directory of sfdx-project.json could not be resolved; no local file is removed for ${family}:${name}.`,
+        );
+        return [];
+      }
+      const inPackage = (...segments: string[]): LocalFileCandidate => ({
+        path: path.join(base, ...segments),
+        boundary: base,
+      });
+      switch (family) {
+        case 'segment': {
+          return [inPackage('data360', 'segments', `${name}.segment.json`)];
+        }
+        case 'identity-resolution': {
+          return [inPackage('data360', 'identityResolution', `${name}.identityResolution.json`)];
+        }
+        case 'calculated-insight': {
+          return [
+            inPackage(
+              'mktCalcInsightObjectDefs',
+              `${name.slice(0, -5)}.mktCalcInsightObjectDef-meta.xml`,
+            ),
+            inPackage('data360', 'calculatedInsights', `${name}.calculatedInsight.json`),
+          ];
+        }
+        default: {
+          return [inPackage('data360', 'dataGraphs', `${name}.native-dataGraph.json`)];
+        }
+      }
     };
     const track = async (item: DeleteItem, candidates: LocalFileCandidate[]): Promise<void> => {
       if (gitMode) return;
@@ -1184,12 +1334,17 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           error instanceof NativeMappingError ||
           error instanceof NativeRelationshipError ||
           error instanceof DataStreamError ||
-          error instanceof DataTransformError
+          error instanceof DataTransformError ||
+          error instanceof SegmentError ||
+          error instanceof IdentityResolutionError ||
+          error instanceof CalculatedInsightError
             ? error.code
             : 'DELETE_FAILED',
         message: operationDiagnostic(
           error,
-          'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+          flags.preview
+            ? 'Preview stopped; nothing was deleted. Correct the reported check before another attempt.'
+            : 'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         ),
         retryable: false,
       });
@@ -1204,11 +1359,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       }
       // Admission: every check below runs before the first org call.
       if (gitMode) {
-        if (flags.metadata !== undefined || flags['source-dir'] !== undefined)
-          throw new DloError('INVALID_SELECTION');
-        // A transform deleted in the range resolves its ID by name; streams follow their DLO file.
-        if (flags['transform-target-id'] !== undefined)
-          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
+        if (flags.metadata !== undefined) throw new DloError('INVALID_SELECTION');
+        // A stream follows its DLO file in the range.
         if (flags['delete-dlo']) throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
       }
       let gitDeletions: readonly GitDeleteCandidate[] = [];
@@ -1229,41 +1381,24 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         ]),
       );
       const selectors = gitMode ? [...gitBySelector.keys()] : (flags.metadata ?? []);
-      for (const selector of selectors) if (!deleteFamily(selector)) throw selectorError(selector);
+      for (const selector of selectors)
+        if (!deleteFamily(selector, gitMode)) throw selectorError(selector);
       if (selectors.length === 0) throw new DloError('INVALID_SELECTION');
-      const familyOf = (selector: string): DeleteFamily => deleteFamily(selector) as DeleteFamily;
+      const familyOf = (selector: string): DeleteFamily =>
+        deleteFamily(selector, gitMode) as DeleteFamily;
       const has = (family: DeleteFamily): boolean =>
         selectors.some((selector) => familyOf(selector) === family);
       const sourceSelectors = selectors.filter((selector) =>
         sourceFamilies.has(familyOf(selector)),
       );
-      const targetId = flags['transform-target-id'];
-      if (has('data-transform')) {
-        if (
-          !gitMode &&
-          (selectors.filter((selector) => familyOf(selector) === 'data-transform').length !== 1 ||
-            !sourceDirectories.some((value) => value.endsWith('.dataTransform.json')) ||
-            typeof targetId !== 'string' ||
-            !dataTransformId.test(targetId))
-        )
-          throw new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION');
-        if (
-          !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
-          effectiveScope !== 'default'
-        )
-          throw new DataTransformError('INVALID_TRANSFORM_SCOPE');
-      } else if (targetId !== undefined) throw new DloError('INVALID_SELECTION');
+      if (
+        has('data-transform') &&
+        (!['auto', '68.0'].includes(flags['api-version'] ?? 'auto') || effectiveScope !== 'default')
+      )
+        throw new DataTransformError('INVALID_TRANSFORM_SCOPE');
       if (flags['delete-dlo'] && !has('data-stream'))
         throw new DataStreamError('STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION');
       if (new Set(sourceSelectors).size !== sourceSelectors.length)
-        throw new DloError('INVALID_SELECTION');
-      if (!gitMode)
-        for (const selector of sourceSelectors) {
-          const pattern = sourcePatterns[familyOf(selector)];
-          if (pattern && !sourceDirectories.some((value) => pattern.test(value)))
-            throw new DloError('INVALID_SELECTION');
-        }
-      if (sourceSelectors.length === 0 && sourceDirectories.length > 0)
         throw new DloError('INVALID_SELECTION');
       if (
         (has('segment') || has('identity-resolution') || has('calculated-insight')) &&
@@ -1298,73 +1433,35 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           throw new DloError('INVALID_SCOPE');
         }
       const snapshot = JSON.stringify(flags);
-      // Each source family selector is backed by exactly one --source-dir input, and every input
-      // is named by a selector.
+      // The definition each source-family selector deletes: from the org by name, or with Git
+      // from the base content of the deleted file.
       const admitted = new Map<string, AdmittedSource>();
       // A file deleted in the range names its component in its own (base) data space.
       for (const candidate of gitDeletions)
         if (candidate.identity.dataSpace !== effectiveScope) throw new DloError('INVALID_SCOPE');
-      const familyError = (family: DeleteFamily): Error =>
-        family === 'data-transform'
-          ? new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION')
-          : new DloError('INVALID_SELECTION');
       if (gitMode)
-        // The base document stands in for the file: the same family checks as --source-dir.
         for (const [selector, candidate] of gitBySelector) {
           if (!sourceFamilies.has(candidate.family)) continue;
-          const input = {
+          const source = admitSourceInput({
             path: candidate.path,
             ...(candidate.companionPath === undefined
               ? {}
               : { companionPath: candidate.companionPath }),
             document: candidate.document,
             inputDigest: candidate.baseDigest,
-          } as DeployInput;
-          const source = admitSourceInput(input);
-          if (source.selector !== selector) throw familyError(source.family);
-          admitted.set(selector, { input, desired: source.desired });
+          } as DeployInput);
+          if (source.selector !== selector)
+            throw source.family === 'data-transform'
+              ? new DataTransformError('INVALID_TRANSFORM_DELETE_SELECTION')
+              : new DloError('INVALID_SELECTION');
+          admitted.set(selector, { desired: source.desired });
         }
-      else if (sourceSelectors.length > 0) {
-        for (const input of await this.resolveInputs({
-          cwd: process.cwd(),
-          sourceDir: sourceDirectories,
-        })) {
-          const source = admitSourceInput(input);
-          if (!sourceSelectors.includes(source.selector) || admitted.has(source.selector))
-            throw familyError(source.family);
-          admitted.set(source.selector, { input, desired: source.desired });
-        }
-        for (const selector of sourceSelectors)
-          if (!admitted.has(selector)) throw familyError(familyOf(selector));
-      }
-      const planInputs: DeletePlanInput[] = [
-        ...[...admitted].map(([selector, source]) => ({
-          path: source.input.path,
-          document: source.input.document,
-          selector,
-          source,
-          ...(gitBySelector.has(selector) ? { git: gitBySelector.get(selector) } : {}),
-        })),
-        ...[...streamSelectors, ...nativeSelectors].map((selector) => ({
-          path: selector,
-          selector,
-          document: { kind: familyOf(selector), identity: { apiName: selectorName(selector) } },
-          ...(gitBySelector.has(selector) ? { git: gitBySelector.get(selector) } : {}),
-        })),
-      ];
-      // A Git delete, or a delete that spans more than one phase, is never an implicit
-      // destructive run.
-      if (
-        !flags.preview &&
-        flags['confirm-delete'] !== true &&
-        (gitMode || new Set(planInputs.map((input) => crudPhase(input))).size > 1)
-      ) {
+      // A Git delete is never an implicit destructive run; a -m delete needs no confirmation.
+      if (gitMode && !flags.preview && flags['confirm-delete'] !== true) {
         const error = new DloError('DESTRUCTIVE_CONFIRMATION_REQUIRED');
         replaceExplanation(
           error,
-          gitMode
-            ? 'Files deleted in the Git range are deleted in the org only with --confirm-delete. Check the selection with --preview, then rerun with --confirm-delete. Nothing was deleted.'
-            : 'This delete spans more than one phase (streams, native DLO/DMO/mapping/relationship, transforms, identity resolution/calculated insight/Segment, graphs). Check it with --preview, then rerun with --confirm-delete. Nothing was deleted.',
+          'Files deleted in the Git range are deleted in the org only with --confirm-delete. Check the selection with --preview, then rerun with --confirm-delete. Nothing was deleted.',
         );
         throw error;
       }
@@ -1385,18 +1482,55 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         username ??= await this.resolveTarget(flags['target-org']);
         return username;
       };
-      // A transform deleted in the Git range has no --transform-target-id: its name from the base
-      // content must match exactly one transform in the org. Resolved here (read-only, preview
-      // too), so a refusal comes before any phase deletes anything.
-      for (const input of planInputs)
-        if (input.git && familyOf(input.selector) === 'data-transform') {
-          const target = await connect();
-          if (!target.getUsername()) throw new DloError('TARGET_ORG_REQUIRED');
-          input.transformTargetId = await resolveDataTransformTargetId(
-            this.createDataTransformClient(target, '68.0', 'default'),
-            selectorName(input.selector),
+      // Read-only, preview too, before any phase deletes anything: each -m source-family
+      // component's current definition by name, and the target ID of a Git-deleted transform.
+      for (const selector of sourceSelectors) {
+        if (gitMode && familyOf(selector) !== 'data-transform') continue;
+        const target = await connect();
+        if (familyOf(selector) === 'data-transform' && !target.getUsername())
+          throw new DloError('TARGET_ORG_REQUIRED');
+        if (!gitMode) {
+          admitted.set(
+            selector,
+            await this.readDeleteSource(familyOf(selector), selectorName(selector), target),
           );
+          continue;
         }
+        const source = admitted.get(selector) as { desired: unknown };
+        const targetId = await resolveDataTransformTargetId(
+          this.createDataTransformClient(target, '68.0', 'default'),
+          selectorName(selector),
+        );
+        // No transform of that name (also on a rerun after it was deleted): nothing to delete.
+        admitted.set(
+          selector,
+          targetId === undefined ? { absent: true } : { ...source, transformTargetId: targetId },
+        );
+      }
+      const planInputs: DeletePlanInput[] = [
+        ...sourceSelectors.map((selector) => {
+          const source = admitted.get(selector) as AdmittedSource;
+          return {
+            path: selector,
+            selector,
+            // An absent component has no definition: it carries only its kind and name.
+            document: (source.absent
+              ? {
+                  kind: documentKind(familyOf(selector)),
+                  identity: { apiName: selectorName(selector) },
+                }
+              : source.desired) as PlanInput['document'],
+            source,
+            ...(gitBySelector.has(selector) ? { git: gitBySelector.get(selector) } : {}),
+          };
+        }),
+        ...[...streamSelectors, ...nativeSelectors].map((selector) => ({
+          path: selector,
+          selector,
+          document: { kind: familyOf(selector), identity: { apiName: selectorName(selector) } },
+          ...(gitBySelector.has(selector) ? { git: gitBySelector.get(selector) } : {}),
+        })),
+      ];
       let streamClients: Parameters<typeof executeDeleteDataStream>[1] | undefined;
       const streamClientsFor = async (): Promise<Parameters<typeof executeDeleteDataStream>[1]> => {
         streamClients ??= await this.createDataStreamClients(
@@ -1428,14 +1562,31 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       const dependents = selectedDependents(stageInputs);
       const keyOfSelector = new Map(planInputs.map((input) => [input.selector, inputKey(input)]));
 
+      // The definition a source-family item deletes (read from the org, or the Git base content).
+      const desiredOf = (
+        entry: DeletePlanInput,
+      ): { desired: unknown; transformTargetId?: string } =>
+        entry.source as { desired: unknown; transformTargetId?: string };
+      // A source-family component the org does not have: nothing to delete, no request sent.
+      const reportAbsent = (entry: DeletePlanInput): StageStatus => {
+        const item: DeleteItem = {
+          family: familyOf(entry.selector),
+          identity: { dataSpace: 'default', apiName: selectorName(entry.selector) },
+          operation: flags.preview ? 'preview' : 'delete',
+          outcome: 'unchanged',
+          mutation: 'not-attempted',
+        };
+        selectorsByItem.set(item, entry.selector);
+        envelope.result.items.push(item);
+        return 'success';
+      };
+
       const runGraph = async (entry: DeletePlanInput): Promise<StageStatus> => {
-        const input = entry.source?.input as NativeDataGraphDeployInput;
+        const { desired } = desiredOf(entry);
         const name = selectorName(entry.selector);
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
-          await (entry.git
-            ? stillDeleted(entry.git)
-            : (this.verifyNativeDataGraphInput ?? verifyNativeDataGraphInputDigest)(input));
+          await stillDeleted(entry.git);
         };
         await verifyInput();
         const target = await connect();
@@ -1443,13 +1594,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         envelope.metadata.apiVersion = '68.0';
         warn(nativeGraphLimitations);
         const result = await this.operateNativeGraph(
-          input.document,
+          desired,
           context,
           this.nativeGraphClient(target, '68.0', 'default'),
           {
             operation: 'delete',
             preview: flags.preview,
-            confirmed: flags['confirm-delete'] === true,
+            confirmed: true,
             verifyInput,
           },
         );
@@ -1479,7 +1630,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         };
         envelope.result.items.push(item);
         selectorsByItem.set(item, entry.selector);
-        await track(item, sourceFiles([input.path]));
+        await track(item, await sourceFiles('data-graph', name));
         const status =
           result.outcome === 'failed'
             ? 'failed'
@@ -1499,13 +1650,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       };
 
       const runTransform = async (entry: DeletePlanInput): Promise<StageStatus> => {
-        const input = entry.source?.input as DataTransformDeployInput;
-        const desired = entry.source?.desired as ReturnType<typeof validateDataTransformDocument>;
+        const { desired, transformTargetId } = desiredOf(entry);
         const name = selectorName(entry.selector);
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot)
             throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
-          await (entry.git ? stillDeleted(entry.git) : this.verifyDataTransformInput(input));
+          await stillDeleted(entry.git);
         };
         await verifyInput();
         const item: DeleteItem = {
@@ -1549,17 +1699,17 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             client,
             this.createDataTransformDloReader(target),
             {
-              // A transform deleted in the Git range: the ID resolved during admission.
-              targetId: entry.transformTargetId ?? (targetId as string),
+              // Resolved from the transform's name during admission.
+              targetId: transformTargetId as string,
               preview: flags.preview,
-              confirmDelete: flags['confirm-delete'] === true,
+              confirmDelete: true,
               verifyInput,
             },
           );
           item.outcome = result.outcome === 'preview' ? 'delete' : result.outcome;
           item.mutation = result.mutation;
           if (result.prerequisitesPreserved) item.prerequisitesPreserved = true;
-          await track(item, sourceFiles([input.path]));
+          await track(item, await sourceFiles('data-transform', name));
           if (result.outcome === 'deletion-unconfirmed') {
             envelope.diagnostics.errors.push({
               code: 'TRANSFORM_DELETE_UNCONFIRMED',
@@ -1571,8 +1721,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           }
           if (result.outcome === 'blocked') {
             envelope.diagnostics.errors.push({
-              code: 'TRANSFORM_DELETE_CONFIRMATION_REQUIRED',
-              message: 'Pass --confirm-delete to delete; nothing was changed.',
+              code: 'DESTRUCTIVE_CONFIRMATION_REQUIRED',
+              message: 'The transform delete was not confirmed; nothing was changed.',
               retryable: false,
             });
             return 'blocked';
@@ -1607,11 +1757,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       };
 
       const runSegment = async (entry: DeletePlanInput): Promise<StageStatus> => {
-        const input = entry.source?.input as SegmentDeployInput;
-        const desired = entry.source?.desired as ReturnType<typeof validateSegmentDocument>;
+        const desired = desiredOf(entry).desired as ReturnType<typeof validateSegmentDocument>;
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
-          await (entry.git ? stillDeleted(entry.git) : this.verifySegmentInput(input));
+          await stillDeleted(entry.git);
         };
         await verifyInput();
         const target = await connect();
@@ -1625,7 +1774,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           target,
           { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
           'default',
-          { preview: flags.preview, confirmDelete: flags['confirm-delete'] === true, verifyInput },
+          { preview: flags.preview, confirmDelete: true, verifyInput },
         );
         const item = {
           ...result,
@@ -1643,17 +1792,21 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             },
           ],
         };
-        return settleOwner(result, item, entry.selector, sourceFiles([input.path]));
+        return settleOwner(
+          result,
+          item,
+          entry.selector,
+          await sourceFiles('segment', selectorName(entry.selector)),
+        );
       };
 
       const runIdentityResolution = async (entry: DeletePlanInput): Promise<StageStatus> => {
-        const input = entry.source?.input as IdentityResolutionDeployInput;
-        const desired = entry.source?.desired as ReturnType<
+        const desired = desiredOf(entry).desired as ReturnType<
           typeof nativeIdentityResolutionDocument
         >;
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
-          await (entry.git ? stillDeleted(entry.git) : this.verifyIdentityResolutionInput(input));
+          await stillDeleted(entry.git);
         };
         await verifyInput();
         const target = await connect();
@@ -1669,7 +1822,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           'default',
           {
             preview: flags.preview,
-            confirmDelete: flags['confirm-delete'] === true,
+            confirmDelete: true,
             verifyInput,
           },
         );
@@ -1697,17 +1850,21 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             },
           ],
         };
-        return settleOwner(result, item, entry.selector, sourceFiles([input.path]));
+        return settleOwner(
+          result,
+          item,
+          entry.selector,
+          await sourceFiles('identity-resolution', selectorName(entry.selector)),
+        );
       };
 
       const runCalculatedInsight = async (entry: DeletePlanInput): Promise<StageStatus> => {
-        const input = entry.source?.input as CalculatedInsightDeployInput;
-        const desired = entry.source?.desired as ReturnType<
+        const desired = desiredOf(entry).desired as ReturnType<
           typeof validateCalculatedInsightDocument
         >;
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('CI_INPUT_DRIFT');
-          await (entry.git ? stillDeleted(entry.git) : this.verifyCalculatedInsightInput(input));
+          await stillDeleted(entry.git);
         };
         await verifyInput();
         const target = await connect();
@@ -1722,7 +1879,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           {
             context,
             preview: flags.preview,
-            confirmDelete: flags['confirm-delete'] === true,
+            confirmDelete: true,
             verifyInput,
             recordObservation: async (observation) => {
               this.calculatedInsightObservations.push(structuredClone(observation));
@@ -1762,7 +1919,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           result,
           item,
           entry.selector,
-          sourceFiles([input.path, input.companionPath]),
+          await sourceFiles('calculated-insight', selectorName(entry.selector)),
         );
       };
 
@@ -2223,8 +2380,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           } else
             for (const input of ready) {
               const family = familyOf(input.selector);
-              status =
-                family === 'data-graph'
+              status = input.source?.absent
+                ? reportAbsent(input)
+                : family === 'data-graph'
                   ? await runGraph(input)
                   : family === 'data-transform'
                     ? await runTransform(input)

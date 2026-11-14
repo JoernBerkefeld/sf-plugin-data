@@ -227,15 +227,14 @@ test('field delete flag combinations are refused before any org call', async () 
     { field: ['Note__c'], metadata: ['mapping:MapA'] },
     { field: ['Note__c'], metadata: ['dlo:Example__dll'] },
     { field: ['Note__c'], metadata: ['dmo:Example'] },
-    { field: ['Note__c'], metadata: ['data-transform:Example'], 'transform-target-id': 'x' },
-    { field: ['Note__c'], 'source-dir': 'data360' },
+    { field: ['Note__c'], metadata: ['data-transform:Example'] },
+    { field: ['Note__c'], 'changed-since': 'HEAD' },
     { field: ['Note__c'], 'delete-dlo': true },
-    { field: ['Note__c'], 'transform-target-id': '1dtxx0000000001AAA' },
     { 'output-dir': 'project' },
     { 'output-dir': 'project', field: [] },
   ]) {
     const org = createOrg();
-    const { result, exitCode } = await run(org, { 'confirm-delete': true, ...flags });
+    const { result, exitCode } = await run(org, { ...flags });
     assert.equal(result.status, 'blocked', JSON.stringify(flags));
     assert.equal(result.diagnostics.errors[0].code, 'INVALID_FIELD_DELETE_SELECTION');
     assert.deepEqual(result.result.items, []);
@@ -244,13 +243,12 @@ test('field delete flag combinations are refused before any org call', async () 
   }
   for (const name of ['Note', 'Note__dlm', '1Note__c', 'Example__dlm.Note__c', '']) {
     const org = createOrg();
-    const { result } = await run(org, { 'confirm-delete': true, field: ['Note__c', name] });
+    const { result } = await run(org, { field: ['Note__c', name] });
     assert.equal(result.diagnostics.errors[0].code, 'INVALID_DMO_FIELD', name);
     assert.deepEqual(org.calls, []);
   }
   const org = createOrg();
   const { result } = await run(org, {
-    'confirm-delete': true,
     field: ['Note__c'],
     'api-version': '60.0',
   });
@@ -258,18 +256,17 @@ test('field delete flag combinations are refused before any org call', async () 
   assert.deepEqual(org.calls, []);
 });
 
-test('field delete without --confirm-delete is blocked before any org call; preview needs none', async () => {
+test('field delete needs no --confirm-delete; preview writes nothing', async () => {
+  const preview = createOrg(twoMappings());
+  const planned = await run(preview, { field: ['Note__c'], preview: true });
+  assert.equal(planned.result.status, 'success');
+  assert.deepEqual(writes(preview), []);
   const org = createOrg(twoMappings());
   const { result, exitCode } = await run(org, { field: ['Note__c'] });
-  assert.equal(result.status, 'blocked');
-  assert.equal(result.diagnostics.errors[0].code, 'DMO_FIELD_DELETE_CONFIRMATION_REQUIRED');
-  assert.match(result.diagnostics.errors[0].message, /nothing was changed/u);
-  assert.equal(result.result.items[0].outcome, 'blocked');
-  assert.equal(result.result.items[0].mutation, 'not-attempted');
-  assert.deepEqual(org.calls, []);
-  assert.equal(exitCode, 1);
-  const preview = await run(org, { field: ['Note__c'], preview: true });
-  assert.equal(preview.result.status, 'success');
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(exitCode, undefined);
+  assert.equal(result.result.items[0].outcome, 'deleted');
+  assert.equal(writes(org).length, 1);
 });
 
 test('field delete admission refuses unsupported targets and fields with reads only', async () => {
@@ -356,7 +353,6 @@ test('field delete admission refuses unsupported targets and fields with reads o
     prepare?.(org);
     const { result, exitCode } = await run(org, {
       field: [field],
-      'confirm-delete': true,
       ...flags,
     });
     const [diagnostic] = result.diagnostics.errors;
@@ -379,7 +375,6 @@ test('a custom field of a standard DMO is removed with its pairs like one of a c
   org.calls.length = 0;
   const { result, exitCode } = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': await temporaryRoot(),
   });
   assert.equal(result.status, 'success');
@@ -425,7 +420,6 @@ test('a failed mapping lookup does not block a field that is not mapped', async 
   };
   const { result } = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': await temporaryRoot(),
   });
   assert.equal(result.status, 'success');
@@ -436,7 +430,7 @@ test('a failed mapping lookup does not block a field that is not mapped', async 
   stuck.mappingClient.list = async () => {
     throw new NativeMappingError('MAPPING_HTTP_ERROR', 503);
   };
-  const stopped = await run(stuck, { field: ['Note__c'], 'confirm-delete': true });
+  const stopped = await run(stuck, { field: ['Note__c'] });
   assert.equal(stopped.result.status, 'blocked');
   assert.equal(stopped.result.diagnostics.errors[0].code, 'MAPPING_HTTP_ERROR');
   assert.match(stopped.result.diagnostics.errors[0].message, /Nothing was written/u);
@@ -516,7 +510,7 @@ test('an unmapped field is removed with one destructive change and no mapping wr
   const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c'])]);
   const { result, lines, exitCode } = await run(
     org,
-    { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root, dataspace: 'default' },
+    { field: ['Note__c'], 'output-dir': root, dataspace: 'default' },
     {},
     false,
   );
@@ -560,7 +554,7 @@ test('a field mapped by two mappings is removed once, its pairs drop from both, 
   await writeNativeMappingDocument(normalizeNativeMapping(org.mappings[0]), root, false);
   const { result, lines, exitCode } = await run(
     org,
-    { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root },
+    { field: ['Note__c'], 'output-dir': root },
     {},
     false,
   );
@@ -632,7 +626,7 @@ test('a field mapped by two mappings is removed once, its pairs drop from both, 
   ]);
   // A repeat finds no such field and writes nothing.
   org.calls.length = 0;
-  const repeat = await run(org, { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root });
+  const repeat = await run(org, { field: ['Note__c'], 'output-dir': root });
   assert.equal(repeat.result.status, 'blocked');
   assert.equal(repeat.result.diagnostics.errors[0].code, 'DMO_FIELD_NOT_FOUND');
   assert.deepEqual(org.calls, ['resolveTarget', 'dmo.get']);
@@ -666,7 +660,7 @@ test('a mapping pair changed between the plan and the write stops before any wri
   });
   const { result, lines, exitCode } = await run(
     org,
-    { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root },
+    { field: ['Note__c'], 'output-dir': root },
     {},
     false,
   );
@@ -693,7 +687,7 @@ test('a mapping pair changed between the plan and the write stops before any wri
 test('a pair still present after the destructive change is unconfirmed, never removed separately', async () => {
   const org = createOrg(twoMappings());
   org.dropPairs = false;
-  const { result, exitCode } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
+  const { result, exitCode } = await run(org, { field: ['Note__c'] });
   assert.equal(result.status, 'failed');
   assert.equal(exitCode, 1);
   const [item] = result.result.items;
@@ -713,7 +707,6 @@ test('pairs that Salesforce drops after a delay are waited for within the readba
   org.dropDelay = 1;
   const { result } = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': await temporaryRoot(),
   });
   assert.equal(result.status, 'success');
@@ -737,7 +730,6 @@ test('a mapping still CREATING after the removal is waited for; it must return t
   };
   const settled = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': await temporaryRoot(),
   });
   assert.equal(settled.result.status, 'success');
@@ -747,7 +739,7 @@ test('a mapping still CREATING after the removal is waited for; it must return t
   stuck.onRemove = () => {
     stuck.mappings[0].status = 'CREATING';
   };
-  const { result } = await run(stuck, { field: ['Note__c'], 'confirm-delete': true });
+  const { result } = await run(stuck, { field: ['Note__c'] });
   assert.equal(result.status, 'failed');
   assert.equal(result.result.items[0].outcome, 'deletion-unconfirmed');
   assert.equal(result.result.items[0].mutation, 'acknowledged');
@@ -780,7 +772,7 @@ test('anything else Salesforce changes with the removal is a side effect, never 
   for (const [name, change] of Object.entries(cases)) {
     const org = createOrg(twoMappings());
     org.onRemove = () => change(org);
-    const { result, exitCode } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
+    const { result, exitCode } = await run(org, { field: ['Note__c'] });
     assert.equal(result.status, 'failed', name);
     assert.equal(exitCode, 1);
     const [item] = result.result.items;
@@ -800,7 +792,7 @@ test('a field still shown as mapped without a pair at the pre-write recheck is n
       (pair) => pair.targetFieldDeveloperName !== 'Note__c',
     );
   });
-  const { result, exitCode } = await run(org, { field: ['Note__c'], 'confirm-delete': true });
+  const { result, exitCode } = await run(org, { field: ['Note__c'] });
   assert.equal(result.status, 'blocked');
   assert.equal(exitCode, 1);
   const [item] = result.result.items;
@@ -826,7 +818,6 @@ test('a failed destructive change is sent once and reported as unknown', async (
   };
   const { result, exitCode } = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': root,
   });
   assert.equal(result.status, 'failed');
@@ -854,7 +845,7 @@ test('a field still readable after the destructive change is unconfirmed, never 
   };
   const { result, lines, exitCode } = await run(
     org,
-    { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root },
+    { field: ['Note__c'], 'output-dir': root },
     {},
     false,
   );
@@ -886,7 +877,7 @@ test('a failed local refresh never hides the confirmed org change', async () => 
   const before = await readFile(dmoFile(root), 'utf8');
   const { result, lines, exitCode } = await run(
     org,
-    { field: ['Note__c'], 'confirm-delete': true, 'output-dir': root },
+    { field: ['Note__c'], 'output-dir': root },
     {
       writeNativeDmo: async () => {
         throw new NativeDmoError('OUTPUT_CHANGED');
@@ -927,7 +918,6 @@ test('an existing file that already matches the target is reported unchanged', a
   await writeNativeDmoDocument(normalizeNativeDmo(after), root, false);
   const { result } = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': root,
   });
   assert.equal(result.status, 'success');
@@ -954,9 +944,6 @@ test('whole-DMO delete without --field keeps its behaviour and never touches the
   assert.equal(result.result.items[0].operation, 'delete');
   assert.equal(result.result.items[0].fields, undefined);
   assert.deepEqual(lines, ['Delete: success.', `deleted dmo ${dmoName}`]);
-  // --confirm-delete is accepted (and not needed) for a whole native selection.
-  const confirmed = await run(org, { 'confirm-delete': true }, seams);
-  assert.equal(confirmed.result.status, 'success');
 });
 
 test('a hand-written mapping file is found by its binding and refreshed under its own name', async () => {
@@ -980,7 +967,6 @@ test('a hand-written mapping file is found by its binding and refreshed under it
   );
   const { result } = await run(org, {
     field: ['Note__c'],
-    'confirm-delete': true,
     'output-dir': root,
   });
   assert.equal(result.status, 'success');

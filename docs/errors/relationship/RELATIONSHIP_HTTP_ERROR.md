@@ -14,6 +14,8 @@ A relationship list, create or delete request returned an HTTP status outside 20
 
 A frequent case on create is HTTP 400 because one of the two DMOs has no mapping yet. A 4xx answer to a create or delete means nothing was written.
 
+A delete by name does not raise this code when the source DMO itself does not exist: its relationship list answers HTTP 404 `ITEM_NOT_FOUND`, and the relationship is reported `unchanged`. Any other list error stops the delete with this code.
+
 ## Why the plugin stops
 
 The plugin reports Salesforce's answer as is and does not retry. It does not check mappings itself; Salesforce decides.

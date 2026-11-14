@@ -223,7 +223,7 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   and those mapping files deploy afterwards and find the pairs already gone.
   Otherwise the deploy is refused with `DMO_FIELD_REMOVAL_MAPPED` before any write,
   naming those files and the single command.
-- `sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete` removes
+- `sf data360 delete -m dmo:<Name__dlm> --field <Field__c>` removes
   named custom fields in the org with one destructive change (Salesforce drops their
   mapping pairs with them), then overwrites this file
   and the `data360/mapping/<MappingApiName>.mapping-meta.json` file of every mapping
@@ -317,17 +317,19 @@ file: on the outcome `deleted` (mutation `confirmed-deleted`) and on
 deletion and is finishing it). Removed are the files under `data360/` in the current
 directory for `dlo`, `dmo` and `relationship`, and `data-stream` (with
 `--delete-dlo` also the linked data lake object's file); for a mapping the file of
-that name or the hand-written file whose binding matches; and for a data transform,
-segment, identity resolution, data graph or calculated insight the `--source-dir`
-file (both members of a calculated insight pair). When `--source-dir` names a folder,
-nothing is removed for that family and a warning says so. Mapping files of mappings
+that name or the hand-written file whose binding matches; for a data transform
+`data360/dataTransforms/<Name>.dataTransform.json` in the current directory; and for a
+segment, identity resolution, data graph or calculated insight its canonical file under
+the default package directory of `sfdx-project.json` (`force-app/main/default` without
+one; both members of a calculated insight pair). Files are found by name at these paths;
+no folder is searched. Mapping files of mappings
 Salesforce removes together with a deleted DMO are not removed, because those
 mappings are not items of the command.
 
 Each file is removed on its own with one unlink. Only regular files are removed:
 directories, symbolic links, junctions, files reached through a linked folder and
 hard-linked files are refused (`UNSAFE_PATH`), as is any path outside the project's
-`data360` folder or other than the exact `--source-dir` file. Each result item lists
+`data360` folder or the package directory. Each result item lists
 `removedLocalFiles` with an outcome per file: `removed`, `not-present`, `kept` or
 `failed`. A failed removal keeps the confirmed org result, and the command exits
 nonzero with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps every file

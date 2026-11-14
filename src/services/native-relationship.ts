@@ -1,5 +1,6 @@
 import { paceReadback, readbackPace } from './readback-pace.js';
 import { replaceExplanation } from './operation-diagnostic.js';
+import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import {
   NativeRelationshipError,
   nativeRelationshipName,
@@ -163,7 +164,7 @@ export async function preflightNativeRelationship(
     const error = new NativeRelationshipError('RELATIONSHIP_CHANGE_UNSUPPORTED');
     replaceExplanation(
       error,
-      `The relationship ${found.name} with this binding exists with cardinality ${found.cardinality} and owner ${found.relationshipOwner}; the file asks for ${desired.spec.cardinality} and ${desired.spec.relationshipOwner}. Salesforce has no route to change a relationship: delete it (sf data360 delete --metadata relationship:${found.name}) and deploy the file again.`,
+      `The relationship ${found.name} with this binding exists with cardinality ${found.cardinality} and owner ${found.relationshipOwner}; the file asks for ${desired.spec.cardinality} and ${desired.spec.relationshipOwner}. Salesforce has no route to change a relationship: delete it (sf data360 delete --metadata relationship:${found.sourceObjectName}:${found.name}) and deploy the file again.`,
     );
     throw error;
   }
@@ -212,7 +213,64 @@ export async function deployNativeRelationship(
 }
 
 /**
- * Qualify a relationship deletion read-only: the name must carry the file's binding.
+ * Read-only: find a relationship by name among the relationships of its source DMO, ignoring
+ * letter case. No match is absence, as is the source DMO itself not existing (HTTP404
+ * ITEM_NOT_FOUND on its relationship list); two matches are refused.
+ * @param {string} sourceDmo Exact source DMO named in the selector.
+ * @param {string} name Relationship name named in the selector.
+ * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
+ * @param {string} [requestScope] Optional request scope.
+ * @returns {Promise<NativeRelationshipDocument | undefined>} The relationship as a document.
+ */
+export async function findNativeRelationshipByName(
+  sourceDmo: string,
+  name: string,
+  client: Pick<RelationshipClient, 'list'>,
+  requestScope?: string,
+): Promise<NativeRelationshipDocument | undefined> {
+  if (!nativeRelationshipName.test(name))
+    throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
+  let inventory: ObservedRelationship[];
+  try {
+    inventory = await listNativeRelationships(sourceDmo, client);
+  } catch (error) {
+    // A relationship cannot exist without its source DMO: only the list's exact HTTP404
+    // ITEM_NOT_FOUND for that DMO is absence; any other error still blocks.
+    const errors = getConnectDiagnostic(error)?.errors;
+    if (
+      error instanceof NativeRelationshipError &&
+      error.code === 'RELATIONSHIP_HTTP_ERROR' &&
+      error.status === 404 &&
+      errors?.length === 1 &&
+      errors[0].code === 'ITEM_NOT_FOUND'
+    )
+      return undefined;
+    throw error;
+  }
+  const matches = inventory.filter((entry) => entry.name.toLowerCase() === name.toLowerCase());
+  if (matches.length > 1) {
+    const error = new NativeRelationshipError('AMBIGUOUS_RELATIONSHIP_TARGET');
+    replaceExplanation(
+      error,
+      `${sourceDmo} has ${matches.length} relationships named ${name} when letter case is ignored, so the name does not resolve to one relationship. Nothing was deleted.`,
+    );
+    throw error;
+  }
+  const [found] = matches;
+  if (found === undefined) return undefined;
+  if (found.sourceObjectName !== sourceDmo) {
+    const error = new NativeRelationshipError('RELATIONSHIP_TARGET_BINDING_MISMATCH');
+    replaceExplanation(
+      error,
+      `The relationship ${found.name} has the source DMO ${found.sourceObjectName}, not ${sourceDmo}. Nothing was deleted; name its source DMO in the selector (relationship:${found.sourceObjectName}:${found.name}).`,
+    );
+    throw error;
+  }
+  return normalizeNativeRelationship(entryToWire(found), requestScope);
+}
+
+/**
+ * Qualify a relationship deletion read-only: the name must carry the document's binding.
  * @param {string} apiName Exact relationship name.
  * @param {unknown} value Local relationship file naming the source DMO.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
@@ -239,7 +297,7 @@ export async function preflightDeleteNativeRelationship(
       const error = new NativeRelationshipError('RELATIONSHIP_NAME_MISMATCH');
       replaceExplanation(
         error,
-        `No relationship is named ${apiName}, but the org relationship ${other.name} carries the file's binding. It was not deleted. Retrieve it (sf data360 retrieve -m relationship:${document.spec.sourceObjectName}) and delete it by that name (sf data360 delete -m relationship:${other.name}).`,
+        `No relationship is named ${apiName}, but the org relationship ${other.name} carries the file's binding. It was not deleted. Retrieve it (sf data360 retrieve -m relationship:${document.spec.sourceObjectName}) and delete it by that name (sf data360 delete -m relationship:${document.spec.sourceObjectName}:${other.name}).`,
       );
       throw error;
     }

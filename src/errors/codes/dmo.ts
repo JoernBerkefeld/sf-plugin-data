@@ -8,8 +8,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce accepted the DMO DELETE, but the DMO could not be confirmed gone. Do not rerun the delete; read the DMO in the org first and act on what you find.',
   DMO_DELETE_UNCONFIRMED:
     'The DMO DELETE got an unexpected answer, so its outcome is unknown. Read the DMO in the org before you run the delete again.',
-  DMO_FIELD_DELETE_CONFIRMATION_REQUIRED:
-    'Deleting DMO fields needs explicit confirmation. Rerun with --confirm-delete, or with --preview to see which fields and mapping pairs would go.',
   DMO_FIELD_NOT_FOUND:
     'A field named for removal does not exist on the DMO in the org. Check the exact field API names, then rerun.',
   DMO_FIELD_REMOVAL_FAILED:

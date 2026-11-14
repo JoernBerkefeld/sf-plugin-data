@@ -79,28 +79,27 @@ export async function listDataTransformInventory(
 }
 
 /**
- * Resolve the target ID of a data transform from its API name (a transform deleted in a Git range
- * has no --transform-target-id): read the complete inventory and require exactly one entry whose
- * name matches, ignoring case. Read-only.
+ * Resolve the target ID of a data transform from its API name: read the complete inventory and
+ * take the one entry whose name matches, ignoring case. Read-only.
  * @param {DataTransformClient} client Fixed API68/default adapter.
- * @param {string} name API name from the authored definition.
- * @returns {Promise<string>} The one matching target ID.
+ * @param {string} name API name of the selected transform.
+ * @returns {Promise<string | undefined>} The one matching target ID; undefined when none matches.
  */
 export async function resolveDataTransformTargetId(
   client: DataTransformClient,
   name: string,
-): Promise<string> {
+): Promise<string | undefined> {
   const inventory = await listDataTransformInventory(client);
   const matches = inventory.filter((row) => row.name.toLowerCase() === name.toLowerCase());
-  if (matches.length !== 1) {
+  if (matches.length > 1) {
     const error = new DataTransformError('TRANSFORM_TARGET_NOT_RESOLVED');
     replaceExplanation(
       error,
-      `The org has ${matches.length === 0 ? 'no data transform' : `${matches.length} data transforms`} named ${name}, so the transform deleted in the Git range cannot be resolved to one target ID. Nothing was deleted.`,
+      `The org has ${matches.length} data transforms named ${name} (ignoring case), so the name does not resolve to one target ID. Nothing was deleted.`,
     );
     throw error;
   }
-  return matches[0].id;
+  return matches[0]?.id;
 }
 
 /**

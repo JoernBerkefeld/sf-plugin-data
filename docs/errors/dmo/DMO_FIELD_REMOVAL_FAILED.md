@@ -22,7 +22,7 @@ The plugin sends the removal once and never retries it. Without a confirmed resu
 
 1. Read the problem text in the message (for example a field still referenced elsewhere).
 2. Read the DMO and its mappings in the org to see which fields are still there.
-3. Resolve the cause, then rerun `sf data360 delete --field ... --confirm-delete` or the deploy with `--allow-field-removal`.
+3. Resolve the cause, then rerun `sf data360 delete -m dmo:<Name>__dlm --field ...` or the deploy with `--allow-field-removal`.
 
 ## Example output
 

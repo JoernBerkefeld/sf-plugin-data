@@ -9,6 +9,7 @@ import {
 } from '../lib/artifacts/native-data-graph-document.js';
 import {
   acquireNativeDataGraph,
+  proveNativeDataGraphAbsent,
   bindNativeGraphRoot,
   readNativeGraphReadiness,
   nativeDataGraphLifecycle,
@@ -714,8 +715,6 @@ test('public native68 retrieve deploy delete route through real services with se
   const deleted = await run(Delete, {
     'api-version': '68.0',
     metadata: [`data-graph:${name}`],
-    'source-dir': receipt.path,
-    'confirm-delete': true,
     preview: false,
   });
   assert.equal(deleted.status, 'success');
@@ -807,8 +806,6 @@ test('graph retrieve, deploy and delete use native API68 at auto and with no fla
       {
         ...(apiVersion ? { 'api-version': apiVersion } : {}),
         metadata: [`data-graph:${name}`],
-        'source-dir': receipt.path,
-        'confirm-delete': true,
         preview: false,
       },
       seams,
@@ -857,8 +854,6 @@ test('graph retrieve, deploy and delete refuse API 67.0 and 65.0 as INVALID_SCOP
         {
           'api-version': apiVersion,
           metadata: [`data-graph:${name}`],
-          'source-dir': receipt.path,
-          'confirm-delete': true,
           preview: true,
         },
         seams,
@@ -2421,12 +2416,12 @@ test('Graph command diagnostics render JSON and human failures including before 
           const flags = {
             'api-version': '68.0',
             metadata: [`data-graph:${name}`],
-            'source-dir': Class === Delete ? receipt.path : [receipt.path],
+            // Delete selects the graph by name only.
+            ...(Class === Delete ? {} : { 'source-dir': [receipt.path] }),
             // Delete admits --output-dir only together with --field.
             ...(Class === Delete ? {} : { 'output-dir': cwd }),
             preview: false,
             'allow-processing': true,
-            'confirm-delete': true,
           };
           command.parse = async () => ({ flags });
           command.jsonEnabled = () => json;
@@ -3406,4 +3401,88 @@ test('deploy command surfaces the preview owner codes on the item', async () => 
   assert.equal(published.result.items[0].diagnostics[0].code, 'DATA_GRAPH_OWNER');
   assert.match(published.result.items[0].diagnostics[0].message, /Individual_MKT/u);
   process.exitCode = 0;
+});
+
+test('graph absence needs item, metadata, inventory and SOQL agreement', async () => {
+  const absent = fixture();
+  assert.deepEqual(await proveNativeDataGraphAbsent(absent.context, name), {
+    state: 'absent',
+    proof: 'item+metadata+inventory+soql',
+  });
+  // Metadata still answering 200 after the item route's not-found is pending, not absent.
+  const stale = fixture();
+  stale.context.metadata = async () => ({ status: 200, body: { dataGraphMetadata: [] } });
+  assert.deepEqual(await proveNativeDataGraphAbsent(stale.context, name), { state: 'pending' });
+  const listed = fixture();
+  listed.context.inventory = async () => ({
+    status: 200,
+    body: { dataGraphMetadata: [{ developerName: name, dataspaceName: 'default' }] },
+  });
+  assert.deepEqual(await proveNativeDataGraphAbsent(listed.context, name), { state: 'pending' });
+  // Any other item answer, HTTP400 included, proves nothing.
+  const other = fixture();
+  other.context.get = async () => ({
+    status: 400,
+    body: [{ errorCode: 'INTERNAL_ERROR', message: 'Something else' }],
+  });
+  const unknown = await proveNativeDataGraphAbsent(other.context, name);
+  assert.equal(unknown.state, 'unknown');
+});
+
+/**
+ * Delete a graph by name, with a later-phase DMO selected, over synthetic readers.
+ * @param {object} f Graph fixture.
+ * @param {boolean} preview Read-only run.
+ * @returns {Promise<object>} Envelope and executor call ledger.
+ */
+async function deleteGraphByName(f, preview) {
+  const calls = [];
+  const fail = (seam) => async () => {
+    calls.push(seam);
+    assert.fail(`${seam} must not run`);
+  };
+  const result = await runGraphCommand(
+    Delete,
+    { metadata: [`data-graph:${name}`, 'dmo:Later__dlm'], preview },
+    {
+      resolveConnection: async () => ({ getUsername: () => 'target' }),
+      resolveTarget: async () => 'target',
+      nativeGraphContext: async () => f.context,
+      nativeGraphClient: () => f.client,
+      operateNativeGraph: fail('operateNativeGraph'),
+      createDmoNativeDeleteClient: () => ({}),
+      retrieveDmo: fail('retrieveDmo'),
+      deleteDmo: fail('deleteDmo'),
+    },
+  );
+  process.exitCode = 0;
+  return { result, calls };
+}
+
+for (const preview of [false, true])
+  test(`graph delete${preview ? ' preview' : ''} by name blocks when the item route says not found but metadata still reads 200`, async () => {
+    const f = fixture();
+    f.context.metadata = async () => ({ status: 200, body: { dataGraphMetadata: [] } });
+    const { result, calls } = await deleteGraphByName(f, preview);
+    assert.equal(result.status, 'blocked', JSON.stringify(result));
+    assert.deepEqual(calls, []);
+    assert.equal(result.result.items.length, 0);
+    assert.equal(result.diagnostics.errors[0].code, 'DELETE_FAILED');
+    assert.match(result.diagnostics.errors[0].message, /still being created or removed/u);
+    assert.match(
+      result.diagnostics.errors[0].message,
+      preview ? /Preview stopped; nothing was deleted\./u : /Deletion stopped\./u,
+    );
+  });
+
+test('graph delete by name blocks on an item HTTP400 without the exact not-found answer', async () => {
+  const f = fixture();
+  f.context.get = async () => ({
+    status: 400,
+    body: [{ errorCode: 'INTERNAL_ERROR', message: 'Something else' }],
+  });
+  const { result, calls } = await deleteGraphByName(f, false);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(calls, []);
+  assert.equal(result.result.items.length, 0);
 });

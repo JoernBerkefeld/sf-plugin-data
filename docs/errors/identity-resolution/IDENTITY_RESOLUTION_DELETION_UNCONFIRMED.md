@@ -20,9 +20,9 @@ Once a delete has been sent, sending it again or rolling anything back could act
 
 ## How to fix
 
-1. Wait a few minutes, then run `sf data360 delete --metadata identity-resolution:<Name> --source-dir <file> --preview`. An `unchanged` result means the ruleset is gone.
+1. Wait a few minutes, then run `sf data360 delete --metadata identity-resolution:<Name> --preview`. An `unchanged` result means the ruleset is gone.
 2. Or check the ruleset in Data Cloud, or retrieve it again.
-3. Only if it still exists and is no longer `DELETING`, run the delete again with `--confirm-delete`.
+3. Only if it still exists and is no longer `DELETING`, run the delete again without `--preview`.
 
 ## Example output
 

@@ -68,25 +68,27 @@ written for them.
 
 `sf data360 delete --changed-since <ref>` takes the same Git selection and deletes the
 components of the files deleted in the range; files changed or added in the range are
-not part of a delete. It is exclusive with `--metadata` and `--source-dir` and refuses
-`--transform-target-id` (`INVALID_TRANSFORM_DELETE_SELECTION`) and `--delete-dlo`
+not part of a delete. It is exclusive with `--metadata` and refuses `--delete-dlo`
 (`INVALID_STREAM_DELETE_SELECTION`). Execution always needs `--confirm-delete`
 (`DESTRUCTIVE_CONFIRMATION_REQUIRED` otherwise, before any org call), even for one
-family; `--preview` runs without it.
+family; `--preview` runs without it. `--confirm-delete` belongs to `--changed-since`
+only: a delete by name with `-m` runs without it.
 
 - The candidates run through the same phases as any delete, in reverse order: graphs,
   then identity resolution, calculated insights and Segments (a dependent before what it
   needs), then data transforms, then relationships, mappings, DMOs and DLOs, then data
   streams. Each phase starts only after the previous one settled.
-- Every family runs from its merge-base document with the checks of an explicit delete.
+- Every family runs from its merge-base document (not from an org read by name, as a
+  `-m` delete does) with the checks of an explicit delete.
   Right before each phase, and before each write of a source-backed family, every
   candidate path must still be absent; a file present again blocks
   (`BLOCKED_GIT_LIFECYCLE`). Each candidate's data space must equal the requested one
   (`INVALID_SCOPE`).
 - A relationship takes its source DMO from the base content; no local file is read.
 - A data transform has no target ID in the range: its API name from the base content is
-  looked up in the complete transform list (ignoring case) and must match exactly one
-  transform, otherwise nothing is deleted (`TRANSFORM_TARGET_NOT_RESOLVED`).
+  looked up in the complete transform list (ignoring case). No match reports `unchanged`
+  / `not-attempted`, also when the delete is run again after the transform was deleted;
+  two or more matches delete nothing (`TRANSFORM_TARGET_NOT_RESOLVED`).
 - A stream file deleted together with the file of its landing DLO is one stream delete
   that also deletes that DLO; the DLO is never deleted on its own. A stream deleted
   alone keeps its DLO.

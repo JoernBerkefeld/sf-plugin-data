@@ -36,5 +36,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 
 ## Related codes
 
-- [`DESTRUCTIVE_CONFIRMATION_REQUIRED`](../general/DESTRUCTIVE_CONFIRMATION_REQUIRED.md) — the delete was refused because `--confirm-delete` was missing.
+- [`DESTRUCTIVE_CONFIRMATION_REQUIRED`](../general/DESTRUCTIVE_CONFIRMATION_REQUIRED.md) — a `--changed-since` delete was refused because `--confirm-delete` was missing.
 - [`LOCAL_FILE_REMOVAL_FAILED`](../general/LOCAL_FILE_REMOVAL_FAILED.md) — the org deletion worked but a local file was not removed.

@@ -1,6 +1,6 @@
 # `TRANSFORM_TARGET_NOT_RESOLVED`
 
-> A data transform deleted in the Git range is found in the org by its name, and exactly one transform must match. Nothing was deleted; check the transforms with that name in Data Cloud, then delete it with -m and --transform-target-id.
+> Two or more data transforms in the org have this name when letter case is ignored, so it does not resolve to one transform. Nothing was deleted; rename or remove the duplicate in Data Cloud, then rerun.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,28 +10,29 @@
 
 ## What it means
 
-`sf data360 delete --changed-since <ref>` deletes a data transform whose `.dataTransform.json` file was deleted in the Git range. There is no `--transform-target-id` in that case, so the plugin reads the full list of data transforms and looks for the name from the file's base content, ignoring case. It found no transform with that name, or more than one. The lookup runs for every such transform before any phase starts (also with `--preview`), so nothing in the range was deleted.
+`sf data360 delete` finds a data transform by its API name: from `-m data-transform:<Name>`, or with `--changed-since` from the base content of the deleted `.dataTransform.json` file. It reads the full list of data transforms and looks for that name, ignoring letter case. It found more than one. The lookup runs before any phase starts (also with `--preview`), so nothing was deleted.
+
+When no transform has that name, there is nothing to delete: the item reports `unchanged`, also when a Git delete is run again after the transform was already deleted.
 
 ## Why the plugin stops
 
-The record ID decides what gets deleted. With no match there is nothing to delete by that name; with several matches the plugin cannot tell which one the file described.
+The record ID decides what gets deleted. With several matches the plugin cannot tell which transform the name means.
 
 ## How to fix
 
 1. Look up the transforms with that name in Data Cloud.
-2. If none exists, the transform is already gone; nothing needs to be deleted.
-3. If several exist, restore the file from the base commit and delete the one you mean with `-m data-transform:<Name>`, `--source-dir` naming that file and `--transform-target-id <Id>`.
+2. Rename or remove the one you do not want to delete, then rerun the delete with `--preview` first.
 
 ## Example output
 
 ```text
 Delete: blocked.
-TRANSFORM_TARGET_NOT_RESOLVED: The org has no data transform named Orders_Copy, so the transform deleted in the Git range cannot be resolved to one target ID. Nothing was deleted.
-Hint: A data transform deleted in the Git range is found in the org by its name, and exactly one transform must match. Nothing was deleted; check the transforms with that name in Data Cloud, then delete it with -m and --transform-target-id.
+TRANSFORM_TARGET_NOT_RESOLVED: The org has 2 data transforms named Orders_Copy (ignoring case), so the name does not resolve to one target ID. Nothing was deleted.
+Hint: Two or more data transforms in the org have this name when letter case is ignored, so it does not resolve to one transform. Nothing was deleted; rename or remove the duplicate in Data Cloud, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/TRANSFORM_TARGET_NOT_RESOLVED.md
 ```
 
 ## Related codes
 
-- [`TRANSFORM_DELETE_IDENTITY_MISMATCH`](../data-transform/TRANSFORM_DELETE_IDENTITY_MISMATCH.md) — the list has no entry with the given ID and name together.
+- [`TRANSFORM_DELETE_IDENTITY_MISMATCH`](../data-transform/TRANSFORM_DELETE_IDENTITY_MISMATCH.md) — the list has no entry with the resolved ID and name together.
 - [`INCOMPLETE_TRANSFORM_INVENTORY`](../data-transform/INCOMPLETE_TRANSFORM_INVENTORY.md) — the list itself could not be read completely.

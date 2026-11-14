@@ -396,7 +396,7 @@ for (const stage of ['untracked', 'index']) {
 }
 
 for (const [label, rows, expected] of [
-  ['no match', [{ id: '1dt000000000002AAA', name: 'OtherTransform' }], undefined],
+  ['no match', [{ id: '1dt000000000002AAA', name: 'OtherTransform' }], 'unchanged'],
   ['one match', [{ id: '1dt000000000001AAA', name: 'SyntheticTransform' }], '1dt000000000001AAA'],
   [
     'two matches',
@@ -412,6 +412,16 @@ for (const [label, rows, expected] of [
     const h = harness(cwd, { 'changed-since': base });
     h.transforms = rows;
     const result = await run(h.command);
+    if (expected === 'unchanged') {
+      // Nothing of that name (also on a rerun after it was deleted): no delete is sent.
+      assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+      assert.deepEqual(h.calls, ['git', 'auth']);
+      assert.deepEqual(
+        result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
+        [['data-transform', 'unchanged', 'not-attempted']],
+      );
+      return;
+    }
     if (expected) {
       assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
       assert.deepEqual(h.calls, ['git', 'auth', `transform:${expected}`]);
@@ -427,11 +437,14 @@ for (const [label, rows, expected] of [
   });
 }
 
-test('a transform deleted in the range with no unique match blocks before its graph is deleted', async () => {
+test('a transform deleted in the range with two matches blocks before its graph is deleted', async () => {
   const { cwd, base } = await repository(['graph', 'transform']);
   for (const preview of [false, true]) {
     const h = harness(cwd, { 'changed-since': base, preview });
-    h.transforms = [{ id: '1dt000000000002AAA', name: 'OtherTransform' }];
+    h.transforms = [
+      { id: '1dt000000000001AAA', name: 'SyntheticTransform' },
+      { id: '1dt000000000003AAA', name: 'SYNTHETICTRANSFORM' },
+    ];
     const result = await run(h.command);
     assert.equal(result.status, 'blocked');
     assert.deepEqual(codes(result), ['TRANSFORM_TARGET_NOT_RESOLVED']);
@@ -486,8 +499,6 @@ test('a file deleted in the range that is present again before its phase blocks 
 
 for (const [flag, value, code] of [
   ['metadata', ['dmo:Example__dlm'], 'INVALID_SELECTION'],
-  ['source-dir', ['data360'], 'INVALID_SELECTION'],
-  ['transform-target-id', '1dt000000000001AAA', 'INVALID_TRANSFORM_DELETE_SELECTION'],
   ['delete-dlo', true, 'INVALID_STREAM_DELETE_SELECTION'],
 ]) {
   test(`--changed-since refuses --${flag} before reading Git`, async () => {

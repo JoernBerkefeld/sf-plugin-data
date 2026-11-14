@@ -1,17 +1,38 @@
-## Delete phases — 2026-11-13
+## Delete phases — 2026-11-14
 
-One delete may hold any mix of families, selected with `-m` (source-backed families also
-need their `--source-dir` file each; `--source-dir` is repeatable). Delete runs the deploy
+One delete may hold any mix of families, selected by name with `-m` only (no
+`--source-dir`). Delete runs the deploy
 phases in reverse: P4 data graphs, P3 identity resolution, calculated insight and Segment
 (every dependent in an earlier stage than the component it needs, including a graph, CI or
-Segment on the unified/link DMO of a selected ruleset), P2 the data transform, P1
+Segment on the unified/link DMO of a selected ruleset), P2 data transforms, P1
 relationships, mappings, DMOs and DLOs (in that order), P0 data streams. Each family keeps
 its own delete checks. A phase starts only after every item of the previous one settled; a
 blocked, failed or unconfirmed item stops the run, and an item Salesforce accepted but still
 processes (`deletion-processing`) stops the later phases (`DELETE_PHASE_NOT_SETTLED`;
-rerun the same delete once it reads absent). A selection spanning more than one phase needs
-`--confirm-delete`, checked before any org call (`DESTRUCTIVE_CONFIRMATION_REQUIRED`).
-Every item carries `family`.
+rerun the same delete once it reads absent). A `-m` delete needs no confirmation flag;
+`--confirm-delete` is accepted only with `--changed-since`. Every item carries `family`.
+
+- Before the first delete (read-only, preview too) each selected transform, Segment, IR,
+  CI and graph is read from the org by name with the existing readers: transform through
+  the complete transform list (name ignoring case → record ID; no match `unchanged`, 2+
+  `TRANSFORM_TARGET_NOT_RESOLVED`) and `retrieveDataTransform`; Segment and IR by exact
+  GET (only `ITEM_NOT_FOUND` is absence); CI by the exact native + Metadata read
+  (`acquireExactCalculatedInsight`, so DRAFT and ACTIVE stay deletable); graph by the
+  item GET; absence needs the item's exact "not found" answer, a metadata 404
+  `METADATA_ERROR_ENTITY_NOTFOUND`, a complete graph list without the name and an empty
+  SOQL read. Metadata, list or SOQL still holding it stops the delete before any deletion. An absent component reports
+  `unchanged` / `not-attempted` without calling its executor. The read definition is what
+  the family executor compares against; every executor guard is unchanged.
+- Relationships are selected as `relationship:<SourceDmo__dlm>:<Name>`; a bare
+  `relationship:<Name>` (or more or fewer parts) is refused with `INVALID_SELECTION`. The
+  source DMO's relationships are listed and the name is matched ignoring case: no match
+  `unchanged` (also when the source DMO itself does not exist: its list answers HTTP 404
+  `ITEM_NOT_FOUND`; any other list error stops the delete), 2+ `AMBIGUOUS_RELATIONSHIP_TARGET`, a match whose source object is another
+  DMO `RELATIONSHIP_TARGET_BINDING_MISMATCH`. No local file is read.
+- Local files after a confirmed deletion are removed at their canonical paths by name:
+  `data360/dataTransforms/<Name>.dataTransform.json` under the current directory; the
+  Segment, IR, graph file and both CI members under the default package directory of
+  `sfdx-project.json`. `--keep-local-files` keeps them.
 
 - Preview runs every phase read-only (also after a blocked phase). An item whose selected
   dependents an earlier phase plans to delete is reported `planned-dependencies`
@@ -30,14 +51,14 @@ Every item carries `family`.
   mapping stays refused.
 - `--changed-since <ref>`: the components of the canonical plugin files deleted in the
   range (committed or staged) are deleted through the same phases; changed and added files
-  are not part of a delete. Exclusive with `-m`/`--source-dir`; `--transform-target-id`
-  and `--delete-dlo` are refused. Execution always needs `--confirm-delete`; preview does
-  not. Each family runs from its merge-base document (identity from content), every
+  are not part of a delete. Exclusive with `-m`; `--delete-dlo` is refused. Execution
+  always needs `--confirm-delete`; preview does not. Each family runs from its merge-base document (identity from content), every
   deleted path must still be absent right before each phase and before each source-family
   write (`BLOCKED_GIT_LIFECYCLE`), and each candidate's data space must equal the requested
   one. A relationship takes its source DMO from the base content; a data transform resolves
-  its target ID by name from the complete transform list, ignoring case, and is refused
-  unless exactly one transform matches (`TRANSFORM_TARGET_NOT_RESOLVED`). A deleted stream
+  its target ID by name from the complete transform list, ignoring case: no match is
+  `unchanged` / `not-attempted` (also on a rerun), 2+ is refused
+  (`TRANSFORM_TARGET_NOT_RESOLVED`). A deleted stream
   file plus its landing DLO file is one stream delete with that DLO. No local file is
   listed or removed. A rename split across commit, index and worktree (one component
   deleted at one path, added at another) blocks the selection before any org call.
@@ -99,8 +120,8 @@ Preview (only) checks the root DMO and, for a derived
 root, its IR owner via `GET /ssot/identity-resolutions` (`DATA_GRAPH_ROOT_NOT_FOUND`,
 `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, info `DATA_GRAPH_OWNER`).
 
-Delete needs an exact selector, matching local native artifact, --confirm-delete
-and fresh ready/identity/created-date/definition/root checks, with explicitly empty
+Delete needs an exact selector (the definition is read from the org by name) and fresh
+ready/identity/created-date/definition/root checks, with explicitly empty
 known dependency/related-segment arrays. Unknown/nonempty dependencies block;
 exhaustive external-consumer exclusion remains unverified. Live API68 create/read/
 delete evidence confirmed independent graph-definition absence. The DELETE answer
@@ -183,8 +204,8 @@ expression edits are writable. Execute, publish and delete compare the authored
 document, status, native profile and Metadata definition before writing, not the
 attribution and runtime fields that the API 68 read varies between consecutive
 reads, so a correct repeat is `unchanged` and a correct delete proceeds.
-Present-owner delete needs its matching pair, exact selector and `--confirm-delete`.
-No cascade, local removal, retry or rollback; bounded independent settlement, not
+Present-owner delete needs the exact selector; the definition is read from the org by
+the exact read. No cascade, retry or rollback; bounded independent settlement, not
 the response, confirms each write.
 
 Live on `isolated-source` (2026-11-12), at `auto`: retrieve of two run insights,
@@ -728,14 +749,13 @@ Salesforce may cascade to the DMO's mapping. Deletion resolves the exact
 target through `deleteNativeDmo` and uses `DmoClient.delete`.
 
 Field-level delete,
-`sf data360 delete -m dmo:<Name__dlm> --field <Field__c> --confirm-delete`:
+`sf data360 delete -m dmo:<Name__dlm> --field <Field__c>`:
 
 - Removes named custom fields from one DMO together with their mapping pairs. It is
   the one delete operation that rewrites project files (it removes none), and it changes mappings the
-  command line does not name; execution requires `--confirm-delete`
-  (`DMO_FIELD_DELETE_CONFIRMATION_REQUIRED` before any org call).
+  command line does not name; check it with `--preview` first.
 - `--field` is repeatable and needs exactly one `dmo:` selector. Any other selector,
-  `--source-dir`, `--delete-dlo`, `--transform-target-id`, or `--output-dir` without
+  `--changed-since`, `--delete-dlo`, or `--output-dir` without
   `--field` is refused with `INVALID_FIELD_DELETE_SELECTION` before any org call.
 - Admission is read-only: custom or standard DMO (`UNSUPPORTED_DMO_TARGET`
   otherwise); each field exists (`DMO_FIELD_NOT_FOUND`), is custom, not the primary
@@ -814,10 +834,14 @@ Not qualified:
       relationship whose DMO the batch creates reports `planned-dependencies`.
 - [x] Salesforce requires both DMOs to be mapped (HTTP 400, reported as
       `RELATIONSHIP_HTTP_ERROR`, mutation `rejected`); no local check.
-- [x] Delete `-m relationship:<Name>` reads the local file to find the source DMO
-      (`RELATIONSHIP_FILE_REQUIRED` names the expected path), confirms the binding
+- [x] Delete `-m relationship:<SourceDmo__dlm>:<Name>` lists the source DMO's
+      relationships and finds the name ignoring case (`unchanged` when absent or when
+      the source DMO itself does not exist, list HTTP 404 `ITEM_NOT_FOUND`,
+      `AMBIGUOUS_RELATIONSHIP_TARGET` for 2+, `RELATIONSHIP_TARGET_BINDING_MISMATCH` when
+      its source is another DMO); a bare `relationship:<Name>` is `INVALID_SELECTION`. With
+      `--changed-since` the base content gives the source DMO and binding
       (`RELATIONSHIP_NAME_MISMATCH`, nothing deleted, when the binding exists only
-      under another name; `unchanged` when neither name nor binding is present), sends one DELETE and confirms absence
+      under another name). It sends one DELETE and confirms absence
       (`RELATIONSHIP_DELETION_UNCONFIRMED`). HTTP 4xx: mutation `rejected`.
       Relationships run first in a delete command. `--preview` only reads.
 - [x] Observed at API68 through the plugin in one org on empty custom DMOs: combined
@@ -939,8 +963,8 @@ its DMO deleted in one command (15 s). DMOs have no dependency route (`/dependen
 
 After a confirmed deletion (`deleted`/`confirmed-deleted`, or
 `deletion-processing`/`acknowledged-processing`) delete removes the component's local
-file, one regular file at a time and only inside the project's `data360` folder or the
-exact `--source-dir` file. Results list `removedLocalFiles` (`removed`, `not-present`,
+file at its canonical path by name, one regular file at a time and only inside the
+project's `data360` folder or the default package directory of `sfdx-project.json`. Results list `removedLocalFiles` (`removed`, `not-present`,
 `kept`, `failed`); a failed removal keeps the org outcome and exits nonzero with
 `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps the files and `--preview` lists
 them as `localFiles`. Details are in [artifact formats](artifact-format.md).

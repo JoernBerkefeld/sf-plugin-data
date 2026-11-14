@@ -10,7 +10,7 @@
 
 ## What it means
 
-Delete records the selector, `--source-dir` and the other flags at the start and checks them again before each step. This code means they no longer matched. The delete result shows this under `CI_ADMISSION_FAILED`.
+Delete records the selector and the other flags at the start and checks them again before each step. This code means they no longer matched. The delete result shows this under `CI_ADMISSION_FAILED`.
 
 ## Why the plugin stops
 
@@ -18,7 +18,7 @@ A delete is not reversible. The plugin deletes only when the request is exactly 
 
 ## How to fix
 
-1. Rerun the delete with the intended `-m calculated-insight:Name__cio`, `--source-dir` and `--confirm-delete`.
+1. Rerun the delete with the intended `-m calculated-insight:Name__cio` and flags.
 2. Do not run the command from a wrapper that changes its options during the run.
 
 ## Example output

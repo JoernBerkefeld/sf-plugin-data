@@ -235,36 +235,34 @@ function nativeGraphCreateEcho(
 }
 
 /**
- * Acquire exact native state. HTTP400 alone is never absence evidence; stale metadata is pending.
+ * Prove that no graph of this name exists. HTTP400 alone is never absence evidence: only the
+ * item route's exact not-found answer, the metadata route's 404 METADATA_ERROR_ENTITY_NOTFOUND,
+ * a complete inventory without the name and an empty SOQL read prove it. Metadata still present
+ * (or the name still listed or queried) is pending; anything else is unknown.
  * @param {NativeGraphContext} context Independent exact readers, not mutation responses.
- * @param {NativeDataGraphDocument} document Native intent.
- * @param {boolean} [baseline] Acquire target independent of desired equality.
- * @returns {Promise<NativeGraphAcquisition>} Correlated state or conservative uncertainty.
+ * @param {string} name Exact graph name.
+ * @param {NativeGraphRead} [item] The item read already made for this name; read when omitted.
+ * @returns {Promise<object>} Absent with its proof, pending, or unknown with any retained diagnostic.
  */
-export async function acquireNativeDataGraph(
+export async function proveNativeDataGraphAbsent(
   context: NativeGraphContext,
-  document: NativeDataGraphDocument,
-  baseline = false,
-): Promise<NativeGraphAcquisition> {
+  name: string,
+  item?: NativeGraphRead,
+): Promise<
+  | { state: 'absent'; proof: 'item+metadata+inventory+soql' }
+  | { state: 'pending' }
+  | { state: 'unknown' }
+> {
   let diagnostic: ConnectDiagnostic | undefined;
   try {
-    const expected = validateNativeDataGraphDocument(document);
-    const name = expected.definition.name as string;
+    graphText(name);
     context.check();
-    const item = await context.get(name);
-    diagnostic = getConnectDiagnostic(item);
+    const read = item ?? (await context.get(name));
+    diagnostic = getConnectDiagnostic(read);
     context.check();
-    if (item.status === 200) {
-      // A just-created graph can read ready ~30s before its generated DMO, mapping and
-      // transform names exist (recorded live at API68); it is still being built, not unknown.
-      if (nativeGraphStillGenerating(item.body)) return { state: 'pending' };
-      const admitted = baseline ? nativeDataGraphDocumentFromResponse(item.body) : expected;
-      graphRequire(admitted.definition.name === name);
-      return { state: 'present', observation: observeNativeDataGraph(item.body, admitted) };
-    }
     graphRequire(
-      item.status === 400 &&
-        isDeepStrictEqual(item.body, [
+      read.status === 400 &&
+        isDeepStrictEqual(read.body, [
           { errorCode: 'INTERNAL_ERROR', message: `Data Graph not found with name ${name}` },
         ]),
     );
@@ -307,6 +305,40 @@ export async function acquireNativeDataGraph(
     );
     if (names.has(name) || rows.records.length > 0) return { state: 'pending' };
     return { state: 'absent', proof: 'item+metadata+inventory+soql' };
+  } catch (error) {
+    return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error) ?? diagnostic);
+  }
+}
+
+/**
+ * Acquire exact native state. HTTP400 alone is never absence evidence; stale metadata is pending.
+ * @param {NativeGraphContext} context Independent exact readers, not mutation responses.
+ * @param {NativeDataGraphDocument} document Native intent.
+ * @param {boolean} [baseline] Acquire target independent of desired equality.
+ * @returns {Promise<NativeGraphAcquisition>} Correlated state or conservative uncertainty.
+ */
+export async function acquireNativeDataGraph(
+  context: NativeGraphContext,
+  document: NativeDataGraphDocument,
+  baseline = false,
+): Promise<NativeGraphAcquisition> {
+  let diagnostic: ConnectDiagnostic | undefined;
+  try {
+    const expected = validateNativeDataGraphDocument(document);
+    const name = expected.definition.name as string;
+    context.check();
+    const item = await context.get(name);
+    diagnostic = getConnectDiagnostic(item);
+    context.check();
+    if (item.status === 200) {
+      // A just-created graph can read ready ~30s before its generated DMO, mapping and
+      // transform names exist (recorded live at API68); it is still being built, not unknown.
+      if (nativeGraphStillGenerating(item.body)) return { state: 'pending' };
+      const admitted = baseline ? nativeDataGraphDocumentFromResponse(item.body) : expected;
+      graphRequire(admitted.definition.name === name);
+      return { state: 'present', observation: observeNativeDataGraph(item.body, admitted) };
+    }
+    return await proveNativeDataGraphAbsent(context, name, item);
   } catch (error) {
     return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error) ?? diagnostic);
   }

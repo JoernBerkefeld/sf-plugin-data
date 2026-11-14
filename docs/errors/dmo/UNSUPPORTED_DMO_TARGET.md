@@ -25,7 +25,7 @@ Platform-generated and packaged DMOs belong to Salesforce features or managed pa
 ## How to fix
 
 1. Check `creationType` and the API name of the DMO in the org.
-2. To delete a standard DMO's custom fields, use `sf data360 delete -m dmo:<Name>__dlm --field <Field>__c --confirm-delete` instead of deleting the DMO.
+2. To delete a standard DMO's custom fields, use `sf data360 delete -m dmo:<Name>__dlm --field <Field>__c` instead of deleting the DMO.
 3. To create a new DMO, use a name without a namespace prefix.
 4. Leave platform-generated and namespaced DMOs out of the selection.
 

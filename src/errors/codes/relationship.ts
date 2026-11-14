@@ -13,7 +13,7 @@ export const hints: Readonly<Record<string, string>> = {
   PARTIAL_RELATIONSHIP_OUTPUT:
     'The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again with --overwrite.',
   RELATIONSHIP_CHANGE_UNSUPPORTED:
-    'The relationship exists with a different cardinality or owner, and Salesforce cannot change it. Delete it with sf data360 delete -m relationship:Name, then deploy the file again.',
+    'The relationship exists with a different cardinality or owner, and Salesforce cannot change it. Delete it with sf data360 delete -m relationship:SourceDmo__dlm:Name, then deploy the file again.',
   RELATIONSHIP_DATASPACE_COLLISION:
     'A local file with this relationship name was saved from a different data space. Retrieve into a separate project folder, or remove the old file first.',
   RELATIONSHIP_DELETION_UNCONFIRMED:
@@ -21,9 +21,7 @@ export const hints: Readonly<Record<string, string>> = {
   RELATIONSHIP_DEPENDENCIES_PLANNED:
     'This batch creates a DMO the relationship uses, so the preview cannot compare the relationship yet. No action is needed; the deploy checks it after the DMO exists.',
   RELATIONSHIP_FILE_IDENTITY_MISMATCH:
-    'The local relationship file names a different relationship than the one selected. Make identity.apiName in the file match the name in -m relationship:Name.',
-  RELATIONSHIP_FILE_REQUIRED:
-    'Deleting a relationship needs its local file, which names the source DMO. Retrieve it with sf data360 retrieve -m relationship:SourceDmo__dlm, then run the delete again.',
+    "The relationship definition the delete checks names a different relationship than the one selected. Nothing was deleted; with --changed-since, fix the deleted file's content, otherwise report it.",
   RELATIONSHIP_HTTP_ERROR:
     'Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, both DMOs must already be mapped.',
   RELATIONSHIP_INVENTORY_INCOMPLETE:
@@ -37,7 +35,7 @@ export const hints: Readonly<Record<string, string>> = {
   RELATIONSHIP_REQUEST_UNCONFIRMED:
     "A relationship request ended without a clear HTTP result. For a create or delete, list the source DMO's relationships before trying again; nothing is retried.",
   RELATIONSHIP_TARGET_BINDING_MISMATCH:
-    "The relationship with this name links different objects or fields than the local file. Retrieve the source DMO's relationships to refresh the file, then check before deleting.",
+    'The relationship with this name links other objects or fields than expected: another source DMO than the selector names, or with --changed-since another binding than the deleted file. Check it before deleting.',
   UNSUPPORTED_RELATIONSHIP_DATASPACE:
     "The file's data space does not match the command's data space. Set --dataspace to the identity.dataSpace of the file, or leave it out for the default data space.",
   UNSUPPORTED_RELATIONSHIP_SELECTION:

@@ -5,7 +5,7 @@ export const hints: Readonly<Record<string, string>> = {
   INCOMPLETE_TRANSFORM_INVENTORY:
     'The list of data transforms in the org could not be read completely and consistently. Nothing was deleted; rerun the delete when the org is not changing transforms.',
   INVALID_TRANSFORM_DELETE_SELECTION:
-    'A delete takes at most one data-transform:Name, with a --source-dir value naming its .dataTransform.json file and --transform-target-id; with --changed-since, no --transform-target-id. Fix the flags and rerun.',
+    'A data transform delete names it exactly as -m data-transform:<Name>; with --changed-since, the deleted file must hold the transform its file name names. Fix the selection and rerun.',
   INVALID_TRANSFORM_DEPLOY_SELECTION:
     'A transform deploy needs --transform-operation create, or update with a valid --transform-target-id. Do not pass a target ID with create. Fix the flags and rerun.',
   INVALID_TRANSFORM_FLAG_SCOPE:
@@ -24,12 +24,10 @@ export const hints: Readonly<Record<string, string>> = {
     'The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve with --overwrite.',
   TRANSFORM_CONNECTION_DRIFT:
     'The connection to the org changed while the command was running. Check that your org login is stable, then rerun the command.',
-  TRANSFORM_DELETE_CONFIRMATION_REQUIRED:
-    'All checks passed, but the delete was not confirmed. Add --confirm-delete to delete the data transform; nothing was changed.',
   TRANSFORM_DELETE_IDENTITY_MISMATCH:
-    'The data transform list has no entry with this ID and name together. Nothing was deleted; check --transform-target-id and the file name against the org, then rerun.',
+    'The data transform list has no entry with the resolved ID and name together. Nothing was deleted; the transform changed during the run, so preview the delete again, then rerun.',
   TRANSFORM_DELETE_INPUT_DRIFT:
-    'The delete inputs or the local transform file changed while the command was running. Nothing was deleted; stop other edits to the file and rerun.',
+    'The delete inputs or the transform definition changed while the command was running. Nothing was deleted; wait until nobody is editing the transform, then rerun.',
   TRANSFORM_DELETE_UNCONFIRMED:
     'The DELETE was sent but its result could not be confirmed. Do not rerun the delete; check in Data Cloud whether the transform still exists.',
   TRANSFORM_DEPLOY_FAILED:
@@ -57,7 +55,7 @@ export const hints: Readonly<Record<string, string>> = {
   TRANSFORM_TARGET_DRIFT:
     'The transform in the org differs from the local file or changed during the run. Nothing was changed; retrieve it again, review the difference, then rerun.',
   TRANSFORM_TARGET_NOT_RESOLVED:
-    'A data transform deleted in the Git range is found in the org by its name, and exactly one transform must match. Nothing was deleted; check the transforms with that name in Data Cloud, then delete it with -m and --transform-target-id.',
+    'Two or more data transforms in the org have this name when letter case is ignored, so it does not resolve to one transform. Nothing was deleted; rename or remove the duplicate in Data Cloud, then rerun.',
   TRANSFORM_VALIDATION_FAILED:
     'Salesforce validation rejected the new data transform, or its answer could not be read. Nothing was created; check the definition and DLOs in Data Cloud, then rerun.',
   TRANSFORM_WRITE_IDENTITY_MISMATCH:

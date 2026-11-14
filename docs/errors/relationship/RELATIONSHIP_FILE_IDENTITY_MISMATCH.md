@@ -1,6 +1,6 @@
 # `RELATIONSHIP_FILE_IDENTITY_MISMATCH`
 
-> The local relationship file names a different relationship than the one selected. Make identity.apiName in the file match the name in -m relationship:Name.
+> The relationship definition the delete checks names a different relationship than the one selected. Nothing was deleted; with --changed-since, fix the deleted file's content, otherwise report it.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,28 +10,28 @@
 
 ## What it means
 
-Delete reads `data360/relationship/<Name>.relationship-meta.json` for the selected name. The `identity.apiName` inside the file is a different name.
+A relationship delete checks one definition: the relationship the org lists under the source DMO named in `-m relationship:<SourceDmo__dlm>:<Name>`, or with `--changed-since` the base content of the deleted `data360/relationship/<Name>.relationship-meta.json` file. The `identity.apiName` of that definition is a different name than the one the delete is about to send.
 
 ## Why the plugin stops
 
-The file tells the plugin which source DMO to check. A file for another relationship could point to the wrong DMO.
+The definition tells the plugin which source DMO to check. A definition for another relationship could point to the wrong DMO.
 
 ## How to fix
 
-1. Retrieve the source DMO's relationships with `--overwrite` to rewrite the file.
-2. Or correct `identity.apiName` in the file, then run the delete again.
+1. With `--changed-since`, check that the deleted file's base content names the relationship of its file name.
+2. With `-m`, report the command you ran: the plugin read this definition itself, so this points to a plugin bug.
 
 ## Example output
 
 ```text
 Delete: blocked.
-Blocked: relationship:Order_CustomerId_map_Customer_Id_1794467679481; mutation: not-attempted.
+Blocked: relationship:Order__dlm:Order_CustomerId_map_Customer_Id_1794467679481; mutation: not-attempted.
 RELATIONSHIP_FILE_IDENTITY_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.
-Hint: The local relationship file names a different relationship than the one selected. Make identity.apiName in the file match the name in -m relationship:Name.
+Hint: The relationship definition the delete checks names a different relationship than the one selected. Nothing was deleted; with --changed-since, fix the deleted file's content, otherwise report it.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/relationship/RELATIONSHIP_FILE_IDENTITY_MISMATCH.md
 ```
 
 ## Related codes
 
-- [`RELATIONSHIP_FILE_REQUIRED`](../relationship/RELATIONSHIP_FILE_REQUIRED.md) — The file is missing.
+- [`RELATIONSHIP_NAME_MISMATCH`](../relationship/RELATIONSHIP_NAME_MISMATCH.md) — The binding exists under another name.
 - [`INVALID_SOURCE`](../general/INVALID_SOURCE.md) — The file is not a valid relationship file.

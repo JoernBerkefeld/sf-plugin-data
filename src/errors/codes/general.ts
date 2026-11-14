@@ -21,7 +21,7 @@ export const hints: Readonly<Record<string, string>> = {
   DEPLOY_PREVIEW_FAILED:
     'The preview could not finish. Read the message for the cause, such as session, selection or target access, fix it and run the preview again. Nothing was written.',
   DESTRUCTIVE_CONFIRMATION_REQUIRED:
-    'This delete needs explicit confirmation: a Segment, IR or CI, a selection spanning more than one phase, or a delete with --changed-since. Check it with --preview first, then rerun the delete with --confirm-delete.',
+    'A delete with --changed-since needs explicit confirmation. Check it with --preview first, then rerun the same delete with --confirm-delete.',
   DUPLICATE_IDENTITY:
     'Two selected files describe the same component. Keep one file per component in the selection, for example by narrowing --source-dir, then rerun.',
   EXECUTION_UNCONFIRMED:
@@ -31,7 +31,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_DRAFT_SCOPE:
     '--draft applies only to calculated insights at API auto or 68.0 in the default data space. Select only calculated insights and drop --dataspace and other API versions.',
   INVALID_FIELD_DELETE_SELECTION:
-    '--field needs exactly one -m dmo:<Name__dlm> and no other selector, --source-dir, --delete-dlo or --transform-target-id; --output-dir works only with --field.',
+    '--field needs exactly one -m dmo:<Name__dlm> and no other selector, --changed-since or --delete-dlo; --output-dir works only with --field.',
   INVALID_GIT_SELECTION:
     'The --changed-since reference or the Git output could not be used. Pass a commit, branch or tag that exists locally and run the command inside the Git repository.',
   INVALID_PROJECT:

@@ -250,17 +250,16 @@ function invocation(overrides = {}) {
   const calls = [];
   const flags = {
     metadata: ['segment:Audience'],
-    'source-dir': 'Audience.segment.json',
     preview: false,
-    'confirm-delete': true,
     ...overrides,
   };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => false;
   command.log = (line) => logs.push(line);
-  command.resolveInputs = async () => [{ path: 'Audience.segment.json', document: document() }];
-  command.verifySegmentInput = async () => {
-    calls.push('input');
+  // The org holds segment Audience only; its definition is read by name.
+  command.readDeleteSource = async (family, name) => {
+    calls.push(`read:${family}:${name}`);
+    return name === 'Audience' ? { desired: document() } : { absent: true };
   };
   command.resolveConnection = async () => {
     calls.push('connection');
@@ -270,6 +269,7 @@ function invocation(overrides = {}) {
     calls.push('service');
     assert.deepEqual(route, selection());
     assert.equal(scope, 'default');
+    assert.equal(options.confirmDelete, true);
     await options.verifyInput();
     return {
       family: 'segment',
@@ -294,10 +294,11 @@ async function run(command) {
     process.exitCode = previous;
   }
 }
-test('public delete selects exact JSON, routes native68 and prints exact processing suffix', async () => {
+test('public delete reads the segment by name, routes native68 and prints exact processing suffix', async () => {
   const h = invocation();
   const result = await run(h.command);
   assert.equal(result.status, 'success');
+  assert.deepEqual(h.calls, ['connection', 'read:segment:Audience', 'service']);
   assert.ok(h.logs.includes('deleted segment Audience (server is still processing)'));
   assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
 });
@@ -305,13 +306,21 @@ test('public Segment delete refuses legacy/mismatched scope or source before ser
   for (const overrides of [
     { 'api-version': '65.0' },
     { dataspace: 'other' },
-    { 'source-dir': 'Audience.marketSegmentDefinition-meta.xml' },
-    { metadata: ['segment:Other'] },
     { 'delete-dlo': true },
   ]) {
     const h = invocation(overrides);
     const result = await run(h.command);
     assert.equal(result.status, 'blocked');
-    assert.ok(!h.calls.includes('service'));
+    assert.deepEqual(h.calls, []);
   }
+});
+test('public Segment delete of a name the org does not have is unchanged without the service', async () => {
+  const h = invocation({ metadata: ['segment:Other'] });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.ok(!h.calls.includes('service'));
+  assert.deepEqual(
+    [result.result.items[0].outcome, result.result.items[0].mutation],
+    ['unchanged', 'not-attempted'],
+  );
 });

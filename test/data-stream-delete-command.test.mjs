@@ -129,7 +129,6 @@ for (const overrides of [
   { metadata: ['data-stream'] },
   { metadata: ['data-stream:*'] },
   { metadata: ['data-stream:../Other'] },
-  { metadata: ['data-stream:Selected', 'dlo:Other__dll'] },
   { metadata: ['dlo:Other__dll'], 'delete-dlo': true },
   { dataspace: 'Other' },
   ...['latest', '67.0', '69.0', '68', ''].map((pin) => ({ 'api-version': pin })),

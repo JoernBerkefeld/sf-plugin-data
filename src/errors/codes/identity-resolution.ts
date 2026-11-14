@@ -7,7 +7,7 @@ export const hints: Readonly<Record<string, string>> = {
   IDENTITY_RESOLUTION_BINDING_UNQUALIFIED:
     'The DMOs and fields this ruleset uses, or the unified objects it creates, could not be verified in the target org. Check that they exist with the expected fields, then rerun.',
   IDENTITY_RESOLUTION_DELETE_ADMISSION_FAILED:
-    'The ruleset in the org does not match the file, or its inputs and outputs could not be verified, so nothing was deleted. Retrieve it again, compare with the file, then rerun.',
+    'The ruleset could not be matched in the org, or its inputs and outputs could not be verified, so nothing was deleted. Check it in Data Cloud, then preview the delete again.',
   IDENTITY_RESOLUTION_DELETION_UNCONFIRMED:
     'The delete request was sent, but the absence of the ruleset could not be confirmed. Do not resend it; preview the delete or retrieve the ruleset to see whether it still exists.',
   IDENTITY_RESOLUTION_EFFECT_ACKNOWLEDGEMENT_REQUIRED:

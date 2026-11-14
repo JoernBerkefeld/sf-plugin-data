@@ -77,7 +77,7 @@ test('Segment help and README distinguish current JSON from historical paired qu
   );
   assert.match(
     Deploy.description,
-    /Segment deletion is separate: sf data360 delete requires --confirm-delete and fresh source-backed checks/u,
+    /Segment deletion is separate: sf data360 delete -m segment:Name reads the segment from the org by name and runs fresh checks/u,
   );
   assert.doesNotMatch(
     Deploy.description,
@@ -101,7 +101,7 @@ test('Segment help and README distinguish current JSON from historical paired qu
   for (const text of [
     'Actual CREATE and changed UPDATE require',
     '`--allow-processing`',
-    'execution requires `--confirm-delete`',
+    'execution needs no confirmation flag',
     'Transitional DELETE success branches are synthetic-only',
     'Generated membership DMOs were not deleted',
   ])
@@ -198,7 +198,7 @@ test('README documents native relationships without the removed XML export', () 
     'Deploy never deletes relationships',
     'Salesforce requires both DMOs to be mapped',
     'planned-dependencies',
-    'RELATIONSHIP_FILE_REQUIRED',
+    'sf data360 delete -m relationship:Order__dlm:<Name>',
     'ssot/data-model-objects/relationships/{name}',
     'In a delete command relationships run first',
     'RELATIONSHIP_NAME_MISMATCH',
@@ -519,8 +519,10 @@ for (const command of topics.flatMap((topic) => [
         assert.ok(result.stdout.includes(flag), flag);
     }
     if (command.endsWith(' delete')) {
-      for (const flag of ['--source-dir', '--confirm-delete', '--metadata', '--preview'])
+      for (const flag of ['--changed-since', '--confirm-delete', '--metadata', '--preview'])
         assert.ok(result.stdout.includes(flag), flag);
+      for (const flag of ['--source-dir', '--transform-target-id'])
+        assert.ok(!result.stdout.includes(flag), flag);
     }
     if (command.endsWith(' publish')) {
       for (const flag of [
@@ -717,19 +719,31 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
   }
 });
 
-test('CI delete parser rejects unbound or unqualified intent before authentication', () => {
+test('delete parser refuses --source-dir, --transform-target-id and a -m --confirm-delete', () => {
+  for (const arguments_ of [
+    ['-d', 'Synthetic.calculatedInsight.json'],
+    ['--source-dir', 'Synthetic.calculatedInsight.json'],
+    ['--transform-target-id', '1dt000000000001AAA'],
+    ['--confirm-delete'],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', 'data360', 'delete', '-m', 'dmo:Synthetic__dlm', ...arguments_, '--json'],
+      { encoding: 'utf8', env: environment },
+    );
+    assert.notEqual(result.status, 0, arguments_.join(' '));
+    assert.match(
+      `${result.stdout}${result.stderr}`,
+      arguments_[0] === '--confirm-delete' ? /changed-since/u : /Nonexistent flag/u,
+      arguments_.join(' '),
+    );
+  }
+});
+
+test('CI delete parser rejects unqualified scope before authentication', () => {
   for (const [arguments_, code] of [
-    [[], 'INVALID_SELECTION'],
-    [['--api-version', '68.0'], 'INVALID_SELECTION'],
-    [['--api-version', '65.0', '-d', 'Synthetic.calculatedInsight.json'], 'INVALID_SCOPE'],
-    [
-      ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--data-space', 'other'],
-      'INVALID_SCOPE',
-    ],
-    [
-      ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--preview'],
-      'UNSAFE_SOURCE',
-    ],
+    [['--api-version', '65.0'], 'INVALID_SCOPE'],
+    [['--api-version', '68.0', '--data-space', 'other'], 'INVALID_SCOPE'],
   ]) {
     const result = spawnSync(
       process.execPath,

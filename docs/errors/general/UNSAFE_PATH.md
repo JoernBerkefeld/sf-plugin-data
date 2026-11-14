@@ -13,7 +13,7 @@
 The plugin only reads, writes and removes plain files inside plain folders. `UNSAFE_PATH` means a path did not meet that rule:
 
 - In `sf data360 retrieve`, the output root or a folder on the way to the output file is a symbolic link, junction or file, the existing output file is linked or hard-linked or larger than 1 MiB, or `--output-dir` is a drive root or contains wildcards or `..`.
-- In `sf data360 delete`, it is a per-file code printed as `local file removal failed (UNSAFE_PATH): <path>`: the file to remove after a confirmed deletion is a link, hard-linked, a folder, reached through a linked folder, or outside the project's `data360` folder or the given `--source-dir` file. The file is left untouched and the run ends with `LOCAL_FILE_REMOVAL_FAILED`.
+- In `sf data360 delete`, it is a per-file code printed as `local file removal failed (UNSAFE_PATH): <path>`: the file to remove after a confirmed deletion is a link, hard-linked, a folder, reached through a linked folder, or outside the project's `data360` folder or the package directory of `sfdx-project.json`. The file is left untouched and the run ends with `LOCAL_FILE_REMOVAL_FAILED`.
 
 ## Why the plugin stops
 

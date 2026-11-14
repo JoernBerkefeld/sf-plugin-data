@@ -10,7 +10,7 @@
 
 ## What it means
 
-A delete that carries several families runs them phase by phase, in reverse dependency order: graphs, then identity resolution, calculated insights and Segments, then the data transform, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous phase settled.
+A delete that carries several families runs them phase by phase, in reverse dependency order: graphs, then identity resolution, calculated insights and Segments, then data transforms, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous phase settled.
 
 Salesforce accepted the deletion of the item named in the message, but still reads it in a deleting state (`deletion-processing`, mutation `acknowledged-processing`). That item is not gone yet, so the phases after it were not started: deleting a component while something that uses it is still being removed could be refused or leave the org half changed.
 
@@ -37,4 +37,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 ## Related codes
 
 - [`DELETE_FAILED`](../general/DELETE_FAILED.md) — a delete step failed without a more specific code.
-- [`DESTRUCTIVE_CONFIRMATION_REQUIRED`](../general/DESTRUCTIVE_CONFIRMATION_REQUIRED.md) — a delete spanning more than one phase needs `--confirm-delete`.
+- [`DESTRUCTIVE_CONFIRMATION_REQUIRED`](../general/DESTRUCTIVE_CONFIRMATION_REQUIRED.md) — a `--changed-since` delete needs `--confirm-delete`.
