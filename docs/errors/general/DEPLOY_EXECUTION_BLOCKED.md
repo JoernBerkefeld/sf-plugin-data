@@ -29,11 +29,11 @@ Deploy stops at the first blocked or failed item instead of skipping it, because
 ```text
 Deploy execution: blocked (DEPLOY_EXECUTION_BLOCKED). No automatic retry or rollback performed.
 Not attempted: segment:High_Value_Customers; mutation: not-attempted.
-PROCESSING_ACKNOWLEDGEMENT_REQUIRED: Qualified Segment creates and updates require explicit --allow-processing. No batch writes were attempted.
+PROCESSING_ACKNOWLEDGEMENT_REQUIRED: Segment create and update start processing in Data Cloud and need --allow-processing. Nothing was written.
 Hint: This create or update starts processing in Data Cloud and needs your explicit consent. Check it with --preview, then rerun with --allow-processing.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/PROCESSING_ACKNOWLEDGEMENT_REQUIRED.md
 Deployed: 0 (0 created / 0 updated / 0 failed)
-DEPLOY_EXECUTION_BLOCKED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
+DEPLOY_EXECUTION_BLOCKED: Deployment did not complete and nothing was written to the org. Read the item diagnostics, fix the cause, then rerun.
 Hint: At least one item was blocked, so the deploy stopped before or between writes. Read the item lines above for the reason, fix it, then rerun the same deploy.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/DEPLOY_EXECUTION_BLOCKED.md
 ```

@@ -5,14 +5,14 @@
 |              |                                                 |
 | ------------ | ----------------------------------------------- |
 | **Family**   | Segment                                         |
-| **Commands** | `sf data360 retrieve`                           |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`      |
 | **Outcome**  | `failed` — nothing was written for this segment |
 
 ## What it means
 
 The read of `segment:<Name>` at API 68 failed: Salesforce answered with an HTTP error (for example 404 when no segment has this name), or the request did not complete.
 
-During a deploy, a missing segment is expected and leads to a create; other read failures there are reported as `SEGMENT_CREATE_AND_TARGET_UNQUALIFIED`.
+During a deploy, a missing segment (HTTP 404 `ITEM_NOT_FOUND`) is expected and leads to a create; any other read failure blocks the item with this code.
 
 ## Why the plugin stops
 
@@ -36,5 +36,4 @@ Downloaded segment: 0
 
 ## Related codes
 
-- [`SEGMENT_CREATE_AND_TARGET_UNQUALIFIED`](../segment/SEGMENT_CREATE_AND_TARGET_UNQUALIFIED.md) — The same kind of read failure during a deploy.
 - [`SEGMENT_DEPENDENCY_ACQUISITION_FAILED`](../segment/SEGMENT_DEPENDENCY_ACQUISITION_FAILED.md) — The read of the segment's DMO failed.

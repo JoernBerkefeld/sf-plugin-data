@@ -149,14 +149,13 @@ export class ConnectClient {
   }
 
   /**
-   * PATCH only a validated complete DBT definition on the selected API65/API68 Segment route.
+   * PATCH the authored DBT definition on the native API68 Segment route.
    * Neither schedule field nor lookback is writable through this boundary.
    * @param {unknown} value Complete independently admitted desired Segment document.
    * @returns {Promise<unknown>} Untrusted single-attempt response, never settlement evidence.
    */
   public async patchSegment(value: unknown): Promise<unknown> {
-    if (!['65.0', '68.0'].includes(this.selection.requested))
-      throw new ConnectError('INVALID_REQUEST');
+    if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
     const document = validateSegmentDocument(value);
     return this.send(
       {

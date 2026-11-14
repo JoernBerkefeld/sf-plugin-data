@@ -10,11 +10,11 @@
 
 ## What it means
 
-Every segment depends on one DMO and one of its fields. The plugin reads that DMO twice, once through the Data Cloud API and once through the Metadata API, to check that it fits. One of these reads failed.
+Every segment is built on one DMO (`spec.segmentOn`). The plugin reads that DMO once through the Data Cloud API at API 68 to bind the segment to its ID in the target. That read failed.
 
 ## Why the plugin stops
 
-Without the DMO, the plugin cannot confirm that the segment will work in this org, so it neither saves nor deploys it.
+Without the DMO's ID, the plugin cannot check that the segment read back after a write is built on that DMO, so it neither saves nor deploys it.
 
 ## How to fix
 
@@ -34,5 +34,4 @@ Downloaded segment: 0
 
 ## Related codes
 
-- [`SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING`](../segment/SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING.md) — The DMO was read, but it or its field was not found exactly once.
-- [`SEGMENT_DEPENDENCY_UNQUALIFIED`](../segment/SEGMENT_DEPENDENCY_UNQUALIFIED.md) — The DMO was read but does not fit.
+- [`SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING`](../segment/SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING.md) — The read returned no DMO of that exact name.

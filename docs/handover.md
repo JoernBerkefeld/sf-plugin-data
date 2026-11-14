@@ -1,3 +1,26 @@
+# Chunk D: Segment on API 68 only, gates removed — 2026-11-14
+
+Plan `sf_plugin_data_offpattern_20261114` chunk D.
+
+- Segment runs on API 68 only; a 65 pin is `INVALID_SCOPE` before any read. The API 65
+  dependency read and the API 65 acceptance harness (scripts + tests) are gone.
+- File: `spec.dependencies` removed (ordering uses `spec.segmentOn`); `spec.models` is any
+  list of `{ name, sql }`. Removed gates/codes: SEGMENT_CREATE_AND_TARGET_UNQUALIFIED,
+  SEGMENT_DEFINITION_UPDATE_UNQUALIFIED, SQL_DEPENDENCIES_UNQUALIFIED,
+  INVALID_SEGMENT_DEPENDENCIES, SEGMENT_DEPENDENCY_UNQUALIFIED, SEGMENT_TARGET_NOT_SETTLED,
+  INVALID_SEGMENT_XML, SEGMENT_PAIR_MISMATCH. Kept: structural key/text checks,
+  `segmentType` DBT, `publishInterval` NO_REFRESH / `lookbackPeriod` P90D (not written by
+  PATCH), segmentOn DMO identity (destructive safety on delete), `--allow-processing`.
+- A 4xx on Segment POST/PATCH is `rejected` (REQUEST_FAILED, 409 SEGMENT_CREATE_CONFLICT)
+  with Salesforce's text; `safeMessage` now lets quoted API names through (all families).
+  Top-level deploy text distinguishes rejected and not-started runs.
+- Live (isolated-source 00Daj000010xkZNEAY, 17:25-17:41Z, `CliSegD_04e060`, `CliSegD_9b1f2e`):
+  Salesforce refuses unqualified columns ("Expected a fully qualified column name") and
+  aliases ("Need api name of DMO"); qualified SQL creates, updates, round-trips byte-exact,
+  deletes. Evidence F:/Temp/clisegd_04e060/_out. Probes deleted; the two shared membership
+  DMOs on UnifiedssotIndividualMkt__dlm stay.
+- Open: ~35 error-page examples still show the generic top-level deploy line.
+
 # Chunk C: data transforms create or update by name — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk C.

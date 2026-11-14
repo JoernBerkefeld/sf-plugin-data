@@ -13,7 +13,7 @@ import {
   retainConnectDiagnostic,
 } from '../lib/transport/connect-diagnostic.js';
 const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
-const version = { requested: '65.0', restSelector: 'v65.0', soapNumeric: '65.0' };
+const version = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' };
 const document = (name) => ({
   schemaVersion: 1,
   kind: 'segment',
@@ -24,7 +24,6 @@ const document = (name) => ({
     segmentType: 'DBT',
     segmentOn: identity('dmo', 'Person__dlm'),
     models: [{ name, sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    dependencies: [{ ...identity('dmo', 'Person__dlm'), fields: ['Id__c'] }],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
@@ -53,7 +52,7 @@ const fixtures = () => {
     },
     raw: async (name) => {
       calls.raw.push(name);
-      return { detail: {}, metadata: [] };
+      return { name, id: 'source-local' };
     },
     bind: async (value, _, __, ___, acquire) => {
       calls.bind.push(value.identity.apiName);
@@ -137,43 +136,21 @@ test('a missing or incompatible Segment prerequisite blocks and names the select
     },
   );
 });
-test('actual source compatibility binder requires PROFILE, not synthetic portable Other stand-ins', async () => {
+test('the source binder reads the segmentOn DMO by exact name; its kind is not judged locally', async () => {
   const { services } = fixtures();
   services.bind = bindSegmentDependencies;
-  services.raw = async () => ({
-    detail: {
-      name: 'Person__dlm',
-      dataSpaceName: 'default',
-      id: 'private-source-id',
-      category: 'PROFILE',
-      isSegmentable: true,
-      fields: [{ name: 'Id__c', type: 'Text', isPrimaryKey: true }],
-    },
-    metadata: [
-      {
-        fullName: 'Person__dlm',
-        mktDataModelAttributes: { dataSpaceName: 'default', isSegmentable: 'true' },
-        fields: [
-          {
-            fullName: 'Id__c',
-            type: 'Text',
-            mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
-          },
-        ],
-      },
-    ],
-  });
+  services.raw = async (name) => ({ name, id: 'private-source-id', category: 'OTHER' });
   const selected = await acquireRetrieveSelection(
     roots,
-    { getApiVersion: () => '65.0' },
+    { getApiVersion: () => '68.0' },
     version,
     services,
   );
   assert.equal(selected.length, 2);
   assert.doesNotMatch(JSON.stringify(selected), /private-source-id/u);
-  services.raw = async () => ({ detail: { category: 'OTHER' }, metadata: [] });
+  services.raw = async () => ({ name: 'Other__dlm', id: 'x' });
   await assert.rejects(
-    acquireRetrieveSelection(roots, { getApiVersion: () => '65.0' }, version, services),
+    acquireRetrieveSelection(roots, { getApiVersion: () => '68.0' }, version, services),
     { code: 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING' },
   );
 });
@@ -278,7 +255,7 @@ test('selection wrappers retain Segment and DMO evidence into human and JSON dia
           flags: {
             // A DMO alone uses the native route; pair it with a Segment to reach this path.
             metadata: kind === 'segment' ? ['segment:Zulu'] : ['dmo:Person__dlm', 'segment:Zulu'],
-            'api-version': '65.0',
+            'api-version': '68.0',
             'data-space': 'default',
           },
         });
@@ -315,7 +292,7 @@ test('unexpected acquisition failure is sanitized and prevents every output', as
   try {
     const command = Object.create(Retrieve.prototype);
     command.parse = async () => ({
-      flags: { metadata: ['segment:Zulu'], 'api-version': '65.0', 'data-space': 'default' },
+      flags: { metadata: ['segment:Zulu'], 'api-version': '68.0', 'data-space': 'default' },
     });
     command.jsonEnabled = () => true;
     command.resolveOrg = async () => ({ getOrgId: () => 'synthetic', getConnection: () => ({}) });
@@ -344,7 +321,7 @@ test('the retrieve command defines no dependency flag and publishes exactly the 
     const command = Object.create(Retrieve.prototype);
     const flags = {
       metadata: ['segment:Zulu', 'segment:Alpha', 'segment:Zulu'],
-      'api-version': '65.0',
+      'api-version': '68.0',
       'data-space': 'default',
       'output-dir': 'synthetic-root',
       overwrite: true,
@@ -380,7 +357,6 @@ test('an explicit Segment and DMO selection reads each family at its own version
     for (const [requested, segmentVersion, dmoVersion] of [
       ['auto', '68.0', '68.0'],
       ['68.0', '68.0', '68.0'],
-      ['65.0', '65.0', '65.0'],
     ]) {
       for (const metadata of [
         ['segment:Zulu', 'dmo:Person__dlm'],
@@ -455,15 +431,17 @@ test('a DMO beside a Segment keeps the Segment version rule and a failed DMO out
   const previous = process.exitCode;
   try {
     const refused = Object.create(Retrieve.prototype);
-    refused.parse = async () => ({
-      flags: { metadata: ['segment:Zulu', 'dmo:Person__dlm'], 'api-version': '67.0' },
-    });
-    refused.jsonEnabled = () => true;
-    refused.resolveOrg = () => assert.fail('a Segment admits only auto, 68.0 or 65.0');
-    const blocked = await refused.run();
-    assert.equal(blocked.status, 'blocked');
-    assert.equal(blocked.diagnostics.errors[0].code, 'INVALID_SCOPE');
-    process.exitCode = undefined;
+    for (const pin of ['67.0', '65.0']) {
+      refused.parse = async () => ({
+        flags: { metadata: ['segment:Zulu', 'dmo:Person__dlm'], 'api-version': pin },
+      });
+      refused.jsonEnabled = () => true;
+      refused.resolveOrg = () => assert.fail('a Segment admits only auto or 68.0');
+      const blocked = await refused.run();
+      assert.equal(blocked.status, 'blocked');
+      assert.equal(blocked.diagnostics.errors[0].code, 'INVALID_SCOPE');
+      process.exitCode = undefined;
+    }
 
     const command = Object.create(Retrieve.prototype);
     command.parse = async () => ({

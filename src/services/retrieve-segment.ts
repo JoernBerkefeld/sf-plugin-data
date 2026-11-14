@@ -2,9 +2,7 @@ import type { Connection } from '@salesforce/core';
 import {
   SegmentError,
   segmentName,
-  segmentSqlDependencies,
   validateSegmentDocument,
-  validateSegmentCriteria,
 } from '../artifacts/segment-document.js';
 import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
@@ -86,7 +84,7 @@ function validateObservations(raw: Record<string, unknown>): void {
 
 /**
  * Admit an exact response without discarding unknown potentially meaningful fields.
- * @param {unknown} response Untrusted API65/API68 exact GET response.
+ * @param {unknown} response Untrusted API68 exact GET response.
  * @param {string} apiName Requested exact identity.
  * @returns {{candidate: SegmentDocument; runtime: Record<string, unknown>}} Detached portable and private projections.
  */
@@ -121,12 +119,8 @@ export function projectSegment(
     !dbt ||
     typeof dbt !== 'object' ||
     Object.keys(dbt).length !== 1 ||
-    !Array.isArray(dbt.models) ||
-    dbt.models.length !== 1
+    !Array.isArray(dbt.models)
   )
-    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
-  const model = dbt.models[0] as Record<string, unknown>;
-  if (!model || typeof model.sql !== 'string')
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
   const candidate = {
     schemaVersion: 1,
@@ -138,22 +132,20 @@ export function projectSegment(
       segmentType: raw.segmentType,
       segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
       models: dbt.models,
-      dependencies: segmentSqlDependencies(model.sql),
       publishInterval: raw.publishInterval,
       lookbackPeriod: raw.lookbackPeriod,
     },
   } as SegmentDocument;
   const admitted = validateSegmentDocument(candidate);
   validateObservations(raw);
-  if (Object.hasOwn(raw, 'includeCriteria'))
-    validateSegmentCriteria(admitted, raw.includeCriteria as string);
+  // includeCriteria is Salesforce's own rendering of includeDbt; the file keeps includeDbt.
   return { candidate: admitted, runtime: structuredClone(raw) };
 }
 
 /**
- * Acquire one fixed API65/API68/default DBT Segment with strict native configuration admission.
+ * Acquire one API68/default DBT Segment by its exact name.
  * A failed GET is never absence evidence; no list expansion or runtime writes are available.
- * @param {Connection} connection Authenticated command-owned API65/API68 connection.
+ * @param {Connection} connection Authenticated command-owned API68 connection.
  * @param {string} apiName Exact selected identity.
  * @param {string | ApiVersionSelection} apiVersion Requested fixed API version.
  * @param {string} dataSpace Requested default data space.
@@ -167,7 +159,7 @@ export async function retrieveSegment(
 ): Promise<SegmentAcquisition> {
   const version = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   if (
-    !['65.0', '68.0'].includes(version) ||
+    version !== '68.0' ||
     (typeof apiVersion !== 'string' &&
       (apiVersion.soapNumeric !== version || apiVersion.restSelector !== `v${version}`)) ||
     connection.getApiVersion() !== version ||

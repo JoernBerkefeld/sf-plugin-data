@@ -2,15 +2,17 @@
 
 > Salesforce rejected or did not complete a request. Read the HTTP status and request ID in the message, fix the cause such as permissions, a missing object or limits, then rerun.
 
-|              |                                                                              |
-| ------------ | ---------------------------------------------------------------------------- |
-| **Family**   | General                                                                      |
-| **Commands** | `sf data360 retrieve`                                                        |
-| **Outcome**  | `failed` — the affected component was not retrieved; the org was not changed |
+|              |                                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                         |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`                                                                      |
+| **Outcome**  | `failed` — retrieve: the component was not retrieved; deploy: mutation `rejected`, nothing was written for it |
 
 ## What it means
 
 A request to the Data Cloud API failed with an HTTP error other than an authentication error, or a call that should answer with an empty success did not. The message shows the HTTP status, any error code and message Salesforce returned, and the request ID. HTTP 429 and 503 are described as possible rate limits.
+
+On a deploy, a Segment create or update that Salesforce answers with HTTP 4xx reports this code with mutation `rejected`: Salesforce refused the write and nothing was written for that item; the message shows Salesforce's reason, for example that a SQL column must be fully qualified.
 
 The plugin does not print response bodies.
 

@@ -1,6 +1,6 @@
 # `INVALID_SEGMENT_DOCUMENT`
 
-> A segment value is not plain text the plugin can save: empty, too long, with control characters, or a model name with unsupported characters. Correct it in the org, then retrieve again.
+> A segment value is not plain text the plugin can save: missing, empty, too long or with control characters, or the models are not a list of name and SQL. Correct it, then rerun.
 
 |              |                                                  |
 | ------------ | ------------------------------------------------ |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-One of the segment's values failed the plugin's format checks: a value that should be text is missing or empty, is longer than 262,144 characters, contains control characters other than tab and line breaks, or the SQL model name does not start with a letter followed by letters, digits and underscores.
+One of the segment's values failed the plugin's format checks: `spec.models` is not a list of `{ name, sql }` entries, or a value that should be text is missing or empty, is longer than 262,144 characters, or contains control characters other than tab and line breaks. The SQL and the model names are otherwise not checked; Salesforce decides about them.
 
 ## Why the plugin stops
 
@@ -18,7 +18,7 @@ The plugin writes segment values exactly as read, without changing SQL bytes or 
 
 ## How to fix
 
-1. Check the segment's label, description, SQL and model name in the org.
+1. Check the segment's label, description, SQL and model names.
 2. Correct the value that breaks the rules above.
 3. Retrieve the segment again.
 
@@ -27,7 +27,7 @@ The plugin writes segment values exactly as read, without changing SQL bytes or 
 ```text
 Retrieve: blocked.
 segment:Example_Segment: INVALID_SEGMENT_DOCUMENT: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
-Hint: A segment value is not plain text the plugin can save: empty, too long, with control characters, or a model name with unsupported characters. Correct it in the org, then retrieve again.
+Hint: A segment value is not plain text the plugin can save: missing, empty, too long or with control characters, or the models are not a list of name and SQL. Correct it, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/segment/INVALID_SEGMENT_DOCUMENT.md
 Downloaded segment: 0
 ```

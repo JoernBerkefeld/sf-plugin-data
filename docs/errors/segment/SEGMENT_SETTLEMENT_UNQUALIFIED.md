@@ -36,4 +36,4 @@ Deployed: 0 (0 created / 0 updated / 1 failed)
 ## Related codes
 
 - [`SEGMENT_READBACK_MISMATCH`](../segment/SEGMENT_READBACK_MISMATCH.md) — The segment read back with a different definition.
-- [`SEGMENT_TARGET_NOT_SETTLED`](../segment/SEGMENT_TARGET_NOT_SETTLED.md) — The segment was not active before the deploy.
+- [`SEGMENT_UPDATE_UNCONFIRMED`](../segment/SEGMENT_UPDATE_UNCONFIRMED.md) — The update result could not be confirmed.

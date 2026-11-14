@@ -18,27 +18,12 @@ import {
   retainConnectDiagnostic,
 } from '../lib/transport/connect-diagnostic.js';
 const dependencyMetadata = () => ({
-  detail: {
-    name: 'Person__dlm',
-    id: 'target-local',
-    dataSpaceName: 'default',
-    category: 'PROFILE',
-    isSegmentable: true,
-    fields: [{ name: 'Id__c', type: 'Text', isPrimaryKey: true }],
-  },
-  metadata: [
-    {
-      fullName: 'Person__dlm',
-      mktDataModelAttributes: { dataSpaceName: 'default', isSegmentable: 'true' },
-      fields: [
-        {
-          fullName: 'Id__c',
-          type: 'Text',
-          mktDataModelFieldAttributes: { primaryIndexOrder: '1' },
-        },
-      ],
-    },
-  ],
+  name: 'Person__dlm',
+  id: 'target-local',
+  dataSpaceName: 'default',
+  category: 'PROFILE',
+  isSegmentable: true,
+  fields: [{ name: 'Id__c', type: 'Text', isPrimaryKey: true }],
 });
 const bind = (value, connection, api, space) =>
   bindSegmentDependencies(value, connection, api, space, async () => dependencyMetadata());
@@ -56,9 +41,6 @@ const document = () => ({
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql }],
-    dependencies: [
-      { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
-    ],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
@@ -67,7 +49,7 @@ const pair = async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-a2a-test-'));
   return { cwd, ...(await writeSegmentDocument(document(), cwd, false)) };
 };
-const connection = { getApiVersion: () => '65.0' };
+const connection = { getApiVersion: () => '68.0' };
 const acquire = async () => ({
   candidate: document(),
   blockers: [],
@@ -83,7 +65,7 @@ test('Segment dependency and target acquisition retain private API evidence with
     bindSegmentDependencies(value, conn, api, space, async () => {
       throw failure;
     });
-  await assert.rejects(failedBind(document(), connection, '65.0', 'default'), (error) => {
+  await assert.rejects(failedBind(document(), connection, '68.0', 'default'), (error) => {
     assert.equal(error.code, 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED');
     assert.equal(getConnectDiagnostic(error), evidence);
     return true;
@@ -92,7 +74,7 @@ test('Segment dependency and target acquisition retain private API evidence with
     const result = await preflightWithBinding(
       document(),
       connection,
-      '65.0',
+      '68.0',
       'default',
       async () => {
         if (mode === 'throw') throw failure;
@@ -108,16 +90,18 @@ test('Segment dependency and target acquisition retain private API evidence with
   }
 });
 
-test('forward predicate is update with processing effects; reverse remains blocked', async () => {
+test('any SQL change is an update with processing effects, in both directions', async () => {
   const desired = document();
-  desired.spec.models[0].sql += ' AND Person__dlm.Id__c IS NOT NULL';
-  const preview = await preflightSegmentDeploy(desired, connection, '65.0', 'default', acquire);
+  desired.spec.models[0].sql =
+    'SELECT p.Id__c FROM Person__dlm p JOIN Other__dlm o ON o.Id__c = p.Id__c';
+  const preview = await preflightSegmentDeploy(desired, connection, '68.0', 'default', acquire);
   assert.equal(preview.outcome, 'update');
   assert.deepEqual(preview.requiredEffects, ['processing']);
+  assert.deepEqual(preview.diagnostics, []);
   const reverse = await preflightSegmentDeploy(
     document(),
     connection,
-    '65.0',
+    '68.0',
     'default',
     async () => ({
       candidate: desired,
@@ -125,10 +109,21 @@ test('forward predicate is update with processing effects; reverse remains block
       expectations: { runtime: { segmentStatus: 'ACTIVE' } },
     }),
   );
-  assert.equal(reverse.outcome, 'blocked-changes');
+  assert.equal(reverse.outcome, 'update');
+  const processing = await preflightSegmentDeploy(
+    desired,
+    connection,
+    '68.0',
+    'default',
+    async () => ({
+      ...(await acquire()),
+      expectations: { runtime: { segmentStatus: 'PROCESSING' } },
+    }),
+  );
+  assert.equal(processing.outcome, 'update');
 });
 
-for (const version of ['65.0', '68.0']) {
+for (const version of ['68.0']) {
   test(`API${version} binding uses exact target-local identity and refreshes every call`, async () => {
     const desired = document();
     const before = structuredClone(desired);
@@ -136,7 +131,7 @@ for (const version of ['65.0', '68.0']) {
     const acquireDependency = async (name) => {
       assert.equal(name, 'Person__dlm');
       const acquired = dependencyMetadata();
-      acquired.detail.id = `target-${++reads}`;
+      acquired.id = `target-${++reads}`;
       return acquired;
     };
     for (const id of ['target-1', 'target-2']) {
@@ -153,88 +148,72 @@ for (const version of ['65.0', '68.0']) {
     assert.deepEqual(desired, before);
   });
 }
-test('missing, ambiguous, incompatible and failed exact dependencies block without name fallback', async () => {
-  const mutations = [
-    (v) => {
-      v.metadata[0].mktDataModelAttributes.dataSpaceName = 'other';
-    },
-    (v) => {
-      v.metadata[0].mktDataModelAttributes.isSegmentable = 'false';
-    },
-    (v) => {
-      v.detail.fields = Array.from({ length: 4097 }, () => ({ name: 'Id__c' }));
-    },
-    (v) => {
-      v.detail.name = 'Other__dlm';
-    },
-    (v) => {
-      delete v.detail.name;
-      v.detail.label = 'Person__dlm';
-    },
-    (v) => {
-      v.detail.isSegmentable = false;
-    },
-    (v) => {
-      v.detail.dataSpaceName = 'other';
-    },
-    (v) => {
-      v.detail.category = 'OTHER';
-    },
-    (v) => {
-      v.metadata = [];
-    },
-    (v) => {
-      v.metadata.push(structuredClone(v.metadata[0]));
-    },
-    (v) => {
-      v.detail.fields.push(structuredClone(v.detail.fields[0]));
-    },
-    (v) => {
-      v.metadata[0].fields = [];
-    },
-    (v) => {
-      v.metadata[0].fields[0].mktDataModelFieldAttributes.primaryIndexOrder = '2';
-    },
-    (v) => {
-      v.detail.fields[0].type = 'Number';
-    },
+test('a missing or differently named segmentOn DMO blocks without name fallback', async () => {
+  const details = [
+    { ...dependencyMetadata(), name: 'Other__dlm' },
+    { ...dependencyMetadata(), name: undefined, label: 'Person__dlm' },
+    { ...dependencyMetadata(), id: undefined },
+    { ...dependencyMetadata(), id: '' },
+    [],
+    'Person__dlm',
   ];
-  for (const mutate of mutations) {
-    const acquired = dependencyMetadata();
-    mutate(acquired);
+  for (const detail of details) {
     let segmentReads = 0;
     const result = await preflightWithBinding(
       document(),
       connection,
-      '65.0',
+      '68.0',
       'default',
       async () => {
         segmentReads++;
         return acquire();
       },
-      (value, conn, api, space) =>
-        bindSegmentDependencies(value, conn, api, space, async () => acquired),
+      (input, conn, api, space) =>
+        bindSegmentDependencies(input, conn, api, space, async () => detail),
     );
     assert.equal(result.outcome, 'blocked');
     assert.equal(segmentReads, 0);
-    assert.match(result.diagnostics[0].code, /^SEGMENT_DEPENDENCY/u);
+    assert.equal(result.diagnostics[0].code, 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
   }
   await assert.rejects(
-    bindSegmentDependencies(document(), connection, '65.0', 'default', async () => {
+    bindSegmentDependencies(document(), connection, '68.0', 'default', async () => {
       throw new Error('private');
     }),
     { code: 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED' },
   );
 });
-test('binding rejects unsupported SQL and API before dependency reads', async () => {
-  const invalid = document();
-  invalid.spec.models[0].sql = 'SELECT * FROM Person__dlm';
-  for (const [value, api] of [
-    [invalid, '65.0'],
-    [document(), 'latest'],
+test("the DMO is not judged locally: category, segmentable flag and field types are Salesforce's call", async () => {
+  const acquired = {
+    name: 'Person__dlm',
+    id: 'target-local',
+    category: 'ENGAGEMENT',
+    isSegmentable: false,
+  };
+  const bindings = await bindSegmentDependencies(
+    document(),
+    connection,
+    '68.0',
+    'default',
+    async () => acquired,
+  );
+  assert.deepEqual(bindings, [{ identity: document().spec.segmentOn, targetId: 'target-local' }]);
+});
+test('binding takes any SQL but refuses API65 and latest before dependency reads', async () => {
+  const other = document();
+  other.spec.models[0].sql = 'SELECT * FROM Person__dlm';
+  const [binding] = await bindSegmentDependencies(other, connection, '68.0', 'default', async () =>
+    dependencyMetadata(),
+  );
+  assert.equal(binding.targetId, 'target-local');
+  for (const [api, version] of [
+    ['65.0', '65.0'],
+    ['latest', '68.0'],
   ])
     await assert.rejects(
-      bindSegmentDependencies(value, connection, api, 'default', () => assert.fail('No reads')),
+      bindSegmentDependencies(document(), { getApiVersion: () => version }, api, 'default', () =>
+        assert.fail('No reads'),
+      ),
+      { code: 'INVALID_SCOPE' },
     );
 });
 
@@ -355,26 +334,20 @@ test('linked and hardlinked companions are refused without following or changing
     }
   }
 });
-test('preview compares exact admitted semantics, reports processing for label/description updates only', async () => {
+test('preview compares exact admitted semantics; every change is an update with processing', async () => {
   for (const change of ['none', 'label', 'description', 'sql']) {
     const desired = document();
     if (change === 'label') desired.spec.displayName = 'Changed';
     if (change === 'description') desired.spec.description = 'Changed';
     if (change === 'sql') desired.spec.models[0].sql += ' ';
-    const result = await preflightSegmentDeploy(desired, connection, '65.0', 'default', acquire);
-    assert.equal(
-      result.outcome,
-      change === 'none' ? 'unchanged' : change === 'sql' ? 'blocked-changes' : 'update',
-    );
-    assert.deepEqual(
-      result.requiredEffects,
-      ['label', 'description'].includes(change) ? ['processing'] : [],
-    );
+    const result = await preflightSegmentDeploy(desired, connection, '68.0', 'default', acquire);
+    assert.equal(result.outcome, change === 'none' ? 'unchanged' : 'update');
+    assert.deepEqual(result.requiredEffects, change === 'none' ? [] : ['processing']);
     assert.equal(result.absenceProof, 'none');
   }
 });
 test('API68 preview admits exact native404 only, with processing effects and no Metadata absence claim', async () => {
-  for (const version of ['65.0', '68.0']) {
+  for (const version of ['68.0']) {
     for (const status of [404, 401, 403, 503]) {
       const result = await preflightSegmentDeploy(
         document(),
@@ -389,7 +362,8 @@ test('API68 preview admits exact native404 only, with processing effects and no 
             ]),
           ),
       );
-      assert.equal(result.outcome, version === '68.0' && status === 404 ? 'create' : 'blocked');
+      assert.equal(result.outcome, status === 404 ? 'create' : 'blocked');
+      if (status !== 404) assert.equal(result.diagnostics[0].code, 'SEGMENT_ACQUISITION_FAILED');
       assert.equal(result.absenceProof, 'none');
       assert.deepEqual(result.requiredEffects, result.outcome === 'create' ? ['processing'] : []);
     }
@@ -407,17 +381,13 @@ test('unproven404, permission failure and malformed target never admit create', 
     async () => ({ blockers: ['SEGMENT_ACQUISITION_FAILED'] }),
     async () => ({
       ...(await acquire()),
-      expectations: { runtime: { segmentStatus: 'PROCESSING' } },
-    }),
-    async () => ({
-      ...(await acquire()),
       candidate: { ...document(), identity: { dataSpace: 'default', apiName: 'Other' } },
     }),
   ]) {
     const result = await preflightSegmentDeploy(
       document(),
       connection,
-      '65.0',
+      '68.0',
       'default',
       acquisition,
     );
@@ -429,9 +399,10 @@ test('unproven404, permission failure and malformed target never admit create', 
 test('unsupported API/latest/space/input fail before any target read', async () => {
   for (const [value, version, space] of [
     [document(), 'latest', 'default'],
+    [document(), '65.0', 'default'],
     [document(), '66.0', 'default'],
-    [document(), '65.0', 'other'],
-    [{}, '65.0', 'default'],
+    [document(), '68.0', 'other'],
+    [{}, '68.0', 'default'],
   ]) {
     const result = await preflightSegmentDeploy(value, connection, version, space, () =>
       assert.fail('No read'),
@@ -439,7 +410,7 @@ test('unsupported API/latest/space/input fail before any target read', async () 
     assert.equal(result.outcome, 'blocked');
   }
 });
-const commandSetup = (inputs, preview, version = '65.0') => {
+const commandSetup = (inputs, preview, version = '68.0') => {
   const command = Object.create(Deploy.prototype);
   command.parse = async () => ({
     flags: {
@@ -602,7 +573,59 @@ test('mixed DMO plus Segment update without acknowledgement blocks whole selecti
     'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
   );
 });
-for (const version of ['65.0', '68.0', 'auto']) {
+test('a Segment deploy pinned to 65.0 is refused before any target read', async () => {
+  const p = await pair();
+  const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+  const command = commandSetup(inputs, true, '65.0');
+  command.preflightSegment = () => assert.fail('No target read');
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
+  assert.match(result.diagnostics.errors[0].message, /nothing was sent to the org/u);
+  assert.doesNotMatch(
+    result.diagnostics.errors[0].message,
+    /Mutation may have occurred|no Salesforce rejection was confirmed/u,
+  );
+});
+test('a Segment write Salesforce rejects reports a rejection, not a possible mutation', async () => {
+  const p = await pair();
+  const inputs = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
+  const command = commandSetup(inputs, false, '68.0');
+  const parse = command.parse;
+  command.parse = async () => {
+    const parsed = await parse();
+    parsed.flags['allow-processing'] = true;
+    return parsed;
+  };
+  command.preflightSegment = async () => ({
+    family: 'segment',
+    outcome: 'update',
+    target: 'present',
+    absenceProof: 'none',
+    diagnostics: [],
+    requiredEffects: ['processing'],
+  });
+  command.executeSegment = async () => ({
+    family: 'segment',
+    route: { apiVersion: '68.0', method: 'PATCH', resource: 'segments' },
+    outcome: 'failed',
+    mutation: 'rejected',
+    diagnostics: [{ code: 'REQUEST_FAILED', message: 'Salesforce API rejected the request.' }],
+  });
+  const lines = [];
+  command.jsonEnabled = () => false;
+  command.log = (line) => lines.push(line);
+  const result = await run(command);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].mutation, 'rejected');
+  assert.match(result.diagnostics.errors[0].message, /Salesforce rejected a write/u);
+  assert.doesNotMatch(
+    result.diagnostics.errors[0].message,
+    /Mutation may have occurred|no Salesforce rejection was confirmed/u,
+  );
+  assert.ok(!lines.some((line) => line.includes('Mutation may have occurred')));
+});
+for (const version of ['68.0', 'auto']) {
   test(`Segment ${version} no-op dispatches real executor without ack or mutations`, async () => {
     const { executeSegmentDeploy } = await import('../lib/services/execute-segment-deploy.js');
     const p = await pair();
@@ -692,7 +715,7 @@ test('reverse mixed selection orders prerequisites first and retains partial/unk
       if (stop === 'throw') throw new Error('private');
       return {
         family: 'segment',
-        route: { apiVersion: '65.0', method: 'PATCH', resource: 'segments' },
+        route: { apiVersion: '68.0', method: 'PATCH', resource: 'segments' },
         outcome: stop === 'success' ? 'updated' : stop === 'blocked' ? 'blocked' : 'failed',
         mutation:
           stop === 'success'
@@ -817,7 +840,7 @@ test('public Segment preview is read-only; drift during target acquisition preve
     if (drift)
       command.preflightSegment = async () => {
         await writeFile(p.path, (await readFile(p.path, 'utf8')) + '\n');
-        return preflightSegmentDeploy(document(), connection, '65.0', 'default', acquire);
+        return preflightSegmentDeploy(document(), connection, '68.0', 'default', acquire);
       };
     const result = await run(command);
     assert.equal(result.status, drift ? 'failed' : 'success');

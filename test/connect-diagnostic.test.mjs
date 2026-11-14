@@ -54,6 +54,7 @@ test('value-shaped prose falls back while unfamiliar actionable explanations sur
     "Invalid API key 'sk_live_1234567890'.",
     "Invalid value 'Alice' for FirstName.",
     'Rejected customer Alice Smith.',
+    "Unknown column 'Alice' near 'Person__dlm'.",
   ]) {
     const evidence = apiDiagnostic(
       400,
@@ -73,6 +74,8 @@ test('value-shaped prose falls back while unfamiliar actionable explanations sur
     'The matching stage requires fewer partitions. Reduce the partition count.',
     'The indexing stage is warming. Wait for index readiness before retrying.',
     'Field FirstName is case-sensitive; use the exact schema field name.',
+    "Expected a fully qualified column name (in the form - table.column) for column: 'ssot__Id__c'",
+    "Unknown field 'Person__dlm.Id__c' in the model.",
   ])
     assert.equal(
       apiDiagnostic(400, { errorCode: 'NEW_REASON', message }).errors[0].message,

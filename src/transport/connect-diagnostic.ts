@@ -40,8 +40,14 @@ function safeMessage(value: unknown): string | undefined {
   )
     return;
   // A quoted token can be a credential or record value, not just a schema identifier.
-  // Without independent schema evidence, use the caller's contextual fallback instead.
-  if (/["'`]/u.test(value)) return;
+  // Only a quoted Salesforce API name (Name__c, ns__Name__dlm, Table__dlm.Field__c) is kept;
+  // any other quoted text uses the caller's contextual fallback instead.
+  if (
+    /["'`]/u.test(
+      value.replaceAll(/(["'`])[A-Za-z]\w*__[A-Za-z]+(?:\.[A-Za-z]\w*__[A-Za-z]+)?\1/gu, ''),
+    )
+  )
+    return;
   // Personal-record and credential/value contexts can echo data even without quotes.
   // These filters deliberately do not claim to establish confidentiality for all free text.
   if (

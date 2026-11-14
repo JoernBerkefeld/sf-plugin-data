@@ -138,7 +138,10 @@ Docs: ${errorCodeInfo('RETRIEVE_FAILED').docs}`,
 
 test('non-DMO output failure uses document kind and excludes failure from human counts', async () => {
   for (const json of [false, true]) {
-    const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
+    const command = invocation({
+      metadata: ['dmo:Sample__dlm', 'segment:Audience'],
+      'api-version': '68.0',
+    });
     const lines = [];
     command.jsonEnabled = () => json;
     command.log = (line) => lines.push(line);
@@ -459,7 +462,15 @@ test('the removed API65 DMO adapter seams are absent from the retrieve command',
   assert.equal(typeof defaults.writeNativeDmo, 'function');
 });
 
-for (const apiVersion of ['65.0', '68.0', 'auto']) {
+test('a Segment retrieve pinned to 65.0 is refused before any org read', async () => {
+  const command = invocation({ metadata: ['segment:Alpha'], 'api-version': '65.0' });
+  command.resolveOrg = () => assert.fail('no org read');
+  command.acquireSelection = () => assert.fail('no acquisition');
+  const { result } = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
+});
+for (const apiVersion of ['68.0', 'auto']) {
   test(`exact Segment ${apiVersion} repeat selection deduplicates and writes pairs without DMO inventory`, async () => {
     const command = invocation({
       metadata: ['segment:Zulu', 'segment:Alpha', 'segment:Zulu'],

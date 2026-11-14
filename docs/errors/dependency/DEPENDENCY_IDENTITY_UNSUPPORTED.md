@@ -20,7 +20,7 @@ The plugin orders and checks components by type, data space and exact API name. 
 
 ## How to fix
 
-1. Check the references in the selected files (for example `spec.dependencies` of a segment or calculated insight).
+1. Check the references in the selected files (for example `spec.segmentOn` of a segment or `spec.dependencies` of a calculated insight).
 2. Use exact API names in the default data space.
 3. For retrieve, use the exact API name (including letter case) in `--metadata`.
 4. Rerun.

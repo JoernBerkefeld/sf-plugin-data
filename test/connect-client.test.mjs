@@ -11,7 +11,7 @@ const path = '/services/data/v65.0/ssot/data-model-objects';
 
 const latest = { requested: 'latest', restSelector: 'latest', soapNumeric: '65.0' };
 // Guarded writes are exercised through the Segment routes; their payload contract is tested elsewhere.
-const segmentRoute = '/services/data/v65.0/ssot/segments/Audience';
+const segmentRoute = '/services/data/v68.0/ssot/segments/Audience';
 const segment = {
   schemaVersion: 1,
   kind: 'segment',
@@ -22,9 +22,6 @@ const segment = {
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    dependencies: [
-      { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
-    ],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
@@ -300,7 +297,7 @@ for (const [method, statusCode, route = segmentRoute] of [
         ? client.get(route)
         : method === 'POST'
           ? new ConnectClient(connection, '68.0').createSegment(segment)
-          : client.patchSegment(segment);
+          : new ConnectClient(connection, '68.0').patchSegment(segment);
     if (statusCode === 204) {
       assert.equal(await operation, undefined);
     } else if (statusCode === 200) {
@@ -421,6 +418,15 @@ test('removed API65 DMO adapter transport methods are absent', () => {
     assert.equal(method in ConnectClient.prototype, false, method);
 });
 
+test('Segment writes on API65 are refused before any request', async () => {
+  const client = new ConnectClient(
+    { instanceUrl: origin, request: async () => assert.fail('no request') },
+    '65.0',
+  );
+  await assert.rejects(client.patchSegment(segment), { code: 'INVALID_REQUEST' });
+  await assert.rejects(client.createSegment(segment), { code: 'INVALID_REQUEST' });
+});
+
 test('guarded PATCH refuses same-origin and cross-origin redirects', async () => {
   for (const redirect of [`${origin}${segmentRoute}Other`, `https://other.test${segmentRoute}`]) {
     let calls = 0;
@@ -433,7 +439,7 @@ test('guarded PATCH refuses same-origin and cross-origin redirects', async () =>
           assert.fail('redirect must throw');
         },
       },
-      '65.0',
+      '68.0',
     );
     await assert.rejects(client.patchSegment(segment), { code: 'INVALID_REQUEST' });
     assert.equal(calls, 1);
@@ -469,7 +475,7 @@ test('guarded PATCH errors discard request payload, credentials, response and ca
           });
         },
       },
-      '65.0',
+      '68.0',
     );
     await assert.rejects(
       client.patchSegment({ ...segment, spec: { ...segment.spec, description: 'secret' } }),

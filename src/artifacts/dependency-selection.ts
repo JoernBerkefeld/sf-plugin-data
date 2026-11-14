@@ -83,13 +83,10 @@ export function documentDependencyNode(
   }
   if (value.kind === 'segment') {
     const document = validateSegmentDocument(value);
+    const { kind, dataSpace, apiName } = document.spec.segmentOn;
     return {
       identity: { kind: 'segment', ...document.identity },
-      dependencies: document.spec.dependencies.map(({ kind, dataSpace, apiName }) => ({
-        kind,
-        dataSpace,
-        apiName,
-      })),
+      dependencies: [{ kind, dataSpace, apiName }],
     };
   }
   if (value.kind !== 'dmo') throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');

@@ -70,7 +70,7 @@ plugin features.
 | Source object definitions                  | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                     | Unavailable                                                                                                                             | Definition XML only, not connectors or credentials.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Data Streams, `data-stream`                | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Exact native stream retrieval" />                                                                                                   | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded Ingestion API stream creation" />         | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Additive nonprimary Text mapping update" />     | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Guarded exact stream deletion" />                       | Exact API68/default Ingestion API/Other/UPSERT subset, alone or as the first deploy phase; portable JSON, preview and processing acknowledgement. Installed cross-org qualification covers source create/retrieve, connectionName-only target remap/create/retrieve, additive Text update, zero-write repeat and explicit cascade cleanup on both sides. Preserve-DLO deletion has separate bounded evidence. Not general connectors, populated data, other API versions or released-package qualification.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Calculated insights, `calculated-insight`  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" /> <img src="assets/icons/cli.svg" width="20" height="20" alt="CLI" title="Standard Salesforce CLI operation" /> | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Bounded API68 draft creation" />                  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Source-bound asynchronous deletion" />                  | Native API68 (default/`auto` or `68.0`; `65.0` refused): retrieve of ACTIVE insights, including run and SYSTEM_MANAGED ones; bounded draft create/edit, separate NOT_SCHEDULED publish, ACTIVE expression edit and source-paired delete of never-run NOT_SCHEDULED insights. Packaged insights and expressions outside the qualified shapes are refused. No calculation/general SQL guarantee.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Segments, `segment`                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native JSON definition retrieval" />                                                                                                | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Bounded absent-target creation" />                | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Bounded existing definition update" />          | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Source-backed confirmed deletion" />                    | Exact single-model DBT portable `.segment.json`; native JSON-only API68/default retrieve, absent-target CREATE, bounded existing UPDATE and source-backed confirmed DELETE have installed acceptance. CREATE/UPDATE require processing acknowledgement; DELETE requires exact source agreement and explicit confirmation, with independent absence verification. Separate same-version DMO detail/Metadata reads validate dependencies, not a companion Segment XML file. Historical API65 XML-paired qualification remains separate. Later conservative DELETE processing-guard refinement is offline-qualified, not a newly installed build acceptance. No general cross-org, arbitrary SQL, completed computation, generated-resource or physical-cleanup claim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Segments, `segment`                        | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 retrieval by name" />                                                                                                  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 create by name" />                   | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 update by name" />                 | Available <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Confirmed deletion by name" />                        | API68/default only (`auto` or `68.0`; other versions, `65.0` included, are refused with `INVALID_SCOPE`). One portable `data360/segments/<Name>.segment.json` per segment: label, description, the `segmentOn` DMO and the DBT SQL models. Deploy selects by name: absent creates, present updates or is unchanged; the file is sent as written and Salesforce decides, its error is reported. Create and update need `--allow-processing`. The `segmentOn` DMO must exist in the target. Only DBT segments without refresh schedule, with a 90-day lookback and without parameters can be expressed (`UNSUPPORTED_SEGMENT_VARIANT`). Delete by name confirms absence. No segment inventory; no completed-computation or generated-resource cleanup claim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | Segment members                            | Unavailable                                                                                                                                                                                                         | Unavailable                                                                                                                       | Unavailable                                                                                                                     | Unavailable                                                                                                                             | Bounded membership reads, not a full population export. Runtime rows are outside plugin configuration scope.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Data Graphs, `data-graph`                  | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 creation" />                         | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 guarded definition deletion" />            | Plugin: native API68 (default space) retrieve, create, update and delete of any root, related objects, field types and schedule; auto and 68.0 select it; other versions are refused. Update sends the authored change in one PUT; name, data space, root and node identity changes are refused. Delete requires known-empty dependencies; exhaustive external consumers and generated-resource/storage/credit cleanup unverified. Deploy runs graphs as the last phase of any selection, explicit or `--changed-since`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Identity Resolution, `identity-resolution` | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                                                                                                               | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 ruleset creation" />                 | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="API-led operation" />                           | Partial <img src="assets/icons/api.svg" width="20" height="20" alt="API" title="Native API68 acknowledged-processing owner deletion" /> | Plugin: native API68/default retrieve, create (POST), full-settings PATCH and delete of any ruleset the API accepts (any configuration, automatic run on or off, any rules); refused only: configuration type or secondary DMO changes, a new name that does not match its type, writes while PUBLISHING or DELETING. Processing acknowledgement required; bounded asynchronous settlement and conservative unknown outcomes. Delete returns acknowledged-processing until Salesforce finishes. No explicit computation or physical-cleanup guarantee.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -131,8 +131,8 @@ Current plugin limits:
   active use, non-default data spaces, other API versions, relationships and SQL/flex
   DMOs are not verified.
 - Native DLO/DMO creation and updates, mapping creation and qualified API68/default
-  desired-state pair reconciliation, native API68 Segment DBT absent-target creation,
-  label/description or qualified forward empty-audience predicate updates, CI predicate updates,
+  desired-state pair reconciliation, native API68 Segment create and update by name
+  (the DBT definition is sent as written; Salesforce decides), CI predicate updates,
   native API68 IR full-settings create/update and Graph
   projection updates are separate bounded profiles. Explicit native batches settle DLOs, then
   DMOs, then mappings, then relationships. General DLO schema edits and unqualified mapping changes are not enabled.
@@ -2188,8 +2188,8 @@ Stream deletion is **not yet verified**; no destructive command is provided.
 #### Read / Retrieve
 
 The following **single command with two selected components** was qualified at
-API `65.0`: it retrieves the calculated insight and the segment documented in the
-next chapter without a hand-authored manifest.
+API `65.0`: it retrieves the calculated insight and a segment definition
+(`MarketSegmentDefinition`) without a hand-authored manifest.
 
 ```sh
 sf project retrieve start --metadata MktCalcInsightObjectDef:E360PushActiveUserCountV2 --metadata MarketSegmentDefinition:Annual_Promo_Segment_1789248847753 --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
@@ -2390,225 +2390,68 @@ or target mutation is implied by this operational definition lifecycle.
 
 ### Public Segment workflow: native JSON API68
 
+Segments use native API68 in the default data space only: `--api-version auto` or
+`68.0`; any other version, `65.0` included, is refused with `INVALID_SCOPE`.
+
 Use exact `segment:<name>` selectors with `sf data360 retrieve` to save one portable
-`data360/segments/<name>.segment.json`; no companion Segment XML is required.
-Default/`auto` uses API68. Separate same-version DMO detail and Metadata reads
-validate the selected PROFILE model and Text primary field. The supported profile
-is a single-model DBT definition, not arbitrary SQL or a general audience builder.
-
-Deploy the exact JSON with `sf data360 deploy --source-dir <file> --preview` first.
-Only authoritative native absence permits CREATE; an existing target uses the
-bounded UPDATE comparison. Actual CREATE and changed UPDATE require
-`--allow-processing`. Installed API68 acceptance covers absent-target creation and
-a description update with independent full definition/preservation reads, including
-accepted PROCESSING/COUNTING states. The human suffix `(server is still processing)`
-means accepted configuration, not completed computation. Identical configuration
-is a zero-write no-op without processing acknowledgement. Historical qualified
-forward empty-audience selected-ID `IS NOT NULL` updates remain a bounded subset;
-failed and partial earlier UPDATE observations below are not erased by later success.
-
-Delete with `sf data360 delete --metadata segment:<name>`; `--preview` is read-only and
-execution needs no confirmation flag. The segment is read from the org by name (one
-the org does not have is `unchanged`) and must agree with fresh target identity,
-definition and dependency checks.
-One DELETE acknowledgement is not terminal absence: independent exact GET404
-confirms deletion; a positively preserved transition may instead report processing.
-Unknown outcomes stop without retry, replay, fallback or rollback. Installed API68
-acceptance demonstrated zero-write preview/unconfirmed rejection, one DELETE204
-and internal plus external GET404. The later conservative fresh-predispatch
-processing guard is offline-qualified only; that final refinement was not separately
-installed/live-tested. Transitional DELETE success branches are synthetic-only.
-
-This is bounded default-space configuration lifecycle evidence, not cross-org,
-lower-version CREATE/DELETE, arbitrary SQL, finished computation or released-package
-qualification. Generated membership DMOs were not deleted; generated-resource,
-physical storage and credit cleanup are unverified. Historical API65 XML-paired
-retrieval and unchanged/deployment observations below are separate evidence, not
-proof of the API68 JSON-only installed build.
-
-### Segment: `MarketSegmentDefinition` (historical Metadata evidence)
-
-#### Read / Retrieve
-
-Run the combined command in the preceding chapter to retrieve
-`MarketSegmentDefinition:Annual_Promo_Segment_1789248847753` alongside the insight.
-This is a directly retrieved segment definition, separate from a kit template
-snapshot. Its file is written under `force-app/main/default/marketSegmentDefinitions/`.
-
-Parsed nested selection criteria, label, target (`segmentOn`) and segment type
-matched independent API 65 readback. The XML **omits live `P2Y` lookback, schedule,
-state and dataspace**. Referenced unified/link DMOs, source objects, fields and
-relationships remain dependencies. Live `NO_REFRESH` and active/success state do
-not prove draft behavior or absence of initial computation after deployment.
-The selected-field comparison does not establish full lifecycle or replay fidelity.
-Retrieval itself does not publish, count or activate the segment.
-
-#### Create — Metadata definition only
-
-**Source-only API 65 Metadata definition creation succeeded.** Use the authorized
-source alias and existing DMO prerequisites described above; this does not qualify
-a nonprocessing target route. The historical, subsequently deleted source file was
-`force-app/main/default/marketSegmentDefinitions/McpSegParallel_20261027_Empty.marketSegmentDefinition-meta.xml`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<MarketSegmentDefinition xmlns="http://soap.sforce.com/2006/04/metadata">
-  <includeCriteria>&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;McpSegParallel_20261027_Empty&lt;/name&gt;&lt;sql&gt;SELECT UnifiedssotIndividualMkt__dlm.ssot__Id__c FROM UnifiedssotIndividualMkt__dlm WHERE 1 = 0&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;</includeCriteria>
-  <masterLabel>McpSegParallel 20261027 Empty</masterLabel>
-  <segmentType>DBT</segmentType>
-</MarketSegmentDefinition>
-```
-
-In a source project containing only this owned fixture:
-
-```sh
-sf project deploy start --source-dir force-app --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
-sf project retrieve start --metadata MarketSegmentDefinition:McpSegParallel_20261027_Empty --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
-```
-
-Independent readback matched decoded criteria, label and type. Two runtime GETs
-for this name returned HTTP 404 `ITEM_NOT_FOUND` while the Metadata existed. Saved
-definition transport is **not** live segment instantiation or guaranteed inertness.
-
-#### Update — Metadata definition only
-
-Changing only `masterLabel` to `McpSegParallel 20261027 Empty Updated`, then repeating
-the commands above succeeded. An identical redeployment reported the segment
-component `Unchanged`; a deployment job still occurred and `package.xml` changed.
-This is not a zero-write promise or proof of live runtime update.
-
-#### Delete — Metadata definition only
-
-Exact destructive deployment succeeded with an internally generated empty
-`manifest/package.xml` and `manifest/destructiveChangesPost.xml` selecting only:
-
-```xml
-<types>
-  <members>McpSegParallel_20261027_Empty</members>
-  <name>MarketSegmentDefinition</name>
-</types>
-```
-
-Use the same full Package wrapper/version shown in the DMO Delete example and run:
-
-```sh
-sf project deploy start --manifest manifest/package.xml --post-destructive-changes manifest/destructiveChangesPost.xml --target-org SOURCE_ALIAS --api-version 65.0 --wait 5 --json
-```
-
-Independent inventory confirmed absence. These diagnostic manifests are internal,
-not the intended user-facing workflow.
-
-### Live segment: standard REST API 65
-
-This is a **separate source-only operational lifecycle**, not `sf data360` or
-Metadata deployment. POST **and PATCH** returned `PROCESSING`, followed by independent
-GET `ACTIVE`, even with `NoRefresh` / `NO_REFRESH` and empty-result SQL. No explicit
-publish/count/activate command was run. The target was untouched: its no-processing
-restriction prevents applying these operations there without additional permission
-or a separately proven nonprocessing admission route. No segment-member operations
-are documented here; those are outside this plugin's scope.
-
-#### Create
-
-Save the exact qualified body as `rest-create.json` in an authorized source scratch
-project (historical fixture name; establish ownership/absence before any reproduction):
+`data360/segments/<name>.segment.json`:
 
 ```json
 {
-  "developerName": "McpSegParallel_20261027_Live",
-  "displayName": "McpSegParallel 20261027 Live",
-  "description": "Isolated source-only qualification, empty SQL audience",
-  "segmentOnApiName": "UnifiedssotIndividualMkt__dlm",
-  "segmentType": "Dbt",
-  "includeDbt": {
-    "models": {
-      "models": [
-        {
-          "name": "McpSegParallel_20261027_Live",
-          "sql": "SELECT UnifiedssotIndividualMkt__dlm.ssot__Id__c FROM UnifiedssotIndividualMkt__dlm WHERE 1 = 0"
-        }
-      ]
-    }
-  },
-  "publishSchedule": "NoRefresh"
-}
-```
-
-```sh
-sf api request rest /services/data/v65.0/ssot/segments --method POST --body @rest-create.json --target-org SOURCE_ALIAS --json
-```
-
-The qualified API 65 **input** requires nested `includeDbt.models.models`; an
-array directly under the first `models` failed with `JSON_PARSER_ERROR`. The
-**output** instead has `includeDbt.models` as an array: do not replay it unchanged
-as input. POST returned HTTP 201 and runtime IDs, not merely a Metadata definition.
-
-#### Read / Retrieve
-
-```sh
-sf api request rest /services/data/v65.0/ssot/segments/McpSegParallel_20261027_Live --method GET --target-org SOURCE_ALIAS --json
-```
-
-HTTP 200 returned a `segments` array with the same IDs, `ACTIVE`, `NO_REFRESH`,
-`P90D` lookback and the preserved DMO/SQL definition. This is live readback, not
-complete cross-org fidelity or authorization to trigger processing elsewhere.
-
-#### Update
-
-Save this complete preserved-definition body as `rest-update.json`. Both schedule
-fields are deliberately omitted; the tested existing no-refresh schedule survived.
-
-```json
-{
-  "displayName": "McpSegParallel 20261027 Live Updated",
-  "description": "Source-only updated definition, empty SQL audience",
-  "segmentOnApiName": "UnifiedssotIndividualMkt__dlm",
-  "segmentType": "Dbt",
-  "includeDbt": {
-    "models": {
-      "models": [
-        {
-          "name": "McpSegParallel_20261027_Live",
-          "sql": "SELECT UnifiedssotIndividualMkt__dlm.ssot__Id__c FROM UnifiedssotIndividualMkt__dlm WHERE 1 = 0"
-        }
-      ]
-    }
+  "schemaVersion": 1,
+  "kind": "segment",
+  "identity": { "dataSpace": "default", "apiName": "Example_Segment" },
+  "spec": {
+    "displayName": "Example Segment",
+    "description": "",
+    "segmentType": "DBT",
+    "segmentOn": { "kind": "dmo", "dataSpace": "default", "apiName": "ssot__Individual__dlm" },
+    "models": [
+      {
+        "name": "Example_Segment",
+        "sql": "SELECT ssot__Individual__dlm.ssot__Id__c FROM ssot__Individual__dlm WHERE ssot__Individual__dlm.ssot__FirstName__c IS NOT NULL"
+      }
+    ],
+    "publishInterval": "NO_REFRESH",
+    "lookbackPeriod": "P90D"
   }
 }
 ```
 
-```sh
-sf api request rest /services/data/v65.0/ssot/segments/McpSegParallel_20261027_Live --method PATCH --body @rest-update.json --target-org SOURCE_ALIAS --json
-```
+The plugin checks the file's structure only: the keys above, plain text values and a
+list of `{ name, sql }` models. The SQL, the model names and whether the DMO suits the
+segment are not checked locally; Salesforce decides. Salesforce requires every column
+fully qualified as `Table.column` with the DMO API name as the table, for example
+`ssot__Individual__dlm.ssot__Id__c`: it refuses an unqualified column ("Expected a fully
+qualified column name") and a table alias ("Need api name of DMO") with HTTP 400, and the
+plugin reports that answer. Only DBT segments without refresh
+schedule (`NO_REFRESH`), with a 90-day lookback (`P90D`) and without parameters can be
+expressed: create and update cannot carry another schedule or lookback, so another value
+is refused with `UNSUPPORTED_SEGMENT_VARIANT` instead of being silently ignored. Segment
+inventory and Segment XML input are not supported.
 
-HTTP 200 returned `PROCESSING`; independent GET then confirmed `ACTIVE`, updated
-label/description and unchanged IDs/SQL/DMO/schedule/lookback. Sparse label-only
-PATCH failed, as did adding only `segmentType`; resending `NoRefresh` failed with
-`publishScheduleInfo` validation, and an attempted `None` subtype was rejected.
-Only the shown preserved-definition PATCH is qualified, not arbitrary sparse
-updates or general omitted-field preservation.
+Deploy with `sf data360 deploy --source-dir <file>` (or `-m segment:<name>`); check it
+with `--preview` first. The segment is read by its exact name: HTTP 404
+`ITEM_NOT_FOUND` creates it with one POST, an existing segment is updated with one
+PATCH of the whole definition, and an identical one is `unchanged` without a write.
+When Salesforce refuses the POST or PATCH with HTTP 4xx, the item is `failed` with
+mutation `rejected` (`REQUEST_FAILED`, or `SEGMENT_CREATE_CONFLICT` for 409): nothing
+was written, and Salesforce's message is shown.
+Create and update need `--allow-processing`. The DMO named in `segmentOn` must exist
+in the target; one native read binds its ID, and the segment read back after the write
+must be built on it. After the write the segment is read back until `ACTIVE`, or `PROCESSING` /
+`COUNTING` after an accepted write; the human suffix `(server is still processing)`
+means accepted configuration, not completed computation. Nothing is retried or rolled
+back.
 
-#### Delete
-
-The tested CLI required a request file for an empty DELETE body. Save this as
-`rest-delete-request.json`:
-
-```json
-{
-  "url": "/services/data/v65.0/ssot/segments/McpSegParallel_20261027_Live",
-  "method": "DELETE",
-  "body": { "mode": "raw", "raw": "" }
-}
-```
-
-```sh
-sf api request rest --file rest-delete-request.json --target-org SOURCE_ALIAS --json
-```
-
-HTTP 204 and independent exact GET HTTP 404 confirmed deletion. Both synthetic
-segment definitions were removed; original source inventory remained, and shared
-unified DMOs/membership tables were deliberately untouched. Do not infer a cleanup
-of every generated/shared artifact or absence of automatic processing.
+Delete with `sf data360 delete --metadata segment:<name>`; `--preview` is read-only and
+execution needs no confirmation flag. The segment is read from the org by name (one
+the org does not have is `unchanged`) and must agree with fresh target identity,
+definition and source-DMO checks. One DELETE acknowledgement is not terminal absence:
+an independent exact GET404 confirms deletion; a positively preserved transition may
+instead report processing. Unknown outcomes stop without retry, replay, fallback or
+rollback. Generated membership DMOs are not deleted; generated-resource, physical
+storage and credit cleanup are not covered.
 
 ### Runtime data graph: standard CLI facade transport
 

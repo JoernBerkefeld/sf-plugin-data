@@ -37,7 +37,6 @@ const segment = (object = 'Person__dlm') => ({
     segmentType: 'DBT',
     segmentOn: identity('dmo', object),
     models: [{ name: 'Audience', sql: `SELECT ${object}.Id__c FROM ${object} WHERE 1 = 0` }],
-    dependencies: [{ ...identity('dmo', object), fields: ['Id__c'] }],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
@@ -163,7 +162,7 @@ test('an explicitly selected DMO deploys before its Segment on the native route'
   const preview = await deploy(cwd, {
     metadata: ['segment:Audience', 'dmo:Person__dlm'],
     preview: true,
-    'api-version': '65.0',
+    'api-version': '68.0',
   });
   assert.equal(preview.result.status, 'success');
   assert.deepEqual(
@@ -177,9 +176,17 @@ test('an explicitly selected DMO deploys before its Segment on the native route'
       ['Audience', 'preview', 'create'],
     ],
   );
-  // An explicit numeric pin is kept for the native route as well.
-  assert.ok(preview.calls.includes('client:target:65.0'));
+  assert.ok(preview.calls.includes('client:target:68.0'));
   assert.ok(!preview.calls.some((call) => call.includes('execute')));
+  // A Segment runs on API68 only: a 65.0 pin refuses the batch before any target read.
+  const pinned = await deploy(cwd, {
+    metadata: ['segment:Audience', 'dmo:Person__dlm'],
+    preview: true,
+    'api-version': '65.0',
+  });
+  assert.equal(pinned.result.status, 'blocked');
+  assert.ok(JSON.stringify(pinned.result).includes('INVALID_SCOPE'));
+  assert.ok(!pinned.calls.some((call) => call.includes('preflight') || call.includes('execute')));
 });
 
 test('a Segment selected alone never pulls in its local DMO file', async () => {

@@ -34,5 +34,5 @@ Deployed: 0 (0 created / 0 updated / 0 failed)
 
 ## Related codes
 
-- [`SEGMENT_CREATE_AND_TARGET_UNQUALIFIED`](../segment/SEGMENT_CREATE_AND_TARGET_UNQUALIFIED.md) — A frequent reason of the fresh preview.
-- [`SEGMENT_TARGET_NOT_SETTLED`](../segment/SEGMENT_TARGET_NOT_SETTLED.md) — Another reason of the fresh preview.
+- [`SEGMENT_ACQUISITION_FAILED`](../segment/SEGMENT_ACQUISITION_FAILED.md) — The read of the existing segment failed.
+- [`SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING`](../segment/SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING.md) — The DMO the segment is built on was not found.

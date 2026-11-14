@@ -29,7 +29,6 @@ const segmentDocument = (object, apiName = 'Audience') => ({
     segmentType: 'DBT',
     segmentOn: reference('dmo', object),
     models: [{ name: apiName, sql: `SELECT ${object}.Id__c FROM ${object} WHERE 1 = 0` }],
-    dependencies: [{ ...reference('dmo', object), fields: ['Id__c'] }],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },

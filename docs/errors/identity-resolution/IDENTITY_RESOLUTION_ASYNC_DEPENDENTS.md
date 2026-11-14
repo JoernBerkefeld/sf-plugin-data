@@ -10,7 +10,7 @@
 
 ## What it means
 
-`--async` returns as soon as Salesforce accepts an identity resolution create or update, before the ruleset is published. The selection also holds a data graph, calculated insight or Segment that uses a unified or link DMO of that ruleset (its graph root or related object, a CI dependency, or a Segment's `segmentOn` or dependency). The plugin derives these DMO names from the ruleset file: ruleset `Individual_5810` with reconciliation DMO `ssot__Individual__dlm` produces `UnifiedssotIndividual5810__dlm` and `UnifiedLinkssotIndividual5810__dlm`.
+`--async` returns as soon as Salesforce accepts an identity resolution create or update, before the ruleset is published. The selection also holds a data graph, calculated insight or Segment that uses a unified or link DMO of that ruleset (its graph root or related object, a CI dependency, or a Segment's `segmentOn`). The plugin derives these DMO names from the ruleset file: ruleset `Individual_5810` with reconciliation DMO `ssot__Individual__dlm` produces `UnifiedssotIndividual5810__dlm` and `UnifiedLinkssotIndividual5810__dlm`.
 
 ## Why the plugin stops
 

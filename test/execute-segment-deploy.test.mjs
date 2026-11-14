@@ -21,9 +21,6 @@ const document = () => ({
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    dependencies: [
-      { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
-    ],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
@@ -46,14 +43,14 @@ const criteria = (d) =>
   `&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;${d.spec.models[0].sql}&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;`;
 const connection = {
   instanceUrl: 'https://synthetic.my.salesforce.com',
-  getApiVersion: () => '65.0',
+  getApiVersion: () => '68.0',
 };
 const changed = () => {
   const d = document();
   d.spec.description = 'Changed';
   return d;
 };
-const harness = (desired = changed(), overrides = {}, version = '65.0') => {
+const harness = (desired = changed(), overrides = {}, version = '68.0') => {
   let writes = 0;
   let reads = 0;
   let acquisitions = 0;
@@ -186,13 +183,19 @@ test('API68 CREATE requires fresh absence, one POST and independent identity/con
     assert.equal(result.outcome, success ? 'created' : blocked ? 'blocked' : 'failed', mode);
     assert.equal(
       result.mutation,
-      success ? 'confirmed-created' : blocked ? 'not-attempted' : 'unknown',
+      success
+        ? 'confirmed-created'
+        : blocked
+          ? 'not-attempted'
+          : mode === 'conflict'
+            ? 'rejected'
+            : 'unknown',
       mode,
     );
     assert.equal(result.route.method, 'POST');
     assert.equal(result.serverProcessing, mode === 'processing' ? true : undefined);
     if (mode === 'conflict') assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_CONFLICT');
-    if (!blocked) assert.equal(reads, 1);
+    if (!blocked) assert.equal(reads, mode === 'conflict' ? 0 : 1);
     assert.deepEqual(desired, before);
   }
 });
@@ -409,7 +412,7 @@ test('partial PATCH accepts omitted membership only with independently preserved
   }
 });
 
-test('Segment retains primary PATCH evidence over secondary poll failure with one dispatch', async () => {
+test('a PATCH answered with HTTP 4xx is a rejection with no poll; other failures stay unknown', async () => {
   const primary = apiDiagnostic(400, [
     { errorCode: 'INVALID_INPUT', message: 'A maximum of 10 rulesets is supported.' },
   ]);
@@ -430,9 +433,14 @@ test('Segment retains primary PATCH evidence over secondary poll failure with on
     });
     const result = await h.run();
     assert.equal(result.outcome, 'failed');
-    assert.equal(result.mutation, 'unknown');
+    assert.equal(result.mutation, writeFails ? 'rejected' : 'unknown');
+    assert.equal(
+      result.diagnostics[0].code,
+      writeFails ? 'REQUEST_FAILED' : 'SEGMENT_UPDATE_UNCONFIRMED',
+    );
+    if (writeFails) assert.match(result.diagnostics[0].message, /nothing was written/u);
     assert.equal(writes, 1);
-    assert.equal(reads, 1);
+    assert.equal(reads, writeFails ? 0 : 1);
     assert.equal(getConnectDiagnostic(result), writeFails ? primary : secondary);
     assert.match(
       result.diagnostics[0].message,
@@ -495,10 +503,15 @@ test('Segment late binding and independent pair failures retain evidence at exis
       },
     });
     const result = await h.run();
-    assert.equal(result.mutation, mode === 'binding' ? 'not-attempted' : 'unknown');
+    // A PATCH answered with HTTP400 (reconciled, bounded) is Salesforce's refusal: no poll.
+    const rejected = ['reconciled', 'bounded'].includes(mode);
+    assert.equal(
+      result.mutation,
+      mode === 'binding' ? 'not-attempted' : rejected ? 'rejected' : 'unknown',
+    );
     assert.equal(result.outcome, mode === 'binding' ? 'blocked' : 'failed');
     assert.equal(writes, mode === 'binding' ? 0 : 1);
-    assert.equal(reads, mode === 'binding' ? 0 : mode === 'bounded' ? segmentPollBudget.reads : 1);
+    assert.equal(reads, mode === 'binding' || rejected ? 0 : 1);
     assert.equal(getConnectDiagnostic(result), evidence);
     assert.match(result.diagnostics[0].message, /INVALID_INPUT/u);
   }
@@ -526,7 +539,7 @@ test('single PATCH requires independently acquired settled pair and preserved bi
   assert.equal(h.counts().writes, 1);
   assert.equal(h.counts().acquisitions, 3);
 });
-test('forward predicate update settles independently and redundant criteria cannot diverge', async () => {
+test('a changed SQL is sent as written, settles independently and readback must match', async () => {
   const desired = document();
   desired.spec.models[0].sql += ' AND Person__dlm.Id__c IS NOT NULL';
   const h = harness(desired);
@@ -544,14 +557,11 @@ test('forward predicate update settles independently and redundant criteria cann
   const repeated = await unchanged.run();
   assert.equal(repeated.outcome, 'unchanged');
   assert.equal(unchanged.counts().writes, 0);
-  for (const corrupt of ['sql', 'criteria', 'schedule']) {
+  for (const corrupt of ['sql', 'schedule']) {
     const mismatch = harness(desired);
     mismatch.options.read = async () => {
       const r = runtime(desired);
       if (corrupt === 'sql') r.includeDbt = runtime().includeDbt;
-      if (corrupt === 'criteria')
-        r.includeCriteria =
-          '&lt;DbtPipeline xmlns=""&gt;&lt;models&gt;&lt;model&gt;&lt;name&gt;Audience&lt;/name&gt;&lt;sql&gt;wrong&lt;/sql&gt;&lt;/model&gt;&lt;/models&gt;&lt;/DbtPipeline&gt;';
       if (corrupt === 'schedule') r.lookbackPeriod = 'P2Y';
       return { segments: [r] };
     };
@@ -575,16 +585,34 @@ test('forward predicate update settles independently and redundant criteria cann
   });
   const missingCriteria = await criteriaPresent.run();
   assert.equal(missingCriteria.mutation, 'unknown');
+  // Any other SQL, here removing the predicate again, is no longer refused locally.
+  let reverseAcquisitions = 0;
   const reverse = harness(document(), {
-    acquire: async () => ({
-      candidate: desired,
-      blockers: [],
-      expectations: { runtime: runtime(desired) },
-    }),
+    acquire: async () => {
+      const d = ++reverseAcquisitions <= 2 ? desired : document();
+      return { candidate: d, blockers: [], expectations: { runtime: runtime(d) } };
+    },
   });
   const reversed = await reverse.run();
-  assert.equal(reversed.outcome, 'blocked');
-  assert.equal(reverse.counts().writes, 0);
+  assert.equal(reversed.mutation, 'confirmed-updated');
+  assert.equal(reverse.counts().writes, 1);
+});
+
+test('an existing segment still processing is updated; Salesforce decides', async () => {
+  let acquisitions = 0;
+  const h = harness(changed(), {
+    acquire: async () => {
+      const d = ++acquisitions <= 2 ? document() : changed();
+      return {
+        candidate: d,
+        blockers: [],
+        expectations: { runtime: runtime(d, acquisitions <= 2 ? 'PROCESSING' : 'ACTIVE') },
+      };
+    },
+  });
+  const result = await h.run();
+  assert.equal(result.mutation, 'confirmed-updated');
+  assert.equal(h.counts().writes, 1);
 });
 
 test('positive PATCH and independent PROCESSING confirm queued configuration with one PATCH', async () => {
@@ -651,7 +679,7 @@ test('COUNTING followed by unknown, missing, error or failed reads stays unknown
     assert.equal(h.counts().acquisitions, 2);
   }
 });
-for (const version of ['65.0', '68.0']) {
+for (const version of ['68.0']) {
   test(`API${version} PATCH payload is complete doubly nested DBT without schedules or lookback`, async () => {
     const calls = [];
     const c = {
@@ -681,13 +709,14 @@ for (const version of ['65.0', '68.0']) {
     });
     for (const version of [
       '64.0',
+      '65.0',
       '66.0',
       { requested: 'latest', restSelector: 'latest', soapNumeric: '65.0' },
     ])
       await assert.rejects(new ConnectClient(c, version).patchSegment(changed()));
     const bad = changed();
     bad.identity.apiName = '../other';
-    await assert.rejects(new ConnectClient(c, '65.0').patchSegment(bad));
+    await assert.rejects(new ConnectClient(c, '68.0').patchSegment(bad));
     assert.equal(calls.length, 1);
     assert.ok(c._refreshDelegate);
   });
@@ -773,7 +802,7 @@ test('semantic, runtime identity and final independent readback drift remain unk
   }
 });
 test('late input digest or prerequisite drift blocks before PATCH', async () => {
-  for (const mode of ['digest', 'binding', 'missing', 'processing', 'definition']) {
+  for (const mode of ['digest', 'binding', 'missing']) {
     const h = harness();
     let calls = 0;
     if (mode === 'digest')
@@ -782,17 +811,7 @@ test('late input digest or prerequisite drift blocks before PATCH', async () => 
       };
     if (mode === 'binding')
       h.options.bind = async () => [{ targetId: ++calls > 2 ? 'changed' : 'original' }];
-    if (['missing', 'processing', 'definition'].includes(mode))
-      h.options.acquire = async () => {
-        if (mode === 'missing') return { blockers: ['missing'] };
-        const d = document();
-        if (mode === 'definition') d.spec.models[0].sql += ' ';
-        return {
-          candidate: d,
-          blockers: [],
-          expectations: { runtime: runtime(d, mode === 'processing' ? 'PROCESSING' : 'ACTIVE') },
-        };
-      };
+    if (mode === 'missing') h.options.acquire = async () => ({ blockers: ['missing'] });
     const result = await h.run();
     assert.equal(result.mutation, 'not-attempted', mode);
     assert.equal(h.counts().writes, 0);
@@ -804,7 +823,7 @@ for (const statusCode of [401, 503, 200])
     const c = Object.create(Connection.prototype);
     Object.assign(c, {
       instanceUrl: connection.instanceUrl,
-      version: '65.0',
+      version: '68.0',
       accessToken: 'synthetic-token',
       logger: { getRawLogger: () => ({ debug: () => {} }) },
       _propagators: [],
@@ -818,7 +837,7 @@ for (const statusCode of [401, 503, 200])
           assert.equal(request.method, 'PATCH');
           assert.equal(
             request.url,
-            `${connection.instanceUrl}/services/data/v65.0/ssot/segments/Audience`,
+            `${connection.instanceUrl}/services/data/v68.0/ssot/segments/Audience`,
           );
           assert.equal(options.retry.maxRetries, 0);
           const response = Promise.resolve({
@@ -841,7 +860,7 @@ for (const statusCode of [401, 503, 200])
       },
     });
     const before = Object.getOwnPropertyDescriptors(c);
-    const pending = new ConnectClient(c, '65.0').patchSegment(changed());
+    const pending = new ConnectClient(c, '68.0').patchSegment(changed());
     if (statusCode === 200) assert.deepEqual(await pending, runtime(changed()));
     else await assert.rejects(pending);
     assert.equal(attempts, 1);
@@ -859,7 +878,7 @@ test('fixed Segment PATCH transport sanitizes errors and attempts only once', as
           throw Object.assign(new Error('secret'), { statusCode });
         },
       },
-      '65.0',
+      '68.0',
     );
     await assert.rejects(
       client.patchSegment(changed()),
@@ -867,4 +886,47 @@ test('fixed Segment PATCH transport sanitizes errors and attempts only once', as
     );
     assert.equal(attempts, 1);
   }
+});
+
+test('a create answered with HTTP 400 is a rejection that shows the Salesforce message', async () => {
+  const refusal = apiDiagnostic(400, [
+    {
+      errorCode: 'ENTITY_SAVE_ERROR',
+      message:
+        "Expected a fully qualified column name (in the form - table.column) for column: 'ssot__Id__c'",
+    },
+  ]);
+  let reads = 0;
+  const result = await executeSegmentDeploy(
+    document(),
+    { ...connection, getApiVersion: () => '68.0' },
+    '68.0',
+    'default',
+    {
+      allowProcessing: true,
+      verifyInput: async () => {},
+      bind: async () => [{ targetId: 'target-local', identity: document().spec.segmentOn }],
+      acquire: async () => absent(),
+      create: async () => {
+        throw retainConnectDiagnostic(new Error('hidden'), refusal);
+      },
+      read: async () => {
+        reads++;
+        return {};
+      },
+      now: () => 0,
+      delay: async () => {},
+    },
+  );
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'rejected');
+  assert.equal(result.route.method, 'POST');
+  assert.equal(result.diagnostics[0].code, 'REQUEST_FAILED');
+  assert.match(
+    result.diagnostics[0].message,
+    /ENTITY_SAVE_ERROR: Expected a fully qualified column name.*'ssot__Id__c'/u,
+  );
+  assert.match(result.diagnostics[0].message, /nothing was written for this item/u);
+  assert.doesNotMatch(result.diagnostics[0].message, /no Salesforce rejection was confirmed/u);
+  assert.equal(reads, 0);
 });

@@ -65,47 +65,36 @@ test('package metadata points to the renamed repository without changing npm ide
   });
 });
 
-test('Segment help and README distinguish current JSON from historical paired qualification', async () => {
+test('Segment help and README describe API68-only deploy by name, sent as written', async () => {
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
-  assert.match(Deploy.description, /one portable \*\.segment\.json/u);
-  assert.match(Deploy.description, /separate same-version DMO detail and Metadata reads/u);
-  assert.match(Deploy.description, /identical configuration is unchanged without acknowledgement/u);
-  assert.doesNotMatch(Deploy.description, /same-version runtime, Metadata and dependency reads/u);
+  const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
+  assert.match(Deploy.description, /one portable \*\.segment\.json\) uses auto or 68\.0/u);
   assert.match(
     Deploy.description,
-    /Bounded absent-target Segment CREATE supports auto\/API68 in default space and requires --allow-processing/u,
+    /sent as written and Salesforce decides; its error is reported/u,
   );
+  assert.match(Deploy.description, /identical configuration is unchanged without acknowledgement/u);
   assert.match(
     Deploy.description,
     /Segment deletion is separate: sf data360 delete -m segment:Name reads the segment from the org by name and runs fresh checks/u,
   );
-  assert.doesNotMatch(
-    Deploy.description,
-    /Creation and deletion remain blocked|API68 installed live qualification is separate/u,
-  );
+  assert.doesNotMatch(Deploy.description, /explicit65|IS NOT NULL|Metadata reads validate/u);
+  assert.match(Retrieve.description, /Segment uses auto or 68\.0 in default space/u);
+  assert.doesNotMatch(Retrieve.description, /explicit65|single-model DBT subset/u);
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   assert.ok(readme.includes('`data360/segments/<name>.segment.json`'));
   assert.ok(!readme.includes('`data360/segment/<name>.segment.json`'));
   const row = readme.split('\n').find((line) => line.startsWith('| Segments, `segment`'));
-  assert.match(row, /portable `\.segment\.json`/u);
-  assert.match(row, /Historical API65 XML-paired/u);
-  assert.equal((row.match(/Partial/gu) ?? []).length, 4);
-  assert.doesNotMatch(row, /Unavailable|No plugin creation\/deletion|icons\/cli\.svg/u);
+  assert.match(row, /`data360\/segments\/<Name>\.segment\.json`/u);
+  assert.match(row, /the file is sent as written and Salesforce decides/u);
+  assert.doesNotMatch(row, /Historical API65|single-model|icons\/cli\.svg/u);
   for (const text of [
-    'native JSON-only API68/default retrieve, absent-target CREATE',
-    'source-backed confirmed DELETE have installed acceptance',
-    'Later conservative DELETE processing-guard refinement is offline-qualified',
-    'No general cross-org, arbitrary SQL, completed computation',
-  ])
-    assert.ok(row.includes(text), text);
-  for (const text of [
-    'Actual CREATE and changed UPDATE require',
-    '`--allow-processing`',
+    'Create and update need `--allow-processing`',
     'execution needs no confirmation flag',
-    'Transitional DELETE success branches are synthetic-only',
-    'Generated membership DMOs were not deleted',
+    'Generated membership DMOs are not deleted',
   ])
     assert.ok(readme.includes(text), text);
+  assert.ok(!readme.includes('### Live segment: standard REST API 65'));
 });
 
 test('README documents the native mapping lifecycle without obsolete XML-only or batch claims', () => {
@@ -426,7 +415,7 @@ test('actual core initialization and fixed command routes never discover or save
       assert.fail('Fixed routes must not request version discovery.');
     };
     for (const cached of [false, true]) {
-      for (const requested of ['65.0', 'auto']) {
+      for (const requested of ['68.0', 'auto']) {
         for (const kind of ['retrieve', 'deploy']) {
             fields = { orgId: '00Dsynthetic', ...(cached ? {
               instanceApiVersion: '68.0', instanceApiVersionLastRetrieved: '2000-01-01',
@@ -458,7 +447,6 @@ test('actual core initialization and fixed command routes never discover or save
                   displayName: 'Synthetic', description: '', segmentType: 'DBT',
                   segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
                   models: [{ name: 'Synthetic', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-                  dependencies: [{ kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] }],
                   publishInterval: 'NO_REFRESH', lookbackPeriod: 'P90D',
                 },
               },

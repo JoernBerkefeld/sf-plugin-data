@@ -248,9 +248,6 @@ test('auto mixed IR/Segment68 and native DMO retains isolated routes and whole-s
         models: [
           { name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' },
         ],
-        dependencies: [
-          { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
-        ],
         publishInterval: 'NO_REFRESH',
         lookbackPeriod: 'P90D',
       },

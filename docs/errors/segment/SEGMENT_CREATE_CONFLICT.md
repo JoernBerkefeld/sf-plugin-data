@@ -6,7 +6,7 @@
 | ------------ | -------------------------------------------------------------------------- |
 | **Family**   | Segment                                                                    |
 | **Commands** | `sf data360 deploy`                                                        |
-| **Outcome**  | `failed` — mutation `unknown`: the change may or may not have been applied |
+| **Outcome**  | `failed` — mutation `rejected`: Salesforce refused the create, nothing was written |
 
 ## What it means
 
@@ -14,7 +14,7 @@ The preview found no segment with this name, so the deploy sent one create reque
 
 ## Why the plugin stops
 
-A create that conflicts is never turned into an update, and it is not retried. The outcome is reported as unknown because the plugin did not confirm the target state after the conflict.
+A create that conflicts is never turned into an update, and it is not retried. Salesforce answered the request itself with a refusal, so this create wrote nothing; the segment that already exists is not touched.
 
 ## How to fix
 
@@ -26,15 +26,15 @@ A create that conflicts is never turned into an update, and it is not retried. T
 
 ```text
 Deploy execution: failed (DEPLOY_EXECUTION_FAILED). No automatic retry or rollback performed.
-Failed: segment:Example_Segment; mutation: unknown.
-SEGMENT_CREATE_CONFLICT: Salesforce API rejected the request (HTTP 409); no response payload is disclosed. Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.
+Failed: segment:Example_Segment; mutation: rejected.
+SEGMENT_CREATE_CONFLICT: Salesforce API rejected the request (HTTP 409); no response payload is disclosed. Salesforce rejected the write and nothing was written for this item; correct the input before another attempt.
 Hint: Salesforce refused the create because a segment with this name already exists (HTTP 409). The plugin does not switch to an update; inspect the target, then preview again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/segment/SEGMENT_CREATE_CONFLICT.md
-Mutation may have occurred. Inspect target before any further attempt.
 Deployed: 0 (0 created / 0 updated / 1 failed)
 ```
 
 ## Related codes
 
 - [`SEGMENT_CREATE_UNCONFIRMED`](../segment/SEGMENT_CREATE_UNCONFIRMED.md) — The create result could not be confirmed for other reasons.
+- [`REQUEST_FAILED`](../general/REQUEST_FAILED.md) — Salesforce refused a create or update for another reason.
 - [`SEGMENT_TARGET_DRIFT`](../segment/SEGMENT_TARGET_DRIFT.md) — A change was detected before the write.

@@ -14,7 +14,6 @@ import type { NativeDmoDocument } from '../artifacts/native-dmo-document.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import type { SegmentAcquisition } from './retrieve-segment.js';
 import { retrieveSegment } from './retrieve-segment.js';
-import { readDmoMetadata } from './read-metadata.js';
 import { retrieveNativeDmo } from './native-dmo.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { ConnectClient } from '../transport/connect-client.js';
@@ -37,14 +36,14 @@ export type RetrieveServices = {
   /** One raw native read of an exact DMO, at the native API version rather than the Segment's. */
   dmo: (apiName: string) => Promise<unknown>;
   bind: typeof bindSegmentDependencies;
-  raw: (name: string) => Promise<{ detail: unknown; metadata: unknown }>;
+  raw: (name: string) => Promise<unknown>;
 };
 
 export type RetrieveSelectionEntry =
   { document: NativeDmoDocument } | { document: NonNullable<SegmentAcquisition['candidate']> };
 
-// Bound admitted transport operations: one native DMO GET; Segment exact GET.
-// Segment prerequisite detail and Metadata compatibility checks remain separate.
+// Bound admitted transport operations: one native DMO GET; Segment exact GET; one native read
+// of the DMO each Segment is built on.
 // CLI job-internal polling is bounded by the existing project transport, not this count.
 export const retrieveSelectionLimits = Object.freeze({ requests: 512 });
 
@@ -69,18 +68,16 @@ export async function acquireRetrieveSelection(
     dmo: async (name: string): Promise<unknown> =>
       createDmoClient(connection.getUsername() ?? '', nativeApiVersion()).get(name),
     bind: bindSegmentDependencies,
-    raw: async (name: string): Promise<{ detail: unknown; metadata: unknown }> => ({
-      detail: await new ConnectClient(connection, version).get(
+    raw: async (name: string): Promise<unknown> =>
+      new ConnectClient(connection, version).get(
         `/services/data/${version.restSelector}/ssot/data-model-objects/${name}`,
       ),
-      metadata: await readDmoMetadata(connection, name),
-    }),
     ...injected,
   };
   const identities = new Map<string, DependencyIdentity>();
   const entries = new Map<string, RetrieveSelectionEntry>();
   const nodes = new Map<string, ReturnType<typeof documentDependencyNode>>();
-  const raw = new Map<string, Promise<{ detail: unknown; metadata: unknown }>>();
+  const raw = new Map<string, Promise<unknown>>();
   let requests = 0;
   const reserve = (count: number): void => {
     requests += count;
@@ -123,7 +120,7 @@ export async function acquireRetrieveSelection(
       nodes.set(key, node);
       if (entry.document.kind === 'segment') {
         for (const dependency of node.dependencies) {
-          if (!raw.has(dependencyKey(dependency))) reserve(2);
+          if (!raw.has(dependencyKey(dependency))) reserve(1);
         }
         await services.bind(
           entry.document,

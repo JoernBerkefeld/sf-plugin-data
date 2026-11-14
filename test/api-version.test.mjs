@@ -1,12 +1,9 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
-test('Segment defaults to API68 retaining only explicit65 compatibility without family drift', () => {
-  for (const requested of ['auto', '68.0', '65.0'])
-    assert.equal(
-      operationApiVersion(requested, 'segment'),
-      requested === 'auto' ? '68.0' : requested,
-    );
-  for (const requested of ['latest', '66.0', '67.0', '69.0'])
+test('Segment runs on API68 only; a 65.0 pin is refused like other unsupported pins', () => {
+  for (const requested of ['auto', '68.0'])
+    assert.equal(operationApiVersion(requested, 'segment'), '68.0');
+  for (const requested of ['latest', '65.0', '66.0', '67.0', '69.0'])
     assert.throws(() => operationApiVersion(requested, 'segment'));
   // A DMO is no operational family: it always uses the native version rule.
   assert.throws(() => operationApiVersion('auto', 'dmo'), /INVALID_SCOPE/u);
@@ -85,7 +82,7 @@ test('invalid selectors fail before discovery', async () => {
   ]) {
     await assert.rejects(
       resolveApiVersion(requested, () => assert.fail('Unexpected discovery')),
-      { message: 'Use latest or an explicit numeric API version such as 65.0.' },
+      { message: 'Use latest or an explicit numeric API version such as 68.0.' },
     );
   }
 });

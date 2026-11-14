@@ -2,10 +2,7 @@ import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import {
-  isQualifiedSegmentUpdate,
-  validateSegmentDocument,
-} from '../artifacts/segment-document.js';
+import { validateSegmentDocument } from '../artifacts/segment-document.js';
 import { retrieveSegment } from './retrieve-segment.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -18,11 +15,12 @@ export type SegmentDeployPreview = DeployPreviewResult & {
 };
 
 /**
- * Compare independently admitted Segments or native68 exact ITEM_NOT_FOUND404.
- * CREATE uses create-only POST; Metadata-only collision protection remains untested.
+ * Classify one authored Segment against the target by its exact name at API68: exact
+ * ITEM_NOT_FOUND404 is create, a readable Segment is update or unchanged. The authored
+ * definition is not judged; Salesforce decides about it on the write.
  * @param {unknown} value Desired bounded authored document.
  * @param {Connection} connection Command-owned authenticated target connection.
- * @param {string | ApiVersionSelection} apiVersion Explicit API65 or API68 selection.
+ * @param {string | ApiVersionSelection} apiVersion API68 selection.
  * @param {string} dataSpace Explicit default target space.
  * @param {Function} acquire Independent acquisition seam for deterministic synthetic tests.
  * @param {Function} bind Fresh independent target dependency binding; never cached across calls.
@@ -58,9 +56,9 @@ export async function preflightSegmentDeploy(
                 message: getConnectDiagnostic(evidence)
                   ? operationDiagnostic(
                       evidence,
-                      'Segment preview is not execution authorization. Resolve the unsupported configuration or target qualification before deployment.',
+                      'Segment preview is not execution authorization. Resolve the reported cause before deployment.',
                     )
-                  : 'Segment preview is not execution authorization. Resolve the unsupported configuration or target qualification before deployment.',
+                  : 'Segment preview is not execution authorization. Resolve the reported cause before deployment.',
               },
             ]
           : [],
@@ -74,7 +72,7 @@ export async function preflightSegmentDeploy(
     return result('blocked', 'unknown', 'INVALID_SOURCE');
   }
   if (
-    !['65.0', '68.0'].includes(requested) ||
+    requested !== '68.0' ||
     dataSpace !== 'default' ||
     connection.getApiVersion() !== requested ||
     (typeof apiVersion !== 'string' &&
@@ -82,23 +80,21 @@ export async function preflightSegmentDeploy(
   )
     return result('blocked', 'unknown', 'INVALID_SCOPE');
   try {
-    // Compatibility is always required, including unchanged and explicit-only selections.
+    // The DMO the Segment is built on must exist; its ID binds the readback.
     await bind(desired, connection, apiVersion, dataSpace);
   } catch (error: unknown) {
     return result(
       'blocked',
       'unknown',
-      error instanceof SegmentError ? error.code : 'SEGMENT_DEPENDENCY_UNQUALIFIED',
+      error instanceof SegmentError ? error.code : 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED',
       error,
     );
   }
   try {
     const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
-    // API68 POST is create-only (observed duplicate409), never an upsert. Runtime
-    // absence does not claim Metadata-only absence; that collision remains untested.
+    // POST is create-only (observed duplicate409), never an upsert; only exact 404 is absence.
     const diagnostic = getConnectDiagnostic(acquired);
     if (
-      requested === '68.0' &&
       !acquired.candidate &&
       !acquired.expectations &&
       acquired.blockers.length === 1 &&
@@ -109,20 +105,25 @@ export async function preflightSegmentDeploy(
     )
       return result('create', 'absent');
     if (!acquired.candidate || acquired.blockers.length > 0 || !acquired.expectations)
-      return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED', acquired);
+      return result(
+        'blocked',
+        'unknown',
+        acquired.blockers[0] ?? 'SEGMENT_ACQUISITION_FAILED',
+        acquired,
+      );
     const current = validateSegmentDocument(acquired.candidate);
     if (JSON.stringify(current.identity) !== JSON.stringify(desired.identity))
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
-    // ACTIVE is the only independently observed settled state for this bounded variant.
-    if (acquired.expectations.runtime.segmentStatus !== 'ACTIVE')
-      return result('blocked', 'present', 'SEGMENT_TARGET_NOT_SETTLED');
-    if (!isQualifiedSegmentUpdate(current, desired))
-      return result('blocked-changes', 'present', 'SEGMENT_DEFINITION_UPDATE_UNQUALIFIED');
     return result(
       JSON.stringify(desired) === JSON.stringify(current) ? 'unchanged' : 'update',
       'present',
     );
   } catch (error) {
-    return result('blocked', 'unknown', 'SEGMENT_CREATE_AND_TARGET_UNQUALIFIED', error);
+    return result(
+      'blocked',
+      'unknown',
+      error instanceof SegmentError ? error.code : 'SEGMENT_ACQUISITION_FAILED',
+      error,
+    );
   }
 }

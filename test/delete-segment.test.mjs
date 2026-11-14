@@ -15,9 +15,6 @@ const document = () => ({
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    dependencies: [
-      { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
-    ],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },

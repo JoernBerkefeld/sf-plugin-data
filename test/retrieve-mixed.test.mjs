@@ -335,17 +335,18 @@ test('a graph org-context failure blocks its group without identity', async () =
 
 for (const [metadata, overrides, code, family] of [
   [
-    ['data-transform:Alpha', 'segment:Audience'],
+    ['data-transform:Alpha', 'dmo:Sample__dlm'],
     { 'api-version': '65.0' },
     'INVALID_SCOPE',
     'data-transform',
   ],
   [
-    ['data-graph:Alpha', 'segment:Audience'],
+    ['data-graph:Alpha', 'dmo:Sample__dlm'],
     { 'api-version': '65.0' },
     'INVALID_SCOPE',
     'data-graph',
   ],
+  [['data-graph:Alpha', 'segment:Audience'], { 'api-version': '65.0' }, 'INVALID_SCOPE', 'segment'],
   [
     ['dmo:Sample__dlm', 'data-stream:Alpha'],
     { dataspace: 'other' },

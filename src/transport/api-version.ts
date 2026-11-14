@@ -52,12 +52,7 @@ export function operationApiVersion(requested: string, family: OperationalFamily
 
       break;
     }
-    case 'segment': {
-      if (requested === 'auto' || requested === '68.0') return '68.0';
-      if (requested === '65.0') return '65.0';
-
-      break;
-    }
+    case 'segment':
     case 'calculated-insight':
     case 'identity-resolution':
     case 'data-graph': {
@@ -85,7 +80,7 @@ export async function resolveApiVersion(
     return Object.freeze({ requested, restSelector: `v${requested}`, soapNumeric: requested });
   }
   if (requested !== 'latest') {
-    throw new Error('Use latest or an explicit numeric API version such as 65.0.');
+    throw new Error('Use latest or an explicit numeric API version such as 68.0.');
   }
 
   let advertised: unknown;

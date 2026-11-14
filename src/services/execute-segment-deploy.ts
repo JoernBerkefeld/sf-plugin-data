@@ -3,15 +3,13 @@ import { setTimeout } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
-import {
-  isQualifiedSegmentUpdate,
-  validateSegmentDocument,
-} from '../artifacts/segment-document.js';
+import { validateSegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { preflightSegmentDeploy } from './preflight-segment-deploy.js';
 import { projectSegment, retrieveSegment } from './retrieve-segment.js';
+import { rejectedNextAction } from './deploy-result.js';
 import type { DeployExecutionResult } from './deploy-result.js';
 
 export const segmentPollBudget = Object.freeze({ reads: 12, intervalMs: 1000, timeoutMs: 120_000 });
@@ -37,7 +35,8 @@ type TargetConnection = Pick<
 >;
 
 /**
- * Compare nonedited private fields; independently projected models/criteria must match desired SQL.
+ * Compare the fields the file does not set; the authored ones are compared via the projection.
+ * The source DMO reference is authored (segmentOnApiName) or bound separately (segmentOnId).
  * @param {Record<string, unknown>} runtime Exact admitted runtime snapshot.
  * @returns {Record<string, unknown>} Detached full preservation baseline.
  */
@@ -53,6 +52,8 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
     'lastModifiedDate',
     'lastSegmentMemberCount',
     'includeDbt',
+    'segmentOnApiName',
+    'segmentOnId',
   ])
     delete result[key];
   for (const key of ['marketSegmentId', 'marketSegmentDefinitionId']) {
@@ -83,7 +84,7 @@ function acknowledgedUpdate(
       segments: [
         Object.hasOwn(raw, 'segmentOnApiName')
           ? raw
-          : { ...raw, segmentOnApiName: baseline.segmentOnApiName },
+          : { ...raw, segmentOnApiName: desired.spec.segmentOn.apiName },
       ],
     },
     desired.identity.apiName,
@@ -98,11 +99,12 @@ function acknowledgedUpdate(
 }
 
 /**
- * Execute native68 create-only POST, qualified ACTIVE updates or zero-write equality.
- * Every write is single-attempt; replay, rollback and Metadata deploy jobs are unavailable.
+ * Execute native68 create-only POST, PATCH of the authored definition, or zero-write equality.
+ * The definition is sent as written and Salesforce decides; every write is single-attempt,
+ * without replay or rollback.
  * @param {unknown} value Complete authored desired Segment.
  * @param {TargetConnection} connection Command-owned authenticated target.
- * @param {string | ApiVersionSelection} apiVersion Fixed explicit API65 or API68 selection.
+ * @param {string | ApiVersionSelection} apiVersion API68 selection.
  * @param {string} dataSpace Fixed default space.
  * @param {SegmentExecutionOptions} options Acknowledgement, JSON digest verifier and bounded test seams.
  * @returns {Promise<SegmentDeployExecution>} Payload-free outcome with conservative mutation evidence.
@@ -132,16 +134,17 @@ export async function executeSegmentDeploy(
           ? [
               {
                 code,
-                message: getConnectDiagnostic(evidence)
-                  ? operationDiagnostic(
-                      evidence,
-                      mutation === 'unknown'
+                message: (() => {
+                  const next =
+                    mutation === 'rejected'
+                      ? rejectedNextAction
+                      : mutation === 'unknown'
                         ? 'Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
-                        : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.',
-                    )
-                  : mutation === 'unknown'
-                    ? 'Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
-                    : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.',
+                        : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.';
+                  return getConnectDiagnostic(evidence)
+                    ? operationDiagnostic(evidence, next)
+                    : next;
+                })(),
               },
             ]
           : [],
@@ -206,13 +209,8 @@ export async function executeSegmentDeploy(
         { segments: [acquired.expectations.runtime] },
         desired.identity.apiName,
       );
-      if (
-        !isDeepStrictEqual(projected.candidate, validateSegmentDocument(acquired.candidate)) ||
-        projected.runtime.segmentStatus !== 'ACTIVE'
-      )
+      if (!isDeepStrictEqual(projected.candidate, validateSegmentDocument(acquired.candidate)))
         return result('blocked', 'not-attempted', 'SEGMENT_TARGET_DRIFT');
-      if (!isQualifiedSegmentUpdate(projected.candidate, desired))
-        return result('blocked', 'not-attempted', 'SEGMENT_DEFINITION_UPDATE_UNQUALIFIED');
       baseline = preservation(projected.runtime);
       // JSON bytes and target binding must still agree after fresh exact runtime acquisition.
       await options.verifyInput();
@@ -256,22 +254,30 @@ export async function executeSegmentDeploy(
     writeFailure = error;
     // Bounded independent reads may reveal the target, but cannot authorize a replay.
   }
-  // A native create409 is a conflict, never permission to PATCH/upsert or retry.
+  // A synchronous HTTP 4xx answer to the single write is Salesforce's refusal: nothing was
+  // applied. A create409 is a conflict, never permission to PATCH/upsert or retry.
+  const status = getConnectDiagnostic(writeFailure)?.statusCode;
+  if (typeof status === 'number' && status >= 400 && status < 500)
+    return result(
+      'failed',
+      'rejected',
+      creating && status === 409 ? 'SEGMENT_CREATE_CONFLICT' : 'REQUEST_FAILED',
+      writeFailure,
+    );
   // Other failures remain uncertain even if independent reads find the desired state.
-  const conflict = creating && getConnectDiagnostic(writeFailure)?.statusCode === 409;
   const unknown = result(
     'failed',
     'unknown',
-    creating
-      ? conflict
-        ? 'SEGMENT_CREATE_CONFLICT'
-        : 'SEGMENT_CREATE_UNCONFIRMED'
-      : 'SEGMENT_UPDATE_UNCONFIRMED',
+    creating ? 'SEGMENT_CREATE_UNCONFIRMED' : 'SEGMENT_UPDATE_UNCONFIRMED',
     writeFailure,
   );
   const matches = (runtime: Record<string, unknown>): boolean => {
     const observed = preservation(runtime);
-    if (!creating) return isDeepStrictEqual(observed, baseline);
+    if (!creating)
+      return (
+        isDeepStrictEqual(observed, baseline) &&
+        (!Object.hasOwn(runtime, 'segmentOnId') || runtime.segmentOnId === bindings[0].targetId)
+      );
     // POST omits generated membership/audit fields; full GET admission stays strict.
     return (
       responseQualified &&

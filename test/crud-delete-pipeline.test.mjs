@@ -235,7 +235,7 @@ test('delete stages run in reverse phase order, dependents first inside P3', () 
     dependencies: [{ kind: 'dmo', apiName: unified }],
   });
   const segment = plan('segment', 'Audience', {
-    dependencies: [{ kind: 'calculated-insight', apiName: 'Score__cio' }],
+    segmentOn: { kind: 'dmo', apiName: unified },
   });
   const stages = planDeleteStages([
     plan('data-stream', 'Feed'),
@@ -252,8 +252,7 @@ test('delete stages run in reverse phase order, dependents first inside P3', () 
     stages.map((stage) => [stage.phase, stage.inputs.map((input) => input.path)]),
     [
       ['P4', ['Graph.native-dataGraph.json']],
-      ['P3', ['segment:Audience']],
-      ['P3', ['calculated-insight:Score__cio']],
+      ['P3', ['calculated-insight:Score__cio', 'segment:Audience']],
       ['P3', ['Individual_A1b2.identityResolution.json']],
       ['P2', ['Copy.dataTransform.json']],
       ['P1', ['dlo:Feed__dll', 'mapping:Feed_map', 'dmo:Person__dlm']],

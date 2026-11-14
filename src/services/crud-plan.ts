@@ -97,7 +97,7 @@ function graphObjectNames(node: unknown, names: string[] = []): string[] {
 }
 
 /**
- * Component references of one input as `[kind, apiName]` pairs: Segment and CI dependencies,
+ * Component references of one input as `[kind, apiName]` pairs: CI dependencies,
  * the Segment's `segmentOn`, IR reconciliation DMOs and graph root/related objects (as DMOs).
  * @param {PlanInput} input Admitted input.
  * @returns {Array<[string, string]>} Referenced components.
@@ -116,8 +116,7 @@ function references(input: PlanInput): Array<[string, string]> {
           )
           .map((item) => [item.kind, item.apiName])
       : [];
-  if (document.kind === 'segment')
-    return [...listed([spec.segmentOn]), ...listed(spec.dependencies)];
+  if (document.kind === 'segment') return listed([spec.segmentOn]);
   if (document.kind === 'calculated-insight') return listed(spec.dependencies);
   if (document.kind === 'identity-resolution')
     return listed(

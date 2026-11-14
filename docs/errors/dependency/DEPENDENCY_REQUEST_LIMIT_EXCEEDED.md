@@ -10,7 +10,7 @@
 
 ## What it means
 
-A retrieve of DMOs and segments reads each selected component and two records for every DMO a segment refers to. For this selection that would be more than 512 reads.
+A retrieve of DMOs and segments reads each selected component and one record for every DMO a segment is built on. For this selection that would be more than 512 reads.
 
 ## Why the plugin stops
 

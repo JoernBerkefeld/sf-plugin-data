@@ -31,7 +31,7 @@ const invocation = (overrides = {}, paths = [selectedPath]) => {
       },
       getUsername: () => 'synthetic@example.invalid',
       getConnection: (version) => {
-        assert.equal(version, '65.0');
+        assert.equal(version, flags['api-version']);
         calls.push('connection');
         return {};
       },
@@ -55,7 +55,7 @@ const invocation = (overrides = {}, paths = [selectedPath]) => {
   const client = {};
   command.createDmoClient = (target, version) => {
     assert.equal(target, 'synthetic@example.invalid');
-    assert.equal(version, '65.0');
+    assert.equal(version, flags['api-version']);
     return client;
   };
   command.preflightNativeDmo = async (document, actual) => {
@@ -117,7 +117,7 @@ for (const preview of [true, false]) {
 }
 for (const preview of [true, false]) {
   test(`Git-selected Segment remains in mixed selection preview=${preview} with missing acknowledgement blocked`, async () => {
-    const { command, calls } = invocation({ preview });
+    const { command, calls } = invocation({ preview, 'api-version': '68.0' });
     const segment = {
       path: 'Audience.marketSegmentDefinition-meta.xml',
       companionPath: 'Audience.segment.json',
@@ -133,9 +133,6 @@ for (const preview of [true, false]) {
           segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
           models: [
             { name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' },
-          ],
-          dependencies: [
-            { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
           ],
           publishInterval: 'NO_REFRESH',
           lookbackPeriod: 'P90D',

@@ -35,7 +35,6 @@ const segment = (apiName = 'Audience') => ({
     segmentType: 'DBT',
     segmentOn: identity('dmo', 'Person__dlm'),
     models: [{ name: apiName, sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    dependencies: [{ ...identity('dmo', 'Person__dlm'), fields: ['Id__c'] }],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
@@ -122,7 +121,7 @@ test('a Git-selected Segment keeps its provenance, is never expanded and blocks 
     command.parse = async () => ({
       flags: {
         'changed-since': 'main',
-        'api-version': '65.0',
+        'api-version': '68.0',
         'data-space': 'default',
         preview: false,
         'target-org': { getOrgId: () => 'synthetic', getConnection: () => ({}) },

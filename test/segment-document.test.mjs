@@ -6,9 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   validateSegmentDocument,
-  validateSegmentPair,
   serializeSegmentDocument,
-  isQualifiedSegmentUpdate,
 } from '../lib/artifacts/segment-document.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { retrieveSegment, projectSegment } from '../lib/services/retrieve-segment.js';
@@ -24,17 +22,10 @@ const candidate = () => ({
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql }],
-    dependencies: [
-      { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm', fields: ['Id__c'] },
-    ],
     publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
 });
-const escape = (value) =>
-  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-const xml = () =>
-  `<?xml version="1.0" encoding="UTF-8"?>\n<MarketSegmentDefinition xmlns="http://soap.sforce.com/2006/04/metadata">\n<includeCriteria>${escape(`<DbtPipeline xmlns=""><models><model><name>Audience</name><sql>${sql}</sql></model></models></DbtPipeline>`)}</includeCriteria>\n<masterLabel>Audience label</masterLabel><segmentType>DBT</segmentType></MarketSegmentDefinition>\n`;
 const root = () => mkdtemp(path.join(os.tmpdir(), 'data360-segment-test-'));
 const raw = () => ({
   segments: [
@@ -54,7 +45,7 @@ const raw = () => ({
   ],
 });
 
-test('observed DBT audit/generated fields stay private and redundant criteria must agree', () => {
+test('observed DBT audit/generated fields stay private; criteria is not correlated', () => {
   const response = raw();
   Object.assign(response.segments[0], {
     createdBy: { id: 'private-user' },
@@ -64,18 +55,15 @@ test('observed DBT audit/generated fields stay private and redundant criteria mu
     segmentOnId: 'private-on',
     segmentMembershipDmo: { historyTable: 'private-history', latestTable: 'private-latest' },
     parameters: [],
-    includeCriteria: escape(
-      `<DbtPipeline xmlns=""><models><model><name>Audience</name><sql>${sql}</sql></model></models></DbtPipeline>`,
-    ),
+    includeCriteria: '&lt;DbtPipeline xmlns=""&gt;rendered by Salesforce&lt;/DbtPipeline&gt;',
   });
   assert.deepEqual(projectSegment(response, 'Audience').candidate, candidate());
   assert.doesNotMatch(
     serializeSegmentDocument(projectSegment(response, 'Audience').candidate),
-    /private/u,
+    /private|rendered/u,
   );
   for (const [key, value] of Object.entries({
     parameters: [{ name: 'meaningful' }],
-    includeCriteria: response.segments[0].includeCriteria.replace('WHERE 1 = 0', 'WHERE 1 = 1'),
     createdBy: { id: 'x', extra: true },
     segmentMembershipDmo: { latestTable: 'x' },
     segmentOnId: undefined,
@@ -86,35 +74,33 @@ test('observed DBT audit/generated fields stay private and redundant criteria mu
   }
 });
 
-test('qualified predicate preserves dependency and only permits forward isolated SQL change', () => {
-  const before = candidate();
-  const after = candidate();
-  after.spec.models[0].sql += ' AND Person__dlm.Id__c IS NOT NULL';
-  assert.deepEqual(validateSegmentDocument(after), after);
-  assert.deepEqual(validateSegmentPair(after, xml().replace(sql, after.spec.models[0].sql)), after);
-  assert.equal(isQualifiedSegmentUpdate(before, after), true);
-  assert.equal(isQualifiedSegmentUpdate(after, before), false);
-  assert.equal(isQualifiedSegmentUpdate(after, after), true);
-  const combined = structuredClone(after);
-  combined.spec.description = 'Unqualified combined edit';
-  assert.equal(isQualifiedSegmentUpdate(before, combined), false);
-  combined.spec.models[0].name = 'Other';
-  assert.equal(isQualifiedSegmentUpdate(before, combined), false);
-  for (const suffix of [
-    ' AND Person__dlm.Other__c IS NOT NULL',
-    ' AND Other__dlm.Id__c IS NOT NULL',
-    ' OR Person__dlm.Id__c IS NOT NULL',
-    ' AND Person__dlm.Id__c IS NULL',
+test('any SQL shape, several models and any model name are kept as written', () => {
+  for (const models of [
+    [{ name: 'Audience', sql: 'SELECT * FROM Person__dlm' }],
+    [
+      {
+        name: 'audience model 1',
+        sql: 'SELECT p.Id__c FROM Person__dlm p JOIN Other__dlm o ON 1=1',
+      },
+    ],
+    [
+      { name: 'First', sql: 'SELECT Id__c FROM Person__dlm' },
+      { name: 'Second', sql: 'SELECT Id__c FROM {{ ref("First") }} WHERE Id__c IS NOT NULL' },
+    ],
+    [],
   ]) {
-    const invalid = candidate();
-    invalid.spec.models[0].sql += suffix;
-    assert.throws(() => validateSegmentDocument(invalid));
+    const value = candidate();
+    value.spec.models = models;
+    assert.deepEqual(validateSegmentDocument(value).spec.models, models);
+    const response = raw();
+    response.segments[0].includeDbt.models = models;
+    assert.deepEqual(projectSegment(response, 'Audience').candidate.spec.models, models);
   }
 });
 
-test('typed document detached stable serialization and paired XML correlation', () => {
+test('typed document detached stable serialization', () => {
   const original = candidate();
-  const admitted = validateSegmentPair(original, xml());
+  const admitted = validateSegmentDocument(original);
   original.spec.displayName = 'changed';
   assert.equal(admitted.spec.displayName, 'Audience label');
   assert.equal(serializeSegmentDocument(candidate()), serializeSegmentDocument(admitted));
@@ -126,31 +112,16 @@ for (const [label, change] of Object.entries({
   schedule: (d) => (d.spec.publishInterval = 'DAILY'),
   lookback: (d) => (d.spec.lookbackPeriod = 'P2Y'),
   space: (d) => (d.identity.dataSpace = 'other'),
-  dependency: (d) => (d.spec.dependencies[0].apiName = 'Other__dlm'),
-  sql: (d) => (d.spec.models[0].sql = 'SELECT * FROM Person__dlm'),
-  multiple: (d) => d.spec.models.push(d.spec.models[0]),
+  'old dependencies key': (d) => (d.spec.dependencies = []),
+  'model keys': (d) => (d.spec.models[0].extra = true),
+  'models shape': (d) => (d.spec.models = { name: 'Audience', sql }),
+  'empty sql': (d) => (d.spec.models[0].sql = ''),
 })) {
   test(`document rejects ${label}`, () => {
     const value = candidate();
     change(value);
     assert.throws(() => validateSegmentDocument(value));
   });
-}
-for (const [label, change] of Object.entries({
-  label: (x) => x.replace('Audience label', 'Other'),
-  sql: (x) => x.replace('WHERE 1 = 0', 'WHERE 1 = 1'),
-  unknown: (x) =>
-    x.replace('</MarketSegmentDefinition>', '<segmentOn>Id</segmentOn></MarketSegmentDefinition>'),
-  duplicate: (x) =>
-    x.replace(
-      '<segmentType>DBT</segmentType>',
-      '<segmentType>DBT</segmentType><segmentType>DBT</segmentType>',
-    ),
-  entity: (x) => x.replace('Audience label', '&unknown;'),
-  doctype: (x) => '<!DOCTYPE x>' + x,
-})) {
-  test(`pair rejects ${label}`, () =>
-    assert.throws(() => validateSegmentPair(candidate(), change(xml()))));
 }
 test('JSON writer emits no XML, repeats byte-stably and refuses conflicts', async () => {
   const directory = await root();
@@ -258,7 +229,7 @@ test('writer honors configured package and refuses junction output', async () =>
   );
   await assert.rejects(writeSegmentDocument(candidate(), linked, true));
 });
-for (const version of ['65.0', '68.0']) {
+for (const version of ['68.0']) {
   test(`retrieve API${version} makes only one exact native request without Segment Metadata`, async () => {
     let calls = 0;
     const connection = {
@@ -293,12 +264,12 @@ for (const [label, change] of Object.entries({
     const result = await retrieveSegment(
       {
         instanceUrl: 'https://synthetic.example',
-        getApiVersion: () => '65.0',
+        getApiVersion: () => '68.0',
         getUsername: () => 'synthetic',
         request: async () => response,
       },
       'Audience',
-      '65.0',
+      '68.0',
       'default',
     );
     assert.equal(result.candidate, undefined);
@@ -313,7 +284,7 @@ test('Segment acquisition retains normalized evidence without publishing remote 
   const result = await retrieveSegment(
     {
       instanceUrl: 'https://synthetic.example',
-      getApiVersion: () => '65.0',
+      getApiVersion: () => '68.0',
       getUsername: () => 'synthetic',
       request: async () => {
         reads++;
@@ -326,7 +297,7 @@ test('Segment acquisition retains normalized evidence without publishing remote 
       },
     },
     'Audience',
-    '65.0',
+    '68.0',
     'default',
   );
   assert.equal(reads, 1);
@@ -335,17 +306,23 @@ test('Segment acquisition retains normalized evidence without publishing remote 
   assert.doesNotMatch(JSON.stringify(result), /hidden|INVALID_INPUT|statusCode/u);
 });
 
-test('generic404 is not absence proof and latest refuses before request', async () => {
+test('generic404 is not absence proof; latest and API65 refuse before request', async () => {
+  let requests = 0;
   const connection = {
     instanceUrl: 'https://synthetic.example',
-    getApiVersion: () => '65.0',
+    getApiVersion: () => '68.0',
     getUsername: () => 'synthetic',
     request: async () => {
+      requests++;
       throw { statusCode: 404 };
     },
   };
-  const result = await retrieveSegment(connection, 'Audience', '65.0', 'default');
+  const result = await retrieveSegment(connection, 'Audience', '68.0', 'default');
   assert.deepEqual(result.blockers, ['SEGMENT_ACQUISITION_FAILED']);
   assert.equal(result.candidate, undefined);
   await assert.rejects(retrieveSegment(connection, 'Audience', 'latest', 'default'));
+  await assert.rejects(
+    retrieveSegment({ ...connection, getApiVersion: () => '65.0' }, 'Audience', '65.0', 'default'),
+  );
+  assert.equal(requests, 1);
 });
