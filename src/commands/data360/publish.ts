@@ -35,18 +35,21 @@ export type PublishEnvelope = {
   };
 };
 
-/** Publish one exactly paired native Calculated Insight without deploying or scheduling it. */
+/** Publish one native Calculated Insight (JSON plus SQL file) without deploying or scheduling it. */
 export default class Publish extends SfCommand<PublishEnvelope> {
   public static readonly aliases = ['datacloud:publish', 'd360:publish', 'dc:publish'];
-  public static readonly summary = 'Publish one paired Data360 Calculated Insight draft.';
+  public static readonly summary = 'Publish one Data360 Calculated Insight draft.';
   public static readonly description =
-    'Requires one exact --source-dir XML or JSON member of a matching Calculated Insight pair, --api-version auto (68.0) or 68.0 and default space (--dataspace; --data-space is a compatibility alias). Only NOT_SCHEDULED, never-run matching DRAFT configuration is publishable. --preview is read-only; an equal ACTIVE target is unchanged without acknowledgement or writes. DRAFT publication requires --allow-processing and uses a separate NotScheduled publication PATCH, never an SQL edit, create or schedule engine. Native publication/read routes use API68; independent Metadata and dependency reads remain API65. Completion requires bounded independent ACTIVE settlement; an unknown mutation is not retried or rolled back. No compute, ingestion or populated-object guarantee.';
+    'Requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and default space (--dataspace; --data-space is a compatibility alias). Only NOT_SCHEDULED, never-run matching DRAFT configuration is publishable. --preview is read-only; an equal ACTIVE target is unchanged without acknowledgement or writes. DRAFT publication requires --allow-processing and uses a separate NotScheduled publication PATCH, never an SQL edit, create or schedule engine. Native publication/read routes use API68; independent Metadata and dependency reads remain API65. Completion requires bounded independent ACTIVE settlement; an unknown mutation is not retried or rolled back. No compute, ingestion or populated-object guarantee.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
       summary: 'Authenticated target org alias or username.',
     }),
-    'source-dir': Flags.string({ char: 'd', summary: 'One exact paired CI XML or JSON member.' }),
+    'source-dir': Flags.string({
+      char: 'd',
+      summary: 'One exact CI JSON file or its SQL file.',
+    }),
     'api-version': Flags.string({ summary: 'Native lifecycle route: auto (68.0) or 68.0.' }),
     dataspace: Flags.string({ aliases: ['data-space'], summary: 'Default space only.' }),
     preview: Flags.boolean({ default: false, summary: 'Read and report only; never publish.' }),
@@ -73,7 +76,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
   };
 
   /**
-   * Validate exact paired intent before auth and delegate one guarded publication.
+   * Validate exact intent before auth and delegate one guarded publication.
    * @returns {Promise<PublishEnvelope>} Payload-free publication receipt.
    */
   public async run(): Promise<PublishEnvelope> {
@@ -98,7 +101,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       if (
         typeof source !== 'string' ||
         !source ||
-        !/\.(?:calculatedInsight\.json|mktCalcInsightObjectDef-meta\.xml)$/u.test(source)
+        !/\.calculatedInsight-meta\.(?:json|sql)$/u.test(source)
       )
         throw new Error('Selection');
       code = 'INVALID_SCOPE';
@@ -171,7 +174,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       envelope.diagnostics.errors.push({
         code: error instanceof DeployInputError ? error.code : code,
         message:
-          'Publication stopped. Verify the exact paired source, explicit API68/default scope and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+          'Publication stopped. Verify the exact JSON and SQL source, explicit API68/default scope and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         retryable: false,
       });
     }

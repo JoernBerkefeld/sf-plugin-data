@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import Deploy from '../lib/commands/data360/deploy.js';
-import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
+import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import {
   readDeployInputs,
   captureDeployInputDigest,
@@ -81,6 +81,19 @@ const candidate = (name = 'SyntheticInsight__cio') => ({
 });
 const xml = (document = candidate()) =>
   `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${document.spec.expression}</expression><masterLabel>${document.spec.displayName}</masterLabel></MktCalcInsightObjectDef>\n`;
+/**
+ * The JSON-plus-SQL file form of a fixed test document.
+ * @param {object} document Fixed document.
+ * @returns {object} File document.
+ */
+const fileDocument = (document) => ({
+  apiName: document.identity.apiName,
+  dataSpace: document.identity.dataSpace,
+  definitionType: document.spec.definitionType,
+  displayName: document.spec.displayName,
+  expression: document.spec.expression,
+  publishScheduleInterval: document.spec.publishScheduleInterval,
+});
 const version = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' };
 const root = async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-command-'));
@@ -207,7 +220,7 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
   const receipts = [];
   for (const name of names)
     receipts.push(
-      await writeCalculatedInsightDocument(candidate(name), xml(candidate(name)), cwd, false),
+      await writeNativeCalculatedInsightDocument(fileDocument(candidate(name)), cwd, false),
     );
   const inputs = await readDeployInputs({
     cwd,
@@ -293,9 +306,9 @@ const deploy = async (overrides = {}, names = ['SyntheticInsight__cio']) => {
 async function nativeDeploy(flags = {}, initial = 'absent', names = ['SyntheticInsight__cio']) {
   const h = await deploy({ 'api-version': '68.0', ...flags }, names);
   for (const input of h.inputs) {
-    const document = structuredClone(input.document);
-    document.spec.publishScheduleInterval = 'NOT_SCHEDULED';
-    await writeFile(input.companionPath, `${JSON.stringify(document)}\n`);
+    const json = JSON.parse(await readFile(input.path, 'utf8'));
+    json.publishScheduleInterval = 'NOT_SCHEDULED';
+    await writeFile(input.path, `${JSON.stringify(json)}\n`);
   }
   const inputs = await readDeployInputs({ cwd: h.cwd, sourceDir: h.flags['source-dir'] });
   h.command.resolveInputs = async () => inputs;

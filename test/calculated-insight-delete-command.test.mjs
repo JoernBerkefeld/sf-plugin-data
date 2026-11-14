@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Delete from '../lib/commands/data360/delete.js';
 import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-document.js';
-import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
+import { observeNativeCalculatedInsight } from '../lib/artifacts/native-calculated-insight-document.js';
+import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import { deleteCalculatedInsight } from '../lib/services/delete-calculated-insight.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
 
@@ -94,8 +95,8 @@ const harness = async (overrides = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-delete-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
   const desired = observeCalculatedInsight(runtime()).document;
-  const xml = `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${expression}</expression><masterLabel>Synthetic delete</masterLabel></MktCalcInsightObjectDef>\n`;
-  const pair = await writeCalculatedInsightDocument(desired, xml, root, false);
+  const files = observeNativeCalculatedInsight(runtime());
+  const pair = await writeNativeCalculatedInsightDocument(files, root, false);
   const flags = {
     metadata: ['calculated-insight:SyntheticDelete__cio'],
     'api-version': '68.0',
@@ -166,7 +167,7 @@ const harness = async (overrides = {}) => {
     pair,
     context,
     connection,
-    restore: () => writeCalculatedInsightDocument(desired, xml, root, false),
+    restore: () => writeNativeCalculatedInsightDocument(files, root, false),
     absent: () => {
       absent = true;
     },
@@ -203,7 +204,7 @@ for (const active of [false, true])
       ],
     );
     assert.doesNotMatch(JSON.stringify(result), /SELECT|private-local-id|lastRunDateTime/u);
-    // Both members of the CI pair, at their canonical paths, are removed after the deletion.
+    // The JSON and the SQL file of the CI, at their canonical paths, are removed after the deletion.
     assert.deepEqual(
       item.removedLocalFiles.map((file) => file.path),
       [h.pair.path, h.pair.companionPath],
@@ -228,7 +229,7 @@ for (const absent of [false, true])
 test('CI delete by name needs no --confirm-delete and reads the definition from the org', async () => {
   const h = await harness();
   assert.equal(h.flags['confirm-delete'], undefined);
-  // The local pair is not an input: a changed file does not stop the delete.
+  // The local files are not an input: a changed file does not stop the delete.
   await writeFile(h.pair.companionPath, 'not the org definition');
   const { result } = await run(h.command);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));

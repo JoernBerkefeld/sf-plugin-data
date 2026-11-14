@@ -28,10 +28,22 @@ import {
 } from './identity-resolution-document.js';
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 import {
+  calculatedInsightConsumerDocument,
   calculatedInsightName,
-  validateCalculatedInsightPair,
 } from './calculated-insight-document.js';
 import type { CalculatedInsightDocument } from './calculated-insight-document.js';
+import { parseNativeCalculatedInsight } from './native-calculated-insight-document.js';
+import type { NativeCalculatedInsight } from './native-calculated-insight-document.js';
+
+const ciMemberInfix = '.calculatedInsight-meta.';
+const ciJsonSuffix = '.calculatedInsight-meta.json';
+/**
+ * A calculated insight file: its JSON, its SQL or any other file of that name stem.
+ * @param {string} file Path.
+ * @returns {boolean} Whether the base name holds `.calculatedInsight-meta.`.
+ */
+const isCalculatedInsightMember = (file: string): boolean =>
+  path.basename(file).includes(ciMemberInfix);
 
 /** Payload-free local selection refusal. */
 export class DeployInputError extends Error {
@@ -64,8 +76,13 @@ export type IdentityResolutionDeployInput = {
   inputDigest: string;
 };
 export type CalculatedInsightDeployInput = {
+  /** `data360/calculatedInsights/<apiName>.calculatedInsight-meta.json`. */
   path: string;
+  /** The SQL file next to it, `<apiName>.calculatedInsight-meta.sql`. */
   companionPath: string;
+  /** The JSON with its SQL joined back. */
+  native: NativeCalculatedInsight;
+  /** The fixed document the consumer services take, built from `native`. */
   document: CalculatedInsightDocument;
   inputDigest: string;
 };
@@ -677,67 +694,95 @@ async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput>
 }
 
 /**
- * Admit either canonical CI member and freeze both exact byte sets as one component.
- * @param {string} file Absolute selected member.
- * @returns {Promise<CalculatedInsightDeployInput>} Complete immutable pair admission.
+ * Admit a calculated insight from its JSON or its SQL file: the JSON joined with exactly its
+ * declared code files (`<apiName>.calculatedInsight-meta.sql`), every byte bound as one component.
+ * A missing JSON or SQL file, or any other `<apiName>.calculatedInsight-meta.*` file beside them,
+ * is INVALID_SOURCE.
+ * @param {string} file Absolute selected JSON or code file.
+ * @returns {Promise<CalculatedInsightDeployInput>} Complete immutable admission.
  */
 async function readCalculatedInsightInput(file: string): Promise<CalculatedInsightDeployInput> {
-  const xmlSuffix = '.mktCalcInsightObjectDef-meta.xml';
-  const jsonSuffix = '.calculatedInsight.json';
-  const xml = file.endsWith(xmlSuffix);
-  const stem = path.basename(file).slice(0, -(xml ? xmlSuffix.length : jsonSuffix.length));
-  const apiName = xml ? `${stem}__cio` : stem;
-  if (!calculatedInsightName.test(apiName)) throw new DeployInputError('INVALID_SOURCE');
-  const member = apiName.slice(0, -5);
+  const base = path.basename(file);
+  const marker = base.indexOf(ciMemberInfix);
+  const apiName = marker > 0 ? base.slice(0, marker) : '';
   const directory = path.dirname(file);
-  const base = xml ? path.dirname(directory) : path.dirname(path.dirname(directory));
   if (
-    path.basename(base) !== 'default' ||
-    path.basename(path.dirname(base)) !== 'main' ||
-    (xml
-      ? path.basename(directory) !== 'mktCalcInsightObjectDefs'
-      : path.basename(directory) !== 'calculatedInsights' ||
-        path.basename(path.dirname(directory)) !== 'data360')
+    path.basename(directory) !== 'calculatedInsights' ||
+    path.basename(path.dirname(directory)) !== 'data360'
   )
     throw new DeployInputError('INVALID_SELECTION');
-  const xmlPath = path.join(base, 'mktCalcInsightObjectDefs', `${member}${xmlSuffix}`);
-  const companionPath = path.join(base, 'data360', 'calculatedInsights', `${apiName}${jsonSuffix}`);
-  const xmlBytes = await memberBytes(xmlPath);
-  const jsonBytes = await memberBytes(companionPath);
+  if (!calculatedInsightName.test(apiName)) throw new DeployInputError('INVALID_SOURCE');
+  const jsonName = `${apiName}${ciJsonSuffix}`;
+  const jsonPath = path.join(directory, jsonName);
+  await inspect(directory);
+  const prefix = `${apiName}${ciMemberInfix}`;
+  const codeFiles: Array<{ path: string; extension: string; name?: string }> = [];
+  let hasJson = false;
+  const entries = await readdir(directory);
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh directory listing within the existing TypeScript library target.
+  for (const entry of entries.sort()) {
+    if (!entry.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+    if (entry === jsonName) {
+      hasJson = true;
+      continue;
+    }
+    const match = /^(?:([A-Za-z0-9][A-Za-z0-9_]*)\.)?([a-z]+)$/u.exec(entry.slice(prefix.length));
+    if (!entry.startsWith(prefix) || !match || match[2] === 'json')
+      throw new DeployInputError('INVALID_SOURCE');
+    codeFiles.push({
+      path: path.join(directory, entry),
+      extension: match[2],
+      ...(match[1] === undefined ? {} : { name: match[1] }),
+    });
+  }
+  if (!hasJson || codeFiles.length > 16) throw new DeployInputError('INVALID_SOURCE');
+  const members = [jsonPath, ...codeFiles.map((code) => code.path)];
+  const bytes: Buffer[] = [];
+  for (const member of members) bytes.push(await memberBytes(member));
+  let native: NativeCalculatedInsight;
   let document: CalculatedInsightDocument;
   try {
-    document = validateCalculatedInsightPair(
-      strictJson(decode(jsonBytes)),
-      decode(xmlBytes),
-      member,
+    const json = decode(bytes[0]);
+    strictJson(json);
+    native = parseNativeCalculatedInsight(
+      json,
+      codeFiles.map((code, index) => ({
+        extension: code.extension,
+        ...(code.name === undefined ? {} : { name: code.name }),
+        text: decode(bytes[index + 1]),
+      })),
     );
+    if (native.apiName !== apiName) throw new Error('Identity mismatch');
+    document = calculatedInsightConsumerDocument(native);
   } catch {
     throw new DeployInputError('INVALID_SOURCE');
   }
-  const xmlAfter = await memberBytes(xmlPath);
-  const jsonAfter = await memberBytes(companionPath);
-  if (!xmlAfter.equals(xmlBytes) || !jsonAfter.equals(jsonBytes)) refuse();
-  const inputDigest = createHash('sha256')
-    .update(String(xmlBytes.length))
-    .update(':')
-    .update(xmlBytes)
-    .update(String(jsonBytes.length))
-    .update(':')
-    .update(jsonBytes)
-    .digest('hex');
+  for (const [index, member] of members.entries()) {
+    const after = await memberBytes(member);
+    if (!after.equals(bytes[index])) refuse();
+  }
+  const hash = createHash('sha256');
+  for (const content of bytes) hash.update(String(content.length)).update(':').update(content);
   const freeze = (value: object): void => {
     for (const child of Object.values(value))
       if (child && typeof child === 'object') freeze(child as object);
     Object.freeze(value);
   };
+  freeze(native);
   freeze(document);
-  return Object.freeze({ path: xmlPath, companionPath, document, inputDigest });
+  return Object.freeze({
+    path: jsonPath,
+    companionPath: codeFiles[0].path,
+    native,
+    document,
+    inputDigest: hash.digest('hex'),
+  });
 }
 
 /**
- * Re-admit both CI members before relying on captured logical content or bytes.
+ * Re-admit the JSON and SQL files before relying on captured logical content or bytes.
  * @param {CalculatedInsightDeployInput} input Original immutable admission.
- * @returns {Promise<void>} Resolves only for unchanged original pair bytes.
+ * @returns {Promise<void>} Resolves only for unchanged original bytes.
  */
 export async function verifyCalculatedInsightInputDigest(
   input: CalculatedInsightDeployInput,
@@ -747,6 +792,7 @@ export async function verifyCalculatedInsightInputDigest(
     if (
       current.companionPath !== input.companionPath ||
       current.inputDigest !== input.inputDigest ||
+      JSON.stringify(current.native) !== JSON.stringify(input.native) ||
       JSON.stringify(current.document) !== JSON.stringify(input.document)
     )
       refuse();
@@ -881,7 +927,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       item.kind !== 'mapping' &&
       item.kind !== 'relationship' &&
       item.kind !== 'data-stream' &&
-      item.kind !== 'data-transform',
+      item.kind !== 'data-transform' &&
+      item.kind !== 'calculated-insight',
   )
     ? await segmentSourceRoot(flags.cwd)
     : undefined;
@@ -908,10 +955,10 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
                       ? path.join(base!, 'data360', 'dataGraphs', `${name}.native-dataGraph.json`)
                       : kind === 'calculated-insight'
                         ? path.join(
-                            base!,
+                            flags.cwd,
                             'data360',
                             'calculatedInsights',
-                            `${name}.calculatedInsight.json`,
+                            `${name}${ciJsonSuffix}`,
                           )
                         : kind === 'identity-resolution'
                           ? path.join(
@@ -949,7 +996,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       }
       if (
         !stat.isFile() ||
-        (path.extname(file) !== '.json' && !file.endsWith('.mktCalcInsightObjectDef-meta.xml')) ||
+        (path.extname(file) !== '.json' && !isCalculatedInsightMember(file)) ||
         stat.nlink !== 1 ||
         stat.size > 1_048_576
       )
@@ -971,10 +1018,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     const identities = new Set<string>();
     // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh candidate array within the existing TypeScript library target.
     for (const file of [...candidates.values()].sort()) {
-      if (
-        file.endsWith('.calculatedInsight.json') ||
-        file.endsWith('.mktCalcInsightObjectDef-meta.xml')
-      ) {
+      if (isCalculatedInsightMember(file)) {
         const input = await readCalculatedInsightInput(file);
         const key =
           `calculated-insight:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
@@ -1178,8 +1222,8 @@ export type DeletedArtifactKind =
  * validator, and take the identity from the content, which must agree with the canonical name.
  * @param {DeletedArtifactKind} kind Family derived from the canonical path.
  * @param {string} name Canonical name derived from the path.
- * @param {Buffer} bytes Exact revision bytes (the JSON member).
- * @param {Buffer} [xml] Calculated insight XML member bytes from the same revision.
+ * @param {Buffer} bytes Exact revision bytes (the JSON file).
+ * @param {Buffer} [sql] Calculated insight SQL file bytes from the same revision.
  * @returns {object} Content identity and the validated base document (deeply frozen), plus the
  * source DMO of a relationship.
  */
@@ -1187,7 +1231,7 @@ export function admitDeletedArtifact(
   kind: DeletedArtifactKind,
   name: string,
   bytes: Buffer,
-  xml?: Buffer,
+  sql?: Buffer,
 ): {
   identity: { dataSpace: string; apiName: string };
   document: DeployInput['document'];
@@ -1244,9 +1288,12 @@ export function admitDeletedArtifact(
         break;
       }
       case 'calculated-insight': {
-        if (!xml) throw new Error('Missing pair');
-        document = validateCalculatedInsightPair(value, decode(xml), name.slice(0, -5));
-        ({ identity } = document);
+        if (!sql) throw new Error('Missing SQL');
+        const native = parseNativeCalculatedInsight(decode(bytes), [
+          { extension: 'sql', text: decode(sql) },
+        ]);
+        document = calculatedInsightConsumerDocument(native);
+        identity = { dataSpace: native.dataSpace, apiName: native.apiName };
         break;
       }
       case 'segment': {

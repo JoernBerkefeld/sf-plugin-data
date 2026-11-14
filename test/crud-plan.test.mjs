@@ -49,7 +49,7 @@ const segmentInput = (object, apiName = 'Audience') => ({
   document: segmentDocument(object, apiName),
 });
 const ciInput = (object) => ({
-  path: 'Spend__cio.calculatedInsight.json',
+  path: 'Spend__cio.calculatedInsight-meta.json',
   document: {
     kind: 'calculated-insight',
     identity: { dataSpace: 'default', apiName: 'Spend__cio' },
@@ -100,7 +100,7 @@ test('graph, CI and Segment inputs on a unified DMO depend on the selected rules
   ]);
   assert.deepEqual(Object.fromEntries(edges), {
     'Audience.segment.json': ['Individual_A1b2'],
-    'Spend__cio.calculatedInsight.json': ['Individual_A1b2'],
+    'Spend__cio.calculatedInsight-meta.json': ['Individual_A1b2'],
     'Graph.native-dataGraph.json': ['Individual_A1b2'],
   });
   assert.equal(identityResolutionEdges([segmentInput('UnifiedssotIndividualA1b2__dlm')]).size, 0);

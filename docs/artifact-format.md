@@ -46,25 +46,20 @@ frozen document content to a SHA256 digest, rechecked before target reliance and
 writes. No XML pair, request envelope, persistent receipt or generated identifiers
 are exported. Create, reverse projection, nesting and settings changes remain blocked.
 
-## Public calculated insight pairs
+## Public calculated insight files
 
-For exact `calculated-insight:Name__cio`, retrieve publishes independent standard
-source XML at `force-app/main/default/mktCalcInsightObjectDefs/Name.mktCalcInsightObjectDef-meta.xml`
-and a versioned companion at
-`force-app/main/default/data360/calculatedInsights/Name__cio.calculatedInsight.json`.
-Configured package directories replace `force-app`. The XML member omits `__cio`;
-the JSON identity retains it. `schemaVersion: 1`, `kind: calculated-insight`, exact
-default-space identity and complete qualified `spec` preserve SQL, schema and settings.
-No runtime IDs/status/attribution or request envelopes enter portable content.
+Retrieve writes each calculated insight as
+`data360/calculatedInsights/Name__cio.calculatedInsight-meta.json` (the API 68 GET body,
+key names and enums as returned, without status, run and derived fields) and
+`data360/calculatedInsights/Name__cio.calculatedInsight-meta.sql` (the expression as
+plain SQL), under the project root.
 
-Either member or the exact selector resolves both; divergent SQL/label/identity,
-missing/unsafe files, duplicate keys and meaningful unsupported fields block.
-The length-prefixed SHA256 digest binds both original byte sequences; revalidation
-checks byte and frozen-document identity before dispatch. Retrieve admits every
-selected CI pair before publishing any selected output. The existing strict pair
-writer preserves independent XML, overwrite/no-clobber/unchanged behavior and
-partial-publication diagnostics. Standard XML is never predeployed to create or
-convert a runtime owner. See the capability contract for the exact supported update.
+Deploy, publish and delete read the same two files. Either file or the exact selector
+selects the insight; the JSON is joined with exactly its SQL file. A missing JSON or
+SQL file, an `expression` kept in the JSON, any other `Name__cio.calculatedInsight-meta.*`
+file beside them, duplicate keys, a name that differs from the file name, links and
+hard links block. A length-prefixed SHA256 digest binds the bytes of both files;
+revalidation checks bytes and the frozen document before dispatch.
 
 ## Public native DMO document
 
@@ -318,10 +313,11 @@ deletion and is finishing it). Removed are the files under `data360/` in the cur
 directory for `dlo`, `dmo` and `relationship`, and `data-stream` (with
 `--delete-dlo` also the linked data lake object's file); for a mapping the file of
 that name or the hand-written file whose binding matches; for a data transform
-`data360/dataTransforms/<Name>.dataTransform.json` in the current directory; and for a
-segment, identity resolution, data graph or calculated insight its canonical file under
-the default package directory of `sfdx-project.json` (`force-app/main/default` without
-one; both members of a calculated insight pair). Files are found by name at these paths;
+`data360/dataTransforms/<Name>.dataTransform.json` and for a calculated insight both
+`data360/calculatedInsights/<Name>.calculatedInsight-meta.json` and
+`.calculatedInsight-meta.sql` in the current directory; and for a segment, identity
+resolution or data graph its canonical file under the default package directory of
+`sfdx-project.json` (`force-app/main/default` without one). Files are found by name at these paths;
 no folder is searched. Mapping files of mappings
 Salesforce removes together with a deleted DMO are not removed, because those
 mappings are not items of the command.

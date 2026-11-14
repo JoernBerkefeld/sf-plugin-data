@@ -6,8 +6,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Publish from '../lib/commands/data360/publish.js';
-import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-document.js';
-import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
+import { observeNativeCalculatedInsight } from '../lib/artifacts/native-calculated-insight-document.js';
+import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import { publishCalculatedInsight } from '../lib/services/publish-calculated-insight.js';
 import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 import { errorCodeInfo } from '../lib/errors/registry.js';
@@ -96,9 +96,11 @@ const run = async (command) => {
 const harness = async (overrides = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-publish-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
-  const desired = observeCalculatedInsight(runtime('DRAFT')).document;
-  const xml = `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${expression}</expression><masterLabel>Synthetic publish</masterLabel></MktCalcInsightObjectDef>\n`;
-  const pair = await writeCalculatedInsightDocument(desired, xml, root, false);
+  const pair = await writeNativeCalculatedInsightDocument(
+    observeNativeCalculatedInsight(runtime('DRAFT')),
+    root,
+    false,
+  );
   const flags = {
     'source-dir': pair.path,
     'api-version': '68.0',
@@ -226,7 +228,9 @@ for (const overrides of [
   { 'source-dir': undefined },
   { 'source-dir': 'folder' },
   { 'source-dir': 'other.dmo-meta.json' },
-  { 'source-dir': '*.calculatedInsight.json' },
+  { 'source-dir': '*.calculatedInsight-meta.json' },
+  { 'source-dir': 'SyntheticPublish__cio.calculatedInsight.json' },
+  { 'source-dir': 'SyntheticPublish.mktCalcInsightObjectDef-meta.xml' },
 ])
   test(`publish rejects unqualified local intent ${JSON.stringify(overrides)}`, async () => {
     const h = await harness(overrides);
@@ -234,7 +238,7 @@ for (const overrides of [
     assert.equal(result.status, 'blocked');
     assert.equal(h.calls.auth, 0);
   });
-test('publish accepts the companion JSON member of the same exact pair', async () => {
+test('publish accepts the SQL file of the same insight', async () => {
   const h = await harness();
   h.flags['source-dir'] = h.pair.companionPath;
   const { result } = await run(h.command);
@@ -242,7 +246,7 @@ test('publish accepts the companion JSON member of the same exact pair', async (
   assert.equal(h.calls.writes, 1);
 });
 for (const member of ['path', 'companionPath'])
-  test(`publish pair byte drift ${member} before write blocks`, async () => {
+  test(`publish JSON or SQL byte drift ${member} before write blocks`, async () => {
     const h = await harness();
     const bind = h.context.bind;
     h.context.bind = async () => {

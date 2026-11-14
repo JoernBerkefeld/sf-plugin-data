@@ -33,10 +33,10 @@ export class GitSelectionError extends Error {
 /** A file present at the merge base and absent now: a delete in the org, identified from base content. */
 export type GitDeleteCandidate = Readonly<{
   family: DeletedArtifactKind;
-  /** Absolute path the file had (the XML member for a calculated insight). */
+  /** Absolute path the file had (the JSON file for a calculated insight). */
   path: string;
   identity: Readonly<{ dataSpace: string; apiName: string }>;
-  /** Calculated insight only: absolute path of the JSON member. */
+  /** Calculated insight only: absolute path of the SQL file. */
   companionPath?: string;
   /** The validated base document (deeply frozen); the delete runs from it, not from a file. */
   document: DeployInput['document'];
@@ -106,8 +106,8 @@ function tokens(output: string): string[] {
   return values;
 }
 
-const ciXmlSuffix = '.mktCalcInsightObjectDef-meta.xml';
-const ciJsonSuffix = '.calculatedInsight.json';
+const ciJsonSuffix = '.calculatedInsight-meta.json';
+const ciSqlSuffix = '.calculatedInsight-meta.sql';
 
 /** Family by file suffix; `package` families live under the sfdx package directory. */
 const families: ReadonlyArray<{
@@ -177,7 +177,7 @@ const families: ReadonlyArray<{
     kind: 'calculated-insight',
     suffix: ciJsonSuffix,
     directory: ['data360', 'calculatedInsights'],
-    base: 'package',
+    base: 'root',
     name: (value) => calculatedInsightName.test(value),
   },
   {
@@ -190,15 +190,15 @@ const families: ReadonlyArray<{
 ];
 
 const segmentXml = (file: string): boolean => /\.marketSegmentDefinition-meta\.xml$/iu.test(file);
-const ciXml = (file: string): boolean => /\.mktCalcInsightObjectDef-meta\.xml$/iu.test(file);
+// The SQL file of a calculated insight selects (or, deleted, deletes) the insight like its JSON.
+const ciSql = (file: string): boolean => /\.calculatedInsight-meta\.sql$/iu.test(file);
 const relevant = (file: string): boolean =>
   segmentXml(file) ||
-  ciXml(file) ||
+  ciSql(file) ||
   families.some(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
 // A deleted path in a plugin folder must resolve to a known family.
 const watched = (file: string): boolean => relevant(file) || file.split('/').includes('data360');
 const needsPackage = (file: string): boolean =>
-  ciXml(file) ||
   segmentXml(file) ||
   families.some(
     ({ suffix, base }) => base === 'package' && file.toLowerCase().endsWith(suffix.toLowerCase()),
@@ -218,12 +218,17 @@ function classify(
 ): { kind: DeletedArtifactKind; name: string } {
   const relative = (absolute: string): string =>
     path.relative(repositoryRoot, absolute).split(path.sep).join('/');
-  if (ciXml(file)) {
-    const stem = path.posix.basename(file).slice(0, -ciXmlSuffix.length);
-    const expected = path.join(packageBase!, 'mktCalcInsightObjectDefs', `${stem}${ciXmlSuffix}`);
-    if (!calculatedInsightName.test(`${stem}__cio`) || file !== relative(expected))
+  if (ciSql(file)) {
+    const name = path.posix.basename(file).slice(0, -ciSqlSuffix.length);
+    const expected = path.join(
+      repositoryRoot,
+      'data360',
+      'calculatedInsights',
+      `${name}${ciSqlSuffix}`,
+    );
+    if (!calculatedInsightName.test(name) || file !== relative(expected))
       throw new GitSelectionError('INVALID_GIT_SELECTION');
-    return { kind: 'calculated-insight', name: `${stem}__cio` };
+    return { kind: 'calculated-insight', name };
   }
   const family = families.find(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
   if (!family) throw new GitSelectionError('INVALID_GIT_SELECTION');
@@ -360,14 +365,12 @@ async function deleteCandidates(
     if (kind === 'calculated-insight') {
       const relative = (value: string): string =>
         path.relative(repositoryRoot, value).split(path.sep).join('/');
-      const stem = name.slice(0, -5);
+      const directory = path.join(repositoryRoot, 'data360', 'calculatedInsights');
       members = [
-        relative(path.join(packageBase!, 'mktCalcInsightObjectDefs', `${stem}${ciXmlSuffix}`)),
-        relative(
-          path.join(packageBase!, 'data360', 'calculatedInsights', `${name}${ciJsonSuffix}`),
-        ),
+        relative(path.join(directory, `${name}${ciJsonSuffix}`)),
+        relative(path.join(directory, `${name}${ciSqlSuffix}`)),
       ];
-      // Both pair members go together; one left behind is not a complete deletion.
+      // The JSON and the SQL file go together; one left behind is not a complete deletion.
       for (const member of members)
         if (await present(absolute(member))) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
     }
@@ -382,7 +385,7 @@ async function deleteCandidates(
     try {
       admitted =
         kind === 'calculated-insight'
-          ? admitDeletedArtifact(kind, name, second, first)
+          ? admitDeletedArtifact(kind, name, first, second)
           : admitDeletedArtifact(kind, name, first);
     } catch {
       throw new GitSelectionError('INVALID_GIT_SELECTION');

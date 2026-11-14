@@ -717,8 +717,8 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
 
 test('delete parser refuses --source-dir, --transform-target-id and a -m --confirm-delete', () => {
   for (const arguments_ of [
-    ['-d', 'Synthetic.calculatedInsight.json'],
-    ['--source-dir', 'Synthetic.calculatedInsight.json'],
+    ['-d', 'Synthetic__cio.calculatedInsight-meta.json'],
+    ['--source-dir', 'Synthetic__cio.calculatedInsight-meta.json'],
     ['--transform-target-id', '1dt000000000001AAA'],
     ['--confirm-delete'],
   ]) {
@@ -763,17 +763,27 @@ test('CI delete parser rejects unqualified scope before authentication', () => {
   }
 });
 
-test('publish parser blocks missing pairs and unqualified scope before authentication', () => {
+test('publish parser blocks a missing source and unqualified scope before authentication', () => {
   for (const [arguments_, code] of [
     [[], 'INVALID_SELECTION'],
-    [['-d', 'Synthetic.calculatedInsight.json'], 'UNSAFE_SOURCE'],
-    [['-d', 'Synthetic.calculatedInsight.json', '--api-version', '65.0'], 'INVALID_SCOPE'],
+    [['-d', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
     [
-      ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--data-space', 'other'],
+      ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'],
       'INVALID_SCOPE',
     ],
     [
-      ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--preview'],
+      [
+        '-d',
+        'Synthetic__cio.calculatedInsight-meta.json',
+        '--api-version',
+        '68.0',
+        '--data-space',
+        'other',
+      ],
+      'INVALID_SCOPE',
+    ],
+    [
+      ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
       'UNSAFE_SOURCE',
     ],
   ]) {

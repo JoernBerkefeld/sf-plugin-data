@@ -2,6 +2,7 @@ import {
   CalculatedInsightError,
   calculatedInsightName,
 } from './native-calculated-insight-document.js';
+import type { NativeCalculatedInsight } from './native-calculated-insight-document.js';
 import { isDeepStrictEqual } from 'node:util';
 
 // eslint-disable-next-line unicorn/no-null -- The native API distinguishes wire null from omitted fields.
@@ -320,6 +321,24 @@ export function validateCalculatedInsightPair(
  */
 export function serializeCalculatedInsightDocument(value: unknown): string {
   return `${JSON.stringify(validateCalculatedInsightDocument(value), undefined, 2)}\n`;
+}
+
+/**
+ * The fixed document the consumer services take, built from a JSON-plus-SQL file document:
+ * only `dataSpace`, `apiName`, `displayName`, `expression` and `publishScheduleInterval` are
+ * read, and the same qualified configurations as before are admitted.
+ * @param {NativeCalculatedInsight} value Document read from the JSON and SQL files.
+ * @returns {CalculatedInsightDocument} Consumer document.
+ */
+export function calculatedInsightConsumerDocument(
+  value: NativeCalculatedInsight,
+): CalculatedInsightDocument {
+  return validateCalculatedInsightDocument({
+    schemaVersion: 1,
+    kind: 'calculated-insight',
+    identity: { dataSpace: value.dataSpace, apiName: value.apiName },
+    spec: specification(text(value.displayName), value.expression, value.publishScheduleInterval),
+  });
 }
 
 /**

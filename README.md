@@ -354,9 +354,9 @@ the selector ignoring case (`-m data-transform:copy` deletes `Copy` and removes
 
 | Family                                                                                 | File removed                                                                                                                     |
 | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `dlo`, `dmo`, `relationship`, `data-stream`, `data-transform` | its file under `data360/` in the current directory (`data360/dataTransforms/<Name>.dataTransform.json` for a transform); with `--delete-dlo` (or its landing DLO selected) also the linked DLO's file |
+| `dlo`, `dmo`, `relationship`, `data-stream`, `data-transform`, `calculated-insight` | its file under `data360/` in the current directory (`data360/dataTransforms/<Name>.dataTransform.json` for a transform; both `data360/calculatedInsights/<Name>.calculatedInsight-meta.json` and `.calculatedInsight-meta.sql` for a calculated insight); with `--delete-dlo` (or its landing DLO selected) also the linked DLO's file |
 | `mapping` | `data360/mapping/<Name>.mapping-meta.json`, or the hand-written mapping file whose binding matches |
-| `segment`, `identity-resolution`, `data-graph`, `calculated-insight` | its canonical file under the default package directory of `sfdx-project.json` (`force-app/main/default` without one), for example `data360/segments/<Name>.segment.json`; both members of a calculated insight pair |
+| `segment`, `identity-resolution`, `data-graph` | its canonical file under the default package directory of `sfdx-project.json` (`force-app/main/default` without one), for example `data360/segments/<Name>.segment.json` |
 
 Files are removed one at a time and only when they are regular files: directories,
 symbolic links, junctions, files reached through a linked folder and hard-linked
@@ -555,15 +555,15 @@ select it; any other version, including `65.0`, is refused with `INVALID_SCOPE`.
 Only the default data space is accepted. Standard XML, SOAP Metadata and DMO
 prerequisite reads use their own fixed routes and are reported separately.
 
-The artifact is a correlated XML/JSON pair; either member selects the full
-component. For example, with a retrieved pair in `./ci-pair`:
+The artifact is a JSON file plus its SQL file; either file selects the insight. For
+example, run from the project root after a retrieve:
 
 ```sh
-sf data360 retrieve -o source -m calculated-insight:ExampleInsight__cio -d ./project --json
-sf data360 deploy -o target --source-dir ./ci-pair --draft --preview --json
-sf data360 deploy -o target --source-dir ./ci-pair --draft --allow-processing --json
-sf data360 publish -o target --source-dir ./ci-pair --preview --json
-sf data360 publish -o target --source-dir ./ci-pair --allow-processing --json
+sf data360 retrieve -o source -m calculated-insight:ExampleInsight__cio --json
+sf data360 deploy -o target -m calculated-insight:ExampleInsight__cio --draft --preview --json
+sf data360 deploy -o target -m calculated-insight:ExampleInsight__cio --draft --allow-processing --json
+sf data360 publish -o target -d data360/calculatedInsights/ExampleInsight__cio.calculatedInsight-meta.json --preview --json
+sf data360 publish -o target -d data360/calculatedInsights/ExampleInsight__cio.calculatedInsight-meta.json --allow-processing --json
 sf data360 delete -o target -m calculated-insight:ExampleInsight__cio --preview --json
 sf data360 delete -o target -m calculated-insight:ExampleInsight__cio --json
 ```
@@ -589,8 +589,11 @@ every insight the API lists in the data space. Each insight becomes two files:
 A repeated retrieve of an unchanged insight is `unchanged`; differing files need
 `--overwrite`. An insight the org does not have is `CI_NOT_FOUND`.
 
-Deploy, publish and delete below still read the earlier XML/JSON pair, not these
-files.
+Deploy, publish and delete read these two files: `-m calculated-insight:Name__cio`,
+or `-d` with either file, selects the insight, and the JSON is joined with its SQL. A
+missing SQL or JSON file, SQL kept in the JSON, or another
+`<Name>.calculatedInsight-meta.*` file beside them is refused with `INVALID_SOURCE`.
+Only the qualified configurations below are admitted.
 
 ### Deploy, publish and delete
 
@@ -619,7 +622,7 @@ Delete takes the exact selector. The calculated insight is read from the org by 
 with the exact native and Metadata read, so a DRAFT one is deletable as well as an
 ACTIVE one; one the org does not have is `unchanged`. Content and dependencies are
 checked fresh. This binds configuration; it does not prove who created it. It never
-cascades. After a confirmed deletion it removes both members of the local pair at their
+cascades. After a confirmed deletion it removes the JSON and the SQL file at their
 canonical paths (see [Local files after delete](#local-files-after-delete)).
 A repeated delete after confirmed absence
 is unchanged without confirmation. Each write is sent once; settlement (at most 12

@@ -17,12 +17,12 @@ Selected files, by family (each file's content identity must equal its file name
 | Relationship | `data360/relationship/<Name>.relationship-meta.json` |
 | Data stream | `data360/data-stream/<Name>.data-stream-meta.json` |
 | Data transform | `data360/dataTransforms/<Name>.dataTransform.json` |
+| Calculated insight | `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json` and `.calculatedInsight-meta.sql` (a change to either file selects the insight) |
 | Data graph | `<package>/main/default/data360/dataGraphs/<Name>.native-dataGraph.json` |
 | Identity resolution | `<package>/main/default/data360/identityResolution/<Name>.identityResolution.json` |
-| Calculated insight | `<package>/main/default/mktCalcInsightObjectDefs/<Name>.mktCalcInsightObjectDef-meta.xml` and `<package>/main/default/data360/calculatedInsights/<Name>__cio.calculatedInsight.json` (either member selects the pair) |
 | Segment | `<package>/main/default/data360/segments/<Name>.segment.json` |
 
-The first six live under the repository root; the others under the default package
+The first seven live under the repository root; the others under the default package
 directory from `sfdx-project.json` (`force-app` when absent). A changed file of a known
 family in another place, an invalid document or Segment XML refuses the whole selection
 (`INVALID_GIT_SELECTION`). Each admitted file's bytes are captured and checked again
@@ -54,8 +54,8 @@ plugin file blocks (`BLOCKED_GIT_LIFECYCLE`): Git cannot see where an unstaged f
 <base>:<path>`), not from the file name; a relationship candidate also carries its
 source DMO and a data transform its API name from that content. A path deleted and then
 added again (in the index or working tree) is not a delete. A deleted file of no known
-family in a `data360` folder, or one calculated insight pair member deleted without the
-other, blocks the selection (`BLOCKED_GIT_LIFECYCLE`). A file added after the merge base
+family in a `data360` folder, or the JSON or the SQL file of a calculated insight deleted
+without the other, blocks the selection (`BLOCKED_GIT_LIFECYCLE`). A file added after the merge base
 and deleted again is ignored.
 
 Deploy does not delete: candidates are listed in `result.selection.deletions` (family,

@@ -1,3 +1,24 @@
+# Chunk E1b: calculated insight readers on the JSON plus SQL files — 2026-11-15
+
+Plan `sf_plugin_data_offpattern_20261114` chunk E1b.
+
+- Deploy, publish and delete read `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json`
+  plus `...-meta.sql` under the project root (`-m calculated-insight:Name__cio`, `-d` with
+  either file, a folder walk). The JSON is joined with exactly its SQL; a missing JSON or
+  SQL, `expression` in the JSON, or any other `<Name>__cio.calculatedInsight-meta.*` file
+  beside them is `INVALID_SOURCE`. The old XML/JSON pair paths are recognised nowhere in
+  the readers.
+- `CalculatedInsightDeployInput`: `path` (JSON), `companionPath` (SQL), `native`
+  (`NativeCalculatedInsight`, SQL joined), `document` (the fixed consumer document from
+  `calculatedInsightConsumerDocument(native)`), `inputDigest` (length-prefixed over both
+  files). The consumers are unchanged, so only the qualified probe configurations are
+  admitted, as before.
+- Git: a change to either file selects the insight; both files deleted is one delete
+  candidate (`path` JSON, `companionPath` SQL); one of them deleted blocks.
+- Delete removes both files from the project root after a confirmed deletion.
+- **CI deploy, publish and delete of real insights work again only after E2** (consumer
+  services still take the fixed document).
+
 # Chunk M: mapping delete by authored name, repeat delete unchanged — 2026-11-14
 
 Plan `sf_plugin_data_offpattern_20261114` chunk M (user: "Fix em").
