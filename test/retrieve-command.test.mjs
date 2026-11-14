@@ -277,17 +277,33 @@ test('mixed mapping relationship and DMO auto stays on the native route', async 
   );
   assert.equal(result.metadata.apiVersion, 'auto');
 });
-test('a native Graph in a mixed retrieve selection is refused before org access', async () => {
+test('a native Graph in a mixed retrieve selection is read after the other families', async () => {
   for (const metadata of [
     ['mapping:Alpha', 'data-graph:Graph'],
     ['relationship:Alpha__dlm', 'data-graph:Graph'],
-    ['identity-resolution:Individual_A1b2', 'data-graph:Graph'],
+    ['data-graph:Graph', 'dmo:Sample__dlm'],
   ]) {
     const command = invocation({ metadata, 'api-version': 'auto' });
-    command.resolveOrg = async () => assert.fail('org resolved');
-    const { result } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors[0].code, 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
+    command.writeMapping = async (name) => ({ path: `${name}.json`, outcome: 'retrieved' });
+    const order = [];
+    const resolve = command.resolveOrg;
+    command.resolveOrg = async (...arguments_) => {
+      order.push('org');
+      return resolve(...arguments_);
+    };
+    command.nativeGraphContext = async () => ({ orgId: 'graph-org' });
+    command.retrieveNativeGraph = async (name) => {
+      order.push(`graph:${name}`);
+      return { name };
+    };
+    command.writeDataGraph = async () => ({ path: 'Graph.json', outcome: 'retrieved' });
+    const { result, exitCode } = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.notEqual(exitCode, 1);
+    assert.deepEqual(order, ['org', 'org', 'graph:Graph']);
+    assert.equal(result.result.selection.at(-1), 'data-graph:Graph');
+    assert.equal(result.result.items.at(-1).family, 'data-graph');
+    assert.equal(result.provenance.sourceOrgId, 'synthetic-org');
   }
 });
 

@@ -96,7 +96,7 @@ export type RetrieveEnvelope = {
       message: string;
       retryable: false;
       identity?: { dataSpace: string; apiName: string };
-      family?: 'relationship' | 'mapping';
+      family?: RetrieveFamily;
     }>;
   };
   provenance: {
@@ -157,13 +157,129 @@ const calculatedInsightRetrieveMessages: Record<string, string> = {
   CI_RUNTIME_UNKNOWN: 'The calculated insight could not be read; no files were written.',
 };
 
+const retrieveFamilies = [
+  'dlo',
+  'dmo',
+  'mapping',
+  'relationship',
+  'segment',
+  'calculated-insight',
+  'identity-resolution',
+  'data-stream',
+  'data-transform',
+  'data-graph',
+] as const;
+/** Family named on a diagnostic. */
+export type RetrieveFamily = (typeof retrieveFamilies)[number];
+type RetrieveDiagnostic = RetrieveEnvelope['diagnostics']['errors'][number];
+const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
+/** Selector groups, in run order; `rest` holds every family without its own group. */
+const selectorGroups = ['rest', 'data-stream', 'data-transform', 'data-graph'] as const;
+type RetrieveFlags = {
+  'target-org'?: string;
+  'api-version': string;
+  dataspace?: string;
+  metadata?: string[];
+  'output-dir'?: string;
+  overwrite: boolean;
+};
+/** Shared state of one retrieve command that each selector group reads and appends to. */
+type RetrieveRun = {
+  flags: RetrieveFlags;
+  envelope: RetrieveEnvelope;
+  outputTypes: Set<string>;
+  errorTypes: Map<RetrieveDiagnostic, string>;
+  requestScope: string | undefined;
+  effectiveScope: string;
+  outputDirectory: string;
+};
+/** What one selector group's read returns; `code` is a group-level refusal without identity. */
+type GroupOutcome = {
+  status: RetrieveEnvelope['status'];
+  selection: string[];
+  code?: string;
+  error?: unknown;
+  family?: RetrieveFamily;
+};
+/** A selector group refused before org access, or its validated read. */
+type GroupPlan =
+  | { refusal: string; family: RetrieveFamily }
+  | { family: RetrieveFamily; run: () => Promise<GroupOutcome> };
+
+/**
+ * The family a selector names; selectors of no known family are DMO selectors.
+ * @param {string | undefined} selector Selector such as `dmo:Name__dlm`.
+ * @returns {RetrieveFamily} Its family.
+ */
+function selectorFamily(selector: string | undefined): RetrieveFamily {
+  const prefix = (selector ?? 'dmo').split(':')[0];
+  return retrieveFamilies.find((family) => family === prefix) ?? 'dmo';
+}
+
+/**
+ * Whether a selector belongs to a group: the bare group name or `group:Name`.
+ * @param {string} group Group name.
+ * @param {string} value Selector.
+ * @returns {boolean} Membership.
+ */
+function inGroup(group: string, value: string): boolean {
+  return value === group || value.startsWith(`${group}:`);
+}
+
+/**
+ * Split the selection into groups in run order; groups without selectors are left out, and an
+ * empty selection is the rest group alone (every native family).
+ * @param {string[]} selectors Every -m selector.
+ * @returns {Array<[string, string[]]>} Non-empty groups in run order.
+ */
+function groupSelectors(selectors: string[]): Array<[(typeof selectorGroups)[number], string[]]> {
+  return selectorGroups
+    .map((group): [(typeof selectorGroups)[number], string[]] => [
+      group,
+      group === 'rest'
+        ? selectors.filter(
+            (value) => !selectorGroups.some((other) => other !== 'rest' && inGroup(other, value)),
+          )
+        : selectors.filter((value) => inGroup(group, value)),
+    ])
+    .filter(
+      ([group, members]) => members.length > 0 || (group === 'rest' && selectors.length === 0),
+    );
+}
+
+/**
+ * Status of one group from the diagnostics it added.
+ * @param {RetrieveEnvelope} envelope Shared envelope.
+ * @param {number} before Diagnostics count when the group started.
+ * @param {boolean} failed Whether a failure was not local to one output.
+ * @returns {'success' | 'blocked' | 'failed'} Group status.
+ */
+function groupStatus(
+  envelope: RetrieveEnvelope,
+  before: number,
+  failed: boolean,
+): RetrieveEnvelope['status'] {
+  return envelope.diagnostics.errors.length === before ? 'success' : failed ? 'failed' : 'blocked';
+}
+
+/**
+ * Message of a diagnostic without a more specific explanation.
+ * @param {unknown} error Cause, whose safe Salesforce detail is kept.
+ * @returns {string} Payload-free message.
+ */
+function retrievalMessage(error: unknown): string {
+  const fallback =
+    'Retrieval did not complete. Check selection, authenticated org, service capability and output path.';
+  return error === undefined ? fallback : operationDiagnostic(error, fallback);
+}
+
 /** Retrieve selected DMO configuration through existing service-owned capability checks. */
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary =
-    'Retrieve Data360 DMOs, exact Segments, calculated insights, Graph or identity resolution configuration.';
+    'Retrieve any mix of Data360 DLOs, DMOs, mappings, relationships, data streams, data transforms, data graphs, Segments, calculated insights and identity resolution configuration.';
   public static readonly description =
-    'Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory and mixed-family selections are unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory and mixed-family selections are unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities; one exact data-graph:ApiName per run, default space only. Graph inventory and mixed selections are blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run with its family named. The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves qualified CUSTOM BATCH STL authored input at API68/default only into data360/dataTransforms/<Name>.dataTransform.json; observations are not deploy input. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. CI requires default space and auto or explicit API68 (no other version), exporting ACTIVE configurations only as independently correlated standard XML/JSON pairs; run history and a SYSTEM_MANAGED schedule do not block a read-only export. API68 uses native runtime reads with fixed API65 Metadata, source XML and dependency reads; CI inventory is blocked. IR uses native API68 exact owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. IR inventory is blocked. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto/API68 or explicit65 in default space for the bounded single-model DBT subset and publishes same-version correlated XML/JSON pairs; API68 live qualification remains pending. Use -m dmo or omit selectors for existing DMO inventory; Segment inventory is unqualified and is not included. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -186,7 +302,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Exact data-transform:Name API68/default authored input; native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName remain exact-only.',
+        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); data-stream:ApiName, data-transform:Name, segment:ApiName, calculated-insight:ApiName__cio, data-graph:ApiName and identity-resolution:ExactObjectApiName are exact-only.',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -371,7 +487,1055 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   }
 
   /**
-   * Acquire the complete runtime projection, then publish only its authored candidate.
+   * Validate exact data transform selectors, then read them one after another.
+   * @param {string[]} selectors The data-transform group.
+   * @param {RetrieveRun} context Shared command state.
+   * @returns {GroupPlan} A refusal, or the group's read.
+   */
+  private prepareDataTransforms(selectors: string[], context: RetrieveRun): GroupPlan {
+    const { flags, envelope, outputTypes, errorTypes, effectiveScope, outputDirectory } = context;
+    const family = 'data-transform';
+    if (
+      selectors.some(
+        (value) => !value.startsWith('data-transform:') || !dataTransformName.test(value.slice(15)),
+      )
+    )
+      return { refusal: 'INVALID_SELECTION', family };
+    try {
+      operationApiVersion(flags['api-version'], 'data-transform');
+    } catch {
+      return { refusal: 'INVALID_SCOPE', family };
+    }
+    if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
+    return {
+      family,
+      run: async (): Promise<GroupOutcome> => {
+        let org;
+        try {
+          org = await this.resolveOrg(flags['target-org']);
+        } catch {
+          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+        }
+        const connection = org.getConnection('68.0');
+        envelope.provenance.sourceOrgId ??= org.getOrgId();
+        envelope.metadata.soapApiVersion ??= '68.0';
+        const names = [...new Set(selectors.map((value) => value.slice(15)))];
+        names.sort();
+        outputTypes.add('data-transform');
+        const before = envelope.diagnostics.errors.length;
+        let failed = false;
+        for (const apiName of names) {
+          try {
+            const observed = await this.acquireDataTransform(
+              apiName,
+              this.createDataTransformClient(connection, '68.0', effectiveScope),
+            );
+            if (observed.document.definition.name !== apiName)
+              throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
+            const receipt = await this.writeDataTransform(
+              observed.document,
+              outputDirectory,
+              flags.overwrite,
+            );
+            envelope.result.items.push({
+              identity: { dataSpace: effectiveScope, apiName },
+              operation: 'retrieve',
+              family: 'data-transform',
+              routes: [
+                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+                {
+                  operation: 'data-transform.schedule.get',
+                  apiVersion: '68.0',
+                  transport: 'native',
+                },
+              ],
+              ...receipt,
+            });
+          } catch (error) {
+            const code =
+              error instanceof DataTransformError ? error.code : 'TRANSFORM_RETRIEVE_FAILED';
+            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
+              failed = true;
+            const diagnostic = {
+              code,
+              message: operationDiagnostic(
+                error,
+                'Transform retrieval did not complete; no org write attempted.',
+              ),
+              retryable: false as const,
+              identity: { dataSpace: effectiveScope, apiName },
+            };
+            envelope.diagnostics.errors.push(diagnostic);
+            errorTypes.set(diagnostic, 'data-transform');
+          }
+        }
+        return {
+          status: groupStatus(envelope, before, failed),
+          selection: names.map((name) => `data-transform:${name}`),
+        };
+      },
+    };
+  }
+
+  /**
+   * Validate exact data stream selectors, then read them one after another.
+   * @param {string[]} selectors The data-stream group.
+   * @param {RetrieveRun} context Shared command state.
+   * @returns {GroupPlan} A refusal, or the group's read.
+   */
+  private prepareDataStreams(selectors: string[], context: RetrieveRun): GroupPlan {
+    const { flags, envelope, outputTypes, errorTypes, effectiveScope, outputDirectory } = context;
+    const family = 'data-stream';
+    if (selectors.some((value) => !/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
+      return { refusal: 'INVALID_SELECTION', family };
+    let version: string;
+    try {
+      version = dataStreamApiVersion(flags['api-version']);
+    } catch {
+      return { refusal: 'INVALID_SCOPE', family };
+    }
+    if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
+    return {
+      family,
+      run: async (): Promise<GroupOutcome> => {
+        let org;
+        try {
+          org = await this.resolveOrg(flags['target-org']);
+        } catch {
+          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+        }
+        const connection = org.getConnection(version);
+        const target = flags['target-org'] ?? connection.getUsername();
+        if (!target)
+          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+        envelope.provenance.sourceOrgId ??= org.getOrgId();
+        envelope.metadata.soapApiVersion ??= version;
+        const names = [...new Set(selectors.map((value) => value.slice('data-stream:'.length)))];
+        names.sort();
+        outputTypes.add('data-stream');
+        const before = envelope.diagnostics.errors.length;
+        let failed = false;
+        for (const apiName of names) {
+          try {
+            const document = await this.acquireDataStream(
+              apiName,
+              this.createDataStreamClients(connection, target, version),
+              effectiveScope,
+            );
+            const receipt = await this.writeDataStream(document, outputDirectory, flags.overwrite);
+            envelope.result.items.push({
+              identity: document.identity,
+              operation: 'retrieve',
+              family: 'data-stream',
+              routes: [
+                { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
+                { operation: 'dlo.get', apiVersion: version, transport: 'native' },
+                { operation: 'connection.read', apiVersion: version, transport: 'native' },
+              ],
+              ...receipt,
+            });
+          } catch (error) {
+            const code =
+              error instanceof DataStreamError ? error.code : 'DATA_STREAM_RETRIEVE_FAILED';
+            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
+              failed = true;
+            const diagnostic = {
+              code,
+              message: operationDiagnostic(
+                error,
+                'Data stream retrieval did not complete; no write attempted.',
+              ),
+              retryable: false as const,
+              identity: { dataSpace: effectiveScope, apiName },
+            };
+            envelope.diagnostics.errors.push(diagnostic);
+            errorTypes.set(diagnostic, 'data-stream');
+          }
+        }
+        return {
+          status: groupStatus(envelope, before, failed),
+          selection: names.map((name) => `data-stream:${name}`),
+        };
+      },
+    };
+  }
+
+  /**
+   * Validate exact data graph selectors, then read the graphs one after another. A failure of
+   * the shared org context blocks the group; a failure of one graph is reported for that graph.
+   * @param {string[]} selectors The data-graph group.
+   * @param {RetrieveRun} context Shared command state.
+   * @returns {GroupPlan} A refusal, or the group's read.
+   */
+  private prepareDataGraphs(selectors: string[], context: RetrieveRun): GroupPlan {
+    const { flags, envelope, outputTypes, errorTypes, effectiveScope, outputDirectory } = context;
+    const family = 'data-graph';
+    try {
+      operationApiVersion(flags['api-version'], 'data-graph');
+    } catch {
+      return { refusal: 'INVALID_SCOPE', family };
+    }
+    if (selectors.includes('data-graph'))
+      return { refusal: 'DATA_GRAPH_INVENTORY_UNQUALIFIED', family };
+    if (selectors.some((value) => !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
+      return { refusal: 'INVALID_SELECTION', family };
+    if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
+    return {
+      family,
+      run: async (): Promise<GroupOutcome> => {
+        let graphContext: Awaited<ReturnType<typeof nativeDataGraphReadContext>>;
+        try {
+          const org = await this.resolveOrg(flags['target-org']);
+          graphContext = await this.nativeGraphContext(org.getConnection('68.0'), 'default');
+        } catch (error) {
+          return {
+            status: 'blocked',
+            selection: selectors,
+            code: 'NATIVE_GRAPH_RETRIEVE_BLOCKED',
+            error,
+          };
+        }
+        envelope.provenance.sourceOrgId ??= graphContext.orgId;
+        envelope.metadata.soapApiVersion ??= '68.0';
+        const names = [...new Set(selectors.map((value) => value.slice('data-graph:'.length)))];
+        names.sort();
+        outputTypes.add('data-graph');
+        const before = envelope.diagnostics.errors.length;
+        for (const apiName of names) {
+          try {
+            const document = await this.retrieveNativeGraph(apiName, graphContext);
+            const receipt = await this.writeDataGraph(document, outputDirectory, flags.overwrite);
+            envelope.result.items.push({
+              identity: { dataSpace: 'default', apiName },
+              operation: 'retrieve',
+              family: 'data-graph',
+              routes: [{ operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' }],
+              ...receipt,
+            });
+          } catch (error) {
+            const diagnostic: RetrieveDiagnostic = {
+              code: 'NATIVE_GRAPH_RETRIEVE_BLOCKED',
+              message: retrievalMessage(error),
+              retryable: false,
+              identity: { dataSpace: 'default', apiName },
+              family: 'data-graph',
+            };
+            envelope.diagnostics.errors.push(diagnostic);
+            errorTypes.set(diagnostic, 'data-graph');
+          }
+        }
+        return {
+          status: groupStatus(envelope, before, false),
+          selection: names.map((name) => `data-graph:${name}`),
+        };
+      },
+    };
+  }
+
+  /**
+   * Validate every other selector (DLO, DMO, mapping, relationship, Segment, calculated
+   * insight, identity resolution); an empty selection is every native family.
+   * @param {string[]} selectors The selectors of no other group.
+   * @param {RetrieveRun} context Shared command state.
+   * @returns {GroupPlan} A refusal, or the group's read.
+   */
+  private prepareRest(selectors: string[], context: RetrieveRun): GroupPlan {
+    // A relationship is retrieved per source DMO; an inventory of all of them is not offered.
+    if (selectors.includes('relationship'))
+      return { refusal: 'RELATIONSHIP_INVENTORY_UNQUALIFIED', family: 'relationship' };
+    const relationshipDmos = [
+      ...new Set(
+        selectors
+          .filter((value) => value.startsWith('relationship:'))
+          .map((value) => value.slice('relationship:'.length)),
+      ),
+    ];
+    relationshipDmos.sort();
+    return selectors.every(
+      (value) =>
+        value.startsWith('relationship:') ||
+        nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
+    )
+      ? this.prepareNativeRest(selectors, relationshipDmos, context)
+      : this.prepareMixedRest(selectors, relationshipDmos, context);
+  }
+
+  /**
+   * Native-only DLO, DMO, mapping and relationship selection, including type inventory.
+   * @param {string[]} selectors The rest group, native families only.
+   * @param {string[]} relationshipDmos Exact sorted relationship source DMOs.
+   * @param {RetrieveRun} context Shared command state.
+   * @returns {GroupPlan} A refusal, or the group's read.
+   */
+  private prepareNativeRest(
+    selectors: string[],
+    relationshipDmos: string[],
+    context: RetrieveRun,
+  ): GroupPlan {
+    const { flags, envelope, outputTypes, errorTypes, requestScope, effectiveScope } = context;
+    const outputDirectory = context.outputDirectory;
+    const label = selectorFamily(selectors[0]);
+    let version: string;
+    try {
+      version = nativeApiVersion(flags['api-version']);
+      if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
+        return { refusal: 'INVALID_SELECTION', family: 'relationship' };
+      for (const selector of selectors) {
+        if (selector.startsWith('relationship:')) continue;
+        const [family, name, extra] = selector.split(':');
+        if (
+          extra !== undefined ||
+          (name !== undefined &&
+            !(
+              family === 'dlo' ? dloName : family === 'dmo' ? nativeDmoName : nativeMappingName
+            ).test(name))
+        )
+          return { refusal: 'INVALID_SELECTION', family: selectorFamily(selector) };
+      }
+    } catch {
+      return { refusal: 'INVALID_SCOPE', family: label };
+    }
+    return {
+      family: label,
+      run: async (): Promise<GroupOutcome> => {
+        let org;
+        try {
+          org = await this.resolveOrg(flags['target-org']);
+        } catch {
+          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+        }
+        const connection = org.getConnection(version);
+        const target = flags['target-org'] ?? connection.getUsername();
+        if (!target)
+          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+        envelope.provenance.sourceOrgId ??= org.getOrgId();
+        envelope.metadata.soapApiVersion ??= version;
+        const selected = new Map<string, string[]>();
+        try {
+          let dmoInventory: string[] | undefined;
+          // Finish every inventory before publishing any file.
+          for (const family of nativeFamilies) {
+            const all = selectors.length === 0 || selectors.includes(family);
+            let names = selectors
+              .filter((value) => value.startsWith(`${family}:`))
+              .map((value) => value.slice(family.length + 1));
+            if (all) {
+              if (family === 'mapping') {
+                dmoInventory ??= await this.listNativeNames(
+                  connection,
+                  version,
+                  'dmo',
+                  requestScope,
+                );
+                names.push(
+                  ...(await this.listNativeMappingNames(
+                    dmoInventory,
+                    this.createMappingInventoryReader(connection, version, requestScope),
+                    requestScope,
+                  )),
+                );
+              } else {
+                const inventory =
+                  family === 'dmo'
+                    ? (dmoInventory ??= await this.listNativeNames(
+                        connection,
+                        version,
+                        family,
+                        requestScope,
+                      ))
+                    : await this.listNativeNames(connection, version, family, requestScope);
+                names.push(...inventory);
+              }
+            }
+            names = [...new Set(names)];
+            names.sort();
+            selected.set(family, names);
+          }
+        } catch (error) {
+          const mapping = error instanceof NativeMappingError;
+          return {
+            status: 'blocked',
+            selection: selectors,
+            code: mapping ? error.code : 'NATIVE_INVENTORY_FAILED',
+            error,
+            family: mapping ? 'mapping' : label,
+          };
+        }
+        const selection = [
+          ...[...selected].flatMap(([family, names]) => names.map((name) => `${family}:${name}`)),
+          ...relationshipDmos.map((name) => `relationship:${name}`),
+        ];
+        const before = envelope.diagnostics.errors.length;
+        let failed = false;
+        for (const family of nativeFamilies) {
+          if (
+            selectors.length === 0 ||
+            selectors.some((selector) => selector === family || selector.startsWith(`${family}:`))
+          )
+            outputTypes.add(family);
+          for (const apiName of selected.get(family) ?? []) {
+            try {
+              const document =
+                family === 'mapping'
+                  ? await this.acquireNativeMapping(
+                      apiName,
+                      this.createMappingClient(target, version, undefined, requestScope),
+                      requestScope,
+                      this.mappingParents(target, version),
+                    )
+                  : family === 'dlo'
+                    ? await this.acquireDlo(
+                        apiName,
+                        this.createDloClient(target, version),
+                        requestScope,
+                      )
+                    : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
+                        apiName,
+                        this.createDmoClient(target, version),
+                        requestScope,
+                      );
+              const root = outputDirectory;
+              const receipt =
+                document.kind === 'mapping'
+                  ? await this.writeNativeMapping(document, root, flags.overwrite)
+                  : document.kind === 'dlo'
+                    ? await this.writeDlo(document, root, flags.overwrite)
+                    : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
+                        document,
+                        root,
+                        flags.overwrite,
+                      );
+              envelope.result.items.push({
+                identity: document.identity,
+                operation: 'retrieve',
+                ...(family === 'dmo' ? {} : { family }),
+                routes: [{ operation: `${family}.get`, apiVersion: version, transport: 'native' }],
+                ...receipt,
+              });
+            } catch (error) {
+              const code =
+                error instanceof NativeMappingError ||
+                error instanceof NativeDmoError ||
+                error instanceof MappingDefinitionError ||
+                error instanceof DloError
+                  ? error.code
+                  : 'NATIVE_RETRIEVE_FAILED';
+              if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
+                failed = true;
+              envelope.diagnostics.errors.push({
+                code,
+                message: operationDiagnostic(
+                  error,
+                  'Native component retrieval did not complete; no write attempted.',
+                ),
+                retryable: false,
+                identity: { dataSpace: effectiveScope, apiName },
+                ...(family === 'mapping' ? { family } : {}),
+              });
+              errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
+            }
+          }
+        }
+        if (relationshipDmos.length > 0) {
+          outputTypes.add('relationship');
+          const relationships = await this.retrieveRelationshipFamily(
+            relationshipDmos,
+            connection,
+            target,
+            version,
+            requestScope,
+            outputDirectory,
+            flags.overwrite,
+          );
+          envelope.result.items.push(...relationships.items);
+          envelope.diagnostics.errors.push(...relationships.errors);
+          if (relationships.failed) failed = true;
+        }
+        return { status: groupStatus(envelope, before, failed), selection };
+      },
+    };
+  }
+
+  /**
+   * DLO, mapping, relationship, DMO, Segment, calculated insight and identity resolution
+   * selections that are not native-only.
+   * @param {string[]} selectors The rest group.
+   * @param {string[]} relationshipDmos Exact sorted relationship source DMOs.
+   * @param {RetrieveRun} context Shared command state.
+   * @returns {GroupPlan} A refusal, or the group's read.
+   */
+  private prepareMixedRest(
+    selectors: string[],
+    relationshipDmos: string[],
+    context: RetrieveRun,
+  ): GroupPlan {
+    const { flags, envelope, outputTypes, errorTypes, requestScope, effectiveScope } = context;
+    const outputDirectory = context.outputDirectory;
+    const label = selectorFamily(selectors[0]);
+    // The family whose check runs, named in a refusal beside other groups.
+    let family: RetrieveFamily = label;
+    if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
+    const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
+    const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
+    const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
+    const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
+    const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
+    const dmoSelectors = selectors.filter(
+      (value) =>
+        !value.startsWith('dlo:') &&
+        !value.startsWith('mapping:') &&
+        !value.startsWith('relationship:') &&
+        !value.startsWith('segment:') &&
+        !value.startsWith('identity-resolution:') &&
+        !value.startsWith('calculated-insight:'),
+    );
+    const hasDmos = dmoSelectors.length > 0;
+    let effectiveVersion: string;
+    try {
+      family = 'dlo';
+      if (selectors.includes('dlo')) return { refusal: 'DLO_INVENTORY_UNSUPPORTED', family };
+      if (dloSelectors.length > 0) {
+        if (dloSelectors.some((value) => !dloName.test(value.slice(4))))
+          return { refusal: 'INVALID_SELECTION', family };
+        if (!['68.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
+          return { refusal: 'INVALID_SCOPE', family };
+      }
+      family = 'mapping';
+      if (selectors.includes('mapping'))
+        throw new MappingDefinitionError('MAPPING_INVENTORY_UNQUALIFIED');
+      if (mappingSelectors.length > 0) {
+        nativeApiVersion(flags['api-version']);
+        if (effectiveScope !== 'default') throw new MappingDefinitionError('INVALID_SCOPE');
+        if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
+          throw new MappingDefinitionError('INVALID_SELECTION');
+      }
+      family = 'relationship';
+      if (relationshipDmos.length > 0) {
+        nativeApiVersion(flags['api-version']);
+        if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
+          throw new NativeRelationshipError('INVALID_SELECTION');
+      }
+      family = 'calculated-insight';
+      if (selectors.includes('calculated-insight'))
+        throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
+      if (ciSelectors.length > 0) {
+        operationApiVersion(flags['api-version'], 'calculated-insight');
+        if (effectiveScope !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
+        if (ciSelectors.some((value) => !calculatedInsightName.test(value.slice(19))))
+          throw new CalculatedInsightError('INVALID_SELECTION');
+      }
+      family = 'identity-resolution';
+      if (selectors.includes('identity-resolution'))
+        throw new IdentityResolutionError('IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED');
+      if (irSelectors.some((value) => !identityResolutionName.test(value.slice(20))))
+        throw new IdentityResolutionError('INVALID_SELECTION');
+      if (irSelectors.length > 0) {
+        operationApiVersion(flags['api-version'], 'identity-resolution');
+        if (effectiveScope !== 'default') throw new IdentityResolutionError('INVALID_SCOPE');
+      }
+      family = 'segment';
+      if (segmentSelectors.length > 0) operationApiVersion(flags['api-version'], 'segment');
+      family = 'dmo';
+      // A DMO is read natively at its own version and never pins the other families.
+      if (hasDmos) nativeApiVersion(flags['api-version']);
+      const sharedFamily =
+        segmentSelectors.length > 0
+          ? 'segment'
+          : ciSelectors.length > 0
+            ? 'calculated-insight'
+            : irSelectors.length > 0
+              ? 'identity-resolution'
+              : undefined;
+      family = sharedFamily ?? label;
+      effectiveVersion =
+        dloSelectors.length === selectors.length && dloSelectors.length > 0
+          ? '68.0'
+          : mappingSelectors.length === selectors.length && selectors.length > 0
+            ? '65.0'
+            : sharedFamily
+              ? operationApiVersion(flags['api-version'], sharedFamily)
+              : hasDmos
+                ? nativeApiVersion(flags['api-version'])
+                : operationApiVersion(flags['api-version'], 'dlo');
+    } catch (error: unknown) {
+      return {
+        refusal:
+          error instanceof MappingDefinitionError ||
+          error instanceof NativeRelationshipError ||
+          error instanceof DloError ||
+          error instanceof IdentityResolutionError ||
+          error instanceof CalculatedInsightError
+            ? error.code
+            : 'INVALID_SCOPE',
+        family,
+      };
+    }
+    try {
+      family = 'segment';
+      if (selectors.includes('segment')) throw new SegmentError('SEGMENT_INVENTORY_UNQUALIFIED');
+      if (segmentSelectors.some((value) => !segmentName.test(value.slice(8))))
+        throw new SegmentError('INVALID_SELECTION');
+      if (
+        segmentSelectors.length > 0 &&
+        (!['65.0', '68.0'].includes(effectiveVersion) || effectiveScope !== 'default')
+      )
+        throw new SegmentError('INVALID_SCOPE');
+      family = 'dmo';
+      // Validate DMO selector syntax before auth; unknown families land here and are refused.
+      if (
+        dmoSelectors.some(
+          (value) =>
+            value !== 'dmo' && !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))),
+        )
+      )
+        return { refusal: 'INVALID_SELECTION', family };
+    } catch (error: unknown) {
+      return {
+        refusal: error instanceof SegmentError ? error.code : 'INVALID_SELECTION',
+        family,
+      };
+    }
+    return {
+      family: label,
+      run: async (): Promise<GroupOutcome> => {
+        let org: Pick<Org, 'getConnection' | 'getOrgId'>;
+        try {
+          org = await this.resolveOrg(flags['target-org']);
+        } catch {
+          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+        }
+        let selection = selectors;
+        const before = envelope.diagnostics.errors.length;
+        let failed = false;
+        // An error already reported for its component is not reported again without identity.
+        let reported: unknown;
+        const diagnose = (error: unknown, apiName?: string, family = 'dmo'): void => {
+          let code = 'RETRIEVE_FAILED';
+          if (
+            error instanceof DloError ||
+            error instanceof CalculatedInsightError ||
+            error instanceof IdentityResolutionError ||
+            error instanceof SegmentError ||
+            error instanceof DependencySelectionError ||
+            error instanceof RetrieveSelectionError ||
+            error instanceof MetadataReadError ||
+            error instanceof NativeDmoError ||
+            error instanceof ConnectError
+          )
+            code = error.code;
+          else failed = true;
+          if (
+            code === 'IDENTITY_RESOLUTION_ACQUISITION_FAILED' ||
+            code === 'OUTPUT_FAILED' ||
+            code === 'PARTIAL_DMO_OUTPUT' ||
+            code === 'PARTIAL_SEGMENT_OUTPUT' ||
+            code === 'SEGMENT_ACQUISITION_FAILED' ||
+            code === 'DEPENDENCY_ACQUISITION_FAILED' ||
+            code === 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED' ||
+            error instanceof ConnectError ||
+            code === 'ACQUISITION_FAILED'
+          )
+            failed = true;
+          if (error instanceof RetrieveSelectionError) {
+            apiName = error.identity.apiName;
+            family = error.identity.kind;
+          }
+          envelope.diagnostics.errors.push({
+            code,
+            message: getConnectDiagnostic(error)
+              ? operationDiagnostic(
+                  error,
+                  'This component was not retrieved; no files were written for it.',
+                )
+              : apiName
+                ? (calculatedInsightRetrieveMessages[code] ??
+                  'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.')
+                : 'The selection could not be retrieved completely; no files were written.',
+            retryable: false,
+            ...(apiName ? { identity: { dataSpace: effectiveScope, apiName } } : {}),
+          });
+          errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
+        };
+        try {
+          envelope.provenance.sourceOrgId ??= org.getOrgId();
+          // Every remaining route is a fixed numeric pin; nothing is discovered from the org.
+          const versions = await resolveApiVersion(effectiveVersion, async () => {
+            throw new Error('Fixed route must not discover.');
+          });
+          envelope.metadata.soapApiVersion ??= versions.soapNumeric;
+          // Definition-only members are independent; retain successes across read/output failures.
+
+          const dlos = [...new Set(dloSelectors.map((value) => value.slice(4)))];
+          dlos.sort();
+          for (const apiName of dlos) {
+            try {
+              const target =
+                flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
+              if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
+              const document = await this.acquireDlo(apiName, this.createDloClient(target, '68.0'));
+              const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
+              envelope.result.items.push({
+                identity: { dataSpace: 'default', apiName },
+                operation: 'retrieve',
+                family: 'dlo',
+                routes: [{ operation: 'dlo.get', apiVersion: '68.0', transport: 'native' }],
+                ...receipt,
+              });
+            } catch (error: unknown) {
+              diagnose(error, apiName, 'dlo');
+              if (
+                !(error instanceof SegmentError) ||
+                ![
+                  'OVERWRITE_REQUIRED',
+                  'UNSAFE_PATH',
+                  'TARGET_ORG_REQUIRED',
+                  'INVALID_PROJECT',
+                ].includes(error.code)
+              )
+                failed = true;
+            }
+          }
+          const mappings = [...new Set(mappingSelectors.map((value) => value.slice(8)))];
+          mappings.sort();
+          for (const apiName of mappings) {
+            try {
+              const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
+              if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
+              const version = nativeApiVersion(flags['api-version']);
+              const document = await this.acquireNativeMapping(
+                apiName,
+                this.createMappingClient(target, version, undefined, requestScope),
+                requestScope,
+                this.mappingParents(target, version),
+              );
+              const receipt = await this.writeNativeMapping(
+                document,
+                outputDirectory,
+                flags.overwrite,
+              );
+              envelope.result.items.push({
+                identity: { dataSpace: 'default', apiName },
+                operation: 'retrieve',
+                family: 'mapping',
+                routes: [{ operation: 'mapping.get', apiVersion: version, transport: 'native' }],
+                ...receipt,
+              });
+            } catch (error: unknown) {
+              const unproven =
+                error instanceof NativeMappingError &&
+                error.code === 'MAPPING_GENERATED_PAIRS_UNPROVEN';
+              const code =
+                error instanceof MappingDefinitionError || unproven ? error.code : 'OUTPUT_FAILED';
+              if (
+                ![
+                  'INVALID_SELECTION',
+                  'INVALID_SCOPE',
+                  'OVERWRITE_REQUIRED',
+                  'UNSAFE_PATH',
+                  'TARGET_ORG_REQUIRED',
+                ].includes(code)
+              )
+                failed = true;
+              envelope.diagnostics.errors.push({
+                code,
+                family: 'mapping',
+                identity: { dataSpace: 'default', apiName },
+                message: unproven
+                  ? operationDiagnostic(error, 'This mapping definition was not exported.')
+                  : 'This mapping definition was not exported. Check the exact selection, acquisition and output path.',
+                retryable: false,
+              });
+            }
+          }
+          if (relationshipDmos.length > 0) {
+            const target = flags['target-org'] ?? org.getConnection().getUsername();
+            if (target) {
+              const relationships = await this.retrieveRelationshipFamily(
+                relationshipDmos,
+                org.getConnection(),
+                target,
+                nativeApiVersion(flags['api-version']),
+                requestScope,
+                outputDirectory,
+                flags.overwrite,
+              );
+              envelope.result.items.push(...relationships.items);
+              envelope.diagnostics.errors.push(...relationships.errors);
+              if (relationships.failed) failed = true;
+            } else
+              envelope.diagnostics.errors.push({
+                code: 'TARGET_ORG_REQUIRED',
+                family: 'relationship',
+                message: 'Relationships were not retrieved; no target org username was resolved.',
+                retryable: false,
+              });
+          }
+          // Pin only this command-owned connection, before any service uses it.
+          const connection = org.getConnection(versions.soapNumeric);
+          // The family pin of this path does not apply to native DMO reads (auto is 68.0).
+          const nativeDmoVersion = nativeApiVersion(flags['api-version']);
+          let names: string[] = [];
+          if (hasDmos) {
+            names = dmoSelectors
+              .filter((selector) => selector !== 'dmo')
+              .map((selector) => selector.slice(4));
+            if (dmoSelectors.includes('dmo'))
+              names.push(
+                ...(await this.listNativeNames(
+                  connection,
+                  nativeDmoVersion,
+                  'dmo',
+                  effectiveScope,
+                )),
+              );
+            names = [...new Set(names)];
+            names.sort();
+          }
+          if (hasDmos) outputTypes.add('dmo');
+          for (const selector of selectors) outputTypes.add(selector.split(':')[0]);
+          // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
+          const segments = [...new Set(segmentSelectors.map((value) => value.slice(8)))].sort();
+          selection = [
+            ...dlos.map((name) => `dlo:${name}`),
+            ...mappings.map((name) => `mapping:${name}`),
+            ...relationshipDmos.map((name) => `relationship:${name}`),
+            ...names.map((name) => `dmo:${name}`),
+            ...segments.map((name) => `segment:${name}`),
+          ];
+          // Acquire and resolve the complete bounded selection before publishing any files.
+          const selected =
+            names.length > 0 || segments.length > 0
+              ? await (this.acquireSelection ?? acquireRetrieveSelection)(
+                  [
+                    ...names.map((apiName) => ({
+                      kind: 'dmo' as const,
+                      dataSpace: effectiveScope,
+                      apiName,
+                    })),
+                    ...segments.map((apiName) => ({
+                      kind: 'segment' as const,
+                      dataSpace: effectiveScope,
+                      apiName,
+                    })),
+                  ],
+                  connection,
+                  versions,
+                  {
+                    dmo: async (apiName: string): Promise<unknown> => {
+                      const target = flags['target-org'] ?? connection.getUsername();
+                      if (!target) throw new NativeDmoError('TARGET_ORG_REQUIRED');
+                      return (this.createDmoClient ?? createDmoClient)(
+                        target,
+                        nativeDmoVersion,
+                      ).get(apiName);
+                    },
+                  },
+                )
+              : [];
+          const calculatedInsights: Array<{
+            document: CalculatedInsightDocument;
+            definitionXml: string;
+          }> = [];
+          // Complete every CI admission before any selected output and before IR repins the receiver.
+          // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
+          for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
+            try {
+              const ciConnection = org.getConnection('68.0');
+              const context = this.calculatedInsightContext(ciConnection, effectiveScope);
+              // Retrieval is read-only: run history and a SYSTEM_MANAGED schedule are admitted.
+              const exact = await this.acquireExactCalculatedInsight(context, apiName, false, true);
+              if (exact.state !== 'present' || exact.status !== 'ACTIVE')
+                throw retainConnectDiagnostic(
+                  new CalculatedInsightError(
+                    exact.state === 'unknown'
+                      ? (exact.diagnostics.find((code) => /^CI_[A-Z_]+$/u.test(code)) ??
+                          'CI_ACQUISITION_FAILED')
+                      : exact.state === 'absent'
+                        ? 'CI_NOT_FOUND'
+                        : 'CI_NOT_ACTIVE',
+                  ),
+                  getConnectDiagnostic(exact),
+                );
+              if (
+                exact.document.identity.apiName !== apiName ||
+                exact.document.identity.dataSpace !== 'default'
+              )
+                throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+              await context.bind(exact.document);
+              const target = flags['target-org'] ?? ciConnection.getUsername();
+              if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
+              const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
+              const document = validateCalculatedInsightPair(
+                exact.document,
+                definitionXml,
+                apiName.slice(0, -5),
+              );
+              context.check();
+              calculatedInsights.push({ document, definitionXml });
+            } catch (error: unknown) {
+              diagnose(error, apiName, 'calculated-insight');
+              reported = error;
+              throw error;
+            }
+          }
+          const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
+          if (irSelectors.length > 0) {
+            const irVersion = await resolveApiVersion('68.0', async () => {
+              throw new Error('Fixed route must not discover.');
+            });
+            const irConnection = org.getConnection('68.0');
+
+            for (const apiName of [
+              ...new Set(irSelectors.map((value) => value.slice(20))),
+              // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
+            ].sort()) {
+              const acquired = await this.acquireIdentityResolution(
+                irConnection,
+                apiName,
+                irVersion,
+                effectiveScope,
+              );
+              if (acquired.blockers.length > 0 || !acquired.candidate)
+                throw retainConnectDiagnostic(
+                  new IdentityResolutionError(
+                    acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION',
+                  ),
+                  getConnectDiagnostic(acquired),
+                );
+              const document = validateIdentityResolutionDocument(acquired.candidate);
+              if (
+                acquired.identity.apiName !== apiName ||
+                acquired.identity.dataSpace !== effectiveScope ||
+                document.identity.apiName !== apiName ||
+                document.identity.dataSpace !== effectiveScope
+              )
+                throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
+              identityResolutions.push({ document });
+            }
+          }
+          const entries = [...selected, ...calculatedInsights, ...identityResolutions];
+          selection = [
+            ...dlos.map((name) => `dlo:${name}`),
+            ...mappings.map((name) => `mapping:${name}`),
+            ...relationshipDmos.map((name) => `relationship:${name}`),
+            ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
+          ];
+          for (const entry of entries) {
+            const { document } = entry;
+            try {
+              const receipt =
+                document.kind === 'calculated-insight'
+                  ? await this.writeCalculatedInsight(
+                      document,
+                      'definitionXml' in entry ? entry.definitionXml : '',
+                      outputDirectory,
+                      flags.overwrite,
+                    )
+                  : document.kind === 'identity-resolution'
+                    ? await this.writeIdentityResolution(document, outputDirectory, flags.overwrite)
+                    : document.kind === 'segment'
+                      ? await this.writeSegment(document, outputDirectory, flags.overwrite)
+                      : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
+                          document,
+                          outputDirectory,
+                          flags.overwrite,
+                        );
+              envelope.result.items.push({
+                identity: { ...document.identity },
+                ...(document.kind === 'segment' ||
+                document.kind === 'identity-resolution' ||
+                document.kind === 'calculated-insight'
+                  ? { family: document.kind }
+                  : {}),
+                ...(flags['api-version'] === 'auto' ||
+                document.kind === 'segment' ||
+                document.kind === 'identity-resolution' ||
+                document.kind === 'calculated-insight'
+                  ? {
+                      routes:
+                        document.kind === 'identity-resolution'
+                          ? [
+                              {
+                                operation: 'identity-resolutions.get',
+                                apiVersion: '68.0',
+                                transport: 'native' as const,
+                              },
+                            ]
+                          : [
+                              {
+                                operation: `${document.kind}.get`,
+                                apiVersion:
+                                  document.kind === 'calculated-insight'
+                                    ? '68.0'
+                                    : document.kind === 'segment'
+                                      ? versions.soapNumeric
+                                      : '65.0',
+                                transport: 'native' as const,
+                              },
+                              ...(document.kind === 'segment'
+                                ? []
+                                : [
+                                    {
+                                      operation: `${document.kind}.metadata`,
+                                      apiVersion: '65.0',
+                                      transport: 'metadata' as const,
+                                    },
+                                  ]),
+                              ...(document.kind === 'calculated-insight'
+                                ? [
+                                    {
+                                      operation: 'calculated-insight.source',
+                                      apiVersion: '65.0',
+                                      transport: 'metadata' as const,
+                                    },
+                                    {
+                                      operation: 'dependency.get',
+                                      apiVersion: '65.0',
+                                      transport: 'native' as const,
+                                    },
+                                    {
+                                      operation: 'dependency.metadata',
+                                      apiVersion: '65.0',
+                                      transport: 'metadata' as const,
+                                    },
+                                  ]
+                                : []),
+                            ],
+                    }
+                  : {}),
+                // A DMO here is always one native read.
+                ...(document.kind === 'dmo'
+                  ? {
+                      routes: [
+                        {
+                          operation: 'dmo.get',
+                          apiVersion: nativeDmoVersion,
+                          transport: 'native' as const,
+                        },
+                      ],
+                    }
+                  : {}),
+                operation: 'retrieve',
+                ...receipt,
+              });
+            } catch (error: unknown) {
+              diagnose(error, document.identity.apiName, document.kind);
+              // Do not publish dependents after an ambiguous prerequisite output failure.
+              break;
+            }
+          }
+        } catch (error: unknown) {
+          if (error !== reported) diagnose(error);
+        }
+        return { status: groupStatus(envelope, before, failed), selection };
+      },
+    };
+  }
+
+  /**
+   * Retrieve any mix of families. Every selector group is validated before any org access; the
+   * groups then run one after another (rest, data-stream, data-transform, data-graph) into one
+   * envelope.
    * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
    */
   public async run(): Promise<RetrieveEnvelope> {
@@ -408,24 +1572,22 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       },
     };
     const outputTypes = new Set<string>();
-    const errorTypes = new Map<RetrieveEnvelope['diagnostics']['errors'][number], string>();
+    const errorTypes = new Map<RetrieveDiagnostic, string>();
     const finish = (
       status: RetrieveEnvelope['status'],
       code?: string,
       error?: unknown,
+      family?: RetrieveFamily,
     ): RetrieveEnvelope => {
       envelope.status = status;
       if (code)
         envelope.diagnostics.errors.push({
           code,
-          message:
-            error === undefined
-              ? 'Retrieval did not complete. Check selection, authenticated org, service capability and output path.'
-              : operationDiagnostic(
-                  error,
-                  'Retrieval did not complete. Check selection, authenticated org, service capability and output path.',
-                ),
+          message: family
+            ? `Retrieval did not start: the ${family} selection was refused, so nothing was read. Check the ${family} selection, --api-version and --dataspace.`
+            : retrievalMessage(error),
           retryable: false,
+          ...(family ? { family } : {}),
         });
       if (status !== 'success') process.exitCode = 1;
       annotateDiagnostics(envelope);
@@ -435,9 +1597,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ...outputTypes,
           ...envelope.result.items.map((item) => item.family ?? 'dmo'),
         ]);
-        const printError = (
-          diagnostic: RetrieveEnvelope['diagnostics']['errors'][number],
-        ): void => {
+        const printError = (diagnostic: RetrieveDiagnostic): void => {
           this.log(
             formatDiagnostic(
               diagnostic,
@@ -468,890 +1628,56 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       }
       return envelope;
     };
-    const selectors = flags.metadata ?? [];
-    if (
-      selectors.some((value) => value === 'data-transform' || value.startsWith('data-transform:'))
-    ) {
-      if (
-        selectors.some(
-          (value) =>
-            !value.startsWith('data-transform:') || !dataTransformName.test(value.slice(15)),
-        )
-      )
-        return finish('blocked', 'INVALID_SELECTION');
-      try {
-        operationApiVersion(flags['api-version'], 'data-transform');
-        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-      } catch {
-        return finish('blocked', 'INVALID_SCOPE');
-      }
-      let org;
-      try {
-        org = await this.resolveOrg(flags['target-org']);
-      } catch {
-        return finish('blocked', 'TARGET_ORG_REQUIRED');
-      }
-      const connection = org.getConnection('68.0');
-      envelope.provenance.sourceOrgId = org.getOrgId();
-      envelope.metadata.soapApiVersion = '68.0';
-      const names = [...new Set(selectors.map((value) => value.slice(15)))];
-      names.sort();
-      envelope.result.selection = names.map((name) => `data-transform:${name}`);
-      outputTypes.add('data-transform');
-      let failed = false;
-      for (const apiName of names) {
-        try {
-          const observed = await this.acquireDataTransform(
-            apiName,
-            this.createDataTransformClient(connection, '68.0', effectiveScope),
-          );
-          if (observed.document.definition.name !== apiName)
-            throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
-          const receipt = await this.writeDataTransform(
-            observed.document,
-            outputDirectory,
-            flags.overwrite,
-          );
-          envelope.result.items.push({
-            identity: { dataSpace: effectiveScope, apiName },
-            operation: 'retrieve',
-            family: 'data-transform',
-            routes: [
-              { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
-              { operation: 'data-transform.schedule.get', apiVersion: '68.0', transport: 'native' },
-            ],
-            ...receipt,
-          });
-        } catch (error) {
-          const code =
-            error instanceof DataTransformError ? error.code : 'TRANSFORM_RETRIEVE_FAILED';
-          if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
-            failed = true;
-          const diagnostic = {
-            code,
-            message: operationDiagnostic(
-              error,
-              'Transform retrieval did not complete; no org write attempted.',
-            ),
-            retryable: false as const,
-            identity: { dataSpace: effectiveScope, apiName },
-          };
-          envelope.diagnostics.errors.push(diagnostic);
-          errorTypes.set(diagnostic, 'data-transform');
-        }
-      }
-      return finish(
-        envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
-      );
-    }
-    if (selectors.some((value) => value === 'data-stream' || value.startsWith('data-stream:'))) {
-      if (selectors.some((value) => !/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
-        return finish('blocked', 'INVALID_SELECTION');
-      let version: string;
-      try {
-        version = dataStreamApiVersion(flags['api-version']);
-        if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-      } catch {
-        return finish('blocked', 'INVALID_SCOPE');
-      }
-      let org;
-      try {
-        org = await this.resolveOrg(flags['target-org']);
-      } catch {
-        return finish('blocked', 'TARGET_ORG_REQUIRED');
-      }
-      const connection = org.getConnection(version);
-      const target = flags['target-org'] ?? connection.getUsername();
-      if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
-      envelope.provenance.sourceOrgId = org.getOrgId();
-      envelope.metadata.soapApiVersion = version;
-      const names = [...new Set(selectors.map((value) => value.slice('data-stream:'.length)))];
-      names.sort();
-      envelope.result.selection = names.map((name) => `data-stream:${name}`);
-      outputTypes.add('data-stream');
-      let failed = false;
-      for (const apiName of names) {
-        try {
-          const document = await this.acquireDataStream(
-            apiName,
-            this.createDataStreamClients(connection, target, version),
-            effectiveScope,
-          );
-          const receipt = await this.writeDataStream(document, outputDirectory, flags.overwrite);
-          envelope.result.items.push({
-            identity: document.identity,
-            operation: 'retrieve',
-            family: 'data-stream',
-            routes: [
-              { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
-              { operation: 'dlo.get', apiVersion: version, transport: 'native' },
-              { operation: 'connection.read', apiVersion: version, transport: 'native' },
-            ],
-            ...receipt,
-          });
-        } catch (error) {
-          const code =
-            error instanceof DataStreamError ? error.code : 'DATA_STREAM_RETRIEVE_FAILED';
-          if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
-            failed = true;
-          const diagnostic = {
-            code,
-            message: operationDiagnostic(
-              error,
-              'Data stream retrieval did not complete; no write attempted.',
-            ),
-            retryable: false as const,
-            identity: { dataSpace: effectiveScope, apiName },
-          };
-          envelope.diagnostics.errors.push(diagnostic);
-          errorTypes.set(diagnostic, 'data-stream');
-        }
-      }
-      return finish(
-        envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
-      );
-    }
-    if (selectors.some((value) => value === 'data-graph' || value.startsWith('data-graph:'))) {
-      try {
-        operationApiVersion(flags['api-version'], 'data-graph');
-      } catch {
-        return finish('blocked', 'INVALID_SCOPE');
-      }
-      if (selectors.includes('data-graph'))
-        return finish('blocked', 'DATA_GRAPH_INVENTORY_UNQUALIFIED');
-      if (selectors.length !== 1 || !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(selectors[0]))
-        return finish('blocked', 'NATIVE_GRAPH_SELECTION_UNSUPPORTED');
-      if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-      try {
-        const org = await this.resolveOrg(flags['target-org']);
-        const context = await this.nativeGraphContext(org.getConnection('68.0'), 'default');
-        const apiName = selectors[0].slice(11);
-        const document = await this.retrieveNativeGraph(apiName, context);
-        const receipt = await this.writeDataGraph(document, outputDirectory, flags.overwrite);
-        envelope.provenance.sourceOrgId = context.orgId;
-        envelope.metadata.soapApiVersion = '68.0';
-        envelope.result.items.push({
-          identity: { dataSpace: 'default', apiName },
-          operation: 'retrieve',
-          family: 'data-graph',
-          routes: [{ operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' }],
-          ...receipt,
-        });
-        return finish('success');
-      } catch (error) {
-        return finish('blocked', 'NATIVE_GRAPH_RETRIEVE_BLOCKED', error);
-      }
-    }
-    // A relationship is retrieved per source DMO; an inventory of all of them is not offered.
-    if (selectors.includes('relationship'))
-      return finish('blocked', 'RELATIONSHIP_INVENTORY_UNQUALIFIED');
-    const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
-    const relationshipDmos = [
-      ...new Set(
-        selectors
-          .filter((value) => value.startsWith('relationship:'))
-          .map((value) => value.slice('relationship:'.length)),
-      ),
-    ];
-    relationshipDmos.sort();
-    if (
-      selectors.every(
-        (value) =>
-          value.startsWith('relationship:') ||
-          nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
-      )
-    ) {
-      let version: string;
-      try {
-        version = nativeApiVersion(flags['api-version']);
-        if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
-          return finish('blocked', 'INVALID_SELECTION');
-        for (const selector of selectors) {
-          if (selector.startsWith('relationship:')) continue;
-          const [family, name, extra] = selector.split(':');
-          if (
-            extra !== undefined ||
-            (name !== undefined &&
-              !(
-                family === 'dlo' ? dloName : family === 'dmo' ? nativeDmoName : nativeMappingName
-              ).test(name))
-          )
-            return finish('blocked', 'INVALID_SELECTION');
-        }
-      } catch {
-        return finish('blocked', 'INVALID_SCOPE');
-      }
-      let org;
-      try {
-        org = await this.resolveOrg(flags['target-org']);
-      } catch {
-        return finish('blocked', 'TARGET_ORG_REQUIRED');
-      }
-      const connection = org.getConnection(version);
-      const target = flags['target-org'] ?? connection.getUsername();
-      if (!target) return finish('blocked', 'TARGET_ORG_REQUIRED');
-      envelope.provenance.sourceOrgId = org.getOrgId();
-      envelope.metadata.soapApiVersion = version;
-      const selected = new Map<string, string[]>();
-      try {
-        let dmoInventory: string[] | undefined;
-        // Finish every inventory before publishing any file.
-        for (const family of nativeFamilies) {
-          const all = selectors.length === 0 || selectors.includes(family);
-          let names = selectors
-            .filter((value) => value.startsWith(`${family}:`))
-            .map((value) => value.slice(family.length + 1));
-          if (all) {
-            if (family === 'mapping') {
-              dmoInventory ??= await this.listNativeNames(connection, version, 'dmo', requestScope);
-              names.push(
-                ...(await this.listNativeMappingNames(
-                  dmoInventory,
-                  this.createMappingInventoryReader(connection, version, requestScope),
-                  requestScope,
-                )),
-              );
-            } else {
-              const inventory =
-                family === 'dmo'
-                  ? (dmoInventory ??= await this.listNativeNames(
-                      connection,
-                      version,
-                      family,
-                      requestScope,
-                    ))
-                  : await this.listNativeNames(connection, version, family, requestScope);
-              names.push(...inventory);
-            }
-          }
-          names = [...new Set(names)];
-          names.sort();
-          selected.set(family, names);
-        }
-      } catch (error) {
-        return finish(
-          'blocked',
-          error instanceof NativeMappingError ? error.code : 'NATIVE_INVENTORY_FAILED',
-          error,
-        );
-      }
-      envelope.result.selection = [
-        ...[...selected].flatMap(([family, names]) => names.map((name) => `${family}:${name}`)),
-        ...relationshipDmos.map((name) => `relationship:${name}`),
-      ];
-      let failed = false;
-      for (const family of nativeFamilies) {
-        if (
-          selectors.length === 0 ||
-          selectors.some((selector) => selector === family || selector.startsWith(`${family}:`))
-        )
-          outputTypes.add(family);
-        for (const apiName of selected.get(family) ?? []) {
-          try {
-            const document =
-              family === 'mapping'
-                ? await this.acquireNativeMapping(
-                    apiName,
-                    this.createMappingClient(target, version, undefined, requestScope),
-                    requestScope,
-                    this.mappingParents(target, version),
-                  )
-                : family === 'dlo'
-                  ? await this.acquireDlo(
-                      apiName,
-                      this.createDloClient(target, version),
-                      requestScope,
-                    )
-                  : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
-                      apiName,
-                      this.createDmoClient(target, version),
-                      requestScope,
-                    );
-            const root = outputDirectory;
-            const receipt =
-              document.kind === 'mapping'
-                ? await this.writeNativeMapping(document, root, flags.overwrite)
-                : document.kind === 'dlo'
-                  ? await this.writeDlo(document, root, flags.overwrite)
-                  : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
-                      document,
-                      root,
-                      flags.overwrite,
-                    );
-            envelope.result.items.push({
-              identity: document.identity,
-              operation: 'retrieve',
-              ...(family === 'dmo' ? {} : { family }),
-              routes: [{ operation: `${family}.get`, apiVersion: version, transport: 'native' }],
-              ...receipt,
-            });
-          } catch (error) {
-            const code =
-              error instanceof NativeMappingError ||
-              error instanceof NativeDmoError ||
-              error instanceof MappingDefinitionError ||
-              error instanceof DloError
-                ? error.code
-                : 'NATIVE_RETRIEVE_FAILED';
-            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
-              failed = true;
-            envelope.diagnostics.errors.push({
-              code,
-              message: operationDiagnostic(
-                error,
-                'Native component retrieval did not complete; no write attempted.',
-              ),
-              retryable: false,
-              identity: { dataSpace: effectiveScope, apiName },
-              ...(family === 'mapping' ? { family } : {}),
-            });
-            errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
-          }
-        }
-      }
-      if (relationshipDmos.length > 0) {
-        outputTypes.add('relationship');
-        const relationships = await this.retrieveRelationshipFamily(
-          relationshipDmos,
-          connection,
-          target,
-          version,
-          requestScope,
-          outputDirectory,
-          flags.overwrite,
-        );
-        envelope.result.items.push(...relationships.items);
-        envelope.diagnostics.errors.push(...relationships.errors);
-        if (relationships.failed) failed = true;
-      }
-      return finish(
-        envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
-      );
-    }
-    if (effectiveScope !== 'default') return finish('blocked', 'INVALID_SCOPE');
-    const dloSelectors = selectors.filter((value) => value.startsWith('dlo:'));
-    const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
-    const ciSelectors = selectors.filter((value) => value.startsWith('calculated-insight:'));
-    const irSelectors = selectors.filter((value) => value.startsWith('identity-resolution:'));
-    const segmentSelectors = selectors.filter((value) => value.startsWith('segment:'));
-    const dmoSelectors = selectors.filter(
-      (value) =>
-        !value.startsWith('dlo:') &&
-        !value.startsWith('mapping:') &&
-        !value.startsWith('relationship:') &&
-        !value.startsWith('segment:') &&
-        !value.startsWith('identity-resolution:') &&
-        !value.startsWith('calculated-insight:'),
-    );
-    const hasDmos = dmoSelectors.length > 0;
-    let effectiveVersion: string;
-    try {
-      if (selectors.includes('dlo')) return finish('blocked', 'DLO_INVENTORY_UNSUPPORTED');
-      if (dloSelectors.length > 0) {
-        if (dloSelectors.some((value) => !dloName.test(value.slice(4))))
-          return finish('blocked', 'INVALID_SELECTION');
-        if (!['68.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
-          return finish('blocked', 'INVALID_SCOPE');
-      }
-      if (selectors.includes('mapping'))
-        throw new MappingDefinitionError('MAPPING_INVENTORY_UNQUALIFIED');
-      if (mappingSelectors.length > 0) {
-        nativeApiVersion(flags['api-version']);
-        if (effectiveScope !== 'default') throw new MappingDefinitionError('INVALID_SCOPE');
-        if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
-          throw new MappingDefinitionError('INVALID_SELECTION');
-      }
-      if (relationshipDmos.length > 0) {
-        nativeApiVersion(flags['api-version']);
-        if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
-          throw new NativeRelationshipError('INVALID_SELECTION');
-      }
-      if (selectors.includes('calculated-insight'))
-        throw new CalculatedInsightError('CI_INVENTORY_UNQUALIFIED');
-      if (ciSelectors.length > 0) {
-        operationApiVersion(flags['api-version'], 'calculated-insight');
-        if (effectiveScope !== 'default') throw new CalculatedInsightError('INVALID_SCOPE');
-        if (ciSelectors.some((value) => !calculatedInsightName.test(value.slice(19))))
-          throw new CalculatedInsightError('INVALID_SELECTION');
-      }
-      if (selectors.includes('identity-resolution'))
-        throw new IdentityResolutionError('IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED');
-      if (irSelectors.some((value) => !identityResolutionName.test(value.slice(20))))
-        throw new IdentityResolutionError('INVALID_SELECTION');
-      if (irSelectors.length > 0) {
-        operationApiVersion(flags['api-version'], 'identity-resolution');
-        if (effectiveScope !== 'default') throw new IdentityResolutionError('INVALID_SCOPE');
-      }
-      if (segmentSelectors.length > 0) operationApiVersion(flags['api-version'], 'segment');
-      // A DMO is read natively at its own version and never pins the other families.
-      if (hasDmos) nativeApiVersion(flags['api-version']);
-      const sharedFamily =
-        segmentSelectors.length > 0
-          ? 'segment'
-          : ciSelectors.length > 0
-            ? 'calculated-insight'
-            : irSelectors.length > 0
-              ? 'identity-resolution'
-              : undefined;
-      effectiveVersion =
-        dloSelectors.length === selectors.length && dloSelectors.length > 0
-          ? '68.0'
-          : mappingSelectors.length === selectors.length && selectors.length > 0
-            ? '65.0'
-            : sharedFamily
-              ? operationApiVersion(flags['api-version'], sharedFamily)
-              : hasDmos
-                ? nativeApiVersion(flags['api-version'])
-                : operationApiVersion(flags['api-version'], 'dlo');
-    } catch (error: unknown) {
-      return finish(
-        'blocked',
-        error instanceof MappingDefinitionError ||
-          error instanceof NativeRelationshipError ||
-          error instanceof DloError ||
-          error instanceof IdentityResolutionError ||
-          error instanceof CalculatedInsightError
-          ? error.code
-          : 'INVALID_SCOPE',
-      );
-    }
-    try {
-      if (selectors.includes('segment')) throw new SegmentError('SEGMENT_INVENTORY_UNQUALIFIED');
-      if (segmentSelectors.some((value) => !segmentName.test(value.slice(8))))
-        throw new SegmentError('INVALID_SELECTION');
-      if (
-        segmentSelectors.length > 0 &&
-        (!['65.0', '68.0'].includes(effectiveVersion) || effectiveScope !== 'default')
-      )
-        throw new SegmentError('INVALID_SCOPE');
-      // Validate DMO selector syntax before auth; unknown families land here and are refused.
-      if (
-        dmoSelectors.some(
-          (value) =>
-            value !== 'dmo' && !(value.startsWith('dmo:') && nativeDmoName.test(value.slice(4))),
-        )
-      )
-        return finish('blocked', 'INVALID_SELECTION');
-    } catch (error: unknown) {
-      return finish('blocked', error instanceof SegmentError ? error.code : 'INVALID_SELECTION');
-    }
-    let org: Pick<Org, 'getConnection' | 'getOrgId'>;
-    try {
-      org = await this.resolveOrg(flags['target-org']);
-    } catch {
-      return finish('blocked', 'TARGET_ORG_REQUIRED');
-    }
-    let failed = false;
-    // An error already reported for its component is not reported again without identity.
-    let reported: unknown;
-    const diagnose = (error: unknown, apiName?: string, family = 'dmo'): void => {
-      let code = 'RETRIEVE_FAILED';
-      if (
-        error instanceof DloError ||
-        error instanceof CalculatedInsightError ||
-        error instanceof IdentityResolutionError ||
-        error instanceof SegmentError ||
-        error instanceof DependencySelectionError ||
-        error instanceof RetrieveSelectionError ||
-        error instanceof MetadataReadError ||
-        error instanceof NativeDmoError ||
-        error instanceof ConnectError
-      )
-        code = error.code;
-      else failed = true;
-      if (
-        code === 'IDENTITY_RESOLUTION_ACQUISITION_FAILED' ||
-        code === 'OUTPUT_FAILED' ||
-        code === 'PARTIAL_DMO_OUTPUT' ||
-        code === 'PARTIAL_SEGMENT_OUTPUT' ||
-        code === 'SEGMENT_ACQUISITION_FAILED' ||
-        code === 'DEPENDENCY_ACQUISITION_FAILED' ||
-        code === 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED' ||
-        error instanceof ConnectError ||
-        code === 'ACQUISITION_FAILED'
-      )
-        failed = true;
-      if (error instanceof RetrieveSelectionError) {
-        apiName = error.identity.apiName;
-        family = error.identity.kind;
-      }
-      envelope.diagnostics.errors.push({
-        code,
-        message: getConnectDiagnostic(error)
-          ? operationDiagnostic(
-              error,
-              'This component was not retrieved; no files were written for it.',
-            )
-          : apiName
-            ? (calculatedInsightRetrieveMessages[code] ??
-              'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.')
-            : 'The selection could not be retrieved completely; no files were written.',
-        retryable: false,
-        ...(apiName ? { identity: { dataSpace: effectiveScope, apiName } } : {}),
-      });
-      errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
+    const context: RetrieveRun = {
+      flags,
+      envelope,
+      outputTypes,
+      errorTypes,
+      requestScope,
+      effectiveScope,
+      outputDirectory,
     };
-    try {
-      envelope.provenance.sourceOrgId = org.getOrgId();
-      // Every remaining route is a fixed numeric pin; nothing is discovered from the org.
-      const selection = await resolveApiVersion(effectiveVersion, async () => {
-        throw new Error('Fixed route must not discover.');
-      });
-      envelope.metadata.soapApiVersion = selection.soapNumeric;
-      // Definition-only members are independent; retain successes across read/output failures.
-
-      const dlos = [...new Set(dloSelectors.map((value) => value.slice(4)))];
-      dlos.sort();
-      for (const apiName of dlos) {
-        try {
-          const target =
-            flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
-          if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
-          const document = await this.acquireDlo(apiName, this.createDloClient(target, '68.0'));
-          const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
-          envelope.result.items.push({
-            identity: { dataSpace: 'default', apiName },
-            operation: 'retrieve',
-            family: 'dlo',
-            routes: [{ operation: 'dlo.get', apiVersion: '68.0', transport: 'native' }],
-            ...receipt,
-          });
-        } catch (error: unknown) {
-          diagnose(error, apiName, 'dlo');
-          if (
-            !(error instanceof SegmentError) ||
-            ![
-              'OVERWRITE_REQUIRED',
-              'UNSAFE_PATH',
-              'TARGET_ORG_REQUIRED',
-              'INVALID_PROJECT',
-            ].includes(error.code)
-          )
-            failed = true;
-        }
-      }
-      const mappings = [...new Set(mappingSelectors.map((value) => value.slice(8)))];
-      mappings.sort();
-      for (const apiName of mappings) {
-        try {
-          const target = flags['target-org'] ?? org.getConnection('65.0').getUsername();
-          if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
-          const version = nativeApiVersion(flags['api-version']);
-          const document = await this.acquireNativeMapping(
-            apiName,
-            this.createMappingClient(target, version, undefined, requestScope),
-            requestScope,
-            this.mappingParents(target, version),
-          );
-          const receipt = await this.writeNativeMapping(document, outputDirectory, flags.overwrite);
-          envelope.result.items.push({
-            identity: { dataSpace: 'default', apiName },
-            operation: 'retrieve',
-            family: 'mapping',
-            routes: [{ operation: 'mapping.get', apiVersion: version, transport: 'native' }],
-            ...receipt,
-          });
-        } catch (error: unknown) {
-          const unproven =
-            error instanceof NativeMappingError &&
-            error.code === 'MAPPING_GENERATED_PAIRS_UNPROVEN';
-          const code =
-            error instanceof MappingDefinitionError || unproven ? error.code : 'OUTPUT_FAILED';
-          if (
-            ![
-              'INVALID_SELECTION',
-              'INVALID_SCOPE',
-              'OVERWRITE_REQUIRED',
-              'UNSAFE_PATH',
-              'TARGET_ORG_REQUIRED',
-            ].includes(code)
-          )
-            failed = true;
-          envelope.diagnostics.errors.push({
-            code,
-            family: 'mapping',
-            identity: { dataSpace: 'default', apiName },
-            message: unproven
-              ? operationDiagnostic(error, 'This mapping definition was not exported.')
-              : 'This mapping definition was not exported. Check the exact selection, acquisition and output path.',
-            retryable: false,
-          });
-        }
-      }
-      if (relationshipDmos.length > 0) {
-        const target = flags['target-org'] ?? org.getConnection().getUsername();
-        if (target) {
-          const relationships = await this.retrieveRelationshipFamily(
-            relationshipDmos,
-            org.getConnection(),
-            target,
-            nativeApiVersion(flags['api-version']),
-            requestScope,
-            outputDirectory,
-            flags.overwrite,
-          );
-          envelope.result.items.push(...relationships.items);
-          envelope.diagnostics.errors.push(...relationships.errors);
-          if (relationships.failed) failed = true;
-        } else
-          envelope.diagnostics.errors.push({
-            code: 'TARGET_ORG_REQUIRED',
-            family: 'relationship',
-            message: 'Relationships were not retrieved; no target org username was resolved.',
-            retryable: false,
-          });
-      }
-      // Pin only this command-owned connection, before any service uses it.
-      const connection = org.getConnection(selection.soapNumeric);
-      // The family pin of this path does not apply to native DMO reads (auto is 68.0).
-      const nativeDmoVersion = nativeApiVersion(flags['api-version']);
-      let names: string[] = [];
-      if (hasDmos) {
-        names = dmoSelectors
-          .filter((selector) => selector !== 'dmo')
-          .map((selector) => selector.slice(4));
-        if (dmoSelectors.includes('dmo'))
-          names.push(
-            ...(await this.listNativeNames(connection, nativeDmoVersion, 'dmo', effectiveScope)),
-          );
-        names = [...new Set(names)];
-        names.sort();
-      }
-      if (hasDmos) outputTypes.add('dmo');
-      for (const selector of selectors) outputTypes.add(selector.split(':')[0]);
-      // eslint-disable-next-line unicorn/no-array-sort -- Deterministic ordering on a new deduplicated array.
-      const segments = [...new Set(segmentSelectors.map((value) => value.slice(8)))].sort();
-      envelope.result.selection = [
-        ...dlos.map((name) => `dlo:${name}`),
-        ...mappings.map((name) => `mapping:${name}`),
-        ...relationshipDmos.map((name) => `relationship:${name}`),
-        ...names.map((name) => `dmo:${name}`),
-        ...segments.map((name) => `segment:${name}`),
-      ];
-      // Acquire and resolve the complete bounded selection before publishing any files.
-      const selected =
-        names.length > 0 || segments.length > 0
-          ? await (this.acquireSelection ?? acquireRetrieveSelection)(
-              [
-                ...names.map((apiName) => ({
-                  kind: 'dmo' as const,
-                  dataSpace: effectiveScope,
-                  apiName,
-                })),
-                ...segments.map((apiName) => ({
-                  kind: 'segment' as const,
-                  dataSpace: effectiveScope,
-                  apiName,
-                })),
-              ],
-              connection,
-              selection,
-              {
-                dmo: async (apiName: string): Promise<unknown> => {
-                  const target = flags['target-org'] ?? connection.getUsername();
-                  if (!target) throw new NativeDmoError('TARGET_ORG_REQUIRED');
-                  return (this.createDmoClient ?? createDmoClient)(target, nativeDmoVersion).get(
-                    apiName,
-                  );
-                },
-              },
-            )
-          : [];
-      const calculatedInsights: Array<{
-        document: CalculatedInsightDocument;
-        definitionXml: string;
-      }> = [];
-      // Complete every CI admission before any selected output and before IR repins the receiver.
-      // eslint-disable-next-line unicorn/no-array-sort -- Deterministic exact CI order.
-      for (const apiName of [...new Set(ciSelectors.map((value) => value.slice(19)))].sort()) {
-        try {
-          const ciConnection = org.getConnection('68.0');
-          const context = this.calculatedInsightContext(ciConnection, effectiveScope);
-          // Retrieval is read-only: run history and a SYSTEM_MANAGED schedule are admitted.
-          const exact = await this.acquireExactCalculatedInsight(context, apiName, false, true);
-          if (exact.state !== 'present' || exact.status !== 'ACTIVE')
-            throw retainConnectDiagnostic(
-              new CalculatedInsightError(
-                exact.state === 'unknown'
-                  ? (exact.diagnostics.find((code) => /^CI_[A-Z_]+$/u.test(code)) ??
-                      'CI_ACQUISITION_FAILED')
-                  : exact.state === 'absent'
-                    ? 'CI_NOT_FOUND'
-                    : 'CI_NOT_ACTIVE',
-              ),
-              getConnectDiagnostic(exact),
-            );
-          if (
-            exact.document.identity.apiName !== apiName ||
-            exact.document.identity.dataSpace !== 'default'
-          )
-            throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-          await context.bind(exact.document);
-          const target = flags['target-org'] ?? ciConnection.getUsername();
-          if (!target) throw new CalculatedInsightError('TARGET_ORG_REQUIRED');
-          const definitionXml = await this.acquireCalculatedInsightXml(target, apiName);
-          const document = validateCalculatedInsightPair(
-            exact.document,
-            definitionXml,
-            apiName.slice(0, -5),
-          );
-          context.check();
-          calculatedInsights.push({ document, definitionXml });
-        } catch (error: unknown) {
-          diagnose(error, apiName, 'calculated-insight');
-          reported = error;
-          throw error;
-        }
-      }
-      const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
-      if (irSelectors.length > 0) {
-        const irVersion = await resolveApiVersion('68.0', async () => {
-          throw new Error('Fixed route must not discover.');
-        });
-        const irConnection = org.getConnection('68.0');
-
-        for (const apiName of [
-          ...new Set(irSelectors.map((value) => value.slice(20))),
-          // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
-        ].sort()) {
-          const acquired = await this.acquireIdentityResolution(
-            irConnection,
-            apiName,
-            irVersion,
-            effectiveScope,
-          );
-          if (acquired.blockers.length > 0 || !acquired.candidate)
-            throw retainConnectDiagnostic(
-              new IdentityResolutionError(acquired.blockers[0] ?? 'INCOMPLETE_IDENTITY_RESOLUTION'),
-              getConnectDiagnostic(acquired),
-            );
-          const document = validateIdentityResolutionDocument(acquired.candidate);
-          if (
-            acquired.identity.apiName !== apiName ||
-            acquired.identity.dataSpace !== effectiveScope ||
-            document.identity.apiName !== apiName ||
-            document.identity.dataSpace !== effectiveScope
-          )
-            throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
-          identityResolutions.push({ document });
-        }
-      }
-      const entries = [...selected, ...calculatedInsights, ...identityResolutions];
-      envelope.result.selection = [
-        ...dlos.map((name) => `dlo:${name}`),
-        ...mappings.map((name) => `mapping:${name}`),
-        ...relationshipDmos.map((name) => `relationship:${name}`),
-        ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
-      ];
-      for (const entry of entries) {
-        const { document } = entry;
-        try {
-          const receipt =
-            document.kind === 'calculated-insight'
-              ? await this.writeCalculatedInsight(
-                  document,
-                  'definitionXml' in entry ? entry.definitionXml : '',
-                  outputDirectory,
-                  flags.overwrite,
-                )
-              : document.kind === 'identity-resolution'
-                ? await this.writeIdentityResolution(document, outputDirectory, flags.overwrite)
-                : document.kind === 'segment'
-                  ? await this.writeSegment(document, outputDirectory, flags.overwrite)
-                  : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
-                      document,
-                      outputDirectory,
-                      flags.overwrite,
-                    );
-          envelope.result.items.push({
-            identity: { ...document.identity },
-            ...(document.kind === 'segment' ||
-            document.kind === 'identity-resolution' ||
-            document.kind === 'calculated-insight'
-              ? { family: document.kind }
-              : {}),
-            ...(flags['api-version'] === 'auto' ||
-            document.kind === 'segment' ||
-            document.kind === 'identity-resolution' ||
-            document.kind === 'calculated-insight'
-              ? {
-                  routes:
-                    document.kind === 'identity-resolution'
-                      ? [
-                          {
-                            operation: 'identity-resolutions.get',
-                            apiVersion: '68.0',
-                            transport: 'native' as const,
-                          },
-                        ]
-                      : [
-                          {
-                            operation: `${document.kind}.get`,
-                            apiVersion:
-                              document.kind === 'calculated-insight'
-                                ? '68.0'
-                                : document.kind === 'segment'
-                                  ? selection.soapNumeric
-                                  : '65.0',
-                            transport: 'native' as const,
-                          },
-                          ...(document.kind === 'segment'
-                            ? []
-                            : [
-                                {
-                                  operation: `${document.kind}.metadata`,
-                                  apiVersion: '65.0',
-                                  transport: 'metadata' as const,
-                                },
-                              ]),
-                          ...(document.kind === 'calculated-insight'
-                            ? [
-                                {
-                                  operation: 'calculated-insight.source',
-                                  apiVersion: '65.0',
-                                  transport: 'metadata' as const,
-                                },
-                                {
-                                  operation: 'dependency.get',
-                                  apiVersion: '65.0',
-                                  transport: 'native' as const,
-                                },
-                                {
-                                  operation: 'dependency.metadata',
-                                  apiVersion: '65.0',
-                                  transport: 'metadata' as const,
-                                },
-                              ]
-                            : []),
-                        ],
-                }
-              : {}),
-            // A DMO here is always one native read.
-            ...(document.kind === 'dmo'
-              ? {
-                  routes: [
-                    {
-                      operation: 'dmo.get',
-                      apiVersion: nativeDmoVersion,
-                      transport: 'native' as const,
-                    },
-                  ],
-                }
-              : {}),
-            operation: 'retrieve',
-            ...receipt,
-          });
-        } catch (error: unknown) {
-          diagnose(error, document.identity.apiName, document.kind);
-          // Do not publish dependents after an ambiguous prerequisite output failure.
-          break;
-        }
-      }
-    } catch (error: unknown) {
-      if (error !== reported) diagnose(error);
+    const groups = groupSelectors(flags.metadata ?? []);
+    const plans: Array<{ family: RetrieveFamily; run: () => Promise<GroupOutcome> }> = [];
+    // Validate every group before any org access; the first refusal blocks the whole run.
+    for (const [group, members] of groups) {
+      const plan =
+        group === 'data-stream'
+          ? this.prepareDataStreams(members, context)
+          : group === 'data-transform'
+            ? this.prepareDataTransforms(members, context)
+            : group === 'data-graph'
+              ? this.prepareDataGraphs(members, context)
+              : this.prepareRest(members, context);
+      if ('refusal' in plan)
+        return groups.length === 1
+          ? finish('blocked', plan.refusal)
+          : finish('blocked', plan.refusal, undefined, plan.family);
+      plans.push(plan);
     }
+    if (plans.length === 1) {
+      const outcome = await plans[0].run();
+      envelope.result.selection = outcome.selection;
+      return finish(outcome.status, outcome.code, outcome.error);
+    }
+    const statuses: Array<RetrieveEnvelope['status']> = [];
+    const selection: string[] = [];
+    // Each group resolves its own org connection, so no API version pin leaks between groups.
+    for (const plan of plans) {
+      const outcome = await plan.run();
+      statuses.push(outcome.status);
+      selection.push(...outcome.selection);
+      if (outcome.code)
+        envelope.diagnostics.errors.push({
+          code: outcome.code,
+          message: retrievalMessage(outcome.error),
+          retryable: false,
+          family: outcome.family ?? plan.family,
+        });
+    }
+    envelope.result.selection = selection;
     return finish(
-      envelope.diagnostics.errors.length === 0 ? 'success' : failed ? 'failed' : 'blocked',
+      statuses.includes('failed') ? 'failed' : statuses.includes('blocked') ? 'blocked' : 'success',
     );
   }
 }

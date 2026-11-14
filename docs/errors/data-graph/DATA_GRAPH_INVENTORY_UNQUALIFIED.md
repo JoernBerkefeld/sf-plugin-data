@@ -10,7 +10,7 @@
 
 ## What it means
 
-You selected the bare type `data-graph` without a name. The retrieve only supports one named data graph.
+You selected the bare type `data-graph` without a name. The retrieve reads only data graphs you name; repeat `--metadata data-graph:<Name>` for several.
 
 ## Why the plugin stops
 
@@ -35,5 +35,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`NATIVE_GRAPH_SELECTION_UNSUPPORTED`](../data-graph/NATIVE_GRAPH_SELECTION_UNSUPPORTED.md) — only one data graph per retrieve.
 - [`IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED`](../identity-resolution/IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED.md) — the same rule for identity resolution.

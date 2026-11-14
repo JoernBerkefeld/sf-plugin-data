@@ -24,11 +24,14 @@ A graph the plugin cannot check could be changed or deleted in a way you did not
 
 ## Example output
 
+`sf data360 retrieve` reports this case under [`NATIVE_GRAPH_RETRIEVE_BLOCKED`](../data-graph/NATIVE_GRAPH_RETRIEVE_BLOCKED.md):
+
 ```text
-Retrieve: blocked (NATIVE_GRAPH_RETRIEVE_BLOCKED).
-UNSUPPORTED_DATA_GRAPH_CONFIGURATION: Data graph configuration could not be admitted.
-Hint: The data graph definition or the answer from the org has a shape the plugin cannot check. Retrieve the graph again to get a supported file, or simplify the definition, then rerun.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-graph/UNSUPPORTED_DATA_GRAPH_CONFIGURATION.md
+Retrieve: blocked.
+data-graph:CustomerGraph: NATIVE_GRAPH_RETRIEVE_BLOCKED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Retrieval did not complete. Check selection, authenticated org, service capability and output path.
+Hint: The data graph could not be retrieved or written to disk. Check the graph name, your org access and the output folder (use --overwrite to replace a changed file), then rerun.
+Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-graph/NATIVE_GRAPH_RETRIEVE_BLOCKED.md
+Downloaded data-graph: 0
 ```
 
 ## Related codes

@@ -42,7 +42,8 @@ The four support columns describe **this plugin's public commands**, not everyth
 Salesforce can do. **Partial** means an implemented bounded subset, not full-resource
 or released-package qualification. **Unavailable** means no public plugin operation;
 it does not mean Salesforce lacks that capability. No resource has full CRUD support.
-Retrieve uses `sf data360 retrieve`; Create/Update use `sf data360 deploy`.
+Retrieve uses `sf data360 retrieve`; one retrieve takes any mix of family selectors
+(several graphs included) and reports one result. Create/Update use `sf data360 deploy`.
 Delete uses `sf data360 delete` for the bounded native families described below,
 each selected by name with `-m` and read from the org before anything is deleted.
 Exact selectors, processing acknowledgements and family-specific limits apply.
@@ -476,8 +477,8 @@ reports `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, or the o
 ruleset as `DATA_GRAPH_OWNER`. Deploy itself does not check the owner; Salesforce
 decides.
 Deploy takes any number of graphs, alone or beside other families (also through
-`--changed-since`); graphs run last. Retrieve takes one graph per command; cascade is
-not available.
+`--changed-since`); graphs run last. Retrieve takes any number of graphs, alone or
+beside other families; cascade is not available.
 
 For an existing graph, edit the retrieved file, preview, then deploy with
 `--allow-processing`. The change goes to Salesforce in one PUT and Salesforce decides:
@@ -1652,7 +1653,8 @@ The plugin separately supports exact `data-transform:Name` retrieval and bounded
 single-file definition deployment using native API68 (`auto` or explicit `68.0`),
 with omitted or explicit `default` dataspace. Canonical files are
 `data360/dataTransforms/Name.dataTransform.json`; use either that exact file with
-`--source-dir` or one exact `--metadata data-transform:Name` selector.
+`--source-dir` or one exact `--metadata data-transform:Name` selector for deploy.
+Retrieve takes several `data-transform:Name` selectors, alone or beside other families.
 
 ```sh
 sf data360 retrieve -m data-transform:Example --target-org SOURCE_ALIAS --api-version 68.0 --json

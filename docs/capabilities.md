@@ -1,3 +1,24 @@
+## Mixed retrieve — 2026-11-14
+
+One retrieve may hold any mix of selectors: `dlo`, `dmo`, `mapping`, `relationship:<Dmo__dlm>`,
+`data-stream:`, `data-transform:`, `data-graph:` (several), `calculated-insight:`,
+`identity-resolution:` and `segment:`, plus the existing type-inventory forms. Every family's
+selector, version and data-space checks run before any org read; one refusal blocks the
+whole run; with several families selected its diagnostic names the family (for example `--api-version 65.0` with a
+transform, which reads at API 68 only). The families then run one after another: DLO, DMO,
+mapping, relationship, Segment, calculated insight and identity resolution first, then data
+streams, data transforms and data graphs. Each keeps its own rules (inventory refusals,
+`--overwrite`, identical bytes `unchanged`). A failing component or family does not stop
+the others; their files are kept and the result is the worst status (`failed` over
+`blocked` over `success`). A failing graph gets its own diagnostic and the next graph still
+runs. Retrieve only reads.
+
+Live on `isolated-source` (2026-11-14, `auto`): one retrieve of a DMO, an Ingestion API
+stream, a transform, two graphs and an identity resolution ruleset retrieved all six in one
+`success` result. A repeat reported the DMO, ruleset, transform and graphs `unchanged`; the
+stream was refused with `OVERWRITE_REQUIRED` because Salesforce returns its field mappings in a
+different order on each read, and the file keeps that order (also for a stream retrieved alone).
+
 ## Delete phases — 2026-11-14
 
 One delete may hold any mix of families, selected by name with `-m` only (no

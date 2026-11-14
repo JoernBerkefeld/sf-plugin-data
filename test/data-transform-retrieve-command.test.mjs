@@ -137,7 +137,7 @@ for (const flags of [
   { metadata: ['data-transform:*'] },
   { metadata: ['data-transform:../Escape'] },
   { metadata: ['data-transform:Alpha:Beta'] },
-  { metadata: ['data-transform:Alpha', 'dlo:Other__dll'] },
+  { metadata: ['data-transform:Alpha', 'segment'] },
   { dataspace: 'other' },
   ...['61.0', '65.0', '67.0', '69.0', 'latest'].map((version) => ({ 'api-version': version })),
 ])

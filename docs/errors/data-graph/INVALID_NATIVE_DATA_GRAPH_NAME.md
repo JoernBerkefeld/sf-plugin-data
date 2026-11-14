@@ -2,11 +2,11 @@
 
 > The data graph name is not a valid API name. Use a name that starts with a letter and has only letters, digits and underscores, at most 200 characters.
 
-|              |                                                                 |
-| ------------ | --------------------------------------------------------------- |
-| **Family**   | Data graph                                                      |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete` |
-| **Outcome**  | `blocked` — nothing was sent to the org                         |
+|              |                                          |
+| ------------ | ---------------------------------------- |
+| **Family**   | Data graph                               |
+| **Commands** | `sf data360 deploy`, `sf data360 delete` |
+| **Outcome**  | `blocked` — nothing was sent to the org  |
 
 ## What it means
 
@@ -23,12 +23,7 @@ Only a plain API name is put into the request address. Anything else could addre
 
 ## Example output
 
-```text
-Retrieve: blocked (NATIVE_GRAPH_RETRIEVE_BLOCKED).
-INVALID_NATIVE_DATA_GRAPH_NAME: Data graph configuration could not be admitted.
-Hint: The data graph name is not a valid API name. Use a name that starts with a letter and has only letters, digits and underscores, at most 200 characters.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-graph/INVALID_NATIVE_DATA_GRAPH_NAME.md
-```
+`sf data360 retrieve` does not print this code: it refuses an invalid name in `--metadata data-graph:<Name>` before any org call with [`INVALID_SELECTION`](../general/INVALID_SELECTION.md).
 
 ## Related codes
 

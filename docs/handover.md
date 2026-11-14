@@ -1,3 +1,43 @@
+# Retrieve takes any mix of families — 2026-11-14
+
+Plan `sf_plugin_data_retrieve_mixed_20261114.plan.md`. Version stays 0.1.0.
+
+- `sf data360 retrieve` splits `-m` into four groups: rest (DLO, DMO, mapping, relationship,
+  Segment, CI, IR and the type-inventory forms; an empty selection is all native families),
+  data-stream, data-transform, data-graph. Every non-empty group runs its existing checks
+  before any org call; the first refusal blocks the run (with several groups the diagnostic
+  carries `family`). Groups then run in that order, each through its existing path as a
+  private method (`prepareRest`, `prepareDataStreams`, `prepareDataTransforms`,
+  `prepareDataGraphs`), each resolving the org itself (no shared connection-version pin).
+  One envelope: selections concatenated, status the worst group status, `sourceOrgId` and
+  `soapApiVersion` from the first group that sets them. A single-group run produces the
+  previous envelope and human output, with one exception: a failing graph is a per-graph
+  diagnostic (`NATIVE_GRAPH_RETRIEVE_BLOCKED` with identity and `family`, header
+  `Retrieve: blocked.`, `sourceOrgId` set); a graph context failure stays one diagnostic
+  without identity.
+- Several `data-graph:` selectors are read one after another (deduplicated, sorted). A
+  malformed `data-graph:1bad` is `INVALID_SELECTION`. Code `NATIVE_GRAPH_SELECTION_UNSUPPORTED`
+  removed (registry, page, index).
+- Tests: new `test/retrieve-mixed.test.mjs`; the old mixed-graph refusal test is replaced.
+- Live (`isolated-source`, org 00Daj000010xkZNEAY verified, zero writes, scratch
+  `F:/Temp/retmix-9CKLjG`): one retrieve of `dmo:AgentMap68_e125f79a93__dlm`,
+  `data-stream:PublicIngestion1793211653953_ProbeRecord_E8A1BD6C`,
+  `data-transform:SafeTr041936a0da`, `data-graph:GraphRetest71399c4a1028`,
+  `data-graph:OwnedPair_a87a82c3` and `identity-resolution:Individual_9a99`: `success`, six
+  items retrieved. Repeat: five `unchanged`, the stream `OVERWRITE_REQUIRED` (Salesforce
+  returns the stream field mappings in a varying order and the file keeps it; also for a
+  stream retrieved alone). Verification DB: `data360:retrieve.mixed.api68`.
+
+Handover:
+
+- Open: stream field-mapping order makes a repeat stream retrieve differ (above).
+- Not done (review nice-to-haves): help says a refusal names the family (only with several
+  groups); no test for a CI/IR admission throw in the rest group beside another group; a
+  stray throw escaping a group's run would skip later groups (no known trigger); the
+  `DATA_GRAPH_INVENTORY_UNQUALIFIED` hint still says "Name one graph".
+- `src/services/retrieve-mapping.ts` is unused (only its test imports it) but is the only
+  emitter of seven registered mapping codes; left for a separate cleanup.
+
 # Chunk E: delete by name, no --confirm-delete — 2026-11-14
 
 Chunk E of the CRUD pipeline plan (user decision 2026-11-14, plus the relationship selector

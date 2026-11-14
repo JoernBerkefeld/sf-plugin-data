@@ -18,8 +18,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Data graphs work only with API version 68.0 in the default data space. Use --api-version auto or 68.0 and the default data space, then rerun.',
   NATIVE_GRAPH_RETRIEVE_BLOCKED:
     'The data graph could not be retrieved or written to disk. Check the graph name, your org access and the output folder (use --overwrite to replace a changed file), then rerun.',
-  NATIVE_GRAPH_SELECTION_UNSUPPORTED:
-    'Retrieve takes exactly one data graph per command. Name it with --metadata data-graph:<Name> and no other selector.',
   PARTIAL_DATA_GRAPH_OUTPUT:
     'The graph file was written, but the final check of it failed, so it may not match the org. Inspect the .native-dataGraph.json file and retrieve again with --overwrite.',
   UNSUPPORTED_DATA_GRAPH_CONFIGURATION:
