@@ -49,9 +49,9 @@ export const hints: Readonly<Record<string, string>> = {
   TRANSFORM_WRITE_UNCONFIRMED:
     'The transform write was sent, but Salesforce did not return a readable confirmation. Check in Data Cloud whether the transform was created or updated before deploying again.',
   UNSUPPORTED_TRANSFORM_INPUT:
-    'The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, or its data space is not default. Fix the file and rerun.',
+    'The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, a key the create/update input does not take, or a data space other than default. Fix the file (the message names the key) and rerun.',
   UNSUPPORTED_TRANSFORM_OWNER_OR_STATE:
-    'The data transform is not a custom transform (creationType CUSTOM) with a valid record ID. The plugin only manages custom transforms; manage this one in Data Cloud.',
+    'The data transform is not a custom transform (creationType CUSTOM) with a valid record ID. The plugin only manages custom transforms: retrieve writes it as-is, deploy and delete refuse it; manage it in Data Cloud.',
   UNSUPPORTED_TRANSFORM_VARIANT:
-    'The data transform has a namespace from a package, which the plugin does not manage. Manage this transform in Data Cloud.',
+    'The data transform has a namespace from a package, which the plugin does not manage: retrieve writes it as-is, deploy and delete refuse it; manage it through its package.',
 };

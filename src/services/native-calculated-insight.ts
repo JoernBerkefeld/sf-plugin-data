@@ -88,8 +88,10 @@ export const visualDraftPlaceholder =
 
 /**
  * Read one calculated insight by name with the API 68 GET and project it to the file form.
- * Read only; any status, schedule or SQL is retrieved, except a Visual Builder draft, whose
- * GET carries a placeholder instead of SQL (`CI_VISUAL_DRAFT_WITHOUT_SQL`).
+ * Read only; any status, schedule or SQL is projected, except a Visual Builder draft, whose
+ * GET carries a placeholder instead of SQL (`CI_VISUAL_DRAFT_WITHOUT_SQL`), and an insight
+ * without SQL (`INVALID_CI_DOCUMENT`). The retrieve command writes those two as returned
+ * (verbatim, with the code as reason), and deploy refuses such a file.
  * @param {Pick<CalculatedInsightClient, 'get'>} client API 68 default-space client.
  * @param {string} apiName Exact name ending in __cio.
  * @param {string} dataSpace Selected data space.
@@ -105,7 +107,8 @@ export async function retrieveNativeCalculatedInsight(
     apiName,
   );
   if (acquired.state === 'absent') throw new CalculatedInsightError('CI_NOT_FOUND');
-  // A Visual Builder draft reads this sentence instead of SQL until it is published.
+  // A Visual Builder draft reads this sentence instead of SQL until it is published; the
+  // retrieve command writes it verbatim with this code as the reason.
   if (acquired.document.expression.trim() === visualDraftPlaceholder)
     throw new CalculatedInsightError('CI_VISUAL_DRAFT_WITHOUT_SQL');
   return acquired.document;

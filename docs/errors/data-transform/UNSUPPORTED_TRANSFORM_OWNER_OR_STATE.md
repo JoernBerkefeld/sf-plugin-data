@@ -1,12 +1,12 @@
 # `UNSUPPORTED_TRANSFORM_OWNER_OR_STATE`
 
-> The data transform is not a custom transform (creationType CUSTOM) with a valid record ID. The plugin only manages custom transforms; manage this one in Data Cloud.
+> The data transform is not a custom transform (creationType CUSTOM) with a valid record ID. The plugin only manages custom transforms: retrieve writes it as-is, deploy and delete refuse it; manage it in Data Cloud.
 
-|              |                                                                              |
-| ------------ | ---------------------------------------------------------------------------- |
-| **Family**   | Data transform                                                               |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`              |
-| **Outcome**  | `failed` for retrieve; `blocked` for deploy and delete — nothing was changed |
+|              |                                                                                                                              |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data transform                                                                                                               |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                              |
+| **Outcome**  | retrieve: `success`, the file is written as-is (verbatim) with a warning; deploy and delete: `blocked` — nothing was changed |
 
 ## What it means
 
@@ -14,7 +14,9 @@ The transform read from the org does not have `creationType` `CUSTOM`, or its re
 
 ## Why the plugin stops
 
-Transforms created by the platform, for example for data graphs or identity resolution, are owned by the feature that made them. Changing or deleting them from a local file could break that feature, so the plugin leaves them alone.
+Transforms created by the platform, for example for data graphs or identity resolution, are owned by the feature that made them. Changing or deleting them from a local file could break that feature, so deploy and delete leave them alone.
+
+Retrieve does not stop: it writes the transform GET as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, so nothing in the org is hidden. Deploy skips that file in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
 
 ## How to fix
 
@@ -24,14 +26,13 @@ Transforms created by the platform, for example for data graphs or identity reso
 ## Example output
 
 ```text
-Retrieve: failed.
-data-transform:Orders_Copy: UNSUPPORTED_TRANSFORM_OWNER_OR_STATE: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Transform retrieval did not complete; no org write attempted.
-Hint: The data transform is not a custom transform (creationType CUSTOM) with a valid record ID. The plugin only manages custom transforms; manage this one in Data Cloud.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/UNSUPPORTED_TRANSFORM_OWNER_OR_STATE.md
-Downloaded data-transform: 0
+Retrieve: success.
+Warning: data-transform:Orders_Copy: retrieved as-is (verbatim, reason UNSUPPORTED_TRANSFORM_OWNER_OR_STATE) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-transform:Orders_Copy (retrieved).
 ```
 
 ## Related codes
 
 - [`UNSUPPORTED_TRANSFORM_VARIANT`](../data-transform/UNSUPPORTED_TRANSFORM_VARIANT.md) — the transform comes from a package.
 - [`UNSUPPORTED_TRANSFORM_INPUT`](../data-transform/UNSUPPORTED_TRANSFORM_INPUT.md) — the transform input fails the basic file checks.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy of the verbatim file.

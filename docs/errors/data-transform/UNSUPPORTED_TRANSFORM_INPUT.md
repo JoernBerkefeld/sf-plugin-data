@@ -1,12 +1,12 @@
 # `UNSUPPORTED_TRANSFORM_INPUT`
 
-> The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, or its data space is not default. Fix the file and rerun.
+> The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, a key the create/update input does not take, or a data space other than default. Fix the file (the message names the key) and rerun.
 
-|              |                                                                              |
-| ------------ | ---------------------------------------------------------------------------- |
-| **Family**   | Data transform                                                               |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`              |
-| **Outcome**  | `failed` for retrieve; `blocked` for deploy and delete — nothing was changed |
+|              |                                                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data transform                                                                                                                                    |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                                                   |
+| **Outcome**  | retrieve: `success`, a transform read from the org is written as-is (verbatim) with a warning; deploy and delete: `blocked` — nothing was changed |
 
 ## What it means
 
@@ -16,9 +16,12 @@ The plugin checks only a few things in the transform input before it sends it, a
 - the envelope is `schemaVersion: 1`, `kind: data-transform`, `apiVersion: 68.0` with one `definition` object;
 - `name` is an API name (a letter, then letters, digits or underscores);
 - exactly one of `definition` (one definition, such as STL) or `definitions` (a list, such as DCSQL) is present;
+- every top-level key of the definition is one the create/update input takes (`name`, `label`, `description`, `type`, `dataSpaceName`, `fullRunFrequency`, `definition`, `definitions`, `parameters`, `tags`, `capabilities`, `currencyIsoCode`, `primarySource`);
 - `dataSpaceName`, when present, is `default` (a transform built in the UI on DLOs may have none).
 
-Everything else in the definition is sent as written, and Salesforce decides whether it is valid.
+Everything else in the definition is sent as written, and Salesforce decides whether it is valid. On deploy, the message names the key path, for example `definition.futureKey`.
+
+Retrieve keeps a key the input does not take (deploy then refuses the file, naming it) and leaves out a `null` `definition` or `definitions` beside the other one. A transform read from the org that still fails these checks, for example with both `definition` and `definitions`, is written as Salesforce returned it (a verbatim file with this code as reason), which deploy refuses.
 
 ## Why the plugin stops
 
@@ -27,16 +30,15 @@ Without a valid name and one definition form, the plugin cannot match the file t
 ## How to fix
 
 1. Open the file in `data360/dataTransforms/` and check the points above.
-2. If the file is damaged, remove it and retrieve the transform again: `sf data360 retrieve --metadata data-transform:<Name>`.
+2. Remove a key the message names, unless you want to keep the file for reference only.
+3. If the file is damaged, remove it and retrieve the transform again: `sf data360 retrieve --metadata data-transform:<Name>`.
 
 ## Example output
 
 ```text
-Retrieve: failed.
-data-transform:Orders_Copy: UNSUPPORTED_TRANSFORM_INPUT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Transform retrieval did not complete; no org write attempted.
-Hint: The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, or its data space is not default. Fix the file and rerun.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/UNSUPPORTED_TRANSFORM_INPUT.md
-Downloaded data-transform: 0
+Retrieve: success.
+Warning: data-transform:Orders_Copy: retrieved as-is (verbatim, reason UNSUPPORTED_TRANSFORM_INPUT) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-transform:Orders_Copy (retrieved).
 ```
 
 ## Related codes

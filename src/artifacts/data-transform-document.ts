@@ -1,3 +1,6 @@
+import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import type { DocumentMode } from './verbatim-document.js';
+
 export type DataTransformDocument = {
   schemaVersion: 1;
   kind: 'data-transform';
@@ -38,6 +41,23 @@ const inputKeys = [
   'currencyIsoCode',
   'primarySource',
 ];
+/**
+ * Server-owned top-level keys of a GET (live API 68 GET, isolated-source 2026-11-15), plus every
+ * `lastRun*` key; no create/update input takes them. Other keys outside `inputKeys` are kept on
+ * retrieve, and deploy refuses them.
+ */
+const serverKeys = new Set([
+  'actionUrls',
+  'createdBy',
+  'createdDate',
+  'creationType',
+  'id',
+  'lastModifiedBy',
+  'lastModifiedDate',
+  'namespace',
+  'status',
+  'url',
+]);
 /** Server-owned keys of an `outputDataObjects` entry; the rest is sent as read. */
 const outputServerKeys = ['id', 'createdDate', 'lastModifiedDate', 'status'];
 
@@ -97,17 +117,44 @@ function record(value: unknown, keys?: string[]): Record<string, unknown> {
 }
 
 /**
+ * Refuse a transform file, naming the key path that cannot be deployed.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {DataTransformError} UNSUPPORTED_TRANSFORM_INPUT with an explanation.
+ */
+function refuseKey(keyPath: string, problem: string): DataTransformError {
+  return explainInput(
+    new DataTransformError('UNSUPPORTED_TRANSFORM_INPUT'),
+    `The data transform file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the transform again once the plugin supports it.`,
+  );
+}
+
+/**
  * Admit the native transform input as authored: inert JSON, an exact name, exactly one of
- * `definition` / `definitions` and, when `dataSpaceName` is present, the default data space.
- * Salesforce validates the rest.
+ * `definition` / `definitions`, only create/update input keys and, when `dataSpaceName` is
+ * present, the default data space. Salesforce validates the rest. Retrieve mode keeps keys the
+ * input does not take; deploy then refuses them, naming the key.
  * @param {unknown} value Complete native input.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
  * @returns {Record<string, unknown>} Detached input, sent as written.
  */
-export function buildDataTransformInput(value: unknown): Record<string, unknown> {
+export function buildDataTransformInput(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): Record<string, unknown> {
   inert(value);
   const input = record(value);
   requireTransform(typeof input.name === 'string' && dataTransformName.test(input.name));
-  requireTransform(Object.hasOwn(input, 'definition') !== Object.hasOwn(input, 'definitions'));
+  if (Object.hasOwn(input, 'definition') && Object.hasOwn(input, 'definitions'))
+    throw refuseKey('definition.definitions', 'is present beside definition.definition');
+  requireTransform(Object.hasOwn(input, 'definition') || Object.hasOwn(input, 'definitions'));
+  if (mode === 'deploy')
+    for (const key of Object.keys(input))
+      if (!inputKeys.includes(key))
+        throw refuseKey(
+          `definition.${printableKey(key)}`,
+          'is not a key the data transform create/update input takes',
+        );
   // A transform on DLOs applies across data spaces and has no dataSpaceName; one that names a
   // data space must name the default one.
   requireTransform(!Object.hasOwn(input, 'dataSpaceName') || input.dataSpaceName === 'default');
@@ -117,9 +164,13 @@ export function buildDataTransformInput(value: unknown): Record<string, unknown>
 /**
  * Validate the portable input-only native API68 artifact.
  * @param {unknown} value Portable candidate.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
  * @returns {DataTransformDocument} Detached checked document.
  */
-export function validateDataTransformDocument(value: unknown): DataTransformDocument {
+export function validateDataTransformDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): DataTransformDocument {
   inert(value);
   const document = record(value, ['schemaVersion', 'kind', 'apiVersion', 'definition']);
   requireTransform(
@@ -131,17 +182,21 @@ export function validateDataTransformDocument(value: unknown): DataTransformDocu
     schemaVersion: 1,
     kind: 'data-transform',
     apiVersion: '68.0',
-    definition: buildDataTransformInput(document.definition),
+    definition: buildDataTransformInput(document.definition, mode),
   };
 }
 
 /**
  * Produce stable portable bytes independent of response property ordering.
  * @param {unknown} value Checked artifact candidate.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
  * @returns {string} Deterministic JSON with final LF.
  */
-export function serializeDataTransformDocument(value: unknown): string {
-  const document = validateDataTransformDocument(value);
+export function serializeDataTransformDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): string {
+  const document = validateDataTransformDocument(value, mode);
   const canonical = (entry: unknown): unknown => {
     if (Array.isArray(entry)) return entry.map((child) => canonical(child));
     if (entry && typeof entry === 'object') {
@@ -176,14 +231,18 @@ function projectDefinition(definition: unknown): unknown {
 
 /**
  * Admit a custom, unpackaged transform GET and project its native input: the input keys present,
- * definitions without schedule and output objects without server-owned keys.
+ * definitions without schedule and output objects without server-owned keys. Retrieve mode also
+ * keeps keys that are neither input nor server-owned, and leaves out a `null` `definition` or
+ * `definitions` beside the other one.
  * @param {unknown} value Native item response.
  * @param {unknown} scheduleValue Independently read native schedule, kept as an observation.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
  * @returns {DataTransformObservation} Portable input plus detached read-only observations.
  */
 export function observeDataTransform(
   value: unknown,
   scheduleValue: unknown,
+  mode: DocumentMode = 'deploy',
 ): DataTransformObservation {
   inert(value);
   inert(scheduleValue);
@@ -197,8 +256,14 @@ export function observeDataTransform(
   );
   requireTransform(!runtime.namespace, 'UNSUPPORTED_TRANSFORM_VARIANT');
   const projected: Record<string, unknown> = {};
+  // On retrieve, a null definition or definitions beside the other one is the unused one.
+  const unused = (key: string): boolean =>
+    mode === 'retrieve' &&
+    (key === 'definition' || key === 'definitions') &&
+    runtime[key] === null &&
+    Object.hasOwn(runtime, key === 'definition' ? 'definitions' : 'definition');
   for (const key of inputKeys) {
-    if (!Object.hasOwn(runtime, key)) continue;
+    if (!Object.hasOwn(runtime, key) || unused(key)) continue;
     const entry = runtime[key];
     projected[key] =
       key === 'definition'
@@ -207,12 +272,16 @@ export function observeDataTransform(
           ? entry.map((item) => projectDefinition(item))
           : structuredClone(entry);
   }
+  if (mode === 'retrieve')
+    for (const key of Object.keys(runtime))
+      if (!inputKeys.includes(key) && !serverKeys.has(key) && !key.startsWith('lastRun'))
+        projected[key] = structuredClone(runtime[key]);
   return {
     document: {
       schemaVersion: 1,
       kind: 'data-transform',
       apiVersion: '68.0',
-      definition: buildDataTransformInput(projected),
+      definition: buildDataTransformInput(projected, mode),
     },
     targetId: runtime.id as string,
     runtime: structuredClone(runtime),

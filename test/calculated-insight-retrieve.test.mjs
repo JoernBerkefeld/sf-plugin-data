@@ -302,7 +302,9 @@ test('acquire: GET by name, 404 is CI_NOT_FOUND, another name is CI_IDENTITY_CHA
     );
 });
 
-test('retrieve refuses a Visual Builder draft whose GET has a placeholder instead of SQL', async () => {
+// The projection still throws for a Visual Builder draft; the retrieve command turns that into a
+// verbatim file with this reason (test/lenient-retrieve-ci-transform.test.mjs).
+test('the projection rejects a Visual Builder draft whose GET has a placeholder instead of SQL', async () => {
   const draft = {
     ...getBody(),
     calculatedInsightStatus: 'DRAFT',

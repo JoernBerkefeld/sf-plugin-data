@@ -1,3 +1,34 @@
+# Lenient retrieve step 5: calculated insights and data transforms keep what the plugin does not model — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 5.
+Deploy behaviour is unchanged except that a transform refusal now names the key path and an
+unknown top-level transform key is refused.
+
+- Calculated insights: no code change needed for the outcome. `retrieveNativeCalculatedInsight`
+  still throws `CI_VISUAL_DRAFT_WITHOUT_SQL` (placeholder) and `INVALID_CI_DOCUMENT` (`expression`
+  null or empty); the step 0a catch-all writes the raw GET verbatim with that reason, no SQL file.
+  The CI document is an open key set, so unknown keys were already kept. Hint, error page and
+  README now describe the verbatim outcome.
+- Transforms: `DocumentMode` on `buildDataTransformInput`, `validateDataTransformDocument`,
+  `serializeDataTransformDocument`, `observeDataTransform` and `retrieveDataTransform` (plus a
+  `warnings` argument). `retrieve.ts` and the writer use `'retrieve'`; deploy, preflight,
+  execution readback and delete stay strict.
+- Retrieve mode: top-level GET keys that are neither input keys nor server-owned (`serverKeys`
+  from a live GET, plus `lastRun*`) are kept; a `null` `definition`/`definitions` beside the
+  other is left out; the schedule read is best effort (error or non-object = `{}` plus a
+  warning). Non-CUSTOM (`UNSUPPORTED_TRANSFORM_OWNER_OR_STATE`), namespaced
+  (`UNSUPPORTED_TRANSFORM_VARIANT`) and both definitions (`UNSUPPORTED_TRANSFORM_INPUT`) go
+  verbatim through the catch-all.
+- Deploy: `buildDataTransformInput` refuses keys outside the input keys and both definitions,
+  naming the key path; `readDataTransformInput` keeps the explanation on `INVALID_SOURCE`.
+- Tests: `test/lenient-retrieve-ci-transform.test.mjs`. Changed: the draft test in
+  `calculated-insight-retrieve.test.mjs` was renamed (the projection still rejects; the command
+  writes verbatim). Error pages for `CI_VISUAL_DRAFT_WITHOUT_SQL` and the three
+  `UNSUPPORTED_TRANSFORM_*` codes updated.
+- Open: git-range delete (`admitDeletedArtifact`) and `delete-data-transform` still validate a
+  transform file strictly, so a file with a kept unknown key cannot be deleted by file (as for
+  steps 1–4). Step 6, README/sfmc.guide (step 7).
+
 # Lenient retrieve step 4: data graphs keep settings the plugin does not model — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 4.

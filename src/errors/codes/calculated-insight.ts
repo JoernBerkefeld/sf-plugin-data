@@ -27,7 +27,7 @@ export const hints: Readonly<Record<string, string>> = {
   CI_UNEXPECTED_STATE:
     'After the write, the calculated insight moved to an unexpected status. Do not resend; check its status in Data 360 before another attempt.',
   CI_VISUAL_DRAFT_WITHOUT_SQL:
-    'A Visual Builder draft has no SQL in the API until it is published (Salesforce returns a placeholder instead), so it cannot be saved as a file. Publish it in Data Cloud, then retrieve it again.',
+    'A Visual Builder draft has no SQL in the API until it is published (Salesforce returns a placeholder instead). Retrieve wrote it as-is without a SQL file, and deploy refuses that file; publish it in Data Cloud, then retrieve it again.',
   INVALID_CI_DOCUMENT:
     'The calculated insight document lacks its API name, data space or SQL, or is not a JSON object. Retrieve the calculated insight again.',
   INVALID_CI_NAME:

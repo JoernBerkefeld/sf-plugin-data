@@ -108,10 +108,12 @@ export async function writeDataTransformDocument(
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'data-transform') ? value : undefined;
-  const document = verbatim ? undefined : validateDataTransformDocument(value);
+  const document = verbatim ? undefined : validateDataTransformDocument(value, 'retrieve');
   const name = verbatim ? verbatim.identity.apiName : (document!.definition.name as string);
   const bytes = Buffer.from(
-    verbatim ? serializeVerbatimDocument(verbatim) : serializeDataTransformDocument(document!),
+    verbatim
+      ? serializeVerbatimDocument(verbatim)
+      : serializeDataTransformDocument(document!, 'retrieve'),
   );
   if (
     !path.isAbsolute(projectRoot) ||
@@ -134,7 +136,7 @@ export async function writeDataTransformDocument(
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
       const saved = previousIdentity(previous.toString('utf8'), (previousValue) => ({
-        apiName: validateDataTransformDocument(previousValue).definition.name as string,
+        apiName: validateDataTransformDocument(previousValue, 'retrieve').definition.name as string,
       }));
       if (saved.apiName !== undefined && saved.apiName !== name)
         throw new DataTransformError('TRANSFORM_FILENAME_COLLISION');
