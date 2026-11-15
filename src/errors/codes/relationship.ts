@@ -5,7 +5,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_RELATIONSHIP_BINDING:
     'A DMO name used to list relationships is not a valid DMO API name. Check the relationship:Name__dlm selector or the source object in the relationship file.',
   INVALID_RELATIONSHIP_DOCUMENT:
-    'A relationship does not fit the file format: objects must be DMO API names, fields custom field API names, and cardinality and owner must be set. Check it in the org.',
+    'A relationship does not fit the file format: the source must be a DMO API name with a custom field (__c), the target any object and field API name (a DMO or a CRM object), and cardinality and owner must be set. Check it in the org.',
   INVALID_RELATIONSHIP_NAME:
     'The relationship name is not a valid API name: it must start with a letter and use only letters, digits and underscores. Use the exact name from the org.',
   INVALID_RELATIONSHIP_RESPONSE:
@@ -23,7 +23,7 @@ export const hints: Readonly<Record<string, string>> = {
   RELATIONSHIP_FILE_IDENTITY_MISMATCH:
     "The relationship definition the delete checks names a different relationship than the one selected. Nothing was deleted; with --changed-since, fix the deleted file's content, otherwise report it.",
   RELATIONSHIP_HTTP_ERROR:
-    'Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, both DMOs must already be mapped.',
+    'Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, the source DMO (and a target DMO) must already be mapped.',
   RELATIONSHIP_INVENTORY_INCOMPLETE:
     'The relationship list of the DMO did not add up (page count, total or duplicate names), possibly because it changed during the read. Rerun the command.',
   RELATIONSHIP_INVENTORY_UNQUALIFIED:

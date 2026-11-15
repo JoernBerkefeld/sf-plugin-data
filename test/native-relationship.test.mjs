@@ -77,6 +77,9 @@ test('relationship documents validate structurally and leave cardinality and own
   for (const value of [
     { ...spec, cardinality: 'OneToOne' },
     { ...spec, relationshipOwner: 'SomethingNew' },
+    // A CRM target (owner SObject): any object and field API name.
+    { ...spec, targetObjectName: 'Account', targetFieldName: 'Id', relationshipOwner: 'SObject' },
+    { ...spec, targetObjectName: 'B' },
   ])
     validateNativeRelationshipDocument({ ...document, spec: value });
   for (const broken of [
@@ -86,7 +89,8 @@ test('relationship documents validate structurally and leave cardinality and own
     { ...document, identity: { apiName: '1bad', dataSpace: 'default' } },
     { ...document, identity: { apiName: name, dataSpace: ' default' } },
     { ...document, spec: { ...spec, sourceObjectName: 'A__dll' } },
-    { ...document, spec: { ...spec, targetObjectName: 'B' } },
+    { ...document, spec: { ...spec, targetObjectName: 'Acc ount' } },
+    { ...document, spec: { ...spec, targetFieldName: '1Id' } },
     { ...document, spec: { ...spec, sourceFieldName: 'BRef' } },
     { ...document, spec: { ...spec, targetFieldName: 'Id__c ' } },
     { ...document, spec: { ...spec, cardinality: '' } },
@@ -97,6 +101,24 @@ test('relationship documents validate structurally and leave cardinality and own
       () => validateNativeRelationshipDocument(broken),
       code('INVALID_RELATIONSHIP_DOCUMENT'),
     );
+});
+
+test('a relationship to a CRM object (owner SObject) normalizes into a valid file', () => {
+  const crm = wire({
+    targetObjectName: 'Account',
+    targetFieldName: 'Id',
+    relationshipOwner: 'SObject',
+  });
+  crm.targetField = { label: 'Account ID', name: 'Id', type: 'SObjectField' };
+  crm.targetObject = { ...crm.targetObject, label: 'Account' };
+  const normalized = normalizeNativeRelationship(crm);
+  assert.deepEqual(normalized.spec, {
+    ...spec,
+    targetObjectName: 'Account',
+    targetFieldName: 'Id',
+    relationshipOwner: 'SObject',
+  });
+  assert.deepEqual(validateNativeRelationshipDocument(normalized), normalized);
 });
 
 test('normalization keeps the authored binding and drops id, labels, status and creation type', () => {

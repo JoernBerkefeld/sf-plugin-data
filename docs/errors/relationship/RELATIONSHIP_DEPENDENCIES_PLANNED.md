@@ -19,7 +19,7 @@ The plugin reports it so you know that the relationship was not compared. It doe
 ## How to fix
 
 1. Nothing to fix. Run the deploy without `--preview`: DMOs are written before relationships, and each relationship is checked when its turn comes.
-2. Both DMOs must be mapped before Salesforce accepts the relationship; include their mappings in the batch.
+2. The source DMO and a target DMO must be mapped before Salesforce accepts the relationship; include their mappings in the batch.
 
 ## Example output
 

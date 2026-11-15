@@ -1,6 +1,6 @@
 # `RELATIONSHIP_HTTP_ERROR`
 
-> Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, both DMOs must already be mapped.
+> Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, the source DMO (and a target DMO) must already be mapped.
 
 |              |                                                                                                                |
 | ------------ | -------------------------------------------------------------------------------------------------------------- |
@@ -33,7 +33,7 @@ The plugin reports Salesforce's answer as is and does not retry. It does not che
 Deploy execution: failed. No automatic retry or rollback performed.
 Failed: relationship:Order_CustomerId_map_Customer_Id_1794467679481; mutation: rejected.
 RELATIONSHIP_HTTP_ERROR: Salesforce API rejected the request (HTTP 400); no response payload is disclosed. Salesforce rejected the write and nothing was written for this item; correct the input before another attempt.
-Hint: Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, both DMOs must already be mapped.
+Hint: Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, the source DMO (and a target DMO) must already be mapped.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/relationship/RELATIONSHIP_HTTP_ERROR.md
 Deployed: 0 (0 created / 0 updated / 1 failed)
 ```

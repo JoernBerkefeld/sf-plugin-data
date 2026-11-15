@@ -31,6 +31,9 @@ export class NativeRelationshipError extends Error {
 export const nativeRelationshipName = /^[A-Za-z][A-Za-z0-9_]{0,239}$/u;
 export const relationshipDmoName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dlm$/u;
 const fieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
+// The target may be a DMO or a CRM object (owner SObject, e.g. Account.Id): any API name.
+const targetObjectName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
+const targetFieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}$/u;
 const specKeys = [
   'cardinality',
   'relationshipOwner',
@@ -92,11 +95,11 @@ export function validateNativeRelationshipDocument(value: unknown): NativeRelati
     typeof spec.sourceObjectName !== 'string' ||
     !relationshipDmoName.test(spec.sourceObjectName) ||
     typeof spec.targetObjectName !== 'string' ||
-    !relationshipDmoName.test(spec.targetObjectName) ||
+    !targetObjectName.test(spec.targetObjectName) ||
     typeof spec.sourceFieldName !== 'string' ||
     !fieldName.test(spec.sourceFieldName) ||
     typeof spec.targetFieldName !== 'string' ||
-    !fieldName.test(spec.targetFieldName) ||
+    !targetFieldName.test(spec.targetFieldName) ||
     !plain(spec.cardinality) ||
     !plain(spec.relationshipOwner)
   )

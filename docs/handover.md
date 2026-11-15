@@ -1,3 +1,17 @@
+# UI parity step 2: relationships to CRM objects — 2026-11-15
+
+Plan `.claude/plans/sf_plugin_data_ui_parity_followups_20261115.plan.md` step 2; evidence
+verification DB `data360:relationship.crm-sobject.api68`.
+
+- The relationship file's target object and field may be any API name (a DMO, or a CRM
+  object such as `Account`/`Id` with owner `SObject`); the source stays a DMO with a `__c`
+  field. Salesforce decides whether owner and target fit. Dependency planning unchanged.
+- Hints of `INVALID_RELATIONSHIP_DOCUMENT` / `RELATIONSHIP_HTTP_ERROR`, deploy help, README,
+  artifact format and error pages updated.
+- Live (isolated-source, `CliRx_c7bb4c`): UI-created CRM relationship retrieves, the plugin
+  deletes it, deploys it from the file (identical to the UI one) and a repeat is unchanged.
+- Not probed: CRM custom fields (the UI lists them by field id `00N...`).
+
 # UI parity fixes: CI SQL newline, DMO read-only field keys — 2026-11-15
 
 Plan `.claude/plans/sf_plugin_data_ui_parity_fixes_20261115.plan.md` (root repo); evidence

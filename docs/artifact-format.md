@@ -308,8 +308,10 @@ Shape checks:
 - The document has exactly `schemaVersion: 1`, `kind: "relationship"`, `identity`
   and `spec`; `identity` has exactly `apiName` (a letter, then letters, digits or
   underscores) and a nonblank, trimmed `dataSpace`.
-- `spec` has exactly the six keys shown. Object names end `__dlm`, field names end
-  `__c`. `cardinality` and `relationshipOwner` are nonblank strings sent as written;
+- `spec` has exactly the six keys shown. The source object ends `__dlm` and the
+  source field `__c`; the target object and field are any API names: a DMO and its
+  custom field, or a CRM object and field with `relationshipOwner` `SObject` (for
+  example `Account` and `Id`). `cardinality` and `relationshipOwner` are nonblank strings sent as written;
   Salesforce decides which values it accepts.
 - The file name must equal `identity.apiName` and the file must sit in a
   `data360/relationship/` folder. Shape failures are reported as
