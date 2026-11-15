@@ -228,13 +228,28 @@ function inputEnum(value: unknown): unknown {
 }
 
 /**
+ * Keys an update leaves out while they equal the org value. Salesforce refuses any
+ * `definitionType` on PATCH, and any schedule field on a streaming insight ("You can't
+ * schedule the calculated insight because it's streaming"), even an unchanged one (live
+ * API 68). A changed value is sent, so the refusal stays Salesforce's answer.
+ */
+const unchangedOnUpdate: ReadonlySet<string> = new Set([
+  'definitionType',
+  'historyPublishScheduleInterval',
+  'historyPublishScheduleTimeZone',
+  'historyPublishTime',
+  'publishScheduleEndDate',
+  'publishScheduleInterval',
+  'publishScheduleStartDateTime',
+  'publishScheduleTimeZone',
+]);
+
+/**
  * The create/update body of one document: every key as authored, with the input names and
  * enum forms of the two tables above. A null value is left out (the GET reports an unset
  * field as null; the input documents that some unset fields must be omitted). The PATCH body
- * leaves out `apiName`, which is in the route, and `definitionType` when it equals the org
- * value: Salesforce answers any `definitionType` on PATCH, even an identical one, with
- * "Cannot change the calculated insight definition type" (live API 68). A changed one is
- * sent, so that refusal is Salesforce's answer.
+ * leaves out `apiName`, which is in the route, and the definition type and schedule fields
+ * while they equal the org value (see `unchangedOnUpdate`).
  * @param {NativeCalculatedInsight} document Complete document (SQL joined).
  * @param {'create' | 'update'} operation POST or PATCH.
  * @param {NativeCalculatedInsight} [observed] Org document an update is based on.
@@ -249,9 +264,9 @@ export function calculatedInsightInputBody(
   for (const [key, value] of Object.entries(validateNativeCalculatedInsight(document))) {
     if (
       operation === 'update' &&
-      key === 'definitionType' &&
+      unchangedOnUpdate.has(key) &&
       observed &&
-      isDeepStrictEqual(value, observed.definitionType)
+      isDeepStrictEqual(value, observed[key])
     )
       continue;
     if (value === null || (operation === 'update' && key === 'apiName')) continue;

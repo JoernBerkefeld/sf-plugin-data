@@ -631,14 +631,21 @@ differently is translated:
 | UPPER_SNAKE values of `definitionType`, `publishScheduleInterval`, `historyPublishScheduleInterval`, `queryDialect` | PascalCase (`NOT_SCHEDULED` → `NotScheduled`) |
 | `null` values                                                                                                       | left out                                      |
 | `apiName` on update                                                                                                 | left out (it is in the route)                 |
-| `definitionType` on update, when it equals the org value                                                            | left out                                      |
+| `definitionType` and the schedule fields on update, when they equal the org value                                   | left out                                      |
 
 Observed at API 68 on `isolated-source` (2026-11-15): Salesforce rejects `dataSpace` and
 `isFromPackage` as unrecognised input, rejects `NOT_SCHEDULED` (it needs
 `NotScheduled`) on POST and PATCH, accepts `definitionType` and `queryDialect` in either
 form on POST, and refuses any `definitionType` on PATCH, even an unchanged one ("Cannot
 change the calculated insight definition type"). A changed `definitionType` is sent, so
-that refusal is reported as `rejected`. The `sourceCiDevName` and
+that refusal is reported as `rejected`. A streaming insight (`definitionType`
+`STREAMING_METRIC`, built with Streaming Insight in the UI) refuses every schedule field
+on PATCH, even `NotScheduled` ("You can't schedule the calculated insight because it's
+streaming"), so an update leaves out schedule fields that equal the org value. Its SQL
+uses windows (`WINDOW.START`, `window(<DateTime>, '5 MINUTE')`); a streaming build takes
+several minutes, longer than the 120-second wait, so publish can end
+`CI_SETTLEMENT_TIMEOUT` while Salesforce is still building: rerun it later. The
+`sourceCiDevName` and
 `historyPublishScheduleInterval` translations follow the input schema and are not
 live-tested.
 

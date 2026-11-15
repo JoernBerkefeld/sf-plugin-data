@@ -1,3 +1,21 @@
+# UI parity step 3c: Streaming insights — 2026-11-15
+
+Evidence: verification DB `data360:calculated-insight.streaming.api68`.
+
+- UI Streaming Insight: tools Visual Builder or Legacy SQL only; SQL template with
+  `WINDOW.START/END` and `window(<DateTime>, 'n MINUTE')`; stored `definitionType`
+  `STREAMING_METRIC`, `queryDialect` `ANSI_SQL`. Retrieve, draft create and unchanged repeat
+  already worked with the file format.
+- Fix: an update leaves out the definition type and schedule fields while they equal the
+  org value (`unchangedOnUpdate`); before, publish of a streaming insight was refused
+  ("You can't schedule the calculated insight because it's streaming"). Batch update
+  live-checked (schedule kept).
+- A streaming build takes about 5 minutes; publish ends `CI_SETTLEMENT_TIMEOUT` (rerun).
+  In this org the Email Engagement streaming insights ended `ERROR` / `CREATE_FAILED`
+  (Salesforce's build result, no reason in the API; likely no streaming source).
+- UI typing into the Legacy SQL textarea does not reach the component (automation limit).
+- Next: 3d Real-Time Insight (needs a Real-Time Data Graph).
+
 # UI parity step 3b: Visual Builder insights — 2026-11-15
 
 Evidence: verification DB `data360:calculated-insight.visual-builder.api68`.

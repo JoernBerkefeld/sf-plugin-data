@@ -224,7 +224,12 @@ test('the API 68 client sends the translated body on the exact routes, single at
       [
         'PATCH',
         `${endpoint}/${apiName}`,
-        Object.fromEntries(Object.entries(update).filter(([key]) => key !== 'definitionType')),
+        // An update based on the org document leaves out the unchanged definition type and schedule.
+        Object.fromEntries(
+          Object.entries(update).filter(
+            ([key]) => key !== 'definitionType' && key !== 'publishScheduleInterval',
+          ),
+        ),
       ],
       ['DELETE', `${endpoint}/${apiName}`, undefined],
     ],
@@ -404,6 +409,30 @@ test('an update leaves out an unchanged definitionType; a changed one reaches Sa
   const changed = await deploy(strict, file({ definitionType: 'STREAMING_METRIC' }));
   assert.equal(changed.mutation, 'rejected');
   assert.equal(sent[1].definitionType, 'StreamingMetric');
+});
+
+test('an update of a streaming insight leaves out unchanged schedule fields; a changed one is sent', async () => {
+  const sent = [];
+  const streaming = org(raw({ definitionType: 'STREAMING_METRIC' }));
+  streaming.client.update = async (document, options) => {
+    const body = calculatedInsightInputBody(document, 'update', options?.observed);
+    sent.push(body);
+    // As live API 68: a streaming insight refuses any schedule field, even NotScheduled.
+    if ('publishScheduleInterval' in body) throw new ConnectError('REQUEST_FAILED', 400);
+    streaming.set(raw({ ...document, expression: document.expression }));
+  };
+  const updated = await deploy(
+    streaming,
+    file({ definitionType: 'STREAMING_METRIC', displayName: 'Renamed' }),
+  );
+  assert.equal(updated.outcome, 'updated', JSON.stringify(updated.diagnostics));
+  assert.equal('publishScheduleInterval' in sent[0], false);
+  const scheduled = await deploy(
+    streaming,
+    file({ definitionType: 'STREAMING_METRIC', publishScheduleInterval: 'ONE' }),
+  );
+  assert.equal(scheduled.mutation, 'rejected');
+  assert.equal(sent[1].publishScheduleInterval, 'One');
 });
 
 test('--draft on an update sends draft true', async () => {
