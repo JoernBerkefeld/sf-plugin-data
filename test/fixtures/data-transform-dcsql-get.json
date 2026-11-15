@@ -1,0 +1,82 @@
+{
+  "actionUrls": {
+    "action": "DcSqlBatchAction",
+    "cancelAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT2/actions/cancel",
+    "refreshStatusAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT2/actions/refresh-status",
+    "retryAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT2/actions/retry",
+    "runAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT2/actions/run"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "name": "Synthetic User",
+    "profilePhotoUrl": "https://synthetic.file.force.com/profilephoto/005/T"
+  },
+  "createdDate": "2026-11-15T11:29:23.000Z",
+  "creationType": "CUSTOM",
+  "dataSpaceName": "default",
+  "definitions": [
+    {
+      "description": "probe dcsql",
+      "label": "Synthetic T2",
+      "manifest": {
+        "macros": {},
+        "nodes": {
+          "model.input1": {
+            "compiled_code": "SELECT Id__c, Name__c FROM SyntheticSrc__dll",
+            "config": {
+              "materialized": "table"
+            },
+            "name": "input1",
+            "relation_name": "SyntheticNew__dll"
+          }
+        },
+        "sources": {}
+      },
+      "name": "SyntheticT2",
+      "outputDataObjects": [
+        {
+          "category": "Other",
+          "createdDate": "2026-11-15T11:29:19.000Z",
+          "fields": [
+            {
+              "isPrimaryKey": true,
+              "keyQualifierField": "KQ_Id",
+              "label": "Id",
+              "name": "Id__c",
+              "type": "Text"
+            },
+            {
+              "isPrimaryKey": false,
+              "keyQualifierField": "KQ_Name",
+              "label": "Name",
+              "name": "Name__c",
+              "type": "Text"
+            }
+          ],
+          "id": "0gO000000000012AAA",
+          "label": "Synthetic New",
+          "lastModifiedDate": "2026-11-15T11:29:29.000Z",
+          "name": "SyntheticNew__dll",
+          "status": "active",
+          "type": "dataLakeObject"
+        }
+      ],
+      "type": "DCSQL"
+    }
+  ],
+  "description": "probe dcsql",
+  "fullRunFrequency": "DAILY",
+  "id": "1dt000000000012AAA",
+  "label": "Synthetic T2",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "name": "Synthetic User",
+    "profilePhotoUrl": "https://synthetic.file.force.com/profilephoto/005/T"
+  },
+  "lastModifiedDate": "2026-11-15T11:31:30.000Z",
+  "lastRunStatus": "NONE",
+  "name": "SyntheticT2",
+  "status": "ACTIVE",
+  "type": "BATCH",
+  "url": "/services/data/v68.0/ssot/data-transforms/SyntheticT2"
+}

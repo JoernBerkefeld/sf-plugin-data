@@ -2,10 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
-import {
-  createDataTransformClient,
-  createDataTransformDloReader,
-} from '../lib/transport/data-transform-rest.js';
+import { createDataTransformClient } from '../lib/transport/data-transform-rest.js';
 
 // Resolve the actual runtime dependencies alongside the transport, including in installed qualification.
 const require = createRequire(new URL('../lib/transport/data-transform-rest.js', import.meta.url));
@@ -113,31 +110,3 @@ function input() {
     },
   };
 }
-
-test('Transform DLO reader exposes GET only on the bound API68 receiver', async () => {
-  let calls = 0;
-  const connection = {
-    instanceUrl: origin,
-    _refreshDelegate: {},
-    request: async function (request, options) {
-      calls++;
-      assert.notEqual(this, connection);
-      assert.equal(this._refreshDelegate, undefined);
-      assert.deepEqual(options.retry, { maxRetries: 0, methods: [] });
-      assert.throws(() => options.followRedirect(origin));
-      assert.deepEqual(request, {
-        method: 'GET',
-        url: `${origin}/services/data/v68.0/ssot/data-lake-objects/SyntheticSource__dll`,
-      });
-      return { name: 'SyntheticSource__dll' };
-    },
-  };
-  const reader = createDataTransformDloReader(connection);
-  assert.deepEqual(Object.keys(reader), ['get']);
-  assert.deepEqual(await reader.get('SyntheticSource__dll'), { name: 'SyntheticSource__dll' });
-  for (const name of ['', '../escape', 'Other__dll?x=1', id])
-    await assert.rejects(reader.get(name));
-  connection.instanceUrl = 'https://other.my.salesforce.com';
-  await assert.rejects(reader.get('SyntheticSource__dll'));
-  assert.equal(calls, 1);
-});

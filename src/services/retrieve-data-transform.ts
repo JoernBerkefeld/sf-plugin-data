@@ -8,7 +8,7 @@ import type { DataTransformObservation } from '../artifacts/data-transform-docum
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
 
 /**
- * Acquire one explicitly selected native transform and independently verify no schedule.
+ * Acquire one explicitly selected native transform and its schedule (kept as an observation).
  * HTTP404 remains a read failure, never an absence or create permission.
  * @param {string} nameOrId Exact selected API name or native record ID.
  * @param {Pick<DataTransformClient, 'get' | 'schedule'>} client Qualified API68/default transport.

@@ -18,7 +18,7 @@ Creating a transform that Salesforce already flags as invalid would leave a brok
 
 ## How to fix
 
-1. Check that the source and output DLOs and the mapped fields exist and are active.
+1. Check that the DLOs and fields the definition reads and writes exist.
 2. Try building the same transform in Data Cloud to see the validation messages there.
 3. Fix the `.dataTransform.json` file or the DLOs, then rerun the deploy.
 

@@ -7,30 +7,26 @@ import {
 } from '../artifacts/data-transform-document.js';
 import type { DataTransformObservation } from '../artifacts/data-transform-document.js';
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
-import type { DloClient } from '../transport/dlo-rest.js';
-import {
-  bindDataTransformDlos,
-  preflightDataTransformDeploy,
-} from './preflight-data-transform-deploy.js';
+import { preflightDataTransformDeploy } from './preflight-data-transform-deploy.js';
 import type { DataTransformDeploySelection } from './preflight-data-transform-deploy.js';
 
 /**
- * Freshly preflight, send exactly once, then independently verify the acknowledged definition.
- * An error after dispatch is not absence or permission to replay; processing is not run success.
+ * Freshly preflight, send exactly once, then read the written transform back for its identity.
+ * Salesforce stores a normalized form, so the readback is not compared with the file; retrieve
+ * gives the stored form. An error after dispatch is not absence or permission to replay;
+ * processing is not run success.
  * @param {unknown} value Portable input artifact.
  * @param {DataTransformDeploySelection} selection Create, or update of the target resolved by name.
  * @param {DataTransformClient} client Native transform adapter.
- * @param {DloClient} dlos Shared native prerequisite adapter.
  * @param {object} [options] Input verification and mutation boundary notification.
  * @param {() => Promise<void>} [options.verifyInput] Reverify captured local bytes.
  * @param {() => void} [options.onDispatch] Notify immediately before invoking the write.
- * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', observation: DataTransformObservation, serverProcessing?: true}>} Independently observed definition, never computation completion.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', observation: DataTransformObservation, serverProcessing?: true}>} The stored transform as read back, never computation completion.
  */
 export async function executeDataTransformDeploy(
   value: unknown,
   selection: DataTransformDeploySelection,
   client: DataTransformClient,
-  dlos: Pick<DloClient, 'get'>,
   options: {
     verifyInput?: () => Promise<void>;
     onDispatch?: () => void;
@@ -40,27 +36,11 @@ export async function executeDataTransformDeploy(
   observation: DataTransformObservation;
   serverProcessing?: true;
 }> {
-  const plan = await preflightDataTransformDeploy(value, selection, client, dlos);
+  const plan = await preflightDataTransformDeploy(value, selection, client);
   if (plan.operation === 'unchanged') {
     await options.verifyInput?.();
     return { operation: 'unchanged', observation: plan.current! };
   }
-  const prerequisites = await bindDataTransformDlos(plan.document, dlos);
-  if (
-    !isDeepStrictEqual(
-      prerequisites.map(({ document, targetId, runtime }) => ({
-        document,
-        targetId,
-        memberships: runtime.dataSpaceInfo,
-      })),
-      plan.prerequisites.map(({ document, targetId, runtime }) => ({
-        document,
-        targetId,
-        memberships: runtime.dataSpaceInfo,
-      })),
-    )
-  )
-    throw new DataTransformError('TRANSFORM_PREREQUISITE_DRIFT');
   await options.verifyInput?.();
   // Last remote check before PUT; this is not an atomic server-side conditional write.
   if (plan.current) {
@@ -91,34 +71,22 @@ export async function executeDataTransformDeploy(
     (plan.targetId !== undefined && receipt.id !== plan.targetId)
   )
     throw new DataTransformError('TRANSFORM_WRITE_IDENTITY_MISMATCH');
-  const observed = observeDataTransform(
-    await client.get(receipt.id),
-    await client.schedule(receipt.id),
-    true,
-  );
+  const raw = await client.get(receipt.id);
+  const rawSchedule = await client.schedule(receipt.id);
+  let observed: DataTransformObservation;
+  try {
+    observed = observeDataTransform(raw, rawSchedule);
+  } catch (error) {
+    // A readback that is not a custom, unpackaged transform of this name is an identity mismatch.
+    if (error instanceof DataTransformError)
+      throw new DataTransformError('TRANSFORM_READBACK_MISMATCH');
+    throw error;
+  }
   if (
     observed.targetId !== receipt.id ||
-    serializeDataTransformDocument(observed.document) !==
-      serializeDataTransformDocument(plan.document)
+    observed.document.definition.name !== plan.document.definition.name
   )
     throw new DataTransformError('TRANSFORM_READBACK_MISMATCH');
-  const after = await bindDataTransformDlos(plan.document, dlos);
-  // Runtime counters may change independently; complete field/key/category/membership definitions may not.
-  if (
-    !isDeepStrictEqual(
-      after.map(({ document, targetId, runtime }) => ({
-        document,
-        targetId,
-        memberships: runtime.dataSpaceInfo,
-      })),
-      prerequisites.map(({ document, targetId, runtime }) => ({
-        document,
-        targetId,
-        memberships: runtime.dataSpaceInfo,
-      })),
-    )
-  )
-    throw new DataTransformError('TRANSFORM_PREREQUISITE_CHANGED');
   return {
     operation: plan.operation,
     observation: observed,

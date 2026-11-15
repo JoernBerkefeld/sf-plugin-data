@@ -1,6 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
-import { dloName } from './dlo-document.js';
-
 export type DataTransformDocument = {
   schemaVersion: 1;
   kind: 'data-transform';
@@ -14,7 +11,7 @@ export type DataTransformObservation = {
   schedule: Record<string, unknown>;
 };
 
-/** Payload-free refusal for the qualified native authored BATCH subset. */
+/** Payload-free refusal of a native data transform operation. */
 export class DataTransformError extends Error {
   public constructor(public readonly code: string) {
     super(`Native Data Transform operation refused: ${code}.`);
@@ -24,7 +21,25 @@ export class DataTransformError extends Error {
 
 export const dataTransformName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 export const dataTransformId = /^1dt[A-Za-z0-9]{15}$/u;
-const fieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
+
+/** Top-level keys of the native create/update input, in the order a GET is projected. */
+const inputKeys = [
+  'name',
+  'label',
+  'description',
+  'type',
+  'dataSpaceName',
+  'fullRunFrequency',
+  'definition',
+  'definitions',
+  'parameters',
+  'tags',
+  'capabilities',
+  'currencyIsoCode',
+  'primarySource',
+];
+/** Server-owned keys of an `outputDataObjects` entry; the rest is sent as read. */
+const outputServerKeys = ['id', 'createdDate', 'lastModifiedDate', 'status'];
 
 /**
  * Reject a condition without retaining resource payloads in diagnostics.
@@ -82,79 +97,17 @@ function record(value: unknown, keys?: string[]): Record<string, unknown> {
 }
 
 /**
- * Admit bounded display text without coercion.
- * @param {unknown} value Text candidate.
- * @param {boolean} empty Permit an empty description.
- */
-function text(value: unknown, empty = false): void {
-  requireTransform(
-    typeof value === 'string' && value.length <= 1024 && (empty || value.trim().length > 0),
-  );
-}
-
-/**
- * Validate only singular STL load-to-existing-DLO output with one field mapping.
- * Request version 56.0 is canonical; response normalization to 68.0 is not authored input.
- * @param {unknown} value Complete native input, never a GET response.
- * @returns {Record<string, unknown>} Detached operation-appropriate input.
+ * Admit the native transform input as authored: inert JSON, an exact name, exactly one of
+ * `definition` / `definitions` and the default data space. Salesforce validates the rest.
+ * @param {unknown} value Complete native input.
+ * @returns {Record<string, unknown>} Detached input, sent as written.
  */
 export function buildDataTransformInput(value: unknown): Record<string, unknown> {
   inert(value);
-  const input = record(value, [
-    'name',
-    'label',
-    'description',
-    'type',
-    'dataSpaceName',
-    'definition',
-  ]);
+  const input = record(value);
   requireTransform(typeof input.name === 'string' && dataTransformName.test(input.name));
-  text(input.label);
-  text(input.description, true);
-  requireTransform(input.type === 'BATCH' && input.dataSpaceName === 'default');
-  const definition = record(input.definition, ['type', 'version', 'nodes']);
-  requireTransform(definition.type === 'STL' && definition.version === '56.0');
-  const nodes = record(definition.nodes);
-  const names = Object.keys(nodes);
-  requireTransform(names.length === 2 && names.every((name) => dataTransformName.test(name)));
-  const loadNames = names.filter((name) => record(nodes[name]).action === 'load');
-  const outputNames = names.filter((name) => record(nodes[name]).action === 'outputD360');
-  requireTransform(loadNames.length === 1 && outputNames.length === 1);
-  const load = record(nodes[loadNames[0]], ['action', 'parameters', 'sources']);
-  const output = record(nodes[outputNames[0]], ['action', 'parameters', 'sources']);
-  requireTransform(
-    isDeepStrictEqual(load.sources, []) && isDeepStrictEqual(output.sources, loadNames),
-  );
-  const source = record(load.parameters, ['dataset', 'fields', 'sampleDetails']);
-  const dataset = record(source.dataset, ['name', 'type']);
-  requireTransform(
-    typeof dataset.name === 'string' &&
-      dloName.test(dataset.name) &&
-      dataset.type === 'dataLakeObject',
-  );
-  requireTransform(
-    Array.isArray(source.fields) &&
-      source.fields.length === 1 &&
-      typeof source.fields[0] === 'string' &&
-      fieldName.test(source.fields[0]),
-  );
-  requireTransform(isDeepStrictEqual(source.sampleDetails, { sortBy: [], type: 'TopN' }));
-  const destination = record(output.parameters, ['name', 'type', 'fieldsMappings']);
-  requireTransform(
-    typeof destination.name === 'string' &&
-      dloName.test(destination.name) &&
-      destination.name !== dataset.name &&
-      destination.type === 'dataLakeObject',
-  );
-  requireTransform(
-    Array.isArray(destination.fieldsMappings) && destination.fieldsMappings.length === 1,
-  );
-  const mapping = record(destination.fieldsMappings[0], ['sourceField', 'targetField']);
-  requireTransform(
-    mapping.sourceField === source.fields[0] &&
-      typeof mapping.targetField === 'string' &&
-      fieldName.test(mapping.targetField),
-  );
+  requireTransform(Object.hasOwn(input, 'definition') !== Object.hasOwn(input, 'definitions'));
+  requireTransform(input.dataSpaceName === 'default');
   return structuredClone(input);
 }
 
@@ -201,88 +154,63 @@ export function serializeDataTransformDocument(value: unknown): string {
 }
 
 /**
- * Project only the qualified GET defaults; retain the full raw observation separately.
- * Unknown nested logic/defaults, generated owners and schedules never become sendable input.
+ * Project one `definition` or `definitions[]` entry as read: without its schedule and without the
+ * server-owned keys of each output object. Everything else is kept.
+ * @param {unknown} definition Entry from a GET.
+ * @returns {unknown} Detached projected entry.
+ */
+function projectDefinition(definition: unknown): unknown {
+  const projected = structuredClone(definition);
+  if (!projected || typeof projected !== 'object' || Array.isArray(projected)) return projected;
+  const entry = projected as Record<string, unknown>;
+  delete entry.schedule;
+  if (Array.isArray(entry.outputDataObjects))
+    for (const output of entry.outputDataObjects as unknown[])
+      if (output && typeof output === 'object' && !Array.isArray(output))
+        for (const key of outputServerKeys) delete (output as Record<string, unknown>)[key];
+  return entry;
+}
+
+/**
+ * Admit a custom, unpackaged transform GET and project its native input: the input keys present,
+ * definitions without schedule and output objects without server-owned keys.
  * @param {unknown} value Native item response.
- * @param {unknown} scheduleValue Independently read native schedule.
- * @param {boolean} [allowProcessing] Admit an acknowledged definition still settling after a write.
+ * @param {unknown} scheduleValue Independently read native schedule, kept as an observation.
  * @returns {DataTransformObservation} Portable input plus detached read-only observations.
  */
 export function observeDataTransform(
   value: unknown,
   scheduleValue: unknown,
-  allowProcessing = false,
 ): DataTransformObservation {
   inert(value);
   inert(scheduleValue);
   const runtime = record(value);
-  const schedule = record(scheduleValue, ['frequency', 'nextScheduledDate', 'time', 'type']);
-  requireTransform(
-    isDeepStrictEqual(
-      schedule,
-      JSON.parse('{"frequency":"None","nextScheduledDate":null,"time":null,"type":"None"}'),
-    ),
-    'UNSUPPORTED_TRANSFORM_SCHEDULE',
-  );
+  const schedule = record(scheduleValue);
   requireTransform(
     runtime.creationType === 'CUSTOM' &&
-      runtime.type === 'BATCH' &&
-      runtime.dataSpaceName === 'default' &&
-      (runtime.status === 'ACTIVE' || (allowProcessing && runtime.status === 'PROCESSING')) &&
       typeof runtime.id === 'string' &&
       dataTransformId.test(runtime.id),
     'UNSUPPORTED_TRANSFORM_OWNER_OR_STATE',
   );
-  requireTransform(
-    !Object.hasOwn(runtime, 'definitions') &&
-      !Object.hasOwn(runtime, 'schedule') &&
-      !Object.hasOwn(runtime, 'schedules') &&
-      !runtime.namespace,
-    'UNSUPPORTED_TRANSFORM_VARIANT',
-  );
-  requireTransform(runtime.fullRunFrequency === 'DAILY', 'UNSUPPORTED_TRANSFORM_FREQUENCY');
-  const definition = structuredClone(record(runtime.definition));
-  requireTransform(definition.version === '68.0');
-  for (const key of ['name', 'label', 'description']) {
-    requireTransform(definition[key] === runtime[key]);
-    delete definition[key];
+  requireTransform(!runtime.namespace, 'UNSUPPORTED_TRANSFORM_VARIANT');
+  const projected: Record<string, unknown> = {};
+  for (const key of inputKeys) {
+    if (!Object.hasOwn(runtime, key)) continue;
+    const entry = runtime[key];
+    projected[key] =
+      key === 'definition'
+        ? projectDefinition(entry)
+        : key === 'definitions' && Array.isArray(entry)
+          ? entry.map((item) => projectDefinition(item))
+          : structuredClone(entry);
   }
-  requireTransform(
-    !Object.hasOwn(definition, 'schedule') && !Object.hasOwn(definition, 'schedules'),
-    'UNSUPPORTED_TRANSFORM_SCHEDULE',
-  );
-  const outputs = definition.outputDataObjects;
-  requireTransform(Array.isArray(outputs) && outputs.length === 1);
-  delete definition.outputDataObjects;
-  definition.version = '56.0';
-  const nodes = record(definition.nodes);
-  for (const nodeValue of Object.values(nodes)) {
-    const node = record(nodeValue);
-    const parameters = record(node.parameters);
-    if (node.action === 'load') {
-      const sample = record(parameters.sampleDetails);
-      requireTransform(sample.dataspace === 'default');
-      delete sample.dataspace;
-    } else if (node.action === 'outputD360') {
-      requireTransform(
-        isDeepStrictEqual(parameters.dedupOrder, []) && parameters.writeMode === 'OVERWRITE',
-      );
-      delete parameters.dedupOrder;
-      delete parameters.writeMode;
-      const output = record(outputs[0]);
-      requireTransform(output.name === parameters.name && output.type === 'dataLakeObject');
-    }
-  }
-  const input = buildDataTransformInput({
-    name: runtime.name,
-    label: runtime.label,
-    description: runtime.description,
-    type: runtime.type,
-    dataSpaceName: runtime.dataSpaceName,
-    definition,
-  });
   return {
-    document: { schemaVersion: 1, kind: 'data-transform', apiVersion: '68.0', definition: input },
+    document: {
+      schemaVersion: 1,
+      kind: 'data-transform',
+      apiVersion: '68.0',
+      definition: buildDataTransformInput(projected),
+    },
     targetId: runtime.id as string,
     runtime: structuredClone(runtime),
     schedule: structuredClone(schedule),

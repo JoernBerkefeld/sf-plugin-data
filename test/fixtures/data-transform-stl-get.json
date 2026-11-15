@@ -1,0 +1,120 @@
+{
+  "actionUrls": {
+    "action": "BatchAction",
+    "cancelAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT1/actions/cancel",
+    "refreshStatusAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT1/actions/refresh-status",
+    "retryAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT1/actions/retry",
+    "runAction": "/services/data/v68.0/ssot/data-transforms/SyntheticT1/actions/run"
+  },
+  "createdBy": {
+    "id": "005000000000001AAA",
+    "name": "Synthetic User",
+    "profilePhotoUrl": "https://synthetic.file.force.com/profilephoto/005/T"
+  },
+  "createdDate": "2026-11-15T11:24:36.000Z",
+  "creationType": "CUSTOM",
+  "dataSpaceName": "default",
+  "definition": {
+    "description": "probe",
+    "label": "SyntheticT1 v3",
+    "name": "SyntheticT1",
+    "nodes": {
+      "LOAD0": {
+        "action": "load",
+        "parameters": {
+          "dataset": {
+            "name": "SyntheticSrc__dll",
+            "type": "dataLakeObject"
+          },
+          "fields": ["Id__c", "Name__c"],
+          "sampleDetails": {
+            "dataspace": "default",
+            "sortBy": [],
+            "type": "TopN"
+          }
+        },
+        "sources": []
+      },
+      "OUT0": {
+        "action": "outputD360",
+        "parameters": {
+          "dedupOrder": [],
+          "fieldsMappings": [
+            {
+              "sourceField": "Id__c",
+              "targetField": "Id__c"
+            },
+            {
+              "sourceField": "Name__c",
+              "targetField": "Name__c"
+            }
+          ],
+          "name": "SyntheticOut__dll",
+          "type": "dataLakeObject",
+          "writeMode": "OVERWRITE"
+        },
+        "sources": ["LOAD0"]
+      }
+    },
+    "outputDataObjects": [
+      {
+        "category": "Other",
+        "createdDate": "2026-11-15T11:20:33.000Z",
+        "fields": [
+          {
+            "isPrimaryKey": true,
+            "keyQualifierField": "KQ_Id",
+            "label": "Id",
+            "name": "Id__c",
+            "type": "Text"
+          },
+          {
+            "isPrimaryKey": false,
+            "keyQualifierField": "KQ_Name",
+            "label": "Name",
+            "name": "Name__c",
+            "type": "Text"
+          }
+        ],
+        "id": "0gO000000000011AAA",
+        "label": "Synthetic Out",
+        "lastModifiedDate": "2026-11-15T11:20:38.000Z",
+        "name": "SyntheticOut__dll",
+        "status": "active",
+        "type": "dataLakeObject"
+      }
+    ],
+    "schedule": {
+      "frequency": "Daily",
+      "interval": 1,
+      "nextScheduledDate": "2026-11-16T03:15:00.000Z",
+      "time": {
+        "hour": 3,
+        "minute": 15,
+        "timezone": {
+          "gmtOffset": 0,
+          "name": "Greenwich Mean Time",
+          "zoneId": "GMT"
+        }
+      },
+      "type": "Daily"
+    },
+    "type": "STL",
+    "version": "68.0"
+  },
+  "description": "probe",
+  "fullRunFrequency": "DAILY",
+  "id": "1dt000000000011AAA",
+  "label": "SyntheticT1 v3",
+  "lastModifiedBy": {
+    "id": "005000000000001AAA",
+    "name": "Synthetic User",
+    "profilePhotoUrl": "https://synthetic.file.force.com/profilephoto/005/T"
+  },
+  "lastModifiedDate": "2026-11-15T11:27:28.000Z",
+  "lastRunStatus": "NONE",
+  "name": "SyntheticT1",
+  "status": "ACTIVE",
+  "type": "BATCH",
+  "url": "/services/data/v68.0/ssot/data-transforms/SyntheticT1"
+}

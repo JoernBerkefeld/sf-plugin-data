@@ -463,7 +463,6 @@ test('a transform matched ignoring case uses the org spelling for the item and i
         };
       },
       createDataTransformClient: () => ({ delete: async () => {} }),
-      createDataTransformDloReader: () => ({}),
       deleteDataTransform: async (desired) => {
         assert.equal(desired.definition.name, 'Copy');
         return { outcome: 'deleted', mutation: 'confirmed-deleted' };

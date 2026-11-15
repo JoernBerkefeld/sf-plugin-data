@@ -34,5 +34,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`TRANSFORM_PREREQUISITE_DRIFT`](../data-transform/TRANSFORM_PREREQUISITE_DRIFT.md) — a source or output DLO changed during the run.
 - [`TRANSFORM_DELETE_INPUT_DRIFT`](../data-transform/TRANSFORM_DELETE_INPUT_DRIFT.md) — the local inputs changed during the run.

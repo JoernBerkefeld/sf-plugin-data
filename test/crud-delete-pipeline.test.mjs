@@ -170,8 +170,7 @@ const harness = (inputs, flags = {}) => {
   };
   // P2 transform.
   command.createDataTransformClient = () => ({ delete: async () => {} });
-  command.createDataTransformDloReader = () => ({});
-  command.deleteDataTransform = async (_desired, _client, _reader, options) => {
+  command.deleteDataTransform = async (_desired, _client, options) => {
     h.calls.push('transform');
     return options.preview
       ? { outcome: 'preview', mutation: 'not-attempted' }

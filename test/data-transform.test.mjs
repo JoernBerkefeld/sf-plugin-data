@@ -1,6 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import {
   buildDataTransformInput,
   observeDataTransform,
@@ -31,89 +32,150 @@ import {
   listDataTransformInventory,
 } from '../lib/services/delete-data-transform.js';
 
+/**
+ * Read a raw GET from a live probe (2026-11-15), names and IDs replaced by synthetic ones.
+ * @param {string} file Fixture file name.
+ * @returns {object} Parsed native GET.
+ */
+const fixture = (file) =>
+  JSON.parse(readFileSync(new URL(`fixtures/${file}`, import.meta.url), 'utf8'));
+const stlGet = () => fixture('data-transform-stl-get.json');
+const dcsqlGet = () => fixture('data-transform-dcsql-get.json');
+
 const id = '1dt000000000001AAA';
+/**
+ * The create/update input of a transform, as retrieve writes it.
+ * @returns {object} Native input.
+ */
 const input = () => ({
   name: 'SyntheticTransform',
   label: 'Synthetic transform',
   description: 'Synthetic definition',
   type: 'BATCH',
   dataSpaceName: 'default',
+  fullRunFrequency: 'DAILY',
   definition: {
+    name: 'SyntheticTransform',
+    label: 'Synthetic transform',
+    description: 'Synthetic definition',
     type: 'STL',
-    version: '56.0',
+    version: '68.0',
     nodes: {
       LOAD_DATASET0: {
         action: 'load',
         parameters: {
           dataset: { name: 'Source__dll', type: 'dataLakeObject' },
           fields: ['Id__c'],
-          sampleDetails: { sortBy: [], type: 'TopN' },
+          sampleDetails: { dataspace: 'default', sortBy: [], type: 'TopN' },
         },
         sources: [],
       },
       OUTPUT0: {
         action: 'outputD360',
         parameters: {
+          dedupOrder: [],
           name: 'Output__dll',
           type: 'dataLakeObject',
           fieldsMappings: [{ sourceField: 'Id__c', targetField: 'Id__c' }],
+          writeMode: 'OVERWRITE',
         },
         sources: ['LOAD_DATASET0'],
       },
     },
+    outputDataObjects: [
+      {
+        category: 'Other',
+        fields: [
+          {
+            isPrimaryKey: true,
+            keyQualifierField: 'KQ_Id',
+            label: 'Id',
+            name: 'Id__c',
+            type: 'Text',
+          },
+        ],
+        label: 'Output',
+        name: 'Output__dll',
+        type: 'dataLakeObject',
+      },
+    ],
   },
 });
 const schedule = () =>
   JSON.parse('{"frequency":"None","nextScheduledDate":null,"time":null,"type":"None"}');
-const runtime = () => {
+/**
+ * A GET of a stored input: the input plus server-owned fields, a schedule inside the definition
+ * and server-owned keys on each output object.
+ * @param {object} body Stored create/update input.
+ * @returns {object} Native GET response.
+ */
+const stored = (body) => {
   const value = {
-    ...input(),
+    ...structuredClone(body),
     id,
     status: 'ACTIVE',
     creationType: 'CUSTOM',
-    fullRunFrequency: 'DAILY',
+    createdDate: '2026-11-15T00:00:00.000Z',
+    lastRunStatus: 'NONE',
     actionUrls: { runAction: '/not-sendable' },
   };
-  Object.assign(value.definition, {
-    name: value.name,
-    label: value.label,
-    description: value.description,
-    version: '68.0',
-    outputDataObjects: [
-      {
-        name: 'Output__dll',
-        type: 'dataLakeObject',
-        id: 'response-only',
-        fields: [{ name: 'Id__c' }],
-      },
-    ],
-  });
-  value.definition.nodes.LOAD_DATASET0.parameters.sampleDetails.dataspace = 'default';
-  Object.assign(value.definition.nodes.OUTPUT0.parameters, {
-    dedupOrder: [],
-    writeMode: 'OVERWRITE',
-  });
+  if (value.definition && typeof value.definition === 'object') {
+    value.definition.schedule = { frequency: 'Daily', interval: 1, type: 'Daily' };
+    for (const output of value.definition.outputDataObjects ?? [])
+      Object.assign(output, {
+        id: '0gO000000000001AAA',
+        createdDate: '2026-11-15T00:00:00.000Z',
+        lastModifiedDate: '2026-11-15T00:00:00.000Z',
+        status: 'active',
+      });
+  }
   return value;
 };
+const runtime = () => stored(input());
 const document = () => ({
   schemaVersion: 1,
   kind: 'data-transform',
   apiVersion: '68.0',
   definition: input(),
 });
+/**
+ * The expected file definition and PUT body of a GET: input keys only, no schedule inside a
+ * definition, no server-owned output object keys. Everything else as read.
+ * @param {object} raw Native GET.
+ * @returns {object} Projected input.
+ */
+const projected = (raw) => {
+  const keys = [
+    'name',
+    'label',
+    'description',
+    'type',
+    'dataSpaceName',
+    'fullRunFrequency',
+    'definition',
+    'definitions',
+  ];
+  const result = structuredClone(
+    Object.fromEntries(keys.filter((key) => key in raw).map((key) => [key, raw[key]])),
+  );
+  for (const definition of result.definitions ?? [result.definition]) {
+    delete definition.schedule;
+    for (const output of definition.outputDataObjects ?? [])
+      for (const key of ['id', 'createdDate', 'lastModifiedDate', 'status']) delete output[key];
+  }
+  return result;
+};
 
-test('Transform projects native normalized defaults without replaying GET observations', () => {
+test('Transform projects the GET onto its native input, keeping what a full PUT would reset', () => {
   const value = runtime();
   const observed = observeDataTransform(value, schedule());
   assert.deepEqual(observed.document, document());
   assert.deepEqual(observed.runtime, value);
   assert.equal(observed.targetId, id);
-  assert.equal(observed.runtime.fullRunFrequency, 'DAILY');
-  assert.equal(observed.schedule.type, 'None');
+  assert.deepEqual(observed.schedule, schedule());
   assert.deepEqual(buildDataTransformInput(observed.document.definition), input());
   value.definition.nodes.OUTPUT0.parameters.name = 'Changed__dll';
   assert.equal(observed.runtime.definition.nodes.OUTPUT0.parameters.name, 'Output__dll');
-  assert.throws(() => buildDataTransformInput(runtime()));
   assert.throws(() =>
     validateDataTransformDocument({ ...document(), observations: observed.runtime }),
   );
@@ -136,49 +198,69 @@ test('Transform projects native normalized defaults without replaying GET observ
   assert.throws(() => dataTransformArtifactPath('../escape'));
 });
 
-test('Transform rejects unsupported authored inputs rather than silently dropping logic', () => {
-  const changes = [
-    (v) => {
-      v.creationType = 'CUSTOM';
-    },
-    (v) => {
-      v.fullRunFrequency = 'DAILY';
-    },
-    (v) => {
-      v.type = 'STREAMING';
-    },
+for (const [kind, read] of [
+  ['STL with a schedule', stlGet],
+  ['DCSQL definitions[]', dcsqlGet],
+])
+  test(`Transform ${kind} GET round-trips to a file and back to the exact PUT body`, async () => {
+    const raw = read();
+    const expected = projected(raw);
+    const observed = observeDataTransform(raw, schedule());
+    assert.deepEqual(observed.document.definition, expected);
+    const definitions = expected.definitions ?? [expected.definition];
+    for (const definition of definitions) {
+      assert.equal(Object.hasOwn(definition, 'schedule'), false);
+      assert.equal(definition.outputDataObjects[0].fields[0].keyQualifierField, 'KQ_Id');
+      assert.equal(Object.hasOwn(definition.outputDataObjects[0], 'id'), false);
+    }
+    assert.equal(expected.fullRunFrequency, 'DAILY');
+    if (expected.definition) {
+      assert.equal(expected.definition.version, '68.0');
+      assert.equal(expected.definition.nodes.OUT0.parameters.writeMode, 'OVERWRITE');
+      assert.deepEqual(expected.definition.nodes.OUT0.parameters.dedupOrder, []);
+      assert.equal(expected.definition.nodes.LOAD0.parameters.sampleDetails.dataspace, 'default');
+    } else assert.deepEqual(expected.definitions[0].manifest.macros, {});
+    // Through the file and its admission, into the PUT body.
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'transform-round-trip-'));
+    const published = await writeDataTransformDocument(observed.document, cwd, false);
+    const [admitted] = await readDeployInputs({ cwd, sourceDir: [published.path] });
+    assert.deepEqual(admitted.document, observed.document);
+    const calls = [];
+    const client = createDataTransformClient(
+      {
+        instanceUrl: 'https://synthetic.my.salesforce.com',
+        request: async (request) => {
+          calls.push(request);
+          return {};
+        },
+      },
+      '68.0',
+      'default',
+    );
+    await client.update(raw.id, admitted.document.definition);
+    assert.equal(calls[0].method, 'PUT');
+    assert.deepEqual(JSON.parse(calls[0].body), expected);
+  });
+
+test('Transform admission refuses only non-inert JSON, a bad name, both/neither definitions and nondefault space', () => {
+  const refused = [
     (v) => {
       v.dataSpaceName = 'other';
+    },
+    (v) => {
+      delete v.dataSpaceName;
     },
     (v) => {
       v.definitions = [v.definition];
     },
     (v) => {
-      v.definition.type = 'DCSQL';
+      delete v.definition;
     },
     (v) => {
-      v.definition.version = '68.0';
+      v.name = 'Bad-Name';
     },
     (v) => {
-      v.definition.nodes.OUTPUT0.action = 'join';
-    },
-    (v) => {
-      v.definition.nodes.OUTPUT0.parameters.writeMode = 'OVERWRITE';
-    },
-    (v) => {
-      v.definition.nodes.OUTPUT0.sources = ['unknown'];
-    },
-    (v) => {
-      v.definition.nodes.OUTPUT0.parameters.name = 'Source__dll';
-    },
-    (v) => {
-      v.definition.nodes.LOAD_DATASET0.parameters.fields.push('Extra__c');
-    },
-    (v) => {
-      v.definition.nodes.LOAD_DATASET0.parameters.sampleDetails.sortBy.push('Id__c');
-    },
-    (v) => {
-      v.definition.nodes.OUTPUT0.parameters.fieldsMappings[0].sourceField = 'Missing__c';
+      v.name = 7;
     },
     (v) => {
       Object.defineProperty(v, 'name', { get: () => assert.fail('getter invoked') });
@@ -186,66 +268,90 @@ test('Transform rejects unsupported authored inputs rather than silently droppin
     (v) => {
       v.definition.nodes.loop = v;
     },
+    (v) => {
+      v.definition.version = Number.NaN;
+    },
   ];
-  for (const change of changes) {
+  for (const change of refused) {
     const value = input();
     change(value);
-    assert.throws(() => buildDataTransformInput(value));
+    assert.throws(() => buildDataTransformInput(value), /UNSUPPORTED_TRANSFORM_INPUT/u);
+  }
+  assert.throws(() => buildDataTransformInput([input()]), /UNSUPPORTED_TRANSFORM_INPUT/u);
+  // Everything else is Salesforce's decision and is sent as written.
+  const accepted = [
+    (v) => {
+      v.type = 'STREAMING';
+    },
+    (v) => {
+      v.fullRunFrequency = 'Weekly';
+    },
+    (v) => {
+      v.definition.type = 'DCSQL';
+      v.definition.version = '56.0';
+    },
+    (v) => {
+      v.definition.nodes.OUTPUT0.parameters.writeMode = 'APPEND';
+      v.definition.nodes.OUTPUT0.parameters.dedupOrder = ['Id__c'];
+    },
+    (v) => {
+      v.definition.nodes.OUTPUT0.parameters.name = 'Source__dll';
+      v.definition.nodes.LOAD_DATASET0.parameters.fields.push('Name__c');
+    },
+    (v) => {
+      v.definition.nodes.extra = { action: 'join' };
+      v.tags = { team: 'synthetic' };
+    },
+    (v) => {
+      v.definitions = [v.definition];
+      delete v.definition;
+    },
+  ];
+  for (const change of accepted) {
+    const value = input();
+    change(value);
+    assert.deepEqual(buildDataTransformInput(value), value);
   }
 });
 
-test('Transform refuses generated, hidden, Graph, IR, unknown schedule and nondefault responses', () => {
+test('Transform refuses non-custom and packaged targets; status, schedule and frequency are not gates', () => {
   for (const creationType of ['SYSTEM', 'GRAPH', 'IR', 'Custom', undefined]) {
     const value = runtime();
-    value.creationType = creationType;
-    assert.throws(() => observeDataTransform(value, schedule()));
+    if (creationType === undefined) delete value.creationType;
+    else value.creationType = creationType;
+    assert.throws(
+      () => observeDataTransform(value, schedule()),
+      /UNSUPPORTED_TRANSFORM_OWNER_OR_STATE/u,
+    );
   }
+  const badId = runtime();
+  badId.id = 'not-an-id';
+  assert.throws(
+    () => observeDataTransform(badId, schedule()),
+    /UNSUPPORTED_TRANSFORM_OWNER_OR_STATE/u,
+  );
+  const packaged = runtime();
+  packaged.namespace = 'owned';
+  assert.throws(() => observeDataTransform(packaged, schedule()), /UNSUPPORTED_TRANSFORM_VARIANT/u);
   for (const change of [
-    (v) => {
-      v.type = 'DbtHidden';
-    },
     (v) => {
       v.status = 'PROCESSING';
     },
     (v) => {
-      v.namespace = 'owned';
-    },
-    (v) => {
-      v.schedule = {};
-    },
-    (v) => {
-      v.definitions = [];
-    },
-    (v) => {
-      v.definition.schedules = [];
+      v.fullRunFrequency = 'WEEKLY';
     },
     (v) => {
       v.definition.nodes.OUTPUT0.parameters.writeMode = 'APPEND';
     },
-    (v) => {
-      v.definition.nodes.OUTPUT0.parameters.dedupOrder = ['Id__c'];
-    },
-    (v) => {
-      v.definition.nodes.LOAD_DATASET0.parameters.sampleDetails.dataspace = 'other';
-    },
-    (v) => {
-      v.definition.nodes.extra = { action: 'join' };
-    },
-    (v) => {
-      v.definition.outputDataObjects[0].name = 'Other__dll';
-    },
   ]) {
     const value = runtime();
     change(value);
-    assert.throws(() => observeDataTransform(value, schedule()));
+    assert.doesNotThrow(() => observeDataTransform(value, schedule()));
   }
-  for (const value of [
-    undefined,
-    {},
-    { ...schedule(), frequency: 'Daily' },
-    { ...schedule(), nextScheduledDate: 'tomorrow' },
-    { ...schedule(), unexpected: true },
-  ])
+  assert.doesNotThrow(() =>
+    observeDataTransform(runtime(), { ...schedule(), frequency: 'Daily', type: 'Daily' }),
+  );
+  for (const value of [undefined, [], 'none'])
     assert.throws(() => observeDataTransform(runtime(), value));
 });
 
@@ -338,7 +444,8 @@ test('Transform transport pins native68 and exposes only admitted definition wri
   for (const selection of ['', '../escape', 'Name?x=1', 'Name/actions/run'])
     await assert.rejects(client.get(selection));
   for (const offset of [-1, 1, 2020, Infinity, '20']) await assert.rejects(client.list(offset));
-  await assert.rejects(client.validate(runtime()));
+  const both = { ...input(), definitions: [] };
+  await assert.rejects(client.validate(both));
   assert.equal(calls.length, 5);
   await client.create(input());
   await client.update(id, input());
@@ -350,7 +457,7 @@ test('Transform transport pins native68 and exposes only admitted definition wri
     ],
   );
   await assert.rejects(client.update('SyntheticTransform', input()));
-  await assert.rejects(client.create(runtime()));
+  await assert.rejects(client.create({ ...input(), dataSpaceName: 'other' }));
   assert.equal(calls.length, 7);
   await assert.rejects(client.delete('SyntheticTransform'));
   await client.delete(id);
@@ -367,15 +474,6 @@ test('Transform transport pins native68 and exposes only admitted definition wri
   assert.equal(calls.length, 8);
 });
 
-const dlo = (name) => ({
-  name,
-  id: name === 'Source__dll' ? '1dl000000000001AAA' : '1dl000000000002AAA',
-  label: name,
-  category: 'Other',
-  status: 'ACTIVE',
-  dataSpaceInfo: [{ name: 'default' }],
-  fields: [{ name: 'Id__c', label: 'ID', dataType: 'Text', isPrimaryKey: true }],
-});
 const harness = () => {
   const calls = [];
   let saved = runtime();
@@ -400,27 +498,18 @@ const harness = () => {
     },
     create: async (body) => {
       calls.push(['create', structuredClone(body)]);
-      // A create under another name reads back as that transform.
-      if (body.name !== saved.name) {
-        saved = runtime();
-        saved.name = saved.definition.name = body.name;
-      }
+      saved = stored(body);
       return { id, name: body.name, status: 'PROCESSING' };
     },
     update: async (target, body) => {
       calls.push(['update', target, structuredClone(body)]);
-      saved = runtime();
-      saved.description = body.description;
-      saved.label = body.label;
-      saved.definition.description = body.description;
-      saved.definition.label = body.label;
+      saved = stored(body);
       return { id, name: body.name, status: 'PROCESSING' };
     },
   };
   return {
     calls,
     client,
-    dlos: { get: async (name) => dlo(name) },
     set: (value) => {
       saved = value;
       listed = [{ id, name: value.name }];
@@ -474,7 +563,6 @@ async function deployTransform(flags = {}, h = harness(), configure = () => {}) 
     return h.client;
   };
   command.createDloClient = () => assert.fail('Transform must not spawn general DLO CLI');
-  command.createDataTransformDloReader = () => h.dlos;
   command.jsonEnabled = () => true;
   command.log = () => {};
   command.selectGitInputs = () => assert.fail('Git must not expand a Transform request');
@@ -529,6 +617,10 @@ test('public Transform deploys by name: create, update, unchanged, without --all
   assert.equal(created.result.result.items[0].outcome, 'created');
   assert.equal(created.result.result.items[0].mutation, 'confirmed-created');
   assert.equal(created.result.result.items[0].serverProcessing, true);
+  assert.deepEqual(
+    created.result.result.items[0].routes.map(({ operation }) => operation),
+    ['data-transform.deploy'],
+  );
   assert.equal(created.h.calls.filter(([op]) => op === 'create').length, 1);
   assert.equal(created.h.calls.filter(([op]) => op === 'update').length, 0);
   assert.match(created.result.result.items[0].diagnostics[0].message, /not established/u);
@@ -674,10 +766,15 @@ test('public Transform pre/post dispatch failures stay truthful', async () => {
   }
 });
 
-for (const phase of ['validation', 'final-prerequisite', 'preview', 'unchanged'])
+for (const phase of ['validation', 'update-read', 'preview', 'unchanged'])
   test(`public Transform real byte drift during ${phase} prevents dispatch`, async () => {
     const h = harness();
     if (phase === 'unchanged') h.set(runtime());
+    if (phase === 'update-read') {
+      const current = runtime();
+      current.description = 'Old';
+      h.set(current);
+    }
     const flags = phase === 'preview' ? { preview: true } : {};
     const { result } = await deployTransform(flags, h, (_command, file) => {
       const drift = async () => appendFile(file, ' ');
@@ -686,14 +783,17 @@ for (const phase of ['validation', 'final-prerequisite', 'preview', 'unchanged']
           await drift();
           return { issues: [] };
         };
-      else {
-        let reads = 0;
-        h.dlos.get = async (name) => {
-          reads++;
-          if (reads === (phase === 'final-prerequisite' ? 4 : 2)) await drift();
-          return dlo(name);
+      else if (phase === 'preview') {
+        const list = h.client.list;
+        h.client.list = async (offset) => {
+          await drift();
+          return list(offset);
         };
-      }
+      } else
+        h.client.schedule = async () => {
+          await drift();
+          return schedule();
+        };
     });
     assert.notEqual(result.status, 'success');
     assert.equal(
@@ -703,15 +803,7 @@ for (const phase of ['validation', 'final-prerequisite', 'preview', 'unchanged']
     if (phase !== 'preview') assert.equal(result.result.items[0].mutation, 'not-attempted');
   });
 
-test('public Transform post-dispatch prerequisite failure is unknown and human evidence is honest', async () => {
-  const h = harness();
-  let reads = 0;
-  h.dlos.get = async (name) => {
-    if (++reads === 5) throw new Error('readback prerequisite unavailable');
-    return dlo(name);
-  };
-  const failed = await deployTransform({}, h);
-  assert.equal(failed.result.result.items[0].mutation, 'unknown');
+test('public Transform human output reports server processing honestly', async () => {
   const lines = [];
   const confirmed = await deployTransform({}, harness(), (command) => {
     command.jsonEnabled = () => false;
@@ -723,71 +815,44 @@ test('public Transform post-dispatch prerequisite failure is unknown and human e
 });
 
 for (const field of ['label', 'description', 'schedule'])
-  test(`public Transform refuses late ${field} drift during final prerequisite GET`, async () => {
+  test(`public Transform refuses late ${field} drift during awaited final input verification`, async () => {
     const h = harness();
     const current = runtime();
     current.description = 'Original';
     current.definition.description = 'Original';
     h.set(current);
-    let reads = 0;
+    let verifications = 0;
     let scheduleChanged = false;
-    h.dlos.get = async (name) => {
-      if (++reads === 4) {
-        if (field === 'schedule') scheduleChanged = true;
-        else {
-          current[field] = 'Concurrent edit';
-          current.definition[field] = 'Concurrent edit';
-          h.set(current);
+    h.client.schedule = async () =>
+      scheduleChanged ? { ...schedule(), type: 'Daily', frequency: 'DAILY' } : schedule();
+    const { result } = await deployTransform({}, h, (command) => {
+      command.verifyDataTransformInput = async (input) => {
+        await verifyDataTransformInputDigest(input);
+        if (++verifications === 2) {
+          await Promise.resolve();
+          if (field === 'schedule') scheduleChanged = true;
+          else {
+            current[field] = 'Concurrent edit';
+            current.definition[field] = 'Concurrent edit';
+            h.set(current);
+          }
         }
-      }
-      return dlo(name);
-    };
-    if (field === 'schedule')
-      h.client.schedule = async () =>
-        scheduleChanged ? { ...schedule(), type: 'Daily', frequency: 'DAILY' } : schedule();
-    const { result } = await deployTransform({}, h);
-    assert.equal(reads, 4);
+      };
+    });
+    assert.equal(verifications, 2);
     assert.equal(result.status, 'blocked');
+    assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_DRIFT');
     assert.equal(result.result.items[0].mutation, 'not-attempted');
-    if (field !== 'schedule')
-      assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_DRIFT');
     assert.equal(
       h.calls.some(([op]) => op === 'update' || op === 'create'),
       false,
     );
   });
 
-test('public Transform refuses target drift during awaited final input verification', async () => {
-  const h = harness();
-  const current = runtime();
-  current.description = 'Original';
-  current.definition.description = 'Original';
-  h.set(current);
-  let verifications = 0;
-  const { result } = await deployTransform({}, h, (command) => {
-    command.verifyDataTransformInput = async (input) => {
-      await verifyDataTransformInputDigest(input);
-      if (++verifications === 2) {
-        await Promise.resolve();
-        current.label = 'Concurrent edit';
-        current.definition.label = 'Concurrent edit';
-        h.set(current);
-      }
-    };
-  });
-  assert.equal(verifications, 2);
-  assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_DRIFT');
-  assert.equal(result.result.items[0].mutation, 'not-attempted');
-  assert.equal(
-    h.calls.some(([op]) => op === 'update' || op === 'create'),
-    false,
-  );
-});
-
 test('Transform executor notifies dispatch only after awaited byte verification', async () => {
   const h = harness();
   const order = [];
-  await executeDataTransformDeploy(document(), { operation: 'create' }, h.client, h.dlos, {
+  await executeDataTransformDeploy(document(), { operation: 'create' }, h.client, {
     verifyInput: async () => {
       await Promise.resolve();
       order.push('verify');
@@ -799,7 +864,17 @@ test('Transform executor notifies dispatch only after awaited byte verification'
   assert.deepEqual(order, ['verify', 'dispatch']);
 });
 
-test('Transform shared DLO resolution returns detached identity and complete definition', async () => {
+const dlo = (name) => ({
+  name,
+  id: name === 'Source__dll' ? '1dl000000000001AAA' : '1dl000000000002AAA',
+  label: name,
+  category: 'Other',
+  status: 'ACTIVE',
+  dataSpaceInfo: [{ name: 'default' }],
+  fields: [{ name: 'Id__c', label: 'ID', dataType: 'Text', isPrimaryKey: true }],
+});
+
+test('Shared DLO resolution returns detached identity and complete definition', async () => {
   const value = dlo('Source__dll');
   const resolved = await resolveNativeDloTarget(
     'Source__dll',
@@ -815,12 +890,7 @@ test('Transform shared DLO resolution returns detached identity and complete def
 
 test('Transform explicit create is one POST with independent readback, never an absence lookup', async () => {
   const h = harness();
-  const result = await executeDataTransformDeploy(
-    document(),
-    { operation: 'create' },
-    h.client,
-    h.dlos,
-  );
+  const result = await executeDataTransformDeploy(document(), { operation: 'create' }, h.client);
   assert.equal(result.operation, 'create');
   assert.equal(result.serverProcessing, true);
   assert.deepEqual(
@@ -836,7 +906,7 @@ test('Transform explicit create is one POST with independent readback, never an 
       throw failure;
     };
     await assert.rejects(
-      executeDataTransformDeploy(document(), { operation: 'create' }, bad.client, bad.dlos),
+      executeDataTransformDeploy(document(), { operation: 'create' }, bad.client),
       (error) => error === failure,
     );
     assert.deepEqual(
@@ -846,15 +916,68 @@ test('Transform explicit create is one POST with independent readback, never an 
   }
 });
 
+test('Transform create reads back the normalized stored form and reports created, not a mismatch', async () => {
+  // Hand-written DCSQL with a mixed-case frequency; Salesforce stores WEEKLY, drops the version
+  // and adds manifest macros/sources and output field key qualifiers.
+  const raw = dcsqlGet();
+  raw.fullRunFrequency = 'WEEKLY';
+  const authored = {
+    name: raw.name,
+    label: raw.label,
+    description: raw.description,
+    type: 'BATCH',
+    dataSpaceName: 'default',
+    fullRunFrequency: 'Weekly',
+    definitions: [
+      {
+        type: 'DCSQL',
+        version: '68.0',
+        manifest: {
+          nodes: structuredClone(raw.definitions[0].manifest.nodes),
+        },
+        outputDataObjects: [
+          {
+            name: 'SyntheticNew__dll',
+            type: 'dataLakeObject',
+            category: 'Other',
+            label: 'Synthetic New',
+            fields: [{ name: 'Id__c', label: 'Id', type: 'Text', isPrimaryKey: true }],
+          },
+        ],
+      },
+    ],
+  };
+  const calls = [];
+  const client = {
+    validate: async () => ({ issues: [] }),
+    create: async (body) => {
+      calls.push(['create', structuredClone(body)]);
+      return { id: raw.id, name: raw.name, status: 'ACTIVE' };
+    },
+    get: async () => structuredClone(raw),
+    schedule: async () => schedule(),
+  };
+  const result = await executeDataTransformDeploy(
+    { schemaVersion: 1, kind: 'data-transform', apiVersion: '68.0', definition: authored },
+    { operation: 'create' },
+    client,
+  );
+  assert.equal(result.operation, 'create');
+  assert.equal(result.serverProcessing, undefined);
+  assert.deepEqual(calls, [['create', authored]]);
+  assert.deepEqual(result.observation.document.definition, projected(raw));
+});
+
 test('Transform full-input PUT preserves settings and canonical repeat is GET-only', async () => {
   const h = harness();
   const desired = document();
   desired.definition.description = 'Changed';
+  desired.definition.fullRunFrequency = 'WEEKLY';
+  desired.definition.definition.nodes.OUTPUT0.parameters.writeMode = 'APPEND';
   const result = await executeDataTransformDeploy(
     desired,
     { operation: 'update', targetId: id },
     h.client,
-    h.dlos,
   );
   assert.equal(result.operation, 'update');
   const write = h.calls.find(([op]) => op === 'update');
@@ -864,7 +987,6 @@ test('Transform full-input PUT preserves settings and canonical repeat is GET-on
     desired,
     { operation: 'update', targetId: id },
     h.client,
-    h.dlos,
   );
   assert.equal(repeat.operation, 'unchanged');
   assert.deepEqual(
@@ -873,63 +995,48 @@ test('Transform full-input PUT preserves settings and canonical repeat is GET-on
   );
 });
 
-test('Transform preflight blocks unsupported current targets, schedules, validation and prerequisites', async () => {
-  for (const mutate of [
-    (h) => {
-      h.client.get = async () => {
-        throw Object.assign(new Error('access ambiguous'), { statusCode: 404 });
-      };
-    },
-    (h) => {
-      h.client.schedule = async () => ({ ...schedule(), frequency: 'Daily' });
-    },
-    (h) => {
-      const value = runtime();
-      value.creationType = 'GRAPH';
-      h.set(value);
-    },
-    (h) => {
-      const value = runtime();
-      value.name = 'Other';
-      h.set(value);
-    },
-    (h) => {
-      const value = runtime();
-      value.definition.nodes.OUTPUT0.parameters.writeMode = 'APPEND';
-      h.set(value);
-    },
-    (h) => {
-      h.dlos.get = async () => {
-        throw new Error('missing prerequisite');
-      };
-    },
-    (h) => {
-      h.dlos.get = async (name) => ({ ...dlo(name), status: 'PROCESSING' });
-    },
-    (h) => {
-      h.dlos.get = async (name) => ({ ...dlo(name), dataSpaceInfo: [{ name: 'other' }] });
-    },
-    (h) => {
-      h.dlos.get = async (name) => {
-        const value = dlo(name);
-        if (name === 'Output__dll') value.fields[0].dataType = 'Number';
-        return value;
-      };
-    },
-    (h) => {
-      h.dlos.get = async (name) => {
-        const value = dlo(name);
-        value.fields[0].name = 'Missing__c';
-        return value;
-      };
-    },
+test('Transform preflight blocks unreadable, non-custom, packaged or renamed targets and failed validation', async () => {
+  for (const [mutate, code] of [
+    [
+      (h) => {
+        h.client.get = async () => {
+          throw Object.assign(new Error('access ambiguous'), { statusCode: 404 });
+        };
+      },
+      /access ambiguous/u,
+    ],
+    [
+      (h) => {
+        const value = runtime();
+        value.creationType = 'GRAPH';
+        h.set(value);
+      },
+      /UNSUPPORTED_TRANSFORM_OWNER_OR_STATE/u,
+    ],
+    [
+      (h) => {
+        const value = runtime();
+        value.namespace = 'owned';
+        h.set(value);
+      },
+      /UNSUPPORTED_TRANSFORM_VARIANT/u,
+    ],
+    [
+      (h) => {
+        const value = runtime();
+        value.name = 'Other';
+        h.set(value);
+      },
+      /TRANSFORM_IDENTITY_MISMATCH/u,
+    ],
   ]) {
     const h = harness();
     mutate(h);
     const desired = document();
     desired.definition.description = 'changed';
     await assert.rejects(
-      executeDataTransformDeploy(desired, { operation: 'update', targetId: id }, h.client, h.dlos),
+      executeDataTransformDeploy(desired, { operation: 'update', targetId: id }, h.client),
+      code,
     );
     assert.equal(
       h.calls.some(([op]) => ['create', 'update'].includes(op)),
@@ -940,13 +1047,14 @@ test('Transform preflight blocks unsupported current targets, schedules, validat
     const h = harness();
     h.client.validate = async () => response;
     await assert.rejects(
-      preflightDataTransformDeploy(document(), { operation: 'create' }, h.client, h.dlos),
+      preflightDataTransformDeploy(document(), { operation: 'create' }, h.client),
+      /TRANSFORM_VALIDATION_FAILED/u,
     );
     assert.equal(h.calls.length, 0);
   }
 });
 
-test('Transform execution detects validation-time target drift and independent readback mismatch', async () => {
+test('Transform execution detects validation-time target drift and readback identity mismatch', async () => {
   const h = harness();
   const desired = document();
   desired.definition.description = 'Changed';
@@ -957,7 +1065,7 @@ test('Transform execution detects validation-time target drift and independent r
     h.set(value);
   };
   await assert.rejects(
-    executeDataTransformDeploy(desired, { operation: 'update', targetId: id }, h.client, h.dlos, {
+    executeDataTransformDeploy(desired, { operation: 'update', targetId: id }, h.client, {
       verifyInput,
     }),
     /TRANSFORM_TARGET_DRIFT/u,
@@ -966,17 +1074,43 @@ test('Transform execution detects validation-time target drift and independent r
     h.calls.some(([op]) => op === 'update'),
     false,
   );
-  const bad = harness();
-  bad.client.get = async () => {
+  for (const change of [
+    (value) => {
+      value.creationType = 'SYSTEM';
+    },
+    (value) => {
+      value.namespace = 'owned';
+    },
+    (value) => {
+      value.name = 'OtherTransform';
+      value.definition.name = 'OtherTransform';
+    },
+  ]) {
+    const bad = harness();
+    bad.client.get = async () => {
+      const value = runtime();
+      change(value);
+      return value;
+    };
+    await assert.rejects(
+      executeDataTransformDeploy(document(), { operation: 'create' }, bad.client),
+      /TRANSFORM_READBACK_MISMATCH/u,
+    );
+  }
+  // A readback that differs only in the stored definition is the stored form, not a mismatch.
+  const normalized = harness();
+  normalized.client.get = async () => {
     const value = runtime();
-    value.description = 'wrong';
-    value.definition.description = 'wrong';
+    value.description = 'stored differently';
+    value.fullRunFrequency = 'WEEKLY';
     return value;
   };
-  await assert.rejects(
-    executeDataTransformDeploy(document(), { operation: 'create' }, bad.client, bad.dlos),
-    /TRANSFORM_READBACK_MISMATCH/u,
+  const created = await executeDataTransformDeploy(
+    document(),
+    { operation: 'create' },
+    normalized.client,
   );
+  assert.equal(created.operation, 'create');
   const processing = harness();
   const value = runtime();
   value.status = 'PROCESSING';
@@ -985,12 +1119,11 @@ test('Transform execution detects validation-time target drift and independent r
     document(),
     { operation: 'create' },
     processing.client,
-    processing.dlos,
   );
   assert.equal(result.serverProcessing, true);
 });
 
-test('Transform update sends changed logic as written and surfaces Salesforce refusal; incomplete keys refused', async () => {
+test('Transform update sends changed logic as written and surfaces Salesforce refusal', async () => {
   const h = harness();
   const changed = document();
   changed.definition.definition.nodes.OUTPUT0.parameters.name = 'OtherOutput__dll';
@@ -999,49 +1132,28 @@ test('Transform update sends changed logic as written and surfaces Salesforce re
     throw new Error('Salesforce: output object cannot be changed');
   };
   await assert.rejects(
-    executeDataTransformDeploy(changed, { operation: 'update', targetId: id }, h.client, h.dlos),
+    executeDataTransformDeploy(changed, { operation: 'update', targetId: id }, h.client),
     /output object cannot be changed/u,
   );
   const sent = h.calls.filter(([op]) => op === 'update');
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0][2], changed.definition);
-  const missingKey = harness();
-  missingKey.dlos.get = async (name) => {
-    const value = dlo(name);
-    value.fields[0].isPrimaryKey = false;
-    value.fields.push({ name: 'Other__c', label: 'Other', dataType: 'Text', isPrimaryKey: true });
-    return value;
-  };
-  await assert.rejects(
-    executeDataTransformDeploy(
-      document(),
-      { operation: 'create' },
-      missingKey.client,
-      missingKey.dlos,
-    ),
-    /INCOMPATIBLE_TRANSFORM_DLO_FIELDS/u,
-  );
 });
 
-test('Transform write acknowledgment never substitutes for ID, schedule or prerequisite readback', async () => {
+test('Transform write acknowledgment never substitutes for the ID readback', async () => {
   for (const receipt of [undefined, {}, { id: '1dt000000000002AAA', name: 'Other' }]) {
     const h = harness();
     h.client.create = async () => {
       h.calls.push(['create']);
       return receipt;
     };
-    await assert.rejects(
-      executeDataTransformDeploy(document(), { operation: 'create' }, h.client, h.dlos),
-    );
+    await assert.rejects(executeDataTransformDeploy(document(), { operation: 'create' }, h.client));
     assert.deepEqual(
       h.calls.map(([op]) => op),
       ['validate', 'create'],
     );
   }
   for (const mutate of [
-    (h) => {
-      h.client.schedule = async () => ({ ...schedule(), type: 'Daily' });
-    },
     (h) => {
       h.client.get = async () => {
         throw Object.assign(new Error('readback access denied'), { statusCode: 404 });
@@ -1050,55 +1162,16 @@ test('Transform write acknowledgment never substitutes for ID, schedule or prere
     (h) => {
       h.client.get = async () => ({ ...runtime(), id: '1dt000000000002AAA' });
     },
-    (h) => {
-      let reads = 0;
-      h.dlos.get = async (name) => {
-        const value = dlo(name);
-        if (++reads > 4)
-          value.fields.push({
-            name: 'Added__c',
-            label: 'Added',
-            dataType: 'Text',
-            isPrimaryKey: false,
-          });
-        return value;
-      };
-    },
-    (h) => {
-      let reads = 0;
-      h.dlos.get = async (name) => {
-        const value = dlo(name);
-        if (++reads > 4) value.dataSpaceInfo.push({ name: 'other' });
-        return value;
-      };
-    },
   ]) {
     const h = harness();
     mutate(h);
-    await assert.rejects(
-      executeDataTransformDeploy(document(), { operation: 'create' }, h.client, h.dlos),
-    );
+    await assert.rejects(executeDataTransformDeploy(document(), { operation: 'create' }, h.client));
     assert.equal(h.calls.filter(([op]) => op === 'create').length, 1);
     assert.equal(
       h.calls.some(([op]) => op === 'update'),
       false,
     );
   }
-  const before = harness();
-  let reads = 0;
-  before.dlos.get = async (name) => {
-    const value = dlo(name);
-    if (++reads > 2) value.label = 'Drift';
-    return value;
-  };
-  await assert.rejects(
-    executeDataTransformDeploy(document(), { operation: 'create' }, before.client, before.dlos),
-    /TRANSFORM_PREREQUISITE_DRIFT/u,
-  );
-  assert.equal(
-    before.calls.some(([op]) => op === 'create'),
-    false,
-  );
   const update = harness();
   const desired = document();
   desired.definition.description = 'Changed';
@@ -1108,12 +1181,7 @@ test('Transform write acknowledgment never substitutes for ID, schedule or prere
     throw failure;
   };
   await assert.rejects(
-    executeDataTransformDeploy(
-      desired,
-      { operation: 'update', targetId: id },
-      update.client,
-      update.dlos,
-    ),
+    executeDataTransformDeploy(desired, { operation: 'update', targetId: id }, update.client),
     (error) => error === failure,
   );
   assert.equal(update.calls.filter(([op]) => op === 'update').length, 1);
@@ -1141,14 +1209,15 @@ test('Transform transport never retries 400, 404, permission or unknown failures
   }
 });
 
-const deleteHarness = () => {
+const deleteHarness = (raw = runtime()) => {
   const h = harness();
+  h.set(raw);
   let deleted = false;
   h.client.list = async () => {
     h.calls.push(['list']);
     return {
       totalSize: deleted ? 0 : 1,
-      dataTransforms: deleted ? [] : [{ id, name: input().name }],
+      dataTransforms: deleted ? [] : [{ id: raw.id, name: raw.name }],
     };
   };
   h.client.delete = async (targetId) => {
@@ -1159,7 +1228,7 @@ const deleteHarness = () => {
   let clock = 0;
   h.sleeps = [];
   h.options = {
-    targetId: id,
+    targetId: raw.id,
     confirmDelete: true,
     verifyInput: async () => {},
     now: () => clock,
@@ -1185,12 +1254,7 @@ test('Transform deletion polls the list until the transform is gone, within a bo
     const gone = deleted && ++reads > 2;
     return { totalSize: gone ? 0 : 1, dataTransforms: gone ? [] : [{ id, name: input().name }] };
   };
-  const confirmed = await deleteDataTransform(
-    document(),
-    lagging.client,
-    lagging.dlos,
-    lagging.options,
-  );
+  const confirmed = await deleteDataTransform(document(), lagging.client, lagging.options);
   assert.equal(confirmed.outcome, 'deleted');
   assert.equal(confirmed.mutation, 'confirmed-deleted');
   assert.deepEqual(lagging.sleeps, [5000, 5000]);
@@ -1200,12 +1264,7 @@ test('Transform deletion polls the list until the transform is gone, within a bo
   stuck.client.delete = async (targetId) => {
     stuck.calls.push(['delete', targetId]);
   };
-  const unconfirmed = await deleteDataTransform(
-    document(),
-    stuck.client,
-    stuck.dlos,
-    stuck.options,
-  );
+  const unconfirmed = await deleteDataTransform(document(), stuck.client, stuck.options);
   assert.equal(unconfirmed.outcome, 'deletion-unconfirmed');
   assert.equal(unconfirmed.mutation, 'acknowledged');
   assert.equal(
@@ -1223,7 +1282,7 @@ test('Transform deletion previews zero writes, requires confirmation and indepen
   ]) {
     const h = deleteHarness();
     Object.assign(h.options, options);
-    const result = await deleteDataTransform(document(), h.client, h.dlos, h.options);
+    const result = await deleteDataTransform(document(), h.client, h.options);
     assert.equal(result.outcome, outcome);
     assert.equal(h.calls.filter(([op]) => op === 'delete').length, writes);
     assert.equal(
@@ -1232,7 +1291,6 @@ test('Transform deletion previews zero writes, requires confirmation and indepen
     );
     if (writes) {
       assert.equal(result.mutation, 'confirmed-deleted');
-      assert.equal(result.prerequisitesPreserved, true);
       assert.deepEqual(
         h.calls.find(([op]) => op === 'delete'),
         ['delete', id],
@@ -1240,6 +1298,33 @@ test('Transform deletion previews zero writes, requires confirmation and indepen
     }
   }
 });
+
+for (const [kind, raw] of [
+  ['DCSQL definitions[]', dcsqlGet],
+  [
+    'non-key STL mapping',
+    () => {
+      const value = stlGet();
+      value.definition.nodes.OUT0.parameters.fieldsMappings = [
+        { sourceField: 'Name__c', targetField: 'Name__c' },
+      ];
+      return value;
+    },
+  ],
+])
+  test(`Transform deletion of a ${kind} transform reaches DELETE and settles on absence`, async () => {
+    const value = raw();
+    value.status = 'PROCESSING';
+    const h = deleteHarness(value);
+    const desired = observeDataTransform(value, schedule()).document;
+    const result = await deleteDataTransform(desired, h.client, h.options);
+    assert.equal(result.outcome, 'deleted');
+    assert.equal(result.mutation, 'confirmed-deleted');
+    assert.deepEqual(
+      h.calls.filter(([op]) => op === 'delete'),
+      [['delete', value.id]],
+    );
+  });
 
 test('Transform deletion rejects ambiguous absence, unsupported targets and fresh drift before writes', async () => {
   for (const mutate of [
@@ -1255,38 +1340,19 @@ test('Transform deletion rejects ambiguous absence, unsupported targets and fres
       h.client.list = async () => ({ totalSize: 0, dataTransforms: [] });
     },
     (h) => {
-      h.client.schedule = async () => ({ ...schedule(), type: 'Daily' });
-    },
-    (h) => {
       const raw = runtime();
       raw.creationType = 'SYSTEM';
       h.set(raw);
     },
     (h) => {
       const raw = runtime();
-      raw.definitions = [];
-      h.set(raw);
-    },
-    (h) => {
-      const raw = runtime();
-      raw.type = 'STREAMING';
+      raw.namespace = 'owned';
       h.set(raw);
     },
     (h) => {
       const raw = runtime();
       raw.id = '1dt000000000002AAA';
       h.set(raw);
-    },
-    (h) => {
-      let reads = 0;
-      h.dlos.get = async (name) => ({ ...dlo(name), label: ++reads > 2 ? 'Drift' : name });
-    },
-    (h) => {
-      let reads = 0;
-      h.dlos.get = async (name) => ({
-        ...dlo(name),
-        id: ++reads > 2 ? '1dl000000000003AAA' : dlo(name).id,
-      });
     },
     (h) => {
       let checks = 0;
@@ -1308,7 +1374,7 @@ test('Transform deletion rejects ambiguous absence, unsupported targets and fres
   ]) {
     const h = deleteHarness();
     mutate(h);
-    await assert.rejects(deleteDataTransform(document(), h.client, h.dlos, h.options));
+    await assert.rejects(deleteDataTransform(document(), h.client, h.options));
     assert.equal(
       h.calls.some(([op]) => op === 'delete'),
       false,
@@ -1319,7 +1385,7 @@ test('Transform deletion rejects ambiguous absence, unsupported targets and fres
   h.options.verifyInput = async () => {
     desired.definition.label = 'Changed';
   };
-  await assert.rejects(deleteDataTransform(desired, h.client, h.dlos, h.options));
+  await assert.rejects(deleteDataTransform(desired, h.client, h.options));
   assert.equal(
     h.calls.some(([op]) => op === 'delete'),
     false,
@@ -1364,16 +1430,8 @@ test('Transform inventory uses bounded complete fixed pages, never partial/error
   );
 });
 
-test('Transform delete acknowledgment is not settlement and never authorizes mutation replay or DLO cleanup', async () => {
-  for (const mode of [
-    'present',
-    'same-name',
-    'partial',
-    'read404',
-    'output-drift',
-    'source-missing',
-    'delete-error',
-  ]) {
+test('Transform delete acknowledgment is not settlement and never authorizes mutation replay', async () => {
+  for (const mode of ['present', 'same-name', 'partial', 'read404', 'delete-error']) {
     const h = deleteHarness();
     let dispatched = false;
     h.client.delete = async () => {
@@ -1385,30 +1443,14 @@ test('Transform delete acknowledgment is not settlement and never authorizes mut
       if (!dispatched) return { totalSize: 1, dataTransforms: [{ id, name: input().name }] };
       if (mode === 'read404') throw Object.assign(new Error('access'), { statusCode: 404 });
       if (mode === 'partial') return { totalSize: 2, dataTransforms: [] };
-      if (mode === 'present' || mode === 'same-name')
-        return {
-          totalSize: 1,
-          dataTransforms: [
-            { id: mode === 'present' ? id : '1dt000000000002AAA', name: input().name },
-          ],
-        };
-      return { totalSize: 0, dataTransforms: [] };
+      return {
+        totalSize: 1,
+        dataTransforms: [
+          { id: mode === 'present' ? id : '1dt000000000002AAA', name: input().name },
+        ],
+      };
     };
-    h.dlos.get = async (name) => {
-      if (dispatched && mode === 'source-missing' && name === 'Source__dll')
-        throw new Error('missing');
-      const raw = dlo(name);
-      if (dispatched && mode === 'output-drift' && name === 'Output__dll')
-        raw.fields.push({
-          name: 'Extra__c',
-          label: 'Extra',
-          dataType: 'Text',
-          isPrimaryKey: false,
-        });
-      return raw;
-    };
-    h.dlos.delete = () => assert.fail('never delete a DLO');
-    const result = await deleteDataTransform(document(), h.client, h.dlos, h.options);
+    const result = await deleteDataTransform(document(), h.client, h.options);
     assert.equal(result.outcome, 'deletion-unconfirmed', mode);
     assert.equal(result.mutation, mode === 'delete-error' ? 'unknown' : 'acknowledged', mode);
     assert.equal(h.calls.filter(([op]) => op === 'delete').length, 1);
@@ -1436,8 +1478,8 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
     },
   });
   // The settlement poll uses the harness's virtual clock.
-  command.deleteDataTransform = async (value, client, dlos, options) =>
-    deleteDataTransform(value, client, dlos, {
+  command.deleteDataTransform = async (value, client, options) =>
+    deleteDataTransform(value, client, {
       ...options,
       now: h.options.now,
       delay: h.options.delay,
@@ -1452,7 +1494,6 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
     return h.client;
   };
   command.createDloClient = () => assert.fail('Transform must not spawn general DLO CLI');
-  command.createDataTransformDloReader = () => h.dlos;
   command.jsonEnabled = () => true;
   command.log = () => {};
   configure(command, published.path);
@@ -1489,6 +1530,10 @@ test('public Transform delete by name: preview GET-only, then one DELETE without
   assert.equal(preview.result.status, 'success');
   assert.equal(preview.result.result.items[0].outcome, 'delete');
   assert.equal(preview.result.result.items[0].operation, 'preview');
+  assert.deepEqual(
+    preview.result.result.items[0].routes.map(({ operation }) => operation),
+    ['data-transform.get'],
+  );
   assert.equal(
     preview.h.calls.some(([op]) => op === 'delete'),
     false,
@@ -1500,7 +1545,6 @@ test('public Transform delete by name: preview GET-only, then one DELETE without
   assert.equal(done.result.status, 'success');
   assert.equal(done.result.result.items[0].outcome, 'deleted');
   assert.equal(done.result.result.items[0].mutation, 'confirmed-deleted');
-  assert.equal(done.result.result.items[0].prerequisitesPreserved, true);
   assert.equal(done.h.calls.filter(([op]) => op === 'delete').length, 1);
   // The target ID came from the transform list; the canonical local file is removed.
   assert.ok(done.h.calls.some((call) => call[0] === 'delete' && call[1] === id));
@@ -1543,17 +1587,14 @@ test('public Transform delete refuses a name two transforms share ignoring case'
 test('public Transform delete reports unconfirmed settlement and unknown HTTP outcome nonzero without replay', async () => {
   for (const mode of ['present', 'error']) {
     const h = deleteHarness();
-    let dispatched = false;
     h.client.delete = async () => {
       h.calls.push(['delete']);
-      dispatched = true;
       if (mode === 'error') throw new Error('uncertain');
     };
     h.client.list = async () => ({
       totalSize: 1,
       dataTransforms: [{ id, name: input().name }],
     });
-    void dispatched;
     const { result } = await deleteTransformCommand({}, h);
     assert.equal(result.status, 'failed');
     assert.equal(result.result.items[0].outcome, 'deletion-unconfirmed');
@@ -1563,42 +1604,44 @@ test('public Transform delete reports unconfirmed settlement and unknown HTTP ou
   }
 });
 
-test('Transform delete service refuses target or schedule changed during final awaited input check', async () => {
-  for (const mutate of ['target', 'schedule']) {
-    const h = deleteHarness();
-    let checks = 0;
-    h.options.verifyInput = async () => {
-      if (++checks < 3) return;
-      if (mutate === 'schedule') h.client.schedule = async () => ({ ...schedule(), type: 'Daily' });
-      else {
-        const raw = runtime();
-        raw.label = 'Changed';
-        raw.definition.label = 'Changed';
-        h.set(raw);
-      }
-    };
-    await assert.rejects(deleteDataTransform(document(), h.client, h.dlos, h.options));
-    assert.equal(
-      h.calls.some(([op]) => op === 'delete'),
-      false,
-    );
-  }
+test('Transform delete service refuses a target changed during the final awaited input check', async () => {
+  const h = deleteHarness();
+  let checks = 0;
+  h.options.verifyInput = async () => {
+    // The second check is the last one before the final read.
+    if (++checks < 2) return;
+    const raw = runtime();
+    raw.label = 'Changed';
+    raw.definition.label = 'Changed';
+    h.set(raw);
+  };
+  await assert.rejects(
+    deleteDataTransform(document(), h.client, h.options),
+    /TRANSFORM_TARGET_DRIFT/u,
+  );
+  assert.equal(
+    h.calls.some(([op]) => op === 'delete'),
+    false,
+  );
 });
 
-test('public Transform delete refuses an org definition changed during final prerequisite reads', async () => {
+test('public Transform delete refuses an org definition changed during the inventory check', async () => {
   const h = deleteHarness();
-  let reads = 0;
-  h.dlos.get = async (name) => {
-    if (++reads === 4) {
+  const list = h.client.list;
+  let lists = 0;
+  h.client.list = async (offset) => {
+    // The first list resolves the name; the second is the delete's own inventory check.
+    if (++lists === 2) {
       const raw = runtime();
       raw.label = 'Changed';
       raw.definition.label = 'Changed';
       h.set(raw);
     }
-    return dlo(name);
+    return list(offset);
   };
   const { result } = await deleteTransformCommand({}, h);
   assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'TRANSFORM_TARGET_DRIFT');
   assert.equal(result.result.items[0].mutation, 'not-attempted');
   assert.equal(h.calls.filter(([op]) => op === 'delete').length, 0);
 });
@@ -1623,14 +1666,6 @@ test('public Transform delete preserves post-dispatch exceptions as unknown and 
   );
 });
 
-test('Transform delete final read compares the complete admitted None schedule', async () => {
-  const h = deleteHarness();
-  let reads = 0;
-  h.client.schedule = async () => ({ ...schedule(), ...(++reads > 1 ? { time: '12:00' } : {}) });
-  await assert.rejects(deleteDataTransform(document(), h.client, h.dlos, h.options));
-  assert.equal(h.calls.filter(([op]) => op === 'delete').length, 0);
-});
-
 test('Transform update never posts to the validation endpoint (live: it rejects the owner own output)', async () => {
   const h = harness();
   const desired = document();
@@ -1644,7 +1679,6 @@ test('Transform update never posts to the validation endpoint (live: it rejects 
     desired,
     { operation: 'update', targetId: id },
     h.client,
-    h.dlos,
   );
   assert.equal(result.operation, 'update');
 });

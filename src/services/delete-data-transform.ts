@@ -8,9 +8,6 @@ import {
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
-import type { DloClient } from '../transport/dlo-rest.js';
-import { bindDataTransformDlos } from './preflight-data-transform-deploy.js';
-import type { DataTransformPrerequisites } from './preflight-data-transform-deploy.js';
 import { retrieveDataTransform } from './retrieve-data-transform.js';
 import { replaceExplanation } from './operation-diagnostic.js';
 
@@ -32,7 +29,6 @@ export type DataTransformDeleteResult = {
   targetId: string;
   outcome: 'preview' | 'blocked' | 'deleted' | 'deletion-unconfirmed';
   mutation: 'not-attempted' | 'acknowledged' | 'confirmed-deleted' | 'unknown';
-  prerequisitesPreserved?: true;
 };
 
 /**
@@ -111,33 +107,18 @@ export async function resolveDataTransformTargetId(
 }
 
 /**
- * Compare complete DLO definitions, identities and memberships, excluding runtime counters.
- * @param {DataTransformPrerequisites} bindings Fresh existing DLO observations.
- * @returns {unknown} Stable preservation baseline.
- */
-function preservation(bindings: DataTransformPrerequisites): unknown {
-  return bindings.map(({ document, targetId, runtime }) => ({
-    document,
-    targetId,
-    memberships: runtime.dataSpaceInfo,
-  }));
-}
-
-/**
- * Delete one positively matched authored STL target; preview never writes and execution sends once.
- * A resolved DELETE is only acknowledgement. One bounded complete inventory plus independent DLO
- * preservation establishes settlement; any read failure/partial list leaves deletion unconfirmed.
- * Never deletes or provisions source/output DLOs, retries mutations, or treats GET404 as absence.
+ * Delete one positively matched custom target; preview never writes and execution sends once.
+ * A resolved DELETE is only acknowledgement; settlement is the transform's absence from one
+ * bounded complete inventory, polled within a bound. Any read failure or partial list leaves
+ * the deletion unconfirmed. Never deletes DLOs, retries mutations or treats GET404 as absence.
  * @param {unknown} value Exact portable definition expectation, not ownership authority.
  * @param {DataTransformClient} client Bound native API68/default transform adapter.
- * @param {DloClient} dlos Shared existing source/output DLO adapter.
  * @param {DataTransformDeleteOptions} options Exact target ID, confirmation and fresh local input guard.
  * @returns {Promise<DataTransformDeleteResult>} Honest acknowledgement/settlement classification.
  */
 export async function deleteDataTransform(
   value: unknown,
   client: DataTransformClient,
-  dlos: Pick<DloClient, 'get'>,
   options: DataTransformDeleteOptions,
 ): Promise<DataTransformDeleteResult> {
   const desired = validateDataTransformDocument(value);
@@ -145,7 +126,6 @@ export async function deleteDataTransform(
   const { targetId, confirmDelete, verifyInput } = options;
   const preview = options.preview === true;
   const methods = { ...client };
-  const dloGet = dlos.get;
   const check = (): void => {
     if (
       typeof targetId !== 'string' ||
@@ -156,7 +136,6 @@ export async function deleteDataTransform(
       options.verifyInput !== verifyInput ||
       (options.preview === true) !== preview ||
       !isDeepStrictEqual({ ...client }, methods) ||
-      dlos.get !== dloGet ||
       serializeDataTransformDocument(value) !== canonical
     )
       throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
@@ -175,29 +154,16 @@ export async function deleteDataTransform(
   };
   await verify();
   await read();
-  const prerequisites = preservation(await bindDataTransformDlos(desired, dlos));
   check();
   const inventory = await listDataTransformInventory(client, check);
   if (!inventory.some((row) => row.id === targetId && row.name === desired.definition.name))
     throw new DataTransformError('TRANSFORM_DELETE_IDENTITY_MISMATCH');
   await verify();
-  const fresh = preservation(await bindDataTransformDlos(desired, dlos));
-  check();
-  if (!isDeepStrictEqual(prerequisites, fresh))
-    throw new DataTransformError('TRANSFORM_PREREQUISITE_DRIFT');
-  await verify();
   await read();
   const result = (
     outcome: DataTransformDeleteResult['outcome'],
     mutation: DataTransformDeleteResult['mutation'],
-    preserved = false,
-  ): DataTransformDeleteResult => ({
-    operation: 'delete',
-    targetId,
-    outcome,
-    mutation,
-    ...(preserved ? { prerequisitesPreserved: true as const } : {}),
-  });
+  ): DataTransformDeleteResult => ({ operation: 'delete', targetId, outcome, mutation });
   if (preview) return result('preview', 'not-attempted');
   if (confirmDelete !== true) return result('blocked', 'not-attempted');
   try {
@@ -219,12 +185,8 @@ export async function deleteDataTransform(
       if (!listed || now() >= deadline) break;
       await delay(Math.min(SETTLE_INTERVAL_MS, Math.max(0, deadline - now())));
     }
-    const retained = preservation(await bindDataTransformDlos(desired, dlos));
-    check();
-    if (!isDeepStrictEqual(prerequisites, retained))
-      return result('deletion-unconfirmed', 'acknowledged');
-    if (listed) return result('deletion-unconfirmed', 'acknowledged', true);
-    return result('deleted', 'confirmed-deleted', true);
+    if (listed) return result('deletion-unconfirmed', 'acknowledged');
+    return result('deleted', 'confirmed-deleted');
   } catch {
     return result('deletion-unconfirmed', 'acknowledged');
   }

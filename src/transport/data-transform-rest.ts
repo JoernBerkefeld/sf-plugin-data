@@ -1,8 +1,4 @@
 import { ConnectClient } from './connect-client.js';
-import { DloError, dloName } from '../artifacts/dlo-document.js';
-import type { DloClient } from './dlo-rest.js';
-
-export type DataTransformDloReader = Pick<DloClient, 'get'>;
 import {
   buildDataTransformInput,
   DataTransformError,
@@ -45,29 +41,6 @@ class DataTransformTransport extends ConnectClient {
       this.noRefreshReceiver(),
     );
   }
-}
-
-/**
- * Read existing Transform prerequisites through the same bound API68 Connection.
- * No CRUD methods, child CLI, refresh, redirects or retry are exposed.
- * @param {ConstructorParameters<typeof ConnectClient>[0]} connection Bound authenticated receiver.
- * @returns {DataTransformDloReader} Exact-name GET-only prerequisite reader.
- */
-export function createDataTransformDloReader(
-  connection: ConstructorParameters<typeof ConnectClient>[0],
-): DataTransformDloReader {
-  const transport = new DataTransformTransport(connection, '68.0');
-  const origin = connection.instanceUrl;
-  const request = connection.request;
-  return {
-    get: async (apiName) => {
-      if (connection.instanceUrl !== origin || connection.request !== request)
-        throw new DataTransformError('TRANSFORM_CONNECTION_DRIFT');
-      if (typeof apiName !== 'string' || !dloName.test(apiName))
-        throw new DloError('UNSUPPORTED_DLO_SELECTION');
-      return transport.request(`/services/data/v68.0/ssot/data-lake-objects/${apiName}`, 'GET');
-    },
-  };
 }
 
 /**

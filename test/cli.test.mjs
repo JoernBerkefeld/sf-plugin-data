@@ -260,43 +260,38 @@ test('README describes optional scope without promoting nondefault qualification
     );
 });
 
-test('README separates bounded public Transform commands from native zero-row qualification', () => {
+test('README documents the transform file as native input that Salesforce decides on', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const dlo = readme
     .split('### Data Lake Object (DLO): native definition CRUD')[1]
-    .split('### Data Transforms:')[0];
+    .split('### Data Transforms:')[0]
+    .replaceAll(/\s+/gu, ' ');
+  assert.ok(dlo.includes('a DCSQL definition creates the output DLOs it declares'));
   const transform = readme
-    .split('### Data Transforms: bounded definition retrieve/deploy and native qualification')[1]
+    .split('### Data Transforms: definition retrieve, deploy and delete')[1]
     .split('### DLO-to-DMO mapping:')[0];
-  for (const raw of [dlo, transform]) {
-    const section = raw.replaceAll(/\s+/gu, ' ');
-    for (const text of [
-      'precreated transform output',
-      'without a DataStream for that output',
-      '`CUSTOM` / `BATCH`',
-      '`STL`',
-      '`SUCCESS` in 47 seconds',
-      'processing and writing zero rows',
-      'ordinary transform sources',
-      'ingested data',
-      'not proven mandatory',
-      'not tested',
-    ])
-      assert.ok(section.includes(text), text);
-  }
-  assert.ok(transform.includes('were removed after the experiment'));
+  const section = transform.replaceAll(/\s+/gu, ' ');
+  for (const text of [
+    "the transform's native input as Salesforce returns it",
+    'everything else is sent as written and Salesforce decides',
+    '`UNSUPPORTED_TRANSFORM_INPUT`',
+    'An update replaces the whole transform',
+    '`fullRunFrequency` to `DAILY`, `writeMode` to `OVERWRITE`',
+    'The schedule is not in the file and is not changed by a deploy',
+    "Salesforce's stored definition is not compared with the file",
+    'Only a `CUSTOM` transform without a namespace is updated or deleted',
+  ])
+    assert.ok(section.includes(text), text);
   assert.match(transform, /sf data360 deploy -m data-transform:Example --target-org/u);
   assert.match(transform, /no match sends one create POST, one match updates that record/u);
   assert.match(transform, /`--allow-processing` is not needed/u);
   assert.doesNotMatch(transform, /--transform-operation|--transform-target-id/u);
-  assert.match(transform, /server validation remains\s+pending/u);
-  assert.doesNotMatch(transform, /lifecycle acceptance, which has not been\s+performed/u);
-  assert.match(transform, /selected only\s+the changed one with `--changed-since`/u);
-  assert.match(transform, /sf data360 delete -m data-transform:Name/u);
+  assert.match(transform, /server validation remains pending/u);
   assert.doesNotMatch(
-    transform.replaceAll(/\s+/gu, ' '),
-    /(?:no [^.]*public delete[^.]*offered|public delete (?:is )?(?:not offered|unavailable|unsupported))/iu,
+    section,
+    /UNSUPPORTED_TRANSFORM_(?:SCHEDULE|FREQUENCY|DLO_STATE)|INCOMPATIBLE_TRANSFORM_DLO_FIELDS/u,
   );
+  assert.match(transform, /sf data360 delete -m data-transform:Name/u);
   assert.match(transform, /deletion-unconfirmed/u);
 });
 

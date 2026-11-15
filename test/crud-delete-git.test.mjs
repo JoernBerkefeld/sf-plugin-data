@@ -278,13 +278,12 @@ const harness = (cwd, flags) => {
     }),
     delete: async () => {},
   });
-  command.createDataTransformDloReader = () => ({});
-  command.deleteDataTransform = async (_desired, _client, _reader, options) => {
+  command.deleteDataTransform = async (_desired, _client, options) => {
     await options.verifyInput();
     h.calls.push(`transform:${options.targetId}`);
     return options.preview
       ? { outcome: 'preview', mutation: 'not-attempted' }
-      : { outcome: 'deleted', mutation: 'confirmed-deleted', prerequisitesPreserved: true };
+      : { outcome: 'deleted', mutation: 'confirmed-deleted' };
   };
   command.createDmoNativeDeleteClient = () => ({});
   command.retrieveDmo = async (name) => ({ identity: { dataSpace: 'default', apiName: name } });

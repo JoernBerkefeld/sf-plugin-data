@@ -185,7 +185,6 @@ const harness = (inputs, flags = {}) => {
   // P2 transform.
   command.verifyDataTransformInput = async () => {};
   command.createDataTransformClient = () => ({});
-  command.createDataTransformDloReader = () => ({});
   // No transform of that name exists in the org: create.
   command.resolveDataTransformTarget = async () => {};
   command.preflightDataTransform = async () => {

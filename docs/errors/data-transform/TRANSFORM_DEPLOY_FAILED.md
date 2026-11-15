@@ -10,7 +10,7 @@
 
 ## What it means
 
-Something went wrong that is not one of the specific transform checks. Common causes are an HTTP error from Salesforce (for example authentication, permissions, or a create rejected because the name already exists), a problem reading a DLO, or a change to the local file detected right before the write. The message shows the HTTP status and Salesforce error detail when there is one.
+Something went wrong that is not one of the specific transform checks. Common causes are an HTTP error from Salesforce (for example authentication, permissions, or a create rejected because the name already exists), or a change to the local file detected right before the write. The message shows the HTTP status and Salesforce error detail when there is one.
 
 ## Why the plugin stops
 

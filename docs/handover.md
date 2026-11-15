@@ -1,3 +1,37 @@
+# Step 3: data transform shape checks removed — 2026-11-15
+
+Plan `.claude/plans/sf_plugin_data_transform_gates_20261115.plan.md` (root repo).
+
+- File = native input as the GET returns it (input keys only; definition `schedule` and
+  output-object `id`/`createdDate`/`lastModifiedDate`/`status` dropped; nothing else
+  rewritten). Admission: inert JSON, name, exactly one of `definition`/`definitions`,
+  default space. CUSTOM + no namespace still required for update/delete targets and
+  retrieve; API 68 only.
+- Removed: node/version/type/key allowlists, `bindDataTransformDlos` and the DLO
+  prerequisite reads, schedule/frequency/status gates and 7 codes
+  (`INCOMPATIBLE_TRANSFORM_DLO_FIELDS`, `TRANSFORM_DLO_IDENTITY_MISMATCH`,
+  `TRANSFORM_PREREQUISITE_CHANGED`, `TRANSFORM_PREREQUISITE_DRIFT`,
+  `UNSUPPORTED_TRANSFORM_DLO_STATE`, `UNSUPPORTED_TRANSFORM_FREQUENCY`,
+  `UNSUPPORTED_TRANSFORM_SCHEDULE`) with their pages. Readback after a write checks
+  identity only; delete settles on absence only.
+- Probes (raw REST, `CliTrG_59ac06`, evidence `F:/Temp/cli-trg-probe-LSa3Sx/out`):
+  full-replace PUT resets an omitted `fullRunFrequency`/`writeMode`; schedule survives a
+  PUT and a schedule in the PUT body is validated but not applied; DCSQL `definitions[]`
+  creates its declared output DLO; Salesforce refuses missing STL output, output = source
+  and STREAMING+STL. DB row `data360:transform.input-shapes.api68`.
+- Live through the plugin (`CliTrG_bf6ae6`, evidence `F:/Temp/cli-trg-live-dIOFj1`):
+  hand-written STL (Weekly, APPEND) and DCSQL create; retrieve keeps WEEKLY/APPEND/68.0;
+  label update keeps them; repeat `unchanged`; delete of both confirmed. The DCSQL output
+  DLO stays after its transform is deleted. All probes deleted (404).
+- README support row: Create Available; Retrieve/Update/Delete stay Partial (SYSTEM and
+  namespaced transforms refused).
+- Open (nice-to-haves, not done): `transformDloNames` in `crud-plan.ts` reads STL nodes
+  only, so DCSQL outputs give no phase ordering against DLOs in the same run; a
+  hand-written file with other casing than the stored form updates on each deploy and
+  fails `delete --changed-since` with `TRANSFORM_TARGET_DRIFT`; stale "Shared DLO
+  resolution" test in `data-transform.test.mjs`; schedule still part of the pre-PUT drift
+  check.
+
 # Step 2a: stream and delete fixes after the off-pattern plan — 2026-11-15
 
 Follow-ups to plan `sf_plugin_data_offpattern_20261114` (user-agreed open topics).
