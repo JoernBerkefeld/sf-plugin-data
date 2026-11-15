@@ -10,7 +10,9 @@
 
 ## What it means
 
-Retrieving data graphs has three steps: read the org context once, then for each selected graph read the graph and write `data360/dataGraphs/<Name>.native-dataGraph.json`. One of them failed: the graph does not exist under that name, the org answered with an error, the graph has a shape the plugin cannot check, a different file already exists and `--overwrite` was not given, or the written file could not be confirmed.
+Retrieving data graphs has three steps: read the org context once, then for each selected graph read the graph and write `data360/dataGraphs/<Name>.native-dataGraph.json`. One of them failed: the graph does not exist under that name, the org answered with an error, the two reads of the graph differed, a different file already exists and `--overwrite` was not given, or the written file could not be confirmed.
+
+A graph shape the plugin does not model is not a failure: it is retrieved with the unknown keys kept, or written as-is (verbatim) — see [`UNSUPPORTED_DATA_GRAPH_CONFIGURATION`](../data-graph/UNSUPPORTED_DATA_GRAPH_CONFIGURATION.md). When the cause has its own code, the message ends with `Cause: <CODE>.`, for example `Cause: OVERWRITE_REQUIRED.`
 
 - When the org context failed, no graph was read; the diagnostic has no graph name.
 - When one graph failed, the diagnostic names that graph (`identity`, `family: "data-graph"`) and the next selected graph is still retrieved. Other families in the same retrieve are not affected.
@@ -63,6 +65,6 @@ Downloaded data-graph: 1
 
 ## Related codes
 
-- [`UNSUPPORTED_DATA_GRAPH_CONFIGURATION`](../data-graph/UNSUPPORTED_DATA_GRAPH_CONFIGURATION.md) — the graph has a shape the plugin cannot check.
+- [`UNSUPPORTED_DATA_GRAPH_CONFIGURATION`](../data-graph/UNSUPPORTED_DATA_GRAPH_CONFIGURATION.md) — the graph has a shape the plugin cannot represent; retrieve writes it as-is.
 - [`PARTIAL_DATA_GRAPH_OUTPUT`](../data-graph/PARTIAL_DATA_GRAPH_OUTPUT.md) — the file was written but not confirmed.
 - [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — a different local file already exists.

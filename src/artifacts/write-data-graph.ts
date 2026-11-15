@@ -94,7 +94,7 @@ export async function writeDataGraphDocument(
   publish = publication,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'native-data-graph') ? value : undefined;
-  const document = verbatim ? undefined : validateNativeDataGraphDocument(value);
+  const document = verbatim ? undefined : validateNativeDataGraphDocument(value, 'retrieve');
   const name = verbatim ? verbatim.identity.apiName : (document!.definition.name as string);
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
@@ -147,7 +147,8 @@ export async function writeDataGraphDocument(
     published = true;
     const completed = await existing(destination);
     if (!completed?.equals(bytes)) throw new DataGraphError('OUTPUT_CHANGED');
-    if (!verbatim) validateNativeDataGraphDocument(JSON.parse(completed.toString('utf8')));
+    if (!verbatim)
+      validateNativeDataGraphDocument(JSON.parse(completed.toString('utf8')), 'retrieve');
     return { path: destination, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new DataGraphError('PARTIAL_DATA_GRAPH_OUTPUT');

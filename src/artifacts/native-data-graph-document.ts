@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import type { DocumentMode } from './verbatim-document.js';
 import {
+  DataGraphError,
   dataGraphName,
   graphCanonicalObject,
   graphRecord,
@@ -17,6 +20,7 @@ export type NativeDataGraphDocument = {
 export type NativeDataGraphObservation = {
   id: string;
   createdDate: string;
+  /** One of the recorded states; a retrieve-mode observation takes any status as read. */
   status:
     | 'creating'
     | 'processing'
@@ -90,19 +94,70 @@ const fieldKeys = [
   'fieldRoles',
 ];
 const pathKeys = ['devName', 'fieldName', 'parentFieldName'];
+// Keys a GET carries that are server facts, never authored configuration; retrieve leaves them out.
+const serverTopKeys = [
+  'id',
+  'createdDate',
+  'createdBy',
+  'modifiedDate',
+  'lastRefreshedDate',
+  'kind',
+  'status',
+  'version',
+  'extendedProperties',
+  'idDmoLabel',
+  'valuesDmoLabel',
+  'primaryObjectLabel',
+];
+const serverNodeKeys = [
+  'id',
+  'categoryDevName',
+  'dependency',
+  'relatedSegments',
+  'fragmentDMOLabel',
+];
+const serverFieldKeys = ['id', 'name', 'dependency', 'sourceFieldLabel'];
+const serverPathKeys = ['fieldLabel', 'parentFieldLabel'];
+const generatedKeys = topKeys.slice(7, 13);
+
+/**
+ * Refuse a data graph setting the plugin cannot send, naming its key path.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {DataGraphError} Refusal with an explanation.
+ */
+function refuse(keyPath: string, problem: string): DataGraphError {
+  return explainInput(
+    new DataGraphError(),
+    `The data graph cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the graph again once the plugin supports it.`,
+  );
+}
+
+/**
+ * Require a deploy invariant, naming the key path when it does not hold.
+ * @param {unknown} condition Invariant.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong otherwise.
+ */
+function need(condition: unknown, keyPath: string, problem: string): asserts condition {
+  if (!condition) throw refuse(keyPath, problem);
+}
 
 /**
  * Reject executable, cyclic, sparse or accessor-bearing inputs before any reads.
  * @param {unknown} value Candidate JSON.
  * @param {Set<object>} ancestors Active ancestors.
+ * @param {number} depth Nesting limit (retrieve mode passes none).
  */
-function inert(value: unknown, ancestors = new Set<object>()): void {
+function inert(value: unknown, ancestors = new Set<object>(), depth = 24): void {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return;
   if (typeof value === 'number') {
     graphRequire(Number.isFinite(value));
     return;
   }
-  graphRequire(value && typeof value === 'object' && !ancestors.has(value) && ancestors.size < 24);
+  graphRequire(
+    value && typeof value === 'object' && !ancestors.has(value) && ancestors.size < depth,
+  );
   graphRequire(
     Object.getPrototypeOf(value) === (Array.isArray(value) ? Array.prototype : Object.prototype),
   );
@@ -111,21 +166,35 @@ function inert(value: unknown, ancestors = new Set<object>()): void {
     if (Array.isArray(value) && key === 'length') continue;
     const d = Object.getOwnPropertyDescriptor(value, key);
     graphRequire(typeof key === 'string' && key !== 'toJSON' && d?.enumerable && 'value' in d);
-    inert(d.value, ancestors);
+    inert(d.value, ancestors, depth);
   }
   if (Array.isArray(value)) graphRequire(Object.keys(value).length === value.length);
   ancestors.delete(value);
 }
 
 /**
- * Check a closed property inventory without discarding unsupported configuration.
+ * Check a closed property inventory without discarding unsupported configuration. Retrieve mode
+ * keeps unknown keys; deploy refuses them, naming the first one.
  * @param {unknown} value Record.
  * @param {string[]} keys Allowed keys.
+ * @param {DocumentMode} mode Strictness.
+ * @param {string} keyPath Printable key path of the record.
  * @returns {Record<string, unknown>} Checked record.
  */
-function closed(value: unknown, keys: string[]): Record<string, unknown> {
+function closed(
+  value: unknown,
+  keys: string[],
+  mode: DocumentMode = 'deploy',
+  keyPath = 'definition',
+): Record<string, unknown> {
   const result = graphRecord(value);
-  graphRequire(Object.keys(result).every((key) => keys.includes(key)));
+  if (mode === 'deploy')
+    for (const key of Object.keys(result))
+      need(
+        keys.includes(key),
+        `${keyPath}.${printableKey(key)}`,
+        'is not a setting the plugin can send',
+      );
   return result;
 }
 
@@ -137,6 +206,25 @@ function closed(value: unknown, keys: string[]): Record<string, unknown> {
 function array(value: unknown): unknown[] {
   graphRequire(Array.isArray(value));
   return value;
+}
+
+/**
+ * Keep a GET record as authored configuration: the known keys in their order, then every other
+ * key in the order read, without the server facts.
+ * @param {Record<string, unknown>} value GET record.
+ * @param {string[]} keys Known request keys.
+ * @param {string[]} server Server-only keys left out.
+ * @returns {Record<string, unknown>} Detached kept properties.
+ */
+function keep(
+  value: Record<string, unknown>,
+  keys: string[],
+  server: string[],
+): Record<string, unknown> {
+  const result = pick(value, keys);
+  for (const key of Object.keys(value))
+    if (!keys.includes(key) && !server.includes(key)) result[key] = structuredClone(value[key]);
+  return result;
 }
 
 /**
@@ -154,97 +242,173 @@ function pick(value: Record<string, unknown>, keys: string[]): Record<string, un
 }
 
 /**
+ * Upper-case text; any other value as is.
+ * @param {unknown} value Candidate.
+ * @returns {unknown} Upper-cased text or the value.
+ */
+function upper(value: unknown): unknown {
+  return typeof value === 'string' ? value.toUpperCase() : value;
+}
+
+/**
+ * Whether a value stands for an unset generated name or extended properties.
+ * @param {unknown} value Candidate.
+ * @returns {boolean} Empty text or null.
+ */
+function unset(value: unknown): boolean {
+  return value === '' || value === null;
+}
+
+/**
  * Write the API's lowercase enum spellings in their request form so a retrieved file and a
  * fresh GET compare equal, whichever case the author used (GET reads `none`, `key_qualifier`,
  * `desc`, `day`; requests send `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`).
  * @param {Record<string, unknown>} node Admitted node, changed in place.
  */
 function normaliseNode(node: Record<string, unknown>): void {
+  // Retrieve mode admits other values (null, absent); they are kept as read.
   for (const field of node.fields as Record<string, unknown>[])
-    field.usageTag = (field.usageTag as string).toUpperCase();
-  if (Object.hasOwn(node, 'topKFilterCriteria'))
-    for (const order of graphRecord(node.topKFilterCriteria).orderCriteria as Record<
-      string,
-      unknown
-    >[])
-      order.sortOrder = (order.sortOrder as string).toUpperCase();
+    if (Object.hasOwn(field, 'usageTag')) field.usageTag = upper(field.usageTag);
+  const top = node.topKFilterCriteria as Record<string, unknown> | null | undefined;
+  if (top && Array.isArray(top.orderCriteria))
+    for (const order of top.orderCriteria as Array<Record<string, unknown>>)
+      if (Object.hasOwn(order, 'sortOrder')) order.sortOrder = upper(order.sortOrder);
   for (const child of node.relatedObjects as Record<string, unknown>[]) normaliseNode(child);
+}
+
+/**
+ * Whether a value is nonblank text.
+ * @param {unknown} value Candidate.
+ * @returns {boolean} Nonblank string.
+ */
+function isText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 /**
  * Admit the structure of a node tree: shapes, names, unique paths and parent-linked joins.
  * Object names, node types, field data types, usage tags, key columns and criteria are not
- * restricted locally; the API decides.
+ * restricted locally; the API decides. Retrieve mode checks only what holds the tree together
+ * (node name and path, field source names, the array shapes) and keeps every other value as read.
  * @param {unknown} value Node input.
+ * @param {DocumentMode} mode Strictness.
+ * @param {string} keyPath Printable key path of the node.
  * @param {Record<string, unknown>} [parent] Parent input.
  * @param {Set<string>} paths Unique node paths.
  * @returns {Record<string, unknown>} Checked node.
  */
 function admitNode(
   value: unknown,
+  mode: DocumentMode,
+  keyPath: string,
   parent?: Record<string, unknown>,
   paths = new Set<string>(),
 ): Record<string, unknown> {
-  const n = closed(value, nodeKeys);
-  for (const key of ['name', 'label', 'jsonPath', 'type']) graphText(n[key]);
-  graphRequire(!paths.has(n.jsonPath as string));
-  paths.add(n.jsonPath as string);
-  for (const key of ['devName', 'fragmentDMOName', 'referenceDeveloperName', 'projectedName'])
-    if (Object.hasOwn(n, key)) graphText(n[key]);
-  const fields = array(n.fields).map((f) => closed(f, fieldKeys));
-  graphRequire(fields.length > 0);
+  const strict = mode === 'deploy';
+  const n = closed(value, nodeKeys, mode, keyPath);
+  graphText(n.name);
+  graphText(n.jsonPath);
+  if (strict)
+    for (const key of ['label', 'type']) need(isText(n[key]), `${keyPath}.${key}`, 'must be text');
+  graphRequire(!paths.has(n.jsonPath));
+  paths.add(n.jsonPath);
+  if (strict)
+    for (const key of ['devName', 'fragmentDMOName', 'referenceDeveloperName', 'projectedName'])
+      if (Object.hasOwn(n, key)) need(isText(n[key]), `${keyPath}.${key}`, 'must be text');
+  const fields = array(n.fields).map((f, index) =>
+    closed(f, fieldKeys, mode, `${keyPath}.fields[${index}]`),
+  );
+  if (strict) need(fields.length > 0, `${keyPath}.fields`, 'must not be empty');
   const sources = new Set<string>();
   const devs = new Set<string>();
-  for (const f of fields) {
-    for (const key of ['sourceFieldName', 'dataType', 'usageTag']) graphText(f[key]);
-    graphRequire(
-      !sources.has(f.sourceFieldName as string) &&
-        typeof f.isKeyColumn === 'boolean' &&
-        typeof f.isProjected === 'boolean',
-    );
-    sources.add(f.sourceFieldName as string);
+  for (const [index, f] of fields.entries()) {
+    const at = `${keyPath}.fields[${index}]`;
+    graphText(f.sourceFieldName);
+    graphRequire(!sources.has(f.sourceFieldName));
+    sources.add(f.sourceFieldName);
+    if (!strict) continue;
+    for (const key of ['dataType', 'usageTag'])
+      need(isText(f[key]), `${at}.${key}`, 'must be text');
+    for (const key of ['isKeyColumn', 'isProjected'])
+      need(typeof f[key] === 'boolean', `${at}.${key}`, 'must be true or false');
     if (Object.hasOwn(f, 'devName')) {
-      graphText(f.devName);
-      graphRequire(dataGraphName.test(f.devName) && !devs.has(f.devName));
+      need(
+        typeof f.devName === 'string' && dataGraphName.test(f.devName) && !devs.has(f.devName),
+        `${at}.devName`,
+        'must be a unique API name',
+      );
       devs.add(f.devName);
     }
-    if (Object.hasOwn(f, 'keyQualifierName')) graphText(f.keyQualifierName);
-    if (Object.hasOwn(f, 'isDGRootKeyField')) graphRequire(typeof f.isDGRootKeyField === 'boolean');
-    if (Object.hasOwn(f, 'fieldRoles')) array(f.fieldRoles);
+    if (Object.hasOwn(f, 'keyQualifierName'))
+      need(isText(f.keyQualifierName), `${at}.keyQualifierName`, 'must be text');
+    if (Object.hasOwn(f, 'isDGRootKeyField'))
+      need(
+        typeof f.isDGRootKeyField === 'boolean',
+        `${at}.isDGRootKeyField`,
+        'must be true or false',
+      );
+    if (Object.hasOwn(f, 'fieldRoles'))
+      need(Array.isArray(f.fieldRoles), `${at}.fieldRoles`, 'must be a list');
   }
-  const joins = array(n.path).map((p) => closed(p, pathKeys));
-  for (const p of joins) {
-    graphText(p.fieldName);
-    graphText(p.parentFieldName);
-    if (Object.hasOwn(p, 'devName')) graphText(p.devName);
+  const joins = array(n.path).map((p, index) =>
+    closed(p, pathKeys, mode, `${keyPath}.path[${index}]`),
+  );
+  if (strict)
+    for (const [index, p] of joins.entries())
+      for (const key of pathKeys)
+        if (key !== 'devName' || Object.hasOwn(p, key))
+          need(isText(p[key]), `${keyPath}.path[${index}].${key}`, 'must be text');
+  // The tree shape is structural: a related object hangs below its parent through a join. A
+  // retrieved jsonPath of another form cannot be represented (the catch-all keeps it verbatim).
+  if (parent) {
+    graphRequire(n.jsonPath === `${parent.jsonPath as string}.${n.name}`);
+    if (strict) need(joins.length > 0, `${keyPath}.path`, 'must name the join to its parent');
+  } else graphRequire(n.jsonPath === '$' && joins.length === 0);
+  if (strict)
+    for (const key of ['recencyCriteria', 'filterCriteria'])
+      if (Object.hasOwn(n, key)) need(Array.isArray(n[key]), `${keyPath}.${key}`, 'must be a list');
+  if (Object.hasOwn(n, 'topKFilterCriteria') && (strict || n.topKFilterCriteria !== null)) {
+    const at = `${keyPath}.topKFilterCriteria`;
+    const top = closed(n.topKFilterCriteria, ['limit', 'orderCriteria'], mode, at);
+    if (strict)
+      need(
+        Number.isSafeInteger(top.limit) && (top.limit as number) > 0,
+        `${at}.limit`,
+        'must be a positive whole number',
+      );
+    if (strict || Array.isArray(top.orderCriteria))
+      for (const [index, entry] of array(top.orderCriteria).entries()) {
+        const order = closed(
+          entry,
+          ['fieldApiName', 'sortOrder'],
+          mode,
+          `${at}.orderCriteria[${index}]`,
+        );
+        if (strict)
+          for (const key of ['fieldApiName', 'sortOrder'])
+            need(isText(order[key]), `${at}.orderCriteria[${index}].${key}`, 'must be text');
+      }
   }
-  // The tree shape is structural: a related object hangs below its parent through a join.
-  if (parent)
-    graphRequire(
-      n.jsonPath === `${parent.jsonPath as string}.${n.name as string}` && joins.length > 0,
-    );
-  else graphRequire(n.jsonPath === '$' && joins.length === 0);
-  for (const key of ['recencyCriteria', 'filterCriteria']) if (Object.hasOwn(n, key)) array(n[key]);
-  if (Object.hasOwn(n, 'topKFilterCriteria')) {
-    const top = closed(n.topKFilterCriteria, ['limit', 'orderCriteria']);
-    graphRequire(Number.isSafeInteger(top.limit) && (top.limit as number) > 0);
-    for (const value of array(top.orderCriteria)) {
-      const order = closed(value, ['fieldApiName', 'sortOrder']);
-      graphText(order.fieldApiName);
-      graphText(order.sortOrder);
-    }
-  }
-  for (const child of array(n.relatedObjects)) admitNode(child, n, paths);
+  for (const [index, child] of array(n.relatedObjects).entries())
+    admitNode(child, mode, `${keyPath}.relatedObjects[${index}]`, n, paths);
   return n;
 }
 
 /**
- * Admit saved native68 definitions by structure; the API decides what it accepts.
+ * Admit saved native68 definitions by structure; the API decides what it accepts. Retrieve mode
+ * keeps unknown keys and unset (`null`) values, and checks only the name, data space, root
+ * object, schedule shape and node tree; a deploy of such a file refuses and names the key.
  * @param {unknown} value Native document.
+ * @param {DocumentMode} mode Strictness (deploy by default).
  * @returns {NativeDataGraphDocument} Detached admitted input with normalised enum spellings.
  */
-export function validateNativeDataGraphDocument(value: unknown): NativeDataGraphDocument {
-  inert(value);
+export function validateNativeDataGraphDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): NativeDataGraphDocument {
+  const strict = mode === 'deploy';
+  // Retrieve mode takes any nesting depth the org returns.
+  inert(value, new Set<object>(), strict ? 24 : Number.POSITIVE_INFINITY);
   const raw = graphRecord(structuredClone(value), [
     'schemaVersion',
     'kind',
@@ -254,33 +418,58 @@ export function validateNativeDataGraphDocument(value: unknown): NativeDataGraph
   graphRequire(
     raw.schemaVersion === 1 && raw.kind === 'native-data-graph' && raw.apiVersion === '68.0',
   );
-  const d = closed(raw.definition, topKeys);
+  const d = closed(raw.definition, topKeys, mode);
   graphRequire(typeof d.name === 'string' && dataGraphName.test(d.name));
-  graphText(d.label);
-  if (Object.hasOwn(d, 'description')) graphRequire(typeof d.description === 'string');
   // Native graph reads and writes are bound to the default data space only.
   graphRequire(d.dataspaceName === 'default');
   graphText(d.primaryObjectName);
-  graphText(d.type);
-  for (const key of topKeys.slice(7, 13)) if (Object.hasOwn(d, key)) graphText(d[key]);
+  if (strict) {
+    need(isText(d.label), 'definition.label', 'must be text');
+    if (Object.hasOwn(d, 'description'))
+      need(typeof d.description === 'string', 'definition.description', 'must be text');
+    need(isText(d.type), 'definition.type', 'must be text');
+    for (const key of generatedKeys)
+      if (Object.hasOwn(d, key)) need(isText(d[key]), `definition.${key}`, 'must be text');
+  }
   if (Object.hasOwn(d, 'fullRefreshConfig')) {
-    const schedule = closed(closed(d.fullRefreshConfig, ['schedule']).schedule, [
-      'frequency',
-      'timeGranularity',
-    ]);
+    // Only {schedule: {frequency, timeGranularity}} is represented, in either mode; a retrieved
+    // schedule of another shape is kept verbatim by the retrieve catch-all.
+    const schedule = closed(
+      closed(d.fullRefreshConfig, ['schedule'], 'deploy', 'definition.fullRefreshConfig').schedule,
+      ['frequency', 'timeGranularity'],
+      'deploy',
+      'definition.fullRefreshConfig.schedule',
+    );
     graphRequire(Number.isSafeInteger(schedule.frequency) && (schedule.frequency as number) > 0);
     graphText(schedule.timeGranularity);
     schedule.timeGranularity =
       schedule.timeGranularity.charAt(0).toUpperCase() +
       schedule.timeGranularity.slice(1).toLowerCase();
   }
-  if (Object.hasOwn(d, 'incrementalRefreshConfig')) graphRecord(d.incrementalRefreshConfig);
-  const root = admitNode(d.sourceObject);
+  if (Object.hasOwn(d, 'incrementalRefreshConfig')) {
+    if (strict)
+      need(
+        isRecord(d.incrementalRefreshConfig),
+        'definition.incrementalRefreshConfig',
+        'must be an object',
+      );
+    else if (d.incrementalRefreshConfig !== null) graphRecord(d.incrementalRefreshConfig);
+  }
+  const root = admitNode(d.sourceObject, mode, 'definition.sourceObject');
   // The root node is the primary object; root binding reads exactly this object.
   graphRequire(root.name === d.primaryObjectName);
-  d.type = d.type.toUpperCase();
+  if (typeof d.type === 'string') d.type = d.type.toUpperCase();
   normaliseNode(root);
   return raw as NativeDataGraphDocument;
+}
+
+/**
+ * Whether a value is a plain object.
+ * @param {unknown} value Candidate.
+ * @returns {boolean} Object and not an array.
+ */
+function isRecord(value: unknown): boolean {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
@@ -311,31 +500,34 @@ export function nativeGraphFingerprint(value: unknown): string {
 }
 
 /**
- * Convert an admitted GET node to the exact qualified PUT inventory.
+ * Convert an admitted GET node to the exact qualified PUT inventory. Retrieve mode keeps unknown
+ * node, field and join keys and does not check record IDs or generated names.
  * @param {unknown} value GET node.
+ * @param {DocumentMode} mode Strictness.
  * @param {Set<string>} identities Already observed record identities.
  * @returns {Record<string, unknown>} Request node.
  */
-function observedNode(value: unknown, identities = new Set<string>()): Record<string, unknown> {
-  const n = closed(value, [
-    ...nodeKeys,
-    'id',
-    'categoryDevName',
-    'dependency',
-    'relatedSegments',
-    'fragmentDMOLabel',
-  ]);
-  graphText(n.id);
-  graphRequire(!identities.has(n.id));
-  identities.add(n.id);
-  graphText(n.devName);
-  // Dependencies and related segments are server facts, not authored configuration; delete
-  // checks them separately (nativeDataGraphUnreferenced).
-  for (const key of ['dependency', 'relatedSegments']) array(n[key]);
-  graphText(n.categoryDevName);
-  const result = pick(n, nodeKeys);
+function observedNode(
+  value: unknown,
+  mode: DocumentMode,
+  identities = new Set<string>(),
+): Record<string, unknown> {
+  const strict = mode === 'deploy';
+  const n = closed(value, [...nodeKeys, ...serverNodeKeys], mode, 'sourceObject');
+  if (strict) {
+    graphText(n.id);
+    graphRequire(!identities.has(n.id));
+    identities.add(n.id);
+    graphText(n.devName);
+    // Dependencies and related segments are server facts, not authored configuration; delete
+    // checks them separately (nativeDataGraphUnreferenced).
+    for (const key of ['dependency', 'relatedSegments']) array(n[key]);
+    graphText(n.categoryDevName);
+  }
+  const result = strict ? pick(n, nodeKeys) : keep(n, nodeKeys, serverNodeKeys);
   result.fields = array(n.fields).map((value) => {
-    const f = closed(value, [...fieldKeys, 'id', 'name', 'dependency', 'sourceFieldLabel']);
+    const f = closed(value, [...fieldKeys, ...serverFieldKeys], mode, 'sourceObject.fields');
+    if (!strict) return keep(f, fieldKeys, serverFieldKeys);
     graphText(f.id);
     graphRequire(!identities.has(f.id));
     identities.add(f.id);
@@ -345,55 +537,65 @@ function observedNode(value: unknown, identities = new Set<string>()): Record<st
     return pick(f, fieldKeys);
   });
   result.path = array(n.path).map((value) => {
-    const p = closed(value, [...pathKeys, 'fieldLabel', 'parentFieldLabel']);
+    const p = closed(value, [...pathKeys, ...serverPathKeys], mode, 'sourceObject.path');
+    if (!strict) return keep(p, pathKeys, serverPathKeys);
     graphText(p.devName);
     return pick(p, pathKeys);
   });
-  result.relatedObjects = array(n.relatedObjects).map((child) => observedNode(child, identities));
+  result.relatedObjects = array(n.relatedObjects).map((child) =>
+    observedNode(child, mode, identities),
+  );
   return result;
 }
 
 /**
  * Roundtrip qualified native GET data without treating record IDs as portable authority.
+ * Retrieve mode takes a graph in any status, keeps unknown keys (and a nonempty
+ * `extendedProperties`) and drops empty or `null` generated names.
  * @param {unknown} value Native GET response.
+ * @param {DocumentMode} mode Strictness (deploy by default).
  * @returns {NativeDataGraphDocument} Complete authored request representation.
  */
-export function nativeDataGraphDocumentFromResponse(value: unknown): NativeDataGraphDocument {
-  inert(value);
-  const raw = closed(value, [
-    ...topKeys,
-    'id',
-    'createdDate',
-    'createdBy',
-    'modifiedDate',
-    'lastRefreshedDate',
-    'kind',
-    'status',
-    'version',
-    'extendedProperties',
-    'idDmoLabel',
-    'valuesDmoLabel',
-    'primaryObjectLabel',
-  ]);
-  graphRequire(
-    raw.kind === 'CdpDataGraphOutputRepresentation' &&
-      raw.extendedProperties === '' &&
-      typeof raw.version === 'string' &&
-      /^\d+$/u.test(raw.version),
-  );
-  const definition = pick(raw, topKeys);
+export function nativeDataGraphDocumentFromResponse(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): NativeDataGraphDocument {
+  const strict = mode === 'deploy';
+  inert(value, new Set<object>(), strict ? 24 : Number.POSITIVE_INFINITY);
+  const raw = closed(value, [...topKeys, ...serverTopKeys], mode, 'graph');
+  if (strict)
+    graphRequire(
+      raw.kind === 'CdpDataGraphOutputRepresentation' &&
+        raw.extendedProperties === '' &&
+        typeof raw.version === 'string' &&
+        /^\d+$/u.test(raw.version),
+    );
+  const definition = strict
+    ? pick(raw, topKeys)
+    : keep(
+        raw,
+        topKeys,
+        serverTopKeys.filter(
+          (key) => key !== 'extendedProperties' || unset(raw.extendedProperties),
+        ),
+      );
   // A graph that is still being created carries empty generated names (`valuesDmoName: ""`
   // in the API68 create echo, recorded live 2026-11-12); they are not authored values.
-  if (raw.status !== 'ready')
-    for (const key of topKeys.slice(7, 13)) if (definition[key] === '') delete definition[key];
-  definition.sourceObject = observedNode(raw.sourceObject);
+  // Retrieve drops empty or null ones whatever the status.
+  if (!strict || raw.status !== 'ready')
+    for (const key of generatedKeys)
+      if (strict ? definition[key] === '' : unset(definition[key])) delete definition[key];
+  definition.sourceObject = observedNode(raw.sourceObject, mode);
   // Lowercase enum spellings (type, usageTag, sortOrder, timeGranularity) are normalised there.
-  return validateNativeDataGraphDocument({
-    schemaVersion: 1,
-    kind: 'native-data-graph',
-    apiVersion: '68.0',
-    definition,
-  });
+  return validateNativeDataGraphDocument(
+    {
+      schemaVersion: 1,
+      kind: 'native-data-graph',
+      apiVersion: '68.0',
+      definition,
+    },
+    mode,
+  );
 }
 
 /**
@@ -434,14 +636,16 @@ export function nativeDataGraphCreateDefinition(value: unknown): Record<string, 
  * read `derived` back (2026-11-12), so a differing node type would be silently replaced.
  * @param {unknown} baseline Fresh independently bound native GET.
  * @param {NativeDataGraphDocument} desired Authored intent, not target authority.
+ * @param {DocumentMode} mode Strictness of both documents (retrieve keeps unknown keys).
  * @returns {Record<string, unknown>} Complete target-bound PUT payload.
  */
 export function buildNativeDataGraphUpdateRequest(
   baseline: unknown,
   desired: NativeDataGraphDocument,
+  mode: DocumentMode = 'deploy',
 ): Record<string, unknown> {
-  const target = nativeDataGraphDocumentFromResponse(baseline).definition;
-  const wanted = validateNativeDataGraphDocument(desired).definition;
+  const target = nativeDataGraphDocumentFromResponse(baseline, mode).definition;
+  const wanted = validateNativeDataGraphDocument(desired, mode).definition;
   for (const key of ['name', 'dataspaceName', 'primaryObjectName'])
     graphRequire(target[key] === wanted[key]);
   // Generated DMO, mapping and transform names stay the target's; authored ones are ignored.
@@ -503,47 +707,59 @@ export function buildNativeDataGraphUpdateRequest(
     }
   }
   merge(graphRecord(target.sourceObject), graphRecord(wanted.sourceObject));
-  return validateNativeDataGraphDocument({
-    schemaVersion: 1,
-    kind: 'native-data-graph',
-    apiVersion: '68.0',
-    definition: target,
-  }).definition;
+  return validateNativeDataGraphDocument(
+    {
+      schemaVersion: 1,
+      kind: 'native-data-graph',
+      apiVersion: '68.0',
+      definition: target,
+    },
+    mode,
+  ).definition;
 }
 
 /**
  * Bind independently read projection and generated identities; readiness is not computation proof.
+ * Retrieve mode takes any status, ID and creation date as read and does not require the generated
+ * names of a ready graph; the authored settings must still hold.
  * @param {unknown} value Native GET response.
  * @param {NativeDataGraphDocument} expected Authored intent.
+ * @param {DocumentMode} mode Strictness (deploy by default).
  * @returns {NativeDataGraphObservation} Detached nonvolatile evidence.
  */
 export function observeNativeDataGraph(
   value: unknown,
   expected: NativeDataGraphDocument,
+  mode: DocumentMode = 'deploy',
 ): NativeDataGraphObservation {
-  const document = validateNativeDataGraphDocument(expected);
-  const actual = nativeDataGraphDocumentFromResponse(value);
+  const strict = mode === 'deploy';
+  const document = validateNativeDataGraphDocument(expected, mode);
+  const actual = nativeDataGraphDocumentFromResponse(value, mode);
   const raw = graphRecord(structuredClone(value));
-  graphText(raw.id);
-  graphText(raw.createdDate);
-  graphRequire(Number.isFinite(Date.parse(raw.createdDate)));
+  const created = Date.parse(raw.createdDate as string);
+  if (strict) {
+    graphText(raw.id);
+    graphText(raw.createdDate);
+    graphRequire(Number.isFinite(created));
+  }
   graphRequire(
-    [
-      'creating',
-      // Read for about 9 s between creating and ready during a live API68 create (2026-11-12).
-      'processing',
-      'ready',
-      'deleting',
-      'editing',
-      'editing_no_version_update',
-      'editing_post_sync',
-    ].includes(raw.status as string),
+    !strict ||
+      [
+        'creating',
+        // Read for about 9 s between creating and ready during a live API68 create (2026-11-12).
+        'processing',
+        'ready',
+        'deleting',
+        'editing',
+        'editing_no_version_update',
+        'editing_post_sync',
+      ].includes(raw.status as string),
   );
   // Every authored setting must already hold. Field order is the server's: it reordered the
   // fields of a related object added by PUT (recorded live at API68, 2026-11-12).
-  const request = buildNativeDataGraphUpdateRequest(raw, document);
+  const request = buildNativeDataGraphUpdateRequest(raw, document, mode);
   graphRequire(isDeepStrictEqual(request, actual.definition));
-  if (raw.status === 'ready') {
+  if (strict && raw.status === 'ready') {
     for (const key of [
       'idDmoName',
       'valuesDmoName',
@@ -556,8 +772,10 @@ export function observeNativeDataGraph(
   const target = { ...raw };
   for (const key of ['status', 'modifiedDate', 'lastRefreshedDate']) delete target[key];
   return {
-    id: raw.id,
-    createdDate: new Date(raw.createdDate).toISOString(),
+    id: raw.id as string,
+    createdDate: Number.isFinite(created)
+      ? new Date(created).toISOString()
+      : (raw.createdDate as string),
     status: raw.status as NativeDataGraphObservation['status'],
     definitionFingerprint: nativeGraphFingerprint(target),
     document,

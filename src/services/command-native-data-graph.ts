@@ -23,6 +23,10 @@ import type { DataGraphClient } from '../transport/data-graph-rest.js';
 
 /**
  * Project independently read native runtime configuration into a distinct authored artifact.
+ * Retrieve takes the graph in any status and keeps settings the plugin does not model (deploy
+ * of such a file refuses and names the key); the root DMO is not read. The graph is read twice
+ * and both reads must agree. A shape the file cannot hold (an unknown schedule form, a jsonPath
+ * other than `$` or `parent.name`) throws, so the retrieve catch-all keeps the GET verbatim.
  * @param {string} name Exact selected graph.
  * @param {NativeGraphContext} context Scoped independent readers.
  * @returns {Promise<import('../artifacts/native-data-graph-document.js').NativeDataGraphDocument>} Portable intent without generated identities.
@@ -40,17 +44,11 @@ export async function retrieveNativeDataGraph(
     );
   const raw = graphRecord(read.body);
   graphRequire(raw.name === name);
-  const document = nativeDataGraphDocumentFromResponse(raw);
-  const rootName = document.definition.primaryObjectName as string;
-  const root = await bindNativeGraphRoot(context, rootName);
-  const observed = observeNativeDataGraph(raw, document);
-  graphRequire(observed.status === 'ready');
-  const fresh = await acquireNativeDataGraph(context, document);
+  const document = nativeDataGraphDocumentFromResponse(raw, 'retrieve');
+  const observed = observeNativeDataGraph(raw, document, 'retrieve');
+  const fresh = await acquireNativeDataGraph(context, document, false, 'retrieve');
   try {
-    graphRequire(
-      isDeepStrictEqual({ state: 'present', observation: observed }, fresh) &&
-        isDeepStrictEqual(root, await bindNativeGraphRoot(context, rootName)),
-    );
+    graphRequire(isDeepStrictEqual({ state: 'present', observation: observed }, fresh));
   } catch (error) {
     if (error instanceof Error) retainConnectDiagnostic(error, getConnectDiagnostic(fresh));
     throw error;

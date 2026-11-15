@@ -297,6 +297,19 @@ function retrievalMessage(error: unknown): string {
 }
 
 /**
+ * Name the code of the error behind a family-level diagnostic, so the cause stays visible.
+ * @param {string} message Diagnostic message.
+ * @param {unknown} error Cause.
+ * @returns {string} The message, followed by `Cause: <CODE>.` when the cause has a code.
+ */
+function withInnerCode(message: string, error: unknown): string {
+  const code = (error as { code?: unknown } | undefined)?.code;
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/u.test(code)
+    ? `${message} Cause: ${code}.`
+    : message;
+}
+
+/**
  * Code of a native inventory that could not be read.
  * @param {unknown} error Cause.
  * @returns {string} Its mapping code, or NATIVE_INVENTORY_FAILED.
@@ -919,7 +932,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             if (error === undefined) continue;
             const diagnostic: RetrieveDiagnostic = {
               code: 'NATIVE_GRAPH_RETRIEVE_BLOCKED',
-              message: retrievalMessage(error),
+              message: withInnerCode(retrievalMessage(error), error),
               retryable: false,
               identity: { dataSpace: 'default', apiName },
               family: 'data-graph',

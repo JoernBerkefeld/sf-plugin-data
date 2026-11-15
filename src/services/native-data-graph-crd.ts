@@ -16,6 +16,7 @@ import type {
   NativeDataGraphDocument,
 } from '../artifacts/native-data-graph-document.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 
 export type NativeGraphRead = { status: number; body: unknown };
 /** Internal trusted readers must bind every response to the supplied exact name/default scope. */
@@ -306,16 +307,18 @@ export async function proveNativeDataGraphAbsent(
  * @param {NativeGraphContext} context Independent exact readers, not mutation responses.
  * @param {NativeDataGraphDocument} document Native intent.
  * @param {boolean} [baseline] Acquire target independent of desired equality.
+ * @param {DocumentMode} [mode] Retrieve mode takes the graph in any status, as read.
  * @returns {Promise<NativeGraphAcquisition>} Correlated state or conservative uncertainty.
  */
 export async function acquireNativeDataGraph(
   context: NativeGraphContext,
   document: NativeDataGraphDocument,
   baseline = false,
+  mode: DocumentMode = 'deploy',
 ): Promise<NativeGraphAcquisition> {
   let diagnostic: ConnectDiagnostic | undefined;
   try {
-    const expected = validateNativeDataGraphDocument(document);
+    const expected = validateNativeDataGraphDocument(document, mode);
     const name = expected.definition.name as string;
     context.check();
     const item = await context.get(name);
@@ -324,10 +327,11 @@ export async function acquireNativeDataGraph(
     if (item.status === 200) {
       // A just-created graph can read ready ~30s before its generated DMO, mapping and
       // transform names exist (recorded live at API68); it is still being built, not unknown.
-      if (nativeGraphStillGenerating(item.body)) return { state: 'pending' };
-      const admitted = baseline ? nativeDataGraphDocumentFromResponse(item.body) : expected;
+      // Retrieve takes the graph as it is, generated names or not.
+      if (mode === 'deploy' && nativeGraphStillGenerating(item.body)) return { state: 'pending' };
+      const admitted = baseline ? nativeDataGraphDocumentFromResponse(item.body, mode) : expected;
       graphRequire(admitted.definition.name === name);
-      return { state: 'present', observation: observeNativeDataGraph(item.body, admitted) };
+      return { state: 'present', observation: observeNativeDataGraph(item.body, admitted, mode) };
     }
     return await proveNativeDataGraphAbsent(context, name, item);
   } catch (error) {

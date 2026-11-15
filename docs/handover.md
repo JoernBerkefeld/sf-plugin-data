@@ -1,3 +1,34 @@
+# Lenient retrieve step 4: data graphs keep settings the plugin does not model — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 4.
+Deploy behaviour is unchanged except that its refusal now names the key path.
+
+- `DocumentMode` added to `validateNativeDataGraphDocument`, `nativeDataGraphDocumentFromResponse`,
+  `buildNativeDataGraphUpdateRequest`, `observeNativeDataGraph` and `acquireNativeDataGraph`.
+  `retrieveNativeDataGraph` and the writer (both validations) use `'retrieve'`; deploy, delete,
+  create/update settlement and `readDeployInputs` stay strict.
+- Retrieve mode: unknown top-level, node, field and join keys are kept (known keys first, then the
+  others in read order; server facts such as `id`, `status`, `version`, `categoryDevName` still
+  left out; a nonempty `extendedProperties` is kept). No `inert` depth limit; no
+  `kind`/`extendedProperties`/`version` check; no text/ID/devName checks on nodes, fields and
+  joins; `null` accepted for description, fieldRoles, criteria, incrementalRefreshConfig,
+  usageTag and topK `limit`; empty/null generated names dropped whatever the status; any status
+  and missing day-zero names accepted (no `pending`); the root DMO is not read. Still checked:
+  name, data space, primary object = root node, field source names unique, array shapes, the
+  graph read twice equal.
+- Unrepresentable shapes (`fullRefreshConfig` other than `{schedule:{frequency,timeGranularity}}`,
+  jsonPath other than `$`/`<parent>.<name>`) throw `UNSUPPORTED_DATA_GRAPH_CONFIGURATION`, so the
+  catch-all writes the graph GET verbatim.
+- Deploy: refusals name the key path (`The data graph cannot be deployed: <path> ...`);
+  `readDeployInputs` keeps it on `INVALID_SOURCE`. `NATIVE_GRAPH_RETRIEVE_BLOCKED` messages end
+  with `Cause: <CODE>.` when the cause has a code. Both error pages updated.
+- Tests: `test/lenient-retrieve-data-graph.test.mjs`. Changed: the unified-root test in
+  `native-data-graph-crd.test.mjs` now expects retrieve not to read the root (deploy preview
+  still binds it and blocks on the Individual root).
+- Open: delete of a graph whose GET has unknown keys still refuses (`delete.ts` projects the GET
+  strictly); a GET whose name differs from the selector still goes verbatim rather than failing
+  (no mismatch code). Steps 5–6, README/sfmc.guide (step 7).
+
 # Lenient retrieve step 3: data streams are retrieved whatever their kind — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 3.

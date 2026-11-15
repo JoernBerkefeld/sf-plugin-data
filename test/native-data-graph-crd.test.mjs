@@ -3159,7 +3159,7 @@ for (const [label, change] of Object.entries({
     assert.throws(() => validateNativeDataGraphDocument(d));
   });
 
-test('retrieve and deploy preview bind the graph own unified root, not Individual', async () => {
+test('deploy preview binds the graph own unified root, not Individual; retrieve reads no root', async () => {
   const f = fixture();
   const seen = [];
   f.context.root = unifiedRoot(seen);
@@ -3174,13 +3174,15 @@ test('retrieve and deploy preview bind the graph own unified root, not Individua
   f.setGraph(unifiedRuntime());
   const saved = await retrieveNativeDataGraph(name, f.context);
   assert.equal(saved.definition.primaryObjectName, 'UnifiedssotIndividualMkt__dlm');
-  assert.ok(seen.length > 0);
-  assert.ok(seen.every((value) => value === 'UnifiedssotIndividualMkt__dlm'));
+  // Retrieve does not bind the root DMO (lenient retrieve step 4).
+  assert.deepEqual(seen, []);
   await expectResult(
     operateNativeDataGraph(saved, f.context, f.client, options('deploy', { preview: true })),
     'outcome',
     'unchanged',
   );
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every((value) => value === 'UnifiedssotIndividualMkt__dlm'));
   // A changed label previews as an update without any write.
   const relabelled = structuredClone(saved);
   relabelled.definition.label = 'Relabelled';
@@ -3190,9 +3192,15 @@ test('retrieve and deploy preview bind the graph own unified root, not Individua
     'update',
   );
   assert.deepEqual(f.calls, []);
-  // An Individual root reader no longer satisfies a unified-root graph.
+  // An Individual root reader no longer satisfies a unified-root graph on deploy; retrieve
+  // does not read it.
   f.context.root = async () => root();
-  await assert.rejects(retrieveNativeDataGraph(name, f.context));
+  await expectResult(
+    operateNativeDataGraph(saved, f.context, f.client, options('deploy', { preview: true })),
+    'outcome',
+    'blocked',
+  );
+  assert.deepEqual(await retrieveNativeDataGraph(name, f.context), saved);
 });
 
 /**

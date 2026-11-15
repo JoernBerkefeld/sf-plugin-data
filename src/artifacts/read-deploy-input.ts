@@ -329,8 +329,8 @@ async function readNativeDataGraphInput(file: string): Promise<NativeDataGraphDe
   try {
     document = validateNativeDataGraphDocument(strictJson(decode(bytes)));
     if (document.definition.name !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();
