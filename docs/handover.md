@@ -1,3 +1,28 @@
+# Lenient retrieve step 3: data streams are retrieved whatever their kind — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 3.
+Deploy behaviour is unchanged except that its refusal now names the key path.
+
+- `retrieveNativeDataStream(..., mode)`: in retrieve mode the stream GET is triaged first
+  (`triageRetrievedStream`), before any connection, schema or DLO read. Another name stays
+  `STREAM_TARGET_MISMATCH`; a DLO in another data space is `UNSUPPORTED_STREAM_DATASPACE`, an item
+  failure (added to `itemFailure` in `verbatim-document.ts`). Other connectors/stream types
+  (`UNSUPPORTED_STREAM_CONNECTOR`), non-UPSERT refresh (`UNSUPPORTED_STREAM_REFRESH`), a DLO
+  category other than Other (`UNSUPPORTED_STREAM_CATEGORY`) and non-Text source fields
+  (`UNSUPPORTED_STREAM_FIELD_TYPE`) throw, so the catch-all writes the raw GET verbatim with that
+  reason. Later IngestApi refusals (real formulas `UNSUPPORTED_STREAM_PROJECTION`, several events
+  `AMBIGUOUS_STREAM_EVENT`, several streams `AMBIGUOUS_STREAM_BINDING`, `STREAM_DLO_DRIFT`,
+  `INVALID_STREAM_PRIMARY_KEY`) also go verbatim; mismatch codes stay failures.
+- `validateDataStreamDocument(value, mode)`: retrieve keeps unknown keys of `observed.mappings`
+  and `observed.sourceFields` entries and lifts the 500-character and 40-character DLO label
+  limits; the writer validates in retrieve mode. Deploy refusals name the key path
+  (`readDeployInputs` keeps it on `INVALID_SOURCE`). Four new codes with docs pages.
+- Tests: `test/lenient-retrieve-data-stream.test.mjs`. Existing stream tests unchanged.
+- Open: deploy and git-range delete still validate stream files strictly (`admitDeletedArtifact`),
+  as for steps 1–2; other families' `UNSUPPORTED_*_DATASPACE` refusals on retrieve still go
+  verbatim rather than failing (plan keeps them per-item); `UNSUPPORTED_STREAM_READ` and similar
+  error pages still describe a retrieve failure. Steps 4–6, README/sfmc.guide (step 7).
+
 # Lenient retrieve step 2: mapping and relationship files keep what the plugin does not model — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 2.

@@ -1,18 +1,20 @@
 # `UNSUPPORTED_STREAM_DATASPACE`
 
-> Data stream create and update support only the default data space. Set identity.dataSpace to default in the stream file.
+> Data streams are supported only in the default data space: deploy refuses another identity.dataSpace, and retrieve does not write a stream whose DLO is in another space.
 
-|              |                                 |
-| ------------ | ------------------------------- |
-| **Family**   | Data stream                     |
-| **Commands** | `sf data360 deploy`             |
-| **Outcome**  | `blocked` — nothing was changed |
+|              |                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Family**   | Data stream                                                                                                                                |
+| **Commands** | `sf data360 deploy`, `sf data360 retrieve`                                                                                                 |
+| **Outcome**  | `blocked` on deploy — nothing was changed; `failed` for that stream on retrieve — no file was written, the other items are still retrieved |
 
 ## What it means
 
 The create and update requests are built only for streams in the `default` data space. This code means `identity.dataSpace` in the document is something else.
 
 The deploy command normally refuses such a file earlier with `INVALID_SCOPE`, so this code is a second guard at the point where the request body is built.
+
+On retrieve it means the landing DLO of the stream is in another data space. Selection is per data space, so that stream is an item failure rather than a file written as-is.
 
 ## Why the plugin stops
 

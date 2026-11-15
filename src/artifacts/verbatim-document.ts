@@ -43,9 +43,10 @@ const kinds = new Set<string>([
 const safeName = /^[A-Za-z0-9_]{1,255}$/u;
 const safeReason = /^[A-Z][A-Z0-9_]{0,99}$/u;
 // Codes that stay item failures: HTTP errors, absence, identity/target mismatch, dependency
-// binding, and the selection, scope and output checks around the projection.
+// binding, the selection, scope and output checks around the projection, and a data stream in
+// another data space (selection is per data space).
 const itemFailure =
-  /NOT_FOUND|MISMATCH|IDENTITY_CHANGED|DEPENDENCY|TARGET_ORG|HTTP|RUNTIME_UNKNOWN|INVALID_SCOPE|INVALID_SELECTION|INVALID_PROJECT|UNSAFE|OUTPUT|OVERWRITE|PARTIAL|COLLISION|LIMIT_EXCEEDED|ACQUISITION_FAILED|RETRIEVE_FAILED/u;
+  /UNSUPPORTED_STREAM_DATASPACE|NOT_FOUND|MISMATCH|IDENTITY_CHANGED|DEPENDENCY|TARGET_ORG|HTTP|RUNTIME_UNKNOWN|INVALID_SCOPE|INVALID_SELECTION|INVALID_PROJECT|UNSAFE|OUTPUT|OVERWRITE|PARTIAL|COLLISION|LIMIT_EXCEEDED|ACQUISITION_FAILED|RETRIEVE_FAILED/u;
 
 type Bag = Record<string, unknown>;
 

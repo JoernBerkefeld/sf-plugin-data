@@ -104,7 +104,7 @@ export async function writeDataStreamDocument(
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'data-stream') ? value : undefined;
-  const document = verbatim ?? validateDataStreamDocument(value);
+  const document = verbatim ?? validateDataStreamDocument(value, 'retrieve');
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
   );

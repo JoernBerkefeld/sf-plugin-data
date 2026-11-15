@@ -1,3 +1,6 @@
+import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import type { DocumentMode } from './verbatim-document.js';
+
 export type DataStreamMapping = {
   sourceFieldLabel: string;
   targetFieldName: string;
@@ -43,55 +46,93 @@ const name = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 const dloName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dll$/u;
 
 /**
- * Check one exact object shape without accepting runtime identifiers.
+ * Refuse a stream file, naming the key path that cannot be deployed.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {DataStreamError} Refusal with an explanation.
+ */
+function refuse(code: string, keyPath: string, problem: string): DataStreamError {
+  return explainInput(
+    new DataStreamError(code),
+    `The data stream file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the stream again once the plugin supports it.`,
+  );
+}
+
+/**
+ * Check one object shape without accepting runtime identifiers.
  * @param {unknown} value Untrusted object.
+ * @param {string} keyPath Printable key path of the object (empty for the document).
  * @param {string[]} required Required keys.
  * @param {string[]} [optional] Optional keys.
+ * @param {boolean} [open] Whether keys outside the set are kept (retrieve mode).
  * @returns {Record<string, unknown>} Checked object.
  */
 function object(
   value: unknown,
+  keyPath: string,
   required: string[],
   optional: string[] = [],
+  open = false,
 ): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new DataStreamError('INVALID_STREAM_DOCUMENT');
+    throw refuse('INVALID_STREAM_DOCUMENT', keyPath || 'the document', 'must be an object');
   const result = value as Record<string, unknown>;
-  if (
-    !required.every((key) => Object.hasOwn(result, key)) ||
-    Object.keys(result).some((key) => !required.includes(key) && !optional.includes(key))
-  )
-    throw new DataStreamError('INVALID_STREAM_DOCUMENT');
+  const prefix = keyPath ? `${keyPath}.` : '';
+  if (!open)
+    for (const key of Object.keys(result))
+      if (!required.includes(key) && !optional.includes(key))
+        throw refuse(
+          'INVALID_STREAM_DOCUMENT',
+          `${prefix}${printableKey(key)}`,
+          'is not a key a data stream file can hold',
+        );
+  for (const key of required)
+    if (!Object.hasOwn(result, key))
+      throw refuse('INVALID_STREAM_DOCUMENT', `${prefix}${key}`, 'is missing');
   return result;
 }
 
 /**
- * Check bounded text, preserving labels rather than rewriting them.
+ * Check text, preserving labels rather than rewriting them.
  * @param {unknown} value Untrusted text.
+ * @param {string} keyPath Printable key path.
+ * @param {boolean} [bounded] Whether the 500-character limit applies (deploy mode).
  * @returns {string} Checked text.
  */
-function text(value: unknown): string {
+function text(value: unknown, keyPath: string, bounded = true): string {
   if (
     typeof value !== 'string' ||
     !value ||
     value !== value.trim() ||
-    value.length > 500 ||
     [...value].some(
       (character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127,
     )
   )
-    throw new DataStreamError('INVALID_STREAM_DOCUMENT');
+    throw refuse(
+      'INVALID_STREAM_DOCUMENT',
+      keyPath,
+      'must be non-empty text without surrounding spaces or control characters',
+    );
+  if (bounded && value.length > 500)
+    throw refuse('INVALID_STREAM_DOCUMENT', keyPath, 'is longer than 500 characters');
   return value;
 }
 
 /**
  * Check a portable developer name.
  * @param {unknown} value Untrusted name.
+ * @param {string} keyPath Printable key path.
  * @param {boolean} [dlo] Whether a DLO suffix is required.
  * @returns {string} Checked name.
  */
-function identifier(value: unknown, dlo = false): string {
-  if (!(dlo ? dloName : name).test(text(value))) throw new DataStreamError('INVALID_STREAM_NAME');
+function identifier(value: unknown, keyPath: string, dlo = false): string {
+  if (!(dlo ? dloName : name).test(text(value, keyPath)))
+    throw refuse(
+      'INVALID_STREAM_NAME',
+      keyPath,
+      dlo ? 'must be a developer name ending in __dll' : 'must be a developer name',
+    );
   return value as string;
 }
 
@@ -109,16 +150,25 @@ function freeze<T>(value: T): T {
 }
 
 /**
- * Validate authored intent separately from retained, read-only schema evidence.
+ * Validate authored intent separately from retained, read-only schema evidence. Deploy mode (the
+ * default) admits only what a deploy can send and names the first offending key path; retrieve
+ * mode keeps unknown keys of observed mappings and source fields as returned, and lifts the
+ * 500-character text limit and the 40-character DLO label limit.
  * @param {unknown} value Untrusted portable document.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (lenient).
  * @returns {DataStreamDocument} Detached deeply frozen document.
  */
-export function validateDataStreamDocument(value: unknown): DataStreamDocument {
-  const document = object(value, ['schemaVersion', 'kind', 'identity', 'spec'], ['observed']);
-  const identity = object(document.identity, ['apiName', 'dataSpace']);
-  identifier(identity.apiName);
-  text(identity.dataSpace);
-  const spec = object(document.spec, [
+export function validateDataStreamDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): DataStreamDocument {
+  const lenient = mode === 'retrieve';
+  const bounded = !lenient;
+  const document = object(value, '', ['schemaVersion', 'kind', 'identity', 'spec'], ['observed']);
+  const identity = object(document.identity, 'identity', ['apiName', 'dataSpace']);
+  identifier(identity.apiName, 'identity.apiName');
+  text(identity.dataSpace, 'identity.dataSpace');
+  const spec = object(document.spec, 'spec', [
     'connectorType',
     'connectionName',
     'event',
@@ -128,15 +178,16 @@ export function validateDataStreamDocument(value: unknown): DataStreamDocument {
     'newDlo',
     'additiveFieldMappings',
   ]);
-  identifier(spec.connectionName);
-  identifier(spec.event);
-  text(spec.label);
-  const dlo = object(spec.newDlo, ['name', 'label', 'category', 'primaryKey']);
-  identifier(dlo.name, true);
-  if (text(dlo.label).length > 40) throw new DataStreamError('INVALID_STREAM_LABEL');
-  const pk = object(dlo.primaryKey, ['name', 'label', 'dataType']);
-  identifier(pk.name);
-  text(pk.label);
+  identifier(spec.connectionName, 'spec.connectionName');
+  identifier(spec.event, 'spec.event');
+  text(spec.label, 'spec.label', bounded);
+  const dlo = object(spec.newDlo, 'spec.newDlo', ['name', 'label', 'category', 'primaryKey']);
+  identifier(dlo.name, 'spec.newDlo.name', true);
+  if (text(dlo.label, 'spec.newDlo.label', bounded).length > 40 && !lenient)
+    throw refuse('INVALID_STREAM_LABEL', 'spec.newDlo.label', 'is longer than 40 characters');
+  const pk = object(dlo.primaryKey, 'spec.newDlo.primaryKey', ['name', 'label', 'dataType']);
+  identifier(pk.name, 'spec.newDlo.primaryKey.name');
+  text(pk.label, 'spec.newDlo.primaryKey.label', bounded);
   if (
     document.schemaVersion !== 1 ||
     document.kind !== 'data-stream' ||
@@ -149,10 +200,15 @@ export function validateDataStreamDocument(value: unknown): DataStreamDocument {
   )
     throw new DataStreamError('UNSUPPORTED_STREAM_SPEC');
   const targets = new Set<string>();
-  for (const entry of spec.additiveFieldMappings) {
-    const mapping = object(entry, ['sourceFieldLabel', 'targetFieldName', 'targetFieldReturntype']);
-    identifier(mapping.sourceFieldLabel);
-    const target = identifier(mapping.targetFieldName);
+  for (const [index, entry] of (spec.additiveFieldMappings as unknown[]).entries()) {
+    const at = `spec.additiveFieldMappings[${index}]`;
+    const mapping = object(entry, at, [
+      'sourceFieldLabel',
+      'targetFieldName',
+      'targetFieldReturntype',
+    ]);
+    identifier(mapping.sourceFieldLabel, `${at}.sourceFieldLabel`);
+    const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`);
     if (
       target.endsWith('__c') ||
       target.toLowerCase() === String(pk.name).toLowerCase() ||
@@ -163,42 +219,52 @@ export function validateDataStreamDocument(value: unknown): DataStreamDocument {
     targets.add(target.toLowerCase());
   }
   if (document.observed !== undefined) {
-    const observed = object(document.observed, [
+    const observed = object(document.observed, 'observed', [
       'mappings',
       'sourceFields',
       'dloFields',
       'actualDloName',
     ]);
-    identifier(observed.actualDloName, true);
+    identifier(observed.actualDloName, 'observed.actualDloName', true);
     for (const key of ['mappings', 'sourceFields', 'dloFields'])
       if (!Array.isArray(observed[key])) throw new DataStreamError('INVALID_STREAM_OBSERVED');
     const observedTargets = new Set<string>();
     const sourceNames = new Set<string>();
     const fieldNames = new Set<string>();
-    for (const entry of observed.mappings as unknown[]) {
-      const mapping = object(entry, ['targetFieldName'], ['sourceFieldName', 'formula']);
-      const target = identifier(mapping.targetFieldName).toLowerCase();
+    for (const [index, entry] of (observed.mappings as unknown[]).entries()) {
+      const at = `observed.mappings[${index}]`;
+      const mapping = object(
+        entry,
+        at,
+        ['targetFieldName'],
+        ['sourceFieldName', 'formula'],
+        lenient,
+      );
+      const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`).toLowerCase();
       if (observedTargets.has(target)) throw new DataStreamError('INVALID_STREAM_OBSERVED');
       observedTargets.add(target);
       if ((mapping.sourceFieldName === undefined) === (mapping.formula === undefined))
         throw new DataStreamError('INVALID_STREAM_OBSERVED');
-      if (mapping.sourceFieldName !== undefined) identifier(mapping.sourceFieldName);
-      if (mapping.formula !== undefined) text(mapping.formula);
+      if (mapping.sourceFieldName !== undefined)
+        identifier(mapping.sourceFieldName, `${at}.sourceFieldName`);
+      if (mapping.formula !== undefined) text(mapping.formula, `${at}.formula`, bounded);
     }
-    for (const entry of observed.sourceFields as unknown[]) {
-      const field = object(entry, ['name', 'datatype']);
-      const source = identifier(field.name).toLowerCase();
+    for (const [index, entry] of (observed.sourceFields as unknown[]).entries()) {
+      const at = `observed.sourceFields[${index}]`;
+      const field = object(entry, at, ['name', 'datatype'], [], lenient);
+      const source = identifier(field.name, `${at}.name`).toLowerCase();
       if (sourceNames.has(source)) throw new DataStreamError('INVALID_STREAM_OBSERVED');
       sourceNames.add(source);
-      text(field.datatype);
+      text(field.datatype, `${at}.datatype`, bounded);
     }
-    for (const entry of observed.dloFields as unknown[]) {
-      const field = object(entry, ['name', 'label', 'dataType', 'isPrimaryKey']);
-      const fieldName = identifier(field.name).toLowerCase();
+    for (const [index, entry] of (observed.dloFields as unknown[]).entries()) {
+      const at = `observed.dloFields[${index}]`;
+      const field = object(entry, at, ['name', 'label', 'dataType', 'isPrimaryKey']);
+      const fieldName = identifier(field.name, `${at}.name`).toLowerCase();
       if (fieldNames.has(fieldName)) throw new DataStreamError('INVALID_STREAM_OBSERVED');
       fieldNames.add(fieldName);
-      text(field.label);
-      text(field.dataType);
+      text(field.label, `${at}.label`, bounded);
+      text(field.dataType, `${at}.dataType`, bounded);
       if (typeof field.isPrimaryKey !== 'boolean')
         throw new DataStreamError('INVALID_STREAM_OBSERVED');
     }
@@ -262,7 +328,7 @@ export function buildDataStreamPatchBody(value: unknown) {
  * @returns {string} Persisted DLO field selector.
  */
 export function dataStreamTargetFieldName(value: string): string {
-  const target = identifier(value);
+  const target = identifier(value, 'targetFieldName');
   if (target.endsWith('__c')) throw new DataStreamError('INVALID_STREAM_MAPPING');
   return `${target}__c`;
 }

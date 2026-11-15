@@ -95,7 +95,7 @@ export class DeployInputError extends Error {
 }
 
 /**
- * Refuse an unusable DLO, DMO, mapping or relationship file, keeping the validator's explanation of the offending key.
+ * Refuse an unusable DLO, DMO, mapping, relationship or data stream file, keeping the validator's explanation of the offending key.
  * @param {unknown} error Validator refusal.
  * @returns {DeployInputError} INVALID_SOURCE refusal.
  */
@@ -271,8 +271,8 @@ async function readDataStreamInput(file: string): Promise<DataStreamDeployInput>
   try {
     document = validateDataStreamDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();

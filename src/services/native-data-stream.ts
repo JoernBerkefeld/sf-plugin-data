@@ -266,6 +266,37 @@ export function inspectNativeDataStream(value: unknown): Json {
 }
 
 /**
+ * Retrieve-mode triage of a stream GET, before any connection or schema read: a stream of another
+ * name stays an item failure, as does one whose DLO is in another data space (selection is per
+ * data space); a stream outside the IngestApi model is refused with a code naming the variant,
+ * so retrieve writes the GET as-is. Anything else goes on to the normal projection.
+ * @param {unknown} value Stream GET response.
+ * @param {string} apiName Requested stream name.
+ */
+function triageRetrievedStream(value: unknown, apiName: string): void {
+  const raw = object(value);
+  if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
+  const bag = (entry: unknown): Json =>
+    entry && typeof entry === 'object' && !Array.isArray(entry) ? (entry as Json) : {};
+  const dlo = bag(raw.dataLakeObjectInfo);
+  const spaces = Array.isArray(dlo.dataSpaceInfo)
+    ? (dlo.dataSpaceInfo as unknown[]).map((entry) => bag(entry).name)
+    : [];
+  if (spaces.some((space) => typeof space === 'string' && space !== 'default'))
+    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  if (raw.dataStreamType !== 'INGESTAPI' || bag(raw.connectorInfo).connectorType !== 'IngestApi')
+    throw new DataStreamError('UNSUPPORTED_STREAM_CONNECTOR');
+  if (bag(raw.refreshConfig).refreshMode !== 'UPSERT')
+    throw new DataStreamError('UNSUPPORTED_STREAM_REFRESH');
+  if (dlo.category !== 'Other') throw new DataStreamError('UNSUPPORTED_STREAM_CATEGORY');
+  if (
+    Array.isArray(raw.sourceFields) &&
+    (raw.sourceFields as unknown[]).some((field) => bag(field).datatype !== 'Text')
+  )
+    throw new DataStreamError('UNSUPPORTED_STREAM_FIELD_TYPE');
+}
+
+/**
  * Resolve an exact portable connection/event independently from generated stream names.
  * A missing source name alone never authorizes creation; this read result authorizes no write.
  * @param {object} selection Portable requested name, connection/event and Text primary key.
@@ -470,7 +501,10 @@ export async function retrieveNativeDataStream(
 ): Promise<DataStreamDocument> {
   if (!name.test(apiName) || dataSpace !== 'default')
     throw new DataStreamError('INVALID_STREAM_BINDING');
-  const raw = inspectNativeDataStream(await clients.streams.get(apiName));
+  const read = await clients.streams.get(apiName);
+  // Decide from the stream GET alone whether the plugin can model it, before connection reads.
+  if (mode === 'retrieve') triageRetrievedStream(read, apiName);
+  const raw = inspectNativeDataStream(read);
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
   let listed: unknown[];
   if (mode === 'retrieve') listed = await listConnectionsLeniently(clients);
@@ -592,37 +626,44 @@ export async function retrieveNativeDataStream(
       targetFieldReturntype: 'Text',
     });
   }
-  return validateDataStreamDocument({
-    schemaVersion: 1,
-    kind: 'data-stream',
-    identity: { apiName, dataSpace },
-    spec: {
-      connectorType: 'IngestApi',
-      connectionName: binding.connectionName,
-      event: binding.event,
-      datastreamType: 'INGEST_API',
-      refreshMode: 'UPSERT',
-      label: raw.label,
-      newDlo: {
-        name: dlo.name,
-        label: dlo.label,
-        category: 'Other',
-        primaryKey: { name: keys[0].name, label: keys[0].label, dataType: 'Text' },
+  return validateDataStreamDocument(
+    {
+      schemaVersion: 1,
+      kind: 'data-stream',
+      identity: { apiName, dataSpace },
+      spec: {
+        connectorType: 'IngestApi',
+        connectionName: binding.connectionName,
+        event: binding.event,
+        datastreamType: 'INGEST_API',
+        refreshMode: 'UPSERT',
+        label: raw.label,
+        newDlo: {
+          name: dlo.name,
+          label: dlo.label,
+          category: 'Other',
+          primaryKey: { name: keys[0].name, label: keys[0].label, dataType: 'Text' },
+        },
+        // Canonicalize only projections derived here; caller-authored mapping order stays strict.
+        // eslint-disable-next-line unicorn/no-array-sort -- Sort this locally derived array within the existing ES2022 library target.
+        additiveFieldMappings: additions.sort((a, b) =>
+          a.targetFieldName < b.targetFieldName
+            ? -1
+            : a.targetFieldName > b.targetFieldName
+              ? 1
+              : 0,
+        ),
       },
-      // Canonicalize only projections derived here; caller-authored mapping order stays strict.
-      // eslint-disable-next-line unicorn/no-array-sort -- Sort this locally derived array within the existing ES2022 library target.
-      additiveFieldMappings: additions.sort((a, b) =>
-        a.targetFieldName < b.targetFieldName ? -1 : a.targetFieldName > b.targetFieldName ? 1 : 0,
-      ),
+      observed: {
+        // Salesforce lists stream mappings in varying order; sort so one org state writes one file.
+        mappings: sortedStreamMappings(raw.mappings as unknown[]),
+        sourceFields: raw.sourceFields,
+        dloFields,
+        actualDloName: dlo.name,
+      },
     },
-    observed: {
-      // Salesforce lists stream mappings in varying order; sort so one org state writes one file.
-      mappings: sortedStreamMappings(raw.mappings as unknown[]),
-      sourceFields: raw.sourceFields,
-      dloFields,
-      actualDloName: dlo.name,
-    },
-  });
+    mode,
+  );
 }
 
 export type DataStreamDeployClients = DataStreamReadClients & {

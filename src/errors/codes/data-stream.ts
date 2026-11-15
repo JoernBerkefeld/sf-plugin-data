@@ -118,8 +118,14 @@ export const hints: Readonly<Record<string, string>> = {
     'The stream update was sent, but the new mappings and ACTIVE status were not confirmed within 15 minutes. Check the stream in the org before you deploy again.',
   STREAM_UPDATE_TARGET_ABSENT:
     'The stream to update was no longer found on the connection. Check whether it was deleted, then rerun the deploy with --preview.',
+  UNSUPPORTED_STREAM_CATEGORY:
+    'The landing DLO of the stream has a category other than Other, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
+  UNSUPPORTED_STREAM_CONNECTOR:
+    'The stream does not use the Ingestion API connector, for example a CRM, S3 or Engagement stream. Retrieve wrote it as-is without connection reads; manage it in Salesforce.',
   UNSUPPORTED_STREAM_DATASPACE:
-    'Data stream create and update support only the default data space. Set identity.dataSpace to default in the stream file.',
+    'Data streams are supported only in the default data space: deploy refuses another identity.dataSpace, and retrieve does not write a stream whose DLO is in another space.',
+  UNSUPPORTED_STREAM_FIELD_TYPE:
+    'The stream has a source field that is not Text, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_MAPPING_SOURCE:
     'A sourceFieldLabel in spec.additiveFieldMappings matches no source field, several fields, or the primary key. Use the exact label of one non-key source field.',
   UNSUPPORTED_STREAM_MAPPING_TARGET:
@@ -128,6 +134,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The stream has a mapping the plugin cannot represent in the file, such as a formula or a mapping onto a key or non-Text field. Manage those mappings in Salesforce.',
   UNSUPPORTED_STREAM_READ:
     'The stream is outside the supported profile: Ingestion API, UPSERT, category Other, default data space. Manage this stream in Salesforce.',
+  UNSUPPORTED_STREAM_REFRESH:
+    'The stream refreshes in a mode other than UPSERT, for example full refresh, which the stream file cannot represent. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_SETTINGS_CHANGE:
     'The file changes the stream label, DLO label or primary key of an existing stream, which is not supported. Use the values from a freshly retrieved file.',
   UNSUPPORTED_STREAM_SPEC:
