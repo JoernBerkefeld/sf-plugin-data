@@ -1,3 +1,32 @@
+# Lenient retrieve step 1: DLO and DMO files keep what the plugin does not model — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 1.
+Deploy behaviour is unchanged except that its refusal now names the key path.
+
+- Mode parameter `DocumentMode` (`'retrieve' | 'deploy'`, default deploy; `verbatim-document.ts`)
+  on `validateDloDocument`, `normalizeDlo`, `resolveNativeDloTarget`, `retrieveNativeDlo`,
+  `validateNativeDmoDocument`, `normalizeNativeDmo`, `retrieveNativeDmo` and
+  `documentDependencyNode`. `retrieve.ts`, `acquireRetrieveSelection` and both writers pass
+  `'retrieve'`; deploy, delete, mapping and IR callers stay strict.
+- Retrieve mode checks only schemaVersion, kind, `identity.apiName` (file path), the data space
+  (DMO: may be absent; a read without `dataSpaceName` takes the requested space) and that
+  `spec.fields` is a list of objects. Everything else is kept as returned: labels of any length or
+  empty, empty/null category, non-`__c` names and event field, empty field lists, non-boolean or
+  null `isPrimaryKey`, composite or no primary key, unknown document/spec/field keys, 15-character
+  DLO IDs. A DMO field whose `dataType` differs from `type`, or that has no `type`, keeps both keys
+  as read. Runtime keys (`id`, `recordId`, `status`, …) are still left out. A normal object yields
+  the same bytes in both modes.
+- Deploy: each strict check throws with an explanation naming the key path
+  (`explainInput`/`printableKey` in `operation-diagnostic.ts`; keys that are not plain identifiers
+  print as `[unnamed key]`). `readDeployInputs` keeps it on `INVALID_SOURCE`, and the deploy
+  envelope message shows it (`explanationOf`).
+- Tests: `test/lenient-retrieve-dlo-dmo.test.mjs`. `verbatim-document.test.mjs` now uses a field
+  that is not an object as the unrepresentable DMO (reason `INVALID_DMO_DOCUMENT`), since a field
+  `type` of 42 is now kept.
+- Not done: native top-level keys the normalizers do not pick (only label, category, event field,
+  description and fields) are still not copied into the file; no real GET sample shows which
+  unmodelled definition keys exist. Open: steps 2–6, README/sfmc.guide (step 7).
+
 # Lenient retrieve step 0b: one failing item no longer blocks the rest — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 0b.

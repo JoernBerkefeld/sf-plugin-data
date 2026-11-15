@@ -10,6 +10,7 @@ import {
 } from '../artifacts/dlo-document.js';
 import type { DloDocument, DloField } from '../artifacts/dlo-document.js';
 import type { DloClient } from '../transport/dlo-rest.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { replaceExplanation } from './operation-diagnostic.js';
 import { paceReadback, readbackPace } from './readback-pace.js';
@@ -51,19 +52,24 @@ function fieldInput(field: DloField): Record<string, unknown> {
  * @param {string} apiName Requested full API name.
  * @param {DloClient} client Target client.
  * @param {string} [requestScope] Optional expected data space, never a URL query.
+ * @param {DocumentMode} [mode] `retrieve` keeps what the plugin cannot deploy and admits a
+ * 15-character ID.
  * @returns {Promise<{document: DloDocument, targetId: string}>} Definition and target identity.
  */
 export async function resolveNativeDloTarget(
   apiName: string,
   client: Pick<DloClient, 'get'>,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<{ document: DloDocument; targetId: string; runtime: Record<string, unknown> }> {
   const raw = unwrapDlo(await client.get(apiName));
-  const document = normalizeDlo(raw, requestScope);
+  const document = normalizeDlo(raw, requestScope, mode);
   if (
     document.identity.apiName !== apiName ||
     typeof raw.id !== 'string' ||
-    !/^[A-Za-z0-9]{18}$/u.test(raw.id)
+    !(mode === 'retrieve' ? /^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u : /^[A-Za-z0-9]{18}$/u).test(
+      raw.id,
+    )
   )
     throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
   return { document, targetId: raw.id, runtime: structuredClone(raw) };
@@ -74,14 +80,16 @@ export async function resolveNativeDloTarget(
  * @param {string} apiName Exact name ending in __dll.
  * @param {Pick<DloClient, 'get'>} client Authenticated target client.
  * @param {string} [requestScope] Optional expected data space, never a URL query.
+ * @param {DocumentMode} [mode] `retrieve` for the retrieve command; other callers stay strict.
  * @returns {Promise<DloDocument>} Portable definition.
  */
 export async function retrieveNativeDlo(
   apiName: string,
   client: Pick<DloClient, 'get'>,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<DloDocument> {
-  const target = await resolveNativeDloTarget(apiName, client, requestScope);
+  const target = await resolveNativeDloTarget(apiName, client, requestScope, mode);
   return target.document;
 }
 

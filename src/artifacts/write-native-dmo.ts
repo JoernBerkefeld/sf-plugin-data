@@ -95,7 +95,7 @@ export async function writeNativeDmoDocument(
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'dmo') ? value : undefined;
   // Authored content only: the generated fields a deploy keeps from the org when they are omitted.
-  const document = verbatim ?? leanNativeDmoDocument(validateNativeDmoDocument(value));
+  const document = verbatim ?? leanNativeDmoDocument(validateNativeDmoDocument(value, 'retrieve'));
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
   );
@@ -123,7 +123,7 @@ export async function writeNativeDmoDocument(
     if (previous) {
       const saved = previousIdentity(
         previous.toString('utf8'),
-        (previousValue) => validateNativeDmoDocument(previousValue).identity,
+        (previousValue) => validateNativeDmoDocument(previousValue, 'retrieve').identity,
       );
       if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new NativeDmoError('DMO_DATASPACE_COLLISION');

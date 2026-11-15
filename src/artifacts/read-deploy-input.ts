@@ -45,7 +45,7 @@ import {
   verbatimSkipWarning,
 } from './verbatim-document.js';
 import type { VerbatimDocument, VerbatimKind } from './verbatim-document.js';
-import { replaceExplanation } from '../services/operation-diagnostic.js';
+import { explanationOf, replaceExplanation } from '../services/operation-diagnostic.js';
 
 const ciMemberInfix = '.calculatedInsight-meta.';
 const ciJsonSuffix = '.calculatedInsight-meta.json';
@@ -92,6 +92,18 @@ export class DeployInputError extends Error {
     );
     this.name = 'DeployInputError';
   }
+}
+
+/**
+ * Refuse an unusable DLO or DMO file, keeping the validator's explanation of the offending key.
+ * @param {unknown} error Validator refusal.
+ * @returns {DeployInputError} INVALID_SOURCE refusal.
+ */
+function invalidSource(error: unknown): DeployInputError {
+  const explanation = explanationOf(error);
+  const refusal = new DeployInputError('INVALID_SOURCE', explanation);
+  if (explanation !== undefined) replaceExplanation(refusal, explanation);
+  return refusal;
 }
 
 /**
@@ -172,8 +184,8 @@ async function readNativeDmoInput(file: string): Promise<NativeDmoDeployInput> {
   try {
     document = validateNativeDmoDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();
@@ -486,8 +498,8 @@ async function readDloInput(file: string): Promise<DloDeployInput> {
   try {
     document = validateDloDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();

@@ -59,10 +59,10 @@ const dmoNative = () => ({
     },
   ],
 });
-// A field type the document cannot represent: the projection refuses with INVALID_DMO_FIELD.
+// A field that is not an object: even the lenient projection refuses (INVALID_DMO_DOCUMENT).
 const unmodelledDmo = () => {
   const raw = dmoNative();
-  raw.fields[0].type = 42;
+  raw.fields[0] = 'unmodelled';
   return raw;
 };
 const segment = () => ({
@@ -295,12 +295,12 @@ test('retrieve twice: normal, then verbatim, then normal again at the same path'
   );
   const second = await run(command(true));
   assert.equal(second.status, 'success', JSON.stringify(second.diagnostics));
-  assert.deepEqual(second.result.items[0].verbatim, { reason: 'INVALID_DMO_FIELD' });
+  assert.deepEqual(second.result.items[0].verbatim, { reason: 'INVALID_DMO_DOCUMENT' });
   assert.equal(second.result.items[0].path, file);
   assert.equal(second.diagnostics.errors.length, 0);
   assert.match(
     second.diagnostics.warnings[0],
-    /^dmo:Example__dlm: retrieved as-is \(verbatim, reason INVALID_DMO_FIELD\)/u,
+    /^dmo:Example__dlm: retrieved as-is \(verbatim, reason INVALID_DMO_DOCUMENT\)/u,
   );
   const saved = JSON.parse(await readFile(file, 'utf8'));
   assert.ok(isVerbatimDocument(saved, 'dmo'));

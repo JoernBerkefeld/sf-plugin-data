@@ -50,6 +50,13 @@ const itemFailure =
 type Bag = Record<string, unknown>;
 
 /**
+ * How strictly a document is checked: `deploy` (the default everywhere) admits only what the
+ * plugin can send; `retrieve` keeps what the org returned and checks only what names and places
+ * the file, so the deploy of such a file refuses and names the key.
+ */
+export type DocumentMode = 'retrieve' | 'deploy';
+
+/**
  * Whether a value is a plain JSON object.
  * @param {unknown} value Candidate.
  * @returns {boolean} Object and not an array.

@@ -1,3 +1,6 @@
+import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import type { DocumentMode } from './verbatim-document.js';
+
 export type NativeDmoField = {
   name: string;
   label: string;
@@ -76,7 +79,7 @@ const dmoSystemFields = new Set([
 export function isGeneratedDmoField(field: NativeDmoField): boolean {
   return (
     dmoSystemFields.has(field.name) ||
-    field.name.startsWith('KQ_') ||
+    (typeof field.name === 'string' && field.name.startsWith('KQ_')) ||
     field.creationType === 'System'
   );
 }
@@ -134,57 +137,119 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Validate only the document shape, retaining field definitions and any extra spec keys.
- * Category, data types, label length and key rules are left to the API.
+ * Refuse an authored DMO file, naming the key path that cannot be deployed.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {NativeDmoError} Refusal with an explanation.
+ */
+function refuse(code: string, keyPath: string, problem: string): NativeDmoError {
+  return explainInput(
+    new NativeDmoError(code),
+    `The DMO file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the DMO again once the plugin supports it.`,
+  );
+}
+
+/**
+ * Require a JSON object at a key path of the file.
+ * @param {unknown} value Untrusted input.
+ * @param {string} keyPath Printable key path.
+ * @returns {Record<string, unknown>} Object content.
+ */
+function objectAt(value: unknown, keyPath: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw refuse('INVALID_DMO_DOCUMENT', keyPath, 'must be an object');
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Whether a value is a usable data space name.
+ * @param {unknown} value Candidate.
+ * @returns {boolean} Non-empty, trimmed and free of control characters.
+ */
+function isDataSpace(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    Boolean(value.trim()) &&
+    value === value.trim() &&
+    ![...value].some(
+      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127,
+    )
+  );
+}
+
+/**
+ * Validate the document shape, retaining field definitions and any extra spec keys. Category,
+ * data types, label length and key rules are left to the API. Deploy mode (the default) admits
+ * only what a deploy can send and names the first offending key path; retrieve mode keeps what
+ * the org returned and checks only what names and places the file.
  * @param {unknown} value Portable input.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (lenient).
  * @returns {NativeDmoDocument} Checked independent copy.
  */
-export function validateNativeDmoDocument(value: unknown): NativeDmoDocument {
-  const document = record(value);
-  const identity = record(document.identity);
-  const spec = record(document.spec);
-  if (
-    Object.keys(document).length !== 4 ||
-    !['identity', 'kind', 'schemaVersion', 'spec'].every((key) => Object.hasOwn(document, key)) ||
-    Object.keys(identity).length !== 2 ||
-    document.schemaVersion !== 1 ||
-    document.kind !== 'dmo' ||
-    typeof identity.apiName !== 'string' ||
-    !nativeDmoName.test(identity.apiName) ||
-    typeof identity.dataSpace !== 'string' ||
-    !identity.dataSpace.trim() ||
-    identity.dataSpace !== identity.dataSpace.trim() ||
-    [...identity.dataSpace].some(
-      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127,
-    ) ||
-    typeof spec.label !== 'string' ||
-    !spec.label.trim() ||
-    typeof spec.category !== 'string' ||
-    !spec.category.trim() ||
-    (spec.description !== undefined && typeof spec.description !== 'string') ||
-    // Identity lives in `identity`; runtime observations are never authored input.
-    Object.keys(spec).some(
-      (key) => key === 'name' || key === 'dataSpaceName' || runtimeKeys.has(key),
-    ) ||
-    !Array.isArray(spec.fields) ||
-    spec.fields.length === 0
-  )
-    throw new NativeDmoError('INVALID_DMO_DOCUMENT');
+export function validateNativeDmoDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): NativeDmoDocument {
+  const document = objectAt(value, 'the document');
+  const identity = objectAt(document.identity, 'identity');
+  const spec = objectAt(document.spec, 'spec');
+  if (document.schemaVersion !== 1)
+    throw refuse('INVALID_DMO_DOCUMENT', 'schemaVersion', 'must be 1');
+  if (document.kind !== 'dmo') throw refuse('INVALID_DMO_DOCUMENT', 'kind', 'must be "dmo"');
+  if (typeof identity.apiName !== 'string' || !nativeDmoName.test(identity.apiName))
+    throw refuse(
+      'INVALID_DMO_DOCUMENT',
+      'identity.apiName',
+      'must be a DMO API name ending in __dlm',
+    );
+  // A retrieved DMO read without any data space keeps none; deploy needs one.
+  if (!isDataSpace(identity.dataSpace) && (mode !== 'retrieve' || identity.dataSpace !== undefined))
+    throw refuse('INVALID_DMO_DOCUMENT', 'identity.dataSpace', 'must be a data space name');
+  if (!Array.isArray(spec.fields))
+    throw refuse('INVALID_DMO_DOCUMENT', 'spec.fields', 'must be a list of fields');
+  const fields = spec.fields.map((field, index) => objectAt(field, `spec.fields[${index}]`));
+  if (mode === 'retrieve') return structuredClone(value) as NativeDmoDocument;
+  for (const key of Object.keys(document))
+    if (!['identity', 'kind', 'schemaVersion', 'spec'].includes(key))
+      throw refuse('INVALID_DMO_DOCUMENT', printableKey(key), 'is not a key a DMO file can hold');
+  for (const key of Object.keys(identity))
+    if (key !== 'apiName' && key !== 'dataSpace')
+      throw refuse(
+        'INVALID_DMO_DOCUMENT',
+        `identity.${printableKey(key)}`,
+        'is not a key a DMO file can hold',
+      );
+  // Identity lives in `identity`; runtime observations are never authored input.
+  const observed = Object.keys(spec).find(
+    (key) => key === 'name' || key === 'dataSpaceName' || runtimeKeys.has(key),
+  );
+  if (observed !== undefined)
+    throw refuse('INVALID_DMO_DOCUMENT', `spec.${observed}`, 'is not a key a DMO file can hold');
+  if (typeof spec.label !== 'string' || !spec.label.trim())
+    throw refuse('INVALID_DMO_DOCUMENT', 'spec.label', 'must be a non-empty text');
+  if (typeof spec.category !== 'string' || !spec.category.trim())
+    throw refuse('INVALID_DMO_DOCUMENT', 'spec.category', 'must be a category name');
+  if (spec.description !== undefined && typeof spec.description !== 'string')
+    throw refuse('INVALID_DMO_DOCUMENT', 'spec.description', 'must be a text');
+  if (fields.length === 0)
+    throw refuse('INVALID_DMO_DOCUMENT', 'spec.fields', 'must list at least one field');
   const names = new Set<string>();
-  for (const value of spec.fields) {
-    const field = record(value);
-    if (
-      typeof field.name !== 'string' ||
-      !nativeDmoFieldName.test(field.name) ||
-      names.has(field.name.toLowerCase()) ||
-      typeof field.label !== 'string' ||
-      !field.label.trim() ||
-      typeof field.dataType !== 'string' ||
-      !field.dataType ||
-      typeof field.isPrimaryKey !== 'boolean' ||
-      Object.keys(field).some((key) => runtimeKeys.has(key) || key === 'type')
-    )
-      throw new NativeDmoError('INVALID_DMO_FIELD');
+  for (const [index, field] of fields.entries()) {
+    const at = `spec.fields[${index}]`;
+    const unknown = Object.keys(field).find((key) => runtimeKeys.has(key) || key === 'type');
+    if (unknown !== undefined)
+      throw refuse('INVALID_DMO_FIELD', `${at}.${unknown}`, 'is not a key a DMO file can hold');
+    if (typeof field.name !== 'string' || !nativeDmoFieldName.test(field.name))
+      throw refuse('INVALID_DMO_FIELD', `${at}.name`, 'must be a field API name ending in __c');
+    if (names.has(field.name.toLowerCase()))
+      throw refuse('INVALID_DMO_FIELD', `${at}.name`, 'repeats the name of another field');
+    if (typeof field.label !== 'string' || !field.label.trim())
+      throw refuse('INVALID_DMO_FIELD', `${at}.label`, 'must be a non-empty text');
+    if (typeof field.dataType !== 'string' || !field.dataType)
+      throw refuse('INVALID_DMO_FIELD', `${at}.dataType`, 'must be a data type name');
+    if (typeof field.isPrimaryKey !== 'boolean')
+      throw refuse('INVALID_DMO_FIELD', `${at}.isPrimaryKey`, 'must be true or false');
     names.add(field.name.toLowerCase());
   }
   return structuredClone(value) as NativeDmoDocument;
@@ -204,47 +269,72 @@ export function unwrapNativeDmo(value: unknown): Record<string, unknown> {
 
 /**
  * Map the read field `type` to the authored `dataType` and keep definition fields, not runtime IDs.
+ * Retrieve mode keeps what the plugin cannot map as returned: a field without `type`, or with a
+ * `dataType` that differs from it, keeps both keys; a non-boolean `isPrimaryKey` stays; a read
+ * without `dataSpaceName` takes the data space it was requested in.
  * @param {unknown} value Direct native response.
  * @param {string} [dataSpace] Optional expected observed scope.
+ * @param {DocumentMode} [mode] `retrieve` (lenient) or `deploy` (strict, the default).
  * @returns {NativeDmoDocument} Portable definition with authoritative observed scope.
  */
-export function normalizeNativeDmo(value: unknown, dataSpace?: string): NativeDmoDocument {
+export function normalizeNativeDmo(
+  value: unknown,
+  dataSpace?: string,
+  mode: DocumentMode = 'deploy',
+): NativeDmoDocument {
   const object = unwrapNativeDmo(value);
-  if (dataSpace !== undefined && object.dataSpaceName !== dataSpace)
+  const lenient = mode === 'retrieve';
+  const observed =
+    lenient && (object.dataSpaceName === undefined || object.dataSpaceName === null)
+      ? dataSpace
+      : object.dataSpaceName;
+  if (dataSpace !== undefined && observed !== dataSpace)
     throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
-  return validateNativeDmoDocument({
-    schemaVersion: 1,
-    kind: 'dmo',
-    identity: { apiName: object.name, dataSpace: object.dataSpaceName },
-    spec: {
-      label: object.label,
-      // Reads are upper case (OTHER, SEGMENT_MEMBERSHIP); save the documented input spelling.
-      category:
-        typeof object.category === 'string'
-          ? object.category
-              .split('_')
-              .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-              .join('_')
-          : object.category,
-      ...(typeof object.description === 'string' && object.description
-        ? { description: object.description }
-        : {}),
-      fields: (object.fields as unknown[]).map((value) => {
-        const field = record(value);
-        if (
-          typeof field.type !== 'string' ||
-          (field.dataType !== undefined && field.dataType !== field.type) ||
-          (field.isPrimaryKey !== undefined && typeof field.isPrimaryKey !== 'boolean')
-        )
-          throw new NativeDmoError('INVALID_DMO_FIELD');
-        return {
-          ...Object.fromEntries(
-            Object.entries(field).filter(([key]) => !runtimeKeys.has(key) && key !== 'type'),
-          ),
-          dataType: field.type,
-          isPrimaryKey: field.isPrimaryKey ?? false,
-        };
-      }),
+  return validateNativeDmoDocument(
+    {
+      schemaVersion: 1,
+      kind: 'dmo',
+      identity:
+        lenient && observed === undefined
+          ? { apiName: object.name }
+          : { apiName: object.name, dataSpace: observed },
+      spec: {
+        label: object.label,
+        // Reads are upper case (OTHER, SEGMENT_MEMBERSHIP); save the documented input spelling.
+        category:
+          typeof object.category === 'string'
+            ? object.category
+                .split('_')
+                .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+                .join('_')
+            : object.category,
+        ...(typeof object.description === 'string' && object.description
+          ? { description: object.description }
+          : {}),
+        fields: (object.fields as unknown[]).map((value) => {
+          const field = record(value);
+          // `type` becomes `dataType` only when the read leaves no doubt.
+          const mapped =
+            typeof field.type === 'string' &&
+            (field.dataType === undefined || field.dataType === field.type);
+          if (
+            !lenient &&
+            (!mapped ||
+              (field.isPrimaryKey !== undefined && typeof field.isPrimaryKey !== 'boolean'))
+          )
+            throw new NativeDmoError('INVALID_DMO_FIELD');
+          return {
+            ...Object.fromEntries(
+              Object.entries(field).filter(
+                ([key]) => !runtimeKeys.has(key) && !(mapped && key === 'type'),
+              ),
+            ),
+            ...(mapped ? { dataType: field.type } : {}),
+            isPrimaryKey: field.isPrimaryKey === undefined ? false : field.isPrimaryKey,
+          };
+        }),
+      },
     },
-  });
+    mode,
+  );
 }

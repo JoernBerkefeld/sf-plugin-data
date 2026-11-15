@@ -6,6 +6,7 @@ import { validateIdentityResolutionDocument } from './identity-resolution-docume
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 import type { NativeDmoDocument } from './native-dmo-document.js';
 import { validateNativeDmoDocument } from './native-dmo-document.js';
+import type { DocumentMode } from './verbatim-document.js';
 import type { SegmentDocument } from './segment-document.js';
 import { validateSegmentDocument } from './segment-document.js';
 
@@ -48,6 +49,7 @@ export function dependencyKey(identity: DependencyIdentity): string {
 /**
  * Extract only admitted family structures; unknown closure must not become an empty leaf.
  * @param {NativeDmoDocument | SegmentDocument | IdentityResolutionDocument} value Authored component.
+ * @param {DocumentMode} [mode] `retrieve` checks a DLO or DMO only for its identity.
  * @returns {DependencyNode} Exact component and dependencies.
  */
 export function documentDependencyNode(
@@ -57,9 +59,10 @@ export function documentDependencyNode(
     | IdentityResolutionDocument
     | CalculatedInsightReference
     | DloDocument,
+  mode: DocumentMode = 'deploy',
 ): DependencyNode {
   if (value.kind === 'dlo') {
-    const document = validateDloDocument(value);
+    const document = validateDloDocument(value, mode);
     // Source ownership is freshly admitted by its family service, never provisioned.
     return { identity: { kind: 'dlo', ...document.identity }, dependencies: [] };
   }
@@ -94,7 +97,7 @@ export function documentDependencyNode(
   if (value.kind !== 'dmo') throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');
   let document: NativeDmoDocument;
   try {
-    document = validateNativeDmoDocument(value);
+    document = validateNativeDmoDocument(value, mode);
   } catch {
     throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');
   }

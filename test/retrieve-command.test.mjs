@@ -375,7 +375,7 @@ const invocation = (overrides = {}) => {
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
   command.acquireNativeDmo = async (...arguments_) => {
-    assert.deepEqual(arguments_, ['Sample__dlm', client, flags.dataspace]);
+    assert.deepEqual(arguments_, ['Sample__dlm', client, flags.dataspace, 'retrieve']);
     return candidate;
   };
   command.writeNativeDmo = async (...arguments_) => {

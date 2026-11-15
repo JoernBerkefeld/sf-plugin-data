@@ -12,6 +12,7 @@ import {
 } from '../artifacts/native-dmo-document.js';
 import type { NativeDmoDocument, NativeDmoField } from '../artifacts/native-dmo-document.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 
 export type NativeDmoDeployPlan =
@@ -233,16 +234,18 @@ function protectedFieldDifference(
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {DocumentMode} [mode] `retrieve` keeps what the plugin cannot deploy.
  * @returns {Promise<{raw: Record<string, unknown>, document: NativeDmoDocument}>} Raw read and its portable definition.
  */
 async function readTarget(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<{ raw: Record<string, unknown>; document: NativeDmoDocument }> {
   if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
   const raw = unwrapNativeDmo(await client.get(apiName));
-  const document = normalizeNativeDmo(raw, requestScope);
+  const document = normalizeNativeDmo(raw, requestScope, mode);
   if (document.identity.apiName !== apiName)
     throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
   return { raw, document };
@@ -253,14 +256,16 @@ async function readTarget(
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {DocumentMode} [mode] `retrieve` keeps what the plugin cannot deploy.
  * @returns {Promise<NativeDmoDocument>} Verified target definition.
  */
 async function resolveTarget(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<NativeDmoDocument> {
-  const { document } = await readTarget(apiName, client, requestScope);
+  const { document } = await readTarget(apiName, client, requestScope, mode);
   return document;
 }
 
@@ -269,14 +274,16 @@ async function resolveTarget(
  * @param {string} apiName Full name ending in __dlm.
  * @param {Pick<DmoClient, 'get'>} client Authenticated client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {DocumentMode} [mode] `retrieve` for the retrieve command; other callers stay strict.
  * @returns {Promise<NativeDmoDocument>} Portable definition, without runtime observations.
  */
 export async function retrieveNativeDmo(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<NativeDmoDocument> {
-  return resolveTarget(apiName, client, requestScope);
+  return resolveTarget(apiName, client, requestScope, mode);
 }
 
 /**

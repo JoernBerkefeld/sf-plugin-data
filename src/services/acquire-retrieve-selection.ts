@@ -124,10 +124,11 @@ export async function acquireRetrieveSelection(
             },
           },
           identity.dataSpace,
+          'retrieve',
         );
         entry = { document: read ? carryNativeResponse(document, read.native) : document };
       }
-      const node = documentDependencyNode(entry.document);
+      const node = documentDependencyNode(entry.document, 'retrieve');
       if (dependencyKey(node.identity) !== key)
         throw new DependencySelectionError('DEPENDENCY_IDENTITY_UNSUPPORTED');
       entries.set(key, entry);

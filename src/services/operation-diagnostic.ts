@@ -170,6 +170,38 @@ export function replaceExplanation(error: Error, message: string): void {
 }
 
 /**
+ * The plugin-built explanation of a refusal, if one was attached.
+ * @param {unknown} error Caught error.
+ * @returns {string | undefined} Explanation text.
+ */
+export function explanationOf(error: unknown): string | undefined {
+  return error instanceof Error ? details.get(error) : undefined;
+}
+
+/**
+ * A key of an authored file as it may appear in a message: a plain identifier, otherwise a
+ * placeholder, so free text in a key is never echoed.
+ * @param {string} key Object key.
+ * @returns {string} Printable key.
+ */
+export function printableKey(key: string): string {
+  return /^[A-Za-z_$][A-Za-z0-9_$-]{0,79}$/u.test(key) ? key : '[unnamed key]';
+}
+
+/**
+ * Attach an explanation that names the offending key path of an authored file.
+ * @template {Error} T
+ * @param {T} error Typed refusal; its code is untouched.
+ * @param {string} detail Sentence built only from printable keys and static text.
+ * @returns {T} The same error.
+ */
+export function explainInput<T extends Error>(error: T, detail: string): T {
+  details.set(error, detail);
+  error.message = `${error.message} ${detail}`;
+  return error;
+}
+
+/**
  * Reuse existing diagnostic messages while distinguishing local verification from API rejection.
  * Arbitrary exception messages, bodies and stack traces are never forwarded.
  * @param {unknown} error Caught error.

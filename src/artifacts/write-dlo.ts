@@ -91,7 +91,7 @@ export async function writeDloDocument(
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'dlo') ? value : undefined;
   // Authored content only: the fields a deploy keeps from the org when the file omits them.
-  const document = verbatim ?? leanDloDocument(validateDloDocument(value));
+  const document = verbatim ?? leanDloDocument(validateDloDocument(value, 'retrieve'));
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
   );
@@ -119,7 +119,7 @@ export async function writeDloDocument(
     if (previous) {
       const saved = previousIdentity(
         previous.toString('utf8'),
-        (previousValue) => validateDloDocument(previousValue).identity,
+        (previousValue) => validateDloDocument(previousValue, 'retrieve').identity,
       );
       if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new DloError('DLO_DATASPACE_COLLISION');

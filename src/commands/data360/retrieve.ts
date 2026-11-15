@@ -1131,11 +1131,13 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         reads.wrap(this.createDloClient(target, version)),
                         // The scope it is read in binds a DLO that belongs to several spaces.
                         effectiveScope,
+                        'retrieve',
                       )
                     : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
                         apiName,
                         reads.wrap(this.createDmoClient(target, version)),
                         requestScope,
+                        'retrieve',
                       );
               const root = outputDirectory;
               const receipt =
@@ -1460,7 +1462,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
               const reads = recordNativeReads(this.createDloClient(target, '68.0'));
               nativeOf = reads.nativeOf;
-              const document = await this.acquireDlo(apiName, reads.client, 'default');
+              const document = await this.acquireDlo(apiName, reads.client, 'default', 'retrieve');
               const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
               envelope.result.items.push({
                 identity: { dataSpace: 'default', apiName },

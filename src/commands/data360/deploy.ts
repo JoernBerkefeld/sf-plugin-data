@@ -13,7 +13,7 @@ import { nativeDataGraphReadContext } from '../../services/native-data-graph-con
 import { createDataGraphClient } from '../../transport/data-graph-rest.js';
 import { verifyNativeDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { NativeDataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
-import { operationDiagnostic } from '../../services/operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 import {
   getConnectDiagnostic,
@@ -2604,8 +2604,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         error instanceof NativeRelationshipError
       )
         return finish('blocked', error.code, error);
-      // A named verbatim file: the message names its kind, name and reason.
-      if (error instanceof DeployInputError && error.code === 'VERBATIM_NOT_DEPLOYABLE')
+      // A named verbatim file names its kind, name and reason; an invalid DLO/DMO file its key.
+      if (
+        error instanceof DeployInputError &&
+        (error.code === 'VERBATIM_NOT_DEPLOYABLE' || explanationOf(error) !== undefined)
+      )
         return finish('blocked', error.code, error);
       if (error instanceof DeployInputError || error instanceof DependencySelectionError)
         return finish('blocked', error.code);
