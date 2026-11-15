@@ -554,7 +554,30 @@ test('an authored mapping whose binding matches two org mappings is refused befo
   );
 });
 
-test('a mapping file that is not a valid mapping names no binding: the exact name is used', async () => {
+for (const [label, document] of [
+  ['an invalid mapping', { ...authored('Generated_123'), kind: 'dmo' }],
+  ['a mapping of another name', authored('Other_1')],
+  ['a mapping differing in letter case', authored('generated_123')],
+])
+  test(`a mapping file holding ${label} is refused before any read`, async () => {
+    const command = invocation({ metadata: ['mapping:Generated_123'] });
+    const f = mappingFixture(command);
+    f.client.list = f.client.get = async () => assert.fail('no mapping read');
+    const { result } = await runInProject(command, { Generated_123: document });
+    assert.equal(result.status, 'blocked');
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => error.code),
+      ['INVALID_SOURCE'],
+    );
+    assert.match(result.diagnostics.errors[0].message, /identity\.apiName is Generated_123/u);
+    assert.deepEqual(
+      result.result.items.map((item) => [item.family, item.outcome, item.mutation]),
+      [['mapping', 'blocked', 'not-attempted']],
+    );
+  });
+
+test('without a mapping file of that name the exact org name is used', async () => {
   const command = invocation({ metadata: ['mapping:Generated_123'], 'keep-local-files': true });
   const f = mappingFixture(command);
   const lists = [];
@@ -563,9 +586,7 @@ test('a mapping file that is not a valid mapping names no binding: the exact nam
     lists.push(dlo);
     return list();
   };
-  const { result } = await runInProject(command, {
-    Generated_123: { ...authored('Generated_123'), kind: 'dmo' },
-  });
+  const { result } = await runInProject(command, { Other_1: authored('Other_1') });
   assert.equal(result.status, 'success', JSON.stringify(result));
   assert.deepEqual(f.calls, [['remove', 'Generated_123']]);
   // No binding lookup: only the DMO's own mapping lists of the deletion.

@@ -144,8 +144,10 @@ import {
 import {
   preflightDeleteDataStream,
   executeDeleteDataStream,
+  watchStreamAbsence,
 } from '../../services/command-native-data-stream.js';
 import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
+import type { StreamDependent } from '../../services/native-data-stream.js';
 import type { DeployInput } from '../../artifacts/read-deploy-input.js';
 import {
   inputKey,
@@ -291,8 +293,15 @@ async function readStreamLinkedDlo(
   apiName: string,
   clients: Parameters<typeof retrieveNativeDataStream>[1],
 ): Promise<string | undefined> {
-  const document = await retrieveNativeDataStream(apiName, clients);
-  return document.spec.newDlo.name;
+  const watched = watchStreamAbsence(apiName, clients);
+  try {
+    const document = await retrieveNativeDataStream(apiName, watched.clients);
+    return document.spec.newDlo.name;
+  } catch (error) {
+    // A stream that is already gone links no DLO; its delete reports it unchanged.
+    if (watched.absent()) return undefined;
+    throw error;
+  }
 }
 
 /**
@@ -772,21 +781,35 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected confirmMappingAbsent = confirmNativeMappingAbsent;
   /**
    * The authored mapping file of that name, if one is there: its binding names the org mapping.
+   * Like deploy, its identity.apiName must be its file name; a file that is there but is not a
+   * valid mapping is refused (INVALID_SOURCE) instead of falling back to the exact org name.
    * @param {string} file Canonical path data360/mapping/<name>.mapping-meta.json.
-   * @returns {Promise<NativeMappingDocument | undefined>} The validated file; undefined without a valid one.
+   * @returns {Promise<NativeMappingDocument | undefined>} The validated file; undefined without one.
    */
   protected async readAuthoredMapping(file: string): Promise<NativeMappingDocument | undefined> {
+    let present: boolean;
     try {
       const stat = await lstat(file);
-      if (!stat.isFile()) return undefined;
-    } catch {
-      return undefined;
+      present = stat.isFile();
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      present = false;
     }
-    // A file that is not a valid mapping names no binding; the selector is then the exact name.
+    const name = path.basename(file).slice(0, -'.mapping-meta.json'.length);
     try {
-      return validateNativeMappingDocument(JSON.parse(await readFile(file, 'utf8')) as unknown);
+      if (!present) throw new Error('Not a file');
+      const document = validateNativeMappingDocument(
+        JSON.parse(await readFile(file, 'utf8')) as unknown,
+      );
+      if (document.identity.apiName !== name) throw new Error('Identity mismatch');
+      return document;
     } catch {
-      return undefined;
+      const error = new DeployInputError('INVALID_SOURCE');
+      replaceExplanation(
+        error,
+        `The mapping file ${file} is not a valid mapping whose identity.apiName is ${name}, so it names no org mapping. Correct or remove the file, then rerun.`,
+      );
+      throw error;
     }
   }
   protected createRelationshipClient = createRelationshipClient;
@@ -1203,10 +1226,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           } catch (error: unknown) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
           }
-          const prefix = `${name}.segment.`;
-          const sql = entries.filter(
-            (entry) => entry.startsWith(prefix) && entry.toLowerCase().endsWith('.sql'),
-          );
+          // Matched ignoring case, like the reader and the writer.
+          const prefix = `${name}.segment.`.toLowerCase();
+          const sql = entries.filter((entry) => {
+            const lower = entry.toLowerCase();
+            return lower.startsWith(prefix) && lower.endsWith('.sql');
+          });
 
           sql.sort();
           return [
@@ -1959,6 +1984,51 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           ? [inProject('dlo', `${dlo}.dlo-meta.json`)]
           : []),
       ];
+      // Preview: a dependent of a stream or its DLO is planned when an earlier phase of this delete
+      // plans to delete it: a selected DMO, a DMO whose every mapping from the landing DLO is a
+      // selected mapping, or a selected mapping. The real run checks the org after those phases.
+      const planned = (family: DeleteFamily): Set<string> =>
+        new Set(
+          envelope.result.items
+            .filter(
+              (item) =>
+                item.family === family &&
+                item.operation === 'preview' &&
+                (item.outcome === 'delete' || item.outcome === 'planned-dependencies'),
+            )
+            .flatMap((item) => [
+              item.identity.apiName,
+              ...(item.targetApiName === undefined ? [] : [item.targetApiName]),
+            ])
+            .map((value) => value.toLowerCase()),
+        );
+      const plannedStreamDependent = async (
+        dependent: StreamDependent,
+        dloName: string,
+      ): Promise<boolean> => {
+        const name = dependent.name.toLowerCase();
+        const mappings = planned('mapping');
+        if (dependent.componentType !== 'DataModelObject')
+          return /mapping/iu.test(dependent.componentType) && mappings.has(name);
+        if (planned('dmo').has(name)) return true;
+        if (mappings.size === 0 || !nativeDmoName.test(dependent.name)) return false;
+        try {
+          const target = await resolveUsername();
+          const names = unwrapNativeMappingCollection(
+            await (this.createMappingClient ?? createMappingClient)(
+              target,
+              nativeVersion,
+              undefined,
+              requestScope,
+              this.createMappingSender(target, nativeVersion),
+            ).list(dependent.name, dloName),
+            requestScope,
+          ).map((entry) => String(entry.developerName).toLowerCase());
+          return names.length > 0 && names.every((value) => mappings.has(value));
+        } catch {
+          return false;
+        }
+      };
       const runStreams = async (selected: string[]): Promise<StageStatus> => {
         envelope.metadata.apiVersion = streamVersion;
         const expected = streamSnapshot();
@@ -2003,9 +2073,19 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           await verifyInput();
           const options = { deleteDlo, verifyInput };
           if (flags.preview) {
-            const preview = await this.preflightDeleteDataStream(apiName, clients, options);
+            const preview = await this.preflightDeleteDataStream(apiName, clients, {
+              ...options,
+              covered: plannedStreamDependent,
+            });
             await verifyInput();
             item.outcome = preview.outcome;
+            if ('plannedDependencies' in preview && preview.plannedDependencies)
+              item.diagnostics = [
+                {
+                  code: 'DEPENDENCIES_PLANNED',
+                  message: `Selected dependent ${preview.plannedDependencies.map((dependent) => `${dependent.componentType} ${dependent.name}`).join(', ')} is deleted earlier in this delete and must settle before this item is checked; no existence or delete outcome is asserted.`,
+                },
+              ];
             await track(
               item,
               streamFiles(
@@ -2023,6 +2103,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             if ('targetDloName' in result) item.targetDloName = result.targetDloName;
             await track(item, streamFiles(apiName, deleteDlo, item.targetDloName));
             reportOwnedDlo();
+            // Already gone (a rerun after it was deleted): nothing to delete.
+            if (result.outcome === 'unchanged') continue;
             if (result.outcome !== 'deleted') {
               envelope.diagnostics.errors.push(...result.diagnostics);
               return result.outcome;

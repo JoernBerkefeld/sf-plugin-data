@@ -27,6 +27,7 @@ import {
   executeDataStream,
 } from '../../services/command-native-data-stream.js';
 import { verifyDataStreamInputDigest } from '../../artifacts/read-deploy-input.js';
+import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import type { DataStreamDeployInput } from '../../artifacts/read-deploy-input.js';
 import { dataStreamApiVersion } from '../../transport/api-version.js';
 import { ConnectClient } from '../../transport/connect-client.js';
@@ -289,6 +290,14 @@ export type DeployEnvelope = {
               diagnostics: Array<{ code: string; message: string }>;
             }
           | Awaited<ReturnType<typeof preflightDataStream>>
+          | {
+              family: 'data-stream';
+              outcome: 'blocked';
+              target: 'unknown';
+              absenceProof: 'none';
+              requiredEffects: string[];
+              diagnostics: Array<{ code: string; message: string }>;
+            }
           | NativeDmoPreview
           | Awaited<ReturnType<typeof preflightMapping>>
           | Awaited<ReturnType<typeof preflightRelationship>>
@@ -2106,6 +2115,56 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           version,
         );
         const created: string[] = [];
+        const routes: ExecutionItem['routes'] = [
+          { operation: 'data-stream.deploy', apiVersion: version, transport: 'native' },
+          { operation: 'dlo.get', apiVersion: version, transport: 'native' },
+          { operation: 'connection.read', apiVersion: version, transport: 'native' },
+        ];
+        // The read-only comparison of one stream. A check that refuses the stream (for example
+        // a connection that already has a stream) is reported on the stream's item.
+        const comparison = async (
+          input: DataStreamDeployInput,
+        ): Promise<
+          { check: Awaited<ReturnType<typeof preflightDataStream>> } | { blocked: CrudStageResult }
+        > => {
+          try {
+            return { check: await this.preflightDataStream(input.document, clients) };
+          } catch (error) {
+            if (!(error instanceof DataStreamError)) throw error;
+            const message = operationDiagnostic(
+              error,
+              flags.preview
+                ? 'Preview stopped; nothing was written. Correct the reported check before another attempt.'
+                : 'No write attempted; correct the reported check before another attempt.',
+            );
+            envelope.result.items.push(
+              flags.preview
+                ? {
+                    family: 'data-stream',
+                    outcome: 'blocked',
+                    target: 'unknown',
+                    absenceProof: 'none',
+                    requiredEffects: [],
+                    diagnostics: [{ code: error.code, message }],
+                    routes,
+                    identity: input.document.identity,
+                    operation: 'preview',
+                    path: input.path,
+                  }
+                : {
+                    family: 'data-stream',
+                    outcome: 'blocked',
+                    mutation: 'not-attempted',
+                    diagnostics: [{ code: error.code, message }],
+                    routes,
+                    identity: input.document.identity,
+                    operation: 'execute',
+                    path: input.path,
+                  },
+            );
+            return { blocked: stageResult('blocked', error.code, error) };
+          }
+        };
         // A new stream creates and owns its landing DLO: a selected DLO file of the same name
         // would write that object a second time. P0 is the first stage, so this read-only
         // check refuses the pair before any write. An existing stream's DLO file is a normal
@@ -2117,8 +2176,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           const landing = streamLandingDlo(input);
           if (!landing || !colliding.has(landing.toLowerCase())) continue;
           await verify();
-          const check = await this.preflightDataStream(input.document, clients);
-          if (check.outcome !== 'create') continue;
+          const compared = await comparison(input);
+          if ('blocked' in compared) return compared.blocked;
+          if (compared.check.outcome !== 'create') continue;
           envelope.diagnostics.warnings.push(
             `DLO ${landing} is the landing DLO of new data stream ${input.document.identity.apiName}; remove the DLO file from the selection.`,
           );
@@ -2126,13 +2186,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         }
         for (const input of streamInputs) {
           await verify();
-          const routes: ExecutionItem['routes'] = [
-            { operation: 'data-stream.deploy', apiVersion: version, transport: 'native' },
-            { operation: 'dlo.get', apiVersion: version, transport: 'native' },
-            { operation: 'connection.read', apiVersion: version, transport: 'native' },
-          ];
           if (flags.preview) {
-            const preview = await this.preflightDataStream(input.document, clients);
+            const compared = await comparison(input);
+            if ('blocked' in compared) return compared.blocked;
+            const preview = compared.check;
             await verify();
             envelope.result.items.push({
               ...preview,
@@ -2157,7 +2214,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               path: input.path,
             });
             if (result.outcome === 'blocked' || result.outcome === 'failed')
-              return stageResult(result.outcome);
+              return stageResult(result.outcome, result.diagnostics[0]?.code);
           }
         }
         await verify();

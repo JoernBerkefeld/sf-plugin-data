@@ -8,6 +8,7 @@ import {
   updateNativeDataStream,
   preflightNativeDataStreamDelete,
   deleteNativeDataStream,
+  isStreamNotFound,
 } from './native-data-stream.js';
 import type {
   DataStreamDeployClients,
@@ -17,6 +18,39 @@ import type {
 } from './native-data-stream.js';
 
 type PublicDeleteOptions = Omit<DataStreamDeleteOptions, 'survivorDloNames'>;
+
+/**
+ * Watch the first stream read of a delete: an exact HTTP 404 for the selected name means the
+ * stream is already gone (a rerun after it was deleted), not a failure.
+ * @template T
+ * @param {string} apiName Exact selected stream name.
+ * @param {T} clients Native clients.
+ * @returns {object} Clients with the watched read, and whether that first read answered 404.
+ */
+export function watchStreamAbsence<
+  T extends { streams: Pick<DataStreamDeleteClients['streams'], 'get'> },
+>(apiName: string, clients: T): { clients: T; absent: () => boolean } {
+  let reads = 0;
+  let absent = false;
+  return {
+    clients: {
+      ...clients,
+      streams: {
+        ...clients.streams,
+        get: async (identity: string) => {
+          const first = reads++ === 0;
+          try {
+            return await clients.streams.get(identity);
+          } catch (error) {
+            if (first && identity === apiName && isStreamNotFound(error)) absent = true;
+            throw error;
+          }
+        },
+      },
+    } as T,
+    absent: () => absent,
+  };
+}
 
 /**
  * Preview selected-stream/linked-parent deletion only; unrelated org objects are outside this scope.
@@ -31,18 +65,33 @@ export async function preflightDeleteDataStream(
   options: PublicDeleteOptions,
 ) {
   await options.verifyInput();
-  const plan = await preflightNativeDataStreamDelete(apiName, clients, {
-    deleteDlo: options.deleteDlo,
-    survivorDloNames: [],
-  });
+  const watched = watchStreamAbsence(apiName, clients);
+  let plan: Awaited<ReturnType<typeof preflightNativeDataStreamDelete>>;
+  try {
+    plan = await preflightNativeDataStreamDelete(apiName, watched.clients, {
+      deleteDlo: options.deleteDlo,
+      survivorDloNames: [],
+      ...(options.covered ? { covered: options.covered } : {}),
+    });
+  } catch (error) {
+    if (!watched.absent()) throw error;
+    // Already gone: nothing to delete.
+    await options.verifyInput();
+    return {
+      outcome: 'unchanged' as const,
+      mutation: 'not-attempted' as const,
+      deleteDlo: options.deleteDlo,
+    };
+  }
   await options.verifyInput();
   const dloName = (plan.dlo as { name?: unknown } | null)?.name;
   return {
-    outcome: 'delete' as const,
+    outcome: plan.plannedDependencies ? ('planned-dependencies' as const) : ('delete' as const),
     mutation: 'not-attempted' as const,
     deleteDlo: options.deleteDlo,
     // Names the linked DLO only when it is deleted too, so its local file can be listed.
     ...(options.deleteDlo && typeof dloName === 'string' ? { targetDloName: dloName } : {}),
+    ...(plan.plannedDependencies ? { plannedDependencies: plan.plannedDependencies } : {}),
   };
 }
 
@@ -59,13 +108,14 @@ export async function executeDeleteDataStream(
   options: PublicDeleteOptions,
 ) {
   let dispatched = false;
+  const watched = watchStreamAbsence(apiName, clients);
   try {
     const receipt = await deleteNativeDataStream(
       apiName,
       {
         ...clients,
         streams: {
-          get: (identity) => clients.streams.get(identity),
+          get: (identity) => watched.clients.streams.get(identity),
           list: (connection) => clients.streams.list(connection),
           delete: async (identity, cascade) => {
             dispatched = true;
@@ -83,6 +133,13 @@ export async function executeDeleteDataStream(
       diagnostics: [],
     };
   } catch (error) {
+    // The first read of the stream answered 404: already gone, nothing was sent.
+    if (!dispatched && watched.absent())
+      return {
+        outcome: 'unchanged' as const,
+        mutation: 'not-attempted' as const,
+        diagnostics: [],
+      };
     return {
       outcome: dispatched ? ('failed' as const) : ('blocked' as const),
       mutation: dispatched ? ('unknown' as const) : ('not-attempted' as const),

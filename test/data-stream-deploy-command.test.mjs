@@ -16,6 +16,7 @@ import {
 } from '../lib/services/command-native-data-stream.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
 import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
+import { DataStreamError } from '../lib/artifacts/data-stream-document.js';
 
 const authored = {
   schemaVersion: 1,
@@ -563,4 +564,65 @@ test('a Git selection holding only a stream reaches the stream route with its ca
   assert.ok(calls.includes('auth'));
   assert.ok(calls.includes('preview'));
   assert.equal(result.result.items[0].identity.apiName, 'Proposed');
+});
+
+test('a stream check that refuses the stream is reported on its item, preview and real deploy', async () => {
+  for (const preview of [true, false]) {
+    const { command, calls, input } = invocation({ preview });
+    // Real deploy reaches the comparison through the landing-DLO collision check.
+    if (!preview)
+      command.resolveInputs = async () => [
+        input,
+        { path: 'other', document: { kind: 'dlo', identity: { apiName: 'proposed__dll' } } },
+      ];
+    command.preflightDataStream = async () => {
+      calls.push('preview');
+      throw new DataStreamError('AMBIGUOUS_STREAM_BINDING');
+    };
+    const { result, code } = await run(command);
+    assert.equal(code, 1);
+    assert.equal(result.status, 'blocked');
+    assert.ok(!calls.includes('execute'));
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => error.code),
+      ['AMBIGUOUS_STREAM_BINDING'],
+    );
+    const [item] = result.result.items;
+    assert.equal(result.result.items.length, 1);
+    assert.equal(item.family, 'data-stream');
+    assert.equal(item.identity.apiName, 'Proposed');
+    assert.equal(item.operation, preview ? 'preview' : 'execute');
+    assert.deepEqual(
+      [item.outcome, item.mutation],
+      ['blocked', preview ? undefined : 'not-attempted'],
+    );
+    assert.equal(item.diagnostics[0].code, 'AMBIGUOUS_STREAM_BINDING');
+    assert.match(item.diagnostics[0].message, /nothing was written|No write attempted/u);
+  }
+  // Any other error keeps the generic preview failure.
+  const other = invocation({ preview: true });
+  other.command.preflightDataStream = async () => {
+    throw new Error('private-token');
+  };
+  const { result } = await run(other.command);
+  assert.equal(result.diagnostics.errors[0].code, 'DEPLOY_PREVIEW_FAILED');
+  assert.doesNotMatch(JSON.stringify(result), /private-token/u);
+});
+
+test('a real stream deploy that is blocked names its code in the envelope', async () => {
+  const { command } = invocation();
+  command.executeDataStream = async () => ({
+    family: 'data-stream',
+    outcome: 'blocked',
+    mutation: 'not-attempted',
+    diagnostics: [{ code: 'AMBIGUOUS_STREAM_BINDING', message: 'No write attempted.' }],
+  });
+  const { result, code } = await run(command);
+  assert.equal(code, 1);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => error.code),
+    ['AMBIGUOUS_STREAM_BINDING'],
+  );
+  assert.equal(result.result.items[0].diagnostics[0].code, 'AMBIGUOUS_STREAM_BINDING');
 });

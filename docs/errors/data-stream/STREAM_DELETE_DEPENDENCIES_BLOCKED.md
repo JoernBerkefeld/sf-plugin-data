@@ -12,6 +12,8 @@
 
 Before deleting, the plugin reads the dependencies of the stream and of its linked DLO. It deletes only when the stream has no dependencies and the DLO's only dependency is this stream.
 
+A preview that also selects the stream's mappings or DMOs does not block on those: when every other dependent is a mapping or DMO the same delete deletes earlier (or a DMO whose every mapping from the landing DLO is selected), the stream reports `planned-dependencies` with [`DEPENDENCIES_PLANNED`](../dependency/DEPENDENCIES_PLANNED.md). The real run checks the dependencies again after those earlier phases.
+
 The code also appears after the delete when the DLO is kept (no `--delete-dlo`): the plugin reads the DLO's dependencies again and expects none, and the stream to be gone.
 
 ## Why the plugin stops

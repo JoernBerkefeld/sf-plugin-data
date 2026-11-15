@@ -12,7 +12,7 @@
 
 The deploy runs in phases: DLOs, DMOs, mappings and relationships first, then identity resolution, calculated insights and Segments. An identity resolution runs before a calculated insight or Segment that uses its unified DMO. This item needs a component that an earlier phase of the same deploy creates (the message names it, for example `dmo:person__dlm` or `identity-resolution:individual_5810`). That component does not exist yet, so the preview lists the item as `planned-dependencies` without saying whether it will be created or updated.
 
-A delete runs the phases in reverse. When a component that needs this item (a graph on the unified DMO of an identity resolution, a Segment on a DMO, a transform on a DLO) is deleted in an earlier phase of the same delete, the preview lists this item as `planned-dependencies` without reading it, because it would only report that dependent.
+A delete runs the phases in reverse. When a component that needs this item (a graph on the unified DMO of an identity resolution, a Segment on a DMO, a transform on a DLO) is deleted in an earlier phase of the same delete, the preview lists this item as `planned-dependencies` without reading it, because it would only report that dependent. A data stream is read first: when the only dependents of the stream and its landing DLO, besides the stream itself, are mappings or DMOs selected in the same delete (a DMO also counts when every mapping from the landing DLO to it is selected), the stream is `planned-dependencies` and the message names those dependents. Any other dependent still blocks with `STREAM_DELETE_DEPENDENCIES_BLOCKED`.
 
 ## Why the plugin reports it
 

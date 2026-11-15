@@ -1299,6 +1299,11 @@ export type DataStreamDeleteOptions = {
   deleteDlo: boolean;
   verifyInput: () => Promise<void>;
   survivorDloNames: readonly string[];
+  /**
+   * Preview only: whether the same delete deletes this dependent in an earlier phase. Without
+   * it every dependent other than the DLO's own stream entry blocks.
+   */
+  covered?: (dependent: StreamDependent, dloName: string) => Promise<boolean>;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<unknown>;
 };
@@ -1312,7 +1317,24 @@ export type DataStreamDeletePlan = {
   streamDependencies: Json;
   dloDependencies: Json;
   survivors: Json[];
+  /** Preview only: dependents of the stream or its DLO that the same delete deletes earlier. */
+  plannedDependencies?: StreamDependent[];
 };
+/** One dependent of a stream or its DLO, by type and name. */
+export type StreamDependent = { componentType: string; name: string };
+
+/**
+ * A stream read answered by Salesforce with HTTP 404: that stream does not exist.
+ * @param {unknown} error Error of a native stream read.
+ * @returns {boolean} True only for a genuine HTTP 404 of the stream route.
+ */
+export function isStreamNotFound(error: unknown): boolean {
+  return (
+    error instanceof DataStreamHttpError &&
+    error.status === 404 &&
+    ['REQUEST_FAILED', 'STREAM_HTTP_ERROR'].includes(error.code)
+  );
+}
 
 /**
  * Admit only the observed complete dependency response, never a transport-success shortcut.
@@ -1338,12 +1360,13 @@ function streamDeleteDependencies(value: unknown): Json {
  * @param {object} options Explicit cascade choice and protected unrelated parent names.
  * @param {boolean} options.deleteDlo Explicit acknowledgement of linked-parent deletion.
  * @param {readonly string[]} options.survivorDloNames Unselected parents to preserve independently.
+ * @param {Function} [options.covered] Preview only: a dependent the same delete deletes earlier.
  * @returns {Promise<DataStreamDeletePlan>} Private guarded plan, not dispatch authority.
  */
 export async function preflightNativeDataStreamDelete(
   apiName: string,
   clients: DataStreamReadClients,
-  options: Pick<DataStreamDeleteOptions, 'deleteDlo' | 'survivorDloNames'>,
+  options: Pick<DataStreamDeleteOptions, 'deleteDlo' | 'survivorDloNames' | 'covered'>,
 ): Promise<DataStreamDeletePlan> {
   if (!name.test(apiName) || typeof options.deleteDlo !== 'boolean')
     throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
@@ -1396,18 +1419,38 @@ export async function preflightNativeDataStreamDelete(
     await clients.dependencies.dlo(dlo.name as string),
   );
   const dependencies = dloDependencies.dependencies as unknown[];
+  // The DLO's own entry for this stream.
+  const ownEntry = (value: unknown): boolean =>
+    object(value).componentType === 'DataStream' &&
+    object(value).id === target.recordId &&
+    object(value).name === target.label &&
+    !Object.keys(object(value)).some((key) => !['id', 'name', 'componentType'].includes(key));
   // Both modes refuse unknown/shared dependencies; cascade additionally has an explicit opt-in.
+  let plannedDependencies: StreamDependent[] | undefined;
   if (
     streamDependencies.totalSize !== 0 ||
     dependencies.length !== 1 ||
-    object(dependencies[0]).componentType !== 'DataStream' ||
-    object(dependencies[0]).id !== target.recordId ||
-    object(dependencies[0]).name !== target.label ||
-    Object.keys(object(dependencies[0])).some(
-      (key) => !['id', 'name', 'componentType'].includes(key),
-    )
-  )
-    throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
+    !ownEntry(dependencies[0])
+  ) {
+    // Preview only: dependents an earlier phase of the same delete plans to delete.
+    const covered = options.covered;
+    if (covered === undefined || dependencies.filter((entry) => ownEntry(entry)).length > 1)
+      throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
+    plannedDependencies = [];
+    for (const entry of [
+      ...(streamDependencies.dependencies as unknown[]),
+      ...dependencies.filter((value) => !ownEntry(value)),
+    ]) {
+      const { componentType, name: dependent } = object(entry);
+      if (
+        typeof componentType !== 'string' ||
+        typeof dependent !== 'string' ||
+        !(await covered({ componentType, name: dependent }, String(dlo.name)))
+      )
+        throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
+      plannedDependencies.push({ componentType, name: dependent });
+    }
+  }
   const survivors: Json[] = [];
   const seen = new Set<string>();
   for (const survivor of options.survivorDloNames) {
@@ -1441,6 +1484,7 @@ export async function preflightNativeDataStreamDelete(
     streamDependencies,
     dloDependencies,
     survivors,
+    ...(plannedDependencies === undefined ? {} : { plannedDependencies }),
   };
 }
 
@@ -1467,12 +1511,7 @@ async function deletedStreamAbsent(
       );
     return false;
   } catch (error) {
-    if (
-      error instanceof DataStreamHttpError &&
-      error.status === 404 &&
-      ['REQUEST_FAILED', 'STREAM_HTTP_ERROR'].includes(error.code)
-    )
-      return true;
+    if (isStreamNotFound(error)) return true;
     throw error;
   }
 }

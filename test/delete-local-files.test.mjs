@@ -105,6 +105,8 @@ test('a confirmed DLO, DMO and mapping deletion removes each item’s own local 
         get: async () => assert.fail('stubbed'),
         remove: async () => {},
       }),
+      // The placeholder file is no valid mapping (that is refused); here it names no binding.
+      readAuthoredMapping: async () => {},
       deleteMapping: async () => ({ apiName: 'Map' }),
     },
   );
@@ -510,12 +512,15 @@ test('a graph matched ignoring case uses the org spelling for the item and its f
   assert.equal(await exists(file), false);
 });
 
-test('a confirmed segment delete removes its JSON and every SQL file, nothing else', async () => {
+test('a confirmed segment delete removes its JSON and every SQL file in any letter case, nothing else', async () => {
   const root = await scratch();
   const json = await packageFile(root, 'segments', 'Audience.segment.json');
   const first = await packageFile(root, 'segments', 'Audience.segment.First.sql');
   const second = await packageFile(root, 'segments', 'Audience.segment.Second.sql');
+  // Matched ignoring letter case, like the segment reader and writer.
+  const third = await packageFile(root, 'segments', 'audience.segment.Third.SQL');
   const other = await packageFile(root, 'segments', 'Audience_2.segment.First.sql');
+  const notSql = await packageFile(root, 'segments', 'AUDIENCE.segment.Notes.txt');
   const seams = {
     resolveConnection: async () => ({ getUsername: () => 'target' }),
     readDeleteSource: async () => ({
@@ -547,6 +552,7 @@ test('a confirmed segment delete removes its JSON and every SQL file, nothing el
     { path: json, exists: true },
     { path: first, exists: true },
     { path: second, exists: true },
+    { path: third, exists: true },
   ]);
   const { result } = await inProject(
     root,
@@ -557,9 +563,11 @@ test('a confirmed segment delete removes its JSON and every SQL file, nothing el
     { path: json, outcome: 'removed' },
     { path: first, outcome: 'removed' },
     { path: second, outcome: 'removed' },
+    { path: third, outcome: 'removed' },
   ]);
-  for (const file of [json, first, second]) assert.equal(await exists(file), false);
+  for (const file of [json, first, second, third]) assert.equal(await exists(file), false);
   assert.equal(await exists(other), true);
+  assert.equal(await exists(notSql), true);
 });
 
 test('delete help names the default removal and the keep flag', () => {

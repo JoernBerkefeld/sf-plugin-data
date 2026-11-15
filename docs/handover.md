@@ -1,3 +1,27 @@
+# Step 2a: stream and delete fixes after the off-pattern plan — 2026-11-15
+
+Follow-ups to plan `sf_plugin_data_offpattern_20261114` (user-agreed open topics).
+
+- Stream delete preview: dependents that are DMOs/mappings selected in the same delete make
+  the stream `planned-dependencies` (`DEPENDENCIES_PLANNED`); other dependents still block.
+- A stream whose first read answers 404 is `unchanged` (alone, mixed, with or without
+  `--delete-dlo`), so a rerun after `DELETE_PHASE_NOT_SETTLED` works.
+- A `DataStreamError` in a deploy is reported on the stream item and in the envelope.
+- Mapping delete by authored name refuses an invalid file or one whose `identity.apiName`
+  differs from its file name (`INVALID_SOURCE`, no read); no file → exact org name.
+- Segment delete matches its `.sql` files ignoring letter case.
+- Live (isolated-source 00Daj000010xkZNEAY, 2026-11-15 03:33-03:43Z, DMO `CliDs_2ddd35__dlm`,
+  generated stream `DloOwn20261028B7_ProbeRecord_5CC73333` on connector
+  `DloOwn20261028B7_2bb4295e_…`): combined preview planned, stream alone blocked, real run
+  confirmed, reruns and stream-alone deletes `unchanged`, invalid mapping file refused with
+  no HTTP call; all probes 404, connector back to 0 streams. Evidence
+  F:/Temp/cli-ds-probe-2ddd35 (and the first probe F:/Temp/cli-ds-probe-4c8e40).
+- Open: a second stream file on an already-used connector/event is matched to the existing
+  stream (binding, not file name) and blocks with `UNSUPPORTED_STREAM_SETTINGS_CHANGE`
+  ("no Salesforce rejection was confirmed" — misleading for a new file), or reads
+  `unchanged` when the labels match; Salesforce generates stream names, so the authored
+  name is never kept.
+
 # Chunk E2b: old calculated insight pair removed, final API 65 grep — 2026-11-15
 
 Plan `sf_plugin_data_offpattern_20261114` chunk E2 (second half) and the end of chunk F.

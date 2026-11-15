@@ -10,6 +10,8 @@ import {
 import { DataStreamError } from '../lib/artifacts/data-stream-document.js';
 import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
+import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
+import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 
 /**
  * Construct an offline command with observable routing boundaries.
@@ -279,6 +281,7 @@ function lifecycle(controls = {}) {
   const clients = {
     streams: {
       get: async () => {
+        if (controls.absent) throw controls.absent;
         if (writes) {
           if (controls.readError) throw controls.readError;
           throw new DataStreamHttpError('STREAM_HTTP_ERROR', 404);
@@ -330,8 +333,9 @@ function lifecycle(controls = {}) {
                   id: controls.wrongOwner ? '1ds000000000002AAA' : sid,
                   name: stream.label,
                 },
+                ...(controls.dloDependents ?? []),
               ],
-              totalSize: 1,
+              totalSize: 1 + (controls.dloDependents ?? []).length,
             };
       },
     },
@@ -377,4 +381,196 @@ test('real adapter preview has zero writes; wrong dependency owner blocks and po
     assert.equal(result.mutation, 'unknown');
     assert.equal(unknown.writes(), 1);
   }
+});
+
+test('a stream whose first read answers 404 is unchanged in preview and real delete, with or without --delete-dlo', async () => {
+  for (const deleteDlo of [false, true]) {
+    const options = { deleteDlo, verifyInput: async () => {} };
+    for (const absent of [
+      new DataStreamHttpError('REQUEST_FAILED', 404),
+      new DataStreamHttpError('STREAM_HTTP_ERROR', 404),
+    ]) {
+      const gone = lifecycle({ absent });
+      const plan = await preflightDeleteDataStream('Selected', gone.clients, options);
+      assert.deepEqual([plan.outcome, plan.mutation], ['unchanged', 'not-attempted']);
+      const result = await executeDeleteDataStream('Selected', gone.clients, options);
+      assert.deepEqual(
+        [result.outcome, result.mutation, result.diagnostics],
+        ['unchanged', 'not-attempted', []],
+      );
+      assert.equal(gone.writes(), 0);
+    }
+    // Any other answer of the first read still blocks.
+    const refused = lifecycle({ absent: new DataStreamHttpError('REQUEST_FAILED', 403) });
+    await assert.rejects(preflightDeleteDataStream('Selected', refused.clients, options));
+    const blocked = await executeDeleteDataStream('Selected', refused.clients, options);
+    assert.deepEqual([blocked.outcome, blocked.mutation], ['blocked', 'not-attempted']);
+  }
+});
+
+for (const metadata of [
+  ['data-stream:Selected'],
+  ['mapping:M_1', 'data-stream:Selected', 'dmo:Target__dlm'],
+])
+  test(`a rerun of a delete whose stream is already gone succeeds ${metadata.join(' ')}`, async () => {
+    for (const deleteDlo of [false, true]) {
+      const native = lifecycle({ absent: new DataStreamHttpError('REQUEST_FAILED', 404) });
+      const fixture = invocation({ metadata, 'delete-dlo': deleteDlo });
+      fixture.command.createDataStreamClients = async () => native.clients;
+      fixture.command.executeDeleteDataStream = executeDeleteDataStream;
+      // The mapping and DMO are gone too.
+      fixture.command.createMappingClient = () => ({
+        get: async () => {
+          throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        },
+      });
+      fixture.command.createMappingSender = () => ({});
+      fixture.command.deleteMapping = async (name, client) => client.get(name);
+      fixture.command.createDmoNativeDeleteClient = () => ({});
+      fixture.command.deleteDmo = async () => {
+        throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+      };
+      const { result, code } = await run(fixture.command);
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      assert.equal(code, 0);
+      assert.ok(result.result.items.every((item) => item.outcome === 'unchanged'));
+      assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+      assert.equal(native.writes(), 0);
+    }
+  });
+
+test('stream preview: dependents that the same delete plans to delete are planned-dependencies', async () => {
+  const dmo = { componentType: 'DataModelObject', id: '0dm000000000001AAA', name: 'Target__dlm' };
+  const options = { deleteDlo: true, verifyInput: async () => {} };
+  const covered = lifecycle({ dloDependents: [dmo] });
+  const seen = [];
+  const plan = await preflightDeleteDataStream('Selected', covered.clients, {
+    ...options,
+    covered: async (dependent, dlo) => {
+      seen.push([dependent, dlo]);
+      return true;
+    },
+  });
+  assert.equal(plan.outcome, 'planned-dependencies');
+  assert.deepEqual(plan.plannedDependencies, [
+    { componentType: 'DataModelObject', name: 'Target__dlm' },
+  ]);
+  assert.deepEqual(seen, [
+    [{ componentType: 'DataModelObject', name: 'Target__dlm' }, 'Linked__dll'],
+  ]);
+  // Not covered, or no coverage at all (the real run): blocked.
+  await assert.rejects(
+    preflightDeleteDataStream('Selected', covered.clients, {
+      ...options,
+      covered: async () => false,
+    }),
+    (error) => error.code === 'STREAM_DELETE_DEPENDENCIES_BLOCKED',
+  );
+  await assert.rejects(
+    preflightDeleteDataStream('Selected', covered.clients, options),
+    (error) => error.code === 'STREAM_DELETE_DEPENDENCIES_BLOCKED',
+  );
+  const real = await executeDeleteDataStream('Selected', covered.clients, {
+    ...options,
+    covered: async () => true,
+  });
+  assert.equal(real.outcome, 'blocked');
+  assert.equal(real.diagnostics[0].code, 'STREAM_DELETE_DEPENDENCIES_BLOCKED');
+  assert.equal(covered.writes(), 0);
+});
+
+/**
+ * One full org mapping from the stream's landing DLO to Target__dlm.
+ * @param {string} developerName Org mapping name.
+ * @returns {object} Native mapping.
+ */
+const landingMapping = (developerName) => ({
+  developerName,
+  sourceEntityDeveloperName: 'Linked__dll',
+  targetEntityDeveloperName: 'Target__dlm',
+  status: 'ACTIVE',
+  fieldMappings: [
+    {
+      sourceFieldDeveloperName: 'ProbeId__c',
+      targetFieldDeveloperName: 'Id__c',
+      developerName: 'observed_Id',
+    },
+  ],
+});
+
+for (const [selection, expected] of [
+  [['dmo:Target__dlm'], 'planned-dependencies'],
+  [['mapping:M_1'], 'planned-dependencies'],
+  [['mapping:M_1', 'dmo:Target__dlm'], 'planned-dependencies'],
+  [[], 'blocked'],
+  [['dmo:Other__dlm'], 'blocked'],
+  [['mapping:M_2'], 'blocked'],
+])
+  test(`stream delete preview with selected ${selection.join(' ') || 'nothing else'} is ${expected}`, async () => {
+    const native = lifecycle({
+      dloDependents: [
+        { componentType: 'DataModelObject', id: '0dm000000000001AAA', name: 'Target__dlm' },
+      ],
+    });
+    const fixture = invocation({
+      preview: true,
+      'delete-dlo': true,
+      metadata: [...selection, 'data-stream:Selected'],
+    });
+    fixture.command.createDataStreamClients = async () => native.clients;
+    fixture.command.preflightDeleteDataStream = preflightDeleteDataStream;
+    fixture.command.createDmoNativeDeleteClient = () => ({});
+    fixture.command.retrieveDmo = async (name) => ({
+      identity: { apiName: name, dataSpace: 'default' },
+    });
+    fixture.command.createMappingSender = () => ({});
+    fixture.command.createMappingClient = () => ({
+      get: async (name) => landingMapping(name),
+      // Between the landing DLO and Target__dlm there is exactly the mapping M_1.
+      list: async () => ({ objectSourceTargetMaps: [landingMapping('M_1')] }),
+    });
+    fixture.command.preflightDeleteMapping = async () => {};
+    const { result, code } = await run(fixture.command);
+    const stream = result.result.items.find((item) => item.family === 'data-stream');
+    assert.equal(stream.outcome, expected, JSON.stringify(result));
+    assert.equal(stream.mutation, 'not-attempted');
+    assert.equal(native.writes(), 0);
+    if (expected === 'blocked') {
+      assert.equal(result.status, 'blocked');
+      assert.equal(code, 1);
+      assert.ok(
+        result.diagnostics.errors.some(
+          (error) => error.code === 'STREAM_DELETE_DEPENDENCIES_BLOCKED',
+        ),
+      );
+    } else {
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      assert.equal(code, 0);
+      assert.equal(stream.diagnostics[0].code, 'DEPENDENCIES_PLANNED');
+      assert.match(stream.diagnostics[0].message, /DataModelObject Target__dlm/u);
+    }
+  });
+test('a stream already gone pairs no selected DLO: the DLO is checked on its own', async () => {
+  const native = lifecycle({ absent: new DataStreamHttpError('REQUEST_FAILED', 404) });
+  const fixture = invocation({
+    preview: true,
+    metadata: ['dlo:Linked__dll', 'data-stream:Selected'],
+  });
+  fixture.command.createDataStreamClients = async () => native.clients;
+  fixture.command.preflightDeleteDataStream = preflightDeleteDataStream;
+  fixture.command.createDloNativeDeleteClient = () => ({
+    dependencies: async () => ({ dependencies: [], totalSize: 0 }),
+  });
+  fixture.command.retrieveDlo = async (name) => ({
+    identity: { apiName: name, dataSpace: 'default' },
+  });
+  const { result } = await run(fixture.command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(
+    result.result.items.map((item) => [item.family, item.outcome, item.removedWith]),
+    [
+      ['dlo', 'delete', undefined],
+      ['data-stream', 'unchanged', undefined],
+    ],
+  );
 });

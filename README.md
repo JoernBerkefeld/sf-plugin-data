@@ -156,8 +156,10 @@ Model Object (DMO) is the separate model that receives mapped fields. Use this o
 
 1. **Create the Data Stream.** It creates its landing DLO. The supported plugin
    create profile uses an existing Ingestion API connection and source event, with
-   an empty `spec.additiveFieldMappings` array and a Text primary key. Do not create
-   a standalone DLO first as a substitute for the stream's landing DLO.
+   an empty `spec.additiveFieldMappings` array and a Text primary key. Salesforce
+   allows one stream per connection, so the connection must not have a stream yet.
+   A check that refuses the stream is reported on the stream's item with its code.
+   Do not create a standalone DLO first as a substitute for the stream's landing DLO.
 2. **Create or prepare the DMO and its required fields.** This is independent of
    step 1: either step can run first, or they can be prepared in parallel. A stream
    does not create the DMO or its fields.
@@ -262,7 +264,13 @@ independent reads, not HTTP success alone. The stream DELETE (including the
 `--delete-dlo` cascade request) is sent once on the same bound authenticated
 connection as the reads: no child `sf api request rest`, no token refresh, no HTTP
 retry, redirects refused. An expired session stops with HTTP 401; log in again and
-rerun. The fresh cross-org run covered cascade
+rerun. A stream whose first read answers `404` is already gone: it reports `unchanged`
+with mutation `not-attempted`, with or without `--delete-dlo`, so the same delete can be
+rerun. In a preview that also selects the stream's mappings or DMOs, a stream whose
+only other dependents are exactly those selected mappings and DMOs reports
+`planned-dependencies` (`DEPENDENCIES_PLANNED`); the real run checks the dependencies
+again after the earlier phases deleted them. Any other dependent blocks
+(`STREAM_DELETE_DEPENDENCIES_BLOCKED`). The fresh cross-org run covered cascade
 mode; it does not requalify preserve mode across orgs. `DataStreamDefinition`
 Metadata XML examples below remain separate from this native JSON workflow.
 
@@ -1990,8 +1998,10 @@ this way, whatever pairs it holds, including pairs onto standard fields (for exa
 `Name__c` to `ssot__Name__c`) and mappings onto standard DMOs. Deletion is admitted
 at every native API version from `61.0`; default/`auto` is `68.0`.
 
-- **Which mapping.** When `data360/mapping/<Name>.mapping-meta.json` is a valid mapping
-  file, `<Name>` is the authored name: the org mapping is found the way deploy finds it, by the file's
+- **Which mapping.** When `data360/mapping/<Name>.mapping-meta.json` is there, it must be a
+  valid mapping file whose `identity.apiName` is `<Name>` (deploy's rule); any other file
+  there is refused with `INVALID_SOURCE` before the mapping is read. Then `<Name>` is the
+  authored name: the org mapping is found the way deploy finds it, by the file's
   source DLO and target DMO, whatever name Salesforce gave it (for example
   `Name_1` against the org's `Name_1794692582238`). The result item keeps the authored
   name and reports the org name as `targetApiName`. No org mapping with that binding is
