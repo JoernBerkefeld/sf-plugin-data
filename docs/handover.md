@@ -1,3 +1,34 @@
+# Lenient retrieve step 6b (delete): retrieved files that keep unmodelled keys can be deleted — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), gap left
+by steps 1–6. Deploy behaviour is unchanged.
+
+- Git range: `admitDeletedArtifact` reads every family in retrieve mode (DMO, DLO, mapping,
+  relationship, stream, transform, graph, IR, segment join); identity must still equal the path
+  name. CI needed nothing (open key set).
+- `delete.ts`: `admitSourceInput` (transform, segment, IR) and `readOrgSource` (`-m` reads of
+  transform, segment, IR, graph) use retrieve mode; `readAuthoredMapping` admits a retrieved
+  mapping file; the mapping-file lookup and last-mapping owner read use retrieve mode.
+- Services: `deleteDataTransform`, `deleteSegment`, `deleteIdentityResolution` validate the
+  expectation and project the live GET in retrieve mode, so file and GET compare like for like.
+  `bindIdentityResolutionDependencies` and `verifyIdentityResolutionOutputs` take an optional
+  `mode` (default deploy; delete passes `'retrieve'`); `bindSegmentDependencies` gets
+  `'retrieve'` from delete. `operateNativeDataGraph` delete reads in retrieve mode and keeps the
+  id, created date and "generated names present" checks explicitly (`nativeGraphStillGenerating`
+  now exported).
+- Unchanged guards: definition match against the org, name/identity, CUSTOM/no-namespace
+  transform, segment/IR runtime IDs and status, IR in-flight status, graph ready + empty
+  dependency/segment arrays, dependency bindings, `--confirm-delete`/preview. Standard/namespaced
+  DMO protection and the DLO/DMO/stream/relationship live reads were not touched.
+- Tests: `crud-delete-git` (lenient file per family deleted from a range; confirmation and
+  identity mismatch still refuse), `native-data-graph-crd` (GET with unknown keys deleted; guards
+  refuse; deploy stays strict; `-m` read), `delete-segment`, `identity-resolution-delete`,
+  `identity-resolution-bindings`, `data-transform`, `native-mapping-delete-command`. No existing
+  assertion changed (the segment harness gained lenient modes).
+- Open: DLO/DMO/stream/relationship delete still read their live GETs strictly (mixed with the
+  standard/namespaced guards); an IR whose retrieved file holds `null` sources is still refused by
+  the dependency binder. Gate 4, README/sfmc.guide, live acceptance (step 7).
+
 # Lenient retrieve step 6: segments and identity resolution keep what the plugin does not model — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 6.

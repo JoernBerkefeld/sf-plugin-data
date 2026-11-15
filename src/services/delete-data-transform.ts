@@ -121,8 +121,9 @@ export async function deleteDataTransform(
   client: DataTransformClient,
   options: DataTransformDeleteOptions,
 ): Promise<DataTransformDeleteResult> {
-  const desired = validateDataTransformDocument(value);
-  const canonical = serializeDataTransformDocument(desired);
+  // Read as retrieve writes it: the file and the GET may keep keys the plugin does not model.
+  const desired = validateDataTransformDocument(value, 'retrieve');
+  const canonical = serializeDataTransformDocument(desired, 'retrieve');
   const { targetId, confirmDelete, verifyInput } = options;
   const preview = options.preview === true;
   const methods = { ...client };
@@ -136,7 +137,7 @@ export async function deleteDataTransform(
       options.verifyInput !== verifyInput ||
       (options.preview === true) !== preview ||
       !isDeepStrictEqual({ ...client }, methods) ||
-      serializeDataTransformDocument(value) !== canonical
+      serializeDataTransformDocument(value, 'retrieve') !== canonical
     )
       throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
   };
@@ -147,9 +148,9 @@ export async function deleteDataTransform(
   };
   const read = async (): Promise<void> => {
     check();
-    const observed = await retrieveDataTransform(targetId, client);
+    const observed = await retrieveDataTransform(targetId, client, 'retrieve');
     check();
-    if (serializeDataTransformDocument(observed.document) !== canonical)
+    if (serializeDataTransformDocument(observed.document, 'retrieve') !== canonical)
       throw new DataTransformError('TRANSFORM_TARGET_DRIFT');
   };
   await verify();

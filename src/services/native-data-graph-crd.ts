@@ -101,7 +101,7 @@ export async function bindNativeGraphRoot(
  * @param {unknown} body Untrusted item body.
  * @returns {boolean} True while generation is visibly incomplete.
  */
-function nativeGraphStillGenerating(body: unknown): boolean {
+export function nativeGraphStillGenerating(body: unknown): boolean {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
   const raw = body as Record<string, unknown>;
   if (raw.status !== 'ready') return false;

@@ -1,13 +1,13 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { projectNativeIdentityResolution } from '../artifacts/identity-resolution-document.js';
+import {
+  projectNativeIdentityResolution,
+  validateIdentityResolutionDocument,
+} from '../artifacts/identity-resolution-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import {
-  inFlightIdentityResolutionStatuses,
-  nativeIdentityResolutionDocument,
-} from './preflight-identity-resolution-deploy.js';
+import { inFlightIdentityResolutionStatuses } from './preflight-identity-resolution-deploy.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import {
   bindIdentityResolutionDependencies,
@@ -94,7 +94,8 @@ export async function deleteIdentityResolution(
       getConnectDiagnostic(error),
     );
   try {
-    const desired = nativeIdentityResolutionDocument(value);
+    // Read as retrieve writes it: the file and the GET may keep keys the plugin does not model.
+    const desired = validateIdentityResolutionDocument(value, 'retrieve');
     const frozen = { ...selection };
     const origin = connection.instanceUrl;
     const request = connection.request;
@@ -138,7 +139,7 @@ export async function deleteIdentityResolution(
       if (
         (options.preview === true) !== preview ||
         options.confirmDelete !== confirmed ||
-        !isDeepStrictEqual(desired, nativeIdentityResolutionDocument(value))
+        !isDeepStrictEqual(desired, validateIdentityResolutionDocument(value, 'retrieve'))
       )
         throw new Error('Input drift');
     };
@@ -198,7 +199,7 @@ export async function deleteIdentityResolution(
       }
     };
     const project = (raw: unknown) =>
-      projectNativeIdentityResolution(raw, desired.identity.apiName);
+      projectNativeIdentityResolution(raw, desired.identity.apiName, 'retrieve');
     const work = async (): Promise<IdentityResolutionDeleteResult> => {
       await input();
       const raw = await read(desired.identity.apiName);
@@ -230,6 +231,8 @@ export async function deleteIdentityResolution(
         receiver,
         { ...frozen },
         dataSpace,
+        undefined,
+        'retrieve',
       );
       check();
       if (!/^[a-f0-9]{64}$/u.test(dependencies?.fingerprint)) throw new Error('Dependency proof');
@@ -242,6 +245,9 @@ export async function deleteIdentityResolution(
         expected,
         receiver,
         { ...frozen },
+        undefined,
+        undefined,
+        'retrieve',
       );
       check();
       if (!Array.isArray(outputs) || outputs.length !== expected.length)

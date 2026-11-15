@@ -648,3 +648,189 @@ for (const [flag, value, code] of [
     assert.deepEqual(h.calls, []);
   });
 }
+
+// Lenient retrieve step 6b: a retrieved file keeps keys the plugin does not model; a Git-range
+// delete reads it as retrieve wrote it and deletes by family and name through the safeguards.
+const withUnknown = (document, change) => {
+  const value = structuredClone(document);
+  change(value);
+  return value;
+};
+files.lenientGraph = [
+  files.graph[0],
+  withUnknown(graphDocument, (value) => {
+    value.definition.futureSetting = { nested: true };
+    value.definition.sourceObject.futureNodeKey = 'node';
+  }),
+];
+files.lenientIr = [
+  files.ir[0],
+  withUnknown(irDocument(), (value) => {
+    value.spec.futureOwnerSetting = 'kept';
+  }),
+];
+files.lenientTransform = [
+  files.transform[0],
+  withUnknown(transformDocument, (value) => {
+    value.definition.futureTransformSetting = 'kept';
+  }),
+];
+files.lenientDmo = [
+  files.dmo[0],
+  withUnknown(files.dmo[1], (value) => {
+    value.spec.futureSpec = 'kept';
+    value.spec.fields[0].futureField = true;
+  }),
+];
+files.lenientStream = [
+  files.stream[0],
+  withUnknown(streamDocument, (value) => {
+    value.spec.newDlo.label = 'A landing DLO label longer than forty characters';
+  }),
+];
+files.lenientLanding = [
+  files.landing[0],
+  withUnknown(files.landing[1], (value) => {
+    value.spec.futureSpec = 'kept';
+  }),
+];
+files.lenientRelationship = [
+  files.relationship[0],
+  withUnknown(relationshipDocument, (value) => {
+    value.spec.futureSpec = 'kept';
+  }),
+];
+files.lenientMapping = [
+  files.mapping[0],
+  withUnknown(files.mapping[1], (value) => {
+    value.spec.futureSpec = 'kept';
+  }),
+];
+const segmentFolder = 'force-app/main/default/data360/segments';
+files.lenientSegment = [
+  `${segmentFolder}/Audience.segment.json`,
+  {
+    schemaVersion: 1,
+    kind: 'segment',
+    identity: { dataSpace: 'default', apiName: 'Audience' },
+    spec: {
+      displayName: 'Audience',
+      description: '',
+      segmentType: 'DBT',
+      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+      models: [{ name: 'Audience' }],
+      publishInterval: 'NO_REFRESH',
+      lookbackPeriod: 'P90D',
+      futureConfiguration: true,
+    },
+  },
+];
+files.lenientSegmentSql = [
+  `${segmentFolder}/Audience.segment.Audience.sql`,
+  'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0\n',
+];
+const lenientNames = [
+  'lenientGraph',
+  'lenientIr',
+  'lenientTransform',
+  'lenientDmo',
+  'lenientStream',
+  'lenientLanding',
+  'lenientRelationship',
+  'lenientMapping',
+  'lenientSegment',
+  'lenientSegmentSql',
+];
+/**
+ * The harness plus the seams a lenient run needs beyond it (mapping, Segment, transform list).
+ * @param {string} cwd Repository.
+ * @param {object} flags Flag overrides.
+ * @returns {object} Harness.
+ */
+const lenientHarness = (cwd, flags) => {
+  const h = harness(cwd, flags);
+  h.transforms.push({ id: '1dt000000000001AAA', name: 'SyntheticTransform' });
+  h.linked.Example_Probe = 'Example_Probe__dll';
+  h.desired = {};
+  h.command.createMappingSender = () => ({});
+  h.command.createMappingClient = () => ({
+    list: async () => ({ objectSourceTargetMaps: [mappingRaw('Example_map_1')] }),
+    get: async (name) => mappingRaw(name),
+  });
+  h.command.deleteMapping = async (name) => {
+    h.calls.push(`mapping:${name}`);
+    return { apiName: name };
+  };
+  h.command.preflightDeleteMapping = async (name) => {
+    h.calls.push(`mapping-preview:${name}`);
+  };
+  h.command.deleteSegment = async (desired, _connection, _version, _space, options) => {
+    await options.verifyInput();
+    h.calls.push(`segment:${desired.identity.apiName}`);
+    h.desired.segment = desired;
+    return {
+      outcome: options.preview ? 'delete' : 'deleted',
+      mutation: options.preview ? 'not-attempted' : 'confirmed-deleted',
+      diagnostics: [],
+    };
+  };
+  // Settled at once, so the later phases run too.
+  h.command.deleteIdentityResolution = async (desired, _connection, _version, _space, options) => {
+    await options.verifyInput();
+    h.calls.push(`ir:${desired.identity.apiName}`);
+    h.desired.ir = desired;
+    return {
+      outcome: options.preview ? 'delete' : 'deleted',
+      mutation: options.preview ? 'not-attempted' : 'confirmed-deleted',
+      diagnostics: [],
+    };
+  };
+  const transform = h.command.deleteDataTransform;
+  h.command.deleteDataTransform = async (desired, ...rest) => {
+    h.desired.transform = desired;
+    return transform(desired, ...rest);
+  };
+  return h;
+};
+
+test('retrieved files that keep keys the plugin does not model are deleted from a Git range', async () => {
+  const { cwd, base } = await repository(lenientNames);
+  const h = lenientHarness(cwd, { 'changed-since': base });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  for (const call of [
+    'graph:SyntheticGraph',
+    'ir:Individual_A1b2',
+    'segment:Audience',
+    'transform:1dt000000000001AAA',
+    'relationship:A_BRef_map_B_Id:A__dlm',
+    'mapping:Example_map_1',
+    'dmo:Example__dlm',
+    'stream:Example_Probe:true',
+  ])
+    assert.ok(h.calls.includes(call), call);
+  // The delete gets the definition as retrieve wrote it, unknown keys included.
+  assert.equal(h.desired.segment.spec.futureConfiguration, true);
+  assert.equal(h.desired.ir.spec.futureOwnerSetting, 'kept');
+  assert.equal(h.desired.transform.definition.futureTransformSetting, 'kept');
+});
+
+test('a lenient Git-range delete still needs --confirm-delete and a name that matches the path', async () => {
+  const { cwd, base } = await repository(lenientNames);
+  const h = lenientHarness(cwd, { 'changed-since': base, 'confirm-delete': false });
+  const result = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(codes(result), ['DESTRUCTIVE_CONFIRMATION_REQUIRED']);
+  assert.deepEqual(h.calls, ['git']);
+  // A retrieved file whose identity is not its file name names no org component.
+  const renamed = withUnknown(files.lenientDmo[1], (value) => {
+    value.identity.apiName = 'Other__dlm';
+  });
+  files.lenientDmoRenamed = [files.dmo[0], renamed];
+  const other = await repository(['lenientDmoRenamed']);
+  const refused = lenientHarness(other.cwd, { 'changed-since': other.base });
+  const outcome = await run(refused.command);
+  assert.equal(outcome.status, 'blocked');
+  assert.deepEqual(codes(outcome), ['INVALID_GIT_SELECTION']);
+  assert.deepEqual(refused.calls, ['git']);
+});

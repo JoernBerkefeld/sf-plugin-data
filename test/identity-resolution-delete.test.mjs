@@ -463,3 +463,46 @@ for (const status of ['PUBLISHING', 'DELETING'])
     assert.equal(result.diagnostics[0].code, 'IDENTITY_RESOLUTION_NOT_SETTLED');
     assert.deepEqual(h.writes, []);
   });
+
+// Lenient retrieve step 6b: delete reads the file and the GET as retrieve writes them.
+const lenientHarness = () => {
+  const h = deleteHarness();
+  h.raw.futureOwnerSetting = 'kept';
+  const retrieved = projectNativeIdentityResolution(
+    h.raw,
+    h.raw.objectApiName,
+    'retrieve',
+  ).candidate;
+  Object.assign(h.desired, retrieved);
+  return h;
+};
+test('a retrieved IR file with a key the plugin does not model is deleted', async () => {
+  const h = lenientHarness();
+  const modes = [];
+  h.options.verifyDependencies = async (...arguments_) => {
+    modes.push(arguments_.at(-1));
+    return { fingerprint: 'a'.repeat(64) };
+  };
+  const outputs = h.options.verifyOutputs;
+  h.options.verifyOutputs = async (...arguments_) => {
+    modes.push(arguments_.at(-1));
+    return outputs(...arguments_);
+  };
+  const result = await h.run();
+  assert.equal(result.outcome, 'deleted');
+  assert.deepEqual(modes, ['retrieve', 'retrieve']);
+  assert.deepEqual(
+    h.writes.map((write) => write.method),
+    ['DELETE'],
+  );
+});
+for (const guard of ['definition', 'publishing', 'confirmation'])
+  test(`a lenient IR delete still refuses on ${guard}`, async () => {
+    const h = lenientHarness();
+    if (guard === 'definition') h.raw.futureOwnerSetting = 'changed in the org';
+    if (guard === 'publishing') h.raw.rulesetStatus = 'PUBLISHING';
+    if (guard === 'confirmation') h.options.confirmDelete = false;
+    const result = await h.run();
+    assert.equal(result.outcome, 'blocked');
+    assert.deepEqual(h.writes, []);
+  });

@@ -103,7 +103,8 @@ export async function deleteSegment(
       getConnectDiagnostic(error),
     );
   try {
-    const desired = validateSegmentDocument(value);
+    // Read as retrieve writes it: the file and the GET may keep keys the plugin does not model.
+    const desired = validateSegmentDocument(value, 'retrieve');
     const frozen = { ...selection };
     const origin = connection.instanceUrl;
     const request = connection.request;
@@ -132,7 +133,7 @@ export async function deleteSegment(
         options.confirmDelete !== confirmed ||
         typeof verify !== 'function' ||
         options.verifyInput !== verify ||
-        !isDeepStrictEqual(validateSegmentDocument(value), desired)
+        !isDeepStrictEqual(validateSegmentDocument(value, 'retrieve'), desired)
       )
         throw new Error('Scope, intent or deadline drift');
       previous = current;
@@ -151,7 +152,7 @@ export async function deleteSegment(
           `/services/data/v68.0/ssot/segments/${desired.identity.apiName}`,
         );
         check();
-        return projectSegment(raw, desired.identity.apiName);
+        return projectSegment(raw, desired.identity.apiName, 'retrieve');
       } catch (error) {
         check();
         if (
@@ -184,7 +185,7 @@ export async function deleteSegment(
     )
       throw new Error('Target identity or definition');
     const bind = options.bind ?? bindSegmentDependencies;
-    const bindings = await bind(desired, connection, frozen, dataSpace);
+    const bindings = await bind(desired, connection, frozen, dataSpace, undefined, 'retrieve');
     check();
     if (bindings.length !== 1 || runtime.segmentOnId !== bindings[0].targetId)
       throw new Error('Source identity');
@@ -192,7 +193,12 @@ export async function deleteSegment(
       isDeepStrictEqual(observed.candidate, desired) &&
       isDeepStrictEqual(preservation(observed.runtime), preservation(runtime));
     await input();
-    if (!isDeepStrictEqual(bindings, await bind(desired, connection, frozen, dataSpace)))
+    if (
+      !isDeepStrictEqual(
+        bindings,
+        await bind(desired, connection, frozen, dataSpace, undefined, 'retrieve'),
+      )
+    )
       throw new Error('Dependency drift');
     check();
     const fresh = await read();

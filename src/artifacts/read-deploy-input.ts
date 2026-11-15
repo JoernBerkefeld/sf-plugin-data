@@ -1448,6 +1448,8 @@ function admitDeletedVerbatim(
 /**
  * Admit bytes of a file read from a Git revision (no worktree file exists) by the family
  * validator, and take the identity from the content, which must agree with the canonical name.
+ * The file is read as retrieve writes it (retrieve mode): a delete needs its family, identity
+ * and what the delete itself uses, not a deployable definition.
  * @param {DeletedArtifactKind} kind Family derived from the canonical path.
  * @param {string} name Canonical name derived from the path.
  * @param {Buffer} bytes Exact revision bytes (the JSON file).
@@ -1475,46 +1477,46 @@ export function admitDeletedArtifact(
     let sourceObjectName: string | undefined;
     switch (kind) {
       case 'dmo': {
-        document = validateNativeDmoDocument(value);
+        document = validateNativeDmoDocument(value, 'retrieve');
         ({ identity } = document);
         break;
       }
       case 'dlo': {
-        document = validateDloDocument(value);
+        document = validateDloDocument(value, 'retrieve');
         ({ identity } = document);
         break;
       }
       case 'mapping': {
-        document = validateNativeMappingDocument(value);
+        document = validateNativeMappingDocument(value, 'retrieve');
         ({ identity } = document);
         break;
       }
       case 'relationship': {
-        const relationship = validateNativeRelationshipDocument(value);
+        const relationship = validateNativeRelationshipDocument(value, 'retrieve');
         document = relationship;
         identity = relationship.identity;
         sourceObjectName = relationship.spec.sourceObjectName;
         break;
       }
       case 'data-stream': {
-        document = validateDataStreamDocument(value);
+        document = validateDataStreamDocument(value, 'retrieve');
         ({ identity } = document);
         break;
       }
       case 'data-transform': {
-        const transform = validateDataTransformDocument(value);
+        const transform = validateDataTransformDocument(value, 'retrieve');
         document = transform;
         identity = { dataSpace: 'default', apiName: transform.definition.name as string };
         break;
       }
       case 'data-graph': {
-        const graph = validateNativeDataGraphDocument(value);
+        const graph = validateNativeDataGraphDocument(value, 'retrieve');
         document = graph;
         identity = { dataSpace: 'default', apiName: graph.definition.name as string };
         break;
       }
       case 'identity-resolution': {
-        document = validateIdentityResolutionDocument(value);
+        document = validateIdentityResolutionDocument(value, 'retrieve');
         ({ identity } = document);
         break;
       }
@@ -1535,6 +1537,7 @@ export function admitDeletedArtifact(
             ...(file.name === undefined ? {} : { name: file.name }),
             text: decode(file.bytes),
           })),
+          'retrieve',
         );
         ({ identity } = document);
         break;

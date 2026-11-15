@@ -13,6 +13,7 @@ import {
   acquireNativeDataGraph,
   bindNativeGraphRoot,
   nativeDataGraphLifecycle,
+  nativeGraphStillGenerating,
   NativeGraphWriteRefused,
   sendNativeGraphWrite,
   settleNativeDataGraph,
@@ -163,6 +164,9 @@ export async function operateNativeDataGraph(
   let creating = false;
   let diagnostic: ConnectDiagnostic | undefined;
   const original = context;
+  // Delete reads the file and the GET as retrieve writes them: settings the plugin does not
+  // model are kept, not refused. Deploy stays strict.
+  const mode = options.operation === 'delete' ? 'retrieve' : 'deploy';
   const now = options.now ?? Date.now;
   const started = now();
   const budget =
@@ -220,13 +224,18 @@ export async function operateNativeDataGraph(
   const acquire = async (
     document: Parameters<typeof acquireNativeDataGraph>[1],
   ): Promise<Awaited<ReturnType<typeof acquireNativeDataGraph>>> => {
-    const result = await acquireNativeDataGraph(context, document, options.operation === 'deploy');
+    const result = await acquireNativeDataGraph(
+      context,
+      document,
+      options.operation === 'deploy',
+      mode,
+    );
     diagnostic = getConnectDiagnostic(result) ?? diagnostic;
     return result;
   };
   const work = async (): Promise<NativeGraphOperationResult> => {
     context.check();
-    const document = validateNativeDataGraphDocument(value);
+    const document = validateNativeDataGraphDocument(value, mode);
     const orgId = context.orgId;
     await options.verifyInput();
     const rootName = document.definition.primaryObjectName as string;
@@ -312,6 +321,11 @@ export async function operateNativeDataGraph(
         ? before.state === 'absent'
         : before.state === 'present' &&
             before.observation.status === 'ready' &&
+            // Retrieve mode does not check these; the delete still needs its identity and a
+            // graph whose generated names are all there (not still being built).
+            before.observation.id.trim() !== '' &&
+            Number.isFinite(Date.parse(before.observation.createdDate)) &&
+            !nativeGraphStillGenerating({ ...before.observation.target, status: 'ready' }) &&
             // Delete stays refused while any node or field reports dependencies or segments.
             nativeDataGraphUnreferenced(before.observation.target.sourceObject),
     );

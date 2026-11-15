@@ -856,3 +856,22 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
     assert.equal(core._transport, transport);
     assert.equal(core._refreshDelegate, refresh);
   });
+
+test('IR dependency binding admits a retrieved file in retrieve mode; deploy still refuses it', async () => {
+  const raw = expandedNativeIrFixture();
+  const plain = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
+  raw.futureOwnerSetting = 'kept';
+  const retrieved = projectNativeIdentityResolution(raw, raw.objectApiName, 'retrieve').candidate;
+  const conn = { ...connection, getApiVersion: () => '68.0' };
+  const bind = (value, mode) =>
+    bindIdentityResolutionDependencies(
+      value,
+      conn,
+      nativeSelection,
+      'default',
+      async (name) => (name.endsWith('__dll') ? sourceFixture(name) : await inputRead(name)),
+      mode,
+    );
+  assert.deepEqual(await bind(retrieved, 'retrieve'), await bind(plain));
+  await assert.rejects(bind(retrieved));
+});

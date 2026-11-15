@@ -11,6 +11,7 @@ import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
 
 export type IdentityResolutionOutputBinding = {
@@ -133,6 +134,7 @@ function compatible(
  * @param {ApiVersionSelection} selection Explicit API68 family route.
  * @param {string} dataSpace Explicit normalized default space; omissions never default.
  * @param {Function} acquire Native API 68 detail acquisition seam.
+ * @param {DocumentMode} [mode] How the IR is checked: `retrieve` admits a retrieved file (delete).
  * @returns {Promise<{fingerprint: string}>} Stable ordered target-local identity/required-field/key digest.
  */
 export async function bindIdentityResolutionDependencies(
@@ -141,8 +143,9 @@ export async function bindIdentityResolutionDependencies(
   selection: ApiVersionSelection,
   dataSpace: string,
   acquire: Acquire = reader(connection),
+  mode: DocumentMode = 'deploy',
 ): Promise<{ fingerprint: string }> {
-  const document = validateIdentityResolutionDocument(value);
+  const document = validateIdentityResolutionDocument(value, mode);
   selection = { ...selection };
   scope(connection, selection);
   requireProof(dataSpace === 'default');
@@ -219,6 +222,8 @@ export async function bindIdentityResolutionDependencies(
  * @param {ApiVersionSelection} selection Explicit family route.
  * @param {Function} acquire Native API 68 detail acquisition seam.
  * @param {Function} acquireOwner Independent native target owner acquisition seam.
+ * @param {DocumentMode} [mode] How the owner GET is read: `retrieve` keeps keys the plugin does not
+ * model (delete).
  * @returns {Promise<IdentityResolutionOutputBinding[]>} Independently verified private target bindings.
  */
 export async function verifyIdentityResolutionOutputs(
@@ -228,6 +233,7 @@ export async function verifyIdentityResolutionOutputs(
   selection: ApiVersionSelection,
   acquire: Acquire = reader(connection),
   acquireOwner = retrieveIdentityResolution,
+  mode: DocumentMode = 'deploy',
 ): Promise<IdentityResolutionOutputBinding[]> {
   selection = { ...selection };
   scope(connection, selection);
@@ -248,6 +254,7 @@ export async function verifyIdentityResolutionOutputs(
     target.targetApiName,
     { ...selection },
     'default',
+    mode,
   );
   if (!acquired.expectations || !acquired.candidate || acquired.blockers.length > 0)
     throw retainConnectDiagnostic(
@@ -257,6 +264,7 @@ export async function verifyIdentityResolutionOutputs(
   const projection = projectNativeIdentityResolution(
     acquired.expectations.native,
     target.targetApiName,
+    mode,
   );
   const expected = projection.expectations.outputs.map(({ identity, sourceApiName }) => ({
     identity,
@@ -278,7 +286,13 @@ export async function verifyIdentityResolutionOutputs(
     });
     scope(connection, selection);
   }
-  const final = await acquireOwner(connection, target.targetApiName, { ...selection }, 'default');
+  const final = await acquireOwner(
+    connection,
+    target.targetApiName,
+    { ...selection },
+    'default',
+    mode,
+  );
   if (!final.expectations || !final.candidate || final.blockers.length > 0)
     throw retainConnectDiagnostic(
       new IdentityResolutionError('IDENTITY_RESOLUTION_BINDING_UNQUALIFIED'),
@@ -287,6 +301,7 @@ export async function verifyIdentityResolutionOutputs(
   const finalProjection = projectNativeIdentityResolution(
     final.expectations.native,
     target.targetApiName,
+    mode,
   );
   requireProof(isDeepStrictEqual(finalProjection, projection));
   scope(connection, selection);

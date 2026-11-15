@@ -1409,6 +1409,57 @@ test('Transform deletion rejects ambiguous absence, unsupported targets and fres
   );
 });
 
+// Lenient retrieve step 6b: delete reads the file and the GET as retrieve writes them.
+const lenientRuntime = () => ({ ...runtime(), futureTransformSetting: 'kept' });
+test('a retrieved transform file with a key the plugin does not model is deleted', async () => {
+  const h = deleteHarness(lenientRuntime());
+  const desired = observeDataTransform(lenientRuntime(), schedule(), 'retrieve').document;
+  assert.equal(desired.definition.futureTransformSetting, 'kept');
+  const result = await deleteDataTransform(desired, h.client, h.options);
+  assert.equal(result.outcome, 'deleted');
+  assert.equal(h.calls.filter(([op]) => op === 'delete').length, 1);
+});
+test('-m data-transform:Name reads a GET with keys the plugin does not model as retrieve does', async () => {
+  const h = deleteHarness(lenientRuntime());
+  const command = Object.create(Delete.prototype);
+  command.createDataTransformClient = () => h.client;
+  const source = await command.readDeleteSource('data-transform', lenientRuntime().name, {});
+  assert.equal(source.desired.definition.futureTransformSetting, 'kept');
+  const result = await deleteDataTransform(source.desired, h.client, h.options);
+  assert.equal(result.outcome, 'deleted');
+});
+test('a lenient transform delete still refuses another definition, a non-custom or namespaced target', async () => {
+  const desired = observeDataTransform(lenientRuntime(), schedule(), 'retrieve').document;
+  for (const change of [
+    (raw) => {
+      raw.futureTransformSetting = 'changed in the org';
+    },
+    (raw) => {
+      raw.creationType = 'SYSTEM';
+    },
+    (raw) => {
+      raw.namespace = 'owned';
+    },
+  ]) {
+    const raw = lenientRuntime();
+    change(raw);
+    const h = deleteHarness(raw);
+    await assert.rejects(deleteDataTransform(desired, h.client, h.options));
+    assert.equal(
+      h.calls.some(([op]) => op === 'delete'),
+      false,
+    );
+  }
+  const h = deleteHarness(lenientRuntime());
+  h.options.confirmDelete = false;
+  const result = await deleteDataTransform(desired, h.client, h.options);
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(
+    h.calls.some(([op]) => op === 'delete'),
+    false,
+  );
+});
+
 test('Transform inventory uses bounded complete fixed pages, never partial/error absence or server links', async () => {
   const rows = Array.from({ length: 21 }, (_, index) => ({
     id: `1dt${String(index).padStart(12, '0')}AAA`,

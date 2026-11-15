@@ -21,11 +21,11 @@ import { SegmentError, validateSegmentDocument } from '../../artifacts/segment-d
 import { projectSegment } from '../../services/retrieve-segment.js';
 import type { SegmentDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteIdentityResolution } from '../../services/delete-identity-resolution.js';
-import { nativeIdentityResolutionDocument } from '../../services/preflight-identity-resolution-deploy.js';
 import {
   IdentityResolutionError,
   identityResolutionName,
   projectNativeIdentityResolution,
+  validateIdentityResolutionDocument,
 } from '../../artifacts/identity-resolution-document.js';
 import type { IdentityResolutionDeployInput } from '../../artifacts/read-deploy-input.js';
 import {
@@ -365,20 +365,20 @@ async function readOrgSource(
       const client = readers.transformClient(connection, '68.0', 'default');
       const targetId = await resolveDataTransformTargetId(client, name);
       if (targetId === undefined) return { absent: true };
-      const observed = await retrieveDataTransform(targetId, client);
+      const observed = await retrieveDataTransform(targetId, client, 'retrieve');
       return { desired: observed.document, transformTargetId: targetId };
     }
     case 'segment': {
       const raw = await exact(`/services/data/v68.0/ssot/segments/${name}`);
       return raw === undefined
         ? { absent: true }
-        : { desired: projectSegment(raw, name).candidate };
+        : { desired: projectSegment(raw, name, 'retrieve').candidate };
     }
     case 'identity-resolution': {
       const raw = await exact(`/services/data/v68.0/ssot/identity-resolutions/${name}`);
       return raw === undefined
         ? { absent: true }
-        : { desired: projectNativeIdentityResolution(raw, name).candidate };
+        : { desired: projectNativeIdentityResolution(raw, name, 'retrieve').candidate };
     }
     case 'calculated-insight': {
       // The API 68 GET in any status; the delete itself reads it again by name. The planning
@@ -394,7 +394,8 @@ async function readOrgSource(
     default: {
       const context = await readers.graphContext(connection, 'default');
       const read = await context.get(name);
-      if (read.status === 200) return { desired: nativeDataGraphDocumentFromResponse(read.body) };
+      if (read.status === 200)
+        return { desired: nativeDataGraphDocumentFromResponse(read.body, 'retrieve') };
       // HTTP400 alone is never absence: the item, metadata, inventory and SOQL reads must agree.
       const proof = await proveNativeDataGraphAbsent(context, name, read);
       if (proof.state === 'absent') return { absent: true };
@@ -414,7 +415,7 @@ async function readOrgSource(
 
 /**
  * Validate the base content of one source-family file deleted in a Git range and name the
- * selector it answers.
+ * selector it answers. The file is read as retrieve writes it (retrieve mode).
  * @param {DeployInput} input Resolved input.
  * @returns {{family: DeleteFamily, selector: string, desired: unknown}} Admitted source.
  */
@@ -426,7 +427,7 @@ function admitSourceInput(input: DeployInput): {
   switch (input.document.kind) {
     case 'data-transform': {
       const transform = input as DataTransformDeployInput;
-      const desired = validateDataTransformDocument(transform.document);
+      const desired = validateDataTransformDocument(transform.document, 'retrieve');
       return {
         family: 'data-transform',
         selector: `data-transform:${String(transform.document.definition.name)}`,
@@ -434,12 +435,13 @@ function admitSourceInput(input: DeployInput): {
       };
     }
     case 'segment': {
-      const desired = validateSegmentDocument((input as SegmentDeployInput).document);
+      const desired = validateSegmentDocument((input as SegmentDeployInput).document, 'retrieve');
       return { family: 'segment', selector: `segment:${desired.identity.apiName}`, desired };
     }
     case 'identity-resolution': {
-      const desired = nativeIdentityResolutionDocument(
+      const desired = validateIdentityResolutionDocument(
         (input as IdentityResolutionDeployInput).document,
+        'retrieve',
       );
       return {
         family: 'identity-resolution',
@@ -797,7 +799,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       const value = JSON.parse(await readFile(file, 'utf8')) as unknown;
       // A verbatim file (retrieved as-is) names no binding: the mapping is deleted by its name.
       if (isVerbatimDocument(value, 'mapping') && value.identity.apiName === name) return undefined;
-      const document = validateNativeMappingDocument(value);
+      const document = validateNativeMappingDocument(value, 'retrieve');
       if (document.identity.apiName !== name) throw new Error('Identity mismatch');
       return document;
     } catch {
@@ -1862,7 +1864,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
 
       const runIdentityResolution = async (entry: DeletePlanInput): Promise<StageStatus> => {
         const desired = desiredOf(entry).desired as ReturnType<
-          typeof nativeIdentityResolutionDocument
+          typeof validateIdentityResolutionDocument
         >;
         const verifyInput = async (): Promise<void> => {
           if (JSON.stringify(flags) !== snapshot) throw new DloError('INVALID_SELECTION');
@@ -2373,7 +2375,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   if (resolved !== undefined) return [canonical];
                   try {
                     const found = await mappingLocalFile(
-                      normalizeNativeMapping(firstRead, requestScope),
+                      normalizeNativeMapping(firstRead, requestScope, 'retrieve'),
                       process.cwd(),
                     );
                     return [{ path: found.path, boundary: projectData }];
@@ -2392,7 +2394,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                     return undefined;
                   let dmo: string;
                   try {
-                    dmo = normalizeNativeMapping(firstRead, requestScope).spec
+                    dmo = normalizeNativeMapping(firstRead, requestScope, 'retrieve').spec
                       .targetEntityDeveloperName;
                   } catch {
                     return undefined;

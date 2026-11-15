@@ -510,6 +510,37 @@ for (const preview of [false, true])
     }
   });
 
+// Lenient retrieve step 6b: a retrieved mapping file keeps keys the plugin does not model.
+const lenient = (apiName) => {
+  const document = authored(apiName);
+  document.spec.futureSpec = 'kept';
+  document.spec.fieldMappings[0].futurePair = 1;
+  return document;
+};
+test('a retrieved mapping file with keys the plugin does not model names the org mapping by its binding', async () => {
+  const command = invocation({ metadata: ['mapping:Authored_1'] });
+  const f = mappingFixture(command);
+  const list = f.client.list;
+  f.client.list = async (dmo, dlo) =>
+    dlo === undefined ? list() : { objectSourceTargetMaps: [structuredClone(f.selected)] };
+  const { result } = await runInProject(command, { Authored_1: lenient('Authored_1') });
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.equal(result.result.items[0].targetApiName, 'Generated_123');
+  assert.deepEqual(f.calls, [['remove', 'Generated_123']]);
+});
+test('a retrieved mapping file of another name is still refused before any read', async () => {
+  const command = invocation({ metadata: ['mapping:Generated_123'] });
+  const f = mappingFixture(command);
+  f.client.list = f.client.get = async () => assert.fail('no mapping read');
+  const { result } = await runInProject(command, { Generated_123: lenient('Other_1') });
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => error.code),
+    ['INVALID_SOURCE'],
+  );
+});
+
 test('an authored mapping whose binding the org does not have is unchanged', async () => {
   const command = invocation({ metadata: ['mapping:Authored_1'] });
   const f = mappingFixture(command);

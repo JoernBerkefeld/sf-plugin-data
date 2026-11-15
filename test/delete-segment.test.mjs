@@ -58,6 +58,9 @@ function absent(code = 'ITEM_NOT_FOUND', statusCode = 404) {
  */
 function harness(mode = 'absence') {
   const desired = document();
+  // A retrieved file keeps a key the plugin does not model (retrieve mode).
+  const lenient = mode.startsWith('lenient');
+  if (lenient) desired.spec.futureConfiguration = true;
   const selected = selection();
   const events = [];
   let reads = 0;
@@ -66,7 +69,7 @@ function harness(mode = 'absence') {
   let binds = 0;
   const flags = {
     preview: mode === 'preview',
-    confirmDelete: mode !== 'confirmation',
+    confirmDelete: !['confirmation', 'lenient-confirmation'].includes(mode),
     verifyInput: async () => {
       events.push('input');
       checks++;
@@ -106,7 +109,10 @@ function harness(mode = 'absence') {
       }
       events.push('read');
       reads++;
-      if (mode === 'absent-before' || (deletes && ['absence', 'uncertain'].includes(mode)))
+      if (
+        mode === 'absent-before' ||
+        (deletes && ['absence', 'uncertain', 'lenient'].includes(mode))
+      )
         throw absent();
       if (mode === 'auth') throw absent('INVALID_SESSION_ID', 401);
       if (mode === 'generic404') throw absent('NOT_FOUND');
@@ -116,7 +122,10 @@ function harness(mode = 'absence') {
       if (mode === 'source') raw.segmentOnId = 'foreign';
       if (mode === 'identity') raw.marketSegmentId = '';
       if (mode === 'definition') raw.description = 'not local';
-      if (mode === 'unknown') raw.futureConfiguration = true;
+      if (mode === 'unknown' || lenient) raw.futureConfiguration = true;
+      if (mode === 'lenient-definition') raw.futureConfiguration = false;
+      if (mode === 'lenient-identity') raw.marketSegmentId = '';
+      if (mode === 'lenient-source') raw.segmentOnId = 'foreign';
       if (mode === 'drift' && reads === 2) raw.marketSegmentDefinitionId = '3HX000000000002AAA';
       if (mode === 'membership' && reads === 2) raw.segmentMembershipDmo.latestTable = 'foreign';
       if (deletes && mode === 'processing') raw.segmentStatus = 'PROCESSING';
@@ -178,6 +187,35 @@ test('Segment preview, missing confirmation, already absent and admission failur
       mode,
     );
     assert.equal(result.mutation, 'not-attempted', mode);
+    assert.equal(h.counts().deletes, 0, mode);
+  }
+});
+test('a retrieved Segment file with a key the plugin does not model is deleted', async () => {
+  const h = harness('lenient');
+  const result = await h.run();
+  assert.equal(result.outcome, 'deleted');
+  assert.equal(h.counts().deletes, 1);
+});
+test('-m segment:Name reads a GET with keys the plugin does not model as retrieve does', async () => {
+  const h = harness('lenient');
+  const source = await Delete.prototype.readDeleteSource.call(
+    Object.create(Delete.prototype),
+    'segment',
+    'Audience',
+    h.connection,
+  );
+  assert.equal(source.desired.spec.futureConfiguration, true);
+});
+test('a lenient Segment delete still refuses on definition, identity, source and confirmation', async () => {
+  for (const mode of [
+    'lenient-definition',
+    'lenient-identity',
+    'lenient-source',
+    'lenient-confirmation',
+  ]) {
+    const h = harness(mode);
+    const result = await h.run();
+    assert.equal(result.outcome, 'blocked', mode);
     assert.equal(h.counts().deletes, 0, mode);
   }
 });

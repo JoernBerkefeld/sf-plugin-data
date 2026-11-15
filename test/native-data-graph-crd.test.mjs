@@ -528,6 +528,94 @@ test('product Graph fresh identity root and input drift block delete', async () 
     assert.deepEqual(f.calls, []);
   }
 });
+// Lenient retrieve step 6b: delete reads the graph (file and GET) as retrieve writes it.
+const unknownKeys = () => {
+  const raw = runtime();
+  raw.futureSetting = { nested: true };
+  raw.sourceObject.futureNodeKey = 'node';
+  raw.sourceObject.fields[0].futureFieldKey = 7;
+  return raw;
+};
+test('a graph whose GET has keys the plugin does not model is deleted', async () => {
+  const f = fixture();
+  f.setGraph(unknownKeys());
+  // -m: the definition comes from the GET; --changed-since: from the retrieved file.
+  const retrieved = nativeDataGraphDocumentFromResponse(unknownKeys(), 'retrieve');
+  for (const desired of [retrieved, document()]) {
+    f.setGraph(unknownKeys());
+    const result = await operateNativeDataGraph(desired, f.context, f.client, options('delete'));
+    assert.equal(result.outcome, 'deleted');
+  }
+  assert.deepEqual(f.calls, ['DELETE', 'DELETE']);
+});
+test('-m data-graph:Name reads a GET with keys the plugin does not model as retrieve does', async () => {
+  const f = fixture();
+  f.setGraph(unknownKeys());
+  const command = Object.create(Delete.prototype);
+  command.nativeGraphContext = async () => f.context;
+  const source = await command.readDeleteSource('data-graph', name, {});
+  assert.deepEqual(source.desired.definition.futureSetting, { nested: true });
+  await expectResult(
+    operateNativeDataGraph(source.desired, f.context, f.client, options('delete')),
+    'outcome',
+    'deleted',
+  );
+});
+test('a lenient graph delete still refuses on dependencies, identity, building and confirmation', async () => {
+  const cases = {
+    dependency: (raw) => {
+      raw.sourceObject.fields[0].dependency = ['consumer'];
+    },
+    segment: (raw) => {
+      raw.sourceObject.relatedSegments = ['consumer'];
+    },
+    'no id': (raw) => {
+      delete raw.id;
+    },
+    'no created date': (raw) => {
+      delete raw.createdDate;
+    },
+    building: (raw) => {
+      raw.idDmoName = '';
+    },
+    'not ready': (raw) => {
+      raw.status = 'editing';
+    },
+    'other definition': (raw) => {
+      raw.label = 'Changed in the org';
+    },
+  };
+  const desired = nativeDataGraphDocumentFromResponse(unknownKeys(), 'retrieve');
+  for (const [label, change] of Object.entries(cases)) {
+    const f = fixture();
+    const raw = unknownKeys();
+    change(raw);
+    f.setGraph(raw);
+    const result = await operateNativeDataGraph(desired, f.context, f.client, options('delete'));
+    assert.equal(result.outcome, 'blocked', label);
+    assert.deepEqual(f.calls, [], label);
+  }
+  const f = fixture();
+  f.setGraph(unknownKeys());
+  await expectResult(
+    operateNativeDataGraph(desired, f.context, f.client, options('delete', { confirmed: false })),
+    'outcome',
+    'blocked',
+  );
+  assert.deepEqual(f.calls, []);
+});
+// Deploy of a file with an unknown key stays strict.
+test('deploy of a graph file with a key the plugin does not model is still refused', async () => {
+  const f = fixture();
+  f.setGraph(unknownKeys());
+  const desired = nativeDataGraphDocumentFromResponse(unknownKeys(), 'retrieve');
+  await expectResult(
+    operateNativeDataGraph(desired, f.context, f.client, options('deploy')),
+    'outcome',
+    'blocked',
+  );
+  assert.deepEqual(f.calls, []);
+});
 test('product Graph confirmation previews and ambiguous writes never replay', async () => {
   const f = fixture();
   f.setGraph(runtime());
