@@ -95,7 +95,7 @@ export class DeployInputError extends Error {
 }
 
 /**
- * Refuse an unusable DLO or DMO file, keeping the validator's explanation of the offending key.
+ * Refuse an unusable DLO, DMO, mapping or relationship file, keeping the validator's explanation of the offending key.
  * @param {unknown} error Validator refusal.
  * @returns {DeployInputError} INVALID_SOURCE refusal.
  */
@@ -227,8 +227,8 @@ async function readMappingInput(file: string): Promise<MappingDeployInput> {
   try {
     document = validateNativeMappingDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();
@@ -447,8 +447,8 @@ export async function readRelationshipInput(file: string): Promise<RelationshipD
   try {
     document = validateNativeRelationshipDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();

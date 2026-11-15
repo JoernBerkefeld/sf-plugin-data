@@ -1,3 +1,27 @@
+# Lenient retrieve step 2: mapping and relationship files keep what the plugin does not model — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 2.
+Deploy behaviour is unchanged except that its refusal now names the key path.
+
+- `DocumentMode` added to `validateNativeMappingDocument`, `normalizeNativeMapping`,
+  `retrieveNativeMapping`, `retrieveLeanNativeMapping`, `generatedMappingPairs` (and the parent
+  DLO/DMO reads it makes), `validateNativeRelationshipDocument`, `observeNativeRelationship`,
+  `normalizeNativeRelationship`, `listNativeRelationships` and `retrieveNativeRelationships`.
+  `retrieve.ts` and both writers pass `'retrieve'`; deploy, delete and `delete-dmo-field` stay strict.
+- Mapping retrieve mode checks schemaVersion, kind, name, data space, a `__dll` source, a `__dlm`
+  target and that pairs are objects. Unknown document/pair keys, any field names, duplicates and
+  an empty pair list after lean filtering are kept. A non-DLO source or non-DMO target still
+  throws `INVALID_MAPPING_DOCUMENT`, so the retrieve catch-all writes a verbatim file. Parent
+  fields without a text name are left out of the generated-pair maps.
+- Relationship retrieve mode takes list entries as listed: only entries kept for the DMO (source
+  is the DMO) are normalized; null/missing values and non-`__c` field names are kept; only text
+  names count for the inventory uniqueness check. A kept entry without a usable name still fails
+  the DMO's relationship read (no file path; no warning channel there).
+- Deploy: mapping and relationship refusals name the key path; `readDeployInputs` keeps it on
+  `INVALID_SOURCE`.
+- Tests: `test/lenient-retrieve-mapping-relationship.test.mjs`. Open: steps 3–6, README/sfmc.guide
+  (step 7).
+
 # Lenient retrieve step 1: DLO and DMO files keep what the plugin does not model — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 1.
@@ -865,6 +889,7 @@ Handover for D (pipeline delete + Git delete):
   `ITEM_NOT_FOUND`).
 - Delete constraint from earlier evidence: IR delete returns `deletion-processing` and reads
   `DELETING` for about 3.5 min.
+
 # Deploy phases P0 streams, P2 transform, P4 graphs; mixed refusals removed — 2026-11-13
 
 Chunk B2 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.

@@ -95,7 +95,7 @@ export async function writeNativeRelationshipDocument(
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'relationship') ? value : undefined;
-  const document = verbatim ?? validateNativeRelationshipDocument(value);
+  const document = verbatim ?? validateNativeRelationshipDocument(value, 'retrieve');
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
   );
@@ -123,7 +123,7 @@ export async function writeNativeRelationshipDocument(
     if (previous) {
       const saved = previousIdentity(
         previous.toString('utf8'),
-        (previousValue) => validateNativeRelationshipDocument(previousValue).identity,
+        (previousValue) => validateNativeRelationshipDocument(previousValue, 'retrieve').identity,
       );
       if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new NativeRelationshipError('RELATIONSHIP_DATASPACE_COLLISION');

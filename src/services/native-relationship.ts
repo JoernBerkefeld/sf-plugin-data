@@ -22,7 +22,7 @@ import {
   createVerbatimDocument,
   verbatimReason,
 } from '../artifacts/verbatim-document.js';
-import type { VerbatimDocument } from '../artifacts/verbatim-document.js';
+import type { DocumentMode, VerbatimDocument } from '../artifacts/verbatim-document.js';
 
 /** Upper bound of pages read for one DMO; far above any observed inventory. */
 const maximumPages = 100;
@@ -33,11 +33,14 @@ const maximumPages = 100;
  * reported totalSize and names must be unique, otherwise the inventory is refused as incomplete.
  * @param {string} dmoName Exact DMO name.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
+ * @param {DocumentMode} [mode] `retrieve` takes entries as listed; only text names count towards
+ * the uniqueness check.
  * @returns {Promise<ObservedRelationship[]>} Complete, verified inventory (empty for 204).
  */
 export async function listNativeRelationships(
   dmoName: string,
   client: Pick<RelationshipClient, 'list'>,
+  mode: DocumentMode = 'deploy',
 ): Promise<ObservedRelationship[]> {
   if (!relationshipDmoName.test(dmoName))
     throw new NativeRelationshipError('INVALID_RELATIONSHIP_BINDING');
@@ -65,12 +68,15 @@ export async function listNativeRelationships(
     total = totalSize;
     // Each observation keeps its raw list entry, for a verbatim file when it cannot be saved.
     collected.push(
-      ...relationships.map((entry) => carryNativeResponse(observeNativeRelationship(entry), entry)),
+      ...relationships.map((entry) =>
+        carryNativeResponse(observeNativeRelationship(entry, mode), entry),
+      ),
     );
     if (relationships.length === 0 || collected.length >= total) break;
   }
-  const names = new Set(collected.map((entry) => entry.name));
-  if (collected.length !== total || names.size !== collected.length)
+  const named = collected.filter((entry) => typeof entry.name === 'string');
+  const names = new Set(named.map((entry) => entry.name));
+  if (collected.length !== total || names.size !== named.length)
     throw new NativeRelationshipError('RELATIONSHIP_INVENTORY_INCOMPLETE');
   return collected;
 }
@@ -82,21 +88,24 @@ export async function listNativeRelationships(
  * @param {string} [requestScope] Optional request scope; omission is the default data space.
  * A relationship the document cannot represent is returned as a verbatim document of its raw list
  * entry; each saved document carries its raw entry for the same fallback at write time.
+ * @param {DocumentMode} [mode] `retrieve` checks only the entries it keeps and keeps their values
+ * as listed.
  * @returns {Promise<Array<NativeRelationshipDocument | VerbatimDocument>>} Documents ordered by name.
  */
 export async function retrieveNativeRelationships(
   dmoName: string,
   client: Pick<RelationshipClient, 'list'>,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
-  const inventory = await listNativeRelationships(dmoName, client);
+  const inventory = await listNativeRelationships(dmoName, client, mode);
   const documents = inventory
     .filter((entry) => entry.sourceObjectName === dmoName)
     .map((entry): NativeRelationshipDocument | VerbatimDocument => {
       const native = carriedNativeResponse(entry);
       try {
         return carryNativeResponse(
-          normalizeNativeRelationship(entryToWire(entry), requestScope),
+          normalizeNativeRelationship(entryToWire(entry), requestScope, mode),
           native?.native,
         );
       } catch (error) {

@@ -1,3 +1,6 @@
+import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import type { DocumentMode } from './verbatim-document.js';
+
 export type NativeRelationshipSpec = {
   sourceObjectName: string;
   sourceFieldName: string;
@@ -72,38 +75,95 @@ function plain(value: unknown): value is string {
 }
 
 /**
+ * Refuse an authored relationship file, naming the key path that cannot be deployed.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {NativeRelationshipError} Refusal with an explanation.
+ */
+function refuse(keyPath: string, problem: string): NativeRelationshipError {
+  return explainInput(
+    new NativeRelationshipError('INVALID_RELATIONSHIP_DOCUMENT'),
+    `The relationship file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the relationship again once the plugin supports it.`,
+  );
+}
+
+/**
+ * Require a JSON object at a key path of the file.
+ * @param {unknown} value Untrusted input.
+ * @param {string} keyPath Printable key path.
+ * @returns {Record<string, unknown>} Object content.
+ */
+function objectAt(value: unknown, keyPath: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw refuse(keyPath, 'must be an object');
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Refuse a key outside the given set and a missing one.
+ * @param {Record<string, unknown>} value Object of the file.
+ * @param {string} prefix Key path of the object, with a trailing dot (empty at the top).
+ * @param {string[]} keys Keys it must hold, and only these.
+ */
+function closedKeys(value: Record<string, unknown>, prefix: string, keys: string[]): void {
+  for (const key of Object.keys(value))
+    if (!keys.includes(key))
+      throw refuse(`${prefix}${printableKey(key)}`, 'is not a key a relationship file can hold');
+  for (const key of keys)
+    if (!Object.hasOwn(value, key)) throw refuse(`${prefix}${key}`, 'is missing');
+}
+
+/**
  * Validate the portable relationship structurally. Cardinality and owner are sent as authored;
- * Salesforce decides which values it accepts.
+ * Salesforce decides which values it accepts. Deploy mode (the default) names the first offending
+ * key path; retrieve mode keeps what the org returned (unknown keys, null or missing values, any
+ * field names) and checks only what names and places the file.
  * @param {unknown} value Portable input.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (lenient).
  * @returns {NativeRelationshipDocument} Checked independent copy.
  */
-export function validateNativeRelationshipDocument(value: unknown): NativeRelationshipDocument {
-  const document = record(value);
-  const identity = record(document.identity);
-  const spec = record(document.spec);
-  if (
-    Object.keys(document).length !== 4 ||
-    !['identity', 'kind', 'schemaVersion', 'spec'].every((key) => Object.hasOwn(document, key)) ||
-    Object.keys(identity).length !== 2 ||
-    document.schemaVersion !== 1 ||
-    document.kind !== 'relationship' ||
-    typeof identity.apiName !== 'string' ||
-    !nativeRelationshipName.test(identity.apiName) ||
-    !plain(identity.dataSpace) ||
-    Object.keys(spec).length !== specKeys.length ||
-    !specKeys.every((key) => Object.hasOwn(spec, key)) ||
-    typeof spec.sourceObjectName !== 'string' ||
-    !relationshipDmoName.test(spec.sourceObjectName) ||
-    typeof spec.targetObjectName !== 'string' ||
-    !targetObjectName.test(spec.targetObjectName) ||
-    typeof spec.sourceFieldName !== 'string' ||
-    !fieldName.test(spec.sourceFieldName) ||
-    typeof spec.targetFieldName !== 'string' ||
-    !targetFieldName.test(spec.targetFieldName) ||
-    !plain(spec.cardinality) ||
-    !plain(spec.relationshipOwner)
-  )
-    throw new NativeRelationshipError('INVALID_RELATIONSHIP_DOCUMENT');
+export function validateNativeRelationshipDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): NativeRelationshipDocument {
+  const document = objectAt(value, 'the document');
+  const identity = objectAt(document.identity, 'identity');
+  const spec = objectAt(document.spec, 'spec');
+  if (document.schemaVersion !== 1) throw refuse('schemaVersion', 'must be 1');
+  if (document.kind !== 'relationship') throw refuse('kind', 'must be "relationship"');
+  if (typeof identity.apiName !== 'string' || !nativeRelationshipName.test(identity.apiName))
+    throw refuse('identity.apiName', 'must be a relationship API name');
+  if (!plain(identity.dataSpace)) throw refuse('identity.dataSpace', 'must be a data space name');
+  if (mode === 'retrieve') return structuredClone(value) as NativeRelationshipDocument;
+  closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
+  closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
+  closedKeys(spec, 'spec.', specKeys);
+  const checks: Array<[string, (value: unknown) => boolean, string]> = [
+    [
+      'sourceObjectName',
+      (part) => typeof part === 'string' && relationshipDmoName.test(part),
+      'must be a data model object API name ending in __dlm',
+    ],
+    [
+      'sourceFieldName',
+      (part) => typeof part === 'string' && fieldName.test(part),
+      'must be a field API name ending in __c',
+    ],
+    [
+      'targetObjectName',
+      (part) => typeof part === 'string' && targetObjectName.test(part),
+      'must be an object API name',
+    ],
+    [
+      'targetFieldName',
+      (part) => typeof part === 'string' && targetFieldName.test(part),
+      'must be a field API name',
+    ],
+    ['cardinality', plain, 'must be a non-empty text'],
+    ['relationshipOwner', plain, 'must be a non-empty text'],
+  ];
+  for (const [key, check, problem] of checks)
+    if (!check(spec[key])) throw refuse(`spec.${key}`, problem);
   return structuredClone(value) as NativeRelationshipDocument;
 }
 
@@ -119,11 +179,17 @@ function name(part: unknown): unknown {
 }
 
 /**
- * Read one entry of a native relationship list: names and values must be strings.
+ * Read one entry of a native relationship list: names and values must be strings, except in
+ * retrieve mode, which takes them as listed (an entry the retrieve keeps is checked when its
+ * document is built; one it does not keep is never checked).
  * @param {unknown} value Native list entry.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (as listed).
  * @returns {ObservedRelationship} Flat observation, not yet a portable document.
  */
-export function observeNativeRelationship(value: unknown): ObservedRelationship {
+export function observeNativeRelationship(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): ObservedRelationship {
   const entry = record(value, 'INVALID_RELATIONSHIP_RESPONSE');
   const observed = {
     name: entry.name,
@@ -135,7 +201,7 @@ export function observeNativeRelationship(value: unknown): ObservedRelationship 
     cardinality: entry.cardinality,
     relationshipOwner: entry.owner,
   };
-  if (Object.values(observed).some((part) => typeof part !== 'string'))
+  if (mode === 'deploy' && Object.values(observed).some((part) => typeof part !== 'string'))
     throw new NativeRelationshipError('INVALID_RELATIONSHIP_RESPONSE');
   return observed as ObservedRelationship;
 }
@@ -144,19 +210,24 @@ export function observeNativeRelationship(value: unknown): ObservedRelationship 
  * Save the authored binding without the generated id, labels, status or creation type.
  * @param {unknown} value Native list entry.
  * @param {string} [dataSpace] Local effective scope.
+ * @param {DocumentMode} [mode] `retrieve` keeps null or missing values as listed.
  * @returns {NativeRelationshipDocument} Portable definition.
  */
 export function normalizeNativeRelationship(
   value: unknown,
   dataSpace = 'default',
+  mode: DocumentMode = 'deploy',
 ): NativeRelationshipDocument {
-  const observed = observeNativeRelationship(value);
-  return validateNativeRelationshipDocument({
-    schemaVersion: 1,
-    kind: 'relationship',
-    identity: { apiName: observed.name, dataSpace },
-    spec: relationshipSpec(observed),
-  });
+  const observed = observeNativeRelationship(value, mode);
+  return validateNativeRelationshipDocument(
+    {
+      schemaVersion: 1,
+      kind: 'relationship',
+      identity: { apiName: observed.name, dataSpace },
+      spec: relationshipSpec(observed),
+    },
+    mode,
+  );
 }
 
 /**

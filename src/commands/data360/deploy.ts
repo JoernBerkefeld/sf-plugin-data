@@ -2604,7 +2604,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         error instanceof NativeRelationshipError
       )
         return finish('blocked', error.code, error);
-      // A named verbatim file names its kind, name and reason; an invalid DLO/DMO file its key.
+      // A named verbatim file names its kind, name and reason; an invalid authored file its key.
       if (
         error instanceof DeployInputError &&
         (error.code === 'VERBATIM_NOT_DEPLOYABLE' || explanationOf(error) !== undefined)

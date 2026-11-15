@@ -92,7 +92,7 @@ export async function writeNativeMappingDocument(
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'mapping') ? value : undefined;
-  const document = verbatim ?? validateNativeMappingDocument(value);
+  const document = verbatim ?? validateNativeMappingDocument(value, 'retrieve');
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
   );
@@ -120,7 +120,7 @@ export async function writeNativeMappingDocument(
     if (previous) {
       const saved = previousIdentity(
         previous.toString('utf8'),
-        (previousValue) => validateNativeMappingDocument(previousValue).identity,
+        (previousValue) => validateNativeMappingDocument(previousValue, 'retrieve').identity,
       );
       if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new NativeMappingError('MAPPING_DATASPACE_COLLISION');

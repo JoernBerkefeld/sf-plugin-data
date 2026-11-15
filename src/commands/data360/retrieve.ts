@@ -598,6 +598,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           dmo,
           this.createRelationshipClient(connection, target, version, requestScope),
           requestScope,
+          'retrieve',
         );
       } catch (error) {
         diagnose(error, dmo);
@@ -1124,6 +1125,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                       ),
                       requestScope,
                       this.mappingParents(target, version),
+                      'retrieve',
                     )
                   : family === 'dlo'
                     ? await this.acquireDlo(
@@ -1514,6 +1516,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 reads.client,
                 requestScope,
                 this.mappingParents(target, version),
+                'retrieve',
               );
               const receipt = await this.writeNativeMapping(
                 document,

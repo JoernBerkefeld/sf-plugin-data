@@ -24,6 +24,7 @@ import type { MappingClient, MappingWriteBody } from '../transport/mapping-rest.
 import type { DloClient } from '../transport/dlo-rest.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 
 export type MappingDependencies = {
   source: Pick<DloClient, 'get'>;
@@ -257,15 +258,19 @@ export function isGeneratedMappingPair(
  * Read the source DLO and target DMO of a mapping fresh and check their identity.
  * @param {NativeMappingDocument} desired Mapping whose binding names both.
  * @param {MappingDependencies} dependencies Fresh source and target readers.
+ * @param {DocumentMode} [mode] `retrieve` reads both parents leniently; a field without a text
+ * name is then left out of the maps, so no pair can match it.
  * @returns {Promise<object>} Field maps, write scope and whether a first mapping activates the DMO.
  */
 async function readMappingParents(
   desired: NativeMappingDocument,
   dependencies: MappingDependencies,
+  mode: DocumentMode = 'deploy',
 ) {
   const source = normalizeDlo(
     await dependencies.source.get(desired.spec.sourceEntityDeveloperName),
     desired.identity.dataSpace,
+    mode,
   );
   const rawTarget = unwrapNativeDmo(
     await dependencies.target.get(desired.spec.targetEntityDeveloperName),
@@ -276,7 +281,7 @@ async function readMappingParents(
   const standard = scope === 'standard';
   // The first mapping enables a standard DMO for good; the raw read says whether that is ahead.
   const activates = standard && rawTarget.isEnabled !== true;
-  const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace);
+  const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace, mode);
   if (
     source.identity.dataSpace !== desired.identity.dataSpace ||
     target.identity.dataSpace !== desired.identity.dataSpace ||
@@ -287,8 +292,16 @@ async function readMappingParents(
   return {
     activates,
     context: {
-      sources: new Map(source.spec.fields.map((field) => [field.name, field])),
-      targets: new Map(target.spec.fields.map((field) => [field.name, field])),
+      sources: new Map(
+        source.spec.fields
+          .filter((field) => typeof field.name === 'string')
+          .map((field) => [field.name, field]),
+      ),
+      targets: new Map(
+        target.spec.fields
+          .filter((field) => typeof field.name === 'string')
+          .map((field) => [field.name, field]),
+      ),
       standard,
     } satisfies MappingPairContext,
   };
@@ -300,15 +313,17 @@ async function readMappingParents(
  * plugin never writes has none: a deploy refuses it, so nothing it lists can be lost.
  * @param {NativeMappingDocument} document Mapping as read.
  * @param {MappingDependencies} dependencies Fresh source and target readers.
+ * @param {DocumentMode} [mode] `retrieve` reads the parents leniently.
  * @returns {Promise<NativeMappingField[]>} Generated pairs, in document order.
  */
 export async function generatedMappingPairs(
   document: NativeMappingDocument,
   dependencies: MappingDependencies,
+  mode: DocumentMode = 'deploy',
 ): Promise<NativeMappingField[]> {
   let context: MappingPairContext;
   try {
-    ({ context } = await readMappingParents(document, dependencies));
+    ({ context } = await readMappingParents(document, dependencies, mode));
   } catch (error) {
     if (error instanceof NativeMappingError && error.code === 'MAPPING_TARGET_UNSUPPORTED')
       return [];
@@ -326,6 +341,8 @@ export async function generatedMappingPairs(
  * @param {MappingClient} client Target mapping transport.
  * @param {string} [requestScope] Optional request scope.
  * @param {MappingDependencies} [dependencies] Fresh source and target readers; required.
+ * @param {DocumentMode} [mode] `retrieve` keeps pairs the plugin cannot deploy, and may leave
+ * none; other callers stay strict.
  * @returns {Promise<NativeMappingDocument>} Authored portable definition.
  */
 export async function retrieveLeanNativeMapping(
@@ -333,12 +350,13 @@ export async function retrieveLeanNativeMapping(
   client: MappingClient,
   requestScope?: string,
   dependencies?: MappingDependencies,
+  mode: DocumentMode = 'deploy',
 ): Promise<NativeMappingDocument> {
-  const document = await retrieveNativeMapping(apiName, client, requestScope);
+  const document = await retrieveNativeMapping(apiName, client, requestScope, mode);
   let generated: NativeMappingField[];
   try {
     if (!dependencies) throw new NativeMappingError('MAPPING_PARENTS_REQUIRED');
-    generated = await generatedMappingPairs(document, dependencies);
+    generated = await generatedMappingPairs(document, dependencies, mode);
   } catch (error) {
     const refusal = retainConnectDiagnostic(
       new NativeMappingError('MAPPING_GENERATED_PAIRS_UNPROVEN'),
@@ -427,15 +445,17 @@ function bodyFor(desired: NativeMappingDocument, fields: NativeMappingField[]): 
  * @param {string} apiName Observed target mapping name.
  * @param {MappingClient} client Target mapping transport.
  * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {DocumentMode} [mode] `retrieve` keeps pairs the plugin cannot deploy as returned.
  * @returns {Promise<NativeMappingDocument>} Complete portable definition.
  */
 export async function retrieveNativeMapping(
   apiName: string,
   client: MappingClient,
   requestScope?: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<NativeMappingDocument> {
   if (!nativeMappingName.test(apiName)) throw new NativeMappingError('INVALID_MAPPING_NAME');
-  const document = normalizeNativeMapping(await client.get(apiName), requestScope);
+  const document = normalizeNativeMapping(await client.get(apiName), requestScope, mode);
   if (document.identity.apiName !== apiName)
     throw new NativeMappingError('MAPPING_TARGET_IDENTITY_MISMATCH');
   return document;
