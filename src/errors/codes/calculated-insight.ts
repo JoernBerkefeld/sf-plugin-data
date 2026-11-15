@@ -3,27 +3,19 @@ export const hints: Readonly<Record<string, string>> = {
   CI_ACQUISITION_FAILED:
     'The calculated insight could not be read and checked in the target org. Check access to the org and the API name, then rerun the retrieve.',
   CI_ADMISSION_FAILED:
-    "The plugin's checks of the calculated insight pair, target or dependencies did not pass, so nothing was sent. Run the command with --preview, fix the input or target, then rerun.",
+    'The calculated insight file or its read from the org did not pass, so nothing was sent. Run the command with --preview, fix the file, data space or target access, then rerun.',
   CI_ATTRIBUTION_UNQUALIFIED:
     'A dimension or measure in the org is attributed to a source field the artifact cannot hold. Nothing was written; this calculated insight cannot be retrieved by the plugin.',
   CI_CONFIGURATION_UNQUALIFIED:
     'The calculated insight settings, such as its schedule, are outside what the plugin supports here. Nothing was written or sent; writes need NOT_SCHEDULED and the other fields as retrieved.',
   CI_DELETION_UNCONFIRMED:
     'The DELETE was sent but the plugin could not confirm the calculated insight is gone. Do not resend; check the org, then rerun the delete to confirm absence.',
-  CI_DEPENDENCY_AMBIGUOUS:
-    'The DMO the calculated insight reads could not be identified uniquely in the target org. Check the DMO and its field list in Data 360, then rerun.',
-  CI_DEPENDENCY_UNQUALIFIED:
-    'The DMO the calculated insight reads is missing, disabled or has fields of the wrong type in the target org. Fix the DMO and its mapped Text fields, then rerun.',
   CI_EXPRESSION_UNQUALIFIED:
     'The calculated insight SQL is not one of the expressions the plugin supports. Nothing was written or sent; this calculated insight cannot be handled by the plugin.',
-  CI_FRESH_ADMISSION_BLOCKED:
-    'The last check right before writing the calculated insight gave a different result than the plan. Nothing was sent; rerun deploy with --preview and review the plan.',
   CI_IDENTITY_CHANGED:
     'The calculated insight in the org has a different API name or data space than selected. Nothing was written or sent; check the selector and the pair, then rerun.',
   CI_INPUT_DRIFT:
     'The delete options changed while the command was running, so nothing was deleted. Rerun the delete once with the intended flags.',
-  CI_METADATA_AMBIGUOUS:
-    'The Metadata API definition of the calculated insight is missing or does not match the native read. Nothing was written or sent; check the calculated insight in the org and rerun.',
   CI_METADATA_MISMATCH:
     'The native and Metadata API definitions of the calculated insight disagree on label, SQL or type. Nothing was written or sent; wait for the org to settle and rerun.',
   CI_MUTATION_UNCONFIRMED:
@@ -44,8 +36,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The calculated insight could not be read from the org, and the answer was not a clear not-found. Check access and the API name, then rerun.',
   CI_SCHEMA_UNQUALIFIED:
     'The dimensions or measures of the calculated insight do not match its supported SQL. Nothing was written or sent; this calculated insight cannot be handled as is.',
-  CI_SETTLEMENT_FAILED:
-    'The plugin could not finish checking the result after the write. Do not resend; inspect the calculated insight in the org before another attempt.',
   CI_SETTLEMENT_MISMATCH:
     'After the write, the calculated insight in the org differs from the pair that was sent. Do not resend; retrieve it and compare before another attempt.',
   CI_SETTLEMENT_TIMEOUT:

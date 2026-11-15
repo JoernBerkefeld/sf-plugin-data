@@ -1,50 +1,49 @@
-import { isDeepStrictEqual } from 'node:util';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
-import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
+import { rejectedNextAction } from './deploy-result.js';
+import {
+  CalculatedInsightError,
+  calculatedInsightMatches,
+  validateNativeCalculatedInsight,
+} from '../artifacts/native-calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import type { CalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import { calculatedInsightDeployContext } from './preflight-calculated-insight-deploy.js';
-import {
-  acquireExactCalculatedInsight,
-  calculatedInsightTargetEvidence,
-} from './retrieve-calculated-insight.js';
+import { acquireCalculatedInsight } from './native-calculated-insight.js';
 import type {
   CalculatedInsightConnection,
   CalculatedInsightReadContext,
-} from './retrieve-calculated-insight.js';
-import type { CalculatedInsightObservation } from './execute-calculated-insight-deploy.js';
+} from './native-calculated-insight.js';
+import { rejectedWrite } from './execute-calculated-insight-deploy.js';
 import { settleCalculatedInsight } from './settle-calculated-insight.js';
+import type { CalculatedInsightTiming } from './settle-calculated-insight.js';
 
-export type CalculatedInsightPublishOptions = {
+export type CalculatedInsightPublishOptions = CalculatedInsightTiming & {
   preview?: boolean;
-  allowProcessing: boolean;
   verifyInput: () => Promise<void>;
-  recordObservation: (observation: CalculatedInsightObservation) => Promise<void>;
   context?: CalculatedInsightReadContext;
-  nativeClient?: Pick<CalculatedInsightClient, 'publish'>;
-  now?: () => number;
-  delay?: (milliseconds: number) => Promise<void>;
+  nativeClient?: Pick<CalculatedInsightClient, 'update'>;
 };
 export type CalculatedInsightPublishResult = {
   family: 'calculated-insight';
   route: { apiVersion: '68.0'; method: 'PATCH'; resource: 'calculated-insights' };
   outcome: 'publish' | 'published' | 'unchanged' | 'blocked' | 'failed';
-  mutation: 'not-attempted' | 'confirmed-published' | 'unknown';
-  requiredEffects: Array<'processing'>;
+  mutation: 'not-attempted' | 'confirmed-published' | 'unknown' | 'rejected';
   diagnostics: Array<{ code: string; message: string }>;
 };
 
 /**
- * Publish an exactly paired, never-run native68 draft; never create, edit SQL or replay.
- * The caller's required verifier must revalidate both paired files and their captured digests.
- * @param {unknown} value Complete paired semantic ownership expectation.
- * @param {CalculatedInsightConnection} connection Explicit native68 receiver.
- * @param {ApiVersionSelection} selection Exact explicit68 route.
- * @param {string} dataSpace Default space only.
- * @param {CalculatedInsightPublishOptions} options Pair verifier, private recorder and explicit effects.
- * @returns {Promise<CalculatedInsightPublishResult>} Payload-free independent settlement evidence.
+ * Publish one existing insight: an ACTIVE insight that holds every key of the document is
+ * unchanged; otherwise one PATCH sends the document with `draft: false` (the files' SQL,
+ * label and schedule become the active definition) and the insight is read until it is
+ * ACTIVE with the document. Never creates; one attempt, no replay or rollback.
+ * @param {unknown} value Document from the files (JSON with its SQL).
+ * @param {CalculatedInsightConnection} connection API 68 connection.
+ * @param {ApiVersionSelection} selection Route selection (68.0).
+ * @param {string} dataSpace Selected data space.
+ * @param {CalculatedInsightPublishOptions} options Input verifier, preview and test seams.
+ * @returns {Promise<CalculatedInsightPublishResult>} Payload-free outcome.
  */
 export async function publishCalculatedInsight(
   value: unknown,
@@ -56,144 +55,78 @@ export async function publishCalculatedInsight(
   let attempted = false;
   const result = (
     outcome: CalculatedInsightPublishResult['outcome'],
+    mutation: CalculatedInsightPublishResult['mutation'],
     code?: string,
     error?: unknown,
-  ): CalculatedInsightPublishResult => ({
-    family: 'calculated-insight',
-    route: { apiVersion: '68.0', method: 'PATCH', resource: 'calculated-insights' },
-    outcome,
-    mutation: attempted
-      ? outcome === 'published'
-        ? 'confirmed-published'
-        : 'unknown'
-      : 'not-attempted',
-    requiredEffects: outcome === 'publish' ? ['processing'] : [],
-    diagnostics: code
-      ? [
-          {
-            code,
-            message: getConnectDiagnostic(error)
-              ? operationDiagnostic(
-                  error,
-                  attempted
-                    ? 'CI publication may have occurred.'
-                    : 'CI publication was not attempted.',
-                )
-              : attempted
-                ? 'CI publication may have occurred; no replay or rollback was performed.'
-                : 'CI publication was not attempted; paired input, scope, content, dependencies or intent are unqualified.',
-          },
-        ]
-      : [],
-  });
+  ): CalculatedInsightPublishResult =>
+    retainConnectDiagnostic(
+      {
+        family: 'calculated-insight' as const,
+        route: {
+          apiVersion: '68.0' as const,
+          method: 'PATCH' as const,
+          resource: 'calculated-insights' as const,
+        },
+        outcome,
+        mutation,
+        diagnostics: code
+          ? [
+              {
+                code,
+                message: (() => {
+                  const next =
+                    mutation === 'rejected'
+                      ? rejectedNextAction
+                      : mutation === 'unknown'
+                        ? 'CI publication may have occurred; no replay or rollback was performed.'
+                        : 'CI publication was not attempted.';
+                  return getConnectDiagnostic(error) ? operationDiagnostic(error, next) : next;
+                })(),
+              },
+            ]
+          : [],
+      },
+      getConnectDiagnostic(error),
+    );
   try {
-    const desired = validateCalculatedInsightDocument(value);
-    if (desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED') throw new Error('Schedule');
-    if (
-      typeof options.verifyInput !== 'function' ||
-      typeof options.recordObservation !== 'function'
-    )
-      throw new Error('Required guards');
-    const context = calculatedInsightDeployContext(connection, selection, dataSpace, {
-      context: options.context,
-    });
-    const preview = options.preview === true;
+    const desired = validateNativeCalculatedInsight(value);
+    if (typeof options.verifyInput !== 'function') throw new Error('Required guards');
     if ('preview' in options && typeof options.preview !== 'boolean') throw new Error('Preview');
-    const capture = async () => {
-      context.check();
-      const acquired = await acquireExactCalculatedInsight(context, desired.identity.apiName);
-      context.check();
-      if (
-        acquired.state !== 'present' ||
-        !['DRAFT', 'ACTIVE'].includes(acquired.status) ||
-        !isDeepStrictEqual(acquired.document, desired)
-      )
-        throw retainConnectDiagnostic(new Error('Ownership'), getConnectDiagnostic(acquired));
-      return acquired;
-    };
+    const context = calculatedInsightDeployContext(
+      connection,
+      selection,
+      dataSpace,
+      desired,
+      options.context,
+    );
     await options.verifyInput();
-    const bound = structuredClone(await context.bind(desired, context.check));
-    const baseline = await capture();
-    await options.recordObservation({
-      phase: 'baseline',
-      status: baseline.status as 'DRAFT' | 'ACTIVE',
-      observations: structuredClone(baseline.observations),
-    });
-    await options.verifyInput();
-    if (!isDeepStrictEqual(bound, await context.bind(desired, context.check)))
-      throw new Error('Dependency drift');
-    const fresh = await capture();
-    if (
-      !isDeepStrictEqual(
-        calculatedInsightTargetEvidence(baseline),
-        calculatedInsightTargetEvidence(fresh),
-      )
-    )
-      throw new Error('Target drift');
-    await options.verifyInput();
-    if (!isDeepStrictEqual(desired, validateCalculatedInsightDocument(value)))
-      throw new Error('Input drift');
+    const acquired = await acquireCalculatedInsight(context, desired.apiName);
     context.check();
-    if (fresh.status === 'ACTIVE') return result('unchanged');
-    if (preview) return result('publish');
-    if (options.allowProcessing !== true)
-      return result('blocked', 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+    // Publication needs the insight; creating it is `sf data360 deploy`.
+    if (acquired.state === 'absent') throw new CalculatedInsightError('CI_NOT_FOUND');
+    await options.verifyInput();
+    if (acquired.status === 'ACTIVE' && calculatedInsightMatches(desired, acquired.document))
+      return result('unchanged', 'not-attempted');
+    if (options.preview === true) return result('publish', 'not-attempted');
     const client =
       options.nativeClient ?? createCalculatedInsightClient(connection, '68.0', dataSpace);
-    const now = options.now ?? Date.now;
-    let previous = now();
-    const end = previous + 120_000;
-    let expired = false;
-    const check = (): void => {
-      context.check();
-      const current = now();
-      if (
-        expired ||
-        !Number.isFinite(previous) ||
-        !Number.isFinite(current) ||
-        current < previous ||
-        current >= end
-      )
-        throw new Error('Deadline');
-      previous = current;
-    };
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    context.check();
+    attempted = true;
     try {
-      check();
-      const work = async (): Promise<CalculatedInsightPublishResult> => {
-        attempted = true;
-        await client.publish(structuredClone(desired));
-        check();
-        const settled = await settleCalculatedInsight({ ...context, check }, desired, 'ACTIVE', {
-          now,
-          delay: options.delay,
-        });
-        check();
-        if (settled.state !== 'present' || !isDeepStrictEqual(settled.binding, bound))
-          throw retainConnectDiagnostic(new Error('Settlement'), getConnectDiagnostic(settled));
-        await options.recordObservation({
-          phase: 'settled',
-          status: 'ACTIVE',
-          observations: structuredClone(settled.acquisition.observations),
-        });
-        check();
-        return result('published');
-      };
-      return await Promise.race([
-        work(),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error('Deadline')), end - now());
-        }),
-      ]);
-    } finally {
-      expired = true;
-      clearTimeout(timer);
+      await client.update(structuredClone(desired), {
+        draft: false,
+        observed: acquired.document,
+      });
+    } catch (error) {
+      if (rejectedWrite(error)) return result('failed', 'rejected', 'REQUEST_FAILED', error);
+      throw error;
     }
+    await settleCalculatedInsight(context, desired, 'ACTIVE', options);
+    return result('published', 'confirmed-published');
   } catch (error) {
-    return result(
-      attempted ? 'failed' : 'blocked',
-      attempted ? 'CI_PUBLICATION_UNCONFIRMED' : 'CI_ADMISSION_FAILED',
-      error,
-    );
+    const code = error instanceof CalculatedInsightError ? error.code : undefined;
+    return attempted
+      ? result('failed', 'unknown', code ?? 'CI_PUBLICATION_UNCONFIRMED', error)
+      : result('blocked', 'not-attempted', code ?? 'CI_ADMISSION_FAILED', error);
   }
 }

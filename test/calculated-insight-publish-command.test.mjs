@@ -11,6 +11,7 @@ import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-nat
 import { publishCalculatedInsight } from '../lib/services/publish-calculated-insight.js';
 import { connectDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 import { errorCodeInfo } from '../lib/errors/registry.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 import {
   readDeployInputs,
   verifyCalculatedInsightInputDigest,
@@ -105,7 +106,6 @@ const harness = async (overrides = {}) => {
     'source-dir': pair.path,
     'api-version': '68.0',
     preview: false,
-    'allow-processing': true,
     ...overrides,
   };
   const command = Object.create(Publish.prototype);
@@ -113,7 +113,7 @@ const harness = async (overrides = {}) => {
   command.jsonEnabled = () => true;
   command.resolveInputs = readDeployInputs;
   command.verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
-  const calls = { auth: 0, writes: 0, reads: 0 };
+  const calls = { auth: 0, writes: 0, reads: 0, bodies: [] };
   let status = 'DRAFT';
   const connection = {
     instanceUrl: 'https://synthetic.my.salesforce.com',
@@ -124,6 +124,7 @@ const harness = async (overrides = {}) => {
     return connection;
   };
   const context = {
+    dataSpace: 'default',
     check() {
       assert.equal(connection.getApiVersion(), '68.0');
     },
@@ -131,27 +132,15 @@ const harness = async (overrides = {}) => {
       calls.reads++;
       return runtime(status);
     },
-    async metadata() {
-      return [
-        {
-          fullName: 'SyntheticPublish',
-          creationType: 'Custom',
-          expression,
-          masterLabel: 'Synthetic publish',
-        },
-      ];
-    },
-    async bind() {
-      return { targetId: 'private-local-id', fields: [] };
-    },
   };
   command.calculatedInsightContext = () => context;
   command.publishCalculatedInsight = (...arguments_) =>
     publishCalculatedInsight(...arguments_.slice(0, 4), {
       ...arguments_[4],
       nativeClient: {
-        publish: async () => {
+        update: async (document, options) => {
           calls.writes++;
+          calls.bodies.push({ document, options });
           status = 'ACTIVE';
         },
       },
@@ -169,13 +158,19 @@ const harness = async (overrides = {}) => {
   };
 };
 
-test('publish command delegates guarded service with paired digest, separate publication and honest routes', async () => {
+test('publish sends the file with draft false and reads until ACTIVE', async () => {
   const h = await harness();
   const { result, exit } = await run(h.command);
   assert.equal(result.status, 'success');
   assert.equal(exit, undefined);
   assert.equal(h.calls.writes, 1);
-  assert.equal(h.calls.reads, 3);
+  assert.equal(h.calls.reads, 2);
+  assert.deepEqual(h.calls.bodies, [
+    {
+      document: observeNativeCalculatedInsight(runtime('DRAFT')),
+      options: { draft: false, observed: observeNativeCalculatedInsight(runtime('DRAFT')) },
+    },
+  ]);
   const [item] = result.result.items;
   assert.equal(item.outcome, 'published');
   assert.equal(item.mutation, 'confirmed-published');
@@ -189,31 +184,51 @@ test('publish command delegates guarded service with paired digest, separate pub
     [
       ['calculated-insight.publish', '68.0'],
       ['calculated-insight.get', '68.0'],
-      ['calculated-insight.metadata', '65.0'],
-      ['dependency.get', '65.0'],
-      ['dependency.metadata', '65.0'],
     ],
   );
-  assert.equal(h.command.calculatedInsightObservations.length, 2);
-  assert.doesNotMatch(JSON.stringify(result), /SELECT|private-local-id|lastRunDateTime/u);
+  assert.doesNotMatch(JSON.stringify(result), /SELECT|lastRunDateTime/u);
 });
 for (const active of [false, true])
-  test(`publish read-only ${active ? 'ACTIVE noop' : 'DRAFT preview'} needs no acknowledgement`, async () => {
-    const h = await harness({ preview: !active, 'allow-processing': false });
+  test(`publish read-only ${active ? 'ACTIVE noop' : 'DRAFT preview'} writes nothing`, async () => {
+    const h = await harness({ preview: !active });
     if (active) h.active();
     const { result } = await run(h.command);
     assert.equal(result.status, 'success');
     assert.equal(h.calls.writes, 0);
     assert.equal(result.result.items[0].outcome, active ? 'unchanged' : 'publish');
-    assert.deepEqual(result.result.items[0].requiredEffects, active ? [] : ['processing']);
   });
-test('publish DRAFT without processing acknowledgement is blocked with no mutation', async () => {
-  const h = await harness({ 'allow-processing': false });
-  const { result, exit } = await run(h.command);
+test('publish has no --allow-processing flag and publishes a DRAFT without one', async () => {
+  assert.equal(Publish.flags['allow-processing'], undefined);
+  const h = await harness();
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(h.calls.writes, 1);
+});
+test('publish of an absent insight is refused with CI_NOT_FOUND and writes nothing', async () => {
+  const h = await harness();
+  h.context.get = async () => {
+    h.calls.reads++;
+    const error = new ConnectError('REQUEST_FAILED', 404);
+    error.nativeCode = 'ITEM_NOT_FOUND';
+    throw error;
+  };
+  const { result } = await run(h.command);
   assert.equal(result.status, 'blocked');
-  assert.equal(exit, 1);
+  assert.equal(result.diagnostics.errors[0].code, 'CI_NOT_FOUND');
   assert.equal(h.calls.writes, 0);
-  assert.equal(result.diagnostics.errors[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+});
+test('publish of an ACTIVE insight that differs from the file sends the file', async () => {
+  const h = await harness();
+  h.active();
+  const get = h.context.get;
+  h.context.get = async () => ({
+    ...(await get()),
+    ...(h.calls.writes === 0 ? { displayName: 'Org label' } : {}),
+  });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.items[0].outcome, 'published');
+  assert.equal(h.calls.bodies[0].document.displayName, 'Synthetic publish');
 });
 for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
   test(`publish rejects pin ${pin} before auth`, async () => {
@@ -248,17 +263,17 @@ test('publish accepts the SQL file of the same insight', async () => {
 for (const member of ['path', 'companionPath'])
   test(`publish JSON or SQL byte drift ${member} before write blocks`, async () => {
     const h = await harness();
-    const bind = h.context.bind;
-    h.context.bind = async () => {
+    const get = h.context.get;
+    h.context.get = async () => {
       await writeFile(h.pair[member], 'private changed input');
-      return bind();
+      return get();
     };
     const { result } = await run(h.command);
     assert.equal(result.status, 'blocked');
     assert.equal(h.calls.writes, 0);
     assert.doesNotMatch(JSON.stringify(result), /private changed input/u);
   });
-for (const drift of ['flags', 'receiver', 'target', 'unknown'])
+for (const drift of ['flags', 'receiver', 'unknown'])
   test(`publish ${drift} fails closed`, async () => {
     const h = await harness();
     if (drift === 'flags')
@@ -267,14 +282,12 @@ for (const drift of ['flags', 'receiver', 'target', 'unknown'])
         return h.connection;
       };
     if (drift === 'receiver') h.connection.getApiVersion = () => '65.0';
-    if (drift === 'target')
-      h.context.get = async () => ({ ...runtime('DRAFT'), displayName: 'foreign' });
     if (drift === 'unknown')
       h.command.publishCalculatedInsight = (...arguments_) =>
         publishCalculatedInsight(...arguments_.slice(0, 4), {
           ...arguments_[4],
           nativeClient: {
-            publish: async () => {
+            update: async () => {
               h.calls.writes++;
               throw new Error('private response');
             },
@@ -311,7 +324,7 @@ for (const status of [429, 503])
             ...arguments_[4],
             delay: async () => {},
             nativeClient: {
-              publish: async () => {
+              update: async () => {
                 h.calls.writes++;
                 if (phase === 'write') failure();
               },
@@ -320,9 +333,14 @@ for (const status of [429, 503])
         const { result, exit } = await run(h.command);
         assert.equal(exit, 1);
         assert.equal(result.status, phase === 'admission' ? 'blocked' : 'failed');
+        // A synchronous 4xx answer to the write (429) applied nothing.
         assert.equal(
           result.result.items[0].mutation,
-          phase === 'admission' ? 'not-attempted' : 'unknown',
+          phase === 'admission'
+            ? 'not-attempted'
+            : phase === 'write' && status === 429
+              ? 'rejected'
+              : 'unknown',
         );
         assert.equal(h.calls.writes, phase === 'admission' ? 0 : 1);
         assert.equal(result.diagnostics.errors.length, 1);
@@ -339,13 +357,12 @@ for (const status of [429, 503])
         else assert.equal(output.filter((line) => line.includes(message)).length, 1);
       });
 
-for (const code of ['PROCESSING_ACKNOWLEDGEMENT_REQUIRED', 'CI_ADMISSION_FAILED'])
+for (const code of ['CI_RUNTIME_UNKNOWN'])
   test(`publish blocked human output prints ${code} with hint and docs`, async () => {
-    const h = await harness({ 'allow-processing': code === 'CI_ADMISSION_FAILED' });
-    if (code === 'CI_ADMISSION_FAILED')
-      h.context.get = async () => {
-        throw new Error('Synthetic admission read failure');
-      };
+    const h = await harness();
+    h.context.get = async () => {
+      throw new Error('Synthetic admission read failure');
+    };
     const output = [];
     h.command.jsonEnabled = () => false;
     h.command.log = (line) => output.push(line);
@@ -360,11 +377,12 @@ for (const code of ['PROCESSING_ACKNOWLEDGEMENT_REQUIRED', 'CI_ADMISSION_FAILED'
     ]);
   });
 
-test('publish help preserves separate lifecycle and no scheduling guarantees', () => {
+test('publish help names the API 68 PATCH with draft false and no API 65 reads', () => {
   assert.deepEqual(Publish.aliases, ['datacloud:publish', 'd360:publish', 'dc:publish']);
   assert.match(Publish.description, /--preview is read-only/u);
-  assert.match(Publish.description, /equal ACTIVE target is unchanged/u);
-  assert.match(Publish.description, /dependency reads remain API65/u);
+  assert.match(Publish.description, /holds every key of the file is unchanged/u);
+  assert.match(Publish.description, /draft: false/u);
+  assert.doesNotMatch(Publish.description, /API65|allow-processing|never-run/u);
   assert.equal(Publish.flags['api-version'].default, undefined);
 });
 
@@ -375,27 +393,3 @@ for (const pin of [undefined, 'auto'])
     assert.equal(result.status, 'success', JSON.stringify(result));
     assert.equal(h.calls.writes, 1);
   });
-
-test('publish refuses a real DRAFT expression drift but not volatile timestamps', async () => {
-  const h = await harness();
-  const get = h.context.get;
-  let reads = 0;
-  h.context.get = async () => {
-    const raw = await get();
-    raw.lastCalcInsightStatusDateTime = `2026-11-12T07:0${++reads % 10}:00.000Z`;
-    return raw;
-  };
-  const { result } = await run(h.command);
-  assert.equal(result.status, 'success', JSON.stringify(result));
-  const drifted = await harness();
-  const original = drifted.context.get;
-  let count = 0;
-  drifted.context.get = async () => {
-    const raw = await original();
-    if (++count === 2) raw.displayName = 'Changed label';
-    return raw;
-  };
-  const refused = await run(drifted.command);
-  assert.notEqual(refused.result.status, 'success');
-  assert.equal(drifted.calls.writes, 0);
-});

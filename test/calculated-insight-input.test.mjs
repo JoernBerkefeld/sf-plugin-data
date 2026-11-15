@@ -175,11 +175,15 @@ for (const member of ['path', 'companionPath']) {
     assert.equal(input.companionPath, sql(cwd));
     assert.equal(input.native.expression, native().expression);
     assert.equal(await readFile(sql(cwd), 'utf8'), native().expression);
-    assert.equal(input.document.kind, 'calculated-insight');
-    assert.equal(input.document.spec.expression, native().expression);
+    // The planning view: identity and the DMO the SQL reads.
+    assert.deepEqual(input.document, {
+      kind: 'calculated-insight',
+      identity: { dataSpace: 'default', apiName: 'SyntheticInsight__cio' },
+      spec: { dependencies: [{ kind: 'dmo', dataSpace: 'default', apiName: table }] },
+    });
     assert.equal(isSupportedDeployInput(input), true);
     assert.ok(Object.isFrozen(input.native));
-    assert.ok(Object.isFrozen(input.document.spec.dimensions[0]));
+    assert.ok(Object.isFrozen(input.document.spec.dependencies[0]));
     assert.equal(await captureDeployInputDigest(input), input.inputDigest);
     const both = await readDeployInputs({ cwd, sourceDir: [receipt.path, receipt.companionPath] });
     assert.equal(both.length, 1);
@@ -237,11 +241,13 @@ test('CI extra code file, SQL in the JSON, duplicate keys and identity mismatch 
     });
   }
   await writeFile(json(cwd), text);
-  await writeFile(sql(cwd), 'SELECT 1');
-  // The consumer services still take the fixed document: an unqualified SQL is refused here.
-  await assert.rejects(readDeployInputs({ cwd, sourceDir: [json(cwd)] }), {
-    code: 'INVALID_SOURCE',
-  });
+  // Any SQL is admitted: whether it works is Salesforce's decision.
+  await writeFile(sql(cwd), 'SELECT 1 AS one__c FROM Other__dlm');
+  const [input] = await readDeployInputs({ cwd, sourceDir: [json(cwd)] });
+  assert.equal(input.native.expression, 'SELECT 1 AS one__c FROM Other__dlm');
+  assert.deepEqual(input.document.spec.dependencies, [
+    { kind: 'dmo', dataSpace: 'default', apiName: 'Other__dlm' },
+  ]);
 });
 
 test('CI files outside data360/calculatedInsights and the old XML/JSON pair are not admitted', async () => {
@@ -358,7 +364,10 @@ test('Git turns a deleted JSON and SQL pair into one delete candidate; one file 
   assert.equal(deletion.path, receipt.path);
   assert.equal(deletion.companionPath, receipt.companionPath);
   assert.deepEqual(deletion.identity, { dataSpace: 'default', apiName: 'SyntheticInsight__cio' });
-  assert.equal(deletion.document.spec.expression, native().expression);
+  assert.deepEqual(deletion.document.identity, deletion.identity);
+  assert.deepEqual(deletion.document.spec.dependencies, [
+    { kind: 'dmo', dataSpace: 'default', apiName: table },
+  ]);
   assert.match(deletion.baseDigest, /^[a-f0-9]{64}$/u);
 });
 test('Git refuses noncanonical CI location and rename lifecycle', async () => {

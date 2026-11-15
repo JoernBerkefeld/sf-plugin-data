@@ -528,15 +528,10 @@ for (const command of topics.flatMap((topic) => [
       for (const flag of ['--transform-operation', '--transform-target-id'])
         assert.ok(!result.stdout.includes(flag), flag);
     if (command.endsWith(' publish')) {
-      for (const flag of [
-        '--source-dir',
-        '--preview',
-        '--allow-processing',
-        '--api-version',
-        '--dataspace',
-      ])
+      for (const flag of ['--source-dir', '--preview', '--api-version', '--dataspace'])
         assert.ok(result.stdout.includes(flag), flag);
-      assert.ok(!result.stdout.includes('--metadata'));
+      for (const flag of ['--metadata', '--allow-processing'])
+        assert.ok(!result.stdout.includes(flag), flag);
     }
     if (command.endsWith(' retrieve')) {
       for (const flag of [

@@ -44,16 +44,12 @@ export const hints: Readonly<Record<string, string>> = {
     'The selection is not valid for this command. Check the -m type:ApiName syntax, the --source-dir paths and flags that cannot be combined, then rerun.',
   INVALID_SOURCE:
     'A selected file is not a valid definition for its file type, or its content names a different component than its file name. Fix the file, or retrieve it again, then rerun.',
-  INVALID_STANDARD_RETRIEVE:
-    'The Salesforce CLI retrieve that fetches the source XML returned output the plugin could not use. Run sf project retrieve start for the same member to see the error, then rerun.',
   INVALID_WAIT_TIMEOUT_SCOPE:
     '--wait-timeout applies only when the selection holds a data graph and must be whole seconds. Remove it, or select at least one data graph.',
   LOCAL_FILE_REMOVAL_FAILED:
     'The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.',
   LOCAL_REFRESH_FAILED:
     'The fields were deleted in the org, but some project files were not refreshed. Do not repeat the delete; run sf data360 retrieve with --overwrite for the DMO and its mappings.',
-  METADATA_REDIRECT_REFUSED:
-    'Salesforce answered a Metadata API read with a redirect, which the plugin does not follow. Check the My Domain and instance URL of the org, log in again, then rerun.',
   NATIVE_INVENTORY_FAILED:
     'Listing the DLOs, DMOs or mappings in the org failed, so nothing was retrieved. Check the org session and permissions in the message, then rerun or select exact type:ApiName members.',
   NATIVE_INVENTORY_UNCONFIRMED:
@@ -80,14 +76,10 @@ export const hints: Readonly<Record<string, string>> = {
     'Retrieval stopped for a reason without a more specific code. Read the message, check the org session and output folder, then rerun the retrieve.',
   STANDARD_CLI_UNAVAILABLE:
     'The globally installed Salesforce CLI npm package was not found. Install it with npm install --global @salesforce/cli, then rerun the retrieve.',
-  STANDARD_RETRIEVE_UNCONFIRMED:
-    'The Salesforce CLI did not report a clean, successful retrieve of the source XML. Run sf project retrieve start for the same member to see its errors or warnings, then rerun.',
   STANDARD_RETRIEVE_UNKNOWN:
     'The Salesforce CLI process ended without an exit code, for example after a timeout or with too much output. Check that sf runs on its own, then rerun the retrieve.',
   TARGET_ORG_REQUIRED:
     'No usable target org was found. Pass --target-org <alias or username>, or set a default with sf config set target-org, then rerun.',
-  UNEXPECTED_METADATA_MEMBERS:
-    'The Salesforce CLI retrieve returned other files than the one requested source file. Check the member name in the org, then rerun the retrieve.',
   UNSAFE_PATH:
     'The plugin refused a file path because it is a link, a hard-linked file, a folder or lies outside the allowed folder. Use plain files and folders inside the project, then rerun.',
   UNSAFE_SOURCE:

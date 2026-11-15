@@ -66,7 +66,6 @@ import {
 import { retrieveIdentityResolution } from '../../services/retrieve-identity-resolution.js';
 import { writeIdentityResolutionDocument } from '../../artifacts/write-identity-resolution.js';
 import type { IdentityResolutionDocument } from '../../artifacts/identity-resolution-document.js';
-import { MetadataReadError } from '../../services/read-metadata.js';
 import { ConnectClient, ConnectError } from '../../transport/connect-client.js';
 import { plugin as packageMetadata } from '../../plugin.js';
 import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
@@ -1107,7 +1106,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             error instanceof SegmentError ||
             error instanceof DependencySelectionError ||
             error instanceof RetrieveSelectionError ||
-            error instanceof MetadataReadError ||
             error instanceof NativeDmoError ||
             error instanceof ConnectError
           )

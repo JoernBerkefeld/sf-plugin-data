@@ -12,7 +12,7 @@ import { identityResolutionName } from './identity-resolution-document.js';
 import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { segmentName } from './segment-document.js';
-import { calculatedInsightName } from './calculated-insight-document.js';
+import { calculatedInsightName } from './native-calculated-insight-document.js';
 import type { CalculatedInsightDeployInput } from './read-deploy-input.js';
 import { nativeMappingName } from './native-mapping-document.js';
 import { nativeRelationshipName } from './native-relationship-document.js';

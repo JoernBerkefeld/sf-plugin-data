@@ -28,12 +28,14 @@ import {
 } from './identity-resolution-document.js';
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 import {
-  calculatedInsightConsumerDocument,
   calculatedInsightName,
-} from './calculated-insight-document.js';
-import type { CalculatedInsightDocument } from './calculated-insight-document.js';
-import { parseNativeCalculatedInsight } from './native-calculated-insight-document.js';
-import type { NativeCalculatedInsight } from './native-calculated-insight-document.js';
+  calculatedInsightReference as calculatedInsightReference,
+  parseNativeCalculatedInsight,
+} from './native-calculated-insight-document.js';
+import type {
+  CalculatedInsightReference as CalculatedInsightReference,
+  NativeCalculatedInsight,
+} from './native-calculated-insight-document.js';
 
 const ciMemberInfix = '.calculatedInsight-meta.';
 const ciJsonSuffix = '.calculatedInsight-meta.json';
@@ -101,8 +103,8 @@ export type CalculatedInsightDeployInput = {
   companionPath: string;
   /** The JSON with its SQL joined back. */
   native: NativeCalculatedInsight;
-  /** The fixed document the consumer services take, built from `native`. */
-  document: CalculatedInsightDocument;
+  /** Kind, identity and the objects the SQL names, for selection and ordering. */
+  document: CalculatedInsightReference;
   inputDigest: string;
 };
 export type DloDeployInput = {
@@ -801,7 +803,7 @@ async function readCalculatedInsightInput(file: string): Promise<CalculatedInsig
   const bytes: Buffer[] = [];
   for (const member of members) bytes.push(await memberBytes(member));
   let native: NativeCalculatedInsight;
-  let document: CalculatedInsightDocument;
+  let document: CalculatedInsightReference;
   try {
     const json = decode(bytes[0]);
     strictJson(json);
@@ -814,7 +816,7 @@ async function readCalculatedInsightInput(file: string): Promise<CalculatedInsig
       })),
     );
     if (native.apiName !== apiName) throw new Error('Identity mismatch');
-    document = calculatedInsightConsumerDocument(native);
+    document = calculatedInsightReference(native);
   } catch {
     throw new DeployInputError('INVALID_SOURCE');
   }
@@ -1357,7 +1359,7 @@ export function admitDeletedArtifact(
         const native = parseNativeCalculatedInsight(decode(bytes), [
           { extension: 'sql', text: decode(code[0].bytes) },
         ]);
-        document = calculatedInsightConsumerDocument(native);
+        document = calculatedInsightReference(native);
         identity = { dataSpace: native.dataSpace, apiName: native.apiName };
         break;
       }

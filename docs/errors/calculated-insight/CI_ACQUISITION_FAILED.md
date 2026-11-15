@@ -38,4 +38,3 @@ Downloaded calculated-insight: 0
 ## Related codes
 
 - [`CI_RUNTIME_UNKNOWN`](../calculated-insight/CI_RUNTIME_UNKNOWN.md) — the native read itself failed.
-- [`CI_METADATA_AMBIGUOUS`](../calculated-insight/CI_METADATA_AMBIGUOUS.md) — the Metadata API read did not give one clear definition.

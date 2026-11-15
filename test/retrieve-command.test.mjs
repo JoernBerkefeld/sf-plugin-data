@@ -7,7 +7,6 @@ import Retrieve from '../lib/commands/data360/retrieve.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { SegmentError } from '../lib/artifacts/segment-document.js';
-import { MetadataReadError } from '../lib/services/read-metadata.js';
 
 import { NativeRelationshipError } from '../lib/artifacts/native-relationship-document.js';
 
@@ -542,7 +541,7 @@ test('Segment bare inventory/latest/invalid identity refuse before auth', async 
 test('blocked Segment dependency selection prevents complete-selection publication', async () => {
   const command = invocation({ metadata: ['dmo:Sample__dlm', 'segment:Audience'] });
   command.acquireSelection = async () => {
-    throw new MetadataReadError('UNKNOWN_SEGMENT_CONFIGURATION');
+    throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
   };
   command.writeSegment = () => assert.fail('must not publish');
   const { result } = await run(command);

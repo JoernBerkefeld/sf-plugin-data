@@ -6,7 +6,6 @@ import { lstat, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Delete from '../lib/commands/data360/delete.js';
-import { observeCalculatedInsight } from '../lib/artifacts/calculated-insight-document.js';
 import { observeNativeCalculatedInsight } from '../lib/artifacts/native-calculated-insight-document.js';
 import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import { deleteCalculatedInsight } from '../lib/services/delete-calculated-insight.js';
@@ -94,7 +93,6 @@ const run = async (command) => {
 const harness = async (overrides = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-delete-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
-  const desired = observeCalculatedInsight(runtime()).document;
   const files = observeNativeCalculatedInsight(runtime());
   const pair = await writeNativeCalculatedInsightDocument(files, root, false);
   const flags = {
@@ -120,6 +118,7 @@ const harness = async (overrides = {}) => {
     return connection;
   };
   const context = {
+    dataSpace: 'default',
     check() {
       assert.equal(connection.getApiVersion(), '68.0');
     },
@@ -132,21 +131,6 @@ const harness = async (overrides = {}) => {
       }
       return runtime(status);
     },
-    async metadata() {
-      return absent
-        ? [{}]
-        : [
-            {
-              fullName: 'SyntheticDelete',
-              creationType: 'Custom',
-              expression,
-              masterLabel: 'Synthetic delete',
-            },
-          ];
-    },
-    async bind() {
-      return { targetId: 'private-local-id', fields: [] };
-    },
   };
   command.calculatedInsightContext = () => context;
   command.deleteCalculatedInsight = (...arguments_) =>
@@ -154,7 +138,7 @@ const harness = async (overrides = {}) => {
       ...arguments_[4],
       nativeClient: {
         delete: async (name) => {
-          assert.equal(name, desired.identity.apiName);
+          assert.equal(name, 'SyntheticDelete__cio');
           calls.writes++;
           absent = true;
         },
@@ -177,14 +161,15 @@ const harness = async (overrides = {}) => {
   };
 };
 for (const active of [false, true])
-  test(`CI delete ${active ? 'ACTIVE' : 'DRAFT'} uses guarded deletion and independent dual absence`, async () => {
+  test(`CI delete ${active ? 'ACTIVE' : 'DRAFT'} sends one DELETE and reads until 404`, async () => {
     const h = await harness();
     if (active) h.active();
     const { result, exit } = await run(h.command);
     assert.equal(result.status, 'success');
     assert.equal(exit, undefined);
-    assert.equal(h.calls.writes, 1);
-    assert.equal(h.calls.reads, 4);
+    assert.equal(h.calls.writes, 1, JSON.stringify(result));
+    // The org source read, the read before the DELETE and the 404 after it.
+    assert.equal(h.calls.reads, 3);
     const [item] = result.result.items;
     assert.equal(item.outcome, 'deleted');
     assert.equal(item.mutation, 'confirmed-deleted');
@@ -198,12 +183,9 @@ for (const active of [false, true])
       [
         ['calculated-insight.delete', '68.0'],
         ['calculated-insight.get', '68.0'],
-        ['calculated-insight.metadata', '65.0'],
-        ['dependency.get', '65.0'],
-        ['dependency.metadata', '65.0'],
       ],
     );
-    assert.doesNotMatch(JSON.stringify(result), /SELECT|private-local-id|lastRunDateTime/u);
+    assert.doesNotMatch(JSON.stringify(result), /SELECT|lastRunDateTime/u);
     // The JSON and the SQL file of the CI, at their canonical paths, are removed after the deletion.
     assert.deepEqual(
       item.removedLocalFiles.map((file) => file.path),
@@ -263,7 +245,7 @@ for (const overrides of [
     assert.equal(result.status, 'blocked');
     assert.equal(h.calls.auth, 0);
   });
-for (const drift of ['flags', 'receiver', 'target', 'unknown'])
+for (const drift of ['flags', 'receiver', 'unknown'])
   test(`CI deletion ${drift} fails closed`, async () => {
     const h = await harness();
     if (drift === 'flags')
@@ -272,7 +254,6 @@ for (const drift of ['flags', 'receiver', 'target', 'unknown'])
         return h.connection;
       };
     if (drift === 'receiver') h.connection.getApiVersion = () => '65.0';
-    if (drift === 'target') h.context.get = async () => ({ ...runtime(), displayName: 'foreign' });
     if (drift === 'unknown')
       h.command.deleteCalculatedInsight = (...arguments_) =>
         deleteCalculatedInsight(...arguments_.slice(0, 4), {
@@ -291,10 +272,45 @@ for (const drift of ['flags', 'receiver', 'target', 'unknown'])
     assert.doesNotMatch(JSON.stringify(result), /private response/u);
     if (drift === 'unknown') assert.equal(result.result.items[0].mutation, 'unknown');
   });
-test('CI delete help discloses paired destructive boundary without changing aliases', () => {
+test('CI delete help names the API 68 read, any-status DELETE and the 404 confirmation', () => {
   assert.deepEqual(Delete.aliases, ['datacloud:delete', 'd360:delete', 'dc:delete']);
-  assert.match(Delete.description, /reads remain API65/u);
-  assert.match(Delete.description, /never-run DRAFT or ACTIVE configuration is deletable/u);
+  assert.match(Delete.description, /deleted with one DELETE in any status, schedule or SQL/u);
+  assert.match(Delete.description, /read until it answers 404/u);
+  assert.doesNotMatch(Delete.description, /API65|never-run/u);
+});
+
+for (const variant of ['scheduled', 'never published SQL'])
+  test(`CI delete of a ${variant} insight is not refused by the plugin`, async () => {
+    const h = await harness();
+    const get = h.context.get;
+    h.context.get = async () => ({
+      ...(await get()),
+      ...(variant === 'scheduled'
+        ? { publishScheduleInterval: 'TWENTY_FOUR', lastRunDateTime: '2026-11-01T00:00:00.000Z' }
+        : { expression: 'SELECT 1 AS one__c FROM Other__dlm' }),
+    });
+    const { result } = await run(h.command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.equal(h.calls.writes, 1);
+  });
+
+test('CI delete reports a 4xx DELETE answer as rejected and does not read again', async () => {
+  const h = await harness();
+  h.command.deleteCalculatedInsight = (...arguments_) =>
+    deleteCalculatedInsight(...arguments_.slice(0, 4), {
+      ...arguments_[4],
+      nativeClient: {
+        delete: async () => {
+          h.calls.writes++;
+          throw new ConnectError('REQUEST_FAILED', 400);
+        },
+      },
+    });
+  const { result, exit } = await run(h.command);
+  assert.equal(exit, 1);
+  assert.equal(result.result.items[0].mutation, 'rejected');
+  assert.equal(result.diagnostics.errors[0].code, 'REQUEST_FAILED');
+  assert.equal(h.calls.reads, 2);
 });
 
 for (const pin of [undefined, 'auto'])
@@ -304,41 +320,3 @@ for (const pin of [undefined, 'auto'])
     assert.equal(result.status, 'success', JSON.stringify(result));
     assert.equal(h.calls.writes, 1);
   });
-
-test('CI delete ignores alternating ACTIVE attribution between baseline and fresh reads', async () => {
-  const h = await harness();
-  h.active();
-  const get = h.context.get;
-  let reads = 0;
-  h.context.get = async () => {
-    const raw = await get();
-    const sourceApiName =
-      ++reads % 2 === 0 ? 'ssot__DeviceId__c' : 'ssot__SoftwareApplicationId__c';
-    for (const role of ['dimensions', 'measures'])
-      raw[role][0].dataSource = { sourceApiName, type: 'STREAMING_DATA_MODEL' };
-    return raw;
-  };
-  const { result } = await run(h.command);
-  assert.equal(result.status, 'success', JSON.stringify(result));
-  assert.equal(h.calls.writes, 1);
-});
-
-test('CI delete still refuses a real status drift between baseline and fresh reads', async () => {
-  const h = await harness();
-  h.active();
-  const get = h.context.get;
-  let reads = 0;
-  h.context.get = async () => {
-    const raw = await get();
-    if (++reads === 2) raw.calculatedInsightStatus = 'DRAFT';
-    if (reads === 2) {
-      raw.dimensions = [];
-      raw.measures = [];
-      raw.isFromPackage = nil;
-    }
-    return raw;
-  };
-  const { result } = await run(h.command);
-  assert.notEqual(result.status, 'success');
-  assert.equal(h.calls.writes, 0);
-});

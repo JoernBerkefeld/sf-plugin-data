@@ -59,7 +59,10 @@ selects the insight; the JSON is joined with exactly its SQL file. A missing JSO
 SQL file, an `expression` kept in the JSON, any other `Name__cio.calculatedInsight-meta.*`
 file beside them, duplicate keys, a name that differs from the file name, links and
 hard links block. A length-prefixed SHA256 digest binds the bytes of both files;
-revalidation checks bytes and the frozen document before dispatch.
+revalidation checks bytes and the frozen document before dispatch. Any key, status,
+schedule and SQL is admitted; deploy sends the document as written (input key names and
+enum forms translated, an unchanged `definitionType` left out of a PATCH) and Salesforce
+decides.
 
 ## Public segment files
 

@@ -37,6 +37,5 @@ Downloaded calculated-insight: 0
 
 ## Related codes
 
-- [`METADATA_REDIRECT_REFUSED`](../general/METADATA_REDIRECT_REFUSED.md) — the same Metadata API read, stopped because Salesforce answered with a redirect.
 - [`AUTHENTICATION_FAILED`](../general/AUTHENTICATION_FAILED.md) — the session itself was rejected.
 - [`RETRIEVE_FAILED`](../general/RETRIEVE_FAILED.md) — retrieve failed for a reason without a more specific code.

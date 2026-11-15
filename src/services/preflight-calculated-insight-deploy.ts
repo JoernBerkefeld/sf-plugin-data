@@ -1,20 +1,21 @@
-import { isDeepStrictEqual } from 'node:util';
-import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 import {
-  buildCalculatedInsightUpdateDelta,
-  validateCalculatedInsightDocument,
-} from '../artifacts/calculated-insight-document.js';
+  CalculatedInsightError,
+  calculatedInsightMatches,
+  validateNativeCalculatedInsight,
+} from '../artifacts/native-calculated-insight-document.js';
+import type { NativeCalculatedInsight } from '../artifacts/native-calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import {
+  acquireCalculatedInsight,
   calculatedInsightReadContext,
-  calculatedInsightTargetEvidence,
-  acquireExactCalculatedInsight,
-} from './retrieve-calculated-insight.js';
+} from './native-calculated-insight.js';
 import type {
+  CalculatedInsightAcquisition,
   CalculatedInsightConnection,
   CalculatedInsightReadContext,
-} from './retrieve-calculated-insight.js';
+} from './native-calculated-insight.js';
 
 export type CalculatedInsightDeployIntent = {
   draft?: true;
@@ -22,109 +23,80 @@ export type CalculatedInsightDeployIntent = {
 };
 
 /**
- * Admit only explicit native68/default lifecycle intent; never repin the caller.
- * @param {CalculatedInsightConnection} connection Authenticated native receiver.
- * @param {ApiVersionSelection} selection Exact native route selection.
- * @param {string} dataSpace Default space.
- * @param {CalculatedInsightDeployIntent} options Explicit draft intent and private readers.
- * @returns {CalculatedInsightReadContext} Scope-guarded operation-local readers.
+ * The read context of one item: API 68 and the data space of the document only.
+ * @param {CalculatedInsightConnection} connection API 68 connection.
+ * @param {ApiVersionSelection} selection Route selection (68.0).
+ * @param {string} dataSpace Selected data space.
+ * @param {NativeCalculatedInsight} desired Document; its `dataSpace` must be the selected one.
+ * @param {CalculatedInsightReadContext} [context] Injected context.
+ * @returns {CalculatedInsightReadContext} Checked context.
  */
 export function calculatedInsightDeployContext(
   connection: CalculatedInsightConnection,
   selection: ApiVersionSelection,
   dataSpace: string,
-  options: CalculatedInsightDeployIntent,
+  desired: NativeCalculatedInsight,
+  context?: CalculatedInsightReadContext,
 ): CalculatedInsightReadContext {
-  const version = { ...selection };
-  const origin = connection.instanceUrl;
-  const draft = { present: 'draft' in options, value: options.draft };
-  const context = options.context ?? calculatedInsightReadContext(connection, dataSpace);
-  const check = (): void => {
-    if (
-      version.requested !== '68.0' ||
-      version.restSelector !== 'v68.0' ||
-      version.soapNumeric !== '68.0' ||
-      connection.getApiVersion() !== '68.0' ||
-      connection.instanceUrl !== origin ||
-      dataSpace !== 'default' ||
-      !isDeepStrictEqual(selection, version) ||
-      !isDeepStrictEqual(draft, { present: 'draft' in options, value: options.draft }) ||
-      ('draft' in options && options.draft !== true)
-    )
-      throw new Error('Native CI scope drift');
-    context.check();
-  };
-  check();
-  return { ...context, check };
+  // The routes are API 68 only, and the file names the data space it belongs to.
+  if (selection.requested !== '68.0' || desired.dataSpace !== dataSpace)
+    throw new Error('Native CI scope');
+  const result = context ?? calculatedInsightReadContext(connection, dataSpace);
+  result.check();
+  return result;
 }
 
+export type CalculatedInsightPlan = {
+  action: 'create' | 'update' | 'unchanged';
+  acquired: CalculatedInsightAcquisition;
+  /** The `draft` value an update sends: true with --draft or for a DRAFT insight, else none. */
+  draft?: true;
+};
+
 /**
- * Derive a guarded create/update/no-op from independent exact reads, never from a write echo.
- * @param {unknown} value Complete desired semantic document.
- * @param {CalculatedInsightReadContext} context Independent native68/Metadata65 readers.
- * @param {boolean} draft Explicit draft retention intent.
- * @returns {Promise<object>} Qualified action and detached acquisition snapshot.
+ * Create when the name reads absent, unchanged when the org insight holds every key of the
+ * document, update otherwise. An update of a DRAFT insight keeps it a draft: deploy never
+ * publishes (that is `sf data360 publish`).
+ * @param {NativeCalculatedInsight} desired Document from the files.
+ * @param {CalculatedInsightReadContext} context Read context.
+ * @param {boolean} draft --draft given.
+ * @returns {Promise<CalculatedInsightPlan>} Action and the read it is based on.
  */
 export async function planNativeCalculatedInsightDeploy(
-  value: unknown,
+  desired: NativeCalculatedInsight,
   context: CalculatedInsightReadContext,
   draft: boolean,
-) {
-  const desired = validateCalculatedInsightDocument(value);
+): Promise<CalculatedInsightPlan> {
   context.check();
-  if (desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED') throw new Error('Schedule blocked');
-  const acquired = await acquireExactCalculatedInsight(context, desired.identity.apiName);
+  const acquired = await acquireCalculatedInsight(context, desired.apiName);
   context.check();
-  if (acquired.state === 'unknown')
-    throw retainConnectDiagnostic(new Error('Target unknown'), getConnectDiagnostic(acquired));
-  if (acquired.state === 'absent') {
-    if (!draft) throw new Error('Draft create intent required');
-    return { action: 'create' as const, acquired };
-  }
-  if (acquired.status !== (draft ? 'DRAFT' : 'ACTIVE')) throw new Error('State conversion blocked');
-  const delta = buildCalculatedInsightUpdateDelta(
-    desired,
-    acquired.expectations.runtime,
-    acquired.expectations.metadata,
-    'default',
-    { expectedStatus: draft ? 'DRAFT' : 'ACTIVE' },
-  );
-  if (delta.status === 'blocked') throw new Error('Content conversion blocked');
+  if (acquired.state === 'absent') return { action: 'create', acquired };
+  if (calculatedInsightMatches(desired, acquired.document))
+    return { action: 'unchanged', acquired };
   return {
-    action: delta.status === 'unchanged' ? ('unchanged' as const) : ('update' as const),
+    action: 'update',
     acquired,
+    ...(draft || acquired.status === 'DRAFT' ? { draft: true as const } : {}),
   };
-}
-
-/**
- * Comparable plan evidence: action plus drift-relevant target evidence, never volatile reads.
- * @param {Awaited<ReturnType<typeof planNativeCalculatedInsightDeploy>>} plan Guarded plan.
- * @returns {unknown} Detached comparable evidence.
- */
-export function calculatedInsightPlanEvidence(
-  plan: Awaited<ReturnType<typeof planNativeCalculatedInsightDeploy>>,
-): unknown {
-  return { action: plan.action, target: calculatedInsightTargetEvidence(plan.acquired) };
 }
 
 export type CalculatedInsightPreview = {
   family: 'calculated-insight';
   outcome: 'create' | 'update' | 'unchanged' | 'blocked';
   target: 'present' | 'absent' | 'unknown';
-  absenceProof: 'none' | 'native-item-not-found+metadata-empty';
+  absenceProof: 'none' | 'native-item-not-found';
   route: { apiVersion: '68.0'; method: 'POST' | 'PATCH'; resource: 'calculated-insights' };
-  requiredEffects: Array<'processing'>;
   diagnostics: Array<{ code: string; message: string }>;
 };
 
 /**
- * Preview one native68 create, update or no-op from independent reads; never writes.
- * @param {unknown} value Complete authored desired CI.
- * @param {CalculatedInsightConnection} connection Authenticated native68 target.
- * @param {ApiVersionSelection} selection Exact native68 route.
- * @param {string} dataSpace Default target space.
- * @param {CalculatedInsightDeployIntent} options Explicit draft intent and private readers.
- * @returns {Promise<CalculatedInsightPreview>} Payload-free classification and processing effects.
+ * Preview one create, update or no-op from one GET; never writes.
+ * @param {unknown} value Document from the files (JSON with its SQL).
+ * @param {CalculatedInsightConnection} connection API 68 connection.
+ * @param {ApiVersionSelection} selection Route selection (68.0).
+ * @param {string} dataSpace Selected data space.
+ * @param {CalculatedInsightDeployIntent} options --draft and an injected read context.
+ * @returns {Promise<CalculatedInsightPreview>} Payload-free classification.
  */
 export async function preflightCalculatedInsightDeploy(
   value: unknown,
@@ -139,18 +111,21 @@ export async function preflightCalculatedInsightDeploy(
     resource: 'calculated-insights' as const,
   };
   try {
-    const context = calculatedInsightDeployContext(connection, selection, dataSpace, options);
-    const desired = validateCalculatedInsightDocument(value);
-    await context.bind(desired, context.check);
+    const desired = validateNativeCalculatedInsight(value);
+    const context = calculatedInsightDeployContext(
+      connection,
+      selection,
+      dataSpace,
+      desired,
+      options.context,
+    );
     const plan = await planNativeCalculatedInsightDeploy(desired, context, options.draft === true);
-    context.check();
     return {
       family: 'calculated-insight',
       outcome: plan.action,
-      target: plan.acquired.state === 'absent' ? 'absent' : 'present',
-      absenceProof: plan.acquired.state === 'absent' ? plan.acquired.absenceProof : 'none',
+      target: plan.acquired.state,
+      absenceProof: plan.acquired.state === 'absent' ? 'native-item-not-found' : 'none',
       route: { ...route, method: plan.action === 'create' ? 'POST' : 'PATCH' },
-      requiredEffects: plan.action === 'unchanged' ? [] : ['processing'],
       diagnostics: [],
     };
   } catch (error) {
@@ -160,13 +135,12 @@ export async function preflightCalculatedInsightDeploy(
       target: 'unknown',
       absenceProof: 'none',
       route,
-      requiredEffects: [],
       diagnostics: [
         {
-          code: 'CI_ADMISSION_FAILED',
+          code: error instanceof CalculatedInsightError ? error.code : 'CI_ADMISSION_FAILED',
           message: getConnectDiagnostic(error)
             ? operationDiagnostic(error, 'Native CI deployment was not attempted.')
-            : 'Native CI intent, scope, content or dependencies are unqualified.',
+            : 'The calculated insight could not be read or its file or data space is invalid; nothing was sent.',
         },
       ],
     };

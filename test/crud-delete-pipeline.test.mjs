@@ -537,13 +537,14 @@ for (const family of ['segment', 'calculated-insight'])
         : {
             kind: 'calculated-insight',
             identity: { dataSpace: 'default', apiName: 'Score__cio' },
-            spec: {},
+            spec: { dependencies: [] },
           };
     const h = harness([{ path: 'x', document }], { metadata: [selectorOf({ document })] });
     const executor = async (desired, _connection, _version, _space, options) => {
-      assert.equal(desired, document);
+      // A calculated insight delete takes the identity of the definition read from the org.
+      assert.equal(desired, family === 'segment' ? document : document.identity);
       assert.equal(options.confirmDelete, true);
-      h.calls.push(`${family}:${desired.identity.apiName}`);
+      h.calls.push(`${family}:${document.identity.apiName}`);
       return { outcome: 'deleted', mutation: 'confirmed-deleted', diagnostics: [] };
     };
     h.command.deleteSegment = executor;

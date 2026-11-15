@@ -1,3 +1,43 @@
+# Chunk E2a: calculated insight deploy, publish and delete on the JSON plus SQL files — 2026-11-15
+
+Plan `sf_plugin_data_offpattern_20261114` chunk E2 (first half).
+
+- Consumers take `input.native`. Deploy: one API 68 GET by name; 404 `ITEM_NOT_FOUND` creates
+  (POST), a present insight holding every key of the file (`calculatedInsightMatches`, org GET
+  projected with `observeNativeCalculatedInsight`) is `unchanged`, otherwise one PATCH. Bounded
+  reads (12, 1 s, 120 s) until not `PROCESSING` and holding the file. A 4xx write is `rejected`
+  (`REQUEST_FAILED`). `--draft` sends `draft: true`; an update of a DRAFT insight sends
+  `draft: true` too (deploy never publishes). Publish: PATCH of the file with `draft: false`,
+  waits for ACTIVE; absent is `CI_NOT_FOUND`. Delete: GET (name and data space must match), one
+  DELETE, reads until 404; desired comes from the org GET (`calculatedInsightReference`).
+- Body (`calculatedInsightInputBody`): every key as authored; `dataSpace`→`dataSpaceName`,
+  `isFromPackage`→`createdFromPackage`, `sourceCiDevName`→`sourceDeveloperName`, UPPER_SNAKE
+  values of `definitionType`, `publishScheduleInterval`, `historyPublishScheduleInterval`,
+  `queryDialect` → PascalCase; nulls left out; PATCH leaves out `apiName` and a `definitionType`
+  equal to the org value. Live (coordinator, F:/Temp/cliCI_dadc47/_out): `dataSpace`/`isFromPackage`
+  rejected as unrecognised, `NOT_SCHEDULED` rejected (PascalCase needed), `definitionType`/`queryDialect`
+  either form on POST, any `definitionType` on PATCH refused, PATCH without `draft` activates a DRAFT
+  (deploy sends `draft: true` for one; only publish activates).
+- `input.document` of a CI is now `CalculatedInsightReference` (kind, identity, SQL-named
+  `__dlm`/`__cio` tokens as dependencies) for selection and ordering.
+- Removed: CI dependency binding and the API 65 Metadata reads (`retrieve-calculated-insight.ts`,
+  `bind-calculated-insight-dependencies.ts`, `read-metadata.ts`,
+  `retrieveCalculatedInsightSourceMetadata`/`retrieveExactMetadata`), `--allow-processing` for CI
+  (deploy) and on `publish`, CI_FRESH_ADMISSION_BLOCKED, CI_DEPENDENCY_AMBIGUOUS/UNQUALIFIED,
+  CI_METADATA_AMBIGUOUS, CI_SETTLEMENT_FAILED, METADATA_REDIRECT_REFUSED,
+  INVALID_STANDARD_RETRIEVE, STANDARD_RETRIEVE_UNCONFIRMED, UNEXPECTED_METADATA_MEMBERS, the CI
+  observation recorder and the "CI keeps the core getter" exception.
+- Verification: build, lint 0 warnings, full `npm test` green.
+- Left for E2b: `calculated-insight-document.ts`, `write-calculated-insight.ts` and the codes only
+  they emit (CI_RUNTIME_PROFILE_UNQUALIFIED, CI_EXPRESSION_UNQUALIFIED,
+  CI_CONFIGURATION_UNQUALIFIED, CI_SCHEMA_UNQUALIFIED, CI_ATTRIBUTION_UNQUALIFIED, CI_NOT_SETTLED,
+  CI_METADATA_MISMATCH, CI_NON_EXPRESSION_CHANGE, INVALID_CI_XML, CI_PAIR_MISMATCH,
+  UNKNOWN_CI_CONFIGURATION; PARTIAL_CI_OUTPUT stays, the new writer emits it, but its page
+  still describes the pair), `calculated-insight-document.test.mjs`, the old
+  writer part of `calculated-insight-input.test.mjs`; `calculated-insight-command.test.mjs` now
+  holds only native inventory tests (rename). README operational CI research (API 65 routes) is
+  for F's final grep.
+
 # Chunk S: segment SQL in one file per model — 2026-11-15
 
 Plan `sf_plugin_data_offpattern_20261114` chunk S (checkpoint decision "Segment SQL split").

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
 
@@ -169,4 +170,133 @@ export function parseNativeCalculatedInsight(
       () => new CalculatedInsightError('INVALID_CI_DOCUMENT'),
     ),
   );
+}
+
+/**
+ * GET keys the create/update input (`CdpCalculatedInsightInputRepresentation`) names
+ * differently. Live API 68 (isolated-source, 2026-11-15): `dataSpace` and `isFromPackage`
+ * are rejected as unrecognised, so the renames are required; `sourceCiDevName` follows the
+ * schema, not live-tested.
+ */
+export const calculatedInsightInputKeys: Readonly<Record<string, string>> = {
+  dataSpace: 'dataSpaceName',
+  isFromPackage: 'createdFromPackage',
+  sourceCiDevName: 'sourceDeveloperName',
+};
+
+/**
+ * Keys whose GET value is UPPER_SNAKE (`NOT_SCHEDULED`) while the input lists PascalCase
+ * (`NotScheduled`). Live API 68: `publishScheduleInterval` must be PascalCase on POST and
+ * PATCH; `definitionType` and `queryDialect` are accepted in either form on POST;
+ * `historyPublishScheduleInterval` follows the schema, not live-tested.
+ */
+export const calculatedInsightInputEnums: readonly string[] = [
+  'definitionType',
+  'historyPublishScheduleInterval',
+  'publishScheduleInterval',
+  'queryDialect',
+];
+
+/**
+ * `NOT_SCHEDULED` → `NotScheduled`; any other value stays as authored.
+ * @param {unknown} value Authored value.
+ * @returns {unknown} Input form.
+ */
+function inputEnum(value: unknown): unknown {
+  return typeof value === 'string' && /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/u.test(value)
+    ? value
+        .split('_')
+        .map((part) => part[0] + part.slice(1).toLowerCase())
+        .join('')
+    : value;
+}
+
+/**
+ * The create/update body of one document: every key as authored, with the input names and
+ * enum forms of the two tables above. A null value is left out (the GET reports an unset
+ * field as null; the input documents that some unset fields must be omitted). The PATCH body
+ * leaves out `apiName`, which is in the route, and `definitionType` when it equals the org
+ * value: Salesforce answers any `definitionType` on PATCH, even an identical one, with
+ * "Cannot change the calculated insight definition type" (live API 68). A changed one is
+ * sent, so that refusal is Salesforce's answer.
+ * @param {NativeCalculatedInsight} document Complete document (SQL joined).
+ * @param {'create' | 'update'} operation POST or PATCH.
+ * @param {NativeCalculatedInsight} [observed] Org document an update is based on.
+ * @returns {Record<string, unknown>} Request body.
+ */
+export function calculatedInsightInputBody(
+  document: NativeCalculatedInsight,
+  operation: 'create' | 'update',
+  observed?: NativeCalculatedInsight,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(validateNativeCalculatedInsight(document))) {
+    if (
+      operation === 'update' &&
+      key === 'definitionType' &&
+      observed &&
+      isDeepStrictEqual(value, observed.definitionType)
+    )
+      continue;
+    if (value === null || (operation === 'update' && key === 'apiName')) continue;
+    body[calculatedInsightInputKeys[key] ?? key] = calculatedInsightInputEnums.includes(key)
+      ? inputEnum(value)
+      : value;
+  }
+  return body;
+}
+
+/**
+ * Whether the org insight already holds the document: every key of the document equals the
+ * org GET projected with {@link observeNativeCalculatedInsight}. Keys the file leaves out are
+ * not compared, so a retrieved file deploys back unchanged and a shorter authored file too.
+ * @param {NativeCalculatedInsight} desired Document from the files.
+ * @param {NativeCalculatedInsight} observed Projected org document.
+ * @returns {boolean} True when nothing would change.
+ */
+export function calculatedInsightMatches(
+  desired: NativeCalculatedInsight,
+  observed: NativeCalculatedInsight,
+): boolean {
+  return Object.keys(desired).every((key) => isDeepStrictEqual(desired[key], observed[key]));
+}
+
+/** The planning view of one insight: kind, identity and what its SQL reads (ordering only). */
+export type CalculatedInsightReference = {
+  kind: 'calculated-insight';
+  identity: { dataSpace: string; apiName: string };
+  spec: {
+    dependencies: Array<{
+      kind: 'dmo' | 'calculated-insight';
+      dataSpace: string;
+      apiName: string;
+    }>;
+  };
+};
+
+/**
+ * The planning view of one document. Dependencies are every distinct `<Name>__dlm` and other
+ * `<Name>__cio` token in the SQL: a deploy orders the insight after the selected DMOs, IRs
+ * (through their unified DMOs) and insights it names. No SQL is parsed; a name in a comment
+ * or string only adds an ordering edge, and a missing object is Salesforce's answer.
+ * @param {NativeCalculatedInsight} document Complete document.
+ * @returns {CalculatedInsightReference} Planning view.
+ */
+export function calculatedInsightReference(
+  document: NativeCalculatedInsight,
+): CalculatedInsightReference {
+  const names = new Map<string, 'dmo' | 'calculated-insight'>();
+  for (const match of document.expression.matchAll(/\b[A-Za-z][A-Za-z0-9_]*__(dlm|cio)\b/gu))
+    if (match[0] !== document.apiName)
+      names.set(match[0], match[1] === 'dlm' ? 'dmo' : 'calculated-insight');
+  return {
+    kind: 'calculated-insight',
+    identity: { dataSpace: document.dataSpace, apiName: document.apiName },
+    spec: {
+      dependencies: [...names]
+        // eslint-disable-next-line unicorn/no-array-sort -- Sorting a new array.
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([apiName, kind]) => ({ kind, dataSpace: document.dataSpace, apiName })),
+    },
+  };
 }

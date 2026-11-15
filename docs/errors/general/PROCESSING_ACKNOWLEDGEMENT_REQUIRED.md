@@ -2,15 +2,15 @@
 
 > This create or update starts processing in Data Cloud and needs your explicit consent. Check it with --preview, then rerun with --allow-processing.
 
-|              |                                           |
-| ------------ | ----------------------------------------- |
-| **Family**   | General                                   |
-| **Commands** | `sf data360 deploy`, `sf data360 publish` |
-| **Outcome**  | `blocked` — nothing was written           |
+|              |                                 |
+| ------------ | ------------------------------- |
+| **Family**   | General                         |
+| **Commands** | `sf data360 deploy`             |
+| **Outcome**  | `blocked` — nothing was written |
 
 ## What it means
 
-Creating or changing a Segment, calculated insight, identity resolution or data stream, and publishing a calculated insight, makes Data Cloud process data. For an identity resolution create it also provisions generated output objects. The deploy (or publish) would do one of these, but `--allow-processing` was not passed.
+Creating or changing a Segment, identity resolution, data stream or data graph makes Data Cloud process data. For an identity resolution create it also provisions generated output objects. The deploy would do one of these, but `--allow-processing` was not passed. Data transforms and calculated insights (deploy and publish) do not need the flag.
 
 A deploy that changes nothing (`unchanged`) does not need the flag.
 

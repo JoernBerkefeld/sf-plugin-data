@@ -1,7 +1,7 @@
 import { validateDloDocument } from './dlo-document.js';
 import type { DloDocument } from './dlo-document.js';
-import { validateCalculatedInsightDocument } from './calculated-insight-document.js';
-import type { CalculatedInsightDocument } from './calculated-insight-document.js';
+import { calculatedInsightName } from './native-calculated-insight-document.js';
+import type { CalculatedInsightReference as CalculatedInsightReference } from './native-calculated-insight-document.js';
 import { validateIdentityResolutionDocument } from './identity-resolution-document.js';
 import type { IdentityResolutionDocument } from './identity-resolution-document.js';
 import type { NativeDmoDocument } from './native-dmo-document.js';
@@ -55,7 +55,7 @@ export function documentDependencyNode(
     | NativeDmoDocument
     | SegmentDocument
     | IdentityResolutionDocument
-    | CalculatedInsightDocument
+    | CalculatedInsightReference
     | DloDocument,
 ): DependencyNode {
   if (value.kind === 'dlo') {
@@ -64,10 +64,12 @@ export function documentDependencyNode(
     return { identity: { kind: 'dlo', ...document.identity }, dependencies: [] };
   }
   if (value.kind === 'calculated-insight') {
-    const document = validateCalculatedInsightDocument(value);
+    // The DMOs and insights its SQL names (calculatedInsightReference): ordering edges only.
+    if (!calculatedInsightName.test(value.identity.apiName))
+      throw new DependencySelectionError('DEPENDENCY_IDENTITY_UNSUPPORTED');
     return {
-      identity: { kind: 'calculated-insight', ...document.identity },
-      dependencies: document.spec.dependencies.map(({ kind, dataSpace, apiName }) => ({
+      identity: { kind: 'calculated-insight', ...value.identity },
+      dependencies: value.spec.dependencies.map(({ kind, dataSpace, apiName }) => ({
         kind,
         dataSpace,
         apiName,

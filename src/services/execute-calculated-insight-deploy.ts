@@ -1,54 +1,59 @@
-import { isDeepStrictEqual } from 'node:util';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
-import { validateCalculatedInsightDocument } from '../artifacts/calculated-insight-document.js';
-import type { CalculatedInsightProjection } from '../artifacts/calculated-insight-document.js';
+import { rejectedNextAction } from './deploy-result.js';
+import {
+  CalculatedInsightError,
+  validateNativeCalculatedInsight,
+} from '../artifacts/native-calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
+import { ConnectError } from '../transport/connect-client.js';
 import type { CalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import {
   calculatedInsightDeployContext,
-  calculatedInsightPlanEvidence,
   planNativeCalculatedInsightDeploy,
 } from './preflight-calculated-insight-deploy.js';
 import type { CalculatedInsightDeployIntent } from './preflight-calculated-insight-deploy.js';
 import { settleCalculatedInsight } from './settle-calculated-insight.js';
-import type { CalculatedInsightConnection } from './retrieve-calculated-insight.js';
+import type { CalculatedInsightTiming } from './settle-calculated-insight.js';
+import type { CalculatedInsightConnection } from './native-calculated-insight.js';
 
-export const calculatedInsightPollBudget = Object.freeze({
-  reads: 12,
-  intervalMs: 1000,
-  timeoutMs: 120_000,
-});
-export type CalculatedInsightObservation = {
-  phase: 'baseline' | 'echo' | 'poll' | 'settled';
-  status: 'ACTIVE' | 'PROCESSING' | 'DRAFT';
-  observations: CalculatedInsightProjection['observations'];
-};
-export type CalculatedInsightExecutionOptions = CalculatedInsightDeployIntent & {
-  nativeClient?: Pick<CalculatedInsightClient, 'create' | 'update'>;
-  allowProcessing: boolean;
-  verifyInput: () => Promise<void>;
-  recordObservation: (observation: CalculatedInsightObservation) => Promise<void>;
-  now?: () => number;
-  delay?: (milliseconds: number) => Promise<void>;
-};
+export type CalculatedInsightExecutionOptions = CalculatedInsightDeployIntent &
+  CalculatedInsightTiming & {
+    nativeClient?: Pick<CalculatedInsightClient, 'create' | 'update'>;
+    verifyInput: () => Promise<void>;
+  };
 export type CalculatedInsightExecution = {
   family: 'calculated-insight';
   route: { apiVersion: '68.0'; method: 'POST' | 'PATCH'; resource: 'calculated-insights' };
   outcome: 'unchanged' | 'blocked' | 'created' | 'updated' | 'failed';
-  mutation: 'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'unknown';
+  mutation: 'not-attempted' | 'confirmed-created' | 'confirmed-updated' | 'unknown' | 'rejected';
   diagnostics: Array<{ code: string; message: string }>;
 };
 
 /**
- * Execute one native68 draft create/retaining edit or state-preserving ACTIVE expression edit.
- * @param {unknown} value Complete desired semantic document.
- * @param {CalculatedInsightConnection} connection Explicit native68 receiver.
- * @param {ApiVersionSelection} selection Exact native route.
- * @param {string} dataSpace Default space.
- * @param {CalculatedInsightExecutionOptions} options Fresh input, private observation and intent guards.
- * @returns {Promise<CalculatedInsightExecution>} Independent settlement or conservative uncertainty.
+ * Whether a write failed with Salesforce's synchronous HTTP 4xx answer (nothing applied).
+ * @param {unknown} error Write failure.
+ * @returns {boolean} True for a 4xx refusal.
+ */
+export function rejectedWrite(error: unknown): boolean {
+  const status =
+    getConnectDiagnostic(error)?.statusCode ??
+    (error instanceof ConnectError ? error.statusCode : undefined);
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/**
+ * Deploy one calculated insight: one GET decides create (POST), update (PATCH) or unchanged;
+ * the document is sent as authored (input key names and enum forms translated) and
+ * Salesforce decides. A 4xx answer is `rejected`; after any other write outcome the insight
+ * is read until it holds the document. One attempt, no replay or rollback.
+ * @param {unknown} value Document from the files (JSON with its SQL).
+ * @param {CalculatedInsightConnection} connection API 68 connection.
+ * @param {ApiVersionSelection} selection Route selection (68.0).
+ * @param {string} dataSpace Selected data space.
+ * @param {CalculatedInsightExecutionOptions} options --draft, input verifier and test seams.
+ * @returns {Promise<CalculatedInsightExecution>} Payload-free outcome.
  */
 export async function executeCalculatedInsightDeploy(
   value: unknown,
@@ -64,130 +69,80 @@ export async function executeCalculatedInsightDeploy(
     mutation: CalculatedInsightExecution['mutation'],
     code?: string,
     error?: unknown,
-  ): CalculatedInsightExecution => ({
-    family: 'calculated-insight',
-    route: { apiVersion: '68.0', method, resource: 'calculated-insights' },
-    outcome,
-    mutation,
-    diagnostics: code
-      ? [
-          {
-            code,
-            message: getConnectDiagnostic(error)
-              ? operationDiagnostic(
-                  error,
-                  mutation === 'unknown'
-                    ? 'CI mutation may have occurred.'
-                    : 'CI deployment was not attempted.',
-                )
-              : mutation === 'unknown'
-                ? 'CI mutation may have occurred; no replay or rollback was performed.'
-                : 'Native CI deployment was not attempted; qualification or explicit intent is required.',
-          },
-        ]
-      : [],
-  });
+  ): CalculatedInsightExecution =>
+    retainConnectDiagnostic(
+      {
+        family: 'calculated-insight' as const,
+        route: { apiVersion: '68.0' as const, method, resource: 'calculated-insights' as const },
+        outcome,
+        mutation,
+        diagnostics: code
+          ? [
+              {
+                code,
+                message: (() => {
+                  const next =
+                    mutation === 'rejected'
+                      ? rejectedNextAction
+                      : mutation === 'unknown'
+                        ? 'CI mutation may have occurred; no replay or rollback was performed.'
+                        : 'CI deployment was not attempted.';
+                  return getConnectDiagnostic(error) ? operationDiagnostic(error, next) : next;
+                })(),
+              },
+            ]
+          : [],
+      },
+      getConnectDiagnostic(error),
+    );
   try {
-    const desired = validateCalculatedInsightDocument(value);
-    const context = calculatedInsightDeployContext(connection, selection, dataSpace, options);
-    const draft = options.draft === true;
-    if (
-      typeof options.verifyInput !== 'function' ||
-      typeof options.recordObservation !== 'function'
-    )
-      throw new Error('Guards absent');
+    const desired = validateNativeCalculatedInsight(value);
+    const context = calculatedInsightDeployContext(
+      connection,
+      selection,
+      dataSpace,
+      desired,
+      options.context,
+    );
+    if (typeof options.verifyInput !== 'function') throw new Error('Guards absent');
     await options.verifyInput();
-    const bound = structuredClone(await context.bind(desired, context.check));
-    const baseline = await planNativeCalculatedInsightDeploy(desired, context, draft);
-    if (baseline.acquired.state === 'present')
-      await options.recordObservation({
-        phase: 'baseline',
-        status: baseline.acquired.status as 'ACTIVE' | 'DRAFT',
-        observations: structuredClone(baseline.acquired.observations),
-      });
+    const plan = await planNativeCalculatedInsightDeploy(desired, context, options.draft === true);
     await options.verifyInput();
-    if (!isDeepStrictEqual(bound, await context.bind(desired, context.check)))
-      throw new Error('Dependency drift');
-    const fresh = await planNativeCalculatedInsightDeploy(desired, context, draft);
-    if (
-      !isDeepStrictEqual(
-        calculatedInsightPlanEvidence(baseline),
-        calculatedInsightPlanEvidence(fresh),
-      )
-    )
-      throw new Error('Target drift');
-    await options.verifyInput();
-    if (!isDeepStrictEqual(desired, validateCalculatedInsightDocument(value)))
-      throw new Error('Desired input drift');
-    context.check();
-    if (fresh.action === 'unchanged') return result('unchanged', 'not-attempted');
-    method = fresh.action === 'create' ? 'POST' : 'PATCH';
-    if (options.allowProcessing !== true)
-      return result('blocked', 'not-attempted', 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+    if (plan.action === 'unchanged') return result('unchanged', 'not-attempted');
+    method = plan.action === 'create' ? 'POST' : 'PATCH';
     const client =
       options.nativeClient ?? createCalculatedInsightClient(connection, '68.0', dataSpace);
-    const now = options.now ?? Date.now;
-    let previous = now();
-    const end = previous + calculatedInsightPollBudget.timeoutMs;
-    let expired = false;
-    const check = (): void => {
-      context.check();
-      const current = now();
-      if (
-        expired ||
-        !Number.isFinite(previous) ||
-        !Number.isFinite(current) ||
-        current < previous ||
-        current >= end
-      )
-        throw new Error('Deadline');
-      previous = current;
-    };
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    context.check();
+    attempted = true;
     try {
-      check();
-      const work = async (): Promise<CalculatedInsightExecution> => {
-        attempted = true;
-        // A response is never settlement evidence, and a rejected write is never replayed.
-        await (fresh.action === 'create'
-          ? client.create(structuredClone(desired))
-          : client.update(structuredClone(desired), draft ? { draft: true } : undefined));
-        check();
-        const settled = await settleCalculatedInsight(
-          { ...context, check },
-          desired,
-          draft ? 'DRAFT' : 'ACTIVE',
-          { now, delay: options.delay },
-        );
-        check();
-        if (settled.state !== 'present' || !isDeepStrictEqual(settled.binding, bound))
-          throw retainConnectDiagnostic(
-            new Error('Settlement unknown'),
-            getConnectDiagnostic(settled),
-          );
-        await options.recordObservation({
-          phase: 'settled',
-          status: settled.acquisition.status as 'ACTIVE' | 'DRAFT',
-          observations: structuredClone(settled.acquisition.observations),
-        });
-        check();
-        return fresh.action === 'create'
-          ? result('created', 'confirmed-created')
-          : result('updated', 'confirmed-updated');
-      };
-      return await Promise.race([
-        work(),
-        new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error('Deadline')), end - now());
-        }),
-      ]);
-    } finally {
-      expired = true;
-      clearTimeout(timer);
+      await (plan.action === 'create'
+        ? client.create(structuredClone(desired), options.draft ? { draft: true } : undefined)
+        : client.update(structuredClone(desired), {
+            // A DRAFT insight stays a draft: deploy never publishes.
+            ...(plan.draft ? { draft: true } : {}),
+            ...(plan.acquired.state === 'present' ? { observed: plan.acquired.document } : {}),
+          }));
+    } catch (error) {
+      if (rejectedWrite(error)) return result('failed', 'rejected', 'REQUEST_FAILED', error);
+      throw error;
     }
+    await settleCalculatedInsight(context, desired, 'present', options);
+    return plan.action === 'create'
+      ? result('created', 'confirmed-created')
+      : result('updated', 'confirmed-updated');
   } catch (error) {
     return attempted
-      ? result('failed', 'unknown', 'CI_MUTATION_UNCONFIRMED', error)
-      : result('blocked', 'not-attempted', 'CI_ADMISSION_FAILED', error);
+      ? result(
+          'failed',
+          'unknown',
+          error instanceof CalculatedInsightError ? error.code : 'CI_MUTATION_UNCONFIRMED',
+          error,
+        )
+      : result(
+          'blocked',
+          'not-attempted',
+          error instanceof CalculatedInsightError ? error.code : 'CI_ADMISSION_FAILED',
+          error,
+        );
   }
 }

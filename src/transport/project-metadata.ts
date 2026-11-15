@@ -1,10 +1,8 @@
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { SegmentError, segmentName } from '../artifacts/segment-document.js';
-import { calculatedInsightName } from '../artifacts/calculated-insight-document.js';
+import { SegmentError } from '../artifacts/segment-document.js';
 const normalize = (value: string): string =>
   process.platform === 'win32' ? value.toLowerCase() : value;
 
@@ -108,108 +106,4 @@ export async function runProjectMetadata(
       },
     );
   });
-}
-
-/**
- * Retrieve exact standard CI source XML independently of runtime/SOAP acquisition.
- * @param {string} targetOrg Explicit authenticated alias or username.
- * @param {string} apiName Exact runtime identity including __cio.
- * @param {MetadataRunner} runner Synthetic standard CLI seam.
- * @returns {Promise<string>} Independently retrieved source XML bytes.
- */
-export async function retrieveCalculatedInsightSourceMetadata(
-  targetOrg: string,
-  apiName: string,
-  runner: MetadataRunner = runProjectMetadata,
-): Promise<string> {
-  if (!calculatedInsightName.test(apiName)) throw new SegmentError('INVALID_SELECTION');
-  return retrieveExactMetadata(targetOrg, apiName.slice(0, -5), 'calculated-insight', runner);
-}
-
-/**
- * Execute one allowlisted standard Metadata retrieve and validate its terminal member receipt.
- * @param {string} targetOrg Explicit authenticated target.
- * @param {string} apiName Exact standard member name.
- * @param {'calculated-insight'} family Allowlisted source family.
- * @param {MetadataRunner} runner Installed CLI or synthetic seam.
- * @param {string} apiVersion Explicit numeric version; non-Segment families retain API65.
- * @returns {Promise<string>} Exact bounded XML.
- */
-async function retrieveExactMetadata(
-  targetOrg: string,
-  apiName: string,
-  family: 'calculated-insight',
-  runner: MetadataRunner,
-  apiVersion = '65.0',
-): Promise<string> {
-  const grammar = {
-    'calculated-insight': [
-      'MktCalcInsightObjectDef',
-      'mktCalcInsightObjectDefs',
-      'mktCalcInsightObjectDef',
-    ],
-  } as const;
-  const [type, directory, extension] = grammar[family];
-  const suffix = `.${extension}-meta.xml`;
-  if (
-    !targetOrg ||
-    targetOrg.startsWith('-') ||
-    [...targetOrg].some((character) => character.codePointAt(0)! < 32) ||
-    !segmentName.test(apiName)
-  )
-    throw new SegmentError('INVALID_SELECTION');
-  verifyTemporaryDirectory();
-  const root = await mkdtemp(path.join(os.tmpdir(), 'data360-metadata-'));
-  await writeFile(path.join(root, 'ownership'), randomUUID(), { flag: 'wx' });
-  await mkdir(path.join(root, 'force-app'));
-  await writeFile(
-    path.join(root, 'sfdx-project.json'),
-    `${JSON.stringify({ packageDirectories: [{ path: 'force-app', default: true }], namespace: '', sourceApiVersion: apiVersion })}\n`,
-    { flag: 'wx' },
-  );
-  const receipt = await runner(
-    [
-      'project',
-      'retrieve',
-      'start',
-      '--metadata',
-      `${type}:${apiName}`,
-      '--target-org',
-      targetOrg,
-      '--api-version',
-      apiVersion,
-      '--wait',
-      '5',
-      '--json',
-    ],
-    root,
-  );
-  let envelope: { status?: unknown; result?: Record<string, unknown>; warnings?: unknown };
-  try {
-    envelope = JSON.parse(receipt.stdout) as typeof envelope;
-  } catch {
-    throw new SegmentError('INVALID_STANDARD_RETRIEVE');
-  }
-  const result = envelope?.result;
-  if (
-    receipt.exitCode !== 0 ||
-    envelope.status !== 0 ||
-    !result ||
-    result.done !== true ||
-    result.success !== true ||
-    result.status !== 'Succeeded' ||
-    (result.messages && (!Array.isArray(result.messages) || result.messages.length > 0)) ||
-    (envelope.warnings && (!Array.isArray(envelope.warnings) || envelope.warnings.length > 0))
-  )
-    throw new SegmentError('STANDARD_RETRIEVE_UNCONFIRMED');
-  if (!Array.isArray(result.files) || result.files.length !== 1)
-    throw new SegmentError('UNEXPECTED_METADATA_MEMBERS');
-  const member = result.files[0] as Record<string, unknown>;
-  if (member.type !== type || member.fullName !== apiName || member.state !== 'Created')
-    throw new SegmentError('UNEXPECTED_METADATA_MEMBERS');
-  const file = path.join(root, 'force-app', 'main', 'default', directory, `${apiName}${suffix}`);
-  const stat = await inspectSegmentPath(file);
-  if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1_048_576)
-    throw new SegmentError('INVALID_STANDARD_RETRIEVE');
-  return readFile(file, 'utf8');
 }

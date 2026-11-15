@@ -32,5 +32,3 @@ Downloaded calculated-insight: 0
 ```
 
 ## Related codes
-
-- [`CI_METADATA_AMBIGUOUS`](../calculated-insight/CI_METADATA_AMBIGUOUS.md) — the Metadata API definition is missing or not unique.

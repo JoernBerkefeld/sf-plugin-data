@@ -7,11 +7,9 @@ import {
   verifyCalculatedInsightInputDigest,
 } from '../../artifacts/read-deploy-input.js';
 import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
-import { validateCalculatedInsightDocument } from '../../artifacts/calculated-insight-document.js';
 import { publishCalculatedInsight } from '../../services/publish-calculated-insight.js';
 import type { CalculatedInsightPublishResult } from '../../services/publish-calculated-insight.js';
-import { calculatedInsightReadContext } from '../../services/retrieve-calculated-insight.js';
-import type { CalculatedInsightObservation } from '../../services/execute-calculated-insight-deploy.js';
+import { calculatedInsightReadContext } from '../../services/native-calculated-insight.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 
 export type PublishEnvelope = {
@@ -40,7 +38,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
   public static readonly aliases = ['datacloud:publish', 'd360:publish', 'dc:publish'];
   public static readonly summary = 'Publish one Data360 Calculated Insight draft.';
   public static readonly description =
-    'Requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and default space (--dataspace; --data-space is a compatibility alias). Only NOT_SCHEDULED, never-run matching DRAFT configuration is publishable. --preview is read-only; an equal ACTIVE target is unchanged without acknowledgement or writes. DRAFT publication requires --allow-processing and uses a separate NotScheduled publication PATCH, never an SQL edit, create or schedule engine. Native publication/read routes use API68; independent Metadata and dependency reads remain API65. Completion requires bounded independent ACTIVE settlement; an unknown mutation is not retried or rolled back. No compute, ingestion or populated-object guarantee.';
+    'Requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and default space (--dataspace; --data-space is a compatibility alias). The insight must exist (create it with sf data360 deploy, --draft for a draft). An ACTIVE insight that holds every key of the file is unchanged; otherwise one API 68 PATCH sends the file (translated like deploy) with draft: false, and the insight is read until it is ACTIVE with the file. Salesforce decides; a 4xx answer is reported as rejected. --preview is read-only. An unknown outcome is not retried or rolled back.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -53,16 +51,11 @@ export default class Publish extends SfCommand<PublishEnvelope> {
     'api-version': Flags.string({ summary: 'Native lifecycle route: auto (68.0) or 68.0.' }),
     dataspace: Flags.string({ aliases: ['data-space'], summary: 'Default space only.' }),
     preview: Flags.boolean({ default: false, summary: 'Read and report only; never publish.' }),
-    'allow-processing': Flags.boolean({
-      default: false,
-      summary: 'Acknowledge publication processing.',
-    }),
   };
   protected resolveInputs = readDeployInputs;
   protected verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
   protected calculatedInsightContext = calculatedInsightReadContext;
   protected publishCalculatedInsight = publishCalculatedInsight;
-  protected calculatedInsightObservations: CalculatedInsightObservation[] = [];
   protected resolveConnection = async (alias?: string): Promise<Connection> => {
     const aggregator = await ConfigAggregator.create();
     const state = await StateAggregator.getInstance();
@@ -116,8 +109,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       if (inputs.length !== 1 || inputs[0].document.kind !== 'calculated-insight')
         throw new Error('Selection');
       const input = inputs[0] as CalculatedInsightDeployInput;
-      const desired = validateCalculatedInsightDocument(input.document);
-      if (desired.spec.publishScheduleInterval !== 'NOT_SCHEDULED') throw new Error('Schedule');
+      const desired = input.native;
       const verifyInput = async (): Promise<void> => {
         if (JSON.stringify(flags) !== snapshot) throw new Error('Intent drift');
         await this.verifyCalculatedInsightInput(input);
@@ -128,8 +120,6 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       code = 'CI_ADMISSION_FAILED';
       const context = this.calculatedInsightContext(connection, 'default');
       await verifyInput();
-      // Keep raw attribution private and detached, following the existing deploy recorder contract.
-      this.calculatedInsightObservations = [];
       const result = await this.publishCalculatedInsight(
         desired,
         connection,
@@ -142,23 +132,16 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         {
           context,
           preview: flags.preview,
-          allowProcessing: flags['allow-processing'] === true,
           verifyInput,
-          recordObservation: async (observation) => {
-            this.calculatedInsightObservations.push(structuredClone(observation));
-          },
         },
       );
       envelope.result.items.push({
         ...result,
-        identity: desired.identity,
+        identity: { apiName: desired.apiName, dataSpace: desired.dataSpace },
         operation: flags.preview ? 'preview' : 'publish',
         routes: [
           { operation: 'calculated-insight.publish', apiVersion: '68.0', transport: 'native' },
           { operation: 'calculated-insight.get', apiVersion: '68.0', transport: 'native' },
-          { operation: 'calculated-insight.metadata', apiVersion: '65.0', transport: 'metadata' },
-          { operation: 'dependency.get', apiVersion: '65.0', transport: 'native' },
-          { operation: 'dependency.metadata', apiVersion: '65.0', transport: 'metadata' },
         ],
       });
       envelope.status =
@@ -174,7 +157,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       envelope.diagnostics.errors.push({
         code: error instanceof DeployInputError ? error.code : code,
         message:
-          'Publication stopped. Verify the exact JSON and SQL source, explicit API68/default scope and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+          'Publication stopped. Verify the exact JSON and SQL source, API 68 and default data space, and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         retryable: false,
       });
     }

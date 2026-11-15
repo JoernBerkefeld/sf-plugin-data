@@ -37,8 +37,8 @@ rerun the same delete once it reads absent). A `-m` delete needs no confirmation
   CI and graph is read from the org by name with the existing readers: transform through
   the complete transform list (name ignoring case → record ID; no match `unchanged`, 2+
   `TRANSFORM_TARGET_NOT_RESOLVED`) and `retrieveDataTransform`; Segment and IR by exact
-  GET (only `ITEM_NOT_FOUND` is absence); CI by the exact native + Metadata read
-  (`acquireExactCalculatedInsight`, so DRAFT and ACTIVE stay deletable); graph by the
+  GET (only `ITEM_NOT_FOUND` is absence); CI by the API 68 GET
+  (`acquireCalculatedInsight`, any status); graph by the
   item GET; absence needs the item's exact "not found" answer, a metadata 404
   `METADATA_ERROR_ENTITY_NOTFOUND`, a complete graph list without the name and an empty
   SOQL read. Metadata, list or SOQL still holding it stops the delete before any deletion. An absent component reports
@@ -203,36 +203,31 @@ and `/schema`) and dependencies (`/ssot/data-streams/{name}/dependencies`,
 says `transport: native`. The API 67 tool layer (`mcp-execute.ts`) is gone. The native
 bodies matched the tool results minus the `{result}` wrapper in live probes.
 
-## Public native calculated insight lifecycle — 2026-11-12
+## Public native calculated insight lifecycle
 
-Calculated insights use native API 68 for retrieve, deploy (including `--draft`),
-publish and delete. Default/`auto` and explicit `68.0` select it; every other
-version, `65.0` included, is refused with `INVALID_SCOPE`. Default space only. The
-XML/JSON pair format is unchanged. Standard XML, Metadata and DMO prerequisite
-reads keep their own fixed routes.
+Calculated insights use API 68 for retrieve, deploy (including `--draft`), publish and
+delete; every other version is refused with `INVALID_SCOPE`. Default space only. No
+Metadata API or dependency reads; no command needs `--allow-processing`.
 
-Retrieve reads the API 68 GET only and writes every insight it names, whatever its
-status, schedule or SQL: `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json`
-(the GET body minus status, run history, record links and the SQL-derived dimensions and
-measures) and `<Name>__cio.calculatedInsight-meta.sql` (the expression as plain SQL;
-Salesforce returns it HTML-escaped). Bare `-m calculated-insight` lists every insight.
-Deploy, publish and delete below still read the old XML/JSON pair (plan chunks E1b, E2).
+Retrieve writes `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json`
+(the GET body minus status, run history, record links and the SQL-derived dimensions
+and measures) and `<Name>__cio.calculatedInsight-meta.sql` (the expression as plain
+SQL). Deploy, publish and delete read the same two files.
 
-Deploy, publish and delete admit only never-run insights with schedule
-`NOT_SCHEDULED`; whether run or scheduled ones are safe to write is untested and
-open. Create needs exact dual absence and `--draft`; draft edits keep DRAFT.
-Publication is explicit; an ACTIVE expression PATCH omits draft. Only the qualified
-expression edits are writable. Execute, publish and delete compare the authored
-document, status, native profile and Metadata definition before writing, not the
-attribution and runtime fields that the API 68 read varies between consecutive
-reads, so a correct repeat is `unchanged` and a correct delete proceeds.
-Present-owner delete needs the exact selector; the definition is read from the org by
-the exact read. No cascade, retry or rollback; bounded independent settlement, not
-the response, confirms each write.
-
-Live on `isolated-source` (2026-11-12), at `auto`: retrieve of two run insights,
-then create, publish, three unchanged repeats and delete of a fixture, all exit 0.
-ACTIVE is not calculation proof; storage/credits and computation remain unknown.
+Deploy: one GET by name; 404 creates (POST), a present insight holding every key of the
+file is `unchanged`, otherwise one PATCH. The file is sent as written with only the
+input key names (`dataSpaceName`, `createdFromPackage`, `sourceDeveloperName`) and
+PascalCase enums translated and null values left out
+(`calculatedInsightInputBody`); a PATCH leaves out an unchanged `definitionType`. Live
+API 68 (2026-11-15): `dataSpace`/`isFromPackage` are rejected as unrecognised,
+`publishScheduleInterval` must be PascalCase, `definitionType`/`queryDialect` pass in
+either form on POST, any `definitionType` on PATCH is refused, and a PATCH without
+`draft` activates a DRAFT (deploy sends `draft: true` for one). A 4xx answer is `rejected`; otherwise bounded reads (12, one second apart,
+120 s) confirm the file is held and the insight is not `PROCESSING`. `--draft` sends
+`draft: true`; a DRAFT insight stays a draft on update. Publish sends the file with
+`draft: false` and waits for ACTIVE. Delete: GET (identity must match), one DELETE,
+reads until 404. Ordering: the `<Name>__dlm` and `<Name>__cio` tokens of the SQL are
+the insight's dependencies (`calculatedInsightReference`).
 
 ## Installed API61 mapping create and single addition — 2026-11-04
 

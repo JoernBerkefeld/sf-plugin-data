@@ -461,9 +461,13 @@ test('an invalid IR or CI file beside a mapping blocks before any native read or
   brokenIr.document = structuredClone(brokenIr.document);
   delete brokenIr.document.spec.matchRules;
   const brokenCi = ciInput('Person__dlm');
+  brokenCi.document = {
+    ...brokenCi.document,
+    identity: { dataSpace: 'default', apiName: 'Spend' },
+  };
   for (const [p3, code] of [
     [brokenIr, 'UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION'],
-    [brokenCi, 'UNKNOWN_CI_CONFIGURATION'],
+    [brokenCi, 'DEPENDENCY_IDENTITY_UNSUPPORTED'],
   ]) {
     const { command, calls } = harness([...mapping, p3]);
     const result = await run(command);

@@ -35,4 +35,3 @@ Downloaded calculated-insight: 0
 ## Related codes
 
 - [`STANDARD_CLI_UNAVAILABLE`](../general/STANDARD_CLI_UNAVAILABLE.md) — the CLI installation was not found.
-- [`STANDARD_RETRIEVE_UNCONFIRMED`](../general/STANDARD_RETRIEVE_UNCONFIRMED.md) — the CLI ran but did not report success.

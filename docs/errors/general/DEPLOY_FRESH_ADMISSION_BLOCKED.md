@@ -10,7 +10,7 @@
 
 ## What it means
 
-In a batch with Segment, calculated insight, identity resolution or DMO inputs, the plugin checks the whole selection first and then checks again right before each write. `DEPLOY_FRESH_ADMISSION_BLOCKED` means that second check failed: a selected file changed on disk, a dependency in the org changed, a target moved to a state that is no longer supported, or `--allow-processing` is needed for what the item would now do.
+In a batch with Segment, calculated insight, identity resolution or DMO inputs, the plugin checks the whole selection first and then checks again right before each write. `DEPLOY_FRESH_ADMISSION_BLOCKED` means that second check failed: a selected file changed on disk, a dependency in the org changed, a target moved to a state that is no longer supported, or `--allow-processing` is needed for what the item would now do. Calculated insights are not checked again here; their own deploy reads them right before the write.
 
 The message names the check that failed when the plugin can tell.
 
@@ -44,5 +44,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 
 - [`DEPLOY_EXECUTION_BLOCKED`](../general/DEPLOY_EXECUTION_BLOCKED.md) — the summary code the deploy ends with.
 - [`SEGMENT_FRESH_ADMISSION_BLOCKED`](../segment/SEGMENT_FRESH_ADMISSION_BLOCKED.md) — the Segment-specific reason behind the fresh check.
-- [`CI_FRESH_ADMISSION_BLOCKED`](../calculated-insight/CI_FRESH_ADMISSION_BLOCKED.md) — the calculated insight reason.
 - [`IDENTITY_RESOLUTION_FRESH_ADMISSION_BLOCKED`](../identity-resolution/IDENTITY_RESOLUTION_FRESH_ADMISSION_BLOCKED.md) — the identity resolution reason.
