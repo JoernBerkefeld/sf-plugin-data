@@ -1,40 +1,37 @@
 # `CI_ACQUISITION_FAILED`
 
-> The calculated insight could not be read and checked in the target org. Check access to the org and the API name, then rerun the retrieve.
+> The calculated insight list from the target org could not be read completely. Check access to the org, then rerun the retrieve.
 
-|              |                                                               |
-| ------------ | ------------------------------------------------------------- |
-| **Family**   | Calculated insight                                            |
-| **Commands** | `sf data360 retrieve`                                         |
-| **Outcome**  | `blocked` — no files were written for this calculated insight |
+|              |                                                      |
+| ------------ | ---------------------------------------------------- |
+| **Family**   | Calculated insight                                   |
+| **Commands** | `sf data360 retrieve`                                |
+| **Outcome**  | `blocked` — no calculated insight files were written |
 
 ## What it means
 
-The plugin reads a calculated insight twice before it writes any file: once through the native Data 360 API and once through the Metadata API. This code means that step stopped for a reason that has no more specific calculated-insight code, for example an unexpected error while reading or checking the response.
-
-If Salesforce returned an error, the message carries the Salesforce detail and the request ID.
+A bare `-m calculated-insight` retrieves every calculated insight the API 68 list returns in the data space, page by page. This code means a page did not have the expected shape: no item list or total, an item without a valid `__cio` API name, the same name twice, or more pages than the plugin reads.
 
 ## Why the plugin stops
 
-Without a complete, checked read the plugin cannot know what it would write. Writing a partial or guessed pair could produce local files that do not match the org.
+Without the complete list the plugin cannot tell which calculated insights exist, so it writes none of them rather than a partial set.
 
 ## How to fix
 
 1. Make sure the target org is authenticated and reachable: `sf org display -o <alias>`.
-2. Check that the API name in `-m calculated-insight:Name__cio` is correct.
-3. Read the Salesforce detail in the message, if any, and resolve it.
-4. Rerun the retrieve.
+2. Rerun the retrieve.
+3. If it keeps failing, retrieve the calculated insights you need by name with `-m calculated-insight:Name__cio`.
 
 ## Example output
 
 ```text
 Retrieve: blocked.
-calculated-insight:ExampleInsight__cio: CI_ACQUISITION_FAILED: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
-Hint: The calculated insight could not be read and checked in the target org. Check access to the org and the API name, then rerun the retrieve.
+CI_ACQUISITION_FAILED: The selection could not be retrieved completely; no files were written.
+Hint: The calculated insight list from the target org could not be read completely. Check access to the org, then rerun the retrieve.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/CI_ACQUISITION_FAILED.md
 Downloaded calculated-insight: 0
 ```
 
 ## Related codes
 
-- [`CI_RUNTIME_UNKNOWN`](../calculated-insight/CI_RUNTIME_UNKNOWN.md) — the native read itself failed.
+- [`CI_RUNTIME_UNKNOWN`](../calculated-insight/CI_RUNTIME_UNKNOWN.md) — the read of one calculated insight failed.

@@ -1,3 +1,31 @@
+# Chunk E2b: old calculated insight pair removed, final API 65 grep — 2026-11-15
+
+Plan `sf_plugin_data_offpattern_20261114` chunk E2 (second half) and the end of chunk F.
+
+- Deleted `src/artifacts/calculated-insight-document.ts`, `src/artifacts/write-calculated-insight.ts`
+  and `test/calculated-insight-document.test.mjs` (nothing outside them imported them; the
+  name regex and error class already live in `native-calculated-insight-document.ts`).
+- Codes removed from the registry, `docs/errors/**` and the index: CI_ATTRIBUTION_UNQUALIFIED,
+  CI_CONFIGURATION_UNQUALIFIED, CI_EXPRESSION_UNQUALIFIED, CI_METADATA_MISMATCH,
+  CI_NON_EXPRESSION_CHANGE, CI_NOT_SETTLED, CI_PAIR_MISMATCH, CI_RUNTIME_PROFILE_UNQUALIFIED,
+  CI_SCHEMA_UNQUALIFIED, INVALID_CI_XML, UNKNOWN_CI_CONFIGURATION.
+- Rewritten for current behaviour: PARTIAL_CI_OUTPUT (JSON plus SQL), CI_ACQUISITION_FAILED (the
+  bare `-m calculated-insight` list), INVALID_CI_DOCUMENT (structural check of the API 68 read),
+  STANDARD_RETRIEVE_UNKNOWN (`sf api request rest` child, no CI XML retrieve); "pair" wording
+  and Metadata API reads dropped from CI_IDENTITY_CHANGED, CI_SETTLEMENT_MISMATCH,
+  CI_DELETION_UNCONFIRMED, CI_MUTATION_UNCONFIRMED, CI_PUBLICATION_UNCONFIRMED, CI_INPUT_DRIFT;
+  DEPLOY_PREVIEW_BLOCKED example uses CI_IDENTITY_CHANGED.
+- `calculated-insight-input.test.mjs` no longer uses the old writer (PARTIAL_CI_OUTPUT now on the
+  native writer; the retired XML/JSON files are hand-written and refused).
+  `calculated-insight-command.test.mjs` renamed `native-inventory-failure.test.mjs`.
+- README: removed "Calculated insight: `MktCalcInsightObjectDef`" with its Operational CI
+  (v65) research; CI table row Read is API only, "other versions refused". capabilities.md:
+  dropped the dated Segment API65 sections (2026-10-29/30) and "Internal native CI transport"
+  (2026-11-04), which described removed behaviour as current.
+- Final grep `65\.0|'65'|API ?65|v65`: no hit in `src`; remaining hits are standard CLI
+  research in README, refusal tests, user pins 61-67 on native DLO/DMO/mapping/relationship
+  and generic transport tests (list in the plan).
+
 # Chunk E2a: calculated insight deploy, publish and delete on the JSON plus SQL files — 2026-11-15
 
 Plan `sf_plugin_data_offpattern_20261114` chunk E2 (first half).

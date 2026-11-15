@@ -22,7 +22,7 @@ A response alone does not prove the change. The plugin sends each write once and
 
 1. Do not repeat the request directly.
 2. Run the same deploy with `--preview`: `unchanged` means the change is in place.
-3. Or retrieve the calculated insight and compare it with your pair.
+3. Or retrieve the calculated insight and compare it with your files.
 4. If it is still processing, wait and check again.
 
 ## Example output

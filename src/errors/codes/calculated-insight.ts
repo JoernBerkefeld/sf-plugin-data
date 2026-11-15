@@ -1,43 +1,25 @@
 /** CLI hints for Calculated insight error codes. Long-form pages: docs/errors/calculated-insight/<CODE>.md */
 export const hints: Readonly<Record<string, string>> = {
   CI_ACQUISITION_FAILED:
-    'The calculated insight could not be read and checked in the target org. Check access to the org and the API name, then rerun the retrieve.',
+    'The calculated insight list from the target org could not be read completely. Check access to the org, then rerun the retrieve.',
   CI_ADMISSION_FAILED:
     'The calculated insight file or its read from the org did not pass, so nothing was sent. Run the command with --preview, fix the file, data space or target access, then rerun.',
-  CI_ATTRIBUTION_UNQUALIFIED:
-    'A dimension or measure in the org is attributed to a source field the artifact cannot hold. Nothing was written; this calculated insight cannot be retrieved by the plugin.',
-  CI_CONFIGURATION_UNQUALIFIED:
-    'The calculated insight settings, such as its schedule, are outside what the plugin supports here. Nothing was written or sent; writes need NOT_SCHEDULED and the other fields as retrieved.',
   CI_DELETION_UNCONFIRMED:
     'The DELETE was sent but the plugin could not confirm the calculated insight is gone. Do not resend; check the org, then rerun the delete to confirm absence.',
-  CI_EXPRESSION_UNQUALIFIED:
-    'The calculated insight SQL is not one of the expressions the plugin supports. Nothing was written or sent; this calculated insight cannot be handled by the plugin.',
   CI_IDENTITY_CHANGED:
-    'The calculated insight in the org has a different API name or data space than selected. Nothing was written or sent; check the selector and the pair, then rerun.',
+    'The calculated insight in the org has a different API name or data space than selected. Nothing was written or sent; check the selector and the JSON file, then rerun.',
   CI_INPUT_DRIFT:
     'The delete options changed while the command was running, so nothing was deleted. Rerun the delete once with the intended flags.',
-  CI_METADATA_MISMATCH:
-    'The native and Metadata API definitions of the calculated insight disagree on label, SQL or type. Nothing was written or sent; wait for the org to settle and rerun.',
   CI_MUTATION_UNCONFIRMED:
     'The deploy request was sent but the plugin could not confirm the result. Do not resend; preview or retrieve the calculated insight to see its state first.',
-  CI_NON_EXPRESSION_CHANGE:
-    'The pair changes more than the SQL expression of an existing calculated insight. Only the expression can be updated; set the other fields back to the org values.',
   CI_NOT_FOUND:
     'The calculated insight does not exist in the target org. Check the API name and the target org, then rerun the retrieve.',
-  CI_NOT_SETTLED:
-    'The calculated insight is in a status the plugin cannot use here, such as deleting or an error. Wait until it is ACTIVE or DRAFT, then rerun.',
-  CI_PAIR_MISMATCH:
-    'The XML and JSON files of the calculated insight pair do not match in name, label, SQL or type. Retrieve the pair again so both files agree.',
   CI_PUBLICATION_UNCONFIRMED:
     'The publish request was sent but the plugin could not confirm the calculated insight is ACTIVE. Do not resend; run publish with --preview to check its state.',
-  CI_RUNTIME_PROFILE_UNQUALIFIED:
-    'The calculated insight is packaged or has run, schedule or source details the plugin cannot handle for this command. Nothing was written or sent; manage it in Data 360.',
   CI_RUNTIME_UNKNOWN:
     'The calculated insight could not be read from the org, and the answer was not a clear not-found. Check access and the API name, then rerun.',
-  CI_SCHEMA_UNQUALIFIED:
-    'The dimensions or measures of the calculated insight do not match its supported SQL. Nothing was written or sent; this calculated insight cannot be handled as is.',
   CI_SETTLEMENT_MISMATCH:
-    'After the write, the calculated insight in the org differs from the pair that was sent. Do not resend; retrieve it and compare before another attempt.',
+    'After the write, the calculated insight in the org differs from the files that were sent. Do not resend; retrieve it and compare before another attempt.',
   CI_SETTLEMENT_TIMEOUT:
     'The calculated insight did not reach the expected state within 120 seconds after the write. Do not resend; check later and rerun the same command to confirm.',
   CI_UNEXPECTED_ABSENCE:
@@ -45,15 +27,11 @@ export const hints: Readonly<Record<string, string>> = {
   CI_UNEXPECTED_STATE:
     'After the write, the calculated insight moved to an unexpected status. Do not resend; check its status in Data 360 before another attempt.',
   INVALID_CI_DOCUMENT:
-    'The calculated insight JSON is not a valid document: wrong shape, name, data space or text. Retrieve the pair again instead of editing its structure.',
+    'The calculated insight document lacks its API name, data space or SQL, or is not a JSON object. Retrieve the calculated insight again.',
   INVALID_CI_NAME:
     'The calculated insight API name is not valid. Use the full API name that starts with a letter and ends in __cio, for example ExampleInsight__cio.',
   INVALID_CI_SCOPE:
     'The calculated insight request used an unsupported API version, data space or option. Use --api-version auto or 68.0 and the default data space.',
-  INVALID_CI_XML:
-    'The calculated insight XML is malformed or has elements the plugin does not support. Retrieve the pair again; only creationType, expression and masterLabel are allowed.',
   PARTIAL_CI_OUTPUT:
-    'Only part of the calculated insight pair was written to disk. Check both files, then rerun the retrieve with --overwrite to write a matching pair.',
-  UNKNOWN_CI_CONFIGURATION:
-    'The calculated insight has fields that are missing or unknown to the plugin. Nothing was written or sent; retrieve the pair again and do not add or remove fields.',
+    'Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve with --overwrite.',
 };

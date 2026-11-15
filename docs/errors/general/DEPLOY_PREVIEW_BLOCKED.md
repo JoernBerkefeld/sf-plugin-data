@@ -28,9 +28,9 @@ A preview is a dry run of every check the deploy would make. Reporting `blocked`
 Deploy preview: blocked (DEPLOY_PREVIEW_BLOCKED). No deployment executed.
 Planned unchanged: dmo:Customer__dlm.
 Planned blocked: calculated-insight:Lifetime_Value__cio.
-CI_NON_EXPRESSION_CHANGE: <message from the calculated insight checks>
-Hint: The pair changes more than the SQL expression of an existing calculated insight. Only the expression can be updated; set the other fields back to the org values.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/CI_NON_EXPRESSION_CHANGE.md
+CI_IDENTITY_CHANGED: <message from the calculated insight checks>
+Hint: The calculated insight in the org has a different API name or data space than selected. Nothing was written or sent; check the selector and the JSON file, then rerun.
+Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/CI_IDENTITY_CHANGED.md
 DEPLOY_PREVIEW_BLOCKED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Preview did not complete. Check explicit authored inputs, target authentication and supported scope. No deployment executed.
 Hint: The preview found at least one item that a deploy would refuse. Read the item lines above for the reason and fix it before running the deploy without --preview.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/DEPLOY_PREVIEW_BLOCKED.md

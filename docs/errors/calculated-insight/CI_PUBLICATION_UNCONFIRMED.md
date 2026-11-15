@@ -21,7 +21,7 @@ A response alone does not prove the publication. The plugin does not resend the 
 ## How to fix
 
 1. Do not repeat the request directly.
-2. Run `sf data360 publish --source-dir <pair member> --preview`: `unchanged` means it is ACTIVE.
+2. Run `sf data360 publish -m calculated-insight:Name__cio --preview`: `unchanged` means it is ACTIVE.
 3. If it is still processing, wait and check again.
 
 ## Example output

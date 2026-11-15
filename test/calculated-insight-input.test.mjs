@@ -7,8 +7,6 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, readFile, link, unlink, rename, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { validateCalculatedInsightPair } from '../lib/artifacts/calculated-insight-document.js';
-import { writeCalculatedInsightDocument } from '../lib/artifacts/write-calculated-insight.js';
 import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import {
   readDeployInputs,
@@ -17,70 +15,17 @@ import {
   isSupportedDeployInput,
 } from '../lib/artifacts/read-deploy-input.js';
 import { selectGitDeployInputs } from '../lib/artifacts/git-deploy-selection.js';
-// eslint-disable-next-line unicorn/no-null -- Qualified synthetic CI configuration preserves wire null.
+// eslint-disable-next-line unicorn/no-null -- The file form keeps the wire null as returned.
 const wireNull = null;
 const table = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${table}.ssot__DeviceId__c`;
 const application = `${table}.ssot__SoftwareApplicationId__c`;
-const candidate = () => ({
-  schemaVersion: 1,
-  kind: 'calculated-insight',
-  identity: { dataSpace: 'default', apiName: 'SyntheticInsight__cio' },
-  spec: {
-    displayName: 'Synthetic insight',
-    expression: `SELECT APPROX_COUNT_DISTINCT(${device}) AS device_count__c, ${application} AS app_id__c FROM ${table} WHERE 1 = 0 GROUP BY ${application}`,
-    creationType: 'Custom',
-    definitionType: 'CALCULATED_METRIC',
-    definitionStatus: 'IN_USE',
-    description: wireNull,
-    isEnabled: true,
-    subType: wireNull,
-    publishScheduleInterval: 'SYSTEM_MANAGED',
-    publishScheduleStartDateTime: wireNull,
-    publishScheduleEndDate: wireNull,
-    dimensions: [
-      {
-        apiName: 'app_id__c',
-        creationType: 'Custom',
-        dataType: 'Text',
-        dateGranularity: wireNull,
-        displayName: 'app_id',
-        fieldRole: 'DIMENSION',
-        formula: application,
-      },
-    ],
-    measures: [
-      {
-        apiName: 'device_count__c',
-        creationType: 'Custom',
-        dataType: 'Number',
-        displayName: 'device_count',
-        fieldAggregationType: 'NONAGGREGATABLE',
-        fieldRole: 'MEASURE',
-        formula: `APPROX_COUNT_DISTINCT(${device})`,
-      },
-    ],
-    dependencies: [
-      {
-        kind: 'dmo',
-        dataSpace: 'default',
-        apiName: table,
-        fields: ['ssot__DeviceId__c', 'ssot__SoftwareApplicationId__c'],
-      },
-    ],
-  },
-});
-const escape = (value) =>
-  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-const xml = (value = candidate()) =>
-  `<MktCalcInsightObjectDef xmlns="http://soap.sforce.com/2006/04/metadata"><creationType>Custom</creationType><expression>${escape(value.spec.expression)}</expression><masterLabel>${escape(value.spec.displayName)}</masterLabel></MktCalcInsightObjectDef>\n`;
+const expression = `SELECT APPROX_COUNT_DISTINCT(${device}) AS device_count__c, ${application} AS app_id__c FROM ${table} WHERE 1 = 0 GROUP BY ${application}`;
 const root = async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-pair-test-'));
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-input-test-'));
   await writeFile(path.join(cwd, '.run-owner'), randomUUID());
   return cwd;
 };
-const putPair = async (cwd, value = candidate(), publish) =>
-  writeCalculatedInsightDocument(value, xml(value), cwd, false, publish);
 /**
  * The JSON-plus-SQL file form of the qualified test insight.
  * @returns {object} File document.
@@ -91,11 +36,11 @@ const native = () => ({
   definitionType: 'CALCULATED_METRIC',
   description: wireNull,
   displayName: 'Synthetic insight',
-  expression: candidate().spec.expression,
+  expression,
   publishScheduleInterval: 'SYSTEM_MANAGED',
 });
-const put = async (cwd, value = native()) =>
-  writeNativeCalculatedInsightDocument(value, cwd, false);
+const put = async (cwd, value = native(), publication) =>
+  writeNativeCalculatedInsightDocument(value, cwd, false, publication);
 const json = (cwd) =>
   path.join(
     cwd,
@@ -110,60 +55,6 @@ const sql = (cwd) =>
     'calculatedInsights',
     'SyntheticInsight__cio.calculatedInsight-meta.sql',
   );
-
-test('CI pair correlates exact member SQL and label without SOAP fullName', () => {
-  assert.deepEqual(
-    validateCalculatedInsightPair(candidate(), xml(), 'SyntheticInsight'),
-    candidate(),
-  );
-  for (const content of [
-    xml().replace('<creationType>', '<unknown>'),
-    xml().replace('</creationType>', '</creationType><creationType>Custom</creationType>'),
-    xml().replace(
-      '</MktCalcInsightObjectDef>',
-      '<fullName>SyntheticInsight</fullName></MktCalcInsightObjectDef>',
-    ),
-    xml().replace('WHERE 1 = 0', 'WHERE 1 = 1'),
-    xml().replace('Synthetic insight', 'Different'),
-    `<!DOCTYPE x>${xml()}`,
-    xml().replace('Custom', '&#0;'),
-    xml().replace('Custom', '&#xD800;'),
-  ])
-    assert.throws(() => validateCalculatedInsightPair(candidate(), content, 'SyntheticInsight'));
-  assert.throws(() => validateCalculatedInsightPair(candidate(), xml(), 'Wrong'));
-  for (const character of ['\uFFFE', '\uFFFF', '\uD800', '\uDC00']) {
-    const value = candidate();
-    value.spec.displayName += character;
-    assert.throws(() => validateCalculatedInsightPair(value, xml(value), 'SyntheticInsight'));
-  }
-  const value = candidate();
-  value.spec.displayName = 'A & B < C';
-  assert.deepEqual(validateCalculatedInsightPair(value, xml(value), 'SyntheticInsight'), value);
-});
-
-test('CI writer publishes canonical configured pair byte-stably and refuses clobber', async () => {
-  const cwd = await root();
-  await writeFile(
-    path.join(cwd, 'sfdx-project.json'),
-    JSON.stringify({ packageDirectories: [{ path: 'custom', default: true }] }),
-  );
-  const receipt = await putPair(cwd);
-  assert.equal(
-    receipt.path,
-    path.join(
-      cwd,
-      'custom/main/default/mktCalcInsightObjectDefs/SyntheticInsight.mktCalcInsightObjectDef-meta.xml',
-    ),
-  );
-  assert.equal(await readFile(receipt.path, 'utf8'), xml());
-  const repeated = await putPair(cwd);
-  assert.equal(repeated.outcome, 'unchanged');
-  const changed = candidate();
-  changed.spec.displayName = 'Changed';
-  await assert.rejects(putPair(cwd, changed), { code: 'OVERWRITE_REQUIRED' });
-  const updated = await writeCalculatedInsightDocument(changed, xml(changed), cwd, true);
-  assert.equal(updated.outcome, 'retrieved');
-});
 
 for (const member of ['path', 'companionPath']) {
   const label = member === 'path' ? 'JSON' : 'SQL';
@@ -264,9 +155,20 @@ test('CI files outside data360/calculatedInsights and the old XML/JSON pair are 
   await assert.rejects(readDeployInputs({ cwd, sourceDir: [moved] }), {
     code: 'INVALID_SELECTION',
   });
+  // The retired XML plus JSON form is recognised nowhere.
   const old = await root();
-  const receipt = await putPair(old);
-  for (const file of [receipt.path, receipt.companionPath])
+  const retired = [
+    path.join(
+      old,
+      'force-app/main/default/mktCalcInsightObjectDefs/SyntheticInsight.mktCalcInsightObjectDef-meta.xml',
+    ),
+    path.join(old, 'data360/calculatedInsights/SyntheticInsight__cio.calculatedInsight.json'),
+  ];
+  for (const file of retired) {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, file.endsWith('.xml') ? '<MktCalcInsightObjectDef/>' : '{}');
+  }
+  for (const file of retired)
     await assert.rejects(readDeployInputs({ cwd: old, sourceDir: [file] }));
   await assert.rejects(
     readDeployInputs({ cwd: old, metadata: ['calculated-insight:SyntheticInsight__cio'] }),
@@ -278,20 +180,14 @@ test('CI publication failure and changed first member report partial output', as
     const cwd = await root();
     let calls = 0;
     await assert.rejects(
-      putPair(cwd, candidate(), {
+      put(cwd, native(), {
         rename,
         unlink,
         link: async (from, to) => {
           calls++;
           if (calls === 2) {
             if (!drift) throw new Error('synthetic');
-            await writeFile(
-              path.join(
-                path.dirname(path.dirname(path.dirname(to))),
-                'mktCalcInsightObjectDefs/SyntheticInsight.mktCalcInsightObjectDef-meta.xml',
-              ),
-              'changed',
-            );
+            await writeFile(json(cwd), 'changed');
           }
           await link(from, to);
         },

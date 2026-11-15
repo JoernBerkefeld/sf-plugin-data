@@ -26,7 +26,7 @@ A delete is not reversible. The plugin deletes only when the request is exactly 
 ```text
 Delete: blocked.
 Blocked: calculated-insight:ExampleInsight__cio; mutation: not-attempted.
-CI_INPUT_DRIFT: CI deletion was not attempted; paired input, scope, ownership, dependencies or intent are unqualified.
+CI_INPUT_DRIFT: CI deletion was not attempted.
 Hint: The delete options changed while the command was running, so nothing was deleted. Rerun the delete once with the intended flags.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/CI_INPUT_DRIFT.md
 ```

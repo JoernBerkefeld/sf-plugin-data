@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin sent one DELETE for the calculated insight, then read the org again (native and Metadata API, at most 12 reads one second apart, within 120 seconds) to prove that it is gone. This code means that proof did not succeed: the reads timed out, failed, or showed an unexpected state.
+The plugin sent one DELETE for the calculated insight, then read the org again (API 68 GET, at most 12 reads one second apart, within 120 seconds) to prove that it is gone. This code means that proof did not succeed: the reads timed out, failed, or showed an unexpected state.
 
 The calculated insight may or may not have been deleted.
 
