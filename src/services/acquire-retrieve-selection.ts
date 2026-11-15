@@ -66,6 +66,8 @@ const unbounded = Object.freeze({
  * @param {object} [injected] Service overrides; the command supplies its native DMO read.
  * @param {Function} [onFailure] Receives each component that could not be acquired; the others
  * are still acquired. Without it, the first failure is thrown.
+ * @param {Function} [onWarning] Receives a warning for each Segment whose DMO could not be bound;
+ * the Segment is still retrieved (retrieve checks prerequisites, it never refuses on them).
  * @returns {Promise<RetrieveSelectionEntry[]>} Acquired selection, referenced DMOs first.
  */
 export async function acquireRetrieveSelection(
@@ -74,6 +76,7 @@ export async function acquireRetrieveSelection(
   version: ApiVersionSelection,
   injected?: Partial<RetrieveServices>,
   onFailure?: (error: RetrieveSelectionError) => void,
+  onWarning?: (message: string) => void,
 ): Promise<RetrieveSelectionEntry[]> {
   const services: RetrieveServices = {
     segment: retrieveSegment,
@@ -105,6 +108,7 @@ export async function acquireRetrieveSelection(
           identity.apiName,
           version,
           identity.dataSpace,
+          'retrieve',
         );
         read = carriedNativeResponse(acquired);
         if (acquired.blockers.length > 0 || !acquired.candidate)
@@ -134,21 +138,33 @@ export async function acquireRetrieveSelection(
       entries.set(key, entry);
       nodes.set(key, node);
       if (entry.document.kind === 'segment') {
-        await services.bind(
-          entry.document,
-          connection,
-          version,
-          identity.dataSpace,
-          async (name) => {
-            const rawKey = dependencyKey({
-              kind: 'dmo',
-              dataSpace: identity.dataSpace,
-              apiName: name,
-            });
-            if (!raw.has(rawKey)) raw.set(rawKey, services.raw(name));
-            return raw.get(rawKey)!;
-          },
-        );
+        const segmentOn = entry.document.spec.segmentOn.apiName;
+        try {
+          await services.bind(
+            entry.document,
+            connection,
+            version,
+            identity.dataSpace,
+            async (name) => {
+              const rawKey = dependencyKey({
+                kind: 'dmo',
+                dataSpace: identity.dataSpace,
+                apiName: name,
+              });
+              if (!raw.has(rawKey)) raw.set(rawKey, services.raw(name));
+              return raw.get(rawKey)!;
+            },
+            'retrieve',
+          );
+        } catch (error: unknown) {
+          // A prerequisite that cannot be bound is a warning on retrieve: the file is still
+          // written, and deploy binds the DMO in the target org again.
+          const code =
+            error instanceof SegmentError ? error.code : 'SEGMENT_DEPENDENCY_ACQUISITION_FAILED';
+          onWarning?.(
+            `segment:${identity.apiName}: its DMO ${segmentOn} could not be checked (${code}); the segment was retrieved anyway, and deploy needs that DMO in the target org.`,
+          );
+        }
       }
     } catch (error: unknown) {
       // A component that failed after its node was built (its binding) is left out entirely.

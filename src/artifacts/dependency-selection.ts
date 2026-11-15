@@ -80,14 +80,14 @@ export function documentDependencyNode(
     };
   }
   if (value.kind === 'identity-resolution') {
-    const document = validateIdentityResolutionDocument(value);
+    const document = validateIdentityResolutionDocument(value, mode);
     return {
       identity: { kind: 'identity-resolution', ...document.identity },
       dependencies: document.spec.reconciliationRules.map(({ entity }) => ({ ...entity })),
     };
   }
   if (value.kind === 'segment') {
-    const document = validateSegmentDocument(value);
+    const document = validateSegmentDocument(value, mode);
     const { kind, dataSpace, apiName } = document.spec.segmentOn;
     return {
       identity: { kind: 'segment', ...document.identity },

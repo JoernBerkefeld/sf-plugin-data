@@ -110,17 +110,31 @@ test('an explicitly selected DMO precedes its Segments in either selector order 
     assert.equal(calls.raw.length, 1);
   }
 });
-test('a missing or incompatible Segment prerequisite blocks and names the selected Segment', async () => {
+// Lenient retrieve step 6: a prerequisite that cannot be bound was a refusal; retrieve now
+// writes the Segment and warns (deploy still binds and refuses).
+test('a missing or incompatible Segment prerequisite is a warning naming the Segment; a failing DMO read still fails', async () => {
   const { calls, services } = fixtures();
   services.bind = async () => {
     throw new SegmentError('SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
   };
-  await assert.rejects(acquireRetrieveSelection(roots, {}, version, services), (error) => {
-    assert.equal(error.code, 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
-    assert.deepEqual(error.identity, roots[0]);
-    assert.equal('reason' in error, false);
-    return true;
-  });
+  const warnings = [];
+  const selected = await acquireRetrieveSelection(
+    roots,
+    {},
+    version,
+    services,
+    () => assert.fail('no failure'),
+    (warning) => warnings.push(warning),
+  );
+  assert.deepEqual(
+    selected.map(({ document }) => document.identity.apiName),
+    ['Alpha', 'Zulu'],
+  );
+  assert.equal(warnings.length, 2);
+  assert.match(
+    warnings[0],
+    /^segment:Zulu: its DMO Person__dlm could not be checked \(SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING\)/u,
+  );
   // The referenced DMO is checked, never acquired for publication.
   assert.deepEqual(calls.dmo, []);
   const fresh = fixtures().services;
@@ -149,10 +163,19 @@ test('the source binder reads the segmentOn DMO by exact name; its kind is not j
   assert.equal(selected.length, 2);
   assert.doesNotMatch(JSON.stringify(selected), /private-source-id/u);
   services.raw = async () => ({ name: 'Other__dlm', id: 'x' });
-  await assert.rejects(
-    acquireRetrieveSelection(roots, { getApiVersion: () => '68.0' }, version, services),
-    { code: 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING' },
+  // Lenient retrieve step 6: another DMO was a refusal; it is now a warning per Segment.
+  const warnings = [];
+  const kept = await acquireRetrieveSelection(
+    roots,
+    { getApiVersion: () => '68.0' },
+    version,
+    services,
+    undefined,
+    (warning) => warnings.push(warning),
   );
+  assert.equal(kept.length, 2);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING/u);
 });
 test('unknown closure and foreign identities fail; retrieve has no node or request cap', async () => {
   let { services } = fixtures();
@@ -203,6 +226,7 @@ test('one failing DMO or Segment is reported alone; the others are still acquire
     return bind(value, ...rest);
   };
   const failures = [];
+  const warnings = [];
   const selected = await acquireRetrieveSelection(
     [
       identity('dmo', 'Broken__dlm'),
@@ -215,16 +239,19 @@ test('one failing DMO or Segment is reported alone; the others are still acquire
     version,
     services,
     (error) => failures.push([error.identity.apiName, error.code]),
+    (warning) => warnings.push(warning),
   );
+  // Lenient retrieve step 6: Bravo's unbound prerequisite was a failure; now a warning.
   assert.deepEqual(
     selected.map(({ document }) => document.identity.apiName),
-    ['Person__dlm', 'Alpha'],
+    ['Person__dlm', 'Alpha', 'Bravo'],
   );
   assert.deepEqual(failures, [
     ['Broken__dlm', 'DMO_HTTP_ERROR'],
     ['Zulu', 'SOURCE_UNAVAILABLE'],
-    ['Bravo', 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING'],
   ]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^segment:Bravo: .*SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING/u);
 });
 test('explicitly selected standard or generated DMOs are retrieved; a Segment alone never acquires its DMO', async () => {
   for (const creationType of ['Standard', 'System']) {
@@ -322,7 +349,9 @@ test('selection wrappers retain Segment and DMO evidence into human and JSON dia
   }
 });
 
-test('unexpected acquisition failure is sanitized and prevents every output', async () => {
+// Lenient retrieve step 6: an unreadable prerequisite blocked the Segment; it is now written
+// with a sanitized warning.
+test('an unexpected prerequisite read failure is a sanitized warning; the Segment is written', async () => {
   const previous = process.exitCode;
   try {
     const command = Object.create(Retrieve.prototype);
@@ -335,14 +364,23 @@ test('unexpected acquisition failure is sanitized and prevents every output', as
     services.raw = async () => {
       throw new Error('private-response-payload');
     };
-    command.acquireSelection = (selected, conn, selection) =>
-      acquireRetrieveSelection(selected, conn, selection, services);
-    command.writeSegment = () => assert.fail('no output');
+    command.acquireSelection = (selected, conn, selection, supplied, ...rest) =>
+      acquireRetrieveSelection(selected, conn, selection, services, ...rest);
+    const written = [];
+    command.writeSegment = async (document) => {
+      written.push(document.identity.apiName);
+      return { path: 'synthetic.segment.json', codePaths: [], outcome: 'retrieved' };
+    };
     command.writeNativeDmo = () => assert.fail('no output');
     const result = await command.run();
-    assert.equal(result.status, 'failed');
-    assert.equal(result.diagnostics.errors[0].code, 'DEPENDENCY_ACQUISITION_FAILED');
-    assert.equal(result.diagnostics.errors[0].identity.apiName, 'Zulu');
+    assert.equal(result.status, 'success');
+    assert.deepEqual(written, ['Zulu']);
+    assert.deepEqual(result.diagnostics.errors, []);
+    assert.equal(result.diagnostics.warnings.length, 1);
+    assert.match(
+      result.diagnostics.warnings[0],
+      /^segment:Zulu: its DMO Person__dlm could not be checked \(SEGMENT_DEPENDENCY_ACQUISITION_FAILED\)/u,
+    );
     assert.equal('dependencies' in result.result, false);
     assert.doesNotMatch(JSON.stringify(result), /private-response-payload/u);
   } finally {
@@ -546,7 +584,9 @@ test('a DMO beside a Segment keeps the Segment version rule and a failed DMO out
     process.exitCode = previous;
   }
 });
-test('a missing Segment prerequisite blocks the command before any file is written', async () => {
+// Lenient retrieve step 6: a missing prerequisite blocked the command; the Segment is now
+// written with a warning.
+test('a missing Segment prerequisite is a warning; the Segment and the DMO are written', async () => {
   const previous = process.exitCode;
   try {
     const command = Object.create(Retrieve.prototype);
@@ -559,23 +599,33 @@ test('a missing Segment prerequisite blocks the command before any file is writt
       getConnection: () => ({ getUsername: () => 'synthetic-user' }),
     });
     command.createDmoClient = () => ({ get: async (name) => dmo(name) });
-    command.acquireSelection = (selected, conn, selection, supplied) =>
-      acquireRetrieveSelection(selected, conn, selection, {
-        ...fixtures().services,
-        ...supplied,
-        bind: async () => {
-          throw new SegmentError('SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
+    command.acquireSelection = (selected, conn, selection, supplied, ...rest) =>
+      acquireRetrieveSelection(
+        selected,
+        conn,
+        selection,
+        {
+          ...fixtures().services,
+          ...supplied,
+          bind: async () => {
+            throw new SegmentError('SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
+          },
         },
-      });
-    command.writeNativeDmo = command.writeSegment = () => assert.fail('no publication');
+        ...rest,
+      );
+    const written = [];
+    command.writeNativeDmo = command.writeSegment = async (document) => {
+      written.push(document.identity.apiName);
+      return { path: 'synthetic.json', outcome: 'retrieved' };
+    };
     const result = await command.run();
-    assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
-    assert.deepEqual(result.diagnostics.errors[0].identity, {
-      dataSpace: 'default',
-      apiName: 'Zulu',
-    });
-    assert.deepEqual(result.result.items, []);
+    assert.equal(result.status, 'success');
+    assert.deepEqual(written, ['Other__dlm', 'Zulu']);
+    assert.deepEqual(result.diagnostics.errors, []);
+    assert.match(
+      result.diagnostics.warnings.join('\n'),
+      /segment:Zulu: .*SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING/u,
+    );
   } finally {
     process.exitCode = previous;
   }

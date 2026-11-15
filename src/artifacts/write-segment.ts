@@ -134,11 +134,12 @@ export async function writeSegmentDocument(
 ): Promise<{ path: string; codePaths: string[]; outcome: 'retrieved' | 'unchanged' }> {
   // A verbatim segment is its JSON alone; every SQL file of that segment is then stale.
   const verbatim = isVerbatimDocument(value, 'segment') ? value : undefined;
-  const strict = verbatim ? undefined : validateSegmentDocument(value);
+  // Retrieve writes keep what the plugin does not model; deploy refuses such a file.
+  const strict = verbatim ? undefined : validateSegmentDocument(value, 'retrieve');
   const document = verbatim ?? strict!;
   const { json, files: code } = verbatim
     ? { json: serializeVerbatimDocument(verbatim), files: [] }
-    : serializeSegmentFiles(strict!);
+    : serializeSegmentFiles(strict!, 'retrieve');
   if (!projectRoot.trim()) throw new SegmentError('UNSAFE_PATH');
   const root = path.resolve(projectRoot);
   let published = 0;
@@ -222,6 +223,7 @@ export async function writeSegmentDocument(
       joinSegmentFiles(
         JSON.parse(completed[0]!.toString('utf8')),
         code.map((file, index) => ({ ...file, text: completed[index + 1]!.toString('utf8') })),
+        'retrieve',
       );
     return { path: files[0], codePaths, outcome: 'retrieved' };
   } catch (error: unknown) {

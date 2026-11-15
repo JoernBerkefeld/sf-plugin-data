@@ -1,35 +1,34 @@
 # `UNKNOWN_SEGMENT_CONFIGURATION`
 
-> The segment has fields or settings the plugin does not know, so saving it could lose them. Only segments with the supported set of settings can be retrieved.
+> The segment has a setting the plugin does not know, or misses one. Retrieve keeps unknown settings in the file; deploy refuses them and names the key. Remove the key, or manage the segment in Data Cloud.
 
-|              |                                                  |
-| ------------ | ------------------------------------------------ |
-| **Family**   | Segment                                          |
-| **Commands** | `sf data360 retrieve`                            |
-| **Outcome**  | `blocked` — nothing was written for this segment |
+|              |                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------ |
+| **Family**   | Segment                                                                              |
+| **Commands** | `sf data360 deploy`, `sf data360 retrieve`                                           |
+| **Outcome**  | deploy: `blocked` for the file; retrieve: the segment is written (normally or as-is) |
 
 ## What it means
 
-The segment read from the org has a field the plugin does not know, misses a field it requires, or has an audit or membership field in an unexpected shape.
+On deploy, the `.segment.json` file has a key the plugin does not send, or misses one it needs. The message names the key path, for example `spec.futureSetting` or `spec.models[0].futureModelKey`.
+
+Retrieve keeps a setting the plugin does not know: an unknown key of the segment goes into `spec` after the known keys, extra keys of `includeDbt` into `spec.includeDbt`, extra model keys stay on the model. Observed fields (audit, status, membership tables) are not checked on retrieve. A segment without its DBT configuration is written as-is (`UNSUPPORTED_SEGMENT_VARIANT`).
 
 ## Why the plugin stops
 
-The file holds only the settings the plugin knows. Dropping an unknown setting silently could change the segment the next time it is deployed.
+Deploy sends only the settings the plugin knows. Sending the file without an unknown setting could change the segment, so the plugin refuses it.
 
 ## How to fix
 
-1. Compare the segment with the supported shape: a SQL (DBT) segment on one DMO, without refresh schedule, with a 90-day lookback.
-2. Remove the extra setting in the org if you can, then retrieve again.
-3. Otherwise this segment cannot be retrieved with the plugin.
+1. Read the key path in the message.
+2. Remove that key from the file if the setting may be dropped, or manage the segment in Data Cloud.
+3. Deploy again.
 
 ## Example output
 
 ```text
-Retrieve: blocked.
-segment:Example_Segment: UNKNOWN_SEGMENT_CONFIGURATION: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
-Hint: The segment has fields or settings the plugin does not know, so saving it could lose them. Only segments with the supported set of settings can be retrieved.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/segment/UNKNOWN_SEGMENT_CONFIGURATION.md
-Downloaded segment: 0
+Deploy execution: blocked (INVALID_SOURCE). No automatic retry or rollback performed.
+INVALID_SOURCE: The segment file cannot be deployed: spec.futureSetting is not a key a segment file can hold. Correct the file, or retrieve the segment again once the plugin supports it.
 ```
 
 ## Related codes

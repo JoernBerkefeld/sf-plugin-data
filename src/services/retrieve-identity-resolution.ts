@@ -12,6 +12,7 @@ import type {
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { carryNativeResponse } from '../artifacts/verbatim-document.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 
 export type IdentityResolutionAcquisition = {
   identity: IdentityResolutionDocument['identity'];
@@ -26,6 +27,7 @@ export type IdentityResolutionAcquisition = {
  * @param {string} apiName Exact exposed owner objectApiName, including its actual suffix.
  * @param {ApiVersionSelection} apiVersion Explicit frozen native version selection.
  * @param {string} dataSpace Requested default data space.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps what the plugin does not model).
  * @returns {Promise<IdentityResolutionAcquisition>} Candidate and private correlation expectations.
  */
 export async function retrieveIdentityResolution(
@@ -33,6 +35,7 @@ export async function retrieveIdentityResolution(
   apiName: string,
   apiVersion: ApiVersionSelection,
   dataSpace: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<IdentityResolutionAcquisition> {
   const version = '68.0';
   if (
@@ -54,7 +57,7 @@ export async function retrieveIdentityResolution(
       `/services/data/v68.0/ssot/identity-resolutions/${apiName}`,
     );
     read = { native };
-    const projection = projectNativeIdentityResolution(native, apiName);
+    const projection = projectNativeIdentityResolution(native, apiName, mode);
     carryNativeResponse(projection.candidate, native);
     return carryNativeResponse({ identity, ...projection, blockers: [] }, native);
   } catch (error: unknown) {

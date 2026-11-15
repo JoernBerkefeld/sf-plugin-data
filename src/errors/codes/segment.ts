@@ -3,7 +3,7 @@ export const hints: Readonly<Record<string, string>> = {
   INCOMPLETE_SEGMENT:
     'The segment read finished without a usable definition and without a more specific reason. Rerun the retrieve; if it repeats, read the segment directly with the API.',
   INVALID_SEGMENT_DOCUMENT:
-    'A segment value is not plain text the plugin can save: missing, empty, too long or with control characters, the models are not a list of name and SQL, or a model name cannot name a SQL file. Correct it, then rerun.',
+    'A segment value is not text the plugin can send (missing, empty, too long, control characters), the models are not a list, or a model name cannot name a SQL file. Retrieve writes such a segment as-is; fix the file for deploy.',
   INVALID_SEGMENT_RESPONSE:
     'Salesforce answered the segment read in a shape the plugin does not expect (not exactly one segment). Rerun the retrieve; if it repeats, inspect the raw API response.',
   PARTIAL_SEGMENT_OUTPUT:
@@ -45,9 +45,9 @@ export const hints: Readonly<Record<string, string>> = {
   SEGMENT_UPDATE_UNCONFIRMED:
     'The segment update was sent, but its result could not be confirmed. Inspect the segment in the org before deploying again; the plugin does not retry.',
   UNKNOWN_SEGMENT_CONFIGURATION:
-    'The segment has fields or settings the plugin does not know, so saving it could lose them. Only segments with the supported set of settings can be retrieved.',
+    'The segment has a setting the plugin does not know, or misses one. Retrieve keeps unknown settings in the file; deploy refuses them and names the key. Remove the key, or manage the segment in Data Cloud.',
   UNSUPPORTED_SEGMENT_VARIANT:
-    'This kind of segment is not supported. Only SQL (DBT) segments on a DMO with no refresh schedule, a 90-day lookback and no parameters can be saved.',
+    'Only SQL (DBT) segments on a DMO without refresh schedule, with a 90-day lookback and no parameters fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.',
   UNSUPPORTED_SEGMENT_XML:
     "Segment XML files cannot be deployed. Select the segment's .segment.json file instead; retrieve one with sf data360 retrieve -m segment:Name if you do not have it.",
 };

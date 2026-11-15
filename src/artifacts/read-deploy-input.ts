@@ -95,7 +95,7 @@ export class DeployInputError extends Error {
 }
 
 /**
- * Refuse an unusable DLO, DMO, mapping, relationship, data stream or data transform file, keeping the validator's explanation of the offending key.
+ * Refuse an unusable DLO, DMO, mapping, relationship, data stream, data transform, segment or identity resolution file, keeping the validator's explanation of the offending key.
  * @param {unknown} error Validator refusal.
  * @returns {DeployInputError} INVALID_SOURCE refusal.
  */
@@ -569,8 +569,8 @@ async function readIdentityResolutionInput(file: string): Promise<IdentityResolu
   try {
     document = validateIdentityResolutionDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error: unknown) {
+    throw invalidSource(error);
   }
   const after = await memberBytes(file);
   if (!after.equals(bytes)) refuse();
@@ -833,8 +833,8 @@ async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput>
       })),
     );
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error: unknown) {
+    throw invalidSource(error);
   }
   for (const [index, member] of members.entries()) {
     const after = await memberBytes(member);

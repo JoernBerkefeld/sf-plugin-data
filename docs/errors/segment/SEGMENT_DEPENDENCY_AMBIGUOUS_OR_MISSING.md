@@ -2,15 +2,15 @@
 
 > The DMO this segment is built on (spec.segmentOn) was not returned under that exact name. Create the DMO in the target org or fix the name in the file, then rerun.
 
-|              |                                            |
-| ------------ | ------------------------------------------ |
-| **Family**   | Segment                                    |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` |
-| **Outcome**  | `blocked` — nothing was changed            |
+|              |                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **Family**   | Segment                                                                                    |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`                                                 |
+| **Outcome**  | deploy: `blocked` — nothing was changed; retrieve: a warning, the segment is still written |
 
 ## What it means
 
-The API 68 read of the DMO named in `spec.segmentOn` answered, but not with a DMO of exactly that name and an ID.
+The API 68 read of the DMO named in `spec.segmentOn` answered, but not with a DMO of exactly that name and an ID. On retrieve this is only a warning naming the code; the segment file is written anyway.
 
 ## Why the plugin stops
 

@@ -35,5 +35,5 @@ export const hints: Readonly<Record<string, string>> = {
   PARTIAL_IDENTITY_RESOLUTION_OUTPUT:
     'The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again with --overwrite.',
   UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION:
-    'The ruleset returned by the org has a shape or size the plugin cannot check, so no file was written. Check the ruleset in Data Cloud, for example its reconciliation rules.',
+    'The ruleset lacks a required key or has a shape, value or name deploy cannot send. Retrieve keeps unknown keys and nulls, or writes the ruleset as-is; deploy refuses and names the key path.',
 };

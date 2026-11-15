@@ -2,15 +2,15 @@
 
 > The plugin could not read the DMO this segment is built on. Check that the DMO exists in the org, that the login works and the API detail in the message, then rerun.
 
-|              |                                                                 |
-| ------------ | --------------------------------------------------------------- |
-| **Family**   | Segment                                                         |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`                      |
-| **Outcome**  | `failed` on retrieve, `blocked` on deploy — nothing was changed |
+|              |                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **Family**   | Segment                                                                                    |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`                                                 |
+| **Outcome**  | deploy: `blocked` — nothing was changed; retrieve: a warning, the segment is still written |
 
 ## What it means
 
-Every segment is built on one DMO (`spec.segmentOn`). The plugin reads that DMO once through the Data Cloud API at API 68 to bind the segment to its ID in the target. That read failed.
+Every segment is built on one DMO (`spec.segmentOn`). The plugin reads that DMO once through the Data Cloud API at API 68 to bind the segment to its ID in the target. That read failed. On retrieve this is only a warning naming the code; the segment file is written anyway.
 
 ## Why the plugin stops
 

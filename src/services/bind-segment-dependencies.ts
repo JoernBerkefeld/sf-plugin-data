@@ -4,6 +4,7 @@ import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 
 export type SegmentDependencyBinding = {
   identity: SegmentDocument['spec']['segmentOn'];
@@ -20,6 +21,7 @@ type ReadConnection = Pick<Connection, 'instanceUrl' | 'request' | 'getApiVersio
  * @param {string | ApiVersionSelection} apiVersion API68 selection.
  * @param {string} dataSpace Explicit default target space.
  * @param {Function} acquire Raw DMO detail read, not a write response.
+ * @param {DocumentMode} [mode] How the Segment is checked: `retrieve` admits a retrieved file.
  * @returns {Promise<SegmentDependencyBinding[]>} Private target-local binding; no source IDs.
  */
 export async function bindSegmentDependencies(
@@ -31,8 +33,9 @@ export async function bindSegmentDependencies(
     new ConnectClient(connection, apiVersion).get(
       `/services/data/v${connection.getApiVersion()}/ssot/data-model-objects/${name}`,
     ),
+  mode: DocumentMode = 'deploy',
 ): Promise<SegmentDependencyBinding[]> {
-  const document = validateSegmentDocument(value);
+  const document = validateSegmentDocument(value, mode);
   const version = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   if (
     dataSpace !== 'default' ||

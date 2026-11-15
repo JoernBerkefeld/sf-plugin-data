@@ -1,3 +1,39 @@
+# Lenient retrieve step 6: segments and identity resolution keep what the plugin does not model — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 6.
+Deploy behaviour is unchanged except that segment and IR refusals now name the key path
+(`readDeployInputs` keeps it on `INVALID_SOURCE`).
+
+- `DocumentMode` on `validateSegmentDocument`, `serializeSegmentFiles`, `joinSegmentFiles`,
+  `projectSegment`, `retrieveSegment`, `bindSegmentDependencies` (after `acquire`),
+  `validateIdentityResolutionDocument`, `serializeIdentityResolutionDocument`,
+  `projectNativeIdentityResolution`, `retrieveIdentityResolution`; `documentDependencyNode`
+  passes it on. `acquireRetrieveSelection`, `retrieve.ts` and both writers use `'retrieve'`;
+  deploy, preflight, execution readback, delete and git-range admission stay strict.
+- Segment retrieve: only `segments[0]` of any wrapper is read; unknown top-level keys go into
+  `spec` after the known keys, extra `includeDbt` keys into `spec.includeDbt`, extra model keys
+  stay on the model; observed fields are not checked; text limits are deploy only. Missing
+  configuration keys, non-empty `parameters` and type/refresh/lookback/source other than
+  DBT/NO_REFRESH/P90D/`__dlm` throw `UNSUPPORTED_SEGMENT_VARIANT`; a model name unfit for a file
+  name or a case-insensitive duplicate throws `INVALID_SEGMENT_DOCUMENT`; both go verbatim.
+  `acquireRetrieveSelection(..., onWarning)`: a binding failure is a warning
+  (`segment:X: its DMO Y could not be checked (CODE) ...`), the segment is still written.
+- IR retrieve: owner and nested key sets open (unknown keys kept after the known ones; a key
+  colliding with a projected key throws); `null` accepted for scalars and lists; no name regexes,
+  uniqueness or `json()` bounds; unusable generated names are left unbound; `canonical()` keeps
+  unknown enums and non-text values. A missing required key throws
+  `UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION`, so the catch-all writes it verbatim.
+- Tests: `test/lenient-retrieve-segment-identity-resolution.test.mjs`. Changed in
+  `retrieve-selection.test.mjs` (five tests): an unbindable Segment DMO was a refusal and is now
+  a warning with the Segment written. Error pages and hints updated for
+  `UNSUPPORTED_SEGMENT_VARIANT`, `UNKNOWN_SEGMENT_CONFIGURATION`, `INVALID_SEGMENT_DOCUMENT`,
+  `UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION`; the `SEGMENT_DEPENDENCY_*` pages note the
+  retrieve warning.
+- Open: git-range delete (`admitDeletedArtifact`), `delete.ts` and `delete-segment` still validate
+  segment/IR files strictly, so a file with a kept unknown key cannot be deleted by file (as for
+  steps 1–5); deploy refusals from `json()` bounds do not name a key path. Gate 4,
+  README/sfmc.guide, live acceptance (step 7).
+
 # Lenient retrieve step 5: calculated insights and data transforms keep what the plugin does not model — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 5.

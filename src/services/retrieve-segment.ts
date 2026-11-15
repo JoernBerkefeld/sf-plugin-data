@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import {
   SegmentError,
@@ -9,6 +10,7 @@ import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { carryNativeResponse } from '../artifacts/verbatim-document.js';
+import type { DocumentMode } from '../artifacts/verbatim-document.js';
 export type SegmentAcquisition = {
   identity: SegmentDocument['identity'];
   candidate?: SegmentDocument;
@@ -83,52 +85,66 @@ function validateObservations(raw: Record<string, unknown>): void {
 }
 
 /**
- * Admit an exact response without discarding unknown potentially meaningful fields.
+ * Admit an exact response without discarding unknown potentially meaningful fields. Retrieve mode
+ * reads `segments[0]` of any wrapper, keeps keys the plugin does not know in `spec` (and extra
+ * `includeDbt` keys in `spec.includeDbt`), does not check the observed fields, and refuses only
+ * what the file cannot represent (no DBT configuration, parameters, another type, refresh,
+ * lookback or source kind, a model name unfit for a file), so the segment is written verbatim.
  * @param {unknown} response Untrusted API68 exact GET response.
  * @param {string} apiName Requested exact identity.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
  * @returns {{candidate: SegmentDocument; runtime: Record<string, unknown>}} Detached portable and private projections.
  */
 export function projectSegment(
   response: unknown,
   apiName: string,
+  mode: DocumentMode = 'deploy',
 ): { candidate: SegmentDocument; runtime: Record<string, unknown> } {
+  const lenient = mode === 'retrieve';
   if (!response || typeof response !== 'object' || Array.isArray(response))
     throw new SegmentError('INVALID_SEGMENT_RESPONSE');
   const wrapper = response as Record<string, unknown>;
   if (
-    Object.keys(wrapper).length !== 1 ||
     !Array.isArray(wrapper.segments) ||
-    wrapper.segments.length !== 1
+    wrapper.segments.length === 0 ||
+    (!lenient && (Object.keys(wrapper).length !== 1 || wrapper.segments.length !== 1))
   )
     throw new SegmentError('INVALID_SEGMENT_RESPONSE');
-  const value = wrapper.segments[0];
+  const value: unknown = wrapper.segments[0];
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new SegmentError('INVALID_SEGMENT_RESPONSE');
   const raw = value as Record<string, unknown>;
   if (raw.apiName !== apiName || raw.dataSpace !== 'default')
     throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
-  if (
-    Object.keys(raw).some(
-      (key) =>
-        ![
-          ...configuration,
-          ...observations,
-          'description',
-          'includeCriteria',
-          'parameters',
-        ].includes(key),
-    ) ||
-    configuration.some((key) => !Object.hasOwn(raw, key))
-  )
+  const known = new Set([
+    ...configuration,
+    ...observations,
+    'description',
+    'includeCriteria',
+    'parameters',
+  ]);
+  const unknown = Object.keys(raw).filter((key) => !known.has(key));
+  // Without its configuration the segment is not a DBT segment the file can hold.
+  if (configuration.some((key) => !Object.hasOwn(raw, key)))
+    throw new SegmentError(
+      lenient ? 'UNSUPPORTED_SEGMENT_VARIANT' : 'UNKNOWN_SEGMENT_CONFIGURATION',
+    );
+  if (!lenient && unknown.length > 0) throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
+  // An unknown key named like a spec key could not be told apart from it.
+  if (unknown.some((key) => ['segmentOn', 'models', 'includeDbt'].includes(key)))
     throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
   const dbt = raw.includeDbt as Record<string, unknown>;
   if (
     !dbt ||
     typeof dbt !== 'object' ||
-    Object.keys(dbt).length !== 1 ||
+    Array.isArray(dbt) ||
+    (!lenient && Object.keys(dbt).length !== 1) ||
     !Array.isArray(dbt.models)
   )
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  if (lenient && Object.hasOwn(raw, 'parameters') && !isDeepStrictEqual(raw.parameters, []))
+    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  const { models, ...dbtExtra } = dbt;
   const candidate = {
     schemaVersion: 1,
     kind: 'segment',
@@ -139,13 +155,15 @@ export function projectSegment(
       description: Object.hasOwn(raw, 'description') ? raw.description : '',
       segmentType: raw.segmentType,
       segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
-      models: dbt.models,
+      models,
       publishInterval: raw.publishInterval,
       lookbackPeriod: raw.lookbackPeriod,
+      ...(Object.keys(dbtExtra).length > 0 ? { includeDbt: dbtExtra } : {}),
+      ...Object.fromEntries(unknown.map((key) => [key, raw[key]])),
     },
   } as SegmentDocument;
-  const admitted = validateSegmentDocument(candidate);
-  validateObservations(raw);
+  const admitted = validateSegmentDocument(candidate, mode);
+  if (!lenient) validateObservations(raw);
   // includeCriteria is Salesforce's own rendering of includeDbt; the file keeps includeDbt.
   return { candidate: admitted, runtime: structuredClone(raw) };
 }
@@ -157,6 +175,7 @@ export function projectSegment(
  * @param {string} apiName Exact selected identity.
  * @param {string | ApiVersionSelection} apiVersion Requested fixed API version.
  * @param {string} dataSpace Requested default data space.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps what the plugin does not model).
  * @returns {Promise<SegmentAcquisition>} Detached portable candidate and private runtime baseline.
  */
 export async function retrieveSegment(
@@ -164,6 +183,7 @@ export async function retrieveSegment(
   apiName: string,
   apiVersion: string | ApiVersionSelection,
   dataSpace: string,
+  mode: DocumentMode = 'deploy',
 ): Promise<SegmentAcquisition> {
   const version = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   if (
@@ -184,7 +204,7 @@ export async function retrieveSegment(
       `/services/data/v${version}/ssot/segments/${apiName}`,
     );
     read = { native: raw };
-    const projection = projectSegment(raw, apiName);
+    const projection = projectSegment(raw, apiName, mode);
     return carryNativeResponse(
       {
         identity,

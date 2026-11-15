@@ -98,10 +98,13 @@ export async function writeIdentityResolutionDocument(
   publish = publication,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'identity-resolution') ? value : undefined;
-  const strict = verbatim ? undefined : validateIdentityResolutionDocument(value);
+  // Retrieve writes keep what the plugin does not model; deploy refuses such a file.
+  const strict = verbatim ? undefined : validateIdentityResolutionDocument(value, 'retrieve');
   const document = verbatim ?? strict!;
   const bytes = Buffer.from(
-    verbatim ? serializeVerbatimDocument(verbatim) : serializeIdentityResolutionDocument(strict!),
+    verbatim
+      ? serializeVerbatimDocument(verbatim)
+      : serializeIdentityResolutionDocument(strict!, 'retrieve'),
   );
   if (
     !path.isAbsolute(projectRoot) ||
@@ -156,7 +159,8 @@ export async function writeIdentityResolutionDocument(
     published = true;
     const completed = await existing(destination);
     if (!completed?.equals(bytes)) throw new IdentityResolutionError('OUTPUT_CHANGED');
-    if (!verbatim) validateIdentityResolutionDocument(JSON.parse(completed.toString('utf8')));
+    if (!verbatim)
+      validateIdentityResolutionDocument(JSON.parse(completed.toString('utf8')), 'retrieve');
     return { path: destination, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new IdentityResolutionError('PARTIAL_IDENTITY_RESOLUTION_OUTPUT');
