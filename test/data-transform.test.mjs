@@ -201,12 +201,25 @@ test('Transform projects the GET onto its native input, keeping what a full PUT 
 for (const [kind, read] of [
   ['STL with a schedule', stlGet],
   ['DCSQL definitions[]', dcsqlGet],
+  [
+    'on DLOs without dataSpaceName',
+    () => {
+      // A transform built in the UI on DLOs applies across data spaces and has no dataSpaceName.
+      const raw = stlGet();
+      delete raw.dataSpaceName;
+      return raw;
+    },
+  ],
 ])
   test(`Transform ${kind} GET round-trips to a file and back to the exact PUT body`, async () => {
     const raw = read();
     const expected = projected(raw);
     const observed = observeDataTransform(raw, schedule());
     assert.deepEqual(observed.document.definition, expected);
+    assert.equal(
+      Object.hasOwn(observed.document.definition, 'dataSpaceName'),
+      Object.hasOwn(raw, 'dataSpaceName'),
+    );
     const definitions = expected.definitions ?? [expected.definition];
     for (const definition of definitions) {
       assert.equal(Object.hasOwn(definition, 'schedule'), false);
@@ -248,7 +261,7 @@ test('Transform admission refuses only non-inert JSON, a bad name, both/neither 
       v.dataSpaceName = 'other';
     },
     (v) => {
-      delete v.dataSpaceName;
+      v.dataSpaceName = 'x';
     },
     (v) => {
       v.definitions = [v.definition];
@@ -305,6 +318,10 @@ test('Transform admission refuses only non-inert JSON, a bad name, both/neither 
     (v) => {
       v.definitions = [v.definition];
       delete v.definition;
+    },
+    (v) => {
+      // A transform on DLOs has no data space.
+      delete v.dataSpaceName;
     },
   ];
   for (const change of accepted) {

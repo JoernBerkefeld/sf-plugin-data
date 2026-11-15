@@ -98,7 +98,8 @@ function record(value: unknown, keys?: string[]): Record<string, unknown> {
 
 /**
  * Admit the native transform input as authored: inert JSON, an exact name, exactly one of
- * `definition` / `definitions` and the default data space. Salesforce validates the rest.
+ * `definition` / `definitions` and, when `dataSpaceName` is present, the default data space.
+ * Salesforce validates the rest.
  * @param {unknown} value Complete native input.
  * @returns {Record<string, unknown>} Detached input, sent as written.
  */
@@ -107,7 +108,9 @@ export function buildDataTransformInput(value: unknown): Record<string, unknown>
   const input = record(value);
   requireTransform(typeof input.name === 'string' && dataTransformName.test(input.name));
   requireTransform(Object.hasOwn(input, 'definition') !== Object.hasOwn(input, 'definitions'));
-  requireTransform(input.dataSpaceName === 'default');
+  // A transform on DLOs applies across data spaces and has no dataSpaceName; one that names a
+  // data space must name the default one.
+  requireTransform(!Object.hasOwn(input, 'dataSpaceName') || input.dataSpaceName === 'default');
   return structuredClone(input);
 }
 

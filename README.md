@@ -1707,10 +1707,12 @@ The file holds the transform's native input as Salesforce returns it: `name`, `l
 `writeMode`, `dedupOrder` and the output object definitions stay as read. Left out are
 the definition's `schedule` and the `id`, `createdDate`, `lastModifiedDate` and `status`
 of each output object. The plugin checks only that the file is plain JSON with a valid
-name, exactly one of `definition` and `definitions`, and the default data space
-(`UNSUPPORTED_TRANSFORM_INPUT`); everything else is sent as written and Salesforce
-decides. Salesforce refuses, for example, an STL output DLO that does not exist, an
-output equal to its source DLO and a `STREAMING` transform with an STL definition; a
+name, exactly one of `definition` and `definitions`, and, when `dataSpaceName` is
+present, the default data space (`UNSUPPORTED_TRANSFORM_INPUT`); everything else is sent
+as written and Salesforce decides. A transform built in the UI on DLOs may have no
+`dataSpaceName`; retrieve keeps it absent, and an output DLO such a transform creates
+belongs to no data space. Salesforce refuses, for example, an STL output DLO that does
+not exist, an output equal to its source DLO and a `STREAMING` transform with an STL definition; a
 DCSQL definition creates the output DLOs it declares, and that DLO stays when the
 transform is deleted.
 

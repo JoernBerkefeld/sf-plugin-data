@@ -16,7 +16,7 @@ The plugin checks only a few things in the transform input before it sends it, a
 - the envelope is `schemaVersion: 1`, `kind: data-transform`, `apiVersion: 68.0` with one `definition` object;
 - `name` is an API name (a letter, then letters, digits or underscores);
 - exactly one of `definition` (one definition, such as STL) or `definitions` (a list, such as DCSQL) is present;
-- `dataSpaceName` is `default`.
+- `dataSpaceName`, when present, is `default` (a transform built in the UI on DLOs may have none).
 
 Everything else in the definition is sent as written, and Salesforce decides whether it is valid.
 

@@ -17,8 +17,10 @@ verification DB `data360:gui-parity.*` (UI vs plugin comparison of all families)
 - Live (isolated-source, `CliFx_533199`): DMO with `isDistinct: true` created + warning,
   repeat unchanged + warning; draft CI from a `.sql` ending CRLF CRLF created, repeat
   unchanged.
-- Open from the audit (not done here): transform without `dataSpaceName` (separate
-  commit, needs approval); `INCOMPLETE_STREAM_LIST` after a successful stream delete; a DLO
+- Transforms: `dataSpaceName` may be absent (a transform built in the UI on DLOs has none);
+  when present it must be `default`. Live: created, retrieved without it and deleted by the
+  plugin; its output DLO belongs to no data space. Separate commit.
+- Open from the audit (not done here): `INCOMPLETE_STREAM_LIST` after a successful stream delete; a DLO
   in no data space cannot be deleted (`UNSUPPORTED_DLO_DATASPACE`); UI (visual) segments
   can be neither retrieved nor deleted.
 
