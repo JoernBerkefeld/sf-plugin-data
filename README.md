@@ -648,14 +648,19 @@ Each write is sent once; an unknown outcome stops without retry or rollback.
 
 ### Live verification
 
-On `isolated-source` (2026-11-12), all at `auto`: retrieving two existing calculated
-insights that had already run exited 0; a fixture calculated insight was created,
-published, deployed unchanged three times and deleted, all exit 0. Earlier
-installed cross-org runs covered create, publish, byte-identical retrieval of both
-pair members and an ACTIVE expression edit. ACTIVE is not proof of a calculation;
-no run, ingestion, populated data, storage/credit cleanup or released-package
-behaviour is claimed. The operational examples later in this README describe
-separate API research, not additional plugin capabilities.
+On `isolated-source`, all at API 68 (`auto`): retrieve wrote three existing calculated
+insights as JSON plus SQL, and a repeat retrieve was `unchanged`. Deploy created an
+insight as a draft (`--draft`) and one as active; SQL and name updates of the draft
+kept it DRAFT; `sf data360 publish` made it ACTIVE; an update of the ACTIVE insight
+succeeded; a repeat deploy was `unchanged`; delete removed it (read back as 404).
+
+In the create/update body Salesforce rejects `dataSpace` and `isFromPackage` as
+unrecognised and `NOT_SCHEDULED` as a value (PascalCase is needed), accepts either form
+of `definitionType` and `queryDialect` on POST, refuses any `definitionType` on PATCH,
+and activates a DRAFT insight on a PATCH without `draft`; hence the translations
+above and `draft: true` on every update of a draft. ACTIVE is not proof of a
+calculation; no run, ingestion, populated data, storage/credit cleanup or
+released-package behaviour is claimed.
 
 ## Public DMO workflow
 
@@ -988,8 +993,9 @@ exist in the target, and a missing or incompatible one blocks with its diagnosti
   native route (DLO, DMO, mapping, relationship, each parent settled before its
   dependents), so any mix of families can be deployed in one command.
 - A data transform deploys by name: the complete transform list is read, no match
-  creates, one match (ignoring letter case) updates or is `unchanged`, two or more are
-  refused (`TRANSFORM_TARGET_NOT_RESOLVED`). A deploy may hold several transforms,
+  creates, one match updates or is `unchanged`, a match that differs only in letter
+  case is refused (`TRANSFORM_IDENTITY_MISMATCH`), two or more are refused
+  (`TRANSFORM_TARGET_NOT_RESOLVED`). A deploy may hold several transforms,
   selected by member, file, directory or `--changed-since`.
 - A DLO file named like the landing DLO of a stream the deploy creates is refused
   after that stream's read-only comparison and before any write
@@ -1726,11 +1732,12 @@ after write dispatch are unknown outcomes, not permission to replay. Server
 
 Public delete: `sf data360 delete -m data-transform:Name` (API68/default only; `--preview` is GET-only). One delete may name several transforms; each is resolved and deleted on its own in the transform phase. The name is resolved to the record ID through the complete transform list (ignoring case; no match is `unchanged`, two or more are refused with `TRANSFORM_TARGET_NOT_RESOLVED`) and the definition is read from the org. It requires a CUSTOM/BATCH/ACTIVE STL target with no schedule, and bounded visible-inventory presence of both ID and name. One native DELETE is sent without retry; confirmed deletion needs a complete inventory omitting both ID and name plus preserved source/output DLOs, otherwise the result is `deletion-unconfirmed` (nonzero, never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established, and the pre-delete recheck narrows but does not eliminate concurrent-edit races.
 
-These command paths have offline regression coverage. Local package installation,
-alias/help and pre-auth admission checks and installed synthetic regressions are
-separate from live public Transform lifecycle acceptance, which has not been
-performed. The native zero-row experiment above is separate evidence, not
-public-command, populated-data or cross-org qualification.
+These command paths have offline regression coverage. Live on `isolated-source` the
+public commands created a transform, updated it, accepted a changed output DLO,
+reported a repeat as `unchanged`, deployed two transforms in one run, selected only
+the changed one with `--changed-since`, and deleted a transform together with its
+DLOs in one command, each deletion confirmed. The native zero-row experiment above is
+separate evidence, not populated-data or cross-org qualification.
 
 ### DLO-to-DMO mapping: native definition CRUD
 

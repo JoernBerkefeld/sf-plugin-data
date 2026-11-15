@@ -288,10 +288,8 @@ test('README separates bounded public Transform commands from native zero-row qu
   assert.match(transform, /`--allow-processing` is not needed/u);
   assert.doesNotMatch(transform, /--transform-operation|--transform-target-id/u);
   assert.match(transform, /server validation remains\s+pending/u);
-  assert.match(
-    transform,
-    /separate from live public Transform lifecycle acceptance, which has not been\s+performed/u,
-  );
+  assert.doesNotMatch(transform, /lifecycle acceptance, which has not been\s+performed/u);
+  assert.match(transform, /selected only\s+the changed one with `--changed-since`/u);
   assert.match(transform, /sf data360 delete -m data-transform:Name/u);
   assert.doesNotMatch(
     transform.replaceAll(/\s+/gu, ' '),
