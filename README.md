@@ -596,6 +596,11 @@ every insight the API lists in the data space. Each insight becomes two files:
   unescaped, ending with one LF. Trailing line breaks of the file are not part of
   the `expression` that deploy sends and compares.
 
+Both SQL tools of the Data Cloud UI produce this format: Legacy SQL stores
+`queryDialect` `ANSI_SQL`, SQL Insights Builder stores `DC_SQL`. Retrieve, deploy and
+publish handle either the same way (observed at API 68 for draft create, unchanged
+repeat and publish of a `DC_SQL` insight).
+
 A repeated retrieve of an unchanged insight is `unchanged`; differing files need
 `--overwrite`. An insight the org does not have is `CI_NOT_FOUND`.
 

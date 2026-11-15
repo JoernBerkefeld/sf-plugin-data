@@ -1,3 +1,13 @@
+# UI parity step 3a: SQL Insights Builder (DC_SQL) insights — 2026-11-15
+
+Plan `.claude/plans/sf_plugin_data_ui_parity_followups_20261115.plan.md` step 3a; evidence
+verification DB `data360:calculated-insight.dc-sql-builder.api68`.
+
+- No code change: a UI SQL Insights Builder draft (`queryDialect` `DC_SQL`) retrieves, a
+  plugin `--draft` create of the same files equals it (30 of 30 values), a repeat is
+  unchanged and `sf data360 publish` activates it. README notes both dialects.
+- Next: 3b Visual Builder, 3c Streaming Insight, 3d Real-Time Insight.
+
 # UI parity step 2: relationships to CRM objects — 2026-11-15
 
 Plan `.claude/plans/sf_plugin_data_ui_parity_followups_20261115.plan.md` step 2; evidence
