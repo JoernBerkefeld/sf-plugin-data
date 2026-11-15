@@ -204,7 +204,9 @@ test('README documents native relationships without the removed XML export', () 
   ])
     assert.ok(section.includes(required), `missing relationship contract: ${required}`);
   const row = readme.split('\n').find((line) => line.startsWith('| DMO field relationships'));
-  assert.equal((row.match(/Partial/gu) ?? []).length, 3);
+  // Only the bare-type retrieve refusal is the plugin's own limit; Salesforce has no update.
+  assert.equal((row.match(/Partial/gu) ?? []).length, 1);
+  assert.equal((row.match(/Available </gu) ?? []).length, 2);
   assert.match(row, /\|\s*Unavailable\s*\|/u);
   for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
     const text = readFileSync(new URL(file, import.meta.url), 'utf8');
