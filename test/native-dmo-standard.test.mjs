@@ -238,9 +238,6 @@ test('standard DMO: relabelling a custom field sends that field; immutable edits
     (entry) => {
       entry.isPrimaryKey = true;
     },
-    (entry) => {
-      entry.creationType = 'Standard';
-    },
   ]) {
     const changed = document();
     mutate(changed.spec.fields.find((entry) => entry.name === 'CliProbeB1__c'));
@@ -249,6 +246,12 @@ test('standard DMO: relabelling a custom field sends that field; immutable edits
       /UNSUPPORTED_DMO_FIELD_CHANGE/,
     );
   }
+  // creationType is read-only: never sent, so a differing value is reported, not refused.
+  const recreated = document();
+  recreated.spec.fields.find((entry) => entry.name === 'CliProbeB1__c').creationType = 'Standard';
+  const kept = await deployNativeDmo(recreated, readOnly(native()), undefined, fast);
+  assert.equal(kept.operation, 'unchanged');
+  assert.deepEqual(kept.notSent, [{ field: 'CliProbeB1__c', key: 'creationType' }]);
 });
 
 test('standard DMO: a custom field missing from the file is removed only with the flag, after the PATCH', async () => {

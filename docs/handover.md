@@ -1,3 +1,27 @@
+# UI parity fixes: CI SQL newline, DMO read-only field keys — 2026-11-15
+
+Plan `.claude/plans/sf_plugin_data_ui_parity_fixes_20261115.plan.md` (root repo); evidence
+verification DB `data360:gui-parity.*` (UI vs plugin comparison of all families).
+
+- Calculated insights: trailing line breaks of the `.sql` file are dropped when it becomes
+  `expression` (Salesforce stores none); retrieve writes the file with exactly one `
+`.
+  A LF/CRLF-terminated file no longer ends `CI_SETTLEMENT_MISMATCH`; a repeat is `unchanged`.
+- DMOs: read-only field keys (`isDistinct` = UI "Enable Value Suggestion", `creationType`,
+  `usageTag`, `keyQualifierName`) are never sent, no longer fail the readback
+  (`nativeDmoConfirmed`) or block an update (`fieldChange`); a file value that differs from
+  the org is reported with the warning `DMO_FIELD_KEY_NOT_SENT` (built in
+  `command-native-dmo.ts`). A custom field whose file says `creationType: Standard` is now
+  `unchanged` with that warning instead of `UNSUPPORTED_DMO_FIELD_CHANGE`.
+- Deploy human output prints a diagnostic carried by both preflight and execution once.
+- Live (isolated-source, `CliFx_533199`): DMO with `isDistinct: true` created + warning,
+  repeat unchanged + warning; draft CI from a `.sql` ending CRLF CRLF created, repeat
+  unchanged.
+- Open from the audit (not done here): transform without `dataSpaceName` (separate
+  commit, needs approval); `INCOMPLETE_STREAM_LIST` after a successful stream delete; a DLO
+  in no data space cannot be deleted (`UNSUPPORTED_DLO_DATASPACE`); UI (visual) segments
+  can be neither retrieved nor deleted.
+
 # Step 3: data transform shape checks removed — 2026-11-15
 
 Plan `.claude/plans/sf_plugin_data_transform_gates_20261115.plan.md` (root repo).

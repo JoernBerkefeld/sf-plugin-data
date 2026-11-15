@@ -18,9 +18,12 @@ import {
   deleteNativeDmo,
   previewDeleteNativeDmo,
   deployNativeDmo,
+  nativeDmoConfirmed,
+  notSentFieldKeys,
   preflightNativeDmo,
   retrieveNativeDmo,
 } from '../lib/services/native-dmo.js';
+import { executeDmo, preflightDmo } from '../lib/services/command-native-dmo.js';
 
 const apiName = 'Example__dlm';
 const resourceId = '0gjaj00000JWkxdAAD';
@@ -84,6 +87,10 @@ const planBody = async (...arguments_) => {
 const described = () => ({ ...native(), description: 'Existing' });
 const getDescribed = async () => described();
 const readable = () => ({ ...native(), futureKey: 'current' });
+const withOld = () => ({
+  ...native(),
+  fields: [...native().fields, { ...field('Old__c'), creationType: 'Custom', isDistinct: false }],
+});
 // Readback spacing is injected so exhausted-readback cases do not wait.
 const fast = { attempts: 3, delayMs: 0, sleep: async () => {} };
 
@@ -516,9 +523,6 @@ test('native DMO update sends edits and additions of any type, refuses what the 
     },
     (d) => {
       d.spec.fields.push({ ...authored('Extra__c'), creationType: 'System' });
-    },
-    (d) => {
-      d.spec.fields[0].keyQualifierName = 'Other';
     },
   ]) {
     const saved = document();
@@ -985,4 +989,129 @@ test('native DMO transport refuses malformed HTTP success and only authentic HTT
       /DELETE_UNCONFIRMED/,
     );
   }
+});
+
+test('native DMO read-only field keys are never sent or confirmed; a differing one is reported, not refused', async () => {
+  // The UI's "Enable Value Suggestion" (isDistinct) has no API input: the field reads back false.
+  const suggested = () => {
+    const d = document();
+    d.spec.fields[1].isDistinct = true;
+    return d;
+  };
+  const notSent = [{ field: 'Note__c', key: 'isDistinct' }];
+  assert.equal(nativeDmoConfirmed(suggested(), document()), true);
+  assert.deepEqual(notSentFieldKeys(suggested(), document()), notSent);
+  assert.deepEqual(notSentFieldKeys(document(), document()), []);
+  // A key the file leaves out is not reported.
+  const bare = document();
+  delete bare.spec.fields[1].isDistinct;
+  assert.deepEqual(notSentFieldKeys(bare, document()), []);
+
+  // Create: one POST without the key, readback confirms, the key is reported.
+  let reads = 0;
+  let body;
+  const created = await deployNativeDmo(
+    suggested(),
+    {
+      get: async () => (++reads === 1 ? absent() : native()),
+      create: async (sent) => {
+        body = sent;
+        return native();
+      },
+    },
+    undefined,
+    fast,
+  );
+  assert.equal(created.operation, 'create');
+  assert.deepEqual(created.notSent, notSent);
+  assert.ok(body.fields.every((entry) => !Object.hasOwn(entry, 'isDistinct')));
+
+  // Repeat: unchanged, no write, the same report; another read-only key is reported too.
+  const repeat = await deployNativeDmo(suggested(), {
+    get: async () => native(),
+    create: async () => assert.fail('must not POST'),
+    update: async () => assert.fail('must not PATCH'),
+  });
+  assert.equal(repeat.operation, 'unchanged');
+  assert.deepEqual(repeat.notSent, notSent);
+  const qualified = suggested();
+  qualified.spec.fields[0].keyQualifierName = 'Other';
+  const plan = await preflightNativeDmo(qualified, { get: async () => native() });
+  assert.equal(plan.operation, 'unchanged');
+  assert.deepEqual(plan.notSent, [{ field: 'Id__c', key: 'keyQualifierName' }, ...notSent]);
+
+  // Update: the PATCH carries the label only and the readback confirms despite the key.
+  const relabelled = suggested();
+  relabelled.spec.label = 'Renamed';
+  let patched;
+  const updated = await deployNativeDmo(
+    relabelled,
+    {
+      get: async () => (patched ? { ...native(), label: 'Renamed' } : native()),
+      update: async (_name, sent) => {
+        patched = sent;
+        return { ...native(), label: 'Renamed' };
+      },
+    },
+    undefined,
+    fast,
+  );
+  assert.equal(updated.operation, 'update');
+  assert.deepEqual(patched, { label: 'Renamed' });
+  assert.deepEqual(updated.notSent, notSent);
+
+  // Edit before a field removal: the wait for the PATCH ignores the key as well.
+  let state = 'before';
+  const removal = await deployNativeDmo(
+    relabelled,
+    {
+      get: async () =>
+        state === 'before'
+          ? withOld()
+          : state === 'patched'
+            ? { ...withOld(), label: 'Renamed' }
+            : { ...native(), label: 'Renamed' },
+      update: async () => {
+        state = 'patched';
+        return { ...withOld(), label: 'Renamed' };
+      },
+      removeFields: async (_name, fields) => {
+        assert.deepEqual(fields, ['Old__c']);
+        state = 'removed';
+      },
+    },
+    undefined,
+    fast,
+    { allowFieldRemoval: true },
+  );
+  assert.equal(removal.operation, 'update');
+  assert.deepEqual(removal.removedFields, ['Old__c']);
+  assert.deepEqual(removal.notSent, notSent);
+});
+
+test('DMO command reports DMO_FIELD_KEY_NOT_SENT as a warning without changing the outcome', async () => {
+  const suggested = document();
+  suggested.spec.fields[1].isDistinct = true;
+  const message =
+    "Salesforce takes no input for these field keys, so the file's values were not sent and the org keeps its own: fields.Note__c.isDistinct.";
+  const warning = [{ code: 'DMO_FIELD_KEY_NOT_SENT', message }];
+  let reads = 0;
+  const created = await executeDmo(suggested, {
+    get: async () => (++reads === 1 ? absent() : native()),
+    create: async () => native(),
+  });
+  assert.equal(created.outcome, 'created');
+  assert.equal(created.mutation, 'confirmed-created');
+  assert.deepEqual(created.diagnostics, warning);
+  const repeat = await executeDmo(suggested, { get: async () => native() });
+  assert.equal(repeat.outcome, 'unchanged');
+  assert.deepEqual(repeat.diagnostics, warning);
+  const preview = await preflightDmo(suggested, { get: async () => native() });
+  assert.equal(preview.outcome, 'unchanged');
+  assert.deepEqual(preview.diagnostics, warning);
+  // A create preview cannot know the org value yet.
+  const createPreview = await preflightDmo(suggested, { get: absent });
+  assert.deepEqual(createPreview.diagnostics, []);
+  const plain = await executeDmo(document(), { get: async () => native() });
+  assert.deepEqual(plain.diagnostics, []);
 });

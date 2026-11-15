@@ -2,7 +2,7 @@ import { operationDiagnostic, replaceExplanation } from './operation-diagnostic.
 import { NativeDmoError } from '../artifacts/native-dmo-document.js';
 import { NativeMappingError, nativeMappingName } from '../artifacts/native-mapping-document.js';
 import { preflightNativeDmo, deployNativeDmo, mappedFieldRemoval } from './native-dmo.js';
-import type { NativeDmoDeployOptions } from './native-dmo.js';
+import type { NativeDmoDeployOptions, NotSentFieldKey } from './native-dmo.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
 import { WriteLedger, rejectedNextAction } from './deploy-result.js';
@@ -56,6 +56,22 @@ export type DmoPreview = {
 };
 
 const identified = new WeakMap<Error, MappedField[]>();
+
+/**
+ * Warn about read-only field keys whose file value differs from the org. The outcome is not
+ * changed: Salesforce takes no input for these keys, so the org keeps its own value.
+ * @param {NotSentFieldKey[]} [notSent] Field and key of every differing read-only key.
+ * @returns {Array<{code: string, message: string}>} One warning, or none.
+ */
+function notSentDiagnostics(notSent?: NotSentFieldKey[]): Array<{ code: string; message: string }> {
+  if (!notSent?.length) return [];
+  return [
+    {
+      code: 'DMO_FIELD_KEY_NOT_SENT',
+      message: `Salesforce takes no input for these field keys, so the file's values were not sent and the org keeps its own: ${notSent.map(({ field, key }) => `fields.${field}.${key}`).join(', ')}.`,
+    },
+  ];
+}
 
 /**
  * Read the mapped fields and their mappings recorded for a refused field removal.
@@ -331,14 +347,17 @@ export async function preflightDmo(
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'confirmed-404' : 'none',
     ...(removeFields ? { removeFields } : {}),
-    diagnostics: removeFields
-      ? [
-          {
-            code: 'DMO_FIELD_REMOVAL_PLANNED',
-            message: `Fields missing from the file are removed with one Metadata API destructive change: ${removeFields.join(', ')}.${deployOptions.coveredMappedFields?.length ? ` Salesforce drops the mapping pairs of ${deployOptions.coveredMappedFields.join(', ')} together with the field(s), so the selected mapping files find them already gone.` : ''}`,
-          },
-        ]
-      : [],
+    diagnostics: [
+      ...(removeFields
+        ? [
+            {
+              code: 'DMO_FIELD_REMOVAL_PLANNED',
+              message: `Fields missing from the file are removed with one Metadata API destructive change: ${removeFields.join(', ')}.${deployOptions.coveredMappedFields?.length ? ` Salesforce drops the mapping pairs of ${deployOptions.coveredMappedFields.join(', ')} together with the field(s), so the selected mapping files find them already gone.` : ''}`,
+            },
+          ]
+        : []),
+      ...notSentDiagnostics(plan.operation === 'create' ? undefined : plan.notSent),
+    ],
   };
 }
 /**
@@ -376,7 +395,7 @@ export async function executeDmo(
       return {
         outcome: 'unchanged' as const,
         mutation: 'not-attempted' as const,
-        diagnostics: [],
+        diagnostics: notSentDiagnostics(result.notSent),
       };
     return {
       outcome: result.operation === 'create' ? ('created' as const) : ('updated' as const),
@@ -386,7 +405,7 @@ export async function executeDmo(
           : ('confirmed-updated' as const),
       ...(result.removedFields ? { removedFields: result.removedFields } : {}),
       ...(result.droppedPairs ? { droppedPairs: result.droppedPairs } : {}),
-      diagnostics: [],
+      diagnostics: notSentDiagnostics(result.notSent),
     };
   } catch (error) {
     // Preflight raises this refusal before any dispatch; the mapping lookup is read-only.

@@ -423,6 +423,27 @@ test('human successful DMO actions are lowercase and never infer processing from
   }
 });
 
+test('human output prints a diagnostic carried by preflight and execution once', async () => {
+  const { command } = batchInvocation();
+  const lines = [];
+  const notSent = {
+    code: 'DMO_FIELD_KEY_NOT_SENT',
+    message:
+      "Salesforce takes no input for these field keys, so the file's values were not sent and the org keeps its own: fields.Name__c.isDistinct.",
+  };
+  command.jsonEnabled = () => false;
+  command.log = (line) => lines.push(line);
+  command.preflightNativeDmo = async () => ({ ...previewResult(), diagnostics: [notSent] });
+  command.executeNativeDmo = async () => ({
+    outcome: 'updated',
+    mutation: 'confirmed-updated',
+    diagnostics: [notSent],
+  });
+  const { result } = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(lines.filter((line) => line.startsWith('DMO_FIELD_KEY_NOT_SENT:')).length, 3);
+});
+
 test('human execution output reports unknown mutation and never aggregate success', async () => {
   const { command } = batchInvocation();
   const logs = [];

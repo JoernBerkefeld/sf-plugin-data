@@ -65,7 +65,7 @@ for (const member of ['path', 'companionPath']) {
     assert.equal(input.path, json(cwd));
     assert.equal(input.companionPath, sql(cwd));
     assert.equal(input.native.expression, native().expression);
-    assert.equal(await readFile(sql(cwd), 'utf8'), native().expression);
+    assert.equal(await readFile(sql(cwd), 'utf8'), `${native().expression}\n`);
     // The planning view: identity and the DMO the SQL reads.
     assert.deepEqual(input.document, {
       kind: 'calculated-insight',

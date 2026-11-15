@@ -11,6 +11,8 @@ import {
   calculatedInsightMatches,
   calculatedInsightReference,
   observeNativeCalculatedInsight,
+  parseNativeCalculatedInsight,
+  serializeNativeCalculatedInsight,
 } from '../lib/artifacts/native-calculated-insight-document.js';
 import { documentDependencyNode } from '../lib/artifacts/dependency-selection.js';
 import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
@@ -248,6 +250,17 @@ test('a retrieved file matches its org insight; a shorter file too; a changed ke
     true,
   );
   assert.equal(calculatedInsightMatches(file({ expression: `${sql} ` }), observed), false);
+  // The final line break of the .sql file (LF or CRLF) is not part of the compared expression.
+  for (const text of [`${sql}\n`, `${sql}\r\n`]) {
+    const { json } = serializeNativeCalculatedInsight(file());
+    assert.equal(
+      calculatedInsightMatches(
+        parseNativeCalculatedInsight(json, [{ extension: 'sql', text }]),
+        observed,
+      ),
+      true,
+    );
+  }
   assert.equal(calculatedInsightMatches(file({ description: 'new' }), observed), false);
 });
 

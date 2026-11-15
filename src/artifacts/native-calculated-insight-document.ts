@@ -130,7 +130,17 @@ export function observeNativeCalculatedInsight(raw: unknown): NativeCalculatedIn
 }
 
 /**
- * The JSON text and the code files of one document.
+ * The text without its trailing line breaks (`\n` or `\r\n`, any number). Salesforce stores a
+ * calculated insight's SQL without the final line break of the `.sql` file.
+ * @param {string} text SQL text.
+ * @returns {string} Text without trailing line breaks.
+ */
+function withoutTrailingLineBreaks(text: string): string {
+  return text.replace(/(?:\r?\n)+$/u, '');
+}
+
+/**
+ * The JSON text and the code files of one document. The `.sql` file ends with exactly one `\n`.
  * @param {unknown} value Complete document.
  * @returns {{json: string; files: CodeFile[]}} JSON (sorted keys, LF) and the SQL file.
  */
@@ -143,11 +153,15 @@ export function serializeNativeCalculatedInsight(value: unknown): {
     calculatedInsightCodeFields,
     () => new CalculatedInsightError('INVALID_CI_DOCUMENT'),
   );
-  return { json: `${JSON.stringify(sorted(document), undefined, 2)}\n`, files };
+  return {
+    json: `${JSON.stringify(sorted(document), undefined, 2)}\n`,
+    files: files.map((file) => ({ ...file, text: `${withoutTrailingLineBreaks(file.text)}\n` })),
+  };
 }
 
 /**
- * Read one document back from its JSON text and code files.
+ * Read one document back from its JSON text and code files. Trailing line breaks of the `.sql`
+ * file are not part of `expression`.
  * @param {string} json JSON file text.
  * @param {readonly CodeFile[]} files Code file contents.
  * @returns {NativeCalculatedInsight} Complete document.
@@ -162,7 +176,7 @@ export function parseNativeCalculatedInsight(
   } catch {
     throw new CalculatedInsightError('INVALID_CI_DOCUMENT');
   }
-  return validateNativeCalculatedInsight(
+  const document = validateNativeCalculatedInsight(
     joinCodeFields(
       parsed,
       calculatedInsightCodeFields,
@@ -170,6 +184,8 @@ export function parseNativeCalculatedInsight(
       () => new CalculatedInsightError('INVALID_CI_DOCUMENT'),
     ),
   );
+  document.expression = withoutTrailingLineBreaks(document.expression);
+  return document;
 }
 
 /**

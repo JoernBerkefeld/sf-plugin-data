@@ -593,7 +593,8 @@ every insight the API lists in the data space. Each insight becomes two files:
   Salesforce derives from the SQL.
 - `data360/calculatedInsights/<Name>.calculatedInsight-meta.sql`: the `expression` as
   plain SQL. The GET returns it HTML-escaped (`&gt;`, `&#39;`); retrieve writes it
-  unescaped.
+  unescaped, ending with one LF. Trailing line breaks of the file are not part of
+  the `expression` that deploy sends and compares.
 
 A repeated retrieve of an unchanged insight is `unchanged`; differing files need
 `--overwrite`. An insight the org does not have is `CI_NOT_FOUND`.
@@ -757,7 +758,9 @@ Observed at API 68 on empty, unmapped custom DMOs in the default data space:
   stored. The plugin sends both keys when a field is created or otherwise edited,
   but cannot detect or confirm a change to them alone.
 - **Read-only keys.** `creationType`, `isDistinct`, `usageTag` and `keyQualifierName`
-  are returned by reads only. They are kept in retrieved files and never sent.
+  are returned by reads only. They are kept in retrieved files and never sent. A file
+  value that differs from the org does not change the outcome; deploy reports it
+  with the warning `DMO_FIELD_KEY_NOT_SENT`.
 
 ### Create and update
 

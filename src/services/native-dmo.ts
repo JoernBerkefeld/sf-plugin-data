@@ -24,6 +24,8 @@ export type NativeDmoDeployPlan =
       operation: 'update';
       apiName: string;
       targetApiName: string;
+      /** Read-only field keys whose file value differs from the target; they are never sent. */
+      notSent?: NotSentFieldKey[];
       /** Absent when field removals are the only change, so no PATCH is sent. */
       body?: Record<string, unknown>;
       /** Custom target fields missing from the file; set only with allowFieldRemoval. */
@@ -35,7 +37,12 @@ export type NativeDmoDeployPlan =
       operation: 'unchanged';
       apiName: string;
       document: NativeDmoDocument;
+      /** Read-only field keys whose file value differs from the target; they are never sent. */
+      notSent?: NotSentFieldKey[];
     };
+
+/** A read-only field key whose file value differs from the org; the API takes no such input. */
+export type NotSentFieldKey = { field: string; key: string };
 
 export type NativeDmoDeployOptions = {
   /** Remove custom target fields missing from the file through the Metadata API. */
@@ -144,14 +151,44 @@ function fieldChange(
   for (const key of new Set([...Object.keys(target), ...Object.keys(incoming)])) {
     const before = target[key];
     const after = incoming[key];
-    if (observedFieldKeys.has(key) || isDeepStrictEqual(before, after)) continue;
+    // Read-only keys are never sent; a differing one is reported by notSentFieldKeys.
+    if (observedFieldKeys.has(key) || readOnlyFieldKeys.has(key)) continue;
+    if (isDeepStrictEqual(before, after)) continue;
     if (writeOnlyFieldKeys.has(key) && before === undefined) continue;
-    if (readOnlyFieldKeys.has(key) && after === undefined) continue;
-    if (readOnlyFieldKeys.has(key) || immutableFieldKeys.has(key) || isGeneratedDmoField(target))
-      return { blocked: key };
+    if (immutableFieldKeys.has(key) || isGeneratedDmoField(target)) return { blocked: key };
     change = 'edit';
   }
   return change;
+}
+
+/**
+ * The read-only field keys whose file value differs from the org. The API rejects them as input,
+ * so they are never sent and the org keeps its own value. Standard and system fields of a standard
+ * DMO are left out: they are compared as a whole before any write.
+ * @param {NativeDmoDocument} desired Requested definition.
+ * @param {NativeDmoDocument} actual Target definition.
+ * @param {boolean} [standard] Standard DMO.
+ * @returns {NotSentFieldKey[]} Field and key of every differing read-only key, in file order.
+ */
+export function notSentFieldKeys(
+  desired: NativeDmoDocument,
+  actual: NativeDmoDocument,
+  standard = false,
+): NotSentFieldKey[] {
+  const fields = new Map(actual.spec.fields.map((field) => [field.name, field]));
+  const notSent: NotSentFieldKey[] = [];
+  for (const field of desired.spec.fields) {
+    const found = fields.get(field.name);
+    if (!found || (standard && found.creationType !== 'Custom')) continue;
+    for (const [key, entry] of Object.entries(field))
+      if (
+        readOnlyFieldKeys.has(key) &&
+        entry !== undefined &&
+        !isDeepStrictEqual(entry, found[key])
+      )
+        notSent.push({ field: field.name, key });
+  }
+  return notSent;
 }
 
 /**
@@ -427,11 +464,15 @@ export async function preflightNativeDmo(
     fields.length > 0 ||
     relabelled ||
     Object.keys({ ...description, ...category, ...changedExtras }).length > 0;
-  if (!patch && removed.length === 0) return { operation: 'unchanged', apiName, document: target };
+  const notSent = notSentFieldKeys(desired, target, standard);
+  const reported = notSent.length > 0 ? { notSent } : {};
+  if (!patch && removed.length === 0)
+    return { operation: 'unchanged', apiName, document: target, ...reported };
   return {
     operation: 'update',
     apiName,
     targetApiName: target.identity.apiName,
+    ...reported,
     ...(patch
       ? {
           body: {
@@ -452,7 +493,8 @@ export async function preflightNativeDmo(
 
 /**
  * Confirm a requested definition against an independent read, allowing server-added defaults.
- * Keys the API accepts but does not return cannot be confirmed and are not compared.
+ * Keys the API accepts but does not return cannot be confirmed and are not compared; read-only
+ * keys are never sent, so they are not compared either.
  * @param {NativeDmoDocument} desired Requested portable state.
  * @param {NativeDmoDocument} actual Independent GET state.
  * @param {string[]} [removed] Fields whose removal was requested and must be absent.
@@ -483,6 +525,7 @@ export function nativeDmoConfirmed(
       Object.entries(field).every(
         ([key, entry]) =>
           observedFieldKeys.has(key) ||
+          readOnlyFieldKeys.has(key) ||
           (writeOnlyFieldKeys.has(key) && found[key] === undefined) ||
           isDeepStrictEqual(entry, found[key]),
       )
@@ -530,7 +573,7 @@ async function confirmEditBeforeRemoval(
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
- * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[], droppedPairs?: DroppedPair[]}>} Observed or confirmed definition, not activation proof.
+ * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[], droppedPairs?: DroppedPair[], notSent?: NotSentFieldKey[]}>} Observed or confirmed definition, not activation proof.
  */
 export async function deployNativeDmo(
   value: unknown,
@@ -544,10 +587,17 @@ export async function deployNativeDmo(
   removedFields?: string[];
   /** Mapping pairs Salesforce dropped together with the removed fields. */
   droppedPairs?: DroppedPair[];
+  /** Read-only field keys whose file value differs from the org; they are never sent. */
+  notSent?: NotSentFieldKey[];
 }> {
   const desired = validateNativeDmoDocument(value);
   const plan = await preflightNativeDmo(desired, client, requestScope, options);
-  if (plan.operation === 'unchanged') return { operation: 'unchanged', document: plan.document };
+  if (plan.operation === 'unchanged')
+    return {
+      operation: 'unchanged',
+      document: plan.document,
+      ...(plan.notSent ? { notSent: plan.notSent } : {}),
+    };
   const planned = plan.operation === 'update' ? (plan.removeFields ?? []) : [];
   const standard = plan.operation === 'update' && plan.standard === true;
   // Refuse before the PATCH when this client has no Metadata route for the planned removal.
@@ -558,6 +608,7 @@ export async function deployNativeDmo(
     return {
       operation: 'unchanged',
       document: await resolveTarget(plan.apiName, client, desired.identity.dataSpace),
+      ...(plan.notSent ? { notSent: plan.notSent } : {}),
     };
   if (plan.operation === 'update' && removed.length > 0 && options.precheckRemoval)
     await options.precheckRemoval(plan.targetApiName, removed, {
@@ -592,13 +643,16 @@ export async function deployNativeDmo(
     if (attempt > 0) await settle.sleep(settle.delayMs);
     const document = await resolveTarget(plan.apiName, client, desired.identity.dataSpace);
     last = document;
-    if (nativeDmoConfirmed(desired, document, removed, standard))
+    if (nativeDmoConfirmed(desired, document, removed, standard)) {
+      const notSent = notSentFieldKeys(desired, document, standard);
       return {
         operation: plan.operation,
         document,
         ...(removed.length > 0 ? { removedFields: removed } : {}),
         ...(droppedPairs.length > 0 ? { droppedPairs } : {}),
+        ...(notSent.length > 0 ? { notSent } : {}),
       };
+    }
   }
   const lingering = last?.spec.fields.find((field) => removed.includes(field.name));
   if (lingering)

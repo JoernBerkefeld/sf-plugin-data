@@ -749,13 +749,19 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               this.log(
                 `Planned field ${step.operation}: ${step.sourceFieldDeveloperName} -> ${step.targetFieldDeveloperName}${'developerName' in step ? ` (${step.developerName})` : ''}.`,
               );
+          // The same diagnostic can come from the preflight and the execution of one item.
+          const logged = new Set<string>();
           for (const diagnostic of [
             ...item.diagnostics,
             ...(item.operation === 'execute' && 'preflight' in item
               ? (item.preflight?.diagnostics ?? [])
               : []),
-          ])
-            this.log(formatDiagnostic(diagnostic));
+          ]) {
+            const line = formatDiagnostic(diagnostic);
+            if (logged.has(line)) continue;
+            logged.add(line);
+            this.log(line);
+          }
           if (item.operation === 'execute' && item.mutation === 'unknown')
             this.log('Mutation may have occurred. Inspect target before any further attempt.');
         }

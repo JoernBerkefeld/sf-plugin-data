@@ -187,7 +187,7 @@ test('module: observe keeps the GET body as returned without server fields, SQL 
   assert.ok(!json.includes('expression'));
   assert.deepEqual(Object.keys(JSON.parse(json)), kept);
   assert.ok(json.endsWith('}\n'));
-  assert.deepEqual(files, [{ extension: 'sql', text: plainSql }]);
+  assert.deepEqual(files, [{ extension: 'sql', text: `${plainSql}\n` }]);
   assert.deepEqual(parseNativeCalculatedInsight(json, files), document);
   // Keys Salesforce adds later are kept as returned.
   assert.equal(observeNativeCalculatedInsight({ ...getBody(), newField: 1 }).newField, 1);
@@ -230,7 +230,7 @@ test('writer: JSON and SQL files; repeat is unchanged with identical bytes', asy
     'Synthetic__cio.calculatedInsight-meta.json',
     'Synthetic__cio.calculatedInsight-meta.sql',
   ]);
-  assert.equal(await readFile(first.companionPath, 'utf8'), plainSql);
+  assert.equal(await readFile(first.companionPath, 'utf8'), `${plainSql}\n`);
   const before = await Promise.all([readFile(first.path), readFile(first.companionPath)]);
   const second = await writeNativeCalculatedInsightDocument(
     observeNativeCalculatedInsight(getBody()),
@@ -248,7 +248,27 @@ test('writer: JSON and SQL files; repeat is unchanged with identical bytes', asy
   const replaced = await writeNativeCalculatedInsightDocument(changed, cwd, true);
   assert.equal(replaced.outcome, 'retrieved');
 
-  assert.equal(await readFile(first.companionPath, 'utf8'), `${plainSql} `);
+  assert.equal(await readFile(first.companionPath, 'utf8'), `${plainSql} \n`);
+});
+
+test('module: the SQL file ends with one LF; trailing line breaks are not part of expression', () => {
+  const document = observeNativeCalculatedInsight(getBody());
+  const json = serializeNativeCalculatedInsight(document).json;
+  for (const text of [plainSql, `${plainSql}\n`, `${plainSql}\r\n`, `${plainSql}\n\r\n\n`])
+    assert.equal(
+      parseNativeCalculatedInsight(json, [{ extension: 'sql', text }]).expression,
+      plainSql,
+    );
+  // Only trailing line breaks: inner ones and trailing blanks stay.
+  assert.equal(
+    parseNativeCalculatedInsight(json, [{ extension: 'sql', text: 'SELECT 1\nFROM x \n' }])
+      .expression,
+    'SELECT 1\nFROM x ',
+  );
+  for (const expression of [plainSql, `${plainSql}\n\n`, `${plainSql}\r\n`])
+    assert.deepEqual(serializeNativeCalculatedInsight({ ...document, expression }).files, [
+      { extension: 'sql', text: `${plainSql}\n` },
+    ]);
 });
 
 test('acquire: GET by name, 404 is CI_NOT_FOUND, another name is CI_IDENTITY_CHANGED', async () => {
@@ -379,7 +399,7 @@ test('retrieve writes the JSON and SQL files; a repeat retrieve is unchanged', a
   assert.deepEqual(item.routes, [
     { operation: 'calculated-insight.get', apiVersion: '68.0', transport: 'native' },
   ]);
-  assert.equal(await readFile(item.companionPath, 'utf8'), plainSql);
+  assert.equal(await readFile(item.companionPath, 'utf8'), `${plainSql}\n`);
   const json = JSON.parse(await readFile(item.path, 'utf8'));
   assert.deepEqual(Object.keys(json), kept);
   const bytes = await Promise.all([readFile(item.path), readFile(item.companionPath)]);

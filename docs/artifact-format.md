@@ -52,7 +52,8 @@ Retrieve writes each calculated insight as
 `data360/calculatedInsights/Name__cio.calculatedInsight-meta.json` (the API 68 GET body,
 key names and enums as returned, without status, run and derived fields) and
 `data360/calculatedInsights/Name__cio.calculatedInsight-meta.sql` (the expression as
-plain SQL), under the project root.
+plain SQL, ending with one LF), under the project root. Trailing line breaks of the SQL
+file are not part of the `expression` that deploy sends and compares.
 
 Deploy, publish and delete read the same two files. Either file or the exact selector
 selects the insight; the JSON is joined with exactly its SQL file. A missing JSON or
@@ -152,7 +153,9 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 ### What deployment sends
 
 - Object and field names are sent without their `__dlm` / `__c` suffix.
-- `creationType`, `isDistinct`, `usageTag` and `keyQualifierName` are never sent.
+- `creationType`, `isDistinct`, `usageTag` and `keyQualifierName` are never sent. A
+  file value that differs from the org is reported with the warning
+  `DMO_FIELD_KEY_NOT_SENT`; the outcome stays `created`, `updated` or `unchanged`.
 - Generated fields (`DataSource__c`, `DataSourceObject__c`,
   `InternalOrganization__c`, names starting with `KQ_`, or `creationType: System`)
   are left out of a create. A definition may also omit them for an update; they
