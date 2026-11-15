@@ -1,3 +1,24 @@
+# UI parity step 3d: Real-Time insights and Real-Time Data Graphs — 2026-11-15
+
+Evidence: verification DB `data360:calculated-insight.real-time.api68` and
+`data360:data-graph.real-time.api68`.
+
+- UI Real-Time Insight: Visual Builder only; input is a Real-Time Data Graph (standard
+  graphs are not offered). Stored `definitionType` `GRAPH_METRIC`, generated `ANSI_SQL`,
+  `publishScheduleInterval` `STREAMING`, ACTIVE at once; the GET does not name the graph.
+- Plugin: retrieve, unchanged repeat, update (description) and delete worked unchanged.
+  Create through the API is refused by Salesforce (`ARGUMENT_OBJECT_PARSE_ERROR`: "The
+  Definition Type is not supported"), reported as `rejected`; documented, not emulated.
+- Real-Time Data Graph (wizard type REALTIME, page "Real-Time Consumption Limits"): the
+  GET carries eight real-time settings. Fix: the graph document admits them as authored
+  configuration (sent on create and update); before, retrieve refused the graph
+  (`NATIVE_GRAPH_RETRIEVE_BLOCKED`). Live: retrieve, unchanged repeat, delete, create from
+  the file.
+- Found, not fixed: a graph create without `--allow-processing`, and a create while a just
+  deleted graph of the same name still lingers, both end as a generic
+  `DEPLOY_EXECUTION_FAILED` block without saying why.
+- Step 1 (DLO files without system fields) was already in place (ac79df6); no change.
+
 # UI parity step 3c: Streaming insights — 2026-11-15
 
 Evidence: verification DB `data360:calculated-insight.streaming.api68`.

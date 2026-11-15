@@ -6,6 +6,7 @@ import {
   validateNativeDataGraphDocument,
   nativeDataGraphDocumentFromResponse,
   buildNativeDataGraphUpdateRequest,
+  nativeDataGraphCreateDefinition,
 } from '../lib/artifacts/native-data-graph-document.js';
 import {
   acquireNativeDataGraph,
@@ -939,6 +940,30 @@ test('recursive native document and PUT preserve full target bindings and normal
   assert.deepEqual(buildNativeDataGraphUpdateRequest(baseline, omitted), saved.definition);
   assert.equal(observeNativeDataGraph(baseline, saved).target.version, '3');
   assert.deepEqual(nativeDataGraphDocumentFromResponse(baseline), saved);
+});
+
+test('a Real-Time Data Graph keeps its real-time settings on retrieve, create and update', () => {
+  // Read on a UI-created Real-Time Data Graph at API68 (2026-11-15).
+  const settings = {
+    isRealTimeToggleEnabled: true,
+    isRecordCachingDisabled: false,
+    processIngestionApi: true,
+    processSalesforceCrm: true,
+    sessionEnd: 30,
+    sessionEndTimeUnit: 'MINUTES',
+    cacheDurationInDays: 0,
+    maxRecordsCached: 0,
+  };
+  const baseline = { ...runtime(), type: 'realtime', ...settings };
+  const saved = nativeDataGraphDocumentFromResponse(baseline);
+  assert.equal(saved.definition.type, 'REALTIME');
+  for (const [key, value] of Object.entries(settings)) assert.equal(saved.definition[key], value);
+  const create = nativeDataGraphCreateDefinition(saved);
+  for (const [key, value] of Object.entries(settings)) assert.equal(create[key], value);
+  assert.deepEqual(buildNativeDataGraphUpdateRequest(baseline, saved), saved.definition);
+  const authored = structuredClone(saved);
+  authored.definition.sessionEnd = 45;
+  assert.equal(buildNativeDataGraphUpdateRequest(baseline, authored).sessionEnd, 45);
 });
 
 /**

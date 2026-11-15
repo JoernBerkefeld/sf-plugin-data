@@ -30,6 +30,20 @@ export type NativeDataGraphObservation = {
   target: Record<string, unknown>;
 };
 
+/**
+ * Settings a Real-Time Data Graph carries (UI page "Real-Time Consumption Limits"; read on a
+ * UI-created real-time graph at API68, 2026-11-15). Authored configuration, sent as written.
+ */
+const realTimeKeys = [
+  'isRealTimeToggleEnabled',
+  'isRecordCachingDisabled',
+  'processIngestionApi',
+  'processSalesforceCrm',
+  'sessionEnd',
+  'sessionEndTimeUnit',
+  'cacheDurationInDays',
+  'maxRecordsCached',
+];
 const topKeys = [
   'name',
   'label',
@@ -46,6 +60,7 @@ const topKeys = [
   'incrementalTransformDevName',
   'fullRefreshConfig',
   'incrementalRefreshConfig',
+  ...realTimeKeys,
 ];
 const nodeKeys = [
   'name',
@@ -430,7 +445,13 @@ export function buildNativeDataGraphUpdateRequest(
   for (const key of ['name', 'dataspaceName', 'primaryObjectName'])
     graphRequire(target[key] === wanted[key]);
   // Generated DMO, mapping and transform names stay the target's; authored ones are ignored.
-  for (const key of ['label', 'type', 'fullRefreshConfig', 'incrementalRefreshConfig'])
+  for (const key of [
+    'label',
+    'type',
+    'fullRefreshConfig',
+    'incrementalRefreshConfig',
+    ...realTimeKeys,
+  ])
     if (Object.hasOwn(wanted, key)) target[key] = wanted[key];
   // An omitted description keeps the target's, like any other omitted property.
   if (Object.hasOwn(wanted, 'description')) target.description = wanted.description;

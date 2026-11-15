@@ -489,6 +489,13 @@ because no API answer exists there, checks the root: a missing root DMO is
 reports `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, or the owning
 ruleset as `DATA_GRAPH_OWNER`. Deploy itself does not check the owner; Salesforce
 decides.
+A Real-Time Data Graph (`type` `REALTIME`) retrieves and deploys the same way. Its file
+also holds the settings of the UI page "Real-Time Consumption Limits"
+(`isRealTimeToggleEnabled`, `processIngestionApi`, `processSalesforceCrm`,
+`isRecordCachingDisabled`, `sessionEnd`, `sessionEndTimeUnit`, `cacheDurationInDays`,
+`maxRecordsCached`); they are sent as written on create and update, and Salesforce
+decides. Observed at API 68 (2026-11-15): a UI-built real-time graph retrieved, deployed
+back `unchanged`, was deleted, and was created again from its file.
 Deploy takes any number of graphs, alone or beside other families (also through
 `--changed-since`); graphs run last. Retrieve takes any number of graphs, alone or
 beside other families; cascade is not available.
@@ -604,6 +611,14 @@ no SQL in the API while it is a draft (the GET returns a placeholder sentence), 
 retrieve refuses such a draft with `CI_VISUAL_DRAFT_WITHOUT_SQL`; once published
 (Save and Run), its generated `ANSI_SQL` retrieves like any other insight, and deploying
 that file creates a SQL insight with the same result (the visual layout is not carried).
+
+A Real-Time Insight (`definitionType` `GRAPH_METRIC`, built in the UI with the Visual
+Builder on a Real-Time Data Graph) stores generated `ANSI_SQL` and
+`publishScheduleInterval` `STREAMING`, and its GET does not name the graph. Retrieve,
+an unchanged repeat, an update (a description change) and delete work. Salesforce does not
+create one through the API: a POST answers "The Definition Type is not supported"
+(`ARGUMENT_OBJECT_PARSE_ERROR`), which deploy reports as `rejected`. Create it in the UI,
+then retrieve and deploy updates to it (observed at API 68, 2026-11-15).
 
 A repeated retrieve of an unchanged insight is `unchanged`; differing files need
 `--overwrite`. An insight the org does not have is `CI_NOT_FOUND`.
