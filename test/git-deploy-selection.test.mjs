@@ -510,3 +510,54 @@ test('Git selector rejects invalid refs without payload leakage', async () => {
     refusal('INVALID_GIT_SELECTION'),
   );
 });
+
+const verbatimFile = (kind, apiName, reason, native) => ({
+  schemaVersion: 1,
+  kind,
+  identity: { dataSpace: 'default', apiName },
+  verbatim: { reason, native },
+});
+const ciJson = 'data360/calculatedInsights/Draft__cio.calculatedInsight-meta.json';
+const ciSql = 'data360/calculatedInsights/Draft__cio.calculatedInsight-meta.sql';
+const draft = verbatimFile('calculated-insight', 'Draft__cio', 'CI_DRAFT_WITHOUT_SQL', {});
+
+test('a changed verbatim file in the range is skipped with a warning', async () => {
+  const cwd = await fixture();
+  const base = await git(cwd, 'rev-parse', 'HEAD');
+  await put(cwd, relative('Raw'), verbatimFile('dmo', 'Raw__dlm', 'INVALID_DMO_FIELD', {}));
+  await put(cwd, relative('Added'), document('Added'));
+  const result = await selectGitDeployInputs({ cwd, ref: base });
+  assert.deepEqual(result.paths, [path.join(cwd, relative('Added'))]);
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /dmo Raw__dlm .*reason INVALID_DMO_FIELD/u);
+});
+
+test('a deleted verbatim insight needs no SQL file and is deleted by name', async () => {
+  const cwd = await fixture();
+  await put(cwd, ciJson, draft);
+  // An SQL file left from an earlier normal retrieve may stay.
+  await put(cwd, ciSql, 'SELECT 1\n');
+  const base = await commit(cwd, ciJson, ciSql);
+  await git(cwd, 'rm', '-q', '--', ciJson);
+  await commit(cwd);
+  const selected = await selectGitDeployInputs({ cwd, ref: base });
+  assert.deepEqual(
+    selected.deletions.map((deletion) => [deletion.family, deletion.identity.apiName]),
+    [['calculated-insight', 'Draft__cio']],
+  );
+  assert.equal(selected.deletions[0].companionPath, undefined);
+  assert.equal(selected.deletions[0].document.verbatim.reason, 'CI_DRAFT_WITHOUT_SQL');
+});
+
+test('removing the leftover SQL file beside a verbatim insight is no deletion', async () => {
+  const cwd = await fixture();
+  await put(cwd, ciJson, draft);
+  await put(cwd, ciSql, 'SELECT 1\n');
+  const base = await commit(cwd, ciJson, ciSql);
+  await git(cwd, 'rm', '-q', '--', ciSql);
+  await commit(cwd);
+  const selected = await selectGitDeployInputs({ cwd, ref: base });
+  assert.equal(selected.deletions, undefined);
+  assert.deepEqual(selected.paths, []);
+  assert.equal(selected.warnings.length, 1);
+});

@@ -218,12 +218,20 @@ test('Transform publisher keeps authored input at canonical root, unchanged and 
     await assert.rejects(writeDataTransformDocument(value, invalid, true), { code: 'UNSAFE_PATH' });
 });
 
-test('Transform publisher refuses filename aliases and malformed saved input even with overwrite', async () => {
+test('Transform publisher refuses filename aliases and non-JSON saved input even with overwrite', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-transform-alias-test-'));
   const value = document();
   const receipt = await writeDataTransformDocument(value, root, false);
-  await writeFile(receipt.path, '{"invalid":true}');
+  await writeFile(receipt.path, 'not json');
   await assert.rejects(writeDataTransformDocument(value, root, true));
+  // A JSON object the strict validator refuses (a non-strict or older file) is replaced like
+  // any differing file: only with overwrite.
+  await writeFile(receipt.path, '{"invalid":true}');
+  await assert.rejects(writeDataTransformDocument(value, root, false), {
+    code: 'OVERWRITE_REQUIRED',
+  });
+  const replaced = await writeDataTransformDocument(value, root, true);
+  assert.equal(replaced.outcome, 'retrieved');
   if (process.platform !== 'win32') {
     await writeFile(
       path.join(path.dirname(receipt.path), 'synthetictransform.dataTransform.json'),

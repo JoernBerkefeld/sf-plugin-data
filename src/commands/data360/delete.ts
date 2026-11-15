@@ -8,6 +8,7 @@ import type {
   GitDeploySelection,
 } from '../../artifacts/git-deploy-selection.js';
 import type { NativeRelationshipDocument } from '../../artifacts/native-relationship-document.js';
+import { isVerbatimDocument } from '../../artifacts/verbatim-document.js';
 import { createDataTransformClient } from '../../transport/data-transform-rest.js';
 import {
   DataTransformError,
@@ -793,9 +794,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const name = path.basename(file).slice(0, -'.mapping-meta.json'.length);
     try {
       if (!present) throw new Error('Not a file');
-      const document = validateNativeMappingDocument(
-        JSON.parse(await readFile(file, 'utf8')) as unknown,
-      );
+      const value = JSON.parse(await readFile(file, 'utf8')) as unknown;
+      // A verbatim file (retrieved as-is) names no binding: the mapping is deleted by its name.
+      if (isVerbatimDocument(value, 'mapping') && value.identity.apiName === name) return undefined;
+      const document = validateNativeMappingDocument(value);
       if (document.identity.apiName !== name) throw new Error('Identity mismatch');
       return document;
     } catch {
@@ -1038,6 +1040,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    * @param {Map<DeleteItem, string>} selectorsByItem Human labels.
    * @param {Function} track Registers the item's local file for removal or preview.
    * @param {NativeRelationshipDocument} [baseDocument] Git delete: the file's base content.
+   * @param {object} [baseNames] Git delete of a verbatim file: the relationship is then found by
+   * name under its source DMO, like -m.
+   * @param {string} baseNames.sourceDmo Source DMO the verbatim file keeps.
+   * @param {string} baseNames.apiName Relationship name.
    * @returns {Promise<void>} Resolves when the item settled; throws to stop the batch.
    */
   private async deleteOneRelationship(
@@ -1050,10 +1056,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     selectorsByItem: Map<DeleteItem, string>,
     track: (item: DeleteItem, candidates: LocalFileCandidate[]) => Promise<void>,
     baseDocument?: NativeRelationshipDocument,
+    baseNames?: { sourceDmo: string; apiName: string },
   ): Promise<void> {
     const [sourceDmo, selectedName] =
       baseDocument === undefined
-        ? selector.slice('relationship:'.length).split(':')
+        ? baseNames === undefined
+          ? selector.slice('relationship:'.length).split(':')
+          : [baseNames.sourceDmo, baseNames.apiName]
         : [baseDocument.spec.sourceObjectName, baseDocument.identity.apiName];
     const item: DeleteItem = {
       family: 'relationship',
@@ -1494,7 +1503,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         if (candidate.identity.dataSpace !== effectiveScope) throw new DloError('INVALID_SCOPE');
       if (gitMode)
         for (const [selector, candidate] of gitBySelector) {
-          if (!sourceFamilies.has(candidate.family)) continue;
+          // A verbatim file (retrieved as-is) is read from the org by name below, like -m.
+          if (!sourceFamilies.has(candidate.family) || isVerbatimDocument(candidate.document))
+            continue;
           const source = admitSourceInput({
             path: candidate.path,
             ...(candidate.companionPath === undefined
@@ -1542,11 +1553,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       // Read-only, preview too, before any phase deletes anything: each -m source-family
       // component's current definition by name, and the target ID of a Git-deleted transform.
       for (const selector of sourceSelectors) {
-        if (gitMode && familyOf(selector) !== 'data-transform') continue;
+        const verbatim = isVerbatimDocument(gitBySelector.get(selector)?.document);
+        if (gitMode && !verbatim && familyOf(selector) !== 'data-transform') continue;
         const target = await connect();
         if (familyOf(selector) === 'data-transform' && !target.getUsername())
           throw new DloError('TARGET_ORG_REQUIRED');
-        if (!gitMode) {
+        if (!gitMode || verbatim) {
           admitted.set(
             selector,
             await this.readDeleteSource(familyOf(selector), selectorName(selector), target),
@@ -2120,8 +2132,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         for (const selector of ordered.filter((value) => value.startsWith('mapping:'))) {
           const name = selector.slice(selector.indexOf(':') + 1);
           try {
+            const base = gitBySelector.get(selector)?.document;
+            // A verbatim base file names no binding: the mapping is deleted by its name.
             const binding = gitMode
-              ? (gitBySelector.get(selector)?.document as NativeMappingDocument | undefined)
+              ? isVerbatimDocument(base)
+                ? undefined
+                : (base as NativeMappingDocument | undefined)
               : await this.readAuthoredMapping(
                   path.join(projectData, 'mapping', `${name}.mapping-meta.json`),
                 );
@@ -2255,6 +2271,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         try {
           for (const selector of ordered) {
             if (selector.startsWith('relationship:')) {
+              const base = gitBySelector.get(selector);
+              // A verbatim base file: the relationship is found by name under its source DMO.
+              const verbatim = isVerbatimDocument(base?.document);
               await this.deleteOneRelationship(
                 selector,
                 target,
@@ -2264,7 +2283,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 envelope,
                 selectorsByItem,
                 track,
-                gitBySelector.get(selector)?.document as NativeRelationshipDocument | undefined,
+                verbatim ? undefined : (base?.document as NativeRelationshipDocument | undefined),
+                verbatim && base?.sourceObjectName !== undefined
+                  ? { sourceDmo: base.sourceObjectName, apiName: base.identity.apiName }
+                  : undefined,
               );
               continue;
             }

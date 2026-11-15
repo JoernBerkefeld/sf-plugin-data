@@ -7,6 +7,11 @@ import {
   validateNativeRelationshipDocument,
 } from './native-relationship-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import {
+  isVerbatimDocument,
+  previousIdentity,
+  serializeVerbatimDocument,
+} from './verbatim-document.js';
 
 /**
  * Validate real ancestors before publication.
@@ -89,8 +94,11 @@ export async function writeNativeRelationshipDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateNativeRelationshipDocument(value);
-  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
+  const verbatim = isVerbatimDocument(value, 'relationship') ? value : undefined;
+  const document = verbatim ?? validateNativeRelationshipDocument(value);
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -113,8 +121,11 @@ export async function writeNativeRelationshipDocument(
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
-      const saved = validateNativeRelationshipDocument(JSON.parse(previous.toString('utf8')));
-      if (saved.identity.dataSpace !== document.identity.dataSpace)
+      const saved = previousIdentity(
+        previous.toString('utf8'),
+        (previousValue) => validateNativeRelationshipDocument(previousValue).identity,
+      );
+      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new NativeRelationshipError('RELATIONSHIP_DATASPACE_COLLISION');
       if (!overwrite) throw new NativeRelationshipError('OVERWRITE_REQUIRED');
     }

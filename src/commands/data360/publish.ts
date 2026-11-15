@@ -156,8 +156,11 @@ export default class Publish extends SfCommand<PublishEnvelope> {
     } catch (error) {
       envelope.diagnostics.errors.push({
         code: error instanceof DeployInputError ? error.code : code,
+        // A verbatim file (retrieved as-is) is named with its kind, name and reason.
         message:
-          'Publication stopped. Verify the exact JSON and SQL source, API 68 and default data space, and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+          error instanceof DeployInputError && error.code === 'VERBATIM_NOT_DEPLOYABLE'
+            ? error.message
+            : 'Publication stopped. Verify the exact JSON and SQL source, API 68 and default data space, and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         retryable: false,
       });
     }

@@ -4,6 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { DataStreamError, validateDataStreamDocument } from './data-stream-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import {
+  isVerbatimDocument,
+  previousIdentity,
+  serializeVerbatimDocument,
+} from './verbatim-document.js';
 
 /**
  * Validate real ancestors before publication.
@@ -98,8 +103,11 @@ export async function writeDataStreamDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateDataStreamDocument(value);
-  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
+  const verbatim = isVerbatimDocument(value, 'data-stream') ? value : undefined;
+  const document = verbatim ?? validateDataStreamDocument(value);
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -120,10 +128,13 @@ export async function writeDataStreamDocument(
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
-      const saved = validateDataStreamDocument(JSON.parse(previous.toString('utf8')));
-      if (saved.identity.apiName !== document.identity.apiName)
+      const saved = previousIdentity(
+        previous.toString('utf8'),
+        (previousValue) => validateDataStreamDocument(previousValue).identity,
+      );
+      if (saved.apiName !== undefined && saved.apiName !== document.identity.apiName)
         throw new DataStreamError('STREAM_FILENAME_COLLISION');
-      if (saved.identity.dataSpace !== document.identity.dataSpace)
+      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new DataStreamError('STREAM_DATASPACE_COLLISION');
       if (!overwrite) throw new DataStreamError('OVERWRITE_REQUIRED');
     }

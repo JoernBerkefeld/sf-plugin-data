@@ -19,6 +19,13 @@ import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { createDmoClient } from '../transport/dmo-rest.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import {
+  carriedNativeResponse,
+  carryNativeResponse,
+  createVerbatimDocument,
+  verbatimReason,
+} from '../artifacts/verbatim-document.js';
+import type { VerbatimDocument } from '../artifacts/verbatim-document.js';
 
 /** Payload-free refusal retaining the affected selected identity. */
 export class RetrieveSelectionError extends Error {
@@ -40,7 +47,9 @@ export type RetrieveServices = {
 };
 
 export type RetrieveSelectionEntry =
-  { document: NativeDmoDocument } | { document: NonNullable<SegmentAcquisition['candidate']> };
+  | { document: NativeDmoDocument }
+  | { document: NonNullable<SegmentAcquisition['candidate']> }
+  | { document: VerbatimDocument };
 
 // Bound admitted transport operations: one native DMO GET; Segment exact GET; one native read
 // of the DMO each Segment is built on.
@@ -87,8 +96,13 @@ export async function acquireRetrieveSelection(
   for (const identity of selected) identities.set(dependencyKey(identity), identity);
   if (identities.size > dependencyLimits.nodes)
     throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
+  // Components the document cannot represent: written as Salesforce returned them, outside the
+  // dependency order (they bind nothing).
+  const verbatim: RetrieveSelectionEntry[] = [];
   for (const [key, identity] of identities) {
     let entry: RetrieveSelectionEntry;
+    // The raw GET response of this component, once read.
+    let read: { native: unknown } | undefined;
     try {
       reserve(1);
       if (identity.kind === 'segment') {
@@ -98,6 +112,7 @@ export async function acquireRetrieveSelection(
           version,
           identity.dataSpace,
         );
+        read = carriedNativeResponse(acquired);
         if (acquired.blockers.length > 0 || !acquired.candidate)
           throw retainConnectDiagnostic(
             new SegmentError(acquired.blockers[0] ?? 'INCOMPLETE_SEGMENT'),
@@ -105,13 +120,18 @@ export async function acquireRetrieveSelection(
           );
         entry = { document: acquired.candidate };
       } else {
-        entry = {
-          document: await retrieveNativeDmo(
-            identity.apiName,
-            { get: async (name) => services.dmo(name) },
-            identity.dataSpace,
-          ),
-        };
+        const document = await retrieveNativeDmo(
+          identity.apiName,
+          {
+            get: async (name) => {
+              const native = await services.dmo(name);
+              read ??= { native };
+              return native;
+            },
+          },
+          identity.dataSpace,
+        );
+        entry = { document: read ? carryNativeResponse(document, read.native) : document };
       }
       const node = documentDependencyNode(entry.document);
       if (dependencyKey(node.identity) !== key)
@@ -141,6 +161,20 @@ export async function acquireRetrieveSelection(
       // Check edge/cycle bounds incrementally, before further acquisition.
       orderDependencyNodes([...nodes.values()]);
     } catch (error: unknown) {
+      const reason = verbatimReason(error);
+      const document =
+        reason === undefined || read === undefined || nodes.has(key)
+          ? undefined
+          : createVerbatimDocument(
+              identity.kind,
+              { dataSpace: identity.dataSpace, apiName: identity.apiName },
+              reason,
+              read.native,
+            );
+      if (document) {
+        verbatim.push({ document });
+        continue;
+      }
       throw retainConnectDiagnostic(
         new RetrieveSelectionError(
           error instanceof SegmentError ||
@@ -154,5 +188,8 @@ export async function acquireRetrieveSelection(
       );
     }
   }
-  return orderDependencyNodes([...nodes.values()]).map((key) => entries.get(key)!);
+  return [
+    ...orderDependencyNodes([...nodes.values()]).map((key) => entries.get(key)!),
+    ...verbatim,
+  ];
 }

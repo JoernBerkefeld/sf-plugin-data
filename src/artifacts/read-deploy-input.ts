@@ -8,6 +8,7 @@ import { nativeMappingName, validateNativeMappingDocument } from './native-mappi
 import type { NativeMappingDocument } from './native-mapping-document.js';
 import {
   nativeRelationshipName,
+  relationshipDmoName,
   validateNativeRelationshipDocument,
 } from './native-relationship-document.js';
 import type { NativeRelationshipDocument } from './native-relationship-document.js';
@@ -36,6 +37,15 @@ import type {
   CalculatedInsightReference as CalculatedInsightReference,
   NativeCalculatedInsight,
 } from './native-calculated-insight-document.js';
+
+import {
+  isVerbatimDocument,
+  parseVerbatimDocument,
+  verbatimRefusalMessage,
+  verbatimSkipWarning,
+} from './verbatim-document.js';
+import type { VerbatimDocument, VerbatimKind } from './verbatim-document.js';
+import { replaceExplanation } from '../services/operation-diagnostic.js';
 
 const ciMemberInfix = '.calculatedInsight-meta.';
 const ciJsonSuffix = '.calculatedInsight-meta.json';
@@ -70,15 +80,30 @@ export class DeployInputError extends Error {
       | 'UNSAFE_SOURCE'
       | 'INVALID_SOURCE'
       | 'DUPLICATE_IDENTITY'
-      | 'UNSUPPORTED_SEGMENT_XML',
+      | 'UNSUPPORTED_SEGMENT_XML'
+      | 'VERBATIM_NOT_DEPLOYABLE',
+    message?: string,
   ) {
     super(
-      code === 'UNSUPPORTED_SEGMENT_XML'
-        ? 'Select the single .segment.json artifact; legacy Segment XML is not supported.'
-        : 'Select explicit, bounded, authored-only sources without links or conflicting identities.',
+      message ??
+        (code === 'UNSUPPORTED_SEGMENT_XML'
+          ? 'Select the single .segment.json artifact; legacy Segment XML is not supported.'
+          : 'Select explicit, bounded, authored-only sources without links or conflicting identities.'),
     );
     this.name = 'DeployInputError';
   }
+}
+
+/**
+ * Refuse an explicitly named verbatim file before any API call.
+ * @param {VerbatimDocument} document Verbatim document.
+ * @returns {DeployInputError} Refusal naming kind, name and reason.
+ */
+function verbatimRefusal(document: VerbatimDocument): DeployInputError {
+  const message = verbatimRefusalMessage(document);
+  const error = new DeployInputError('VERBATIM_NOT_DEPLOYABLE', message);
+  replaceExplanation(error, message);
+  return error;
 }
 
 export type SegmentDeployInput = {
@@ -573,7 +598,24 @@ export type DeployInputFlags = {
   cwd: string;
   sourceDir?: readonly string[];
   metadata?: readonly string[];
+  /**
+   * Verbatim files (retrieved as-is) are skipped with a warning inside a selected folder and
+   * refused (VERBATIM_NOT_DEPLOYABLE) when named directly. `skip` also skips named ones: a Git
+   * range names every changed file.
+   */
+  verbatim?: 'skip';
 };
+
+const skippedWarnings = new WeakMap<object, readonly string[]>();
+
+/**
+ * The warnings of the verbatim files a {@link readDeployInputs} call skipped, one per file.
+ * @param {readonly unknown[]} inputs Array that call returned.
+ * @returns {readonly string[]} Warnings; empty for any other array.
+ */
+export function skippedVerbatimWarnings(inputs: readonly unknown[]): readonly string[] {
+  return skippedWarnings.get(inputs) ?? [];
+}
 const refuse = (): never => {
   throw new DeployInputError('UNSAFE_SOURCE');
 };
@@ -673,6 +715,55 @@ async function memberBytes(file: string): Promise<Buffer> {
   } finally {
     await handle.close();
   }
+}
+
+/** The kind a verbatim file must carry, by the suffix of its canonical file name. */
+const verbatimSuffixes: ReadonlyArray<[string, VerbatimKind]> = [
+  ['.dmo-meta.json', 'dmo'],
+  ['.dlo-meta.json', 'dlo'],
+  ['.mapping-meta.json', 'mapping'],
+  ['.relationship-meta.json', 'relationship'],
+  ['.data-stream-meta.json', 'data-stream'],
+  ['.dataTransform.json', 'data-transform'],
+  ['.native-dataGraph.json', 'native-data-graph'],
+  ['.identityResolution.json', 'identity-resolution'],
+  [ciJsonSuffix, 'calculated-insight'],
+  [segmentJsonSuffix, 'segment'],
+];
+
+/**
+ * The verbatim document a selected file belongs to: the file itself, or the JSON of the
+ * calculated insight or segment whose SQL file it is. Its kind and name must match the file name.
+ * @param {string} file Absolute selected file.
+ * @returns {Promise<{path: string; document: VerbatimDocument} | undefined>} JSON path and
+ * verbatim document, or undefined for anything else (the family reader then decides).
+ */
+async function verbatimMember(
+  file: string,
+): Promise<{ path: string; document: VerbatimDocument } | undefined> {
+  const entry = path.basename(file);
+  const directory = path.dirname(file);
+  let json = file;
+  if (isCalculatedInsightMember(file))
+    json = path.join(directory, `${entry.slice(0, entry.indexOf(ciMemberInfix))}${ciJsonSuffix}`);
+  else if (isSegmentMember(file) && entry.includes(segmentMemberInfix))
+    json = path.join(
+      directory,
+      `${entry.slice(0, entry.indexOf(segmentMemberInfix))}${segmentJsonSuffix}`,
+    );
+  const suffix = verbatimSuffixes.find(([ending]) => json.endsWith(ending));
+  if (!suffix) return undefined;
+  let document: VerbatimDocument | undefined;
+  try {
+    document = parseVerbatimDocument(decode(await memberBytes(json)));
+  } catch {
+    return undefined;
+  }
+  return document &&
+    document.kind === suffix[1] &&
+    path.basename(json) === `${document.identity.apiName}${suffix[0]}`
+    ? { path: json, document }
+    : undefined;
 }
 
 /**
@@ -1044,9 +1135,12 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         return path.resolve(flags.cwd, value);
       });
   const candidates = new Map<string, string>();
+  // Files named directly (a selector or an exact --source-dir file), not found in a folder.
+  const named = new Set<string>();
   let visited = 0;
   const walk = async (file: string, depth: number): Promise<void> => {
     if (++visited > 1024 || depth > 16) refuse();
+    if (depth === 0) named.add(canonical(file));
     const stat = await inspect(file);
     if (stat.isDirectory()) {
       if (path.dirname(file) === file) refuse();
@@ -1082,8 +1176,21 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
     if (candidates.size === 0) throw new DeployInputError('INVALID_SELECTION');
     const inputs: DeployInput[] = [];
     const identities = new Set<string>();
+    const skipped = new Set<string>();
+    const warnings: string[] = [];
     // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh candidate array within the existing TypeScript library target.
     for (const file of [...candidates.values()].sort()) {
+      // A file retrieved as-is is never sent: refused when named, otherwise skipped with a warning.
+      const verbatim = await verbatimMember(file);
+      if (verbatim) {
+        if (flags.verbatim !== 'skip' && named.has(canonical(file)))
+          throw verbatimRefusal(verbatim.document);
+        if (!skipped.has(canonical(verbatim.path))) {
+          skipped.add(canonical(verbatim.path));
+          warnings.push(verbatimSkipWarning(verbatim.document, verbatim.path));
+        }
+        continue;
+      }
       if (isCalculatedInsightMember(file)) {
         const input = await readCalculatedInsightInput(file);
         const key =
@@ -1264,6 +1371,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       }
       throw new DeployInputError('INVALID_SOURCE');
     }
+    if (warnings.length > 0) skippedWarnings.set(inputs, Object.freeze(warnings));
     return inputs;
   } catch (error: unknown) {
     if (error instanceof DeployInputError) throw error;
@@ -1284,6 +1392,48 @@ export type DeletedArtifactKind =
   | 'segment';
 
 /**
+ * Admit a deleted verbatim file (retrieved as-is): it is deleted by family and name, needs no SQL
+ * file and no spec. A relationship's source DMO comes from the raw list entry it keeps.
+ * @param {DeletedArtifactKind} kind Family derived from the canonical path.
+ * @param {string} name Canonical name derived from the path.
+ * @param {Buffer} bytes Exact revision bytes (the JSON file).
+ * @returns {object | undefined} Identity, the frozen verbatim document and a relationship's
+ * source DMO; undefined when the bytes are not a verbatim document of that family.
+ */
+function admitDeletedVerbatim(
+  kind: DeletedArtifactKind,
+  name: string,
+  bytes: Buffer,
+):
+  | {
+      identity: { dataSpace: string; apiName: string };
+      document: VerbatimDocument;
+      sourceObjectName?: string;
+    }
+  | undefined {
+  let value: unknown;
+  try {
+    value = strictJson(decode(bytes));
+  } catch {
+    return undefined;
+  }
+  if (!isVerbatimDocument(value, kind === 'data-graph' ? 'native-data-graph' : kind))
+    return undefined;
+  const source = (value.verbatim.native as { sourceObject?: { name?: unknown } } | null)
+    ?.sourceObject?.name;
+  if (
+    value.identity.apiName !== name ||
+    (kind === 'relationship' && (typeof source !== 'string' || !relationshipDmoName.test(source)))
+  )
+    throw new DeployInputError('INVALID_SOURCE');
+  return {
+    identity: { ...value.identity },
+    document: Object.freeze(value),
+    ...(kind === 'relationship' ? { sourceObjectName: source as string } : {}),
+  };
+}
+
+/**
  * Admit bytes of a file read from a Git revision (no worktree file exists) by the family
  * validator, and take the identity from the content, which must agree with the canonical name.
  * @param {DeletedArtifactKind} kind Family derived from the canonical path.
@@ -1301,9 +1451,11 @@ export function admitDeletedArtifact(
   code?: ReadonlyArray<{ name?: string; bytes: Buffer }>,
 ): {
   identity: { dataSpace: string; apiName: string };
-  document: DeployInput['document'];
+  document: DeployInput['document'] | VerbatimDocument;
   sourceObjectName?: string;
 } {
+  const verbatim = admitDeletedVerbatim(kind, name, bytes);
+  if (verbatim) return verbatim;
   try {
     const value = strictJson(decode(bytes));
     let identity: { dataSpace: string; apiName: string };

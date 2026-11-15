@@ -10,6 +10,7 @@ import {
   validateSegmentDocument,
 } from './segment-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 const filesystemPublication = { link, rename, unlink };
 
@@ -131,8 +132,13 @@ export async function writeSegmentDocument(
   overwrite: boolean,
   publication = filesystemPublication,
 ): Promise<{ path: string; codePaths: string[]; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateSegmentDocument(value);
-  const { json, files: code } = serializeSegmentFiles(document);
+  // A verbatim segment is its JSON alone; every SQL file of that segment is then stale.
+  const verbatim = isVerbatimDocument(value, 'segment') ? value : undefined;
+  const strict = verbatim ? undefined : validateSegmentDocument(value);
+  const document = verbatim ?? strict!;
+  const { json, files: code } = verbatim
+    ? { json: serializeVerbatimDocument(verbatim), files: [] }
+    : serializeSegmentFiles(strict!);
   if (!projectRoot.trim()) throw new SegmentError('UNSAFE_PATH');
   const root = path.resolve(projectRoot);
   let published = 0;
@@ -212,10 +218,11 @@ export async function writeSegmentDocument(
       throw new SegmentError('OUTPUT_CHANGED');
     const left = await staleSqlFiles(path.dirname(jsonPath), document.identity.apiName, files);
     if (left.length > 0) throw new SegmentError('OUTPUT_CHANGED');
-    joinSegmentFiles(
-      JSON.parse(completed[0]!.toString('utf8')),
-      code.map((file, index) => ({ ...file, text: completed[index + 1]!.toString('utf8') })),
-    );
+    if (!verbatim)
+      joinSegmentFiles(
+        JSON.parse(completed[0]!.toString('utf8')),
+        code.map((file, index) => ({ ...file, text: completed[index + 1]!.toString('utf8') })),
+      );
     return { path: files[0], codePaths, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new SegmentError('PARTIAL_SEGMENT_OUTPUT');

@@ -11,6 +11,7 @@ import type {
 } from '../artifacts/identity-resolution-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
+import { carryNativeResponse } from '../artifacts/verbatim-document.js';
 
 export type IdentityResolutionAcquisition = {
   identity: IdentityResolutionDocument['identity'];
@@ -45,13 +46,19 @@ export async function retrieveIdentityResolution(
   )
     throw new IdentityResolutionError('INVALID_SCOPE');
   const identity = { dataSpace: 'default', apiName } as const;
+  // The raw GET response travels with the result and the candidate, for a verbatim file when
+  // the owner cannot be represented.
+  let read: { native: unknown } | undefined;
   try {
     const native = await new ConnectClient(connection, apiVersion).get(
       `/services/data/v68.0/ssot/identity-resolutions/${apiName}`,
     );
-    return { identity, ...projectNativeIdentityResolution(native, apiName), blockers: [] };
+    read = { native };
+    const projection = projectNativeIdentityResolution(native, apiName);
+    carryNativeResponse(projection.candidate, native);
+    return carryNativeResponse({ identity, ...projection, blockers: [] }, native);
   } catch (error: unknown) {
-    return retainConnectDiagnostic(
+    const result = retainConnectDiagnostic(
       {
         identity,
         blockers: [
@@ -62,5 +69,6 @@ export async function retrieveIdentityResolution(
       },
       getConnectDiagnostic(error),
     );
+    return read ? carryNativeResponse(result, read.native) : result;
   }
 }

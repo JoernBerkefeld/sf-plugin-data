@@ -76,6 +76,18 @@ import {
   RetrieveSelectionError,
 } from '../../services/acquire-retrieve-selection.js';
 import { DependencySelectionError } from '../../artifacts/dependency-selection.js';
+import {
+  carriedNativeResponse,
+  carryNativeResponse,
+  createVerbatimDocument,
+  isVerbatimDocument,
+  nativeReadRecorder,
+  recordNativeReads,
+  verbatimFamily,
+  verbatimReason,
+} from '../../artifacts/verbatim-document.js';
+import type { VerbatimDocument, VerbatimKind } from '../../artifacts/verbatim-document.js';
+import { localFilePresent } from '../../services/local-file-removal.js';
 
 export type RetrieveEnvelope = {
   contract: 'sf-data360-retrieve';
@@ -131,9 +143,34 @@ export type RetrieveEnvelope = {
         apiVersion: string;
         transport: 'native' | 'metadata';
       }>;
+      /** Written as Salesforce returned it: the plugin cannot represent it (reason: error code). */
+      verbatim?: { reason: string };
     }>;
   };
 };
+type RetrieveItem = RetrieveEnvelope['result']['items'][number];
+type RetrieveRoute = NonNullable<RetrieveItem['routes']>[number];
+/** One family writer: a normal or a verbatim document to its file(s). */
+type DocumentWriter = (
+  document: unknown,
+  root: string,
+  overwrite: boolean,
+) => Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }>;
+/** Where a verbatim fallback is written and reported. */
+type VerbatimTarget = {
+  kind: VerbatimKind;
+  identity: { dataSpace: string; apiName: string };
+  routes: RetrieveRoute[];
+  root: string;
+  overwrite: boolean;
+  warnings: string[];
+  push: (item: RetrieveItem) => void;
+};
+/** The raw GET response remembered for a name, if it was read. */
+type NativeOf = (name: string) => { native: unknown } | undefined;
+// Before an item's client exists nothing was read.
+const noReads = new Map<string, { native: unknown }>();
+const nothingRead: NativeOf = (name) => noReads.get(name);
 
 /** Name the actual reason a calculated insight was not exported. */
 const calculatedInsightRetrieveMessages: Record<string, string> = {
@@ -398,6 +435,110 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
   };
   /**
+   * The writer of a document kind; every writer also writes a verbatim document of its kind.
+   * @param {VerbatimKind} kind Document kind.
+   * @returns {DocumentWriter} Family writer.
+   */
+  private documentWriter(kind: VerbatimKind): DocumentWriter {
+    const writers: Record<VerbatimKind, DocumentWriter> = {
+      dlo: this.writeDlo ?? writeDloDocument,
+      dmo: this.writeNativeDmo ?? writeNativeDmoDocument,
+      mapping: this.writeNativeMapping ?? writeNativeMappingDocument,
+      relationship: this.writeRelationship ?? writeNativeRelationshipDocument,
+      'data-stream': this.writeDataStream ?? writeDataStreamDocument,
+      'data-transform': this.writeDataTransform ?? writeDataTransformDocument,
+      'native-data-graph': this.writeDataGraph ?? writeDataGraphDocument,
+      'calculated-insight': this.writeCalculatedInsight ?? writeNativeCalculatedInsightDocument,
+      'identity-resolution': this.writeIdentityResolution ?? writeIdentityResolutionDocument,
+      segment: this.writeSegment ?? writeSegmentDocument,
+    };
+    return writers[kind];
+  }
+
+  /**
+   * Report a written verbatim document: a warning naming the reason (and a calculated insight's
+   * SQL file left from an earlier retrieve), plus the item marker.
+   * @param {VerbatimDocument} document Written verbatim document.
+   * @param {string} file Its path.
+   * @param {string[]} warnings Envelope warnings.
+   * @returns {Promise<{verbatim: {reason: string}}>} Item marker.
+   */
+  private async noteVerbatim(
+    document: VerbatimDocument,
+    file: string,
+    warnings: string[],
+  ): Promise<{ verbatim: { reason: string } }> {
+    let text = `${verbatimFamily(document.kind)}:${document.identity.apiName}: retrieved as-is (verbatim, reason ${document.verbatim.reason}) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.`;
+    if (document.kind === 'calculated-insight') {
+      const sql = file.replace(/\.json$/u, '.sql');
+      if (sql !== file && (await localFilePresent(sql)))
+        text += ` The SQL file ${sql} from an earlier retrieve was left in place; remove it when you no longer need it.`;
+    }
+    warnings.push(text);
+    return { verbatim: { reason: document.verbatim.reason } };
+  }
+
+  /**
+   * The verbatim document for a failed projection or validation, or undefined when the failure
+   * stays an item failure (HTTP error, not found, identity/target mismatch, no response read).
+   * @param {unknown} error Caught error.
+   * @param {{native: unknown} | undefined} read Raw GET response of the item.
+   * @param {VerbatimKind} kind Normal document kind.
+   * @param {object} identity Normal identity.
+   * @param {string} identity.dataSpace Data space.
+   * @param {string} identity.apiName API name.
+   * @returns {VerbatimDocument | undefined} Verbatim document.
+   */
+  private verbatimFor(
+    error: unknown,
+    read: { native: unknown } | undefined,
+    kind: VerbatimKind,
+    identity: { dataSpace: string; apiName: string },
+  ): VerbatimDocument | undefined {
+    const reason = verbatimReason(error);
+    return reason === undefined || read === undefined
+      ? undefined
+      : createVerbatimDocument(kind, identity, reason, read.native);
+  }
+
+  /**
+   * Catch-all of every family: an item whose projection or validation failed is written as
+   * Salesforce returned it, at its normal path, with a warning; it is not an item failure.
+   * @param {unknown} caught Caught error.
+   * @param {{native: unknown} | undefined} read Raw GET response of the item.
+   * @param {VerbatimTarget} target Kind, identity, routes, output and where to report.
+   * @returns {Promise<unknown>} Undefined when written; otherwise the error to report (the
+   * original one, or the verbatim write's own).
+   */
+  private async verbatimFallback(
+    caught: unknown,
+    read: { native: unknown } | undefined,
+    target: VerbatimTarget,
+  ): Promise<unknown> {
+    const document = this.verbatimFor(caught, read, target.kind, target.identity);
+    if (document === undefined) return caught;
+    try {
+      const receipt = await this.documentWriter(target.kind)(
+        document,
+        target.root,
+        target.overwrite,
+      );
+      const family = verbatimFamily(target.kind);
+      target.push({
+        identity: { ...document.identity },
+        operation: 'retrieve',
+        ...(family === 'dmo' ? {} : { family: family as RetrieveItem['family'] }),
+        routes: target.routes,
+        ...receipt,
+        ...(await this.noteVerbatim(document, receipt.path, target.warnings)),
+      });
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  }
+
+  /**
    * Retrieve every relationship whose source is one of the DMOs, one file each. Each DMO's
    * inventory is read completely before its files are written; failures stay per DMO or file.
    * @param {string[]} dmoNames Exact sorted source DMOs.
@@ -420,10 +561,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   ): Promise<{
     items: RetrieveEnvelope['result']['items'];
     errors: RetrieveEnvelope['diagnostics']['errors'];
+    warnings: string[];
     failed: boolean;
   }> {
     const items: RetrieveEnvelope['result']['items'] = [];
     const errors: RetrieveEnvelope['diagnostics']['errors'] = [];
+    const warnings: string[] = [];
     let failed = false;
     const diagnose = (error: unknown, apiName: string): void => {
       const code = error instanceof NativeRelationshipError ? error.code : 'NATIVE_RETRIEVE_FAILED';
@@ -451,6 +594,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         diagnose(error, dmo);
         continue;
       }
+      const routes: RetrieveRoute[] = [
+        { operation: 'relationship.list', apiVersion: version, transport: 'native' },
+      ];
       for (const document of documents)
         try {
           const receipt = await (this.writeRelationship ?? writeNativeRelationshipDocument)(
@@ -462,14 +608,26 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             identity: document.identity,
             operation: 'retrieve',
             family: 'relationship',
-            routes: [{ operation: 'relationship.list', apiVersion: version, transport: 'native' }],
+            routes,
             ...receipt,
+            ...(isVerbatimDocument(document)
+              ? await this.noteVerbatim(document, receipt.path, warnings)
+              : {}),
           });
-        } catch (error) {
-          diagnose(error, document.identity.apiName);
+        } catch (error_) {
+          const error = await this.verbatimFallback(error_, carriedNativeResponse(document), {
+            kind: 'relationship',
+            identity: document.identity,
+            routes,
+            root,
+            overwrite,
+            warnings,
+            push: (item) => items.push(item),
+          });
+          if (error !== undefined) diagnose(error, document.identity.apiName);
         }
     }
-    return { items, errors, failed };
+    return { items, errors, warnings, failed };
   }
 
   /**
@@ -510,12 +668,22 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         outputTypes.add('data-transform');
         const before = envelope.diagnostics.errors.length;
         let failed = false;
+        const routes: RetrieveRoute[] = [
+          { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
+          {
+            operation: 'data-transform.schedule.get',
+            apiVersion: '68.0',
+            transport: 'native',
+          },
+        ];
         for (const apiName of names) {
+          let nativeOf = nothingRead;
           try {
-            const observed = await this.acquireDataTransform(
-              apiName,
+            const reads = recordNativeReads(
               this.createDataTransformClient(connection, '68.0', effectiveScope),
             );
+            nativeOf = reads.nativeOf;
+            const observed = await this.acquireDataTransform(apiName, reads.client);
             if (observed.document.definition.name !== apiName)
               throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
             const receipt = await this.writeDataTransform(
@@ -527,17 +695,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               identity: { dataSpace: effectiveScope, apiName },
               operation: 'retrieve',
               family: 'data-transform',
-              routes: [
-                { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
-                {
-                  operation: 'data-transform.schedule.get',
-                  apiVersion: '68.0',
-                  transport: 'native',
-                },
-              ],
+              routes,
               ...receipt,
             });
-          } catch (error) {
+          } catch (error_) {
+            const error = await this.verbatimFallback(error_, nativeOf(apiName), {
+              kind: 'data-transform',
+              identity: { dataSpace: effectiveScope, apiName },
+              routes,
+              root: outputDirectory,
+              overwrite: flags.overwrite,
+              warnings: envelope.diagnostics.warnings,
+              push: (item) => envelope.result.items.push(item),
+            });
+            if (error === undefined) continue;
             const code =
               error instanceof DataTransformError ? error.code : 'TRANSFORM_RETRIEVE_FAILED';
             if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
@@ -601,11 +772,21 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         outputTypes.add('data-stream');
         const before = envelope.diagnostics.errors.length;
         let failed = false;
+        const routes: RetrieveRoute[] = [
+          { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
+          { operation: 'dlo.get', apiVersion: version, transport: 'native' },
+          { operation: 'connection.read', apiVersion: version, transport: 'native' },
+        ];
         for (const apiName of names) {
+          let nativeOf = nothingRead;
           try {
+            const clients = this.createDataStreamClients(connection, target, version);
+            // The stream's own GET is the raw response a verbatim file keeps.
+            const reads = recordNativeReads(clients.streams);
+            nativeOf = reads.nativeOf;
             const document = await this.acquireDataStream(
               apiName,
-              this.createDataStreamClients(connection, target, version),
+              clients.streams ? { ...clients, streams: reads.client } : clients,
               effectiveScope,
             );
             const receipt = await this.writeDataStream(document, outputDirectory, flags.overwrite);
@@ -613,14 +794,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               identity: document.identity,
               operation: 'retrieve',
               family: 'data-stream',
-              routes: [
-                { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
-                { operation: 'dlo.get', apiVersion: version, transport: 'native' },
-                { operation: 'connection.read', apiVersion: version, transport: 'native' },
-              ],
+              routes,
               ...receipt,
             });
-          } catch (error) {
+          } catch (error_) {
+            const error = await this.verbatimFallback(error_, nativeOf(apiName), {
+              kind: 'data-stream',
+              identity: { dataSpace: effectiveScope, apiName },
+              routes,
+              root: outputDirectory,
+              overwrite: flags.overwrite,
+              warnings: envelope.diagnostics.warnings,
+              push: (item) => envelope.result.items.push(item),
+            });
+            if (error === undefined) continue;
             const code =
               error instanceof DataStreamError ? error.code : 'DATA_STREAM_RETRIEVE_FAILED';
             if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
@@ -683,10 +870,19 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         }
         envelope.provenance.sourceOrgId ??= graphContext.orgId;
         envelope.metadata.soapApiVersion ??= '68.0';
+        // The body of each graph's first successful read is the raw response a verbatim file keeps.
+        const reads = recordNativeReads(graphContext, (response) => {
+          const read = response as { status?: unknown; body?: unknown } | undefined;
+          return read?.status === 200 ? { native: read.body } : undefined;
+        });
+        graphContext = reads.client;
         const names = [...new Set(selectors.map((value) => value.slice('data-graph:'.length)))];
         names.sort();
         outputTypes.add('data-graph');
         const before = envelope.diagnostics.errors.length;
+        const routes: RetrieveRoute[] = [
+          { operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' },
+        ];
         for (const apiName of names) {
           try {
             const document = await this.retrieveNativeGraph(apiName, graphContext);
@@ -695,10 +891,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               identity: { dataSpace: 'default', apiName },
               operation: 'retrieve',
               family: 'data-graph',
-              routes: [{ operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' }],
+              routes,
               ...receipt,
             });
-          } catch (error) {
+          } catch (error_) {
+            const error = await this.verbatimFallback(error_, reads.nativeOf(apiName), {
+              kind: 'native-data-graph',
+              identity: { dataSpace: 'default', apiName },
+              routes,
+              root: outputDirectory,
+              overwrite: flags.overwrite,
+              warnings: envelope.diagnostics.warnings,
+              push: (item) => envelope.result.items.push(item),
+            });
+            if (error === undefined) continue;
             const diagnostic: RetrieveDiagnostic = {
               code: 'NATIVE_GRAPH_RETRIEVE_BLOCKED',
               message: retrievalMessage(error),
@@ -859,26 +1065,33 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             selectors.some((selector) => selector === family || selector.startsWith(`${family}:`))
           )
             outputTypes.add(family);
+          const routes: RetrieveRoute[] = [
+            { operation: `${family}.get`, apiVersion: version, transport: 'native' },
+          ];
           for (const apiName of selected.get(family) ?? []) {
+            // The item's own client: its GET is the raw response a verbatim file keeps.
+            const reads = nativeReadRecorder();
             try {
               const document =
                 family === 'mapping'
                   ? await this.acquireNativeMapping(
                       apiName,
-                      this.createMappingClient(target, version, undefined, requestScope),
+                      reads.wrap(
+                        this.createMappingClient(target, version, undefined, requestScope),
+                      ),
                       requestScope,
                       this.mappingParents(target, version),
                     )
                   : family === 'dlo'
                     ? await this.acquireDlo(
                         apiName,
-                        this.createDloClient(target, version),
+                        reads.wrap(this.createDloClient(target, version)),
                         // The scope it is read in binds a DLO that belongs to several spaces.
                         effectiveScope,
                       )
                     : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
                         apiName,
-                        this.createDmoClient(target, version),
+                        reads.wrap(this.createDmoClient(target, version)),
                         requestScope,
                       );
               const root = outputDirectory;
@@ -896,10 +1109,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 identity: document.identity,
                 operation: 'retrieve',
                 ...(family === 'dmo' ? {} : { family }),
-                routes: [{ operation: `${family}.get`, apiVersion: version, transport: 'native' }],
+                routes,
                 ...receipt,
               });
-            } catch (error) {
+            } catch (error_) {
+              const error = await this.verbatimFallback(error_, reads.nativeOf(apiName), {
+                kind: family,
+                identity: { dataSpace: effectiveScope, apiName },
+                routes,
+                root: outputDirectory,
+                overwrite: flags.overwrite,
+                warnings: envelope.diagnostics.warnings,
+                push: (item) => envelope.result.items.push(item),
+              });
+              if (error === undefined) continue;
               const code =
                 error instanceof NativeMappingError ||
                 error instanceof NativeDmoError ||
@@ -936,6 +1159,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           );
           envelope.result.items.push(...relationships.items);
           envelope.diagnostics.errors.push(...relationships.errors);
+          envelope.diagnostics.warnings.push(...relationships.warnings);
           if (relationships.failed) failed = true;
         }
         return { status: groupStatus(envelope, before, failed), selection };
@@ -1160,25 +1384,37 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             );
           dlos = [...new Set(dlos)];
           dlos.sort();
+          const dloRoutes: RetrieveRoute[] = [
+            { operation: 'dlo.get', apiVersion: '68.0', transport: 'native' },
+          ];
           for (const apiName of dlos) {
+            let nativeOf = nothingRead;
             try {
               const target =
                 flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
               if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
-              const document = await this.acquireDlo(
-                apiName,
-                this.createDloClient(target, '68.0'),
-                'default',
-              );
+              const reads = recordNativeReads(this.createDloClient(target, '68.0'));
+              nativeOf = reads.nativeOf;
+              const document = await this.acquireDlo(apiName, reads.client, 'default');
               const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
               envelope.result.items.push({
                 identity: { dataSpace: 'default', apiName },
                 operation: 'retrieve',
                 family: 'dlo',
-                routes: [{ operation: 'dlo.get', apiVersion: '68.0', transport: 'native' }],
+                routes: dloRoutes,
                 ...receipt,
               });
-            } catch (error: unknown) {
+            } catch (error_: unknown) {
+              const error = await this.verbatimFallback(error_, nativeOf(apiName), {
+                kind: 'dlo',
+                identity: { dataSpace: 'default', apiName },
+                routes: dloRoutes,
+                root: outputDirectory,
+                overwrite: flags.overwrite,
+                warnings: envelope.diagnostics.warnings,
+                push: (item) => envelope.result.items.push(item),
+              });
+              if (error === undefined) continue;
               diagnose(error, apiName, 'dlo');
               if (
                 !(error instanceof SegmentError) ||
@@ -1195,13 +1431,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const mappings = [...new Set(mappingSelectors.map((value) => value.slice(8)))];
           mappings.sort();
           for (const apiName of mappings) {
+            let nativeOf = nothingRead;
+            let routes: RetrieveRoute[] = [];
             try {
               const version = nativeApiVersion(flags['api-version']);
+              routes = [{ operation: 'mapping.get', apiVersion: version, transport: 'native' }];
               const target = flags['target-org'] ?? org.getConnection(version).getUsername();
               if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
+              const reads = recordNativeReads(
+                this.createMappingClient(target, version, undefined, requestScope),
+              );
+              nativeOf = reads.nativeOf;
               const document = await this.acquireNativeMapping(
                 apiName,
-                this.createMappingClient(target, version, undefined, requestScope),
+                reads.client,
                 requestScope,
                 this.mappingParents(target, version),
               );
@@ -1214,10 +1457,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 identity: { dataSpace: 'default', apiName },
                 operation: 'retrieve',
                 family: 'mapping',
-                routes: [{ operation: 'mapping.get', apiVersion: version, transport: 'native' }],
+                routes,
                 ...receipt,
               });
-            } catch (error: unknown) {
+            } catch (error_: unknown) {
+              const error = await this.verbatimFallback(error_, nativeOf(apiName), {
+                kind: 'mapping',
+                identity: { dataSpace: 'default', apiName },
+                routes,
+                root: outputDirectory,
+                overwrite: flags.overwrite,
+                warnings: envelope.diagnostics.warnings,
+                push: (item) => envelope.result.items.push(item),
+              });
+              if (error === undefined) continue;
               const unproven =
                 error instanceof NativeMappingError &&
                 error.code === 'MAPPING_GENERATED_PAIRS_UNPROVEN';
@@ -1258,6 +1511,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               );
               envelope.result.items.push(...relationships.items);
               envelope.diagnostics.errors.push(...relationships.errors);
+              envelope.diagnostics.warnings.push(...relationships.warnings);
               if (relationships.failed) failed = true;
             } else
               envelope.diagnostics.errors.push({
@@ -1329,13 +1583,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   },
                 )
               : [];
-          const calculatedInsights: Array<{
-            document: {
-              kind: 'calculated-insight';
-              identity: { dataSpace: string; apiName: string };
-            };
-            insight: NativeCalculatedInsight;
-          }> = [];
+          const calculatedInsights: Array<
+            | {
+                document: {
+                  kind: 'calculated-insight';
+                  identity: { dataSpace: string; apiName: string };
+                };
+                insight: NativeCalculatedInsight;
+              }
+            | { document: VerbatimDocument }
+          > = [];
           if (ciSelectors.length > 0) {
             // Every CI is read before any selected output (API 68 GET only).
             const ciConnection = org.getConnection('68.0');
@@ -1353,12 +1610,15 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 reported = error;
                 throw error;
               }
-            const client = this.createCalculatedInsightClient(ciConnection, '68.0', effectiveScope);
+            // Each insight's GET is the raw response a verbatim file keeps.
+            const ciReads = recordNativeReads(
+              this.createCalculatedInsightClient(ciConnection, '68.0', effectiveScope),
+            );
             // eslint-disable-next-line unicorn/no-array-sort -- Deterministic CI order on a new array.
             for (const apiName of [...new Set(ciNames)].sort()) {
               try {
                 const insight = await this.acquireCalculatedInsight(
-                  client,
+                  ciReads.client,
                   apiName,
                   effectiveScope,
                 );
@@ -1367,16 +1627,28 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     kind: 'calculated-insight',
                     identity: { dataSpace: insight.dataSpace, apiName },
                   },
-                  insight,
+                  insight: carryNativeResponse(insight, ciReads.nativeOf(apiName)?.native),
                 });
               } catch (error: unknown) {
+                const verbatim = this.verbatimFor(
+                  error,
+                  ciReads.nativeOf(apiName),
+                  'calculated-insight',
+                  { dataSpace: effectiveScope, apiName },
+                );
+                if (verbatim) {
+                  calculatedInsights.push({ document: verbatim });
+                  continue;
+                }
                 diagnose(error, apiName, 'calculated-insight');
                 reported = error;
                 throw error;
               }
             }
           }
-          const identityResolutions: Array<{ document: IdentityResolutionDocument }> = [];
+          const identityResolutions: Array<{
+            document: IdentityResolutionDocument | VerbatimDocument;
+          }> = [];
           if (irSelectors.length > 0) {
             const irVersion = await resolveApiVersion('68.0', async () => {
               throw new Error('Fixed route must not discover.');
@@ -1387,6 +1659,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               ...new Set(irSelectors.map((value) => value.slice(20))),
               // eslint-disable-next-line unicorn/no-array-sort -- Sort a detached selector list within the ES2022 library target.
             ].sort()) {
+              // The raw GET response travels with the acquisition, for a verbatim file.
+              let read: { native: unknown } | undefined;
               try {
                 const acquired = await this.acquireIdentityResolution(
                   irConnection,
@@ -1394,6 +1668,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   irVersion,
                   effectiveScope,
                 );
+                read = carriedNativeResponse(acquired);
                 if (acquired.blockers.length > 0 || !acquired.candidate)
                   throw retainConnectDiagnostic(
                     new IdentityResolutionError(
@@ -1409,8 +1684,18 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   document.identity.dataSpace !== effectiveScope
                 )
                   throw new IdentityResolutionError('IDENTITY_RESOLUTION_IDENTITY_MISMATCH');
-                identityResolutions.push({ document });
+                identityResolutions.push({
+                  document: read ? carryNativeResponse(document, read.native) : document,
+                });
               } catch (error: unknown) {
+                const verbatim = this.verbatimFor(error, read, 'identity-resolution', {
+                  dataSpace: effectiveScope,
+                  apiName,
+                });
+                if (verbatim) {
+                  identityResolutions.push({ document: verbatim });
+                  continue;
+                }
                 diagnose(error, apiName, 'identity-resolution');
                 reported = error;
                 throw error;
@@ -1426,6 +1711,23 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ];
           for (const entry of entries) {
             const { document } = entry;
+            // dmo, segment, identity-resolution or calculated-insight (also as a verbatim file).
+            const kind = document.kind as VerbatimKind;
+            const routes: RetrieveRoute[] = [
+              kind === 'identity-resolution'
+                ? { operation: 'identity-resolutions.get', apiVersion: '68.0', transport: 'native' }
+                : {
+                    operation: `${kind}.get`,
+                    // A DMO here is always one native read.
+                    apiVersion:
+                      kind === 'calculated-insight'
+                        ? '68.0'
+                        : kind === 'dmo'
+                          ? nativeDmoVersion
+                          : versions.soapNumeric,
+                    transport: 'native',
+                  },
+            ];
             try {
               const receipt =
                 'insight' in entry
@@ -1434,63 +1736,32 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                       outputDirectory,
                       flags.overwrite,
                     )
-                  : document.kind === 'identity-resolution'
-                    ? await this.writeIdentityResolution(document, outputDirectory, flags.overwrite)
-                    : document.kind === 'segment'
-                      ? await this.writeSegment(document, outputDirectory, flags.overwrite)
-                      : await (this.writeNativeDmo ?? writeNativeDmoDocument)(
-                          document,
-                          outputDirectory,
-                          flags.overwrite,
-                        );
+                  : await this.documentWriter(kind)(document, outputDirectory, flags.overwrite);
               envelope.result.items.push({
                 identity: { ...document.identity },
-                ...(document.kind === 'segment' ||
-                document.kind === 'identity-resolution' ||
-                document.kind === 'calculated-insight'
-                  ? { family: document.kind }
-                  : {}),
-                ...(document.kind === 'segment' ||
-                document.kind === 'identity-resolution' ||
-                document.kind === 'calculated-insight'
-                  ? {
-                      routes:
-                        document.kind === 'identity-resolution'
-                          ? [
-                              {
-                                operation: 'identity-resolutions.get',
-                                apiVersion: '68.0',
-                                transport: 'native' as const,
-                              },
-                            ]
-                          : [
-                              {
-                                operation: `${document.kind}.get`,
-                                apiVersion:
-                                  document.kind === 'calculated-insight'
-                                    ? '68.0'
-                                    : versions.soapNumeric,
-                                transport: 'native' as const,
-                              },
-                            ],
-                    }
-                  : {}),
-                // A DMO here is always one native read.
-                ...(document.kind === 'dmo'
-                  ? {
-                      routes: [
-                        {
-                          operation: 'dmo.get',
-                          apiVersion: nativeDmoVersion,
-                          transport: 'native' as const,
-                        },
-                      ],
-                    }
-                  : {}),
+                ...(kind === 'dmo' ? {} : { family: kind as RetrieveItem['family'] }),
+                routes,
                 operation: 'retrieve',
                 ...receipt,
+                ...(isVerbatimDocument(document)
+                  ? await this.noteVerbatim(document, receipt.path, envelope.diagnostics.warnings)
+                  : {}),
               });
-            } catch (error: unknown) {
+            } catch (error_: unknown) {
+              const error = await this.verbatimFallback(
+                error_,
+                carriedNativeResponse('insight' in entry ? entry.insight : document),
+                {
+                  kind,
+                  identity: { ...document.identity },
+                  routes,
+                  root: outputDirectory,
+                  overwrite: flags.overwrite,
+                  warnings: envelope.diagnostics.warnings,
+                  push: (item) => envelope.result.items.push(item),
+                },
+              );
+              if (error === undefined) continue;
               diagnose(error, document.identity.apiName, document.kind);
               // Do not publish dependents after an ambiguous prerequisite output failure.
               break;
@@ -1597,6 +1868,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             !groups.has(errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo')
           )
             printError(diagnostic);
+        for (const warning of envelope.diagnostics.warnings) this.log(`Warning: ${warning}`);
       }
       return envelope;
     };

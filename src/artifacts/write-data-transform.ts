@@ -8,6 +8,11 @@ import {
   validateDataTransformDocument,
 } from './data-transform-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import {
+  isVerbatimDocument,
+  previousIdentity,
+  serializeVerbatimDocument,
+} from './verbatim-document.js';
 import { dataTransformArtifactPath } from '../services/retrieve-data-transform.js';
 
 /**
@@ -102,8 +107,12 @@ export async function writeDataTransformDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateDataTransformDocument(value);
-  const bytes = Buffer.from(serializeDataTransformDocument(document));
+  const verbatim = isVerbatimDocument(value, 'data-transform') ? value : undefined;
+  const document = verbatim ? undefined : validateDataTransformDocument(value);
+  const name = verbatim ? verbatim.identity.apiName : (document!.definition.name as string);
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : serializeDataTransformDocument(document!),
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -114,10 +123,7 @@ export async function writeDataTransformDocument(
     throw new DataTransformError('UNSAFE_PATH');
   const root = path.resolve(projectRoot);
   if (path.dirname(root) === root) throw new DataTransformError('UNSAFE_PATH');
-  const destination = path.join(
-    root,
-    dataTransformArtifactPath(document.definition.name as string),
-  );
+  const destination = path.join(root, dataTransformArtifactPath(name));
   const directory = path.dirname(destination);
   const filename = path.basename(destination);
   let published = false;
@@ -127,8 +133,10 @@ export async function writeDataTransformDocument(
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
-      const saved = validateDataTransformDocument(JSON.parse(previous.toString('utf8')));
-      if (saved.definition.name !== document.definition.name)
+      const saved = previousIdentity(previous.toString('utf8'), (previousValue) => ({
+        apiName: validateDataTransformDocument(previousValue).definition.name as string,
+      }));
+      if (saved.apiName !== undefined && saved.apiName !== name)
         throw new DataTransformError('TRANSFORM_FILENAME_COLLISION');
       if (!overwrite) throw new DataTransformError('OVERWRITE_REQUIRED');
     }

@@ -106,6 +106,7 @@ import {
   captureDeployInputDigest,
   DeployInputError,
   readDeployInputs,
+  skippedVerbatimWarnings,
 } from '../../artifacts/read-deploy-input.js';
 import { executeSegmentDeploy } from '../../services/execute-segment-deploy.js';
 import type { SegmentDeployExecution } from '../../services/execute-segment-deploy.js';
@@ -702,6 +703,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           this.log(
             `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since ${envelope.result.selection.changedSince ?? '<ref>'} --confirm-delete after a --preview).`,
           );
+        for (const warning of envelope.diagnostics.warnings)
+          if (warning.startsWith('Skipped ')) this.log(`Warning: ${warning}`);
         for (const item of envelope.result.items) {
           const family =
             families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo';
@@ -810,6 +813,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         envelope.result.selection.changedSince = changedSince;
         const selected = await this.selectGitInputs({ cwd, ref: changedSince });
         envelope.provenance.git = selected.provenance;
+        envelope.diagnostics.warnings.push(...(selected.warnings ?? []));
         if (selected.deletions?.length)
           envelope.result.selection.deletions = selected.deletions.map((deletion) => ({
             family: deletion.family,
@@ -829,6 +833,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      // Verbatim files (retrieved as-is) in a selected folder were skipped with a warning.
+      const skipped = skippedVerbatimWarnings(resolvedInputs);
+      envelope.diagnostics.warnings.push(...skipped);
       // Bind every resolved input, of every family, to the bytes the Git selection admitted.
       if (gitCaptured) {
         if (resolvedInputs.length !== gitCaptured.length)
@@ -874,6 +881,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input.path,
           input.document.kind === 'native-data-graph' ? 'data-graph' : input.document.kind,
         );
+      // Every selected file was a skipped verbatim file: nothing to deploy.
+      if (resolvedInputs.length === 0 && skipped.length > 0) return finish('success');
       if (resolvedInputs.length === 0 && changedSince === undefined)
         return finish('blocked', 'INVALID_SELECTION');
       const graphInputs = resolvedInputs.filter(
@@ -2594,6 +2603,9 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         error instanceof NativeMappingError ||
         error instanceof NativeRelationshipError
       )
+        return finish('blocked', error.code, error);
+      // A named verbatim file: the message names its kind, name and reason.
+      if (error instanceof DeployInputError && error.code === 'VERBATIM_NOT_DEPLOYABLE')
         return finish('blocked', error.code, error);
       if (error instanceof DeployInputError || error instanceof DependencySelectionError)
         return finish('blocked', error.code);

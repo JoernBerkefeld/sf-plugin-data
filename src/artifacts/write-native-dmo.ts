@@ -8,6 +8,11 @@ import {
   validateNativeDmoDocument,
 } from './native-dmo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import {
+  isVerbatimDocument,
+  previousIdentity,
+  serializeVerbatimDocument,
+} from './verbatim-document.js';
 
 /**
  * Validate real ancestors before publication.
@@ -78,7 +83,7 @@ async function existing(file: string): Promise<Buffer | undefined> {
 }
 /**
  * Publish complete native DMO definitions.
- * @param {unknown} value Portable definition including generated fields.
+ * @param {unknown} value Portable definition including generated fields, or a verbatim document.
  * @param {string} projectRoot Explicit project root.
  * @param {boolean} overwrite Permit replacing differing bytes.
  * @returns {Promise<{path: string; outcome: 'retrieved' | 'unchanged'}>} Publication receipt.
@@ -88,9 +93,12 @@ export async function writeNativeDmoDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
+  const verbatim = isVerbatimDocument(value, 'dmo') ? value : undefined;
   // Authored content only: the generated fields a deploy keeps from the org when they are omitted.
-  const document = leanNativeDmoDocument(validateNativeDmoDocument(value));
-  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
+  const document = verbatim ?? leanNativeDmoDocument(validateNativeDmoDocument(value));
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -113,8 +121,11 @@ export async function writeNativeDmoDocument(
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
-      const saved = validateNativeDmoDocument(JSON.parse(previous.toString('utf8')));
-      if (saved.identity.dataSpace !== document.identity.dataSpace)
+      const saved = previousIdentity(
+        previous.toString('utf8'),
+        (previousValue) => validateNativeDmoDocument(previousValue).identity,
+      );
+      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new NativeDmoError('DMO_DATASPACE_COLLISION');
       if (!overwrite) throw new NativeDmoError('OVERWRITE_REQUIRED');
     }

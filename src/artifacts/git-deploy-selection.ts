@@ -2,10 +2,14 @@ import { dloName } from './dlo-document.js';
 import type { DloDeployInput, DeployInput, DeletedArtifactKind } from './read-deploy-input.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { admitDeletedArtifact, readDeployInputs } from './read-deploy-input.js';
+import {
+  admitDeletedArtifact,
+  readDeployInputs,
+  skippedVerbatimWarnings,
+} from './read-deploy-input.js';
 import { codeFilePath } from './code-fields.js';
 import { nativeDmoName } from './native-dmo-document.js';
 import { identityResolutionName } from './identity-resolution-document.js';
@@ -18,6 +22,8 @@ import { nativeMappingName } from './native-mapping-document.js';
 import { nativeRelationshipName } from './native-relationship-document.js';
 import { dataTransformName } from './data-transform-document.js';
 import { dataGraphName } from './data-graph-document.js';
+import { parseVerbatimDocument } from './verbatim-document.js';
+import type { VerbatimDocument } from './verbatim-document.js';
 
 const execute = promisify(execFile);
 
@@ -41,8 +47,11 @@ export type GitDeleteCandidate = Readonly<{
   companionPath?: string;
   /** Segment only: absolute paths of the SQL file of each base model. */
   codePaths?: readonly string[];
-  /** The validated base document (deeply frozen); the delete runs from it, not from a file. */
-  document: DeployInput['document'];
+  /**
+   * The validated base document (deeply frozen); the delete runs from it, not from a file. A
+   * verbatim document (retrieved as-is) is deleted by family and name only.
+   */
+  document: DeployInput['document'] | VerbatimDocument;
   /** Relationship source DMO, from the base content. */
   sourceObjectName?: string;
   /** SHA-256 of the base bytes. */
@@ -59,6 +68,8 @@ export type GitDeploySelection = {
   identityResolutions?: readonly IdentityResolutionDeployInput[];
   /** Files deleted in the range. Carried for the caller; selection never deletes. */
   deletions?: readonly GitDeleteCandidate[];
+  /** Changed verbatim files (retrieved as-is) that were left out, one warning each. */
+  warnings?: readonly string[];
   provenance: {
     repositoryRoot: string;
     requestedRef: string;
@@ -318,6 +329,24 @@ async function present(file: string): Promise<boolean> {
 }
 
 /**
+ * Whether a worktree file is a verbatim document (retrieved as-is).
+ * @param {string} file Absolute path.
+ * @returns {Promise<boolean>} A regular file holding a verbatim document.
+ */
+async function verbatimFile(file: string): Promise<boolean> {
+  try {
+    const stat = await lstat(file);
+    return (
+      stat.isFile() &&
+      stat.size <= 1_048_576 &&
+      parseVerbatimDocument(await readFile(file, 'utf8')) !== undefined
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read one regular file of a commit, or undefined when the commit has no entry at that path.
  * @param {string} repositoryRoot Absolute repository root.
  * @param {string} commit Resolved commit.
@@ -349,7 +378,7 @@ async function revisionBytes(
  * @param {DeployInput['document']} document Validated document.
  * @returns {string} Key such as `dmo:person__dlm`.
  */
-function identityKey(document: DeployInput['document']): string {
+function identityKey(document: DeployInput['document'] | VerbatimDocument): string {
   const value = document as { identity?: { apiName?: unknown }; definition?: { name?: unknown } };
   return `${document.kind}:${String(value.identity?.apiName ?? value.definition?.name)}`.toLowerCase();
 }
@@ -470,6 +499,10 @@ async function deleteCandidates(
         relative(path.join(directory, `${name}${ciJsonSuffix}`)),
         relative(path.join(directory, `${name}${ciSqlSuffix}`)),
       ];
+      // A verbatim insight (retrieved as-is) is its JSON alone: no SQL file is needed or deleted.
+      const json = await revisionBytes(repositoryRoot, mergeBase, members[0]);
+      if (json !== undefined && parseVerbatimDocument(json.toString('utf8')) !== undefined)
+        members = [members[0]];
       // The JSON and the SQL file go together; one left behind is not a complete deletion.
       for (const member of members)
         if (await present(absolute(member))) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
@@ -480,18 +513,20 @@ async function deleteCandidates(
     // Added after the merge base and removed again: nothing changed in the range.
     if (bytes.every((value) => value === undefined)) continue;
     if (bytes.includes(undefined)) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
-    const [first, second] = bytes as Buffer[];
+    const [first, second] = bytes as Array<Buffer | undefined> as [Buffer, Buffer | undefined];
     let admitted: ReturnType<typeof admitDeletedArtifact>;
     try {
       admitted =
-        kind === 'calculated-insight'
-          ? admitDeletedArtifact(kind, name, first, [{ bytes: second }])
-          : admitDeletedArtifact(kind, name, first);
+        second === undefined
+          ? admitDeletedArtifact(kind, name, first)
+          : admitDeletedArtifact(kind, name, first, [{ bytes: second }]);
     } catch {
       throw new GitSelectionError('INVALID_GIT_SELECTION');
     }
     const hash = createHash('sha256');
-    if (kind === 'calculated-insight')
+    if (second === undefined) {
+      hash.update(first);
+    } else {
       hash
         .update(String(first.length))
         .update(':')
@@ -499,13 +534,13 @@ async function deleteCandidates(
         .update(String(second.length))
         .update(':')
         .update(second);
-    else hash.update(first);
+    }
     candidates.set(
       key,
       Object.freeze({
         family: kind,
         path: absolute(members[0]),
-        ...(kind === 'calculated-insight' ? { companionPath: absolute(members[1]) } : {}),
+        ...(members[1] === undefined ? {} : { companionPath: absolute(members[1]) }),
         identity: Object.freeze(admitted.identity),
         document: admitted.document,
         ...(admitted.sourceObjectName === undefined
@@ -613,6 +648,18 @@ export async function selectGitDeployInputs(options: {
         paths.add(file);
         continue;
       }
+      // An SQL file removed beside a verbatim insight JSON (retrieved as-is) that stays: a
+      // leftover cleaned up, not a deletion of the insight.
+      if (
+        ciSql(file) &&
+        (await verbatimFile(
+          path.join(repositoryRoot, ...file.slice(0, -ciSqlSuffix.length).split('/')) +
+            ciJsonSuffix,
+        ))
+      ) {
+        paths.add(file);
+        continue;
+      }
       paths.delete(file);
       removed.push(file);
     }
@@ -626,8 +673,12 @@ export async function selectGitDeployInputs(options: {
     });
     const deletions = await deleteCandidates({ repositoryRoot, mergeBase, packageBase }, removed);
     // Existing admission checks canonical filename, document identity and no-link regular files.
+    // A Git range names every changed file; verbatim ones are skipped with a warning.
     const inputs =
-      metadata.length > 0 ? await readDeployInputs({ cwd: repositoryRoot, metadata }) : [];
+      metadata.length > 0
+        ? await readDeployInputs({ cwd: repositoryRoot, metadata, verbatim: 'skip' })
+        : [];
+    const warnings = skippedVerbatimWarnings(inputs);
     const segments = inputs.filter(
       (input): input is SegmentDeployInput => input.document.kind === 'segment',
     );
@@ -657,6 +708,7 @@ export async function selectGitDeployInputs(options: {
       ...(inputs.length > 0 ? { capturedInputs: Object.freeze(inputs) } : {}),
       ...(segments.length > 0 ? { segments: Object.freeze(segments) } : {}),
       ...(deletions.length > 0 ? { deletions: Object.freeze(deletions) } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
       provenance: {
         repositoryRoot,
         requestedRef: options.ref,

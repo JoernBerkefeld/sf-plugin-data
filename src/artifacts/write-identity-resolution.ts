@@ -9,6 +9,7 @@ import {
 } from './identity-resolution-document.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 const publication = { link, rename, unlink };
 
@@ -96,8 +97,12 @@ export async function writeIdentityResolutionDocument(
   overwrite: boolean,
   publish = publication,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateIdentityResolutionDocument(value);
-  const bytes = Buffer.from(serializeIdentityResolutionDocument(document));
+  const verbatim = isVerbatimDocument(value, 'identity-resolution') ? value : undefined;
+  const strict = verbatim ? undefined : validateIdentityResolutionDocument(value);
+  const document = verbatim ?? strict!;
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : serializeIdentityResolutionDocument(strict!),
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -151,7 +156,7 @@ export async function writeIdentityResolutionDocument(
     published = true;
     const completed = await existing(destination);
     if (!completed?.equals(bytes)) throw new IdentityResolutionError('OUTPUT_CHANGED');
-    validateIdentityResolutionDocument(JSON.parse(completed.toString('utf8')));
+    if (!verbatim) validateIdentityResolutionDocument(JSON.parse(completed.toString('utf8')));
     return { path: destination, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new IdentityResolutionError('PARTIAL_IDENTITY_RESOLUTION_OUTPUT');

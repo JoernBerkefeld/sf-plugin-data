@@ -16,6 +16,13 @@ import type {
   ObservedRelationship,
 } from '../artifacts/native-relationship-document.js';
 import type { RelationshipClient } from '../transport/relationship-rest.js';
+import {
+  carriedNativeResponse,
+  carryNativeResponse,
+  createVerbatimDocument,
+  verbatimReason,
+} from '../artifacts/verbatim-document.js';
+import type { VerbatimDocument } from '../artifacts/verbatim-document.js';
 
 /** Upper bound of pages read for one DMO; far above any observed inventory. */
 const maximumPages = 100;
@@ -56,7 +63,10 @@ export async function listNativeRelationships(
     if (total !== undefined && total !== totalSize)
       throw new NativeRelationshipError('RELATIONSHIP_INVENTORY_INCOMPLETE');
     total = totalSize;
-    collected.push(...relationships.map((entry) => observeNativeRelationship(entry)));
+    // Each observation keeps its raw list entry, for a verbatim file when it cannot be saved.
+    collected.push(
+      ...relationships.map((entry) => carryNativeResponse(observeNativeRelationship(entry), entry)),
+    );
     if (relationships.length === 0 || collected.length >= total) break;
   }
   const names = new Set(collected.map((entry) => entry.name));
@@ -70,17 +80,40 @@ export async function listNativeRelationships(
  * @param {string} dmoName Exact source DMO.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
  * @param {string} [requestScope] Optional request scope; omission is the default data space.
- * @returns {Promise<NativeRelationshipDocument[]>} Documents ordered by name.
+ * A relationship the document cannot represent is returned as a verbatim document of its raw list
+ * entry; each saved document carries its raw entry for the same fallback at write time.
+ * @returns {Promise<Array<NativeRelationshipDocument | VerbatimDocument>>} Documents ordered by name.
  */
 export async function retrieveNativeRelationships(
   dmoName: string,
   client: Pick<RelationshipClient, 'list'>,
   requestScope?: string,
-): Promise<NativeRelationshipDocument[]> {
+): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
   const inventory = await listNativeRelationships(dmoName, client);
   const documents = inventory
     .filter((entry) => entry.sourceObjectName === dmoName)
-    .map((entry) => normalizeNativeRelationship(entryToWire(entry), requestScope));
+    .map((entry): NativeRelationshipDocument | VerbatimDocument => {
+      const native = carriedNativeResponse(entry);
+      try {
+        return carryNativeResponse(
+          normalizeNativeRelationship(entryToWire(entry), requestScope),
+          native?.native,
+        );
+      } catch (error) {
+        const reason = verbatimReason(error);
+        const verbatim =
+          reason === undefined || native === undefined
+            ? undefined
+            : createVerbatimDocument(
+                'relationship',
+                { dataSpace: requestScope ?? 'default', apiName: entry.name },
+                reason,
+                native.native,
+              );
+        if (verbatim === undefined) throw error;
+        return verbatim;
+      }
+    });
   // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh mapped array within the ES2022 library target.
   return documents.sort((a, b) => a.identity.apiName.localeCompare(b.identity.apiName));
 }

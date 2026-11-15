@@ -1,3 +1,31 @@
+# Lenient retrieve step 0a: verbatim files instead of refusals — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 0a.
+
+- `src/artifacts/verbatim-document.ts`: the document is
+  `{ schemaVersion: 1, kind, identity, verbatim: { reason, native } }`, with `native` the raw GET
+  response, keys sorted. Helpers: `createVerbatimDocument`,
+  `isVerbatimDocument`, `serializeVerbatimDocument`, `parseVerbatimDocument`, `verbatimReason`
+  (error code; HTTP, not found, mismatch, dependency, scope/selection/output stay failures),
+  `carryNativeResponse`/`carriedNativeResponse` (raw response on a document, acquisition or
+  error), `recordNativeReads`/`nativeReadRecorder` (first successful `get` per name),
+  `previousIdentity` (writers), `verbatimRefusalMessage`, `verbatimSkipWarning`.
+- Retrieve catch-all (`Retrieve.verbatimFallback`): every family writes a verbatim file at the
+  normal path with a warning and an item `verbatim: { reason }`. Raw responses: item clients
+  wrapped by `recordNativeReads` (DLO, DMO, mapping, stream, transform, CI, graph);
+  `retrieveSegment`, `retrieveIdentityResolution` and the relationship list carry them;
+  `acquireRetrieveSelection` returns verbatim entries outside the dependency order.
+- Writers accept a verbatim document and a verbatim or non-strict previous file (overwrite and
+  data-space/name collisions unchanged). A verbatim segment removes its SQL files (stale-file
+  mechanism); a calculated insight has none, so its old SQL file stays and is reported.
+- Deploy: `readDeployInputs` skips verbatim files found in a folder (warning via
+  `skippedVerbatimWarnings`) and refuses a named one with `VERBATIM_NOT_DEPLOYABLE`; Git ranges
+  pass `verbatim: 'skip'`. Publish refuses alike. A deleted verbatim file is admitted by
+  family and name (`admitDeletedArtifact`; no CI SQL needed), and
+  `sf data360 delete --changed-since` deletes it by name like `-m`.
+- Open (later steps): listing leniency and group-wide failure isolation (0b), per-type lenient
+  validators (1–6), README/sfmc.guide (step 7).
+
 # UI parity step 3d: Real-Time insights and Real-Time Data Graphs — 2026-11-15
 
 Evidence: verification DB `data360:calculated-insight.real-time.api68` and

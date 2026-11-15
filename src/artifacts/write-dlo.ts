@@ -4,6 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { DloError, leanDloDocument, validateDloDocument } from './dlo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import {
+  isVerbatimDocument,
+  previousIdentity,
+  serializeVerbatimDocument,
+} from './verbatim-document.js';
 
 /**
  * Validate each real directory ancestor before publication.
@@ -84,9 +89,12 @@ export async function writeDloDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
+  const verbatim = isVerbatimDocument(value, 'dlo') ? value : undefined;
   // Authored content only: the fields a deploy keeps from the org when the file omits them.
-  const document = leanDloDocument(validateDloDocument(value));
-  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
+  const document = verbatim ?? leanDloDocument(validateDloDocument(value));
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -109,8 +117,11 @@ export async function writeDloDocument(
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
-      const saved = validateDloDocument(JSON.parse(previous.toString('utf8')));
-      if (saved.identity.dataSpace !== document.identity.dataSpace)
+      const saved = previousIdentity(
+        previous.toString('utf8'),
+        (previousValue) => validateDloDocument(previousValue).identity,
+      );
+      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new DloError('DLO_DATASPACE_COLLISION');
       if (!overwrite) throw new DloError('OVERWRITE_REQUIRED');
     }

@@ -10,6 +10,7 @@ import {
   validateNativeCalculatedInsight,
 } from './native-calculated-insight-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 const filesystemPublication = { link, rename, unlink };
 
@@ -87,9 +88,15 @@ export async function writeNativeCalculatedInsightDocument(
   projectRoot: string,
   overwrite: boolean,
   publication = filesystemPublication,
-): Promise<{ path: string; companionPath: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateNativeCalculatedInsight(value);
-  const { json, files: code } = serializeNativeCalculatedInsight(document);
+): Promise<{ path: string; companionPath?: string; outcome: 'retrieved' | 'unchanged' }> {
+  // A verbatim insight is its JSON alone. The writer owns no stale-file removal, so an earlier
+  // SQL file is left where it is; the command reports it.
+  const verbatim = isVerbatimDocument(value, 'calculated-insight') ? value : undefined;
+  const document = verbatim ? undefined : validateNativeCalculatedInsight(value);
+  const apiName = verbatim ? verbatim.identity.apiName : document!.apiName;
+  const { json, files: code } = verbatim
+    ? { json: serializeVerbatimDocument(verbatim), files: [] }
+    : serializeNativeCalculatedInsight(document!);
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -103,7 +110,7 @@ export async function writeNativeCalculatedInsightDocument(
     root,
     'data360',
     'calculatedInsights',
-    `${document.apiName}.calculatedInsight-meta.json`,
+    `${apiName}.calculatedInsight-meta.json`,
   );
   const files = [jsonPath, ...code.map((file) => codeFilePath(jsonPath, file))];
   const bytes = [Buffer.from(json), ...code.map((file) => Buffer.from(file.text))];
@@ -114,8 +121,14 @@ export async function writeNativeCalculatedInsightDocument(
     await ensure(path.dirname(jsonPath));
     const previous = await Promise.all(files.map((file) => existing(file)));
     const changed = files.map((_, index) => !previous[index]?.equals(bytes[index]));
-    if (!changed.some(Boolean))
-      return { path: files[0], companionPath: files[1], outcome: 'unchanged' };
+    const receipt = (
+      outcome: 'retrieved' | 'unchanged',
+    ): Awaited<ReturnType<typeof writeNativeCalculatedInsightDocument>> => ({
+      path: files[0],
+      ...(files[1] === undefined ? {} : { companionPath: files[1] }),
+      outcome,
+    });
+    if (!changed.some(Boolean)) return receipt('unchanged');
     if (!overwrite && previous.some((content, index) => content && changed[index]))
       throw new CalculatedInsightError('OVERWRITE_REQUIRED');
     verifyTemporaryDirectory();
@@ -157,11 +170,12 @@ export async function writeNativeCalculatedInsightDocument(
     const completed = await Promise.all(files.map((file) => existing(file)));
     if (completed.some((content, index) => !content?.equals(bytes[index])))
       throw new CalculatedInsightError('OUTPUT_CHANGED');
-    parseNativeCalculatedInsight(
-      completed[0]!.toString('utf8'),
-      code.map((file, index) => ({ ...file, text: completed[index + 1]!.toString('utf8') })),
-    );
-    return { path: files[0], companionPath: files[1], outcome: 'retrieved' };
+    if (!verbatim)
+      parseNativeCalculatedInsight(
+        completed[0]!.toString('utf8'),
+        code.map((file, index) => ({ ...file, text: completed[index + 1]!.toString('utf8') })),
+      );
+    return receipt('retrieved');
   } catch (error: unknown) {
     if (published) throw new CalculatedInsightError('PARTIAL_CI_OUTPUT');
     if (error instanceof CalculatedInsightError) throw error;

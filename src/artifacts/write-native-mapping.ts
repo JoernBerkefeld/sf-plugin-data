@@ -4,6 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { NativeMappingError, validateNativeMappingDocument } from './native-mapping-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import {
+  isVerbatimDocument,
+  previousIdentity,
+  serializeVerbatimDocument,
+} from './verbatim-document.js';
 
 /**
  * Validate real ancestors before publication.
@@ -86,8 +91,11 @@ export async function writeNativeMappingDocument(
   projectRoot: string,
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateNativeMappingDocument(value);
-  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
+  const verbatim = isVerbatimDocument(value, 'mapping') ? value : undefined;
+  const document = verbatim ?? validateNativeMappingDocument(value);
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -110,8 +118,11 @@ export async function writeNativeMappingDocument(
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
     if (previous) {
-      const saved = validateNativeMappingDocument(JSON.parse(previous.toString('utf8')));
-      if (saved.identity.dataSpace !== document.identity.dataSpace)
+      const saved = previousIdentity(
+        previous.toString('utf8'),
+        (previousValue) => validateNativeMappingDocument(previousValue).identity,
+      );
+      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
         throw new NativeMappingError('MAPPING_DATASPACE_COLLISION');
       if (!overwrite) throw new NativeMappingError('OVERWRITE_REQUIRED');
     }

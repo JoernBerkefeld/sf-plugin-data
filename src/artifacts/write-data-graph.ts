@@ -6,6 +6,7 @@ import path from 'node:path';
 import { DataGraphError } from './data-graph-document.js';
 import { segmentSourceRoot } from './write-segment.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 const publication = { link, rename, unlink };
 
@@ -92,8 +93,12 @@ export async function writeDataGraphDocument(
   overwrite: boolean,
   publish = publication,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
-  const document = validateNativeDataGraphDocument(value);
-  const bytes = Buffer.from(`${JSON.stringify(document, undefined, 2)}\n`);
+  const verbatim = isVerbatimDocument(value, 'native-data-graph') ? value : undefined;
+  const document = verbatim ? undefined : validateNativeDataGraphDocument(value);
+  const name = verbatim ? verbatim.identity.apiName : (document!.definition.name as string);
+  const bytes = Buffer.from(
+    verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
+  );
   if (
     !path.isAbsolute(projectRoot) ||
     projectRoot !== projectRoot.trim() ||
@@ -107,12 +112,7 @@ export async function writeDataGraphDocument(
   let published = false;
   try {
     const base = await segmentSourceRoot(root);
-    const destination = path.join(
-      base,
-      'data360',
-      'dataGraphs',
-      `${document.definition.name as string}.native-dataGraph.json`,
-    );
+    const destination = path.join(base, 'data360', 'dataGraphs', `${name}.native-dataGraph.json`);
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
@@ -147,7 +147,7 @@ export async function writeDataGraphDocument(
     published = true;
     const completed = await existing(destination);
     if (!completed?.equals(bytes)) throw new DataGraphError('OUTPUT_CHANGED');
-    validateNativeDataGraphDocument(JSON.parse(completed.toString('utf8')));
+    if (!verbatim) validateNativeDataGraphDocument(JSON.parse(completed.toString('utf8')));
     return { path: destination, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new DataGraphError('PARTIAL_DATA_GRAPH_OUTPUT');

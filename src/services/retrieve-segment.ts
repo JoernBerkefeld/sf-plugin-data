@@ -8,6 +8,7 @@ import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
+import { carryNativeResponse } from '../artifacts/verbatim-document.js';
 export type SegmentAcquisition = {
   identity: SegmentDocument['identity'];
   candidate?: SegmentDocument;
@@ -175,24 +176,32 @@ export async function retrieveSegment(
   )
     throw new SegmentError('INVALID_SCOPE');
   const identity = { dataSpace: 'default', apiName } as const;
+  // The raw GET response travels with the result and the candidate, for a verbatim file when
+  // the segment cannot be represented.
+  let read: { native: unknown } | undefined;
   try {
     const raw = await new ConnectClient(connection, version).get(
       `/services/data/v${version}/ssot/segments/${apiName}`,
     );
+    read = { native: raw };
     const projection = projectSegment(raw, apiName);
-    return {
-      identity,
-      candidate: projection.candidate,
-      blockers: [],
-      expectations: { runtime: projection.runtime },
-    };
+    return carryNativeResponse(
+      {
+        identity,
+        candidate: carryNativeResponse(projection.candidate, raw),
+        blockers: [],
+        expectations: { runtime: projection.runtime },
+      },
+      raw,
+    );
   } catch (error: unknown) {
-    return retainConnectDiagnostic(
+    const result = retainConnectDiagnostic(
       {
         identity,
         blockers: [error instanceof SegmentError ? error.code : 'SEGMENT_ACQUISITION_FAILED'],
       },
       getConnectDiagnostic(error),
     );
+    return read ? carryNativeResponse(result, read.native) : result;
   }
 }

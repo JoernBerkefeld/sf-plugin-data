@@ -544,6 +544,83 @@ test('a relationship deleted in the range takes its source DMO from the base con
   }
 });
 
+// Files retrieved as-is (verbatim): deleted by family and name through the normal safeguards.
+const verbatim = (kind, apiName, native) => ({
+  schemaVersion: 1,
+  kind,
+  identity: { dataSpace: 'default', apiName },
+  verbatim: { reason: 'UNMODELLED_VARIANT', native },
+});
+files.verbatimDmo = ['data360/dmo/Example__dlm.dmo-meta.json', verbatim('dmo', 'Example__dlm', {})];
+files.verbatimMapping = [
+  'data360/mapping/Example_map_1.mapping-meta.json',
+  verbatim('mapping', 'Example_map_1', {}),
+];
+const relationshipEntry = {
+  name: 'A_BRef_map_B_Id',
+  status: 'ACTIVE',
+  cardinality: 'ManyToOne',
+  owner: 'DataCloud',
+  sourceObject: { name: 'A__dlm' },
+  sourceField: { name: 'BRef__c' },
+  targetObject: { name: 'B__dlm' },
+  targetField: { name: 'Id__c' },
+};
+files.verbatimRelationship = [
+  'data360/relationship/A_BRef_map_B_Id.relationship-meta.json',
+  verbatim('relationship', 'A_BRef_map_B_Id', relationshipEntry),
+];
+
+test('a verbatim DMO deleted in the range is deleted by name', async () => {
+  const { cwd, base } = await repository(['verbatimDmo']);
+  const h = harness(cwd, { 'changed-since': base });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(h.calls, ['git', 'dmo:Example__dlm']);
+});
+
+test('a verbatim mapping deleted in the range is deleted by its exact name, not a binding', async () => {
+  const { cwd, base } = await repository(['verbatimMapping']);
+  const h = harness(cwd, { 'changed-since': base });
+  h.command.createMappingSender = () => ({});
+  h.command.createMappingClient = () => ({
+    list: async (dmo, dlo) => {
+      h.calls.push(`mapping-list:${dmo}:${dlo}`);
+      return { objectSourceTargetMaps: [] };
+    },
+    get: async (name) => mappingRaw(name),
+  });
+  h.command.deleteMapping = async (name) => {
+    h.calls.push(`mapping:${name}`);
+    return { apiName: name };
+  };
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.ok(!h.calls.some((call) => call.startsWith('mapping-list:')));
+  assert.equal(h.calls.at(-1), 'mapping:Example_map_1');
+});
+
+test('a verbatim relationship deleted in the range is found by name under its source DMO', async () => {
+  const { cwd, base } = await repository(['verbatimRelationship']);
+  for (const preview of [true, false]) {
+    const h = harness(cwd, { 'changed-since': base, preview });
+    h.command.createRelationshipClient = () => ({
+      list: async (dmo) => {
+        h.calls.push(`relationship-list:${dmo}`);
+        return { relationships: [relationshipEntry], totalSize: 1 };
+      },
+      remove: async () => {},
+    });
+    const result = await run(h.command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(h.calls, [
+      'git',
+      'relationship-list:A__dlm',
+      `relationship${preview ? '-preview' : ''}:A_BRef_map_B_Id:A__dlm`,
+    ]);
+  }
+});
+
 test('a file deleted in the range that is present again before its phase blocks that phase', async () => {
   const { cwd, base } = await repository(['ir', 'graph']);
   const h = harness(cwd, { 'changed-since': base });

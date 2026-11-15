@@ -86,4 +86,6 @@ export const hints: Readonly<Record<string, string>> = {
     'A selected source file is missing, linked, too large or changed while the plugin read it. Use plain files under 1 MiB and do not edit them during the run, then rerun.',
   UNSAFE_TEMP:
     'On Windows, TEMP, TMP, TMPDIR or the Node.js temp folder is not the temp folder the plugin accepts. Set them to the same absolute folder for this shell, then rerun.',
+  VERBATIM_NOT_DEPLOYABLE:
+    'The named file was retrieved as-is because the plugin cannot represent that object, so it cannot be deployed. Change the object in the org, or select a file the plugin can represent.',
 };

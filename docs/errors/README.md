@@ -51,6 +51,7 @@ Each page explains what the code means, why the plugin stops, how to fix it, an 
 | [`UNSAFE_PATH`](general/UNSAFE_PATH.md)                                                   | The plugin refused a file path because it is a link, a hard-linked file, a folder or lies outside the allowed folder. Use plain files and folders inside the project, then rerun.                                                |
 | [`UNSAFE_SOURCE`](general/UNSAFE_SOURCE.md)                                               | A selected source file is missing, linked, too large or changed while the plugin read it. Use plain files under 1 MiB and do not edit them during the run, then rerun.                                                           |
 | [`UNSAFE_TEMP`](general/UNSAFE_TEMP.md)                                                   | On Windows, TEMP, TMP, TMPDIR or the Node.js temp folder is not the temp folder the plugin accepts. Set them to the same absolute folder for this shell, then rerun.                                                             |
+| [`VERBATIM_NOT_DEPLOYABLE`](general/VERBATIM_NOT_DEPLOYABLE.md)                           | The named file was retrieved as-is because the plugin cannot represent that object, so it cannot be deployed. Change the object in the org, or select a file the plugin can represent.                                           |
 
 ## Dependency
 
