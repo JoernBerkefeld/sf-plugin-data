@@ -440,7 +440,8 @@ test('a PATCH answered with HTTP 4xx is a rejection with no poll; other failures
     );
     if (writeFails) assert.match(result.diagnostics[0].message, /nothing was written/u);
     assert.equal(writes, 1);
-    assert.equal(reads, writeFails ? 0 : 1);
+    // A failed read is tried again within the bound.
+    assert.equal(reads, writeFails ? 0 : segmentPollBudget.reads);
     assert.equal(getConnectDiagnostic(result), writeFails ? primary : secondary);
     assert.match(
       result.diagnostics[0].message,
@@ -674,7 +675,10 @@ test('COUNTING followed by unknown, missing, error or failed reads stays unknown
     const result = await h.run();
     assert.equal(result.outcome, 'failed');
     assert.equal(result.mutation, 'unknown');
-    assert.equal(reads, 2);
+    // A failed read is tried again until the bound; a settled state ends the poll.
+    assert.equal(reads, state === 'read-error' ? segmentPollBudget.reads : 2);
+    if (state === 'read-error')
+      assert.equal(result.diagnostics[0].code, 'SEGMENT_UPDATE_UNCONFIRMED');
     assert.equal(h.counts().writes, 1);
     assert.equal(h.counts().acquisitions, 2);
   }
@@ -929,4 +933,123 @@ test('a create answered with HTTP 400 is a rejection that shows the Salesforce m
   assert.match(result.diagnostics[0].message, /nothing was written for this item/u);
   assert.doesNotMatch(result.diagnostics[0].message, /no Salesforce rejection was confirmed/u);
   assert.equal(reads, 0);
+});
+
+/**
+ * Run one create whose POST answers PROCESSING, with the given poll reads.
+ * @param {() => Promise<unknown>} read Poll read.
+ * @returns {Promise<object>} Execution result.
+ */
+async function createWith(read) {
+  const desired = document();
+  let acquisitions = 0;
+  const full = () => ({
+    ...runtime(desired, 'ACTIVE'),
+    segmentOnId: 'target-local',
+    segmentMembershipDmo: { historyTable: 'history', latestTable: 'latest' },
+  });
+  return executeSegmentDeploy(
+    desired,
+    { ...connection, getApiVersion: () => '68.0' },
+    '68.0',
+    'default',
+    {
+      allowProcessing: true,
+      verifyInput: async () => {},
+      bind: async () => [{ targetId: 'target-local', identity: desired.spec.segmentOn }],
+      acquire: async () =>
+        ++acquisitions <= 2
+          ? absent()
+          : { candidate: desired, blockers: [], expectations: { runtime: full() } },
+      create: async () => ({ ...runtime(desired, 'PROCESSING'), segmentOnId: 'target-local' }),
+      read: () => read(full),
+      now: () => 0,
+      delay: async () => {},
+    },
+  );
+}
+
+test('a create keeps polling through a 404 right after the POST and confirms the segment', async () => {
+  let reads = 0;
+  const result = await createWith(async (full) => {
+    if (++reads === 1)
+      throw retainConnectDiagnostic(
+        new Error('hidden-read'),
+        apiDiagnostic(404, [{ errorCode: 'NOT_FOUND', message: 'Not found yet.' }]),
+      );
+    return { segments: [full()] };
+  });
+  assert.equal(reads, 2);
+  assert.equal(result.outcome, 'created');
+  assert.equal(result.mutation, 'confirmed-created');
+});
+
+test('a create whose reads keep failing ends at the bound as SEGMENT_CREATE_UNCONFIRMED with the cause', async () => {
+  let reads = 0;
+  const cause = apiDiagnostic(404, [{ errorCode: 'NOT_FOUND', message: 'Not found yet.' }]);
+  const result = await createWith(async () => {
+    reads++;
+    throw retainConnectDiagnostic(new Error('hidden-read'), cause);
+  });
+  assert.equal(reads, segmentPollBudget.reads);
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_UNCONFIRMED');
+  assert.match(result.diagnostics[0].message, /^The read after the create failed\./u);
+  assert.match(result.diagnostics[0].message, /HTTP 404/u);
+  assert.equal(getConnectDiagnostic(result), cause);
+  assert.doesNotMatch(JSON.stringify(result), /hidden-/u);
+});
+
+test('a projection refusal of the readback ends the poll as SEGMENT_CREATE_UNCONFIRMED naming its code', async () => {
+  let reads = 0;
+  const result = await createWith(async (full) => {
+    reads++;
+    return { segments: [{ ...full(), futureMeaningful: true }] };
+  });
+  assert.equal(reads, 1);
+  assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_UNCONFIRMED');
+  assert.match(
+    result.diagnostics[0].message,
+    /^The read after the create failed with UNKNOWN_SEGMENT_CONFIGURATION\./u,
+  );
+});
+
+test('a create of a segment with an empty description is confirmed although the GET omits it', async () => {
+  const desired = document();
+  desired.spec.description = '';
+  let acquisitions = 0;
+  const full = () => {
+    const raw = {
+      ...runtime(desired, 'ACTIVE'),
+      segmentOnId: 'target-local',
+      segmentMembershipDmo: { historyTable: 'history', latestTable: 'latest' },
+    };
+    delete raw.description;
+    return raw;
+  };
+  const result = await executeSegmentDeploy(
+    desired,
+    { ...connection, getApiVersion: () => '68.0' },
+    '68.0',
+    'default',
+    {
+      allowProcessing: true,
+      verifyInput: async () => {},
+      bind: async () => [{ targetId: 'target-local', identity: desired.spec.segmentOn }],
+      acquire: async () =>
+        ++acquisitions <= 2
+          ? absent()
+          : { candidate: desired, blockers: [], expectations: { runtime: full() } },
+      create: async () => {
+        const raw = { ...runtime(desired, 'PROCESSING'), segmentOnId: 'target-local' };
+        delete raw.description;
+        return raw;
+      },
+      read: async () => ({ segments: [full()] }),
+      now: () => 0,
+      delay: async () => {},
+    },
+  );
+  assert.equal(result.outcome, 'created', JSON.stringify(result.diagnostics));
 });

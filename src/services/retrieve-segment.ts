@@ -18,7 +18,6 @@ export type SegmentAcquisition = {
 const configuration = [
   'apiName',
   'displayName',
-  'description',
   'dataSpace',
   'segmentType',
   'segmentOnApiName',
@@ -109,7 +108,14 @@ export function projectSegment(
     throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
   if (
     Object.keys(raw).some(
-      (key) => ![...configuration, ...observations, 'includeCriteria', 'parameters'].includes(key),
+      (key) =>
+        ![
+          ...configuration,
+          ...observations,
+          'description',
+          'includeCriteria',
+          'parameters',
+        ].includes(key),
     ) ||
     configuration.some((key) => !Object.hasOwn(raw, key))
   )
@@ -128,7 +134,8 @@ export function projectSegment(
     identity: { dataSpace: 'default', apiName },
     spec: {
       displayName: raw.displayName,
-      description: raw.description,
+      // Salesforce leaves description out of the GET when it is empty.
+      description: Object.hasOwn(raw, 'description') ? raw.description : '',
       segmentType: raw.segmentType,
       segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
       models: dbt.models,

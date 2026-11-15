@@ -6,6 +6,7 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { admitDeletedArtifact, readDeployInputs } from './read-deploy-input.js';
+import { codeFilePath } from './code-fields.js';
 import { nativeDmoName } from './native-dmo-document.js';
 import { identityResolutionName } from './identity-resolution-document.js';
 import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
@@ -38,6 +39,8 @@ export type GitDeleteCandidate = Readonly<{
   identity: Readonly<{ dataSpace: string; apiName: string }>;
   /** Calculated insight only: absolute path of the SQL file. */
   companionPath?: string;
+  /** Segment only: absolute paths of the SQL file of each base model. */
+  codePaths?: readonly string[];
   /** The validated base document (deeply frozen); the delete runs from it, not from a file. */
   document: DeployInput['document'];
   /** Relationship source DMO, from the base content. */
@@ -192,14 +195,22 @@ const families: ReadonlyArray<{
 const segmentXml = (file: string): boolean => /\.marketSegmentDefinition-meta\.xml$/iu.test(file);
 // The SQL file of a calculated insight selects (or, deleted, deletes) the insight like its JSON.
 const ciSql = (file: string): boolean => /\.calculatedInsight-meta\.sql$/iu.test(file);
+// A segment's SQL file (`<Name>.segment.<model>.sql`) selects the segment like its JSON.
+const segmentSql = (file: string): boolean => {
+  const entry = path.posix.basename(file).toLowerCase();
+  return entry.includes('.segment.') && entry.endsWith('.sql');
+};
+const segmentSqlPattern = /^([A-Za-z][A-Za-z0-9_]*)\.segment\.([A-Za-z0-9][A-Za-z0-9_]*)\.sql$/u;
 const relevant = (file: string): boolean =>
   segmentXml(file) ||
   ciSql(file) ||
+  segmentSql(file) ||
   families.some(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
 // A deleted path in a plugin folder must resolve to a known family.
 const watched = (file: string): boolean => relevant(file) || file.split('/').includes('data360');
 const needsPackage = (file: string): boolean =>
   segmentXml(file) ||
+  segmentSql(file) ||
   families.some(
     ({ suffix, base }) => base === 'package' && file.toLowerCase().endsWith(suffix.toLowerCase()),
   );
@@ -229,6 +240,16 @@ function classify(
     if (!calculatedInsightName.test(name) || file !== relative(expected))
       throw new GitSelectionError('INVALID_GIT_SELECTION');
     return { kind: 'calculated-insight', name };
+  }
+  if (segmentSql(file)) {
+    const match = segmentSqlPattern.exec(path.posix.basename(file));
+    if (
+      !match ||
+      !segmentName.test(match[1]) ||
+      file !== relative(path.join(packageBase!, 'data360', 'segments', match[0]))
+    )
+      throw new GitSelectionError('INVALID_GIT_SELECTION');
+    return { kind: 'segment', name: match[1] };
   }
   const family = families.find(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
   if (!family) throw new GitSelectionError('INVALID_GIT_SELECTION');
@@ -334,6 +355,80 @@ function identityKey(document: DeployInput['document']): string {
 }
 
 /**
+ * A deleted segment: its JSON and the SQL file of every base model, all gone from the worktree,
+ * read from the merge base and joined.
+ * @param {object} context Repository, merge base and package directory.
+ * @param {string} context.repositoryRoot Absolute repository root.
+ * @param {string} context.mergeBase Resolved merge base.
+ * @param {string | undefined} context.packageBase Absolute sfdx package directory.
+ * @param {string} file Deleted repository-relative path (the JSON or a SQL file).
+ * @param {string} name Segment name.
+ * @returns {Promise<GitDeleteCandidate | undefined>} Candidate, or undefined when the segment did not exist at the merge base.
+ */
+async function segmentDeleteCandidate(
+  context: { repositoryRoot: string; mergeBase: string; packageBase: string | undefined },
+  file: string,
+  name: string,
+): Promise<GitDeleteCandidate | undefined> {
+  const { repositoryRoot, mergeBase, packageBase } = context;
+  const relative = (value: string): string =>
+    path.relative(repositoryRoot, value).split(path.sep).join('/');
+  const absolute = (value: string): string => path.join(repositoryRoot, ...value.split('/'));
+  const jsonPath = path.join(packageBase!, 'data360', 'segments', `${name}.segment.json`);
+  const json = await revisionBytes(repositoryRoot, mergeBase, relative(jsonPath));
+  if (json === undefined) {
+    // Added after the merge base and removed again: nothing changed in the range.
+    if ((await revisionBytes(repositoryRoot, mergeBase, file)) === undefined) return undefined;
+    throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
+  }
+  let models: string[];
+  try {
+    const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(json)) as {
+      spec?: { models?: Array<{ name?: unknown }> };
+    };
+    models = (parsed.spec?.models ?? []).map((model) => {
+      if (typeof model?.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_]*$/u.test(model.name))
+        throw new Error('Model name');
+      return model.name;
+    });
+  } catch {
+    throw new GitSelectionError('INVALID_GIT_SELECTION');
+  }
+  const codePaths = models.map((model) =>
+    codeFilePath(jsonPath, { extension: 'sql', name: model }),
+  );
+  // The JSON and every SQL file go together; one left behind is not a complete deletion.
+  for (const member of [jsonPath, ...codePaths])
+    if (await present(member)) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
+  const code = await Promise.all(
+    codePaths.map(async (member) => revisionBytes(repositoryRoot, mergeBase, relative(member))),
+  );
+  if (code.includes(undefined)) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
+  let admitted: ReturnType<typeof admitDeletedArtifact>;
+  try {
+    admitted = admitDeletedArtifact(
+      'segment',
+      name,
+      json,
+      models.map((model, index) => ({ name: model, bytes: code[index]! })),
+    );
+  } catch {
+    throw new GitSelectionError('INVALID_GIT_SELECTION');
+  }
+  const hash = createHash('sha256');
+  for (const content of [json, ...(code as Buffer[])])
+    hash.update(String(content.length)).update(':').update(content);
+  return Object.freeze({
+    family: 'segment',
+    path: absolute(relative(jsonPath)),
+    codePaths: Object.freeze(codePaths.map((member) => absolute(relative(member)))),
+    identity: Object.freeze(admitted.identity),
+    document: admitted.document,
+    baseDigest: hash.digest('hex'),
+  });
+}
+
+/**
  * Turn deleted paths into delete candidates identified from merge-base content.
  * @param {object} context Repository, merge base and package directory.
  * @param {string} context.repositoryRoot Absolute repository root.
@@ -361,6 +456,11 @@ async function deleteCandidates(
     }
     const key = `${kind}:${name}`;
     if (candidates.has(key)) continue;
+    if (kind === 'segment') {
+      const candidate = await segmentDeleteCandidate(context, file, name);
+      if (candidate) candidates.set(key, candidate);
+      continue;
+    }
     let members = [file];
     if (kind === 'calculated-insight') {
       const relative = (value: string): string =>
@@ -385,7 +485,7 @@ async function deleteCandidates(
     try {
       admitted =
         kind === 'calculated-insight'
-          ? admitDeletedArtifact(kind, name, first, second)
+          ? admitDeletedArtifact(kind, name, first, [{ bytes: second }])
           : admitDeletedArtifact(kind, name, first);
     } catch {
       throw new GitSelectionError('INVALID_GIT_SELECTION');
@@ -495,6 +595,22 @@ export async function selectGitDeployInputs(options: {
     for (const file of deleted) {
       if (await present(path.join(repositoryRoot, ...file.split('/')))) {
         if (!paths.has(file)) throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
+        continue;
+      }
+      // A segment SQL file deleted while its JSON stays is a change of that segment (a model
+      // removed); the segment is read again from its current files.
+      const match = segmentSqlPattern.exec(path.posix.basename(file));
+      if (
+        match &&
+        (await present(
+          path.join(
+            repositoryRoot,
+            ...path.posix.dirname(file).split('/'),
+            `${match[1]}.segment.json`,
+          ),
+        ))
+      ) {
+        paths.add(file);
         continue;
       }
       paths.delete(file);

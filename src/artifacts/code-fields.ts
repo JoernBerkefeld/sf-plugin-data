@@ -151,12 +151,13 @@ export function joinCodeFields(
 
 /**
  * Path of a code file next to its JSON file: `X.type-meta.json` → `X.type-meta.sql`, or
- * `X.type-meta.<name>.sql` for an array element.
- * @param {string} jsonPath Path of the JSON file, ending in `-meta.json`.
+ * `X.type-meta.<name>.sql` for an array element; likewise `X.segment.json` gives
+ * `X.segment.<name>.sql`.
+ * @param {string} jsonPath Path of the JSON file, ending in `.json`.
  * @param {Pick<CodeFile, 'extension' | 'name'>} file Code file.
  * @returns {string} Code file path.
  */
 export function codeFilePath(jsonPath: string, file: Pick<CodeFile, 'extension' | 'name'>): string {
-  if (!jsonPath.endsWith('-meta.json')) throw new Error('Code files sit next to -meta.json files.');
+  if (!jsonPath.endsWith('.json')) throw new Error('Code files sit next to .json files.');
   return `${jsonPath.slice(0, -'json'.length)}${file.name === undefined ? '' : `${file.name}.`}${file.extension}`;
 }

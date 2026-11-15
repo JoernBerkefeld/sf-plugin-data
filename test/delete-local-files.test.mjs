@@ -510,6 +510,58 @@ test('a graph matched ignoring case uses the org spelling for the item and its f
   assert.equal(await exists(file), false);
 });
 
+test('a confirmed segment delete removes its JSON and every SQL file, nothing else', async () => {
+  const root = await scratch();
+  const json = await packageFile(root, 'segments', 'Audience.segment.json');
+  const first = await packageFile(root, 'segments', 'Audience.segment.First.sql');
+  const second = await packageFile(root, 'segments', 'Audience.segment.Second.sql');
+  const other = await packageFile(root, 'segments', 'Audience_2.segment.First.sql');
+  const seams = {
+    resolveConnection: async () => ({ getUsername: () => 'target' }),
+    readDeleteSource: async () => ({
+      desired: {
+        schemaVersion: 1,
+        kind: 'segment',
+        identity: { dataSpace: 'default', apiName: 'Audience' },
+        spec: {
+          displayName: 'Audience',
+          description: '',
+          segmentType: 'DBT',
+          segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+          models: [{ name: 'First', sql: 'SELECT 1' }],
+          publishInterval: 'NO_REFRESH',
+          lookbackPeriod: 'P90D',
+        },
+      },
+    }),
+    deleteSegment: async (_desired, _connection, _version, _space, options) =>
+      options.preview
+        ? { outcome: 'delete', mutation: 'not-attempted', diagnostics: [] }
+        : { outcome: 'deleted', mutation: 'confirmed-deleted', diagnostics: [] },
+  };
+  const preview = await inProject(
+    root,
+    command({ metadata: ['segment:Audience'], preview: true }, seams).command,
+  );
+  assert.deepEqual(preview.result.result.items[0].localFiles, [
+    { path: json, exists: true },
+    { path: first, exists: true },
+    { path: second, exists: true },
+  ]);
+  const { result } = await inProject(
+    root,
+    command({ metadata: ['segment:Audience'] }, seams).command,
+  );
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.result.items[0].removedLocalFiles, [
+    { path: json, outcome: 'removed' },
+    { path: first, outcome: 'removed' },
+    { path: second, outcome: 'removed' },
+  ]);
+  for (const file of [json, first, second]) assert.equal(await exists(file), false);
+  assert.equal(await exists(other), true);
+});
+
 test('delete help names the default removal and the keep flag', () => {
   assert.match(Delete.description, /removed by default/u);
   assert.match(Delete.description, /LOCAL_FILE_REMOVAL_FAILED/u);

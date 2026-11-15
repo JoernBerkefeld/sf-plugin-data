@@ -3,7 +3,7 @@ import { setTimeout } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
-import { validateSegmentDocument } from '../artifacts/segment-document.js';
+import { SegmentError, validateSegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -123,6 +123,7 @@ export async function executeSegmentDeploy(
     mutation: DeployExecutionResult['mutation'],
     code?: string,
     evidence?: unknown,
+    cause?: string,
   ): SegmentDeployExecution =>
     retainConnectDiagnostic(
       {
@@ -141,9 +142,10 @@ export async function executeSegmentDeploy(
                       : mutation === 'unknown'
                         ? 'Segment mutation may have occurred. Inspect the exact target; no retry or rollback was performed.'
                         : 'Segment deployment was not attempted. Resolve input, scope, effects or target qualification.';
-                  return getConnectDiagnostic(evidence)
+                  const text = getConnectDiagnostic(evidence)
                     ? operationDiagnostic(evidence, next)
                     : next;
+                  return cause ? `${cause} ${text}` : text;
                 })(),
               },
             ]
@@ -286,15 +288,32 @@ export async function executeSegmentDeploy(
       runtime.segmentOnId === bindings[0].targetId
     );
   };
+  // A read failing after the write (for example HTTP 404 right after a create) is retried
+  // within the bound; the last one is reported when the bound ends without a confirmation.
+  let readFailure: unknown;
+  const unconfirmed = (error: unknown): SegmentDeployExecution => {
+    const code = (error as { code?: unknown } | undefined)?.code;
+    return result(
+      'failed',
+      'unknown',
+      creating ? 'SEGMENT_CREATE_UNCONFIRMED' : 'SEGMENT_UPDATE_UNCONFIRMED',
+      error,
+      `The read after the ${creating ? 'create' : 'update'} failed${typeof code === 'string' && /^[A-Z][A-Z0-9_]*$/u.test(code) ? ` with ${code}` : ''}.`,
+    );
+  };
+  const expired = (): SegmentDeployExecution =>
+    readFailure === undefined || getConnectDiagnostic(writeFailure)
+      ? unknown
+      : unconfirmed(readFailure);
   const started = now();
   if (!Number.isFinite(started)) return unknown;
   for (let attempt = 0; attempt < segmentPollBudget.reads; attempt++) {
     try {
       const elapsed = now() - started;
       if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed >= segmentPollBudget.timeoutMs)
-        return unknown;
+        return expired();
       if (attempt > 0) await delay(segmentPollBudget.intervalMs);
-      if (now() - started >= segmentPollBudget.timeoutMs) return unknown;
+      if (now() - started >= segmentPollBudget.timeoutMs) return expired();
       const observed = projectSegment(
         await read(desired.identity.apiName),
         desired.identity.apiName,
@@ -305,7 +324,7 @@ export async function executeSegmentDeploy(
         readElapsed < 0 ||
         readElapsed >= segmentPollBudget.timeoutMs
       )
-        return unknown;
+        return expired();
       if (creating && !responseQualified) return unknown;
       if (!matches(observed.runtime) || !isDeepStrictEqual(observed.candidate, desired))
         return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH', writeFailure);
@@ -356,10 +375,13 @@ export async function executeSegmentDeploy(
           )
         : unknown;
     } catch (error) {
-      return getConnectDiagnostic(writeFailure)
-        ? unknown
-        : result('failed', 'unknown', 'SEGMENT_UPDATE_UNCONFIRMED', error);
+      // A projection refusal is final; a failed read is tried again within the bound.
+      if (!(error instanceof SegmentError)) {
+        readFailure = error;
+        continue;
+      }
+      return getConnectDiagnostic(writeFailure) ? unknown : unconfirmed(error);
     }
   }
-  return unknown;
+  return expired();
 }

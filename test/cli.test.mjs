@@ -68,7 +68,14 @@ test('package metadata points to the renamed repository without changing npm ide
 test('Segment help and README describe API68-only deploy by name, sent as written', async () => {
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
-  assert.match(Deploy.description, /one portable \*\.segment\.json\) uses auto or 68\.0/u);
+  assert.match(
+    Deploy.description,
+    /Name\.segment\.json joined with one Name\.segment\.<model>\.sql per model; a missing or extra SQL file or SQL left in the JSON is INVALID_SOURCE\) uses auto or 68\.0/u,
+  );
+  assert.match(
+    Retrieve.description,
+    /each model as Salesforce returns it in <Name>\.segment\.<model>\.sql/u,
+  );
   assert.match(
     Deploy.description,
     /sent as written and Salesforce decides; its error is reported/u,

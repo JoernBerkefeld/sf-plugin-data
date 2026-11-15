@@ -61,6 +61,26 @@ file beside them, duplicate keys, a name that differs from the file name, links 
 hard links block. A length-prefixed SHA256 digest binds the bytes of both files;
 revalidation checks bytes and the frozen document before dispatch.
 
+## Public segment files
+
+Retrieve writes each segment as
+`<package>/main/default/data360/segments/<Name>.segment.json` (identity, label,
+description, `segmentOn` DMO, schedule and lookback, and the list of model names) and one
+`<Name>.segment.<model>.sql` per model beside it (that model's `sql`, plain text, bytes as
+returned). `<package>` is the default package directory of `sfdx-project.json`
+(`force-app` when absent). A model name must start with a letter or digit and hold only
+letters, digits and underscores, and two model names may not differ only in case; another
+name is refused with `INVALID_SEGMENT_DOCUMENT`. A repeat retrieve of an unchanged segment
+writes nothing (`unchanged`); with `--overwrite`, the SQL file of a model the segment no
+longer has is removed.
+
+Deploy, delete and `--changed-since` read the same files. The JSON or any of its SQL files,
+or the exact selector, selects the segment; the JSON is joined with exactly one SQL file
+per model. A missing JSON or SQL file, a `sql` kept in the JSON, any other
+`<Name>.segment.*` file beside them, duplicate keys, a name that differs from the file
+name, links and hard links block (`INVALID_SOURCE`). A length-prefixed SHA256 digest binds
+the bytes of all files; revalidation checks bytes and the frozen document before dispatch.
+
 ## Public native DMO document
 
 Exact `dmo:ApiName__dlm` retrieval writes
@@ -315,10 +335,12 @@ directory for `dlo`, `dmo` and `relationship`, and `data-stream` (with
 that name or the hand-written file whose binding matches; for a data transform
 `data360/dataTransforms/<Name>.dataTransform.json` and for a calculated insight both
 `data360/calculatedInsights/<Name>.calculatedInsight-meta.json` and
-`.calculatedInsight-meta.sql` in the current directory; and for a segment, identity
-resolution or data graph its canonical file under the default package directory of
-`sfdx-project.json` (`force-app/main/default` without one). Files are found by name at these paths;
-no folder is searched. Mapping files of mappings
+`.calculatedInsight-meta.sql` in the current directory; for a segment
+`data360/segments/<Name>.segment.json` and every `<Name>.segment.*.sql` beside it; and for
+an identity resolution or data graph its canonical file. Segment, identity resolution and
+data graph files live under the default package directory of `sfdx-project.json`
+(`force-app/main/default` without one). Files are found by name at these paths; only the
+segments folder is listed, for the segment's SQL files. Mapping files of mappings
 Salesforce removes together with a deleted DMO are not removed, because those
 mappings are not items of the command.
 

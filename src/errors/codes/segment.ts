@@ -3,11 +3,11 @@ export const hints: Readonly<Record<string, string>> = {
   INCOMPLETE_SEGMENT:
     'The segment read finished without a usable definition and without a more specific reason. Rerun the retrieve; if it repeats, read the segment directly with the API.',
   INVALID_SEGMENT_DOCUMENT:
-    'A segment value is not plain text the plugin can save: missing, empty, too long or with control characters, or the models are not a list of name and SQL. Correct it, then rerun.',
+    'A segment value is not plain text the plugin can save: missing, empty, too long or with control characters, the models are not a list of name and SQL, or a model name cannot name a SQL file. Correct it, then rerun.',
   INVALID_SEGMENT_RESPONSE:
     'Salesforce answered the segment read in a shape the plugin does not expect (not exactly one segment). Rerun the retrieve; if it repeats, inspect the raw API response.',
   PARTIAL_SEGMENT_OUTPUT:
-    'The segment file was written, but a later step of saving it failed, so the file on disk may not be complete. Inspect the .segment.json file and retrieve again with --overwrite.',
+    'A segment file was written, but a later step of saving the JSON and SQL files failed, so the files on disk may not be complete. Inspect the .segment.json and .sql files and retrieve again with --overwrite.',
   SEGMENT_ACQUISITION_FAILED:
     'The plugin could not read the segment from the org. Check the segment name, the target org login and the Salesforce API detail in the message, then rerun the retrieve.',
   SEGMENT_ADMISSION_FAILED:

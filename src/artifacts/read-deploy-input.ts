@@ -19,7 +19,7 @@ import { dataGraphName } from './data-graph-document.js';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { segmentName, validateSegmentDocument } from './segment-document.js';
+import { joinSegmentFiles, segmentName } from './segment-document.js';
 import type { SegmentDocument } from './segment-document.js';
 import { segmentSourceRoot } from './write-segment.js';
 import {
@@ -45,6 +45,21 @@ const ciJsonSuffix = '.calculatedInsight-meta.json';
 const isCalculatedInsightMember = (file: string): boolean =>
   path.basename(file).includes(ciMemberInfix);
 
+const segmentMemberInfix = '.segment.';
+const segmentJsonSuffix = '.segment.json';
+/**
+ * A segment file: its JSON or one of its SQL files.
+ * @param {string} file Path.
+ * @returns {boolean} Whether the base name is `X.segment.json` or `X.segment.*.sql`.
+ */
+export const isSegmentMember = (file: string): boolean => {
+  const entry = path.basename(file).toLowerCase();
+  return (
+    entry.endsWith(segmentJsonSuffix) ||
+    (entry.includes(segmentMemberInfix) && entry.endsWith('.sql'))
+  );
+};
+
 /** Payload-free local selection refusal. */
 export class DeployInputError extends Error {
   public constructor(
@@ -65,7 +80,11 @@ export class DeployInputError extends Error {
 }
 
 export type SegmentDeployInput = {
+  /** `data360/segments/<apiName>.segment.json` under the package directory. */
   path: string;
+  /** The SQL file of each model next to it, `<apiName>.segment.<model>.sql`, in model order. */
+  codePaths: readonly string[];
+  /** The JSON with every model's SQL joined back. */
   document: SegmentDocument;
   inputDigest: string;
 };
@@ -655,42 +674,84 @@ async function memberBytes(file: string): Promise<Buffer> {
 }
 
 /**
- * Admit one canonical Segment JSON and bind its exact bytes.
- * @param {string} file Absolute selected member.
- * @returns {Promise<SegmentDeployInput>} Detached immutable JSON admission.
+ * Admit a segment from its JSON or one of its SQL files: the JSON joined with exactly one
+ * `<apiName>.segment.<model>.sql` per model, every byte bound as one component. A missing JSON or
+ * SQL file, SQL left in the JSON, or any other `<apiName>.segment.*` file beside them is
+ * INVALID_SOURCE.
+ * @param {string} file Absolute selected JSON or SQL file.
+ * @returns {Promise<SegmentDeployInput>} Detached immutable admission.
  */
 async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput> {
-  const suffix = '.segment.json';
-  const name = path.basename(file).slice(0, -suffix.length);
-  if (!segmentName.test(name)) throw new DeployInputError('INVALID_SOURCE');
+  const entry = path.basename(file);
+  const marker = entry.indexOf(segmentMemberInfix);
+  const name = marker > 0 ? entry.slice(0, marker) : '';
   const directory = path.dirname(file);
   const base = path.dirname(path.dirname(directory));
   if (
-    !file.endsWith(suffix) ||
     path.basename(base) !== 'default' ||
     path.basename(path.dirname(base)) !== 'main' ||
     path.basename(directory) !== 'segments' ||
     path.basename(path.dirname(directory)) !== 'data360'
   )
     throw new DeployInputError('INVALID_SELECTION');
-  const bytes = await memberBytes(file);
+  if (!segmentName.test(name)) throw new DeployInputError('INVALID_SOURCE');
+  const jsonName = `${name}${segmentJsonSuffix}`;
+  const jsonPath = path.join(directory, jsonName);
+  await inspect(directory);
+  const prefix = `${name}${segmentMemberInfix}`;
+  const codeFiles: Array<{ path: string; name: string }> = [];
+  let hasJson = false;
+  const entries = await readdir(directory);
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort the fresh directory listing within the existing TypeScript library target.
+  for (const member of entries.sort()) {
+    if (!member.toLowerCase().startsWith(prefix.toLowerCase())) continue;
+    if (member === jsonName) {
+      hasJson = true;
+      continue;
+    }
+    const match = /^([A-Za-z0-9][A-Za-z0-9_]*)\.sql$/u.exec(member.slice(prefix.length));
+    if (!member.startsWith(prefix) || !match) throw new DeployInputError('INVALID_SOURCE');
+    codeFiles.push({ path: path.join(directory, member), name: match[1] });
+  }
+  if (!hasJson || codeFiles.length > 64) throw new DeployInputError('INVALID_SOURCE');
+  const members = [jsonPath, ...codeFiles.map((code) => code.path)];
+  const bytes: Buffer[] = [];
+  for (const member of members) bytes.push(await memberBytes(member));
   let document: SegmentDocument;
   try {
-    document = validateSegmentDocument(strictJson(decode(bytes)));
+    document = joinSegmentFiles(
+      strictJson(decode(bytes[0])),
+      codeFiles.map((code, index) => ({
+        extension: 'sql',
+        name: code.name,
+        text: decode(bytes[index + 1]),
+      })),
+    );
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
   } catch {
     throw new DeployInputError('INVALID_SOURCE');
   }
-  const after = await memberBytes(file);
-  if (!after.equals(bytes)) refuse();
-  const inputDigest = createHash('sha256').update(bytes).digest('hex');
+  for (const [index, member] of members.entries()) {
+    const after = await memberBytes(member);
+    if (!after.equals(bytes[index])) refuse();
+  }
+  const hash = createHash('sha256');
+  for (const content of bytes) hash.update(String(content.length)).update(':').update(content);
   const freeze = (value: object): void => {
     for (const child of Object.values(value))
       if (child && typeof child === 'object') freeze(child as object);
     Object.freeze(value);
   };
   freeze(document);
-  return Object.freeze({ path: file, document, inputDigest });
+  // The files as found on disk, in model order.
+  const byModel = new Map(codeFiles.map((code) => [code.name.toLowerCase(), code.path]));
+  const codePaths = document.spec.models.map((model) => byModel.get(model.name.toLowerCase())!);
+  return Object.freeze({
+    path: jsonPath,
+    codePaths: Object.freeze(codePaths),
+    document,
+    inputDigest: hash.digest('hex'),
+  });
 }
 
 /**
@@ -810,6 +871,7 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
   try {
     const current = await readSegmentDeployInput(input.path);
     if (
+      JSON.stringify(current.codePaths) !== JSON.stringify(input.codePaths) ||
       current.inputDigest !== input.inputDigest ||
       JSON.stringify(current.document) !== JSON.stringify(input.document)
     )
@@ -996,7 +1058,9 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       }
       if (
         !stat.isFile() ||
-        (path.extname(file) !== '.json' && !isCalculatedInsightMember(file)) ||
+        (path.extname(file) !== '.json' &&
+          !isCalculatedInsightMember(file) &&
+          !isSegmentMember(file)) ||
         stat.nlink !== 1 ||
         stat.size > 1_048_576
       )
@@ -1175,7 +1239,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
         inputs.push(input);
         continue;
       }
-      if (file.endsWith('.segment.json')) {
+      if (isSegmentMember(file)) {
         const paired = await readSegmentDeployInput(file);
         const key =
           `segment:${paired.document.identity.dataSpace}:${paired.document.identity.apiName}`.toLowerCase();
@@ -1223,7 +1287,8 @@ export type DeletedArtifactKind =
  * @param {DeletedArtifactKind} kind Family derived from the canonical path.
  * @param {string} name Canonical name derived from the path.
  * @param {Buffer} bytes Exact revision bytes (the JSON file).
- * @param {Buffer} [sql] Calculated insight SQL file bytes from the same revision.
+ * @param {Array<{name?: string; bytes: Buffer}>} [code] SQL file bytes from the same revision: the
+ * calculated insight's one SQL file, or one per segment model (`name` is the model).
  * @returns {object} Content identity and the validated base document (deeply frozen), plus the
  * source DMO of a relationship.
  */
@@ -1231,7 +1296,7 @@ export function admitDeletedArtifact(
   kind: DeletedArtifactKind,
   name: string,
   bytes: Buffer,
-  sql?: Buffer,
+  code?: ReadonlyArray<{ name?: string; bytes: Buffer }>,
 ): {
   identity: { dataSpace: string; apiName: string };
   document: DeployInput['document'];
@@ -1288,16 +1353,23 @@ export function admitDeletedArtifact(
         break;
       }
       case 'calculated-insight': {
-        if (!sql) throw new Error('Missing SQL');
+        if (code?.length !== 1 || code[0].name !== undefined) throw new Error('Missing SQL');
         const native = parseNativeCalculatedInsight(decode(bytes), [
-          { extension: 'sql', text: decode(sql) },
+          { extension: 'sql', text: decode(code[0].bytes) },
         ]);
         document = calculatedInsightConsumerDocument(native);
         identity = { dataSpace: native.dataSpace, apiName: native.apiName };
         break;
       }
       case 'segment': {
-        document = validateSegmentDocument(value);
+        document = joinSegmentFiles(
+          value,
+          (code ?? []).map((file) => ({
+            extension: 'sql',
+            ...(file.name === undefined ? {} : { name: file.name }),
+            text: decode(file.bytes),
+          })),
+        );
         ({ identity } = document);
         break;
       }

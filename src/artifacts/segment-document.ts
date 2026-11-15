@@ -1,3 +1,6 @@
+import { joinCodeFields, splitCodeFields } from './code-fields.js';
+import type { CodeField, CodeFile } from './code-fields.js';
+
 export type SegmentReference = {
   kind: 'dmo';
   dataSpace: 'default';
@@ -119,11 +122,39 @@ export function validateSegmentDocument(value: unknown): SegmentDocument {
   };
 }
 
+/** Every `spec.models[].sql` lives in its own `<Name>.segment.<model>.sql` file. */
+export const segmentCodeFields: readonly CodeField[] = Object.freeze([
+  { path: ['spec', 'models'], each: 'sql', key: 'name', extension: 'sql' },
+]);
+
 /**
- * Serialize only admitted authored fields in stable key order.
- * @param {unknown} value Authored document.
- * @returns {string} Canonical JSON with LF terminator.
+ * The JSON text (admitted fields, stable key order, models without SQL) and one SQL file per model.
+ * @param {unknown} value Complete authored document.
+ * @returns {{json: string; files: CodeFile[]}} JSON with LF terminator and the SQL files in model order.
  */
-export function serializeSegmentDocument(value: unknown): string {
-  return `${JSON.stringify(validateSegmentDocument(value), undefined, 2)}\n`;
+export function serializeSegmentFiles(value: unknown): { json: string; files: CodeFile[] } {
+  const { document, files } = splitCodeFields(
+    validateSegmentDocument(value),
+    segmentCodeFields,
+    () => new SegmentError('INVALID_SEGMENT_DOCUMENT'),
+  );
+  return { json: `${JSON.stringify(document, undefined, 2)}\n`, files };
+}
+
+/**
+ * Join a parsed segment JSON with its SQL files; a missing or extra SQL file, or SQL left in the
+ * JSON, is INVALID_SEGMENT_DOCUMENT.
+ * @param {unknown} value Parsed JSON file content.
+ * @param {readonly CodeFile[]} files SQL file contents.
+ * @returns {SegmentDocument} Complete admitted document.
+ */
+export function joinSegmentFiles(value: unknown, files: readonly CodeFile[]): SegmentDocument {
+  return validateSegmentDocument(
+    joinCodeFields(
+      value,
+      segmentCodeFields,
+      files,
+      () => new SegmentError('INVALID_SEGMENT_DOCUMENT'),
+    ),
+  );
 }

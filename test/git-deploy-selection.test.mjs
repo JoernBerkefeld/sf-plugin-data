@@ -11,8 +11,10 @@ import { GitSelectionError, selectGitDeployInputs } from '../lib/artifacts/git-d
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { verifySegmentInputDigest } from '../lib/artifacts/read-deploy-input.js';
 
-const segment = async (cwd) => {
-  const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
+const segment = async (
+  cwd,
+  models = [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
+) => {
   const value = {
     schemaVersion: 1,
     kind: 'segment',
@@ -22,7 +24,7 @@ const segment = async (cwd) => {
       description: 'Description',
       segmentType: 'DBT',
       segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
-      models: [{ name: 'Audience', sql }],
+      models,
       publishInterval: 'NO_REFRESH',
       lookbackPeriod: 'P90D',
     },
@@ -91,42 +93,61 @@ test('mapping XML is not admitted from mapping-only or mixed Git changes', async
   assert.ok(!mixed.paths.some((file) => file.endsWith('.objectSourceTargetMap-meta.xml')));
 });
 
-for (const member of ['path']) {
+for (const member of ['json', 'sql']) {
   for (const phase of ['committed', 'index', 'worktree', 'untracked']) {
-    test(`Segment ${member} ${phase} changes select one byte-bound pair with DMO`, async () => {
+    test(`Segment ${member} ${phase} changes select one byte-bound segment with DMO`, async () => {
       const cwd = await fixture();
       const p = await segment(cwd);
+      const files = [p.path, ...p.codePaths];
       const base =
-        phase === 'untracked'
-          ? await git(cwd, 'rev-parse', 'HEAD')
-          : await commit(cwd, p.path, p.path);
-      for (const key of member === 'both' ? ['path'] : [member]) {
-        const { readFile } = await import('node:fs/promises');
-        await writeFile(p[key], (await readFile(p[key], 'utf8')) + '\n');
-      }
-      if (phase === 'index' || phase === 'committed') await git(cwd, 'add', '--', p.path, p.path);
+        phase === 'untracked' ? await git(cwd, 'rev-parse', 'HEAD') : await commit(cwd, ...files);
+      const changed = member === 'json' ? p.path : p.codePaths[0];
+      const { readFile } = await import('node:fs/promises');
+      await writeFile(changed, (await readFile(changed, 'utf8')) + '\n');
+      if (phase === 'index' || phase === 'committed') await git(cwd, 'add', '--', ...files);
       if (phase === 'committed') await commit(cwd);
       await put(cwd, relative('Added'), document('Added'));
       const result = await selectGitDeployInputs({ cwd, ref: base });
       assert.equal(result.paths.length, 2);
       assert.ok(result.paths.includes(p.path));
       assert.equal(result.segments.length, 1);
+      assert.deepEqual(result.segments[0].codePaths, p.codePaths);
       assert.equal('companionPath' in result.segments[0], false);
       assert.ok(Object.isFrozen(result.segments));
       assert.ok(Object.isFrozen(result.segments[0]));
+      if (member === 'sql')
+        assert.ok(result.segments[0].document.spec.models[0].sql.endsWith('WHERE 1 = 0\n'));
       await verifySegmentInputDigest(result.segments[0]);
-      const { readFile } = await import('node:fs/promises');
-      for (const key of ['path']) {
-        const original = await readFile(p[key]);
-        await writeFile(p[key], Buffer.concat([original, Buffer.from('\n')]));
+      for (const file of files) {
+        const original = await readFile(file);
+        await writeFile(file, Buffer.concat([original, Buffer.from('\n')]));
         await assert.rejects(verifySegmentInputDigest(result.segments[0]));
-        await writeFile(p[key], original);
+        await writeFile(file, original);
       }
     });
   }
 }
 
-for (const member of ['path']) {
+test('a segment SQL file deleted with its model removed from the JSON is a change, not a delete', async () => {
+  const cwd = await fixture();
+  const p = await segment(cwd, [
+    { name: 'First', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm' },
+    { name: 'Second', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' },
+  ]);
+  const base = await commit(cwd, p.path, ...p.codePaths);
+  const { readFile } = await import('node:fs/promises');
+  const json = JSON.parse(await readFile(p.path, 'utf8'));
+  json.spec.models.pop();
+  await writeFile(p.path, `${JSON.stringify(json, undefined, 2)}\n`);
+  await unlink(p.codePaths[1]);
+  await git(cwd, 'add', '--', p.path, p.codePaths[1]);
+  const result = await selectGitDeployInputs({ cwd, ref: base });
+  assert.equal(result.deletions, undefined);
+  assert.deepEqual(result.paths, [p.path]);
+  assert.deepEqual(result.segments[0].codePaths, [p.codePaths[0]]);
+});
+
+for (const member of ['json', 'sql']) {
   for (const phase of ['committed', 'index', 'worktree']) {
     for (const action of ['delete', 'rename']) {
       // A committed or staged deletion is a delete candidate; a worktree deletion beside an
@@ -135,16 +156,20 @@ for (const member of ['path']) {
       test(`Segment ${member} ${phase} ${action} ${blocks ? 'blocks' : 'is a delete candidate beside'} otherwise valid DMO`, async () => {
         const cwd = await fixture();
         const p = await segment(cwd);
-        const base = await commit(cwd, p.path, p.path);
-        await (action === 'delete'
-          ? unlink(p[member])
-          : rename(p[member], path.join(cwd, 'outside.json')));
+        const files = [p.path, ...p.codePaths];
+        const base = await commit(cwd, ...files);
+        const moved = member === 'json' ? p.path : p.codePaths[0];
+        // The whole set is deleted; a rename moves one of its files away.
+        for (const file of files)
+          await (action === 'delete' || file !== moved
+            ? unlink(file)
+            : rename(file, path.join(cwd, 'outside.json')));
         if (phase !== 'worktree')
           await git(
             cwd,
             'add',
             '--',
-            p[member],
+            ...files,
             ...(action === 'rename' ? [path.join(cwd, 'outside.json')] : []),
           );
         if (phase === 'committed') await commit(cwd);
@@ -153,8 +178,17 @@ for (const member of ['path']) {
           const selected = await selectGitDeployInputs({ cwd, ref: base });
           assert.deepEqual(selected.paths, [path.join(cwd, relative('Added'))]);
           assert.deepEqual(
-            selected.deletions.map((deletion) => [deletion.family, deletion.identity.apiName]),
-            [['segment', 'Audience']],
+            selected.deletions.map((deletion) => [
+              deletion.family,
+              deletion.identity.apiName,
+              deletion.path,
+              deletion.codePaths,
+            ]),
+            [['segment', 'Audience', p.path, p.codePaths]],
+          );
+          assert.equal(
+            selected.deletions[0].document.spec.models[0].sql,
+            'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0',
           );
           return;
         }
@@ -165,16 +199,41 @@ for (const member of ['path']) {
       });
     }
   }
-  test(`absent never-tracked Segment ${member} does not manufacture a Git selection`, async () => {
+}
+
+for (const member of ['json', 'sql']) {
+  test(`a segment with only its ${member} file deleted blocks`, async () => {
     const cwd = await fixture();
     const p = await segment(cwd);
-    await unlink(p[member]);
-    await put(cwd, relative('Added'), document('Added'));
-    const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
-    assert.equal(selected.segments, undefined);
-    assert.deepEqual(selected.paths, [path.join(cwd, relative('Added'))]);
+    const base = await commit(cwd, p.path, ...p.codePaths);
+    const gone = member === 'json' ? p.path : p.codePaths[0];
+    await unlink(gone);
+    if (member === 'json') {
+      await git(cwd, 'add', '--', gone);
+      await assert.rejects(
+        selectGitDeployInputs({ cwd, ref: base }),
+        refusal('BLOCKED_GIT_LIFECYCLE'),
+      );
+      return;
+    }
+    // The JSON still names the model, so its SQL file is missing: the segment is refused.
+    await git(cwd, 'add', '--', gone);
+    await assert.rejects(
+      selectGitDeployInputs({ cwd, ref: base }),
+      refusal('INVALID_GIT_SELECTION'),
+    );
   });
 }
+
+test('absent never-tracked Segment does not manufacture a Git selection', async () => {
+  const cwd = await fixture();
+  const p = await segment(cwd);
+  for (const file of [p.path, ...p.codePaths]) await unlink(file);
+  await put(cwd, relative('Added'), document('Added'));
+  const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
+  assert.equal(selected.segments, undefined);
+  assert.deepEqual(selected.paths, [path.join(cwd, relative('Added'))]);
+});
 
 test('legacy Segment XML Git selection refuses rather than discovering or rewriting JSON', async () => {
   const cwd = await fixture();

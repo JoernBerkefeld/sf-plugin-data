@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { link, mkdir, mkdtemp, open, readFile, rename, unlink } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { codeFilePath } from './code-fields.js';
 import {
   SegmentError,
-  serializeSegmentDocument,
+  joinSegmentFiles,
+  serializeSegmentFiles,
   validateSegmentDocument,
 } from './segment-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
@@ -89,34 +91,74 @@ export async function segmentSourceRoot(root: string): Promise<string> {
 }
 
 /**
- * Publish one strict portable JSON definition with exact-byte conflict and drift admission.
- * @param {unknown} value Authored candidate.
+ * SQL files of a segment in its folder that are not among the files being written (a model the
+ * org no longer has).
+ * @param {string} directory Absolute segments folder.
+ * @param {string} apiName Segment name.
+ * @param {readonly string[]} files Absolute files being written.
+ * @returns {Promise<string[]>} Absolute stale SQL files, sorted.
+ */
+async function staleSqlFiles(
+  directory: string,
+  apiName: string,
+  files: readonly string[],
+): Promise<string[]> {
+  const prefix = `${apiName}.segment.`.toLowerCase();
+  const own = new Set(files.map((file) => path.basename(file).toLowerCase()));
+  const entries = await readdir(directory);
+  const stale = entries.filter((entry) => {
+    const lower = entry.toLowerCase();
+    return lower.startsWith(prefix) && lower.endsWith('.sql') && !own.has(lower);
+  });
+
+  stale.sort();
+  return stale.map((entry) => path.join(directory, entry));
+}
+
+/**
+ * Publish one segment as `data360/segments/<apiName>.segment.json` plus one
+ * `<apiName>.segment.<model>.sql` per model, with exact-byte conflict and drift admission. A SQL
+ * file of a model the document no longer has is removed (it needs `overwrite`).
+ * @param {unknown} value Complete authored candidate (SQL included).
  * @param {string} projectRoot Selected output project root.
  * @param {boolean} overwrite Permit differing existing files.
  * @param {object} publication Narrow filesystem seam for publication-failure regression tests.
- * @returns {Promise<{path: string; outcome: 'retrieved' | 'unchanged'}>} Validated single-file receipt.
+ * @returns {Promise<{path: string; codePaths: string[]; outcome: 'retrieved' | 'unchanged'}>} JSON path, SQL paths and outcome.
  */
 export async function writeSegmentDocument(
   value: unknown,
   projectRoot: string,
   overwrite: boolean,
   publication = filesystemPublication,
-): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
+): Promise<{ path: string; codePaths: string[]; outcome: 'retrieved' | 'unchanged' }> {
   const document = validateSegmentDocument(value);
+  const { json, files: code } = serializeSegmentFiles(document);
   if (!projectRoot.trim()) throw new SegmentError('UNSAFE_PATH');
   const root = path.resolve(projectRoot);
   let published = 0;
   try {
     const base = await segmentSourceRoot(root);
-    const files = [
-      path.join(base, 'data360', 'segments', `${document.identity.apiName}.segment.json`),
-    ];
-    const bytes = [Buffer.from(serializeSegmentDocument(document))];
+    const jsonPath = path.join(
+      base,
+      'data360',
+      'segments',
+      `${document.identity.apiName}.segment.json`,
+    );
+    const files = [jsonPath, ...code.map((file) => codeFilePath(jsonPath, file))];
+    const codePaths = files.slice(1);
+    const bytes = [Buffer.from(json), ...code.map((file) => Buffer.from(file.text))];
+    if (bytes.some((content) => content.length > 1_048_576)) throw new SegmentError('UNSAFE_PATH');
     for (const file of files) await ensure(path.dirname(file));
     const previous = await Promise.all(files.map((file) => existing(file)));
+    const stale = await staleSqlFiles(path.dirname(jsonPath), document.identity.apiName, files);
+    for (const file of stale) await existing(file);
     const changed = files.map((_, index) => !previous[index]?.equals(bytes[index]));
-    if (!changed.some(Boolean)) return { path: files[0], outcome: 'unchanged' };
-    if (!overwrite && previous.some((value, index) => value && changed[index]))
+    if (!changed.some(Boolean) && stale.length === 0)
+      return { path: files[0], codePaths, outcome: 'unchanged' };
+    if (
+      !overwrite &&
+      (stale.length > 0 || previous.some((value, index) => value && changed[index]))
+    )
       throw new SegmentError('OVERWRITE_REQUIRED');
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-segment-output-'));
@@ -160,11 +202,21 @@ export async function writeSegmentDocument(
       }
       published++;
     }
+    for (const file of stale) {
+      await existing(file);
+      published++;
+      await publication.unlink(file);
+    }
     const completed = await Promise.all(files.map((file) => existing(file)));
     if (completed.some((value, index) => !value?.equals(bytes[index])))
       throw new SegmentError('OUTPUT_CHANGED');
-    validateSegmentDocument(JSON.parse(completed[0]!.toString('utf8')));
-    return { path: files[0], outcome: 'retrieved' };
+    const left = await staleSqlFiles(path.dirname(jsonPath), document.identity.apiName, files);
+    if (left.length > 0) throw new SegmentError('OUTPUT_CHANGED');
+    joinSegmentFiles(
+      JSON.parse(completed[0]!.toString('utf8')),
+      code.map((file, index) => ({ ...file, text: completed[index + 1]!.toString('utf8') })),
+    );
+    return { path: files[0], codePaths, outcome: 'retrieved' };
   } catch (error: unknown) {
     if (published) throw new SegmentError('PARTIAL_SEGMENT_OUTPUT');
     if (error instanceof SegmentError) throw error;

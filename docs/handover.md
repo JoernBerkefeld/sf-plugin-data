@@ -1,3 +1,34 @@
+# Chunk S: segment SQL in one file per model — 2026-11-15
+
+Plan `sf_plugin_data_offpattern_20261114` chunk S (checkpoint decision "Segment SQL split").
+
+- Retrieve writes `<package>/main/default/data360/segments/<Name>.segment.json` (models
+  without `sql`) and one `<Name>.segment.<model>.sql` per model (bytes as returned) via the
+  shared `code-fields.ts` (`codeFilePath` now takes any `.json`, so `X.segment.json` gives
+  `X.segment.<model>.sql`). Repeat unchanged writes nothing; with `--overwrite` a SQL file
+  of a dropped model is removed (one unlink). Receipt: `path`, `codePaths`.
+- Model names must be `[A-Za-z0-9][A-Za-z0-9_]*`, unique ignoring case, else
+  `INVALID_SEGMENT_DOCUMENT` on retrieve (Salesforce allows more).
+- `SegmentDeployInput` gains `codePaths` (model order); digest is length-prefixed over JSON +
+  SQL files. Missing/extra/misnamed `<Name>.segment.*` file, `sql` in the JSON, or the old
+  single-file form: `INVALID_SOURCE`. `-d` with any member file or the folder works.
+- Git: a change to the JSON or any SQL file selects the segment; a SQL file deleted while
+  the JSON stays is a change; JSON + every base model SQL deleted is one delete candidate
+  (`codePaths`); a JSON deleted with a SQL file left blocks.
+- Delete removes the JSON and every `<Name>.segment.*.sql` in the segments folder.
+- Live-run fixes (pre-existing): a GET without `description` (Salesforce omits an empty
+  one) reads as `""` (was UNKNOWN_SEGMENT_CONFIGURATION, so such a segment could not be
+  read, retrieved, previewed or deleted). The post-write poll retries a failed read within
+  the bound (a 404 right after create); only a projection refusal (SegmentError) or the
+  bound ends it, as SEGMENT_CREATE_UNCONFIRMED on create (was SEGMENT_UPDATE_UNCONFIRMED)
+  with "The read after the create/update failed[ with <CODE>]." before the cause text.
+
+- Live (isolated-source 00Daj000010xkZNEAY, 2026-11-15 00:02-00:04Z, `CliSegS_0648ff`, empty
+  description): create from JSON + `.sql`, retrieve writes the `.sql` byte-equal, repeat
+  `unchanged`, SQL-only edit `updated`, delete removes both files, GET 404. The first run
+  (`CliSegS_5fe816`) found the missing-`description` bug; that probe was deleted through the
+  plugin after the fix. Evidence F:/Temp/cliSegS_0648ff, F:/Temp/cliSegS_5fe816.
+
 # Chunk E1b: calculated insight readers on the JSON plus SQL files — 2026-11-15
 
 Plan `sf_plugin_data_offpattern_20261114` chunk E1b.
