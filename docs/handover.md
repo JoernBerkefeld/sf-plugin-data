@@ -1,3 +1,15 @@
+# UI parity step 3b: Visual Builder insights — 2026-11-15
+
+Evidence: verification DB `data360:calculated-insight.visual-builder.api68`.
+
+- A Visual Builder draft reads `expression` "SQL expression will be available when you
+  publish the insight" (visual model not in the API). Retrieve now refuses it with the new
+  code `CI_VISUAL_DRAFT_WITHOUT_SQL` (`retrieveNativeCalculatedInsight`; acquire for
+  delete/deploy/publish unchanged). Unit-tested with the exact live placeholder.
+- A published visual insight (generated `ANSI_SQL`) retrieves and deploys as a SQL insight:
+  twin equal in 25 of 27 values (only Salesforce-derived `dataSource.sourceApiName`).
+- Next: 3c Streaming Insight.
+
 # UI parity step 3a: SQL Insights Builder (DC_SQL) insights — 2026-11-15
 
 Plan `.claude/plans/sf_plugin_data_ui_parity_followups_20261115.plan.md` step 3a; evidence

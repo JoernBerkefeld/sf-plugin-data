@@ -599,7 +599,11 @@ every insight the API lists in the data space. Each insight becomes two files:
 Both SQL tools of the Data Cloud UI produce this format: Legacy SQL stores
 `queryDialect` `ANSI_SQL`, SQL Insights Builder stores `DC_SQL`. Retrieve, deploy and
 publish handle either the same way (observed at API 68 for draft create, unchanged
-repeat and publish of a `DC_SQL` insight).
+repeat and publish of a `DC_SQL` insight). An insight built with the Visual Builder has
+no SQL in the API while it is a draft (the GET returns a placeholder sentence), so
+retrieve refuses such a draft with `CI_VISUAL_DRAFT_WITHOUT_SQL`; once published
+(Save and Run), its generated `ANSI_SQL` retrieves like any other insight, and deploying
+that file creates a SQL insight with the same result (the visual layout is not carried).
 
 A repeated retrieve of an unchanged insight is `unchanged`; differing files need
 `--overwrite`. An insight the org does not have is `CI_NOT_FOUND`.

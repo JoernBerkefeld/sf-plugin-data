@@ -82,9 +82,14 @@ export async function acquireCalculatedInsight(
   return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN', document };
 }
 
+/** What the API 68 GET returns as `expression` for an unpublished Visual Builder draft. */
+export const visualDraftPlaceholder =
+  'SQL expression will be available when you publish the insight';
+
 /**
  * Read one calculated insight by name with the API 68 GET and project it to the file form.
- * Read only; whatever the GET returns is retrieved (any status, schedule or SQL).
+ * Read only; any status, schedule or SQL is retrieved, except a Visual Builder draft, whose
+ * GET carries a placeholder instead of SQL (`CI_VISUAL_DRAFT_WITHOUT_SQL`).
  * @param {Pick<CalculatedInsightClient, 'get'>} client API 68 default-space client.
  * @param {string} apiName Exact name ending in __cio.
  * @param {string} dataSpace Selected data space.
@@ -100,6 +105,9 @@ export async function retrieveNativeCalculatedInsight(
     apiName,
   );
   if (acquired.state === 'absent') throw new CalculatedInsightError('CI_NOT_FOUND');
+  // A Visual Builder draft reads this sentence instead of SQL until it is published.
+  if (acquired.document.expression.trim() === visualDraftPlaceholder)
+    throw new CalculatedInsightError('CI_VISUAL_DRAFT_WITHOUT_SQL');
   return acquired.document;
 }
 

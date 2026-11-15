@@ -17,8 +17,10 @@ import {
 } from '../lib/artifacts/native-calculated-insight-document.js';
 import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import {
+  acquireCalculatedInsight,
   listCalculatedInsightNames,
   retrieveNativeCalculatedInsight,
+  visualDraftPlaceholder,
 } from '../lib/services/native-calculated-insight.js';
 import { ConnectError } from '../lib/transport/connect-client.js';
 
@@ -298,6 +300,25 @@ test('acquire: GET by name, 404 is CI_NOT_FOUND, another name is CI_IDENTITY_CHA
       retrieveNativeCalculatedInsight({ get }, 'Synthetic__cio', 'default'),
       (error) => error.code === code,
     );
+});
+
+test('retrieve refuses a Visual Builder draft whose GET has a placeholder instead of SQL', async () => {
+  const draft = {
+    ...getBody(),
+    calculatedInsightStatus: 'DRAFT',
+    expression: visualDraftPlaceholder,
+  };
+  await assert.rejects(
+    retrieveNativeCalculatedInsight({ get: async () => draft }, 'Synthetic__cio', 'default'),
+    (error) => error.code === 'CI_VISUAL_DRAFT_WITHOUT_SQL',
+  );
+  // Delete, deploy and publish read the same insight through acquire, which still works.
+  const acquired = await acquireCalculatedInsight(
+    { dataSpace: 'default', get: async () => draft },
+    'Synthetic__cio',
+  );
+  assert.equal(acquired.state, 'present');
+  assert.equal(acquired.document.expression, visualDraftPlaceholder);
 });
 
 test('inventory: every page of the API 68 list up to total', async () => {
