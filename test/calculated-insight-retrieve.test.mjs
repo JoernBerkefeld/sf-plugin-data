@@ -341,14 +341,63 @@ test('inventory: every page of the API 68 list up to total', async () => {
     urls.map((url) => new URL(url).search),
     ['?dataspace=default&batchSize=25&offset=0', '?dataspace=default&batchSize=25&offset=2'],
   );
-  for (const body of [{}, { collection: { items: [{ apiName: 'Bad' }], total: 1 } }])
-    await assert.rejects(
-      listCalculatedInsightNames(
-        { instanceUrl: connection.instanceUrl, request: async () => body },
-        'default',
-      ),
-      (error) => error.code === 'CI_ACQUISITION_FAILED',
-    );
+  await assert.rejects(
+    listCalculatedInsightNames(
+      { instanceUrl: connection.instanceUrl, request: async () => ({}) },
+      'default',
+    ),
+    (error) => error.code === 'CI_ACQUISITION_FAILED',
+  );
+  // An unusable name is skipped with a warning; the other insights are still listed.
+  const warnings = [];
+  assert.deepEqual(
+    await listCalculatedInsightNames(
+      {
+        instanceUrl: connection.instanceUrl,
+        request: async () => ({
+          collection: { items: [{ apiName: 'Bad' }, {}, { apiName: 'Good__cio' }], total: 3 },
+        }),
+      },
+      'default',
+      warnings,
+    ),
+    ['Good__cio'],
+  );
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /"Bad" because it has no usable API name/u);
+});
+
+test('inventory: pages past 200 pages until total, and ends on a repeated page', async () => {
+  const offsets = [];
+  const names = await listCalculatedInsightNames(
+    {
+      instanceUrl: 'https://synthetic.my.salesforce.com',
+      request: async ({ url }) => {
+        const offset = Number(new URL(url).searchParams.get('offset'));
+        offsets.push(offset);
+        const items = Array.from({ length: Math.min(25, 5010 - offset) }, (_, index) => ({
+          apiName: `I${offset + index}__cio`,
+        }));
+        return { collection: { items, total: 5010 } };
+      },
+    },
+    'default',
+  );
+  assert.equal(names.length, 5010);
+  assert.equal(offsets.length, 201);
+  let calls = 0;
+  const repeated = await listCalculatedInsightNames(
+    {
+      instanceUrl: 'https://synthetic.my.salesforce.com',
+      request: async () => {
+        calls++;
+        return { collection: { items: [{ apiName: 'Same__cio' }], total: 99 } };
+      },
+    },
+    'default',
+  );
+  assert.deepEqual(repeated, ['Same__cio']);
+  assert.equal(calls, 2);
 });
 
 /**
@@ -468,6 +517,74 @@ test('a missing insight is CI_NOT_FOUND with its identity and nothing is written
     [['CI_NOT_FOUND', { dataSpace: 'default', apiName: 'Missing__cio' }]],
   );
   assert.deepEqual(await readdir(cwd), ['.owner']);
+});
+
+test('one failing insight or file never blocks the others', async () => {
+  const cwd = await root();
+  const { command: instance, reads } = command(
+    [
+      'calculated-insight',
+      'calculated-insight:Broken__cio',
+      'calculated-insight:Aa_Unwritable__cio',
+    ],
+    cwd,
+  );
+  const client = instance.createCalculatedInsightClient;
+  instance.createCalculatedInsightClient = (...arguments_) => {
+    const inner = client(...arguments_);
+    return {
+      get: async (name) => {
+        if (name === 'Broken__cio') {
+          reads.push(name);
+          throw new ConnectError('REQUEST_FAILED', 500);
+        }
+        return inner.get(name);
+      },
+    };
+  };
+  instance.writeCalculatedInsight = async (insight, ...rest) => {
+    if (insight.apiName === 'Aa_Unwritable__cio' || insight.name === 'Aa_Unwritable__cio')
+      throw new CalculatedInsightError('OUTPUT_FAILED');
+    return writeNativeCalculatedInsightDocument(insight, ...rest);
+  };
+  const result = await run(instance);
+  assert.equal(result.status, 'failed');
+  // Every insight is read, and every readable one after a failing write is still written.
+  assert.deepEqual(reads, [
+    'Aa_Unwritable__cio',
+    'Broken__cio',
+    'Listed_One__cio',
+    'Listed_Two__cio',
+  ]);
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ identity }) => identity?.apiName),
+    ['Broken__cio', 'Aa_Unwritable__cio'],
+  );
+  assert.deepEqual(
+    result.result.items.map(({ identity }) => identity.apiName),
+    ['Listed_One__cio', 'Listed_Two__cio'],
+  );
+});
+
+test('a failing insight listing fails that inventory only; named insights are still retrieved', async () => {
+  const cwd = await root();
+  const { command: instance } = command(
+    ['calculated-insight', 'calculated-insight:Listed_One__cio'],
+    cwd,
+  );
+  instance.listCalculatedInsightNames = async () => {
+    throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
+  };
+  const result = await run(instance);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ code, family }) => [code, family]),
+    [['CI_ACQUISITION_FAILED', 'calculated-insight']],
+  );
+  assert.deepEqual(
+    result.result.items.map(({ identity }) => identity.apiName),
+    ['Listed_One__cio'],
+  );
 });
 
 for (const overrides of [

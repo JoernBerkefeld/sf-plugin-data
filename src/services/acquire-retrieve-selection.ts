@@ -3,7 +3,6 @@ import { nativeApiVersion } from '../transport/api-version.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import {
   dependencyKey,
-  dependencyLimits,
   DependencySelectionError,
   documentDependencyNode,
   orderDependencyNodes,
@@ -33,7 +32,7 @@ export class RetrieveSelectionError extends Error {
     public readonly code: string,
     public readonly identity: DependencyIdentity,
   ) {
-    super('A selected component could not be acquired completely; no artifacts were published.');
+    super('A selected component could not be acquired completely; it was not retrieved.');
     this.name = 'RetrieveSelectionError';
   }
 }
@@ -51,10 +50,11 @@ export type RetrieveSelectionEntry =
   | { document: NonNullable<SegmentAcquisition['candidate']> }
   | { document: VerbatimDocument };
 
-// Bound admitted transport operations: one native DMO GET; Segment exact GET; one native read
-// of the DMO each Segment is built on.
-// CLI job-internal polling is bounded by the existing project transport, not this count.
-export const retrieveSelectionLimits = Object.freeze({ requests: 512 });
+// Retrieve writes files and provisions nothing: no node, edge or request cap (deploy keeps its).
+const unbounded = Object.freeze({
+  nodes: Number.POSITIVE_INFINITY,
+  edges: Number.POSITIVE_INFINITY,
+});
 
 /**
  * Acquire exactly the selected DMOs and Segments and check each Segment's source references.
@@ -64,13 +64,16 @@ export const retrieveSelectionLimits = Object.freeze({ requests: 512 });
  * @param {Connection} connection Command-owned source connection.
  * @param {ApiVersionSelection} version Resolved API selection for Segment reads.
  * @param {object} [injected] Service overrides; the command supplies its native DMO read.
- * @returns {Promise<RetrieveSelectionEntry[]>} Complete publication selection, referenced DMOs first.
+ * @param {Function} [onFailure] Receives each component that could not be acquired; the others
+ * are still acquired. Without it, the first failure is thrown.
+ * @returns {Promise<RetrieveSelectionEntry[]>} Acquired selection, referenced DMOs first.
  */
 export async function acquireRetrieveSelection(
   selected: DependencyIdentity[],
   connection: Connection,
   version: ApiVersionSelection,
   injected?: Partial<RetrieveServices>,
+  onFailure?: (error: RetrieveSelectionError) => void,
 ): Promise<RetrieveSelectionEntry[]> {
   const services: RetrieveServices = {
     segment: retrieveSegment,
@@ -87,15 +90,7 @@ export async function acquireRetrieveSelection(
   const entries = new Map<string, RetrieveSelectionEntry>();
   const nodes = new Map<string, ReturnType<typeof documentDependencyNode>>();
   const raw = new Map<string, Promise<unknown>>();
-  let requests = 0;
-  const reserve = (count: number): void => {
-    requests += count;
-    if (requests > retrieveSelectionLimits.requests)
-      throw new DependencySelectionError('DEPENDENCY_REQUEST_LIMIT_EXCEEDED');
-  };
   for (const identity of selected) identities.set(dependencyKey(identity), identity);
-  if (identities.size > dependencyLimits.nodes)
-    throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
   // Components the document cannot represent: written as Salesforce returned them, outside the
   // dependency order (they bind nothing).
   const verbatim: RetrieveSelectionEntry[] = [];
@@ -104,7 +99,6 @@ export async function acquireRetrieveSelection(
     // The raw GET response of this component, once read.
     let read: { native: unknown } | undefined;
     try {
-      reserve(1);
       if (identity.kind === 'segment') {
         const acquired = await services.segment(
           connection,
@@ -139,9 +133,6 @@ export async function acquireRetrieveSelection(
       entries.set(key, entry);
       nodes.set(key, node);
       if (entry.document.kind === 'segment') {
-        for (const dependency of node.dependencies) {
-          if (!raw.has(dependencyKey(dependency))) reserve(1);
-        }
         await services.bind(
           entry.document,
           connection,
@@ -158,12 +149,13 @@ export async function acquireRetrieveSelection(
           },
         );
       }
-      // Check edge/cycle bounds incrementally, before further acquisition.
-      orderDependencyNodes([...nodes.values()]);
     } catch (error: unknown) {
+      // A component that failed after its node was built (its binding) is left out entirely.
+      const bound = nodes.delete(key);
+      entries.delete(key);
       const reason = verbatimReason(error);
       const document =
-        reason === undefined || read === undefined || nodes.has(key)
+        reason === undefined || read === undefined || bound
           ? undefined
           : createVerbatimDocument(
               identity.kind,
@@ -175,7 +167,7 @@ export async function acquireRetrieveSelection(
         verbatim.push({ document });
         continue;
       }
-      throw retainConnectDiagnostic(
+      const failure = retainConnectDiagnostic(
         new RetrieveSelectionError(
           error instanceof SegmentError ||
             error instanceof NativeDmoError ||
@@ -186,10 +178,13 @@ export async function acquireRetrieveSelection(
         ),
         getConnectDiagnostic(error),
       );
+      // One component failing never blocks the others when the caller collects failures.
+      if (!onFailure) throw failure;
+      onFailure(failure);
     }
   }
   return [
-    ...orderDependencyNodes([...nodes.values()]).map((key) => entries.get(key)!),
+    ...orderDependencyNodes([...nodes.values()], unbounded).map((key) => entries.get(key)!),
     ...verbatim,
   ];
 }

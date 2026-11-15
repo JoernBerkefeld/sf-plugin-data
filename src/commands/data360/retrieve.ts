@@ -296,6 +296,15 @@ function retrievalMessage(error: unknown): string {
   return error === undefined ? fallback : operationDiagnostic(error, fallback);
 }
 
+/**
+ * Code of a native inventory that could not be read.
+ * @param {unknown} error Cause.
+ * @returns {string} Its mapping code, or NATIVE_INVENTORY_FAILED.
+ */
+function inventoryCode(error: unknown): string {
+  return error instanceof NativeMappingError ? error.code : 'NATIVE_INVENTORY_FAILED';
+}
+
 /** Retrieve selected DMO configuration through existing service-owned capability checks. */
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
@@ -788,6 +797,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               apiName,
               clients.streams ? { ...clients, streams: reads.client } : clients,
               effectiveScope,
+              false,
+              'retrieve',
             );
             const receipt = await this.writeDataStream(document, outputDirectory, flags.overwrite);
             envelope.result.items.push({
@@ -1003,61 +1014,93 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         envelope.provenance.sourceOrgId ??= org.getOrgId();
         envelope.metadata.soapApiVersion ??= version;
         const selected = new Map<string, string[]>();
-        try {
-          let dmoInventory: string[] | undefined;
-          // Finish every inventory before publishing any file.
-          for (const family of nativeFamilies) {
-            const all = selectors.length === 0 || selectors.includes(family);
-            let names = selectors
-              .filter((value) => value.startsWith(`${family}:`))
-              .map((value) => value.slice(family.length + 1));
-            if (all) {
-              if (family === 'mapping') {
-                dmoInventory ??= await this.listNativeNames(
-                  connection,
-                  version,
-                  'dmo',
-                  requestScope,
-                );
+        const before = envelope.diagnostics.errors.length;
+        const warnings = envelope.diagnostics.warnings;
+        // An inventory that cannot be read fails its family only; the others are still read.
+        const inventoryFailures: Array<{ family: RetrieveFamily; error: unknown }> = [];
+        // The DMO inventory, read once for both the DMO and the mapping family.
+        let dmoInventory: Promise<string[]> | undefined;
+        const listDmos = async (): Promise<string[]> =>
+          (dmoInventory ??= this.listNativeNames(
+            connection,
+            version,
+            'dmo',
+            requestScope,
+            warnings,
+          ));
+        // Finish every inventory before publishing any file.
+        for (const family of nativeFamilies) {
+          const all = selectors.length === 0 || selectors.includes(family);
+          let names = selectors
+            .filter((value) => value.startsWith(`${family}:`))
+            .map((value) => value.slice(family.length + 1));
+          if (all)
+            try {
+              if (family === 'mapping')
                 names.push(
                   ...(await this.listNativeMappingNames(
-                    dmoInventory,
+                    await listDmos(),
                     this.createMappingInventoryReader(connection, version, requestScope),
                     requestScope,
+                    {
+                      warnings,
+                      failure: (dmo, error) =>
+                        envelope.diagnostics.errors.push({
+                          code: 'NATIVE_INVENTORY_FAILED',
+                          message: retrievalMessage(error),
+                          retryable: false,
+                          identity: { dataSpace: effectiveScope, apiName: dmo },
+                          family: 'mapping',
+                        }),
+                    },
                   )),
                 );
-              } else {
-                const inventory =
-                  family === 'dmo'
-                    ? (dmoInventory ??= await this.listNativeNames(
+              else
+                names.push(
+                  ...(family === 'dmo'
+                    ? await listDmos()
+                    : await this.listNativeNames(
                         connection,
                         version,
                         family,
                         requestScope,
-                      ))
-                    : await this.listNativeNames(connection, version, family, requestScope);
-                names.push(...inventory);
-              }
+                        warnings,
+                      )),
+                );
+            } catch (error) {
+              inventoryFailures.push({ family, error });
             }
-            names = [...new Set(names)];
-            names.sort();
-            selected.set(family, names);
-          }
-        } catch (error) {
-          const mapping = error instanceof NativeMappingError;
+          names = [...new Set(names)];
+          names.sort();
+          selected.set(family, names);
+        }
+        // Nothing else to read: the one failed inventory is the group's outcome, as before.
+        if (
+          inventoryFailures.length === 1 &&
+          relationshipDmos.length === 0 &&
+          [...selected.values()].every((names) => names.length === 0) &&
+          envelope.diagnostics.errors.length === before
+        )
           return {
             status: 'blocked',
             selection: selectors,
-            code: mapping ? error.code : 'NATIVE_INVENTORY_FAILED',
-            error,
-            family: mapping ? 'mapping' : label,
+            code: inventoryCode(inventoryFailures[0].error),
+            error: inventoryFailures[0].error,
+            family: inventoryFailures[0].family,
           };
-        }
+        for (const { family, error } of inventoryFailures)
+          envelope.diagnostics.errors.push({
+            code: inventoryCode(error),
+            message: retrievalMessage(error),
+            retryable: false,
+            family,
+          });
         const selection = [
+          // A family whose inventory failed stays in the selection under its bare name.
+          ...inventoryFailures.map(({ family }) => family),
           ...[...selected].flatMap(([family, names]) => names.map((name) => `${family}:${name}`)),
           ...relationshipDmos.map((name) => `relationship:${name}`),
         ];
-        const before = envelope.diagnostics.errors.length;
         let failed = false;
         for (const family of nativeFamilies) {
           if (
@@ -1319,8 +1362,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         let selection = selectors;
         const before = envelope.diagnostics.errors.length;
         let failed = false;
-        // An error already reported for its component is not reported again without identity.
-        let reported: unknown;
+        // An inventory that cannot be read fails its family only; the other selectors still run.
+        const inventoryFailure = (error: unknown, family: RetrieveFamily): void => {
+          envelope.diagnostics.errors.push({
+            code:
+              error instanceof CalculatedInsightError || error instanceof ConnectError
+                ? error.code
+                : 'NATIVE_INVENTORY_FAILED',
+            message: retrievalMessage(error),
+            retryable: false,
+            family,
+          });
+          errorTypes.set(envelope.diagnostics.errors.at(-1)!, family);
+          if (error instanceof ConnectError) failed = true;
+        };
         const diagnose = (error: unknown, apiName?: string, family = 'dmo'): void => {
           let code = 'RETRIEVE_FAILED';
           if (
@@ -1379,9 +1434,19 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           let dlos = dloSelectors.filter((value) => value !== 'dlo').map((value) => value.slice(4));
           // Bare dlo: every DLO the API lists, read before any file is written.
           if (dloSelectors.includes('dlo'))
-            dlos.push(
-              ...(await this.listNativeNames(org.getConnection('68.0'), '68.0', 'dlo', 'default')),
-            );
+            try {
+              dlos.push(
+                ...(await this.listNativeNames(
+                  org.getConnection('68.0'),
+                  '68.0',
+                  'dlo',
+                  'default',
+                  envelope.diagnostics.warnings,
+                )),
+              );
+            } catch (error: unknown) {
+              inventoryFailure(error, 'dlo');
+            }
           dlos = [...new Set(dlos)];
           dlos.sort();
           const dloRoutes: RetrieveRoute[] = [
@@ -1531,14 +1596,19 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               .filter((selector) => selector !== 'dmo')
               .map((selector) => selector.slice(4));
             if (dmoSelectors.includes('dmo'))
-              names.push(
-                ...(await this.listNativeNames(
-                  connection,
-                  nativeDmoVersion,
-                  'dmo',
-                  effectiveScope,
-                )),
-              );
+              try {
+                names.push(
+                  ...(await this.listNativeNames(
+                    connection,
+                    nativeDmoVersion,
+                    'dmo',
+                    effectiveScope,
+                    envelope.diagnostics.warnings,
+                  )),
+                );
+              } catch (error: unknown) {
+                inventoryFailure(error, 'dmo');
+              }
             names = [...new Set(names)];
             names.sort();
           }
@@ -1581,6 +1651,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                       ).get(apiName);
                     },
                   },
+                  // One DMO or Segment failing never blocks the others.
+                  (error) => diagnose(error),
                 )
               : [];
           const calculatedInsights: Array<
@@ -1603,12 +1675,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             if (ciSelectors.includes('calculated-insight'))
               try {
                 ciNames.push(
-                  ...(await this.listCalculatedInsightNames(ciConnection, effectiveScope)),
+                  ...(await this.listCalculatedInsightNames(
+                    ciConnection,
+                    effectiveScope,
+                    envelope.diagnostics.warnings,
+                  )),
                 );
               } catch (error: unknown) {
-                diagnose(error, undefined, 'calculated-insight');
-                reported = error;
-                throw error;
+                inventoryFailure(error, 'calculated-insight');
               }
             // Each insight's GET is the raw response a verbatim file keeps.
             const ciReads = recordNativeReads(
@@ -1640,9 +1714,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   calculatedInsights.push({ document: verbatim });
                   continue;
                 }
+                // One insight failing never blocks the others.
                 diagnose(error, apiName, 'calculated-insight');
-                reported = error;
-                throw error;
               }
             }
           }
@@ -1696,9 +1769,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   identityResolutions.push({ document: verbatim });
                   continue;
                 }
+                // One identity resolution failing never blocks the others.
                 diagnose(error, apiName, 'identity-resolution');
-                reported = error;
-                throw error;
               }
             }
           }
@@ -1762,13 +1834,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 },
               );
               if (error === undefined) continue;
+              // One file failing never blocks the others; references are not provisioned.
               diagnose(error, document.identity.apiName, document.kind);
-              // Do not publish dependents after an ambiguous prerequisite output failure.
-              break;
             }
           }
         } catch (error: unknown) {
-          if (error !== reported) diagnose(error);
+          diagnose(error);
         }
         return { status: groupStatus(envelope, before, failed), selection };
       },

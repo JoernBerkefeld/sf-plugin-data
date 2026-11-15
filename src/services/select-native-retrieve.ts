@@ -5,19 +5,62 @@ import {
   NativeMappingError,
   mappingDloName,
   mappingDmoName,
-  normalizeNativeMapping,
-  unwrapNativeMappingCollection,
+  nativeMappingName,
 } from '../artifacts/native-mapping-document.js';
 
 /**
- * Read native inventories using only documented offset pagination: every entry the API returns.
- * A paged DLO answer may hold fewer entries than its offset range (Salesforce leaves some out);
- * the range up to totalSize is read and nothing is added. Unknown wrappers, repeated identities
- * and a full last permitted page block publication.
+ * The data spaces an inventory entry belongs to; an unusable space is left out.
+ * @param {Record<string, unknown>} item Inventory entry.
+ * @param {'dlo' | 'dmo'} family Inventory family.
+ * @returns {string[]} Its data space names.
+ */
+function entrySpaces(item: Record<string, unknown>, family: 'dlo' | 'dmo'): string[] {
+  if (family === 'dmo')
+    return typeof item.dataSpaceName === 'string' && item.dataSpaceName ? [item.dataSpaceName] : [];
+  if (!Array.isArray(item.dataSpaceInfo)) return [];
+  return item.dataSpaceInfo.flatMap((space: unknown) =>
+    space &&
+    typeof space === 'object' &&
+    'name' in space &&
+    typeof space.name === 'string' &&
+    space.name
+      ? [space.name]
+      : [],
+  );
+}
+
+/**
+ * The listing entry as an object; anything else has no usable field.
+ * @param {unknown} value Listing entry.
+ * @returns {Record<string, unknown>} The entry, or an empty object.
+ */
+function entryObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Name a skipped listing entry in a warning.
+ * @param {string | undefined} name Its name, when it has one.
+ * @param {number} position Its position in the listing.
+ * @returns {string} `"Name"` or `the entry at position N`.
+ */
+function entryLabel(name: string | undefined, position: number): string {
+  return name === undefined ? `the entry at position ${position}` : `"${name}"`;
+}
+
+/**
+ * Read a native DLO or DMO inventory through its documented offset paging, until the API has no
+ * more pages: `totalSize` when the answer has it, otherwise a non-empty `nextPageUrl` or a full
+ * page. Extra envelope keys and the format of the page URLs are ignored. A page whose entries are
+ * all listed already ends the listing (a server ignoring the offset). An entry without a usable
+ * API name or data space is skipped with a warning; a repeated entry is listed once.
  * @param {Connection} connection Authenticated command-owned connection.
  * @param {string} version Admitted numeric native version.
  * @param {'dlo' | 'dmo'} family Inventory family.
- * @param {string} [requestScope] Local response-space filter; omission retains bounded default inventory.
+ * @param {string} [requestScope] Local response-space filter; omission lists the default space.
+ * @param {string[]} [warnings] Receives one warning per skipped entry.
  * @returns {Promise<string[]>} Sorted names in the selected space.
  */
 export async function listNativeNames(
@@ -25,151 +68,130 @@ export async function listNativeNames(
   version: string,
   family: 'dlo' | 'dmo',
   requestScope?: string,
+  warnings?: string[],
 ): Promise<string[]> {
   const client = new ConnectClient(connection, version);
   const key = family === 'dmo' ? 'dataModelObject' : 'dataLakeObjects';
   const resource = family === 'dmo' ? 'data-model-objects' : 'data-lake-objects';
   const limit = family === 'dmo' ? 50 : 20;
+  const pattern = family === 'dmo' ? mappingDmoName : mappingDloName;
   const seen = new Set<string>();
   const names: string[] = [];
-  let totalSize: number | undefined;
-  let pagedWrapper: boolean | undefined;
-  // Paged DLO answers: whether the offset range continues past this page.
-  let more = false;
-  const pageUrl = (offset: number): string =>
-    `/services/data/v${version}/ssot/${resource}?limit=${limit}&offset=${offset}&orderBy=ASC`;
-  for (let offset = 0; offset <= 2000; offset += limit) {
-    const page = await client.get<unknown>(pageUrl(offset));
+  for (let offset = 0; ; offset += limit) {
+    const page = await client.get<unknown>(
+      `/services/data/v${version}/ssot/${resource}?limit=${limit}&offset=${offset}&orderBy=ASC`,
+    );
     if (!page || typeof page !== 'object' || Array.isArray(page))
       throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
     const wrapper = page as Record<string, unknown>;
-    if (!Array.isArray(wrapper[key])) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-    const entries = wrapper[key];
-    if (entries.length > limit) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-    const paged = family === 'dlo' && Object.keys(wrapper).length !== 1;
-    if (pagedWrapper !== undefined && pagedWrapper !== paged)
-      throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-    pagedWrapper = paged;
-    if (paged) {
-      if (
-        Object.keys(wrapper).some(
-          (name) => !['currentPageUrl', key, 'nextPageUrl', 'totalSize'].includes(name),
-        ) ||
-        !['currentPageUrl', key, 'totalSize'].every((name) => Object.hasOwn(wrapper, name)) ||
-        wrapper.currentPageUrl !== pageUrl(offset) ||
-        typeof wrapper.totalSize !== 'number' ||
-        !Number.isSafeInteger(wrapper.totalSize) ||
-        wrapper.totalSize < offset + entries.length ||
-        (totalSize !== undefined && totalSize !== wrapper.totalSize)
-      )
-        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-      totalSize = wrapper.totalSize;
-      // Salesforce may return fewer entries than a page's offset range; the range decides.
-      more = offset + limit < totalSize;
-      if (
-        (more && wrapper.nextPageUrl !== pageUrl(offset + limit)) ||
-        (!more &&
-          Object.hasOwn(wrapper, 'nextPageUrl') &&
-          wrapper.nextPageUrl !== null &&
-          wrapper.nextPageUrl !== '')
-      )
-        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-    } else if (Object.keys(wrapper).length !== 1) {
-      throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-    }
-    for (const value of entries) {
-      if (!value || typeof value !== 'object' || Array.isArray(value))
-        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-      const item = value as Record<string, unknown>;
-      if (
-        typeof item.name !== 'string' ||
-        !(family === 'dmo' ? mappingDmoName : mappingDloName).test(item.name)
-      )
-        throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-      let spaces: string[];
-      if (family === 'dmo') {
-        if (typeof item.dataSpaceName !== 'string' || !item.dataSpaceName)
-          throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-        spaces = [item.dataSpaceName];
-      } else {
-        if (!Array.isArray(item.dataSpaceInfo) || item.dataSpaceInfo.length === 0)
-          throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-        spaces = item.dataSpaceInfo.map((space: unknown) => {
-          if (
-            !space ||
-            typeof space !== 'object' ||
-            !('name' in space) ||
-            typeof space.name !== 'string' ||
-            !space.name
-          )
-            throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
-          return space.name;
-        });
-        if (new Set(spaces).size !== spaces.length)
-          throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    const entries: unknown = wrapper[key];
+    if (!Array.isArray(entries)) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+    let added = 0;
+    for (const [index, value] of entries.entries()) {
+      const item = entryObject(value);
+      const name = typeof item.name === 'string' ? item.name : undefined;
+      const named = name !== undefined && pattern.test(name);
+      const spaces = entrySpaces(item, family);
+      if (!named || spaces.length === 0) {
+        warnings?.push(
+          `${family} inventory: skipped ${entryLabel(name, offset + index)} because it has no usable ${named ? 'data space' : 'API name'}.`,
+        );
+        continue;
       }
-      const identity = item.name.toLowerCase();
-      if (seen.has(identity)) throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+      const identity = name.toLowerCase();
+      if (seen.has(identity)) continue;
       seen.add(identity);
-      if (spaces.includes(requestScope ?? 'default')) names.push(item.name);
+      added++;
+      if (spaces.includes(requestScope ?? 'default')) names.push(name);
     }
-    // Every page up to totalSize was read; what the API returned is the inventory.
-    if (paged ? !more : entries.length < limit) {
-      names.sort();
-      return names;
-    }
+    const total =
+      typeof wrapper.totalSize === 'number' &&
+      Number.isSafeInteger(wrapper.totalSize) &&
+      wrapper.totalSize >= 0
+        ? wrapper.totalSize
+        : undefined;
+    // Salesforce may return fewer entries than a page's offset range; totalSize decides.
+    const more =
+      total === undefined
+        ? added > 0 &&
+          ((typeof wrapper.nextPageUrl === 'string' && wrapper.nextPageUrl !== '') ||
+            entries.length >= limit)
+        : offset + limit < total;
+    if (!more) break;
   }
-  throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
+  names.sort();
+  return names;
 }
 
+/** What a mapping listing reports besides the names. */
+export type MappingListingReport = {
+  /** Receives one warning per skipped listing entry. */
+  warnings?: string[];
+  /** Receives a DMO whose mapping list could not be read; without it, that failure is thrown. */
+  failure?: (dmo: string, error: unknown) => void;
+};
+
 /**
- * Resolve mappings through every confirmed selected-space DMO, never a global guess.
- * A filtered no-map 404 is meaningful only after the DMO inventory proved existence.
- * @param {string[]} dmos Complete validated selected-space DMO inventory.
+ * Collect the names of the mappings of every selected-space DMO; each mapping is read and checked
+ * on its own later. A filtered no-map 404 means the DMO has none. Extra envelope keys are
+ * ignored. An entry without a usable name, or of another data space, is skipped with a warning;
+ * a name listed under several DMOs is kept once.
+ * @param {string[]} dmos Selected-space DMO inventory.
  * @param {Pick<MappingClient, 'list'>} client Filtered mapping reader.
- * @param {string} [requestScope] Explicit request context; omission uses documented mapping default locally.
+ * @param {string} [requestScope] Explicit request context; omission uses the default space.
+ * @param {MappingListingReport} [report] Warnings and per-DMO failures.
  * @returns {Promise<string[]>} Unique sorted mapping names.
  */
 export async function listNativeMappingNames(
   dmos: string[],
   client: Pick<MappingClient, 'list'>,
   requestScope?: string,
+  report: MappingListingReport = {},
 ): Promise<string[]> {
   const mappings = new Map<string, string>();
+  const space = requestScope ?? 'default';
+  const fail = (dmo: string, error: unknown): void => {
+    if (!report.failure) throw error;
+    report.failure(dmo, error);
+  };
   for (const dmo of dmos) {
     let response: unknown;
     try {
       response = await client.list(dmo);
     } catch (error) {
-      if (
+      if (!(
         error instanceof NativeMappingError &&
         error.code === 'MAPPING_HTTP_ERROR' &&
         error.status === 404
-      )
-        continue;
-      throw error;
+      ))
+        fail(dmo, error);
+      continue;
     }
-    if (
-      !response ||
-      typeof response !== 'object' ||
-      Array.isArray(response) ||
-      Object.keys(response).length !== 1
-    )
-      throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-    for (const raw of unwrapNativeMappingCollection(response, requestScope)) {
-      const document = normalizeNativeMapping(raw, requestScope);
-      if (document.spec.targetEntityDeveloperName !== dmo)
-        throw new NativeMappingError('MAPPING_INVENTORY_BINDING_MISMATCH');
-      const key = document.identity.apiName.toLowerCase();
-      const signature = JSON.stringify(document);
-      if (mappings.has(key) && mappings.get(key) !== signature)
-        throw new NativeMappingError('AMBIGUOUS_MAPPING_TARGET');
-      mappings.set(key, signature);
+    const entries: unknown = entryObject(response).objectSourceTargetMaps;
+    if (!Array.isArray(entries)) {
+      fail(dmo, new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED'));
+      continue;
+    }
+    for (const [index, value] of entries.entries()) {
+      const item = entryObject(value);
+      const name = typeof item.developerName === 'string' ? item.developerName : undefined;
+      if (name === undefined || !nativeMappingName.test(name)) {
+        report.warnings?.push(
+          `mapping inventory of ${dmo}: skipped ${entryLabel(name, index)} because it has no usable API name.`,
+        );
+        continue;
+      }
+      if (item.dataSpaceName !== undefined && item.dataSpaceName !== space) {
+        report.warnings?.push(
+          `mapping inventory of ${dmo}: skipped "${name}" because it belongs to another data space.`,
+        );
+        continue;
+      }
+      const identity = name.toLowerCase();
+      if (!mappings.has(identity)) mappings.set(identity, name);
     }
   }
-  const names = [...mappings.values()].map(
-    (value) => (JSON.parse(value) as { identity: { apiName: string } }).identity.apiName,
-  );
+  const names = [...mappings.values()];
   names.sort();
   return names;
 }

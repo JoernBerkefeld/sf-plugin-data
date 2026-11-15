@@ -35,5 +35,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`DEPENDENCY_REQUEST_LIMIT_EXCEEDED`](../dependency/DEPENDENCY_REQUEST_LIMIT_EXCEEDED.md) — the selection needs too many reads.
 - [`SEGMENT_DEPENDENCY_ACQUISITION_FAILED`](../segment/SEGMENT_DEPENDENCY_ACQUISITION_FAILED.md) — a DMO a segment uses could not be read.

@@ -106,11 +106,15 @@ export function documentDependencyNode(
  * Order selected nodes dependency-first, retaining isolated roots and external prerequisites.
  * Family/space/name is a tie-break only among ready nodes. External nodes need target binding.
  * @param {DependencyNode[]} nodes Complete selected graph.
+ * @param {{nodes: number, edges: number}} [limits] Node and edge caps; deploy keeps the default,
+ * retrieve passes unbounded caps (it writes files and provisions nothing).
  * @returns {string[]} Ordered typed keys.
  */
-export function orderDependencyNodes(nodes: DependencyNode[]): string[] {
-  if (nodes.length > dependencyLimits.nodes)
-    throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
+export function orderDependencyNodes(
+  nodes: DependencyNode[],
+  limits: Readonly<{ nodes: number; edges: number }> = dependencyLimits,
+): string[] {
+  if (nodes.length > limits.nodes) throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
   const remaining = new Map<string, Set<string>>();
   let edges = 0;
   for (const node of nodes) {
@@ -118,16 +122,16 @@ export function orderDependencyNodes(nodes: DependencyNode[]): string[] {
     if (remaining.has(key)) throw new DependencySelectionError('DEPENDENCY_DUPLICATE_IDENTITY');
     const dependencies = new Set(node.dependencies.map((identity) => dependencyKey(identity)));
     edges += dependencies.size;
-    if (edges > dependencyLimits.edges)
-      throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
+    if (edges > limits.edges) throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');
     remaining.set(key, dependencies);
   }
   const selected = new Set(remaining.keys());
   const ordered: string[] = [];
+  const done = new Set<string>();
   while (remaining.size > 0) {
     const ready = [...remaining]
       .filter(([, dependencies]) =>
-        [...dependencies].every((key) => !selected.has(key) || ordered.includes(key)),
+        [...dependencies].every((key) => !selected.has(key) || done.has(key)),
       )
       .map(([key]) => key)
       // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh ready-node list within the existing TypeScript library target.
@@ -136,6 +140,7 @@ export function orderDependencyNodes(nodes: DependencyNode[]): string[] {
     // Recompute readiness after each node so newly-ready nodes take part in the tie-break.
     const key = ready[0];
     ordered.push(key);
+    done.add(key);
     remaining.delete(key);
   }
   return ordered;

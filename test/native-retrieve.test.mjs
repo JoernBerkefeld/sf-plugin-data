@@ -180,174 +180,141 @@ for (const total of [0, 1, 20, 21, 78])
       assert.equal(names.length, Math.ceil(total / 2));
     });
 
-for (const [total, field, value] of [
-  [1, 'nextPageUrl', undefined],
-  [1, 'nextPageUrl', false],
-  [1, 'nextPageUrl', {}],
-  [1, 'extra', true],
-  [21, 'nextPageUrl', 'omit'],
-  [1, 'currentPageUrl', 'omit'],
-  [1, 'totalSize', 'omit'],
-  [1, 'dataLakeObjects', 'omit'],
-])
-  test(`DLO terminal shape refuses ${total}/${field}/${JSON.stringify(value)}`, async () => {
-    const page = dloPage(0, total);
-    if (value === 'omit') delete page[field];
-    else page[field] = value;
-    await assert.rejects(
-      listNativeNames(
-        connection(async () => page),
-        '68.0',
-        'dlo',
-      ),
-      { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
-    );
-  });
-
-for (const change of [
-  { dataLakeObjects: [] },
-  { nextPageUrl: dloPageUrl(40) },
-  { nextPageUrl: dloPageUrl(20).replace('limit=20', 'limit=10') },
-  { nextPageUrl: dloPageUrl(20).replace('v68.0', 'v67.0') },
-  { nextPageUrl: dloPageUrl(20).replace('ASC', 'DESC') },
-  { totalSize: Number.MAX_SAFE_INTEGER + 1 },
-])
-  test(`DLO invalid continuation remains blocked ${JSON.stringify(change)}`, async () => {
-    await assert.rejects(
-      listNativeNames(
-        connection(async () => ({ ...dloPage(0, 78), ...change })),
-        '68.0',
-        'dlo',
-      ),
-      { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
-    );
-  });
-
-test('short continuation does not waive contradictory terminal total checks', async () => {
+// Lenient listing (retrieve never refuses a whole inventory over envelope details).
+test('DLO listing ignores extra envelope keys and the page URL format', async () => {
   const offsets = [];
-  await assert.rejects(
-    listNativeNames(
-      connection(async ({ url }) => {
-        const offset = Number(new URL(url).searchParams.get('offset'));
-        offsets.push(offset);
-        const page = dloPage(offset, 78);
-        if (offset === 20) page.dataLakeObjects.splice(18);
-        if (offset === 40) page.nextPageUrl = '';
-        return page;
-      }),
-      '68.0',
-      'dlo',
-    ),
-    { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
+  const names = await listNativeNames(
+    connection(async ({ url }) => {
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      offsets.push(offset);
+      const page = dloPage(offset, 21);
+      for (const item of page.dataLakeObjects) item.dataSpaceInfo = [{ name: 'default' }];
+      return {
+        ...page,
+        extra: true,
+        currentPageUrl: `https://synthetic.example${page.currentPageUrl}&x=1`,
+        nextPageUrl: offset === 0 ? 'https://synthetic.example/absolute/next' : JSON.parse('null'),
+      };
+    }),
+    '68.0',
+    'dlo',
   );
-  assert.deepEqual(offsets, [0, 20, 40]);
+  assert.deepEqual(offsets, [0, 20]);
+  assert.equal(names.length, 21);
 });
 
-test('DLO explicit continuation at offset ceiling cannot publish partial inventory', async () => {
+test('DLO listing follows an absolute nextPageUrl when the answer has no totalSize', async () => {
+  const offsets = [];
+  const names = await listNativeNames(
+    connection(async ({ url }) => {
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      offsets.push(offset);
+      const page = dloPage(offset, 25);
+      delete page.totalSize;
+      page.dataLakeObjects = page.dataLakeObjects.slice(0, 3);
+      if (offset === 0) page.nextPageUrl = `https://synthetic.example${dloPageUrl(20)}`;
+      return page;
+    }),
+    '68.0',
+    'dlo',
+  );
+  assert.deepEqual(offsets, [0, 20]);
+  assert.deepEqual(names, ['Source0__dll', 'Source20__dll', 'Source22__dll', 'Source2__dll']);
+});
+
+test('DMO listing pages past 2000 entries until the API is exhausted', async () => {
+  const offsets = [];
+  const names = await listNativeNames(
+    connection(async ({ url }) => {
+      const offset = Number(new URL(url).searchParams.get('offset'));
+      offsets.push(offset);
+      const count = offset < 2500 ? 50 : 7;
+      return {
+        dataModelObject: Array.from({ length: count }, (_, index) => ({
+          name: `Model${offset + index}__dlm`,
+          dataSpaceName: 'default',
+        })),
+        nextPageToken: 'ignored',
+      };
+    }),
+    '68.0',
+    'dmo',
+  );
+  assert.equal(names.length, 2507);
+  assert.equal(offsets.at(-1), 2500);
+});
+
+test('a listing that repeats its page (offset ignored) ends instead of looping', async () => {
   let calls = 0;
-  await assert.rejects(
-    listNativeNames(
-      connection(async ({ url }) => {
-        calls++;
-        return dloPage(Number(new URL(url).searchParams.get('offset')), 2040);
-      }),
-      '68.0',
-      'dlo',
-    ),
-    { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
+  const names = await listNativeNames(
+    connection(async () => {
+      calls++;
+      return {
+        dataModelObject: Array.from({ length: 50 }, (_, index) => ({
+          name: `Model${index}__dlm`,
+          dataSpaceName: 'default',
+        })),
+      };
+    }),
+    '68.0',
+    'dmo',
   );
-  assert.equal(calls, 101);
+  assert.equal(calls, 2);
+  assert.equal(names.length, 50);
 });
 
-test('legacy single-key DLO wrapper remains supported', async () => {
+test('one unusable inventory entry is skipped with a warning; the rest are listed', async () => {
+  const warnings = [];
+  const names = await listNativeNames(
+    connection(async () => ({
+      dataModelObject: [
+        { name: 'Good__dlm', dataSpaceName: 'default' },
+        { name: 'NoSpace__dlm' },
+        { label: 'no name' },
+        'not an entry',
+        { name: 'Good__dlm', dataSpaceName: 'default' },
+        { name: 'Other__dlm', dataSpaceName: 'other' },
+      ],
+    })),
+    '68.0',
+    'dmo',
+    undefined,
+    warnings,
+  );
+  assert.deepEqual(names, ['Good__dlm']);
+  assert.equal(warnings.length, 3);
+  assert.match(warnings[0], /"NoSpace__dlm" because it has no usable data space/u);
+  assert.match(warnings[1], /entry at position 2 because it has no usable API name/u);
+  const dloWarnings = [];
   assert.deepEqual(
     await listNativeNames(
-      connection(async () => ({ dataLakeObjects: dloPage(0, 1).dataLakeObjects })),
+      connection(async () => ({
+        dataLakeObjects: [
+          { name: 'Good__dll', dataSpaceInfo: [{ name: 'default' }, { bad: true }] },
+          { name: 'Bad__dll', dataSpaceInfo: [] },
+        ],
+      })),
       '68.0',
       'dlo',
+      undefined,
+      dloWarnings,
     ),
-    ['Source0__dll'],
+    ['Good__dll'],
   );
+  assert.equal(dloWarnings.length, 1);
 });
 
-for (const change of [
-  { totalSize: -1 },
-  { totalSize: '21' },
-  { totalSize: 1.5 },
-  { currentPageUrl: dloPageUrl(20) },
-  { nextPageUrl: 'https://outside.example/inventory' },
-  { nextPageUrl: JSON.parse('null') },
-  { nextPageUrl: dloPageUrl(0) },
-  { extra: true },
-  { dataLakeObjects: dloPage(0, 1).dataLakeObjects, nextPageUrl: '' },
-])
-  test(`DLO contradictory pagination blocks ${JSON.stringify(change)}`, async () => {
-    await assert.rejects(
-      listNativeNames(
-        connection(async () => ({ ...dloPage(0, 21), ...change })),
-        '68.0',
-        'dlo',
-      ),
-      { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
-    );
-  });
-
-for (const second of [
-  { ...dloPage(20, 21), totalSize: 22 },
-  { ...dloPage(20, 21), nextPageUrl: dloPageUrl(40) },
-  { dataLakeObjects: dloPage(20, 21).dataLakeObjects },
-  { ...dloPage(20, 21), dataLakeObjects: dloPage(0, 1).dataLakeObjects },
-])
-  test(`DLO inconsistent later page blocks ${JSON.stringify(second)}`, async () => {
-    let calls = 0;
-    await assert.rejects(
-      listNativeNames(
-        connection(async () => (calls++ === 0 ? dloPage(0, 21) : second)),
-        '68.0',
-        'dlo',
-      ),
-      { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
-    );
-    assert.equal(calls, 2);
-  });
-
-for (const page of [
-  {},
-  { dataModelObject: [], nextPageToken: 'secret' },
-  { dataModelObject: [{ name: 'A__dlm' }] },
-  {
-    dataModelObject: [
-      { name: 'A__dlm', dataSpaceName: 'default' },
-      { name: 'A__dlm', dataSpaceName: 'default' },
-    ],
-  },
-])
-  test(`invalid or ambiguous inventory blocks ${JSON.stringify(page)}`, async () => {
+for (const page of [{}, { dataModelObject: 'x' }, [], 'text'])
+  test(`a listing without its entry array still fails ${JSON.stringify(page)}`, async () => {
     await assert.rejects(
       listNativeNames(
         connection(async () => page),
         '68.0',
         'dmo',
       ),
+      { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
     );
   });
-
-test('full offset2000 page cannot claim complete inventory', async () => {
-  let calls = 0;
-  await assert.rejects(
-    listNativeNames(
-      connection(async () => ({
-        dataModelObject: Array.from({ length: 50 }, (_, index) => ({
-          name: `Model${calls++}_${index}__dlm`,
-          dataSpaceName: 'default',
-        })),
-      })),
-      '68.0',
-      'dmo',
-    ),
-  );
-  assert.equal(calls, 2050);
-});
 
 test('mapping inventory filters every DMO and accepts only typed no-map404, never auth', async () => {
   const calls = [];
@@ -368,16 +335,56 @@ test('mapping inventory filters every DMO and accepts only typed no-map404, neve
         },
       }),
     );
-  await assert.rejects(
-    listNativeMappingNames(['Other__dlm'], {
+  // Names only: the target binding is checked when the mapping itself is read.
+  assert.deepEqual(
+    await listNativeMappingNames(['Other__dlm'], {
       list: async () => ({ objectSourceTargetMaps: [mapping()] }),
     }),
+    ['Map'],
+  );
+  // Extra envelope keys are ignored.
+  assert.deepEqual(
+    await listNativeMappingNames(['Target__dlm'], {
+      list: async () => ({ objectSourceTargetMaps: [mapping()], nextPageUrl: 'more' }),
+    }),
+    ['Map'],
   );
   await assert.rejects(
-    listNativeMappingNames(['Target__dlm'], {
-      list: async () => ({ objectSourceTargetMaps: [], nextPageUrl: 'more' }),
-    }),
+    listNativeMappingNames(['Target__dlm'], { list: async () => ({ other: [] }) }),
+    { code: 'MAPPING_INVENTORY_UNCONFIRMED' },
   );
+});
+
+test('mapping listing skips unusable entries with a warning and reports a failing DMO alone', async () => {
+  const warnings = [];
+  const failures = [];
+  const names = await listNativeMappingNames(
+    ['Broken__dlm', 'Odd__dlm', 'Target__dlm'],
+    {
+      list: async (dmo) => {
+        if (dmo === 'Broken__dlm') throw new NativeMappingError('MAPPING_HTTP_ERROR', 500);
+        if (dmo === 'Odd__dlm') return { unexpected: true };
+        return {
+          objectSourceTargetMaps: [
+            { developerName: 'NoPairs' },
+            { fieldMappings: [] },
+            { ...mapping('Elsewhere'), dataSpaceName: 'other' },
+            mapping(),
+          ],
+        };
+      },
+    },
+    undefined,
+    { warnings, failure: (dmo, error) => failures.push([dmo, error.code]) },
+  );
+  assert.deepEqual(names, ['Map', 'NoPairs']);
+  assert.deepEqual(failures, [
+    ['Broken__dlm', 'MAPPING_HTTP_ERROR'],
+    ['Odd__dlm', 'MAPPING_INVENTORY_UNCONFIRMED'],
+  ]);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /entry at position 1 because it has no usable API name/u);
+  assert.match(warnings[1], /"Elsewhere" because it belongs to another data space/u);
 });
 
 test('mapping inventory reader is list-only, version-pinned and disables replay/redirect', async () => {
@@ -477,8 +484,9 @@ test('mapping inventory queries every confirmed parent serially with typed 404 a
   );
   assert.deepEqual(await listNativeMappingNames(parents, reader), ['Alpha', 'Zed']);
   assert.deepEqual(calls, parents);
-  await assert.rejects(
-    listNativeMappingNames(['Target__dlm'], {
+  // The same name twice is listed once; each mapping is checked when it is read.
+  assert.deepEqual(
+    await listNativeMappingNames(['Target__dlm'], {
       list: async () => ({
         objectSourceTargetMaps: [
           mapping(),
@@ -486,7 +494,7 @@ test('mapping inventory queries every confirmed parent serially with typed 404 a
         ],
       }),
     }),
-    { code: 'AMBIGUOUS_MAPPING_TARGET' },
+    ['Map'],
   );
 });
 
@@ -697,7 +705,7 @@ test('public mapping inventory uses owned connection while artifact acquisition 
   ]);
 });
 
-test('public mapping inventory transport failure prevents artifact acquisition and publication', async () => {
+test('public mapping inventory transport failure leaves the mapping family empty', async () => {
   const command = invocation({ metadata: ['mapping'] });
   command.resolveOrg = async () => ({
     getOrgId: () => 'org',
@@ -785,25 +793,52 @@ test('scoped mapping inventory normalizes omitted response scope in request cont
     ),
     ['Map'],
   );
-  await assert.rejects(
-    listNativeMappingNames(
+  const warnings = [];
+  assert.deepEqual(
+    await listNativeMappingNames(
       ['Target__dlm'],
       {
         list: async () => ({ objectSourceTargetMaps: [{ ...mapping(), dataSpaceName: 'Other' }] }),
       },
       'Team',
+      { warnings },
     ),
+    [],
   );
+  assert.equal(warnings.length, 1);
 });
 
-test('inventory failure prevents all publication; low version refuses before auth', async () => {
+test('a failing inventory fails its family only; low version refuses before auth', async () => {
   const command = invocation();
   command.listNativeMappingNames = async () => {
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   };
-  command.writeDlo = () => assert.fail('No partial inventory publication');
   const result = await run(command);
   assert.equal(result.status, 'blocked');
+  assert.deepEqual(
+    result.result.items.map((item) => item.identity.apiName),
+    ['Source__dll', 'Target__dlm'],
+  );
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ code, family }) => [code, family]),
+    [['MAPPING_INVENTORY_UNCONFIRMED', 'mapping']],
+  );
+  // A failing DLO inventory leaves the DMO and mapping inventories (and their items) alone.
+  const dlo = invocation();
+  dlo.listNativeNames = async (_, __, family) => {
+    if (family === 'dlo') throw new ConnectError('REQUEST_FAILED', 500);
+    return ['Target__dlm'];
+  };
+  const partial = await run(dlo);
+  assert.equal(partial.status, 'blocked');
+  assert.deepEqual(
+    partial.result.items.map((item) => item.identity.apiName),
+    ['Target__dlm', 'Map'],
+  );
+  assert.deepEqual(
+    partial.diagnostics.errors.map(({ code, family }) => [code, family]),
+    [['NATIVE_INVENTORY_FAILED', 'dlo']],
+  );
   const old = invocation({ 'api-version': '60.0' });
   old.resolveOrg = () => assert.fail('No auth');
   const refused = await run(old);

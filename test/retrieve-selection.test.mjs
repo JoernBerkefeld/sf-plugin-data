@@ -154,7 +154,7 @@ test('the source binder reads the segmentOn DMO by exact name; its kind is not j
     { code: 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING' },
   );
 });
-test('unknown closure, foreign identities, node and request limits fail closed before excess reads', async () => {
+test('unknown closure and foreign identities fail; retrieve has no node or request cap', async () => {
   let { services } = fixtures();
   services.segment = async () => ({
     candidate: { ...document('Zulu'), kind: 'graph' },
@@ -170,26 +170,61 @@ test('unknown closure, foreign identities, node and request limits fail closed b
     acquireRetrieveSelection([identity('dmo', 'Person__dlm')], {}, version, services),
     { code: 'DMO_TARGET_IDENTITY_MISMATCH' },
   );
+  // More than the deploy caps (256 nodes, 512 requests): every DMO and Segment is acquired.
   const fixture = fixtures();
-  await assert.rejects(
-    acquireRetrieveSelection(
-      Array.from({ length: 257 }, (_, index) => identity('segment', `N${index}`)),
-      {},
-      version,
-      fixture.services,
-    ),
-    { code: 'DEPENDENCY_LIMIT_EXCEEDED' },
-  );
-  assert.equal(fixture.calls.segment.length, 0);
-  // One native read per DMO: five selections stay far inside the request budget.
-  const five = await acquireRetrieveSelection(
-    Array.from({ length: 5 }, (_, index) => identity('dmo', `N${index}__dlm`)),
+  const many = await acquireRetrieveSelection(
+    [
+      ...Array.from({ length: 300 }, (_, index) => identity('dmo', `N${index}__dlm`)),
+      ...Array.from({ length: 300 }, (_, index) => identity('segment', `S${index}`)),
+    ],
     {},
     version,
     fixture.services,
   );
-  assert.equal(five.length, 5);
-  assert.equal(fixture.calls.dmo.length, 5);
+  assert.equal(many.length, 600);
+  assert.equal(fixture.calls.dmo.length, 300);
+  assert.equal(fixture.calls.segment.length, 300);
+});
+test('one failing DMO or Segment is reported alone; the others are still acquired', async () => {
+  const { services } = fixtures();
+  services.dmo = async (name) => {
+    if (name === 'Broken__dlm') throw new NativeDmoError('DMO_HTTP_ERROR', 500);
+    return dmo(name);
+  };
+  const segment = services.segment;
+  services.segment = async (connection, name, ...rest) => {
+    if (name === 'Zulu') return { blockers: ['SOURCE_UNAVAILABLE'] };
+    return segment(connection, name, ...rest);
+  };
+  const bind = services.bind;
+  services.bind = async (value, ...rest) => {
+    if (value.identity.apiName === 'Bravo')
+      throw new SegmentError('SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING');
+    return bind(value, ...rest);
+  };
+  const failures = [];
+  const selected = await acquireRetrieveSelection(
+    [
+      identity('dmo', 'Broken__dlm'),
+      identity('dmo', 'Person__dlm'),
+      identity('segment', 'Zulu'),
+      identity('segment', 'Bravo'),
+      identity('segment', 'Alpha'),
+    ],
+    {},
+    version,
+    services,
+    (error) => failures.push([error.identity.apiName, error.code]),
+  );
+  assert.deepEqual(
+    selected.map(({ document }) => document.identity.apiName),
+    ['Person__dlm', 'Alpha'],
+  );
+  assert.deepEqual(failures, [
+    ['Broken__dlm', 'DMO_HTTP_ERROR'],
+    ['Zulu', 'SOURCE_UNAVAILABLE'],
+    ['Bravo', 'SEGMENT_DEPENDENCY_AMBIGUOUS_OR_MISSING'],
+  ]);
 });
 test('explicitly selected standard or generated DMOs are retrieved; a Segment alone never acquires its DMO', async () => {
   for (const creationType of ['Standard', 'System']) {
@@ -347,6 +382,47 @@ test('the retrieve command defines no dependency flag and publishes exactly the 
     assert.deepEqual(calls.dmo, []);
     assert.deepEqual(result.result.selection, ['segment:Alpha', 'segment:Zulu']);
     assert.equal('dependencies' in result.result, false);
+  } finally {
+    process.exitCode = previous;
+  }
+});
+test('the retrieve command writes every other Segment when one fails to read or to write', async () => {
+  const previous = process.exitCode;
+  try {
+    const command = Object.create(Retrieve.prototype);
+    command.parse = async () => ({
+      flags: {
+        metadata: ['segment:Zulu', 'segment:Alpha', 'segment:Bravo', 'segment:Charlie'],
+        'api-version': '68.0',
+        'data-space': 'default',
+        'output-dir': 'synthetic-root',
+        overwrite: true,
+      },
+    });
+    command.jsonEnabled = () => true;
+    command.resolveOrg = async () => ({ getOrgId: () => 'synthetic', getConnection: () => ({}) });
+    const { services } = fixtures();
+    const segment = services.segment;
+    services.segment = async (connection, name, ...rest) =>
+      name === 'Bravo' ? { blockers: ['SOURCE_UNAVAILABLE'] } : segment(connection, name, ...rest);
+    command.acquireSelection = (selected, conn, selection, _injected, onFailure) =>
+      acquireRetrieveSelection(selected, conn, selection, services, onFailure);
+    const written = [];
+    command.writeSegment = async (document_) => {
+      if (document_.identity.apiName === 'Alpha') throw new SegmentError('OUTPUT_FAILED');
+      written.push(document_.identity.apiName);
+      return { path: `${document_.identity.apiName}.segment.json`, outcome: 'retrieved' };
+    };
+    const result = await command.run();
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(written, ['Charlie', 'Zulu']);
+    assert.deepEqual(
+      result.diagnostics.errors.map(({ code, identity }) => [code, identity?.apiName]),
+      [
+        ['SOURCE_UNAVAILABLE', 'Bravo'],
+        ['OUTPUT_FAILED', 'Alpha'],
+      ],
+    );
   } finally {
     process.exitCode = previous;
   }

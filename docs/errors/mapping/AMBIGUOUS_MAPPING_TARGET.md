@@ -38,5 +38,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/m
 
 ## Related codes
 
-- [`MAPPING_INVENTORY_BINDING_MISMATCH`](../mapping/MAPPING_INVENTORY_BINDING_MISMATCH.md) — a DMO's mapping list contained a mapping of another DMO.
 - [`MAPPING_TARGET_BINDING_MISMATCH`](../mapping/MAPPING_TARGET_BINDING_MISMATCH.md) — the org mapping binds other objects than the file.

@@ -113,19 +113,23 @@ export async function retrieveNativeCalculatedInsight(
 
 /**
  * Every calculated insight the API 68 list returns in the data space, following its offset
- * paging up to `total`. A malformed page or a repeated name stops the listing.
+ * paging until `total` or an empty page. A malformed page stops the listing; an entry without a
+ * usable API name is skipped with a warning and a repeated name is listed once. A page that adds
+ * no new name ends the listing (a server ignoring the offset).
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated connection.
  * @param {string} dataSpace Selected data space.
+ * @param {string[]} [warnings] Receives one warning per skipped entry.
  * @returns {Promise<string[]>} Sorted API names.
  */
 export async function listCalculatedInsightNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   dataSpace: string,
+  warnings?: string[],
 ): Promise<string[]> {
   const client = new ConnectClient(connection, '68.0');
   const names = new Set<string>();
   let offset = 0;
-  for (let page = 0; page < 200; page++) {
+  for (;;) {
     const response = await client.get<unknown>(
       `/services/data/v68.0/ssot/calculated-insights?dataspace=${encodeURIComponent(dataSpace)}&batchSize=25&offset=${offset}`,
     );
@@ -139,16 +143,20 @@ export async function listCalculatedInsightNames(
       !Number.isSafeInteger(collection.total)
     )
       throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
-    for (const item of collection.items as unknown[]) {
+    const before = names.size;
+    for (const [index, item] of (collection.items as unknown[]).entries()) {
       const apiName = (item as { apiName?: unknown } | undefined)?.apiName;
-      if (typeof apiName !== 'string' || !calculatedInsightName.test(apiName) || names.has(apiName))
-        throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
+      if (typeof apiName !== 'string' || !calculatedInsightName.test(apiName)) {
+        warnings?.push(
+          `calculated-insight inventory: skipped ${typeof apiName === 'string' ? `"${apiName}"` : `the entry at position ${offset + index}`} because it has no usable API name.`,
+        );
+        continue;
+      }
       names.add(apiName);
     }
     offset += collection.items.length;
-    if (collection.items.length === 0 || offset >= collection.total)
+    if (collection.items.length === 0 || offset >= collection.total || names.size === before)
       // eslint-disable-next-line unicorn/no-array-sort -- Sorting a new array.
       return [...names].sort();
   }
-  throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
 }

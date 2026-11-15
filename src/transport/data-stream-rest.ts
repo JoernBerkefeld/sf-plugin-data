@@ -29,7 +29,8 @@ type JsonObject = Record<string, unknown>;
 /** Native connection and dependency reads a stream binding/delete decision depends on. */
 export type DataStreamReferenceReader = {
   connections: {
-    list: () => Promise<JsonObject>;
+    /** One page of IngestApi connections (200 per page) from the offset, 0 by default. */
+    list: (offset?: number) => Promise<JsonObject>;
     get: (connectionId: string) => Promise<JsonObject>;
     schema: (connectionId: string) => Promise<JsonObject>;
   };
@@ -92,7 +93,8 @@ export function createDataStreamReferenceReader(
   };
   return {
     connections: {
-      list: async () => read('connections?connectorType=IngestApi&limit=200&offset=0'),
+      list: async (offset = 0) =>
+        read(`connections?connectorType=IngestApi&limit=200&offset=${offset}`),
       get: async (connectionId) => read(connectionPath(connectionId)),
       schema: async (connectionId) => read(`${connectionPath(connectionId)}/schema`),
     },

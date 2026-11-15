@@ -16,6 +16,4 @@ export const hints: Readonly<Record<string, string>> = {
     'A selected file changed on disk while the command was running. Finish editing, then rerun the deploy.',
   DEPENDENCY_LIMIT_EXCEEDED:
     'The selection has more than 256 components or 512 dependency links. Split it into smaller selections and run them one after another.',
-  DEPENDENCY_REQUEST_LIMIT_EXCEEDED:
-    'Retrieving this selection would need more than 512 reads from the org. Retrieve fewer DMOs or segments per command.',
 };

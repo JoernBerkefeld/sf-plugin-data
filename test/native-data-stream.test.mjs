@@ -792,6 +792,35 @@ function connectionPage() {
   };
 }
 
+test('retrieve mode pages the connection list and ignores extra envelope keys and URL formats', async () => {
+  const fixture = reads();
+  const offsets = [];
+  const filler = Array.from({ length: 200 }, (_, index) => ({
+    ...connection,
+    name: `Filler${index}`,
+    id: `1WM${String(index + 100).padStart(12, '0')}AAA`,
+  }));
+  fixture.clients.connections.list = async (offset = 0) => {
+    offsets.push(offset);
+    return offset === 0
+      ? {
+          connections: filler,
+          currentPageUrl: 'https://synthetic.example/absolute?offset=0',
+          nextPageUrl: 'https://synthetic.example/absolute?offset=200',
+          totalSize: 201,
+          extra: true,
+        }
+      : { connections: [structuredClone(connection)], totalSize: 201, unexpected: {} };
+  };
+  const result = await resolveDataStreamBinding(selection, fixture.clients, false, 'retrieve');
+  assert.equal(result.connectionId, connectionId);
+  assert.deepEqual(offsets, [0, 200]);
+  // Deploy keeps the strict single-page check.
+  await assert.rejects(resolveDataStreamBinding(selection, fixture.clients), {
+    code: 'INCOMPLETE_CONNECTION_LIST',
+  });
+});
+
 test('binding admits observed complete connection envelope and preserves independent exact identity reads', async () => {
   const fixture = reads();
   const original = fixture.clients.reference.read;

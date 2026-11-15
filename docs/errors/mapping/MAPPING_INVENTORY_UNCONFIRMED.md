@@ -39,4 +39,3 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/m
 ## Related codes
 
 - [`MAPPING_TARGET_NOT_SETTLED`](../mapping/MAPPING_TARGET_NOT_SETTLED.md) — a mapping is not ACTIVE yet.
-- [`MAPPING_INVENTORY_BINDING_MISMATCH`](../mapping/MAPPING_INVENTORY_BINDING_MISMATCH.md) — a DMO's mapping list contained a mapping of another DMO.

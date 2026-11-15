@@ -5,7 +5,7 @@
 |              |                                            |
 | ------------ | ------------------------------------------ |
 | **Family**   | Dependency                                 |
-| **Commands** | `sf data360 deploy`, `sf data360 retrieve` |
+| **Commands** | `sf data360 deploy`                        |
 | **Outcome**  | `blocked` — nothing was changed or written |
 
 ## What it means
@@ -32,4 +32,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`DEPENDENCY_REQUEST_LIMIT_EXCEEDED`](../dependency/DEPENDENCY_REQUEST_LIMIT_EXCEEDED.md) — the retrieve needs too many reads.
+- [`DEPENDENCY_CYCLE`](../dependency/DEPENDENCY_CYCLE.md) — the selected components depend on each other in a loop.

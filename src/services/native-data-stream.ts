@@ -30,6 +30,78 @@ export type DataStreamBinding = {
 };
 const name = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 const recordId = /^[A-Za-z0-9]{18}$/u;
+/** Retrieve reads leniently; deploy (the default) keeps every strict check. */
+export type DataStreamReadMode = 'retrieve' | 'deploy';
+const connectionPageSize = 200;
+
+/**
+ * Deploy-mode connection listing: the prior bare list or the observed complete first-page
+ * envelope only. No continuation contract is admitted, and a full page cannot prove exhaustion.
+ * @param {Json} listed Connection list response.
+ * @returns {Json[]} Listed connections.
+ */
+function strictConnections(listed: Json): Json[] {
+  const keys = Object.keys(listed);
+  const bare = keys.length === 1 && keys[0] === 'connections';
+  const completePage =
+    keys.length === 3 &&
+    keys.every((key) => ['connections', 'currentPageUrl', 'totalSize'].includes(key)) &&
+    listed.currentPageUrl ===
+      '/services/data/v68.0/ssot/connections?connectorType=IngestApi&limit=200&offset=0' &&
+    Number.isSafeInteger(listed.totalSize) &&
+    listed.totalSize === (Array.isArray(listed.connections) ? listed.connections.length : -1);
+  if (
+    !Array.isArray(listed.connections) ||
+    listed.connections.length >= 200 ||
+    (!bare && !completePage)
+  )
+    throw new DataStreamError('INCOMPLETE_CONNECTION_LIST');
+  return objects(listed.connections as unknown[]);
+}
+
+/**
+ * Every listed entry as an object.
+ * @param {unknown[]} values Listed entries.
+ * @returns {Json[]} The entries; a non-object entry refuses the read.
+ */
+function objects(values: unknown[]): Json[] {
+  return values.map((value) => object(value));
+}
+
+/**
+ * Retrieve-mode connection listing: every page of the IngestApi connection list, following its
+ * offset until `totalSize`, otherwise while a page is full or names a next page. Extra envelope
+ * keys and the page URL format are ignored; a page that adds no new connection ends the listing.
+ * @param {DataStreamReadClients} clients Read-only dependency boundaries.
+ * @returns {Promise<unknown[]>} Every listed connection entry, once each.
+ */
+async function listConnectionsLeniently(clients: DataStreamReadClients): Promise<unknown[]> {
+  const connections: unknown[] = [];
+  const seen = new Set<string>();
+  for (let offset = 0; ; offset += connectionPageSize) {
+    const page = await clients.connections.list(offset);
+    if (!Array.isArray(page.connections)) throw new DataStreamError('INCOMPLETE_CONNECTION_LIST');
+    let added = 0;
+    for (const value of page.connections as unknown[]) {
+      const id =
+        value && typeof value === 'object' && typeof (value as Json).id === 'string'
+          ? ((value as Json).id as string)
+          : JSON.stringify(value);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      connections.push(value);
+      added++;
+    }
+    const total = Number.isSafeInteger(page.totalSize) ? (page.totalSize as number) : undefined;
+    const more =
+      added > 0 &&
+      (total === undefined
+        ? page.connections.length >= connectionPageSize ||
+          (typeof page.nextPageUrl === 'string' && page.nextPageUrl !== '')
+        : offset + connectionPageSize < total);
+    if (!more) return connections;
+  }
+}
 
 /**
  * Compare exact mapping multisets, consuming each match so duplicates cannot hide drift.
@@ -204,6 +276,8 @@ export function inspectNativeDataStream(value: unknown): Json {
  * @param {string} selection.dataSpace Expected data space.
  * @param {DataStreamReadClients} clients Read-only dependency boundaries.
  * @param {boolean} postWrite Whether this read belongs to bounded create/update settlement.
+ * @param {DataStreamReadMode} mode `retrieve` lists connections leniently (every page, extra
+ * envelope keys ignored); `deploy` keeps the strict single-page envelope check.
  * @returns {Promise<DataStreamBinding>} Private target-local binding and complete inventory.
  */
 export async function resolveDataStreamBinding(
@@ -216,6 +290,7 @@ export async function resolveDataStreamBinding(
   },
   clients: DataStreamReadClients,
   postWrite = false,
+  mode: DataStreamReadMode = 'deploy',
 ): Promise<DataStreamBinding> {
   if (
     selection.dataSpace !== 'default' ||
@@ -224,25 +299,10 @@ export async function resolveDataStreamBinding(
     )
   )
     throw new DataStreamError('INVALID_STREAM_BINDING');
-  const listed = await clients.connections.list();
-  // Admit the prior bare list or the observed complete first-page envelope only.
-  // No continuation contract is admitted, and a full page cannot prove exhaustion.
-  const keys = Object.keys(listed);
-  const bare = keys.length === 1 && keys[0] === 'connections';
-  const completePage =
-    keys.length === 3 &&
-    keys.every((key) => ['connections', 'currentPageUrl', 'totalSize'].includes(key)) &&
-    listed.currentPageUrl ===
-      '/services/data/v68.0/ssot/connections?connectorType=IngestApi&limit=200&offset=0' &&
-    Number.isSafeInteger(listed.totalSize) &&
-    listed.totalSize === (Array.isArray(listed.connections) ? listed.connections.length : -1);
-  if (
-    !Array.isArray(listed.connections) ||
-    listed.connections.length >= 200 ||
-    (!bare && !completePage)
-  )
-    throw new DataStreamError('INCOMPLETE_CONNECTION_LIST');
-  const connections = listed.connections.map((value) => object(value));
+  const connections =
+    mode === 'retrieve'
+      ? objects(await listConnectionsLeniently(clients))
+      : strictConnections(await clients.connections.list());
   const seen = new Set<string>();
   const ids = new Set<string>();
   for (const connection of connections) {
@@ -398,6 +458,7 @@ export async function resolveDataStreamBinding(
  * @param {DataStreamReadClients} clients Internal read clients.
  * @param {string} dataSpace Explicit observed-scope constraint.
  * @param {boolean} postWrite Whether this read belongs to bounded create/update settlement.
+ * @param {DataStreamReadMode} mode `retrieve` lists connections leniently; `deploy` strictly.
  * @returns {Promise<DataStreamDocument>} Detached validated portable document without runtime IDs.
  */
 export async function retrieveNativeDataStream(
@@ -405,15 +466,21 @@ export async function retrieveNativeDataStream(
   clients: DataStreamReadClients,
   dataSpace = 'default',
   postWrite = false,
+  mode: DataStreamReadMode = 'deploy',
 ): Promise<DataStreamDocument> {
   if (!name.test(apiName) || dataSpace !== 'default')
     throw new DataStreamError('INVALID_STREAM_BINDING');
   const raw = inspectNativeDataStream(await clients.streams.get(apiName));
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
-  const connectionIdList = await clients.connections.list();
-  if (!Array.isArray(connectionIdList.connections))
-    throw new DataStreamError('INCOMPLETE_CONNECTION_LIST');
-  const matches = connectionIdList.connections
+  let listed: unknown[];
+  if (mode === 'retrieve') listed = await listConnectionsLeniently(clients);
+  else {
+    const connectionIdList = await clients.connections.list();
+    if (!Array.isArray(connectionIdList.connections))
+      throw new DataStreamError('INCOMPLETE_CONNECTION_LIST');
+    listed = connectionIdList.connections;
+  }
+  const matches = listed
     .map((value) => object(value))
     .filter((item) => item.name === raw.dataSource);
   if (matches.length !== 1 || typeof matches[0].id !== 'string' || !recordId.test(matches[0].id))
@@ -438,6 +505,7 @@ export async function retrieveNativeDataStream(
     },
     clients,
     postWrite,
+    mode,
   );
   if (!binding.target || !sameStreamSnapshot(raw, binding.target, postWrite))
     throw explainMismatch(

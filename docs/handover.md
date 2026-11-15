@@ -1,3 +1,32 @@
+# Lenient retrieve step 0b: one failing item no longer blocks the rest — 2026-11-15
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 0b.
+Deploy behaviour is unchanged.
+
+- Listing (`src/services/select-native-retrieve.ts`): DLO/DMO inventories ignore extra envelope
+  keys and the page URL format, page by offset until `totalSize` (or, without it, a non-empty
+  `nextPageUrl` or a full page) with no 2,000 cap; a page adding no new name ends the listing.
+  An entry without a usable name or data space is skipped with a warning (optional `warnings`
+  argument); duplicates are listed once. Only a page without its entry array still refuses.
+  `listNativeMappingNames` collects names only (no `normalizeNativeMapping`), skips unusable or
+  other-space entries with a warning and reports a failing DMO list through `report.failure`
+  (thrown when absent). `listCalculatedInsightNames` skips unusable names with a warning, has no
+  200-page cap and stops on a page adding nothing.
+- Data stream connection list: `resolveDataStreamBinding` / `retrieveNativeDataStream` take a
+  `mode` (`'retrieve' | 'deploy'`, default deploy). Retrieve pages `connections.list(offset)`
+  (transport now takes the offset) and ignores extra keys/URL format; deploy keeps the strict
+  single-page check (`strictConnections`).
+- Caps: `orderDependencyNodes(nodes, limits)` keeps the 256/512 default for deploy;
+  `acquireRetrieveSelection` passes unbounded limits and no longer counts requests or nodes.
+  Codes no longer emitted were removed with their pages: `DEPENDENCY_REQUEST_LIMIT_EXCEEDED`,
+  `MAPPING_INVENTORY_BINDING_MISMATCH`; `DEPENDENCY_LIMIT_EXCEEDED` is now deploy only.
+- Per-item isolation in `retrieve.ts`: a failed DLO/DMO/mapping/CI inventory is a diagnostic
+  with its `family` (the bare family stays in `selection`); a lone failed inventory with nothing
+  else to read keeps the old group-level envelope. `acquireRetrieveSelection(..., onFailure)`
+  reports each failing DMO/Segment and acquires the rest. CI and IR loops diagnose and continue;
+  the write loop no longer `break`s. Exit stays nonzero when any item failed.
+- Open (later steps): per-type lenient validators (1–6), README/sfmc.guide (step 7).
+
 # Lenient retrieve step 0a: verbatim files instead of refusals — 2026-11-15
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), step 0a.

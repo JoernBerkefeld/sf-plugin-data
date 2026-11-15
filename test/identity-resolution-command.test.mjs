@@ -248,7 +248,7 @@ test('explicit 68.0 serves an IR owner beside a DMO, each on its own route', asy
   );
 });
 
-test('IR missing/mismatched/incomplete candidate blocks entire mixed publication', async () => {
+test('IR missing/mismatched/incomplete candidate fails that owner only; the rest is written', async () => {
   for (const acquired of [
     {
       identity: { dataSpace: 'default', apiName: 'Individual_A1b2' },
@@ -267,12 +267,31 @@ test('IR missing/mismatched/incomplete candidate blocks entire mixed publication
     { identity: { dataSpace: 'default', apiName: 'Individual_A1b2' }, blockers: [], candidate: {} },
   ]) {
     const { command, calls } = invocation({
-      metadata: ['dmo:Sample__dlm', 'identity-resolution:Individual_A1b2'],
+      metadata: [
+        'dmo:Sample__dlm',
+        'identity-resolution:Individual_A1b2',
+        'identity-resolution:Individual_Z9y8',
+      ],
     });
-    command.acquireIdentityResolution = async () => acquired;
+    const acquire = command.acquireIdentityResolution;
+    command.acquireIdentityResolution = async (...arguments_) =>
+      arguments_[1] === 'Individual_A1b2' ? acquired : acquire(...arguments_);
+    const written = [];
+    command.writeIdentityResolution = async (value) => {
+      written.push(value.identity.apiName);
+      return { path: `${value.identity.apiName}.json`, outcome: 'retrieved' };
+    };
     const result = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.ok(!calls.some((call) => call.startsWith('write:')));
+    assert.notEqual(result.status, 'success');
+    assert.deepEqual(
+      calls.filter((call) => call.startsWith('write:')),
+      ['write:Sample__dlm'],
+    );
+    assert.deepEqual(written, ['Individual_Z9y8']);
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => error.identity?.apiName),
+      ['Individual_A1b2'],
+    );
   }
 });
 

@@ -40,8 +40,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The mapping was not saved: its source DLO or target DMO could not be read to leave out the pairs Salesforce generates. Check both objects exist and are readable, then rerun.',
   MAPPING_HTTP_ERROR:
     'Salesforce rejected a mapping request with an HTTP error. Read the status and API detail in the message, fix the cause (name, access, org state), then rerun.',
-  MAPPING_INVENTORY_BINDING_MISMATCH:
-    'Listing the mappings of a DMO returned a mapping that targets a different DMO, so the list cannot be trusted. Rerun the retrieve; if it repeats, select mappings by name.',
   MAPPING_INVENTORY_UNCONFIRMED:
     "The list of the DMO's mappings could not be confirmed against the individual mapping reads. Wait for pending mapping changes to finish, then rerun.",
   MAPPING_INVENTORY_UNQUALIFIED:
