@@ -166,6 +166,20 @@ test('only projection and validation errors with a code are written verbatim', (
   assert.equal(verbatimReason(new CalculatedInsightError('CI_NOT_FOUND')), undefined);
   assert.equal(verbatimReason(new CalculatedInsightError('CI_IDENTITY_CHANGED')), undefined);
   assert.equal(verbatimReason(new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH')), undefined);
+  // Read state, not content: an incomplete inventory, a pending snapshot or a change between reads.
+  for (const code of [
+    'INCOMPLETE_CONNECTION_LIST',
+    'INCOMPLETE_STREAM_DEPENDENCIES',
+    'STREAM_SNAPSHOT_PENDING',
+    'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+    'STREAM_BINDING_DRIFT',
+    'STREAM_DELETE_GUARD_DRIFT',
+    'TRANSFORM_TARGET_DRIFT',
+  ])
+    assert.equal(verbatimReason(Object.assign(new Error(code), { code })), undefined, code);
+  // A DLO whose fields differ from its stream's is content: written verbatim.
+  const dloDrift = Object.assign(new Error('drift'), { code: 'STREAM_DLO_DRIFT' });
+  assert.equal(verbatimReason(dloDrift), 'STREAM_DLO_DRIFT');
   assert.equal(verbatimReason(new NativeDmoError('OVERWRITE_REQUIRED')), undefined);
   assert.equal(
     verbatimReason(Object.assign(new Error('x'), { code: 'SOME_CODE', status: 500 })),

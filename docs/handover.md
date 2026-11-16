@@ -1,3 +1,13 @@
+# Lenient retrieve review round 2: read-state codes stay item failures — 2026-11-16
+
+Gate 4 round 2 must-fix. Codes about read state rather than content are now item failures in
+`verbatimReason`: `INCOMPLETE*`, `*PENDING`, `PROCESSING_ACKNOWLEDGEMENT_REQUIRED` and `*_DRIFT`
+(a change between two reads). Before, an incomplete connection page or a stream caught
+mid-processing was written verbatim on retrieve and routed a stream delete to the by-name path.
+`STREAM_DLO_DRIFT` stays a verbatim reason (a DLO whose fields differ from its stream's is content).
+The lifecycle test in `native-data-stream.test.mjs` expects `STREAM_BINDING_DRIFT` again for the
+delete preflight, as before 9b30244.
+
 # Lenient retrieve review fixes: remaining refusals closed — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), Gate 4

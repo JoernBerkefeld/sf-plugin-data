@@ -2032,8 +2032,9 @@ test('top-level stream lifecycle mismatch remains strict during retrieve and upd
                   survivorDloNames: [],
                 })
               : updateNativeDataStream(scenario.desired, scenario.clients, scenario.options),
-      // A delete that cannot model the stream goes by name, which still requires ACTIVE.
-      { code: operation === 'delete-preflight' ? 'STREAM_NOT_READY' : 'STREAM_BINDING_DRIFT' },
+      // A stream caught mid-change is read state, not unmodelled content: every operation
+      // refuses it as drift, including a delete preflight (no by-name fallback).
+      { code: 'STREAM_BINDING_DRIFT' },
     );
     assert.equal(scenario.counts().writes, 0);
     assert.equal(scenario.counts().pauses, 0);
