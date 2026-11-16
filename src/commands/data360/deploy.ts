@@ -426,7 +426,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   ): Parameters<typeof executeDataStream>[1] => {
     const reader = new ConnectClient(connection, version);
     return {
-      streams: createDataStreamClient(target, reader, version),
+      // Writes go over the command's shared bound sender, never a child CLI process.
+      streams: createDataStreamClient(target, reader, version, this.ssotSender(target, version)),
       ...createDataStreamReferenceReader(reader, version),
       dlo: {
         get: (name) =>
@@ -451,8 +452,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   protected executeDlo = executeDloDeploy;
   protected verifyDloInput = verifyDloInputDigest;
   protected createDloClient = createDloClient;
-  // Native DLO/DMO/mapping reads share one bound Connection per org and version instead of one
-  // CLI process per read; writes stay on the CLI runner. Tests replace this seam.
+  // Native DLO/DMO/mapping/relationship/stream reads and writes share one bound Connection per
+  // org and version instead of one CLI process per call. Only the Metadata API destructive
+  // deploys (DMO field removal, mapping remove) still start `sf project deploy start`.
+  // Tests replace this seam.
   protected createSsotSender = (target: string, version: string): BoundSsot =>
     openBoundSsot(target, version);
   private ssotSenders?: Map<string, BoundSsot>;
@@ -986,7 +989,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         const source = (this.createDloClient ?? createDloClient)(
           target,
           version,
-          undefined,
           this.ssotSender(target, version),
         );
         const dmo = (this.createDmoClient ?? createDmoClient)(
@@ -1007,7 +1009,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           (this.createRelationshipClient ?? createRelationshipClient)(
             target,
             version,
-            undefined,
             requestScope,
             this.ssotSender(target, version),
           );
@@ -1693,12 +1694,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         const dloClient = (): ReturnType<typeof createDloClient> => {
           const username = org.getUsername();
           if (!username) throw new Error('TARGET_ORG_REQUIRED');
-          return this.createDloClient(
-            username,
-            '68.0',
-            undefined,
-            this.ssotSender(username, '68.0'),
-          );
+          return this.createDloClient(username, '68.0', this.ssotSender(username, '68.0'));
         };
         const dmoClient = (): ReturnType<typeof createDmoClient> => {
           const username = org.getUsername();

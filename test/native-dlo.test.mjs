@@ -13,6 +13,7 @@ import {
   validateDloDocument,
 } from '../lib/artifacts/dlo-document.js';
 import { createDloClient } from '../lib/transport/dlo-rest.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 import {
   deleteNativeDlo,
   deployNativeDlo,
@@ -60,10 +61,6 @@ const systemNames = [
 const absent = () => {
   throw new DloError('DLO_HTTP_ERROR', 404);
 };
-const http = (status, body) => ({
-  exitCode: status >= 400 ? 1 : 0,
-  stdout: `HTTP/1.1 ${status}\ncontent-type: application/json\nx-request-id: receipt\n${body === undefined ? '' : JSON.stringify(body)}`,
-});
 
 test('normalizes GET and write shapes, preserving all fields but not runtime/wrappers', () => {
   const raw = native();
@@ -603,63 +600,55 @@ test('DLO concrete membership binding, required create scope and collision refus
   assert.deepEqual(await readFile(receipt.path), bytes);
 });
 
-test('REST parses receipt-proven raw status/body shapes and corrected empty DELETE request', async () => {
+test('REST sends each call once over the bound sender with exact routes and JSON bodies', async () => {
   const requests = [];
-  const client = createDloClient('target', '68.0', async (arguments_, cwd) => {
-    assert.ok(arguments_.includes('--include'));
-    assert.ok(!arguments_.includes('--json'));
-    assert.equal(arguments_[arguments_.indexOf('--target-org') + 1], 'target');
-    const file = arguments_.indexOf('--file');
-    if (file !== -1) {
-      const request = JSON.parse(await readFile(arguments_[file + 1], 'utf8'));
-      requests.push(request);
-      assert.deepEqual(request, {
-        url: `/services/data/v68.0/ssot/data-lake-objects/${targetId}`,
-        method: 'DELETE',
-        body: { mode: 'raw', raw: '' },
-      });
-      return http(204);
-    }
-    const method = arguments_[arguments_.indexOf('--method') + 1];
-    const body = arguments_.indexOf('--body');
-    if (body !== -1)
-      requests.push(JSON.parse(await readFile(arguments_[body + 1].slice(1), 'utf8')));
-    assert.ok(
-      cwd.toLowerCase().startsWith(path.join(os.tmpdir(), 'data360-native-dlo-').toLowerCase()),
-    );
-    return http(
-      method === 'POST' ? 201 : 200,
-      method === 'GET' ? { dataLakeObjects: [native()] } : native(),
-    );
+  const client = createDloClient('target', '68.0', {
+    request: async (method, route, noContent, body) => {
+      requests.push({ method, route, body });
+      if (method === 'DELETE') return noContent;
+      return method === 'GET' ? { dataLakeObjects: [native()] } : native();
+    },
   });
   assert.deepEqual(await client.get(apiName), { dataLakeObjects: [native()] });
   await client.create({ name: 'Example' });
   await client.update(targetId, { label: 'Changed' });
   await client.delete(targetId);
-  assert.equal(requests.length, 3);
+  const endpoint = '/services/data/v68.0/ssot/data-lake-objects';
+  assert.deepEqual(requests, [
+    { method: 'GET', route: `${endpoint}/${apiName}`, body: undefined },
+    { method: 'POST', route: endpoint, body: { name: 'Example' } },
+    { method: 'PATCH', route: `${endpoint}/${targetId}`, body: { label: 'Changed' } },
+    { method: 'DELETE', route: `${endpoint}/${targetId}`, body: undefined },
+  ]);
   assert.doesNotThrow(() => createDloClient('target', '67.0'));
   assert.throws(() => createDloClient('target', '60.0'), /INVALID_SCOPE/);
   await assert.rejects(client.delete('../unsafe'), /TARGET_ID/);
 });
 
-test('REST never treats generic CLI errors or malformed success as absence', async () => {
-  for (const receipt of [
-    { exitCode: 1, stdout: JSON.stringify({ status: 1, message: '404' }) },
-    { exitCode: 0, stdout: 'not HTTP' },
-    { exitCode: 0, stdout: 'HTTP/1.1 200\ncontent-type: application/json\ninvalid' },
-    { ...http(200, native()), exitCode: 1 },
-  ]) {
-    const client = createDloClient('target', '68.0', async () => receipt);
+test('REST never treats an unconfirmed or malformed answer as absence', async () => {
+  const empty = Symbol('empty');
+  for (const answer of [new ConnectError('REQUEST_FAILED'), 'invalid', [], empty]) {
+    const client = createDloClient('target', '68.0', {
+      request: async (method, route, noContent) => {
+        if (answer instanceof Error) throw answer;
+        return answer === empty ? noContent : answer;
+      },
+    });
     await assert.rejects(
       preflightNativeDlo(document(), client),
       (error) => error instanceof DloError && error.code !== 'DLO_HTTP_ERROR',
     );
   }
-  const client = createDloClient('target', '68.0', async () =>
-    http(404, [
-      { errorCode: 'INVALID_INPUT', message: 'valid recordId or developerName required' },
-    ]),
+  // A DELETE answered with a body is not the HTTP 204 acknowledgement.
+  await assert.rejects(
+    createDloClient('target', '68.0', { request: async () => ({}) }).delete(targetId),
+    { code: 'DLO_DELETE_UNCONFIRMED' },
   );
+  const client = createDloClient('target', '68.0', {
+    request: async () => {
+      throw new ConnectError('REQUEST_FAILED', 404);
+    },
+  });
   const plan = await preflightNativeDlo(document(), client);
   assert.equal(plan.operation, 'create');
   await assert.rejects(

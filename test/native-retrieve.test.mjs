@@ -38,10 +38,18 @@ test('native versions default/auto to68, preserve >=61 and reject old/malformed/
   for (const version of ['61.0', '65.0', '68.0', '99.0']) {
     assert.equal(nativeApiVersion(version), version);
     for (const factory of [createDloClient, createDmoClient, createMappingClient]) {
-      const client = factory('synthetic', version, async (arguments_) => {
-        assert.ok(arguments_[3].startsWith(`/services/data/v${version}/ssot/`));
-        return { exitCode: 0, stdout: 'HTTP/1.1 200\n{}' };
-      });
+      const sender = {
+        request: async (method, route) => {
+          assert.ok(route.startsWith(`/services/data/v${version}/ssot/`));
+          return {};
+        },
+      };
+      const client =
+        factory === createDloClient
+          ? factory('synthetic', version, sender)
+          : factory === createDmoClient
+            ? factory('synthetic', version, undefined, sender)
+            : factory('synthetic', version, undefined, undefined, sender);
       await client.get(
         factory === createMappingClient
           ? 'Map'
@@ -53,7 +61,7 @@ test('native versions default/auto to68, preserve >=61 and reject old/malformed/
   }
   for (const version of ['60.0', '59.0', 'latest', '61', 'v68.0', '68.1'])
     for (const factory of [createDloClient, createDmoClient, createMappingClient])
-      assert.throws(() => factory('synthetic', version, () => assert.fail('no call')));
+      assert.throws(() => factory('synthetic', version));
 });
 
 test('DMO inventory paginates documented offsets, includes standard names and filters explicit spaces', async () => {
@@ -720,8 +728,12 @@ test('retrieve reads DLOs, DMOs, mappings and mapping parents through one shared
     return sender;
   };
   const senders = [];
-  // No runner argument: the clients' GETs never start a CLI process.
-  command.createDloClient = command.createDmoClient = (_target, _version, runner, sender) => {
+  // The DLO client has no runner; the DMO client's runner serves only field removal.
+  command.createDloClient = (_target, _version, sender) => {
+    senders.push(sender);
+    return { get: async (name) => ({ name }) };
+  };
+  command.createDmoClient = (_target, _version, runner, sender) => {
     assert.equal(runner, undefined);
     senders.push(sender);
     return { get: async (name) => ({ name }) };

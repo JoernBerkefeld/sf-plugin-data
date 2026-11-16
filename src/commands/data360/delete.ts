@@ -810,7 +810,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         target,
         reader,
         version,
-        undefined,
         openBoundSsot(target, version, async () => connection),
       ),
       ...createDataStreamReferenceReader(reader, version),
@@ -1156,7 +1155,6 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       const base = (this.createRelationshipClient ?? createRelationshipClient)(
         target,
         version,
-        undefined,
         requestScope,
         (this.createRelationshipSender ?? openBoundSsot)(target, version),
       );

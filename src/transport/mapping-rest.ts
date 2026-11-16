@@ -1,6 +1,5 @@
 import type { Connection } from '@salesforce/core';
 import {
-  apiReceiptDiagnostic,
   getConnectDiagnostic,
   retainConnectDiagnostic,
   retainMetadataProblems,
@@ -20,6 +19,7 @@ import {
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
 import { nativeApiVersion } from './api-version.js';
+import { openBoundSsot } from './bound-ssot.js';
 import type { BoundSsot } from './bound-ssot.js';
 
 export type MappingWriteBody = {
@@ -103,14 +103,15 @@ function validateBody(body: MappingWriteBody): void {
 }
 
 /**
- * Build a single-attempt native client. Numeric admission is not live-version qualification.
+ * Build a native client on the bound in-process connection. Numeric admission is not
+ * live-version qualification.
  * The caller owns target pair resolution; additions send names only, without a field selector.
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiVersion Validated numeric version, or default/auto 68.0.
- * @param {MetadataRunner} runner Injectable installed CLI runner.
+ * @param {MetadataRunner} runner Installed CLI runner, used only for the destructive `remove`.
  * @param {string} dataSpace Optional explicit request scope.
- * @param {BoundSsot} [sender] Bound single-attempt sender for GET and DELETE; POST/PATCH stay on runner.
- * @returns {MappingClient} Raw operations; all scratch is retained.
+ * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
+ * @returns {MappingClient} Raw operations; `remove` scratch is retained.
  */
 export function createMappingClient(
   targetOrg: string,
@@ -126,6 +127,7 @@ export function createMappingClient(
     [...targetOrg].some((character) => character.codePointAt(0)! < 32)
   )
     throw new NativeMappingError('UNSUPPORTED_MAPPING_SELECTION');
+  const bound = sender ?? openBoundSsot(targetOrg, version);
   const endpoint = `/services/data/v${version}/ssot/data-model-object-mappings`;
   const scopeQuery =
     dataSpace === undefined ? '' : `?${new URLSearchParams({ dataspace: dataSpace })}`;
@@ -141,84 +143,23 @@ export function createMappingClient(
   }
 
   /**
-   * Execute once with receipt-proven HTTP status, without inferring settlement.
-   * @param {string} method HTTP verb.
+   * Send one request on the bound connection: no child CLI, token refresh or redirect, and a
+   * write is never resent once it may have reached Salesforce. Not settlement evidence.
+   * @param {'GET' | 'POST' | 'PATCH' | 'DELETE'} method HTTP verb.
    * @param {string} suffix Validated route and query.
-   * @param {MappingWriteBody} body Explicit optional operation input.
-   * @returns {Promise<unknown>} Raw response, not persistence evidence.
+   * @param {MappingWriteBody} [body] Explicit operation input.
+   * @returns {Promise<unknown>} Parsed non-array object; nothing for a successful DELETE.
    */
   async function request(
-    method: string,
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
     suffix: string,
     body?: MappingWriteBody,
   ): Promise<unknown> {
-    if (sender && (method === 'GET' || method === 'DELETE'))
-      return boundRequest(sender, method, suffix);
     if (body) validateBody(body);
-    verifyTemporaryDirectory();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'data360-native-mapping-'));
-    const arguments_ = ['api', 'request', 'rest'];
-    if (method === 'DELETE') {
-      const file = path.join(root, 'request.json');
-      await writeFile(
-        file,
-        JSON.stringify({ url: endpoint + suffix, method, body: { mode: 'raw', raw: '' } }),
-        { flag: 'wx' },
-      );
-      arguments_.push('--file', file);
-    } else {
-      arguments_.push(endpoint + suffix, '--method', method);
-      if (body) {
-        const file = path.join(root, 'body.json');
-        await writeFile(file, JSON.stringify(body), { flag: 'wx' });
-        arguments_.push('--body', `@${file}`, '--header', 'Content-Type:application/json');
-      }
-    }
-    arguments_.push('--target-org', targetOrg, '--include');
-    const receipt = await runner(arguments_, root);
-    const match = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n/u.exec(receipt.stdout);
-    if (!match) throw new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED');
-    const status = Number(match[1]);
-    const payload = receipt.stdout
-      .slice(match[0].length)
-      .replace(/^(?:[^\r\n]+:[^\r\n]*\r?\n|\r?\n)*/u, '')
-      .trim();
-    if (status < 200 || status >= 300)
-      throw retainConnectDiagnostic(
-        new NativeMappingError('MAPPING_HTTP_ERROR', status),
-        apiReceiptDiagnostic(receipt.stdout),
-      );
-    if (
-      receipt.exitCode !== 0 ||
-      (status !== 200 &&
-        !(method === 'POST' && status === 201) &&
-        !(method === 'DELETE' && status === 204))
-    )
-      throw new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED', status);
-    if (method === 'DELETE') return;
-    try {
-      return JSON.parse(payload) as unknown;
-    } catch {
-      throw new NativeMappingError('INVALID_MAPPING_RESPONSE', status);
-    }
-  }
-
-  /**
-   * Send one GET or DELETE on the bound connection: no child CLI, refresh, retry or redirect.
-   * @param {BoundSsot} bound Bound sender.
-   * @param {'GET' | 'DELETE'} method Read or exact delete.
-   * @param {string} suffix Validated route and query.
-   * @returns {Promise<unknown>} Parsed non-array object for GET; nothing for a successful DELETE.
-   */
-  async function boundRequest(
-    bound: BoundSsot,
-    method: 'GET' | 'DELETE',
-    suffix: string,
-  ): Promise<unknown> {
     const noContent = Symbol('mapping-no-content');
     let response: unknown;
     try {
-      response = await bound.request(method, endpoint + suffix, noContent);
+      response = await bound.request(method, endpoint + suffix, noContent, body);
     } catch (error) {
       if (!(error instanceof ConnectError)) throw error;
       const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;
@@ -230,8 +171,8 @@ export function createMappingClient(
         getConnectDiagnostic(error),
       );
     }
-    // Like the runner path, DELETE accepts documented 200 and observed 204; the body is
-    // ignored because absence is proven later by typed-404 settlement reads.
+    // DELETE accepts documented 200 and observed 204; the body is ignored because absence is
+    // proven later by typed-404 settlement reads.
     if (method === 'DELETE') return;
     if (response === noContent) throw new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED', 204);
     if (typeof response !== 'object' || response === null || Array.isArray(response))
@@ -241,6 +182,8 @@ export function createMappingClient(
 
   /**
    * Delete one mapping with one Metadata API destructive deployment; never retried.
+   * This is the one mapping write left on the child `sf project deploy start` runner: the bound
+   * connection has no deploy-and-poll route yet, and the user chose to keep it here for now.
    * @param {string} name Exact native mapping developer name.
    * @returns {Promise<void>} Resolves only when the member is reported deleted.
    */

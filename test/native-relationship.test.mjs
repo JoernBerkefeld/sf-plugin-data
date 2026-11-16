@@ -560,17 +560,6 @@ test('delete refuses a name carrying another binding and an unconfirmed absence'
   );
 });
 
-/**
- * A CLI receipt with an HTTP status line.
- * @param {number} status HTTP status.
- * @param {unknown} [value] JSON body.
- * @returns {{exitCode: number, stdout: string}} Receipt.
- */
-const receipt = (status, value) => ({
-  exitCode: 0,
-  stdout: `HTTP/1.1 ${status}\r\ncontent-type: application/json\r\n\r\n${value === undefined ? '' : JSON.stringify(value)}`,
-});
-
 test('bound sender carries GET and DELETE on the exact routes, once each', async () => {
   const requests = [];
   const sender = {
@@ -579,13 +568,12 @@ test('bound sender carries GET and DELETE on the exact routes, once each', async
       return method === 'GET' && route.includes('Empty__dlm') ? noContent : page([wire()]);
     },
   };
-  const runner = async () => assert.fail('GET and DELETE never start a CLI process');
-  const client = createRelationshipClient('target', 'auto', runner, undefined, sender);
+  const client = createRelationshipClient('target', 'auto', undefined, sender);
   assert.equal(client.apiVersion, '68.0');
   assert.deepEqual(await client.list('A__dlm', 0), page([wire()]));
   assert.equal(await client.list('Empty__dlm', 200), undefined);
   await client.remove(name);
-  const scoped = createRelationshipClient('target', '68.0', runner, 'other', sender);
+  const scoped = createRelationshipClient('target', '68.0', 'other', sender);
   await scoped.list('A__dlm', 0);
   assert.deepEqual(requests, [
     ['GET', '/services/data/v68.0/ssot/data-model-objects/A__dlm/relationships?limit=200&offset=0'],
@@ -623,8 +611,7 @@ test('Metadata API read and update go over the bound sender, ten names per read'
       },
     }),
   };
-  const runner = async () => assert.fail('Metadata API calls never start a CLI process');
-  const client = createRelationshipClient('target', '68.0', runner, undefined, sender);
+  const client = createRelationshipClient('target', '68.0', undefined, sender);
   const names = Array.from({ length: 11 }, (_, index) => `R${index}`);
   const definitions = await client.readDefinitions(names);
   assert.equal(definitions.length, 11);
@@ -656,7 +643,7 @@ test('Metadata API read and update go over the bound sender, ten names per read'
   await assert.rejects(client.update({ fullName: name }), code('RELATIONSHIP_REQUEST_UNCONFIRMED'));
   await assert.rejects(client.update({ fullName: 'bad/name' }), code('INVALID_RELATIONSHIP_NAME'));
   // Without a bound sender, there are no Metadata API calls.
-  assert.equal(createRelationshipClient('target', '68.0', runner).update, undefined);
+  assert.equal(createRelationshipClient('target', '68.0').update, undefined);
 });
 
 test('bound failures map to typed HTTP errors without a retry', async () => {
@@ -666,7 +653,7 @@ test('bound failures map to typed HTTP errors without a retry', async () => {
     [new ConnectError('REQUEST_FAILED'), 'RELATIONSHIP_REQUEST_UNCONFIRMED', undefined],
   ]) {
     let attempts = 0;
-    const client = createRelationshipClient('target', '68.0', undefined, undefined, {
+    const client = createRelationshipClient('target', '68.0', undefined, {
       request: async () => {
         attempts++;
         throw error;
@@ -681,23 +668,16 @@ test('bound failures map to typed HTTP errors without a retry', async () => {
   }
 });
 
-test('create posts one body to the source DMO through the CLI runner and surfaces a 400', async () => {
+test('create posts one body to the source DMO over the bound sender, once, and surfaces a 400', async () => {
   const sent = [];
-  const runner = async (arguments_) => {
-    const body = JSON.parse(await readFile(arguments_[arguments_.indexOf('--body') + 1].slice(1)));
-    sent.push({ route: arguments_[3], method: arguments_[5], body });
-    return sent.length === 1
-      ? receipt(201, { relationships: [wire({ status: 'CREATING' })] })
-      : receipt(400, [
-          {
-            errorCode: 'INVALID_INPUT',
-            message:
-              'No ObjectSourceTargetMaps were found for the DMOs in the relationships. Make sure that the DMOs are mapped.',
-          },
-        ]);
+  const sender = {
+    request: async (method, route, noContent, body) => {
+      sent.push({ route, method, body });
+      if (sent.length === 1) return { relationships: [wire({ status: 'CREATING' })] };
+      throw new ConnectError('REQUEST_FAILED', 400);
+    },
   };
-  const sender = { request: async () => assert.fail('POST never uses the bound sender') };
-  const client = createRelationshipClient('target', '68.0', runner, undefined, sender);
+  const client = createRelationshipClient('target', '68.0', undefined, sender);
   assert.deepEqual(await client.create(spec), { relationships: [wire({ status: 'CREATING' })] });
   await assert.rejects(client.create(spec), (error) => {
     assert.equal(error.code, 'RELATIONSHIP_HTTP_ERROR');
@@ -721,24 +701,13 @@ test('create posts one body to the source DMO through the CLI runner and surface
   );
 });
 
-test('runner GET reads 204 as empty and DELETE uses a request file', async () => {
-  const seen = [];
-  const client = createRelationshipClient('target', '68.0', async (arguments_) => {
-    seen.push(arguments_);
-    if (arguments_.includes('--file')) {
-      const request = JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1]));
-      assert.deepEqual(request, {
-        url: `/services/data/v68.0/ssot/data-model-objects/relationships/${name}`,
-        method: 'DELETE',
-        body: { mode: 'raw', raw: '' },
-      });
-      return receipt(204);
-    }
-    return receipt(204);
+test('a create answered 204 is empty; a malformed answer is invalid', async () => {
+  const answers = [undefined, []];
+  const client = createRelationshipClient('target', '68.0', undefined, {
+    request: async (method, route, noContent) => answers.shift() ?? noContent,
   });
-  assert.equal(await client.list('A__dlm', 0), undefined);
-  await client.remove(name);
-  assert.equal(seen.length, 2);
+  assert.equal(await client.create(spec), undefined);
+  await assert.rejects(client.create(spec), code('INVALID_RELATIONSHIP_RESPONSE'));
 });
 
 test('writer publishes data360/relationship/<Name>.relationship-meta.json and guards overwrite', async () => {

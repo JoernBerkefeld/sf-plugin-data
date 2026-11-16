@@ -549,8 +549,8 @@ test('bare dlo beside identity resolution retrieves every listed DLO; a failing 
     return sender;
   };
   const senders = [];
-  command.createDloClient = (target, version, runner, sender) => {
-    assert.deepEqual([target, version, runner], ['synthetic', '68.0', undefined]);
+  command.createDloClient = (target, version, sender) => {
+    assert.deepEqual([target, version], ['synthetic', '68.0']);
     senders.push(sender);
     return {};
   };

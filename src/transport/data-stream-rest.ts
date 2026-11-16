@@ -1,12 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import {
-  apiReceiptDiagnostic,
-  getConnectDiagnostic,
-  retainConnectDiagnostic,
-} from './connect-diagnostic.js';
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { getConnectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
 import {
   DataStreamError,
   buildDataStreamCreateBody,
@@ -17,9 +9,8 @@ import {
 } from '../artifacts/data-stream-document.js';
 import { dataStreamApiVersion } from './api-version.js';
 import { ConnectClient, ConnectError } from './connect-client.js';
+import { openBoundSsot } from './bound-ssot.js';
 import type { BoundSsot } from './bound-ssot.js';
-import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
-import type { MetadataRunner } from './project-metadata.js';
 
 export type DataStreamClient = {
   get: (nameOrId: string) => Promise<unknown>;
@@ -125,25 +116,25 @@ export class DataStreamHttpError extends DataStreamError {
 }
 
 /**
- * Construct bounded stream transport. Writes are single attempts, not lifecycle authorization.
+ * Construct bounded stream transport. Writes go over the bound in-process connection and are
+ * never resent once they may have reached Salesforce; they are not lifecycle authorization.
  * @param {string} targetOrg Existing CLI org alias.
  * @param {ConnectClient} reader Authenticated native GET transport.
  * @param {string} apiVersion Initial qualified pin only.
- * @param {MetadataRunner} runner Installed CLI runner with real --include receipts.
- * @param {BoundSsot} [deleteSender] Bound single-attempt sender; when given, DELETE never uses the runner.
+ * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
  * @returns {DataStreamClient} Internal operations; no command wiring.
  */
 export function createDataStreamClient(
   targetOrg: string,
   reader: Pick<ConnectClient, 'get'>,
   apiVersion = 'auto',
-  runner: MetadataRunner = runProjectMetadata,
-  deleteSender?: BoundSsot,
+  sender?: BoundSsot,
 ): DataStreamClient {
   const version = dataStreamApiVersion(apiVersion);
   const endpoint = `/services/data/v${version}/ssot/data-streams`;
   if (!targetOrg || targetOrg.startsWith('-') || /[\p{Cc}]/u.test(targetOrg))
     throw new DataStreamError('INVALID_STREAM_ORG');
+  const bound = sender ?? openBoundSsot(targetOrg, version);
 
   /**
    * Resolve a safe pagination offset; response echoes may omit filters, never change them.
@@ -247,77 +238,41 @@ export function createDataStreamClient(
   }
 
   /**
-   * Send a native mutation once with actual HTTP status evidence; retain owned scratch.
-   * @param {string} method Qualified HTTP verb.
+   * Send one native mutation on the bound connection. It is never resent once it may have
+   * reached Salesforce, and never after a token refresh; the caller's read-back decides.
+   * @param {'POST' | 'PATCH' | 'DELETE'} method Qualified HTTP verb.
    * @param {string} suffix Checked target/query suffix.
-   * @param {unknown} body Serialized operation-specific body, absent for DELETE.
+   * @param {unknown} [body] Operation-specific body, absent for DELETE.
    * @returns {Promise<unknown>} Untrusted echo or undefined, never settlement proof.
    */
-  async function send(method: string, suffix: string, body?: unknown): Promise<unknown> {
-    verifyTemporaryDirectory();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'data360-native-stream-'));
-    await writeFile(
-      path.join(root, 'ownership.json'),
-      JSON.stringify({ marker: randomUUID(), files: ['request.json'] }),
-      { flag: 'wx' },
-    );
-    const file = path.join(root, 'request.json');
-    const arguments_ = ['api', 'request', 'rest'];
-    if (method === 'DELETE') {
-      // plugin-api requires raw mode; omitting raw yields undefined, not a JSON request body.
-      await writeFile(
-        file,
-        JSON.stringify({ url: endpoint + suffix, method, body: { mode: 'raw' } }),
-        { flag: 'wx' },
-      );
-      arguments_.push('--file', file);
-    } else {
-      await writeFile(file, JSON.stringify(body), { flag: 'wx' });
-      arguments_.push(
-        endpoint + suffix,
-        '--method',
-        method,
-        '--body',
-        `@${file}`,
-        '--header',
-        'Content-Type:application/json',
-      );
-    }
-    let receipt: Awaited<ReturnType<MetadataRunner>>;
+  async function send(
+    method: 'POST' | 'PATCH' | 'DELETE',
+    suffix: string,
+    body?: unknown,
+  ): Promise<unknown> {
+    const noContent = Symbol('stream-no-content');
+    let response: unknown;
     try {
-      receipt = await runner([...arguments_, '--target-org', targetOrg, '--include'], root);
-    } catch {
-      throw new DataStreamHttpError('STREAM_REQUEST_UNCONFIRMED');
-    }
-    const match = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n/u.exec(receipt.stdout);
-    if (!match) throw new DataStreamHttpError('STREAM_REQUEST_UNCONFIRMED');
-    const status = Number(match[1]);
-    const payload = receipt.stdout
-      .slice(match[0].length)
-      .replace(/^(?:[^\r\n]+:[^\r\n]*\r?\n|\r?\n)*/u, '')
-      .trim();
-    if (status < 200 || status >= 300)
+      response = await bound.request(method, endpoint + suffix, noContent, body);
+    } catch (error) {
+      if (!(error instanceof ConnectError)) throw error;
+      const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;
       throw retainConnectDiagnostic(
-        new DataStreamHttpError('STREAM_HTTP_ERROR', status),
-        apiReceiptDiagnostic(receipt.stdout),
+        new DataStreamHttpError(
+          status === undefined ? 'STREAM_REQUEST_UNCONFIRMED' : 'STREAM_HTTP_ERROR',
+          status,
+        ),
+        getConnectDiagnostic(error),
       );
-    if (
-      receipt.exitCode !== 0 ||
-      status !== (method === 'POST' ? 201 : method === 'PATCH' ? 200 : 204)
-    )
-      throw new DataStreamHttpError('STREAM_REQUEST_UNCONFIRMED', status);
+    }
     if (method === 'DELETE') {
-      if (payload) throw new DataStreamHttpError('STREAM_DELETE_UNCONFIRMED', status);
+      if (response !== noContent) throw new DataStreamHttpError('STREAM_DELETE_UNCONFIRMED');
       return;
     }
-    try {
-      const result: unknown = JSON.parse(payload);
-      if (!result || typeof result !== 'object' || Array.isArray(result))
-        throw new Error('Invalid stream response');
-      return result;
-    } catch {
-      throw new DataStreamHttpError('INVALID_STREAM_RESPONSE', status);
-    }
+    if (response === noContent) throw new DataStreamHttpError('STREAM_REQUEST_UNCONFIRMED', 204);
+    if (!response || typeof response !== 'object' || Array.isArray(response))
+      throw new DataStreamHttpError('INVALID_STREAM_RESPONSE');
+    return response;
   }
   return {
     get: async (nameOrId) => {
@@ -353,27 +308,7 @@ export function createDataStreamClient(
     delete: async (recordId, deleteDlo) => {
       if (!id.test(recordId) || typeof deleteDlo !== 'boolean')
         throw new DataStreamError('INVALID_STREAM_TARGET_ID');
-      const suffix = `/${recordId}?shouldDeleteDataLakeObject=${String(deleteDlo)}`;
-      if (!deleteSender) {
-        await send('DELETE', suffix);
-        return;
-      }
-      const noContent = Symbol('stream-deleted');
-      let response: unknown;
-      try {
-        response = await deleteSender.request('DELETE', endpoint + suffix, noContent);
-      } catch (error) {
-        if (!(error instanceof ConnectError)) throw error;
-        const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;
-        throw retainConnectDiagnostic(
-          new DataStreamHttpError(
-            status === undefined ? 'STREAM_REQUEST_UNCONFIRMED' : 'STREAM_HTTP_ERROR',
-            status,
-          ),
-          getConnectDiagnostic(error),
-        );
-      }
-      if (response !== noContent) throw new DataStreamHttpError('STREAM_DELETE_UNCONFIRMED');
+      await send('DELETE', `/${recordId}?shouldDeleteDataLakeObject=${String(deleteDlo)}`);
     },
   };
 }

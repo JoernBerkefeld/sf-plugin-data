@@ -4,6 +4,14 @@ import test from 'node:test';
 import { PassThrough } from 'node:stream';
 import { Connection } from '@salesforce/core';
 import { ConnectClient, connectRetry } from '../lib/transport/connect-client.js';
+import { openBoundSsot } from '../lib/transport/bound-ssot.js';
+import { createDloClient } from '../lib/transport/dlo-rest.js';
+import { createDmoClient } from '../lib/transport/dmo-rest.js';
+import { createMappingClient } from '../lib/transport/mapping-rest.js';
+import { createRelationshipClient } from '../lib/transport/relationship-rest.js';
+
+// Only the Metadata API destructive deploys may start a CLI process; no REST write does.
+const unusedRunner = async () => assert.fail('a REST write must never start a CLI process');
 
 const origin = 'https://synthetic.my.salesforce.com';
 const route = '/services/data/v68.0/ssot/data-model-objects/Synthetic__dlm';
@@ -220,4 +228,109 @@ test('a 429 without Retry-After uses the backoff and gives up after three attemp
   });
   assert.equal(fake.calls(), 3);
   assert.deepEqual(waits, [1000, 2000]);
+});
+
+/**
+ * A scripted fake connection that also records each request it receives.
+ * @param {Array<object | Error>} outcomes Errors are thrown, anything else is returned.
+ * @returns {{ connection: object, calls: () => number, requests: object[] }} Recorder.
+ */
+function recorded(outcomes) {
+  const fake = scripted(outcomes);
+  const requests = [];
+  const request = fake.connection.request;
+  fake.connection.request = async (input, options) => {
+    requests.push(input);
+    return request(input, options);
+  };
+  return { ...fake, requests };
+}
+
+const writeMethods = ['POST', 'PATCH', 'PUT', 'DELETE'];
+
+test('a bound write carries its JSON body and is not resent after a reset, a timeout, 429, 503 or an expired session', async (t) => {
+  const { waits, warnings } = observe(t);
+  for (const method of writeMethods)
+    for (const failure of [
+      network('ECONNRESET'),
+      network('ETIMEDOUT'),
+      network('ECONNABORTED'),
+      Object.assign(new Error('x'), { statusCode: 429 }),
+      Object.assign(new Error('x'), { statusCode: 503 }),
+      Object.assign(new Error('expired'), { name: 'INVALID_SESSION_ID', statusCode: 401 }),
+    ]) {
+      const fake = recorded([failure, { id: 'written' }]);
+      let refreshes = 0;
+      fake.connection.refreshAuth = async () => {
+        refreshes++;
+      };
+      const sender = openBoundSsot('target', '68.0', async () => fake.connection);
+      await assert.rejects(sender.request(method, route, undefined, { label: 'Synthetic' }));
+      assert.equal(fake.calls(), 1, `${method} ${failure.code ?? failure.statusCode}`);
+      assert.equal(refreshes, 0);
+      assert.equal(fake.requests[0].method, method);
+      assert.equal(fake.requests[0].body, '{"label":"Synthetic"}');
+      assert.equal(fake.requests[0].headers['content-type'], 'application/json');
+    }
+  assert.deepEqual(waits, []);
+  assert.deepEqual(warnings, []);
+});
+
+test('a bound write is resent only when it never reached Salesforce', async (t) => {
+  const { waits } = observe(t);
+  for (const method of writeMethods)
+    for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'EAI_AGAIN']) {
+      const fake = recorded([network(code), { id: 'written' }]);
+      const sender = openBoundSsot('target', '68.0', async () => fake.connection);
+      assert.deepEqual(await sender.request(method, route, undefined, { label: 'Synthetic' }), {
+        id: 'written',
+      });
+      assert.equal(fake.calls(), 2);
+      assert.deepEqual(fake.requests[0], fake.requests[1]);
+    }
+  assert.equal(waits.length, 16);
+});
+
+test('family writes go over the bound sender once, never through a child CLI process', async (t) => {
+  observe(t);
+  const fake = recorded([network('ECONNRESET')]);
+  const sender = openBoundSsot('target', '68.0', async () => fake.connection);
+  const mappingBody = {
+    sourceEntityDeveloperName: 'Synthetic__dll',
+    targetEntityDeveloperName: 'Synthetic__dlm',
+    fieldMapping: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Id__c' }],
+  };
+  const writes = [
+    () => createDloClient('target', '68.0', sender).create({ name: 'Synthetic__dll' }),
+    () => createDloClient('target', '68.0', sender).update('0dl000000000001AAA', {}),
+    () =>
+      createDmoClient('target', '68.0', unusedRunner, sender).create({ name: 'Synthetic__dlm' }),
+    () => createDmoClient('target', '68.0', unusedRunner, sender).update('Synthetic__dlm', {}),
+    () => createDmoClient('target', '68.0', unusedRunner, sender).delete('Synthetic__dlm'),
+    () =>
+      createMappingClient('target', '68.0', unusedRunner, undefined, sender).create(mappingBody),
+    () =>
+      createMappingClient('target', '68.0', unusedRunner, undefined, sender).update(
+        'Synthetic',
+        mappingBody,
+      ),
+    () =>
+      createRelationshipClient('target', '68.0', undefined, sender).create({
+        sourceObjectName: 'Source__dlm',
+        sourceFieldName: 'RefId__c',
+        targetObjectName: 'Target__dlm',
+        targetFieldName: 'Id__c',
+        cardinality: 'ManyToOne',
+        relationshipOwner: 'DataCloud',
+      }),
+  ];
+  for (const write of writes) await assert.rejects(write(), /UNCONFIRMED/u);
+  assert.equal(fake.calls(), writes.length);
+  assert.deepEqual(
+    fake.requests.map(({ method }) => method),
+    ['POST', 'PATCH', 'POST', 'PATCH', 'DELETE', 'POST', 'PATCH', 'POST'],
+  );
+  assert.ok(
+    fake.requests.every(({ method, body }) => method === 'DELETE' || typeof body === 'string'),
+  );
 });

@@ -17,6 +17,7 @@ import { retrieveNativeDmo } from './native-dmo.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { createDmoClient } from '../transport/dmo-rest.js';
+import { openBoundSsot } from '../transport/bound-ssot.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import {
   carriedNativeResponse,
@@ -80,8 +81,16 @@ export async function acquireRetrieveSelection(
 ): Promise<RetrieveSelectionEntry[]> {
   const services: RetrieveServices = {
     segment: retrieveSegment,
-    dmo: async (name: string): Promise<unknown> =>
-      createDmoClient(connection.getUsername() ?? '', nativeApiVersion()).get(name),
+    // The DMO read rides the command's connection: no child CLI process.
+    dmo: async (name: string): Promise<unknown> => {
+      const username = connection.getUsername() ?? '';
+      return createDmoClient(
+        username,
+        nativeApiVersion(),
+        undefined,
+        openBoundSsot(username, nativeApiVersion(), async () => connection),
+      ).get(name);
+    },
     bind: bindSegmentDependencies,
     raw: async (name: string): Promise<unknown> =>
       new ConnectClient(connection, version).get(

@@ -13,6 +13,7 @@ import {
 } from '../lib/artifacts/native-mapping-document.js';
 import { writeNativeMappingDocument } from '../lib/artifacts/write-native-mapping.js';
 import { createMappingClient } from '../lib/transport/mapping-rest.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 
 const mappingName = 'Example_map_Example_1793097786690';
 const pair = (source, target = source) => ({
@@ -44,10 +45,6 @@ const body = () => ({
     sourceFieldDeveloperName: name,
     targetFieldDeveloperName: name,
   })),
-});
-const http = (status, value, exitCode = status >= 400 ? 1 : 0) => ({
-  exitCode,
-  stdout: `HTTP/1.1 ${status}\r\ncontent-type: application/json\r\nx-request-id: synthetic\r\n\r\n${value === undefined ? '' : JSON.stringify(value)}`,
 });
 
 // Seven-pair output and three-pair input mirror the retained API65 create evidence.
@@ -180,123 +177,107 @@ test('mapping publication rejects linked ancestors and hardlinked destinations',
   assert.equal(await readFile(sentinel, 'utf8'), 'sentinel');
 });
 
-test('mapping transport uses filtered collection, detail, singular input and selector-free PATCH', async () => {
+const noRunner = async () => assert.fail('a REST call must never start a CLI process');
+/**
+ * A bound sender that records each call and answers through the handler.
+ * @param {Function} answer Returns the response for (method, route, body), or throws.
+ * @returns {{ sender: object, calls: Array<[string, string, unknown]> }} Sender and calls.
+ */
+const recording = (answer = () => native()) => {
   const calls = [];
-  const client = createMappingClient('target', '65.0', async (arguments_) => {
-    calls.push(arguments_);
-    if (arguments_.includes('--body')) {
-      const sent = JSON.parse(
-        await readFile(arguments_[arguments_.indexOf('--body') + 1].slice(1), 'utf8'),
-      );
-      assert.deepEqual(sent, body());
-      assert.equal(sent.fieldMappings, undefined);
-      assert.equal(sent.name, undefined);
-      assert.equal(sent.replaceSource, undefined);
-    }
-    return http(
-      arguments_.includes('POST') ? 201 : 200,
-      arguments_.includes('POST') ? { ...native(), status: 'CREATING' } : native(),
-    );
-  });
-  await client.list('Example__dlm');
-  await client.list('Example__dlm', 'Example__dll');
-  assert.deepEqual(await client.get(mappingName), native());
-  const created = await client.create(body());
+  return {
+    calls,
+    sender: {
+      request: async (method, route, noContent, sent) => {
+        calls.push([method, route, sent]);
+        const value = await answer(method, route, sent);
+        return value === undefined ? noContent : value;
+      },
+    },
+  };
+};
+const client = (version, sender, dataSpace) =>
+  createMappingClient('target', version, noRunner, dataSpace, sender);
+
+test('mapping transport uses filtered collection, detail, singular input and selector-free PATCH', async () => {
+  const { calls, sender } = recording((method) =>
+    method === 'POST' ? { ...native(), status: 'CREATING' } : native(),
+  );
+  const mapping = client('65.0', sender);
+  await mapping.list('Example__dlm');
+  await mapping.list('Example__dlm', 'Example__dll');
+  assert.deepEqual(await mapping.get(mappingName), native());
+  const created = await mapping.create(body());
   assert.equal(created.status, 'CREATING');
-  await client.update(mappingName, body());
+  await mapping.update(mappingName, body());
   const prefix = '/services/data/v65.0/ssot/data-model-object-mappings';
-  assert.equal(calls[0][3], `${prefix}?dmoDeveloperName=Example__dlm`);
-  assert.equal(
-    calls[1][3],
-    `${prefix}?dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`,
-  );
-  assert.equal(calls[2][3], `${prefix}/${mappingName}`);
-  assert.equal(calls[3][3], `${prefix}`);
-  assert.ok(calls[3].includes('POST'));
-  assert.equal(calls[4][3], `${prefix}/${mappingName}/field-mappings`);
-  assert.ok(calls[4].includes('PATCH'));
-  assert.ok(
-    calls.every((arguments_) => arguments_.includes('--include') && arguments_.includes('target')),
-  );
+  assert.deepEqual(calls, [
+    ['GET', `${prefix}?dmoDeveloperName=Example__dlm`, undefined],
+    ['GET', `${prefix}?dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`, undefined],
+    ['GET', `${prefix}/${mappingName}`, undefined],
+    ['POST', prefix, body()],
+    ['PATCH', `${prefix}/${mappingName}/field-mappings`, body()],
+  ]);
+  for (const sent of calls.slice(3).map((call) => call[2])) {
+    assert.equal(sent.fieldMappings, undefined);
+    assert.equal(sent.name, undefined);
+    assert.equal(sent.replaceSource, undefined);
+  }
 });
 
 test('mapping transport encodes explicit dataspace on every operation without changing routes or bodies', async () => {
-  const calls = [];
   const dataSpace = 'Team / +&?=ü';
   const query = '?dataspace=Team+%2F+%2B%26%3F%3D%C3%BC';
   const prefix = '/services/data/v68.0/ssot/data-model-object-mappings';
-  const client = createMappingClient(
-    'target',
-    '68.0',
-    async (arguments_) => {
-      if (arguments_.includes('--file')) {
-        const request = JSON.parse(
-          await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),
-        );
-        assert.deepEqual(request.body, { mode: 'raw', raw: '' });
-        calls.push([request.method, request.url]);
-        return http(204);
-      }
-      if (arguments_.includes('--body'))
-        assert.deepEqual(
-          JSON.parse(await readFile(arguments_[arguments_.indexOf('--body') + 1].slice(1), 'utf8')),
-          body(),
-        );
-      const method = arguments_[arguments_.indexOf('--method') + 1];
-      calls.push([method, arguments_[3]]);
-      return http(method === 'POST' ? 201 : 200, native());
-    },
-    dataSpace,
-  );
-  await client.list('Example__dlm');
-  await client.list('Example__dlm', 'Example__dll');
-  await client.get(mappingName);
-  await client.create(body());
-  await client.update(mappingName, body());
-  await client.deleteField(mappingName, 'observed_selector_123');
+  const { calls, sender } = recording((method) => (method === 'DELETE' ? undefined : native()));
+  const mapping = client('68.0', sender, dataSpace);
+  await mapping.list('Example__dlm');
+  await mapping.list('Example__dlm', 'Example__dll');
+  await mapping.get(mappingName);
+  await mapping.create(body());
+  await mapping.update(mappingName, body());
+  await mapping.deleteField(mappingName, 'observed_selector_123');
   assert.deepEqual(calls, [
-    ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm`],
-    ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`],
-    ['GET', `${prefix}/${mappingName}${query}`],
-    ['POST', `${prefix}${query}`],
-    ['PATCH', `${prefix}/${mappingName}/field-mappings${query}`],
-    ['DELETE', `${prefix}/${mappingName}/field-mappings/observed_selector_123${query}`],
+    ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm`, undefined],
+    [
+      'GET',
+      `${prefix}${query}&dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`,
+      undefined,
+    ],
+    ['GET', `${prefix}/${mappingName}${query}`, undefined],
+    ['POST', `${prefix}${query}`, body()],
+    ['PATCH', `${prefix}/${mappingName}/field-mappings${query}`, body()],
+    ['DELETE', `${prefix}/${mappingName}/field-mappings/observed_selector_123${query}`, undefined],
   ]);
 });
 
 test('mapping field DELETE uses exact observed selector once and rejects unsafe inputs', async () => {
-  const calls = [];
-  const client = createMappingClient('target', '68.0', async (arguments_) => {
-    calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
-    return http(204);
-  });
-  assert.equal(client.apiVersion, '68.0');
-  await client.deleteField(mappingName, 'observed_selector_123');
-  assert.equal(calls.length, 1);
-  assert.equal(
-    calls[0].url,
-    `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
-  );
-  assert.deepEqual(calls[0].body, { mode: 'raw', raw: '' });
+  const { calls, sender } = recording(() => {});
+  const mapping = client('68.0', sender);
+  assert.equal(mapping.apiVersion, '68.0');
+  await mapping.deleteField(mappingName, 'observed_selector_123');
+  assert.deepEqual(calls, [
+    [
+      'DELETE',
+      `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
+      undefined,
+    ],
+  ]);
   for (const selector of ['', '../escape', 'a/b', 'a?dataspace=other', undefined])
-    await assert.rejects(client.deleteField(mappingName, selector));
+    await assert.rejects(mapping.deleteField(mappingName, selector));
   assert.equal(calls.length, 1);
   // The client keeps a newer numeric pin as given; the field DELETE has no version gate.
-  await createMappingClient('target', '69.0', async (arguments_) => {
-    calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
-    return http(204);
-  }).deleteField(mappingName, 'observed');
+  await client('69.0', sender).deleteField(mappingName, 'observed');
   assert.equal(calls.length, 2);
-  assert.match(calls[1].url, /^\/services\/data\/v69\.0\//u);
-  let attempts = 0;
+  assert.match(calls[1][1], /^\/services\/data\/v69\.0\//u);
+  const failing = recording(() => {
+    throw new ConnectError('REQUEST_FAILED', 500);
+  });
   await assert.rejects(
-    createMappingClient('target', '68.0', async () => {
-      attempts++;
-      return http(500);
-    }).deleteField(mappingName, 'observed'),
+    client('68.0', failing.sender).deleteField(mappingName, 'observed'),
     /HTTP_ERROR/,
   );
-  assert.equal(attempts, 1);
+  assert.equal(failing.calls.length, 1);
 });
 
 test('mapping field DELETE preserves every admitted compatibility pin and normalizes default/auto', async () => {
@@ -312,81 +293,72 @@ test('mapping field DELETE preserves every admitted compatibility pin and normal
     'auto',
     undefined,
   ]) {
-    const calls = [];
-    const client = createMappingClient('target', version, async (arguments_) => {
-      calls.push(JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8')));
-      return http(204);
-    });
-    await client.deleteField(mappingName, 'observed_selector_123');
+    const { calls, sender } = recording(() => {});
+    await client(version, sender).deleteField(mappingName, 'observed_selector_123');
     assert.deepEqual(calls, [
-      {
-        url: `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
-        method: 'DELETE',
-        body: { mode: 'raw', raw: '' },
-      },
+      [
+        'DELETE',
+        `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
+        undefined,
+      ],
     ]);
   }
 });
 
 test('mapping version guard admits explicit >=61 and default/auto68 before calls, preserving pins', async () => {
-  let calls = 0;
-  const runner = async (arguments_) => {
-    calls++;
-    return http(200, { route: arguments_[3] });
-  };
+  const { calls, sender } = recording((method, route) => ({ route }));
   for (const version of ['60.0', '59.0', '0.0', 'latest', 'v65.0', '65', '../68.0', '68.1'])
-    assert.throws(() => createMappingClient('target', version, runner), /INVALID_SCOPE/);
-  assert.throws(() => createMappingClient('-target', '68.0', runner), /UNSUPPORTED/);
-  assert.equal(calls, 0);
+    assert.throws(() => client(version, sender), /INVALID_SCOPE/);
+  assert.throws(
+    () => createMappingClient('-target', '68.0', noRunner, undefined, sender),
+    /UNSUPPORTED/,
+  );
+  assert.equal(calls.length, 0);
   for (const version of ['61.0', '65.0', '66.0', '67.0', '68.0', '69.0', 'auto', undefined]) {
-    const result = await createMappingClient('target', version, runner).get(mappingName);
+    const result = await client(version, sender).get(mappingName);
     assert.ok(result.route.includes(`/v${!version || version === 'auto' ? '68.0' : version}/`));
   }
 });
 
 test('mapping transport rejects unsafe selection and read documents as write payloads with zero calls', async () => {
-  let calls = 0;
-  const client = createMappingClient('target', '68.0', async () => {
-    calls++;
-    return http(200, native());
-  });
+  const { calls, sender } = recording();
+  const mapping = client('68.0', sender);
   for (const operation of [
-    () => client.list(''),
-    () => client.list('Example__dlm', '../escape'),
-    () => client.get('../escape'),
-    () => client.remove('../escape'),
-    () => client.update('../escape', body()),
-    () => client.update(mappingName, { ...body(), fieldMapping: document().spec.fieldMappings }),
-    () => client.create(document()),
-    () => client.create({ ...body(), replaceSource: true }),
-    () => client.create({ ...body(), fieldMapping: document().spec.fieldMappings }),
-    () => client.create({ ...body(), fieldMapping: [] }),
+    () => mapping.list(''),
+    () => mapping.list('Example__dlm', '../escape'),
+    () => mapping.get('../escape'),
+    () => mapping.remove('../escape'),
+    () => mapping.update('../escape', body()),
+    () => mapping.update(mappingName, { ...body(), fieldMapping: document().spec.fieldMappings }),
+    () => mapping.create(document()),
+    () => mapping.create({ ...body(), replaceSource: true }),
+    () => mapping.create({ ...body(), fieldMapping: document().spec.fieldMappings }),
+    () => mapping.create({ ...body(), fieldMapping: [] }),
   ])
     await assert.rejects(operation(), NativeMappingError);
-  assert.equal(calls, 0);
+  assert.equal(calls.length, 0);
 });
 
-test('mapping transport distinguishes confirmed HTTP errors and refuses malformed receipts without retries', async () => {
-  for (const [receipt, code, status] of [
-    [http(404, { message: 'secret' }), 'MAPPING_HTTP_ERROR', 404],
-    [http(403, { message: 'secret' }), 'MAPPING_HTTP_ERROR', 403],
-    [http(500, {}), 'MAPPING_HTTP_ERROR', 500],
-    [http(202, native()), 'MAPPING_REQUEST_UNCONFIRMED', 202],
-    [http(200, native(), 1), 'MAPPING_REQUEST_UNCONFIRMED', 200],
-    [{ exitCode: 0, stdout: JSON.stringify(native()) }, 'MAPPING_REQUEST_UNCONFIRMED', undefined],
-    [{ exitCode: 0, stdout: 'HTTP/1.1 200\n\nnot-json' }, 'INVALID_MAPPING_RESPONSE', 200],
+test('mapping transport distinguishes confirmed HTTP errors and refuses unconfirmed or malformed answers once', async () => {
+  for (const [answer, code, status] of [
+    [new ConnectError('REQUEST_FAILED', 404), 'MAPPING_HTTP_ERROR', 404],
+    [new ConnectError('REQUEST_FAILED', 403), 'MAPPING_HTTP_ERROR', 403],
+    [new ConnectError('REQUEST_FAILED', 500), 'MAPPING_HTTP_ERROR', 500],
+    [new ConnectError('REQUEST_FAILED'), 'MAPPING_REQUEST_UNCONFIRMED', undefined],
+    [undefined, 'MAPPING_REQUEST_UNCONFIRMED', 204],
+    ['not-json', 'INVALID_MAPPING_RESPONSE', undefined],
+    [[], 'INVALID_MAPPING_RESPONSE', undefined],
   ]) {
-    let calls = 0;
-    const client = createMappingClient('target', '68.0', async () => {
-      calls++;
-      return receipt;
+    const { calls, sender } = recording(() => {
+      if (answer instanceof Error) throw answer;
+      return answer;
     });
-    await assert.rejects(client.create(body()), (error) => {
+    await assert.rejects(client('68.0', sender).create(body()), (error) => {
       assert.equal(error.code, code);
       assert.equal(error.status, status);
       assert.ok(!error.message.includes('secret'));
       return true;
     });
-    assert.equal(calls, 1);
+    assert.equal(calls.length, 1);
   }
 });

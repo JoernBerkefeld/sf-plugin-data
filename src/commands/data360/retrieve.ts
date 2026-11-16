@@ -458,7 +458,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     return {
       source: {
         get: async (name) =>
-          (this.createDloClient ?? createDloClient)(target, version, undefined, sender).get(name),
+          (this.createDloClient ?? createDloClient)(target, version, sender).get(name),
       },
       target: {
         get: async (name) =>
@@ -487,7 +487,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     return createRelationshipClient(
       target,
       version,
-      undefined,
       requestScope,
       this.ssotSender(target, version, connection),
     );
@@ -1332,7 +1331,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                           this.createDloClient(
                             target,
                             version,
-                            undefined,
                             this.ssotSender(target, version, connection),
                           ),
                         ),
@@ -1685,7 +1683,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 this.createDloClient(
                   target,
                   '68.0',
-                  undefined,
                   this.ssotSender(target, '68.0', org.getConnection()),
                 ),
               );

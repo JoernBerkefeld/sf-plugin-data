@@ -18,6 +18,7 @@ import { createDloClient } from '../lib/transport/dlo-rest.js';
 import { createDmoClient } from '../lib/transport/dmo-rest.js';
 import { createMappingClient } from '../lib/transport/mapping-rest.js';
 import { createDataStreamClient } from '../lib/transport/data-stream-rest.js';
+import { openBoundSsot } from '../lib/transport/bound-ssot.js';
 
 const origin = 'https://synthetic.my.salesforce.com';
 
@@ -268,37 +269,44 @@ for (const status of [400, 500]) {
   }
 }
 
+/**
+ * The four family clients on one bound sender over the synthetic core wire.
+ * @param {object} connection Synthetic core Connection.
+ * @returns {object} Family client factories.
+ */
+function boundClients(connection) {
+  const sender = () => openBoundSsot('synthetic', '68.0', async () => connection);
+  return {
+    dlo: () => createDloClient('synthetic', '68.0', sender()),
+    dmo: () => createDmoClient('synthetic', '68.0', undefined, sender()),
+    mapping: () => createMappingClient('synthetic', '68.0', undefined, undefined, sender()),
+    stream: () => createDataStreamClient('synthetic', {}, '68.0', sender()),
+  };
+}
+
 for (const family of ['dlo', 'dmo', 'mapping', 'stream']) {
-  test(`CLI ${family} actual HTTP failure preserves code, safe reason and request ID once`, async () => {
-    let calls = 0;
-    const runner = async () => {
-      calls++;
-      return {
-        stdout:
-          'HTTP/1.1 400 Bad Request\nX-SFDC-Request-ID: req-12345678\nAuthorization: Bearer private\n[{"errorCode":"INVALID_INPUT","message":"Reduce the ruleset count to 10."}]',
-        stderr: 'private',
-        exitCode: 1,
-      };
-    };
+  test(`bound ${family} actual HTTP failure preserves code, safe reason and request ID once`, async () => {
+    const f = core(
+      400,
+      [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }],
+      'req-12345678',
+    );
+    const make = boundClients(f.connection);
     const clients = {
-      dlo: () => createDloClient('synthetic', '68.0', runner).get('Synthetic__dll'),
-      dmo: () => createDmoClient('synthetic', '68.0', runner).get('Synthetic__dlm'),
-      mapping: () => createMappingClient('synthetic', '68.0', runner).get('Synthetic'),
-      stream: () =>
-        createDataStreamClient('synthetic', {}, '68.0', runner).delete('0dk000000000001AAA', false),
+      dlo: () => make.dlo().get('Synthetic__dll'),
+      dmo: () => make.dmo().get('Synthetic__dlm'),
+      mapping: () => make.mapping().get('Synthetic'),
+      stream: () => make.stream().delete('0dk000000000001AAA', false),
     };
     await assert.rejects(clients[family](), (error) => {
       assert.equal(getConnectDiagnostic(error).statusCode, 400);
       const rendered = operationDiagnostic(error, 'No automatic replay.');
       assert.match(rendered, /INVALID_INPUT: Reduce the ruleset count to 10/u);
       assert.match(rendered, /Request ID: req-12345678/u);
-      assert.doesNotMatch(
-        rendered + inspect(error) + JSON.stringify(error),
-        /private|Authorization/u,
-      );
+      assert.doesNotMatch(rendered + inspect(error) + JSON.stringify(error), /synthetic-token/u);
       return true;
     });
-    assert.equal(calls, 1);
+    assert.equal(f.count(), 1);
   });
 }
 
@@ -331,68 +339,37 @@ for (const status of [429, 503]) {
     });
   for (const family of ['dlo', 'dmo', 'mapping', 'stream'])
     for (const method of family === 'stream' ? ['DELETE'] : ['GET', 'POST', 'PATCH', 'DELETE'])
-      test(`CLI ${family} ${method} HTTP${status} retains only safe header evidence`, async () => {
-        let calls = 0;
-        const runner = async () => {
-          calls++;
-          return {
-            stdout: `HTTP/1.1 ${status} Unavailable\nRetry-After: 7\nAuthorization: secret\n[{"message":"secret"}]`,
-            stderr: 'secret',
-            exitCode: 1,
-          };
-        };
+      test(`bound ${family} ${method} HTTP${status} retains only safe evidence; a write goes once`, async () => {
+        const f = core(status);
+        const make = boundClients(f.connection);
         const mappingBody = {
           sourceEntityDeveloperName: 'Synthetic__dll',
           targetEntityDeveloperName: 'Synthetic__dlm',
           fieldMapping: [{ sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Id__c' }],
         };
         const clients = {
-          dlo: () =>
-            native(
-              createDloClient('synthetic', '68.0', runner),
-              'Synthetic__dll',
-              '0dl000000000001AAA',
-              {},
-              method,
-            ),
-          dmo: () =>
-            native(
-              createDmoClient('synthetic', '68.0', runner),
-              'Synthetic__dlm',
-              'Synthetic__dlm',
-              {},
-              method,
-            ),
+          dlo: () => native(make.dlo(), 'Synthetic__dll', '0dl000000000001AAA', {}, method),
+          dmo: () => native(make.dmo(), 'Synthetic__dlm', 'Synthetic__dlm', {}, method),
           // The mapping REST DELETE route is the field-pair delete.
           mapping: () =>
             method === 'DELETE'
-              ? createMappingClient('synthetic', '68.0', runner).deleteField(
-                  'Synthetic',
-                  'observed_selector_123',
-                )
-              : native(
-                  createMappingClient('synthetic', '68.0', runner),
-                  'Synthetic',
-                  'Synthetic',
-                  mappingBody,
-                  method,
-                ),
-          stream: () =>
-            createDataStreamClient('synthetic', {}, '68.0', runner).delete(
-              '0dk000000000001AAA',
-              false,
-            ),
+              ? make.mapping().deleteField('Synthetic', 'observed_selector_123')
+              : native(make.mapping(), 'Synthetic', 'Synthetic', mappingBody, method),
+          stream: () => make.stream().delete('0dk000000000001AAA', false),
         };
         await assert.rejects(clients[family](), (error) => {
           assert.deepEqual(
             getConnectDiagnostic(error),
-            connectDiagnostic(status, { 'retry-after': '7' }),
+            apiDiagnostic(status, [{ errorCode: 'INTERNAL_ERROR', message: 'secret' }], {
+              'retry-after': '7',
+            }),
           );
           assert.ok(
             ![inspect(error), JSON.stringify(error)].some((text) => text.includes('secret')),
           );
           return true;
         });
-        assert.equal(calls, 1);
+        // A throttled read is retried; a throttled write is never resent.
+        assert.equal(f.count(), method === 'GET' ? 3 : 1);
       });
 }

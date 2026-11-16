@@ -261,37 +261,27 @@ function useProductionTransport(scenario, document) {
       },
     },
     '68.0',
-    async (arguments_) => {
-      let result;
-      let status;
-      if (arguments_.includes('--file')) {
-        const request = JSON.parse(
-          await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),
-        );
-        const parsed = new URL(request.url, 'https://synthetic.invalid');
-        await original.delete(
-          parsed.pathname.slice(endpoint.length + 1),
-          parsed.searchParams.get('shouldDeleteDataLakeObject') === 'true',
-        );
-        status = 204;
-      } else if (arguments_[arguments_.indexOf('--method') + 1] === 'POST') {
-        result = await original.create(document);
-        status = 201;
-      } else {
-        result = await original.update(arguments_[3].slice(endpoint.length + 1), {
+    {
+      // The bound sender: one in-process request per write, the body as an object.
+      request: async (method, route, noContent, body) => {
+        const parsed = new URL(route, 'https://synthetic.invalid');
+        if (method === 'DELETE') {
+          assert.equal(body, undefined);
+          await original.delete(
+            parsed.pathname.slice(endpoint.length + 1),
+            parsed.searchParams.get('shouldDeleteDataLakeObject') === 'true',
+          );
+          return noContent;
+        }
+        if (method === 'POST') return original.create(document);
+        return original.update(parsed.pathname.slice(endpoint.length + 1), {
           ...document,
           spec: {
             ...document.spec,
             additiveFieldMappings: document.spec.additiveFieldMappings.slice(-1),
           },
         });
-        status = 200;
-      }
-      return {
-        exitCode: 0,
-        stdout: `HTTP/1.1 ${status} Synthetic\r\n\r\n${result === undefined ? '' : JSON.stringify(result)}`,
-        stderr: '',
-      };
+      },
     },
   );
   return calls;
@@ -679,30 +669,17 @@ test('inventory continuation preserves resource, version and filters; duplicates
 
 test('native mutations use exact builders, target record IDs and explicit boolean with no DELETE body', async () => {
   const requests = [];
-  const runner = async (arguments_) => {
-    assert.equal(arguments_.includes('--include'), true);
-    assert.equal(arguments_.includes('--json'), false);
-    const request = arguments_.includes('--file')
-      ? JSON.parse(await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'))
-      : {
-          url: arguments_[3],
-          method: arguments_[arguments_.indexOf('--method') + 1],
-          body: JSON.parse(
-            await readFile(arguments_[arguments_.indexOf('--body') + 1].slice(1), 'utf8'),
-          ),
-        };
-    requests.push(request);
-    const status = request.method === 'POST' ? 201 : request.method === 'PATCH' ? 200 : 204;
-    return {
-      exitCode: 0,
-      stdout: `HTTP/1.1 ${status} Synthetic\nContent-Type: application/json\n${status === 204 ? '' : '{"name":"UntrustedEcho"}'}`,
-    };
+  const sender = {
+    request: async (method, url, noContent, body) => {
+      requests.push({ url, method, body });
+      return method === 'DELETE' ? noContent : { name: 'UntrustedEcho' };
+    },
   };
   const client = createDataStreamClient(
     'synthetic',
     { get: async () => assert.fail('no GET') },
     '68.0',
-    runner,
+    sender,
   );
   await client.create(authored);
   const patch = structuredClone(authored);
@@ -712,6 +689,10 @@ test('native mutations use exact builders, target record IDs and explicit boolea
   await client.update(streamId, patch);
   await client.delete(streamId, false);
   await client.delete(streamId, true);
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ['POST', 'PATCH', 'DELETE', 'DELETE'],
+  );
   assert.equal(requests[0].body.dataLakeObjectInfo.name, 'Proposed__dll');
   assert.deepEqual(requests[1].body, {
     datastreamType: 'INGEST_API',
@@ -719,34 +700,33 @@ test('native mutations use exact builders, target record IDs and explicit boolea
   });
   assert.equal(requests[2].url, `${endpoint}/${streamId}?shouldDeleteDataLakeObject=false`);
   assert.equal(requests[3].url, `${endpoint}/${streamId}?shouldDeleteDataLakeObject=true`);
-  assert.deepEqual(requests[2].body, { mode: 'raw' });
-  assert.deepEqual(requests[3].body, { mode: 'raw' });
+  assert.equal(requests[2].body, undefined);
+  assert.equal(requests[3].body, undefined);
   await assert.rejects(client.delete('DefinitionId', false));
   await assert.rejects(client.delete(streamId, undefined));
   assert.equal(requests.length, 4);
 });
 
-test('HTTP status is not CLI exit status; malformed/success echoes never imply settlement or absence', async () => {
-  for (const [stdout, exitCode, expectedStatus] of [
-    ['{"status":404}', 0, undefined],
-    ['HTTP/1.1 404 Not Found\n[]', 0, 404],
-    ['HTTP/1.1 201 Created\n{}', 1, 201],
-    ['HTTP/1.1 200 OK\n{}', 0, 200],
-    ['HTTP/1.1 201 Created\n[]', 0, 201],
-    ['HTTP/1.1 201 Created\nsecret', 0, 201],
-    ['HTTP/1.1 302 Redirect\nLocation: https://hostile.test\n', 0, 302],
+test('a failed or malformed write answer never implies settlement or absence', async () => {
+  const empty = Symbol('empty');
+  for (const [answer, code, expectedStatus] of [
+    [new ConnectError('REQUEST_FAILED'), 'STREAM_REQUEST_UNCONFIRMED', undefined],
+    [new ConnectError('REQUEST_FAILED', 404), 'STREAM_HTTP_ERROR', 404],
+    [new ConnectError('AUTHENTICATION_FAILED', 401), 'STREAM_HTTP_ERROR', 401],
+    [[], 'INVALID_STREAM_RESPONSE', undefined],
+    ['secret', 'INVALID_STREAM_RESPONSE', undefined],
+    [empty, 'STREAM_REQUEST_UNCONFIRMED', 204],
   ]) {
     let calls = 0;
-    const client = createDataStreamClient(
-      'synthetic',
-      { get: async () => {} },
-      '68.0',
-      async () => {
+    const client = createDataStreamClient('synthetic', { get: async () => {} }, '68.0', {
+      request: async (method, route, noContent) => {
         calls++;
-        return { stdout, exitCode };
+        if (answer instanceof Error) throw answer;
+        return answer === empty ? noContent : answer;
       },
-    );
+    });
     await assert.rejects(client.create(authored), (error) => {
+      assert.equal(error.code, code);
       assert.equal(error.status, expectedStatus);
       assert.equal(String(error).includes('secret'), false);
       return true;
@@ -974,9 +954,9 @@ test('production native API68 connection reads reach create preview with the obs
   }, requests);
   const reader = new ConnectClient(owner, '68.0');
   Object.assign(fixture.clients, createDataStreamReferenceReader(reader, '68.0'));
-  fixture.clients.streams = createDataStreamClient('synthetic', reader, '68.0', async () =>
-    assert.fail('preview must not dispatch mutations'),
-  );
+  fixture.clients.streams = createDataStreamClient('synthetic', reader, '68.0', {
+    request: async () => assert.fail('preview must not dispatch mutations'),
+  });
   fixture.clients.dlo.get = async (name) => {
     fixture.calls.push(name);
     assert.equal(name, 'Proposed__dll');

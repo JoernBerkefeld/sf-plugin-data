@@ -1,17 +1,12 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import {
-  apiReceiptDiagnostic,
   displayableApiText,
   getConnectDiagnostic,
   retainConnectDiagnostic,
 } from './connect-diagnostic.js';
 import { replaceExplanation } from '../services/operation-diagnostic.js';
 import { ConnectError } from './connect-client.js';
-import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
-import type { MetadataRunner } from './project-metadata.js';
 import { nativeApiVersion } from './api-version.js';
+import { openBoundSsot } from './bound-ssot.js';
 import type { BoundSsot } from './bound-ssot.js';
 import {
   NativeRelationshipError,
@@ -28,7 +23,7 @@ export type RelationshipClient = {
   readonly apiVersion: string;
   /** One page of every relationship the DMO is source or target of; undefined for 204. */
   list: (dmoName: string, offset: number) => Promise<unknown>;
-  /** One POST creating exactly one relationship on its source DMO; never retried. */
+  /** One POST creating exactly one relationship on its source DMO; never resent once sent. */
   create: (relationship: NativeRelationshipSpec) => Promise<unknown>;
   /** One DELETE by exact relationship name; never retried. */
   remove: (relationshipName: string) => Promise<void>;
@@ -87,19 +82,17 @@ function records(value: unknown): unknown[] {
 }
 
 /**
- * Build a single-attempt native relationship client. GET and DELETE go through the bound sender
- * when one is given; POST stays on the installed CLI runner like the other native writes.
+ * Build a native relationship client on the bound in-process connection; the POST and DELETE
+ * are never resent once they may have reached Salesforce.
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiVersion Validated numeric version, or default/auto 68.0.
- * @param {MetadataRunner} runner Injectable installed CLI runner.
  * @param {string} dataSpace Optional explicit request scope.
- * @param {BoundSsot} [sender] Bound single-attempt sender for GET and DELETE.
- * @returns {RelationshipClient} Raw operations; all scratch is retained.
+ * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
+ * @returns {RelationshipClient} Raw operations.
  */
 export function createRelationshipClient(
   targetOrg: string,
   apiVersion = '68.0',
-  runner: MetadataRunner = runProjectMetadata,
   dataSpace?: string,
   sender?: BoundSsot,
 ): RelationshipClient {
@@ -114,86 +107,24 @@ export function createRelationshipClient(
   const scopeQuery =
     dataSpace === undefined ? '' : `?${new URLSearchParams({ dataspace: dataSpace })}`;
   const noContent = Symbol('relationship-no-content');
+  const bound = sender ?? openBoundSsot(targetOrg, version);
 
   /**
-   * Execute once with receipt-proven HTTP status, without inferring settlement.
+   * Send one request on the bound connection: no child CLI, token refresh or redirect, and the
+   * POST is never resent once it may have reached Salesforce. Not settlement evidence.
    * @param {'GET' | 'POST' | 'DELETE'} method HTTP verb.
    * @param {string} route Validated route and query.
    * @param {object} [body] Explicit create body.
-   * @returns {Promise<unknown>} Raw response, `noContent` for 204, not persistence evidence.
+   * @returns {Promise<unknown>} Parsed object or `noContent` for GET/POST; nothing for DELETE.
    */
   async function request(
     method: 'GET' | 'POST' | 'DELETE',
     route: string,
     body?: object,
   ): Promise<unknown> {
-    if (sender && method !== 'POST') return boundRequest(sender, method, route);
-    verifyTemporaryDirectory();
-    const root = await mkdtemp(path.join(os.tmpdir(), 'data360-native-relationship-'));
-    const arguments_ = ['api', 'request', 'rest'];
-    if (method === 'DELETE') {
-      const file = path.join(root, 'request.json');
-      await writeFile(
-        file,
-        JSON.stringify({ url: route, method, body: { mode: 'raw', raw: '' } }),
-        { flag: 'wx' },
-      );
-      arguments_.push('--file', file);
-    } else {
-      arguments_.push(route, '--method', method);
-      if (body) {
-        const file = path.join(root, 'body.json');
-        await writeFile(file, JSON.stringify(body), { flag: 'wx' });
-        arguments_.push('--body', `@${file}`, '--header', 'Content-Type:application/json');
-      }
-    }
-    arguments_.push('--target-org', targetOrg, '--include');
-    const receipt = await runner(arguments_, root);
-    const match = /^HTTP\/\d(?:\.\d)? (\d{3})[^\r\n]*\r?\n/u.exec(receipt.stdout);
-    if (!match) throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
-    const status = Number(match[1]);
-    const payload = receipt.stdout
-      .slice(match[0].length)
-      .replace(/^(?:[^\r\n]+:[^\r\n]*\r?\n|\r?\n)*/u, '')
-      .trim();
-    if (status < 200 || status >= 300)
-      throw retainConnectDiagnostic(
-        new NativeRelationshipError('RELATIONSHIP_HTTP_ERROR', status),
-        apiReceiptDiagnostic(receipt.stdout),
-      );
-    if (
-      receipt.exitCode !== 0 ||
-      !(
-        (method === 'GET' && (status === 200 || status === 204)) ||
-        (method === 'POST' && (status === 200 || status === 201)) ||
-        (method === 'DELETE' && (status === 200 || status === 204))
-      )
-    )
-      throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED', status);
-    if (method === 'DELETE') return;
-    if (status === 204) return noContent;
-    try {
-      return JSON.parse(payload) as unknown;
-    } catch {
-      throw new NativeRelationshipError('INVALID_RELATIONSHIP_RESPONSE', status);
-    }
-  }
-
-  /**
-   * Send one GET or DELETE on the bound connection: no child CLI, refresh, retry or redirect.
-   * @param {BoundSsot} bound Bound sender.
-   * @param {'GET' | 'DELETE'} method Read or exact delete.
-   * @param {string} route Validated route and query.
-   * @returns {Promise<unknown>} Parsed object or `noContent` for GET; nothing for DELETE.
-   */
-  async function boundRequest(
-    bound: BoundSsot,
-    method: 'GET' | 'DELETE',
-    route: string,
-  ): Promise<unknown> {
     let response: unknown;
     try {
-      response = await bound.request(method, route, noContent);
+      response = await bound.request(method, route, noContent, body);
     } catch (error) {
       if (!(error instanceof ConnectError)) throw error;
       const status = error.code === 'AUTHENTICATION_FAILED' ? 401 : error.statusCode;

@@ -553,9 +553,15 @@ grouped by family, is in [docs/errors/README.md](docs/errors/README.md).
 
 ## Native DLO definition workflow
 
-The DLO workflow uses native Data Cloud API 68 through authenticated
-`sf api request rest`. This retains standard Salesforce CLI authentication; it does
-not replace CLI auth with another credential store.
+The DLO workflow uses native Data Cloud API 68 over the command's authenticated
+in-process connection. This retains standard Salesforce CLI authentication; it does
+not replace CLI auth with another credential store. DLO, DMO, mapping, relationship
+and stream writes share that one connection with the reads, with no child
+`sf api request rest` process. A write is sent again only when it provably never
+left (connection refused, host not found or unreachable); never after a reset, a
+timeout, HTTP 429 or 503, and never after a token refresh. The read-back after the
+write decides the outcome. Only the two Metadata API destructive changes (DMO field
+removal and a whole-mapping delete) still run `sf project deploy start`.
 
 **Why not simply wrap `sf project retrieve/deploy`?** Standard Metadata retrieval
 worked at requested APIs 65–68 and saved identical object/field XML. However,

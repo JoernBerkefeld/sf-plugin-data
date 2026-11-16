@@ -14,6 +14,7 @@ import {
   validateNativeDmoDocument,
 } from '../lib/artifacts/native-dmo-document.js';
 import { createDmoClient } from '../lib/transport/dmo-rest.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 import {
   deleteNativeDmo,
   previewDeleteNativeDmo,
@@ -71,10 +72,6 @@ const authored = (name) => ({
 const absent = async () => {
   throw new NativeDmoError('DMO_HTTP_ERROR', 404);
 };
-const http = (status, body) => ({
-  exitCode: status >= 400 ? 1 : 0,
-  stdout: `HTTP/1.1 ${status}\ncontent-type: application/json\nx-request-id: synthetic\n${body === undefined ? '' : JSON.stringify(body)}`,
-});
 
 const planOperation = async (...arguments_) => {
   const plan = await preflightNativeDmo(...arguments_);
@@ -915,33 +912,19 @@ test('DMO authoritative scope, conditional body projection and collision refusal
   assert.deepEqual(await readFile(receipt.path), bytes);
 });
 
-test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained FTemp bodies and no IDs', async () => {
+test('native DMO transport uses API65 full-name GET/POST/PATCH/DELETE routes on the bound sender and no IDs', async () => {
   const requests = [];
-  const client = createDmoClient('target', '65.0', async (arguments_, cwd) => {
-    assert.ok(arguments_.includes('--include'));
-    assert.ok(!arguments_.includes('--json'));
-    assert.equal(arguments_[arguments_.indexOf('--target-org') + 1], 'target');
-    assert.ok(
-      cwd.toLowerCase().startsWith(path.join(os.tmpdir(), 'data360-native-dmo-').toLowerCase()),
-    );
-    if (arguments_.includes('--file')) {
-      const request = JSON.parse(
-        await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),
-      );
-      requests.push(request);
-      return http(204);
-    }
-    const method = arguments_[arguments_.indexOf('--method') + 1];
-    const body = arguments_.indexOf('--body');
-    requests.push({
-      method,
-      url: arguments_[3],
-      ...(body === -1
-        ? {}
-        : { body: JSON.parse(await readFile(arguments_[body + 1].slice(1), 'utf8')) }),
-    });
-    return http(method === 'POST' ? 201 : 200, native());
-  });
+  const client = createDmoClient(
+    'target',
+    '65.0',
+    async () => assert.fail('a REST call must never start a CLI process'),
+    {
+      request: async (method, url, noContent, body) => {
+        requests.push({ method, url, ...(body === undefined ? {} : { body }) });
+        return method === 'DELETE' ? noContent : native();
+      },
+    },
+  );
   await client.get(apiName);
   await client.create({ name: 'Example' });
   await client.update(apiName, { label: 'Changed' });
@@ -951,7 +934,7 @@ test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained 
     { method: 'GET', url: `${base}/${apiName}` },
     { method: 'POST', url: base, body: { name: 'Example' } },
     { method: 'PATCH', url: `${base}/${apiName}`, body: { label: 'Changed' } },
-    { method: 'DELETE', url: `${base}/${apiName}`, body: { mode: 'raw', raw: '' } },
+    { method: 'DELETE', url: `${base}/${apiName}` },
   ]);
   assert.ok(!JSON.stringify(requests).includes(resourceId));
   for (const name of [resourceId, '../unsafe', 'Example']) {
@@ -966,28 +949,32 @@ test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained 
   assert.throws(() => createDmoClient('-target'), /SELECTION/);
 });
 
-test('native DMO transport refuses malformed HTTP success and only authentic HTTP404 is absence', async () => {
-  for (const receipt of [
-    { exitCode: 1, stdout: JSON.stringify({ status: 1, message: '404' }) },
-    { exitCode: 0, stdout: 'not HTTP' },
-    { exitCode: 0, stdout: 'HTTP/1.1 200\ncontent-type: application/json\ninvalid' },
-    { ...http(200, native()), exitCode: 1 },
-    http(202, native()),
-  ]) {
-    const client = createDmoClient('target', '65.0', async () => receipt);
+test('native DMO transport refuses unconfirmed or malformed answers and only an HTTP404 is absence', async () => {
+  const empty = Symbol('empty');
+  const sender = (answer) => ({
+    request: async (method, url, noContent) => {
+      if (answer instanceof Error) throw answer;
+      return answer === empty ? noContent : answer;
+    },
+  });
+  for (const answer of [new ConnectError('REQUEST_FAILED'), 'invalid', [], empty]) {
+    const client = createDmoClient('target', '65.0', undefined, sender(answer));
     await assert.rejects(
       preflightNativeDmo(document(), client),
       (error) => error instanceof NativeDmoError && error.code !== 'DMO_HTTP_ERROR',
     );
   }
-  const client = createDmoClient('target', '65.0', async () =>
-    http(404, [{ errorCode: 'NOT_FOUND' }]),
+  const client = createDmoClient(
+    'target',
+    '65.0',
+    undefined,
+    sender(new ConnectError('REQUEST_FAILED', 404)),
   );
   const plan = await preflightNativeDmo(document(), client);
   assert.equal(plan.operation, 'create');
-  for (const receipt of [http(200), http(204, { unexpected: true })]) {
+  for (const answer of [native(), { unexpected: true }]) {
     await assert.rejects(
-      createDmoClient('target', '65.0', async () => receipt).delete(apiName),
+      createDmoClient('target', '65.0', undefined, sender(answer)).delete(apiName),
       /DELETE_UNCONFIRMED/,
     );
   }

@@ -11,9 +11,17 @@ export type BoundMetadata = {
   update: (type: string, metadata: Record<string, unknown>) => Promise<unknown>;
 };
 
-/** One bound SSOT route sender; see BoundTransport for its only resend. */
+/** HTTP methods of the bound sender; every method other than GET is a write. */
+export type BoundMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+
+/** One bound SSOT route sender; see BoundTransport for its resend rules. */
 export type BoundSsot = {
-  request: (method: 'GET' | 'DELETE', route: string, noContent?: unknown) => Promise<unknown>;
+  request: (
+    method: BoundMethod,
+    route: string,
+    noContent?: unknown,
+    body?: unknown,
+  ) => Promise<unknown>;
   /** Metadata API calls on the same Connection; never a child CLI process. */
   metadata?: () => Promise<BoundMetadata>;
 };
@@ -35,7 +43,10 @@ function sessionExpired(error: unknown): boolean {
 /**
  * Routes on the bound Connection: no child CLI and no redirect. A GET answered with an expired
  * session refreshes the token once through Salesforce core (one refresh shared by concurrent
- * reads) and is sent once more; a DELETE is never refreshed or resent.
+ * reads) and is sent once more. A write (POST, PATCH, PUT, DELETE) keeps ConnectClient.send's
+ * write rule: it is resent only after a failure that proves it never left (ECONNREFUSED,
+ * ENOTFOUND, EHOSTUNREACH, EAI_AGAIN), never after a reset, timeout, 429 or 503, and never
+ * after a token refresh. The caller's read-back decides what the write did.
  */
 class BoundTransport extends ConnectClient {
   private refreshing?: Promise<void>;
@@ -49,18 +60,30 @@ class BoundTransport extends ConnectClient {
 
   /**
    * Dispatch one fixed route.
-   * @param {'GET' | 'DELETE'} method Read or exact delete.
+   * @param {BoundMethod} method Read or write.
    * @param {string} route Root-relative endpoint.
    * @param {unknown} [noContent] Sentinel JSforce returns for HTTP 204.
+   * @param {unknown} [body] JSON body of a write.
    * @returns {Promise<unknown>} Untrusted native response.
    */
   public async request(
-    method: 'GET' | 'DELETE',
+    method: BoundMethod,
     route: string,
     noContent?: unknown,
+    body?: unknown,
   ): Promise<unknown> {
+    const url = this.safeUrl(route);
+    const request =
+      body === undefined
+        ? { method, url }
+        : {
+            method,
+            url,
+            body: JSON.stringify(body),
+            headers: { 'content-type': 'application/json' },
+          };
     const send = async (): Promise<unknown> =>
-      this.send({ method, url: this.safeUrl(route) }, this.noRefreshReceiver(), noContent);
+      this.send(request, this.noRefreshReceiver(), noContent);
     try {
       return await send();
     } catch (error) {
@@ -80,13 +103,13 @@ class BoundTransport extends ConnectClient {
 }
 
 /**
- * Bind GET and DELETE routes, and the Metadata API calls, to one lazily opened authenticated
+ * Bind SSOT reads and writes, and the Metadata API calls, to one lazily opened authenticated
  * Connection.
  * Failures surface as ConnectError with the retained API diagnostic; callers map them.
  * @param {string} targetOrg Resolved username of the target org.
  * @param {string} version Numeric API version such as 68.0, already normalized by the caller.
  * @param {BoundConnection} [connect] Supplies the Connection; defaults to the CLI auth for targetOrg.
- * @returns {BoundSsot} Sender; a GET is resent once after an expired-session refresh, a DELETE never.
+ * @returns {BoundSsot} Sender; a GET is resent once after an expired-session refresh, a write never.
  * Its Metadata API calls use the same Connection.
  */
 export function openBoundSsot(
@@ -104,12 +127,12 @@ export function openBoundSsot(
   let session: ReturnType<typeof open> | undefined;
   let transport: Promise<BoundTransport> | undefined;
   return {
-    request: async (method, route, noContent) => {
+    request: async (method, route, noContent, body) => {
       session ??= open();
       const opened = session;
       transport ??= (async () => new BoundTransport(await opened, version))();
       const client = await transport;
-      return client.request(method, route, noContent);
+      return client.request(method, route, noContent, body);
     },
     metadata: async () => {
       session ??= open();

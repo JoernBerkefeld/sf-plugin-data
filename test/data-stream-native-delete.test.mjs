@@ -15,7 +15,7 @@ const origin = 'https://synthetic.my.salesforce.com';
 const streamId = '1dsaj00000000001AA';
 
 /**
- * Send one stream DELETE through real JSforce against a mocked wire; the CLI runner must stay unused.
+ * Send one stream DELETE through real JSforce against a mocked wire; no child CLI process is involved.
  * @param {number|string} response Status code, or 'network' for a socket failure.
  * @param {boolean} deleteDlo Cascade flag forwarded to the route.
  * @returns {Promise<{attempts: number, paths: string[], outcome: unknown}>} Attempts and settled outcome.
@@ -57,7 +57,6 @@ async function wire(response, deleteDlo = false) {
     'target',
     { get: async () => assert.fail('no read in this test') },
     '68.0',
-    async () => assert.fail('the child CLI runner must never run'),
     openBoundSsot('target', '68.0', async () => connection),
   );
   try {

@@ -18,6 +18,8 @@ import {
   retrieveDataStreamDocument,
 } from '../lib/services/native-crm-data-stream.js';
 import { createDataStreamClient, DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
+import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-crm-stream-'));
 const recordId = '1ds000000000003AAA';
@@ -161,29 +163,26 @@ const ordered = (body) => ({
 });
 
 /**
- * A stream client over a runner that answers like Salesforce and records each write body.
+ * A stream client over a bound sender that answers like Salesforce and records each write body.
  * @param {Function} getStream Current stream GET, or undefined for absent.
  * @param {Function} [answer] Status for a write.
  * @returns {object} Clients and the recorded requests.
  */
 function org(getStream, answer = () => 200) {
   const requests = [];
-  const runner = async (arguments_) => {
-    const method = arguments_[arguments_.indexOf('--method') + 1];
-    const body = JSON.parse(
-      await readFile(arguments_[arguments_.indexOf('--body') + 1].slice(1), 'utf8'),
-    );
-    requests.push({ method, url: arguments_[3], body });
-    const status = method === 'POST' ? 201 : answer(body);
-    return status >= 400
-      ? {
-          exitCode: 1,
-          stdout: `HTTP/1.1 ${status} Bad Request\nContent-Type: application/json\n\n[{"errorCode":"POST_BODY_PARSE_ERROR","message":"invalid refresh mode"}]`,
-        }
-      : {
-          exitCode: 0,
-          stdout: `HTTP/1.1 ${status} OK\nContent-Type: application/json\n\n{"name":"CliCrmPb2","recordId":"${recordId}","status":"PROCESSING"}`,
-        };
+  const sender = {
+    request: async (method, url, noContent, body) => {
+      requests.push({ method, url, body });
+      const status = method === 'POST' ? 201 : answer(body);
+      if (status >= 400)
+        throw retainConnectDiagnostic(
+          new ConnectError('REQUEST_FAILED', status),
+          apiDiagnostic(status, [
+            { errorCode: 'POST_BODY_PARSE_ERROR', message: 'invalid refresh mode' },
+          ]),
+        );
+      return { name: 'CliCrmPb2', recordId, status: 'PROCESSING' };
+    },
   };
   const reader = {
     get: async () => {
@@ -192,7 +191,7 @@ function org(getStream, answer = () => 200) {
       return structuredClone(stream);
     },
   };
-  const streams = createDataStreamClient('synthetic', reader, '68.0', runner);
+  const streams = createDataStreamClient('synthetic', reader, '68.0', sender);
   return {
     clients: { streams: { ...streams, get: reader.get } },
     requests,

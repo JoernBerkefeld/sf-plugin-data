@@ -14,11 +14,11 @@ const { Connection } = require('@jsforce/jsforce-node');
 const requestModule = require('@jsforce/jsforce-node/lib/request.js');
 const { MockAgent } = require('undici');
 const origin = 'https://synthetic.my.salesforce.com';
-const runner = async () => assert.fail('a bound GET must never start a CLI process');
+const runner = async () => assert.fail('a bound request must never start a CLI process');
 
 const families = {
   dlo: {
-    create: (sender) => createDloClient('target', '68.0', runner, sender),
+    create: (sender) => createDloClient('target', '68.0', sender),
     name: 'Example__dll',
     route: '/services/data/v68.0/ssot/data-lake-objects/Example__dll',
     Error: DloError,
@@ -122,7 +122,7 @@ for (const [label, family] of Object.entries(families)) {
 /**
  * Send one request through a bound sender whose wire answers each attempt from a list; the
  * connection's core refresh is a counted stub.
- * @param {'GET'|'DELETE'} method Request method.
+ * @param {'GET'|'POST'|'PATCH'|'PUT'|'DELETE'} method Request method.
  * @param {number[]} statuses Status of each attempt in order.
  * @param {boolean} [refreshFails] Whether the refresh itself fails.
  * @returns {Promise<{attempts: number, refreshes: number, tokens: string[], outcome: object}>} Result.
@@ -167,7 +167,12 @@ async function expiring(method, statuses, refreshFails = false) {
   try {
     const noContent = Symbol('deleted');
     const outcome = await sender
-      .request(method, '/services/data/v68.0/ssot/data-lake-objects/Example__dll', noContent)
+      .request(
+        method,
+        '/services/data/v68.0/ssot/data-lake-objects/Example__dll',
+        noContent,
+        method === 'GET' || method === 'DELETE' ? undefined : { label: 'Example' },
+      )
       .then(
         (value) => ({ value }),
         (error) => ({ error }),
@@ -197,9 +202,10 @@ test('a bound GET answered 401 INVALID_SESSION_ID refreshes once and is sent onc
   assert.equal(failed.outcome.error.code, 'AUTHENTICATION_FAILED');
 });
 
-test('a bound DELETE answered 401 INVALID_SESSION_ID is neither refreshed nor resent', async () => {
-  const { attempts, refreshes, outcome } = await expiring('DELETE', [401, 204]);
-  assert.equal(attempts, 1);
-  assert.equal(refreshes, 0);
-  assert.equal(outcome.error.code, 'AUTHENTICATION_FAILED');
-});
+for (const method of ['POST', 'PATCH', 'PUT', 'DELETE'])
+  test(`a bound ${method} answered 401 INVALID_SESSION_ID is neither refreshed nor resent`, async () => {
+    const { attempts, refreshes, outcome } = await expiring(method, [401, 204]);
+    assert.equal(attempts, 1);
+    assert.equal(refreshes, 0);
+    assert.equal(outcome.error.code, 'AUTHENTICATION_FAILED');
+  });

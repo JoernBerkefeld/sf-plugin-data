@@ -149,8 +149,8 @@ async function deployFixture(options = {}) {
       diagnostics: [],
     };
   };
-  command.createRelationshipClient = (target, version, runner, scope) => {
-    assert.deepEqual([target, version, runner, scope], ['target', '68.0', undefined, undefined]);
+  command.createRelationshipClient = (target, version, scope) => {
+    assert.deepEqual([target, version, scope], ['target', '68.0', undefined]);
     order.push('relationship');
     return client;
   };
