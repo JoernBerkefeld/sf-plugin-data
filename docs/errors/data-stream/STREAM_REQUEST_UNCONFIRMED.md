@@ -10,7 +10,7 @@
 
 ## What it means
 
-Stream creates and updates run through `sf api request rest`, and reads through the plugin's own client. This code means the plugin could not confirm how a request ended: the CLI call failed, its output had no HTTP status line, it ended with an error, the status was a success other than the expected one (201 for create, 200 for update, 204 for delete), or a read failed with an unexpected error.
+Stream creates and updates run through `sf api request rest`, and reads through the plugin's own client. This code means the plugin could not confirm how a request ended: the CLI call failed, its output had no HTTP status line, it ended with an error, the status was a success other than the expected one (201 for create, 200 for update, 204 for delete), or a read failed with an unexpected error. For a stream label change (Metadata API `updateMetadata` of the `DataStreamDefinition`), it also covers a server SOAP fault (`soapenv:Server`, `sf:UNKNOWN_EXCEPTION`) and an update without a readable answer.
 
 ## Why the plugin stops
 

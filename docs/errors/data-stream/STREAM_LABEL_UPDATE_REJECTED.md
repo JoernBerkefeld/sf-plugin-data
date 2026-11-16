@@ -10,7 +10,7 @@
 
 ## What it means
 
-The file holds another stream label than the org. Salesforce ignores a label in a stream PATCH, so deploy changes the label with one Metadata API `updateMetadata` of the stream's `DataStreamDefinition` record: it reads the record, replaces `masterLabel` and sends the record back over the command's connection. Salesforce answered that update with an error (success `false` or a SOAP fault), or it returned no `DataStreamDefinition` record of the stream's name.
+The file holds another stream label than the org. Salesforce ignores a label in a stream PATCH, so deploy changes the label with one Metadata API `updateMetadata` of the stream's `DataStreamDefinition` record: it reads the record, replaces `masterLabel` and sends the record back over the command's connection. Salesforce answered that update with an error (success `false`, or a client SOAP fault such as `soapenv:Client`, `sf:INVALID_…` or `sf:REQUEST_LIMIT_EXCEEDED`), or it returned no `DataStreamDefinition` record of the stream's name. A server fault (`soapenv:Server`, `sf:UNKNOWN_EXCEPTION`) is not a refusal: the update may have been applied, so it is reported as [`STREAM_REQUEST_UNCONFIRMED`](../data-stream/STREAM_REQUEST_UNCONFIRMED.md).
 
 The label update is sent before any other change of the same stream. When it is refused, the other changes are not sent.
 

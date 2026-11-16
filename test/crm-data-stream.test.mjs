@@ -532,6 +532,7 @@ function metadataOrg(refusal) {
       },
       update: async (type, record) => {
         metadata.push(['update', type, record]);
+        if (refusal instanceof Error) throw refusal;
         if (refusal) return refusal;
         label = record.masterLabel;
         return { fullName: record.fullName, success: true, errors: [] };
@@ -589,6 +590,20 @@ test('a refused stream label update is rejected with Salesforce text and sends n
   assert.deepEqual(refused.requests, []);
 });
 
+test('a server fault on the stream label update is unconfirmed, not rejected, and sends nothing else', async () => {
+  const relabelled = structuredClone(crmDocument());
+  relabelled.spec.label = 'New label';
+  const faulted = metadataOrg(
+    Object.assign(new Error('An unexpected error occurred.'), { name: 'sf:UNKNOWN_EXCEPTION' }),
+  );
+  const result = await executeDataStream(relabelled, faulted.clients, options);
+  assert.deepEqual([result.outcome, result.mutation], ['failed', 'unknown']);
+  assert.equal(result.diagnostics[0].code, 'STREAM_REQUEST_UNCONFIRMED');
+  // One update, no resend and no PATCH afterwards.
+  assert.deepEqual(faulted.metadata.filter(([kind]) => kind === 'update').length, 1);
+  assert.deepEqual(faulted.requests, []);
+});
+
 test('the stream label transport refuses a missing record and leaves other failures unconfirmed', async () => {
   let answer;
   let record = {
@@ -618,8 +633,19 @@ test('the stream label transport refuses a missing record and leaves other failu
   await relabel('CliCrmPb2', 'New');
   // An explicit nil is not sent back.
   assert.deepEqual(sent[0], { fullName: 'CliCrmPb2', masterLabel: 'New' });
-  answer = Object.assign(new Error('bad value'), { name: 'soapenv:Client' });
-  await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_LABEL_UPDATE_REJECTED' });
+  // Client faults are refusals; server faults may follow an applied update.
+  for (const [name, code] of [
+    ['soapenv:Client', 'STREAM_LABEL_UPDATE_REJECTED'],
+    ['sf:INVALID_TYPE', 'STREAM_LABEL_UPDATE_REJECTED'],
+    ['sf:REQUEST_LIMIT_EXCEEDED', 'STREAM_LABEL_UPDATE_REJECTED'],
+    ['soapenv:Server', 'STREAM_REQUEST_UNCONFIRMED'],
+    ['sf:UNKNOWN_EXCEPTION', 'STREAM_REQUEST_UNCONFIRMED'],
+  ]) {
+    answer = Object.assign(new Error('fault'), { name });
+    const before = sent.length;
+    await assert.rejects(relabel('CliCrmPb2', 'New'), { code }, name);
+    assert.equal(sent.length, before + 1, `${name} is sent once`);
+  }
   answer = new Error('socket hang up');
   await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_REQUEST_UNCONFIRMED' });
   record = {};

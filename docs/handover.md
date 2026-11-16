@@ -1,3 +1,16 @@
+# Stream label update: a server fault is unconfirmed, not rejected — 2026-11-16
+
+Review must-fix. `relabelCall` in `src/transport/data-stream-rest.ts` treated every
+`soapenv:`/`sf:` SOAP fault as `STREAM_LABEL_UPDATE_REJECTED` (mutation `rejected`, "The label was
+not changed"). Now only client faults (`soapenv:Client`, `sf:INVALID_*`, `sf:MALFORMED_*`,
+`sf:REQUEST_LIMIT_EXCEEDED`, `sf:INSUFFICIENT_ACCESS`, `sf:API_DISABLED_FOR_ORG`,
+`sf:UNSUPPORTED_API_VERSION`) are a refusal; `soapenv:Server`, `sf:UNKNOWN_EXCEPTION` and any other
+fault are `STREAM_REQUEST_UNCONFIRMED` (mutation `unknown`, no resend, no PATCH afterwards). Tests in
+`test/crm-data-stream.test.mjs` (transport per fault, deploy result for `sf:UNKNOWN_EXCEPTION`);
+error pages of both codes updated. The same broad fault match remains in
+`src/transport/relationship-rest.ts` (out of scope here; relationship update retries once after an
+UNKNOWN_EXCEPTION read-back by design).
+
 # Graph, segment and identity resolution files under data360/ — 2026-11-16
 
 Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),
