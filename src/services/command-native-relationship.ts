@@ -5,15 +5,15 @@ import type { RelationshipClient } from '../transport/relationship-rest.js';
 import { WriteLedger, rejectedNextAction } from './deploy-result.js';
 
 /**
- * Compare a relationship with the org read-only, matched by its binding.
+ * Compare a relationship with the org read-only, matched by name, else by its binding.
  * @param {unknown} value Portable relationship.
- * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
+ * @param {Pick<RelationshipClient, 'list' | 'readDefinitions'>} client Relationship reader.
  * @param {string} [requestScope] Optional request scope.
  * @returns {Promise<object>} Payload-free preview.
  */
 export async function preflightRelationship(
   value: unknown,
-  client: Pick<RelationshipClient, 'list'>,
+  client: Pick<RelationshipClient, 'list' | 'readDefinitions'>,
   requestScope?: string,
 ) {
   const plan = await preflightNativeRelationship(value, client, requestScope);
@@ -23,12 +23,15 @@ export async function preflightRelationship(
     target: plan.operation === 'create' ? ('absent' as const) : ('existing' as const),
     absenceProof: plan.operation === 'create' ? 'confirmed-binding-lookup' : 'none',
     ...(plan.existing ? { targetApiName: plan.existing } : {}),
+    ...(plan.changes ? { changes: plan.changes } : {}),
     diagnostics: [] as Array<{ code: string; message: string }>,
   };
 }
 
 /**
- * Create a relationship once when absent and report independently confirmed settlement.
+ * Create a relationship when absent, update it through the Metadata API when it differs, and
+ * report independently confirmed settlement. Salesforce's refusal of the item's first write is
+ * `rejected`: nothing was written.
  * @param {unknown} value Portable relationship.
  * @param {RelationshipClient} client Relationship transport.
  * @param {string} [requestScope] Optional request scope.
@@ -36,26 +39,53 @@ export async function preflightRelationship(
  */
 export async function executeRelationship(
   value: unknown,
-  client: Pick<RelationshipClient, 'list' | 'create'>,
+  client: Pick<RelationshipClient, 'list' | 'create' | 'readDefinitions' | 'update'>,
   requestScope?: string,
 ) {
   const ledger = new WriteLedger();
+  let writes = 0;
   const guarded = {
     list: client.list,
-    create: async (body: Parameters<RelationshipClient['create']>[0]) =>
-      ledger.run(async () => client.create(body)),
+    readDefinitions: client.readDefinitions,
+    create: async (body: Parameters<RelationshipClient['create']>[0]) => {
+      writes++;
+      return ledger.run(async () => client.create(body));
+    },
+    ...(client.update
+      ? {
+          update: async (definition: Record<string, unknown>) => {
+            writes++;
+            return ledger.run(async () => client.update!(definition));
+          },
+        }
+      : {}),
   };
   try {
     const result = await deployNativeRelationship(value, guarded, requestScope);
     return {
-      outcome: result.operation === 'noop' ? ('unchanged' as const) : ('created' as const),
+      outcome:
+        result.operation === 'noop'
+          ? ('unchanged' as const)
+          : result.operation === 'update'
+            ? ('updated' as const)
+            : ('created' as const),
       mutation:
-        result.operation === 'noop' ? ('not-attempted' as const) : ('confirmed-created' as const),
+        result.operation === 'noop'
+          ? ('not-attempted' as const)
+          : result.operation === 'update'
+            ? ('confirmed-updated' as const)
+            : ('confirmed-created' as const),
       targetApiName: result.apiName,
       diagnostics: [] as Array<{ code: string; message: string }>,
     };
   } catch (error) {
-    const failure = ledger.failure(error);
+    // Salesforce refusing the only write (a Metadata API update) changed nothing.
+    const failure =
+      error instanceof NativeRelationshipError &&
+      error.code === 'RELATIONSHIP_UPDATE_REJECTED' &&
+      writes === 1
+        ? { outcome: 'failed' as const, mutation: 'rejected' as const }
+        : ledger.failure(error);
     return {
       ...failure,
       diagnostics: [

@@ -752,24 +752,29 @@ Not qualified:
 - [ ] Relationships and SQL/flex DMOs.
 - [ ] Released-package acceptance.
 
-## relationship: native definition retrieve, create and delete
+## relationship: native definition retrieve, create, update and delete
 
 - [x] File `data360/relationship/<Name>.relationship-meta.json`: `schemaVersion: 1`,
       `kind: relationship`, `identity` (`apiName`, `dataSpace`) and `spec` with
       `sourceObjectName`, `sourceFieldName`, `targetObjectName`, `targetFieldName`,
-      `cardinality` and `relationshipOwner`. Cardinality and owner are sent as written.
+      `cardinality` and `relationshipOwner`, plus an optional `label`. Cardinality,
+      owner and label are sent as written.
 - [x] Native route only, default/auto API68; numeric pins from 61 are kept.
 - [x] Retrieve `-m relationship:<Dmo__dlm>`: every relationship whose source is that
       DMO, one file each. Bare `relationship` reads those of every listed DMO,
       one DMO after another. The list is read in pages of 200 by
       offset and must add up to `totalSize` without duplicate names
-      (`RELATIONSHIP_INVENTORY_INCOMPLETE` otherwise).
-- [x] Deploy matches by binding (source object and field, target object and field), so
+      (`RELATIONSHIP_INVENTORY_INCOMPLETE` otherwise). The label comes from the
+      Metadata API (`FieldSrcTrgtRelationship` read, ten per call, same connection).
+- [x] Deploy matches by the file's name, then by binding (source object and field, target object and field), so
       a hand-written file may use any name; Salesforce generates the name on create.
-      Present with the same cardinality and owner: `unchanged`. Absent: one create,
+      Present with the file's values: `unchanged`. Absent: one create,
       then reads until ACTIVE (`RELATIONSHIP_PERSISTENCE_UNCONFIRMED`, at once on a
-      status other than ACTIVE or CREATING). Different
-      cardinality or owner: `RELATIONSHIP_CHANGE_UNSUPPORTED` before any write.
+      status other than ACTIVE or CREATING), then a label update when the file states one.
+      Other values: one Metadata API `updateMetadata` of the whole record over the
+      command's connection, read back until it holds the file (`updated`,
+      `confirmed-updated`); Salesforce's refusal is `RELATIONSHIP_UPDATE_REJECTED`,
+      mutation `rejected`.
 - [x] Native batches run DLOs, DMOs, mappings, then relationships; a preview of a
       relationship whose DMO the batch creates reports `planned-dependencies`.
 - [x] Salesforce requires both DMOs to be mapped (HTTP 400, reported as
@@ -788,7 +793,10 @@ Not qualified:
       create of two DLOs, two DMOs, two mappings and the relationship, unchanged
       repeat, retrieve by DMO with unchanged redeploy, read-only delete preview,
       confirmed delete and unchanged repeat delete.
-- [ ] Update (no Salesforce route; delete and deploy again).
+- [x] Update observed at API68 through the plugin on an active relationship between
+      mapped custom DMOs: label and cardinality changed, retrieved back, unchanged
+      repeat. Raw probes: source field change accepted; target field, target object and
+      owner refused (`UNKNOWN_EXCEPTION`).
 - [ ] Standard and data-bearing DMOs, non-default data spaces, other API versions,
       cardinalities other than ManyToOne.
 

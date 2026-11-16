@@ -298,7 +298,8 @@ whose source is that DMO, at
     "targetObjectName": "Customer__dlm",
     "targetFieldName": "Id__c",
     "cardinality": "ManyToOne",
-    "relationshipOwner": "DataCloud"
+    "relationshipOwner": "DataCloud",
+    "label": "Order to customer"
   }
 }
 ```
@@ -308,7 +309,7 @@ Shape checks:
 - The document has exactly `schemaVersion: 1`, `kind: "relationship"`, `identity`
   and `spec`; `identity` has exactly `apiName` (a letter, then letters, digits or
   underscores) and a nonblank, trimmed `dataSpace`.
-- `spec` has exactly the six keys shown. The source object ends `__dlm` and the
+- `spec` has the six keys shown and may have `label` (a nonblank, trimmed text). The source object ends `__dlm` and the
   source field `__c`; the target object and field are any API names: a DMO and its
   custom field, or a CRM object and field with `relationshipOwner` `SObject` (for
   example `Account` and `Id`). `cardinality` and `relationshipOwner` are nonblank strings sent as written;
@@ -318,9 +319,13 @@ Shape checks:
   `INVALID_RELATIONSHIP_DOCUMENT`.
 
 Salesforce generates the relationship name (the example's shape). Retrieval saves
-that name and the six authored values; the id, labels, status and creation type are
-not saved. A hand-written file may use any valid name, because deploy finds the
-relationship by its binding: source object and field, target object and field. Two
+that name, the six authored values and the label (the Metadata API `masterLabel`;
+left out when there is no record); the id, object and field labels, status and
+creation type are not saved. A hand-written file may use any valid name, because
+deploy finds the relationship by the file's name and otherwise by its binding:
+source object and field, target object and field. A file without `label` leaves the
+org's label as it is. Other values than the org's are sent as one Metadata API
+`updateMetadata` of the whole record; Salesforce decides which it accepts. Two
 files with the same binding in one command are refused (`DUPLICATE_IDENTITY`).
 Delete uses the file to learn the source DMO, and the selector name must be the
 org's relationship name; if the binding exists only under another name, delete

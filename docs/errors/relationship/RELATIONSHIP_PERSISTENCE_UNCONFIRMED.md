@@ -1,6 +1,6 @@
 # `RELATIONSHIP_PERSISTENCE_UNCONFIRMED`
 
-> The relationship create was sent, but it did not read back as active with the requested settings in time. Check the source DMO's relationships before deploying again.
+> The relationship create or update was sent, but it did not read back with the file's values in time (a create also as active). Check the source DMO's relationships before deploying again.
 
 |              |                                                                            |
 | ------------ | -------------------------------------------------------------------------- |
@@ -10,11 +10,13 @@
 
 ## What it means
 
-After the create, the plugin reads the source DMO's relationship list until the relationship is `ACTIVE` with the requested cardinality and owner. It did not get there within the read budget, or it showed a status other than `ACTIVE` or `CREATING`, which ends the reads at once. The message names that status when there is one.
+After a create, the plugin reads the source DMO's relationship list until the relationship is `ACTIVE` with the requested cardinality and owner. It did not get there within the read budget, or it showed a status other than `ACTIVE` or `CREATING`, which ends the reads at once. The message names that status when there is one.
+
+After an update, the plugin reads the list (and, for a label, the Metadata API record) until the relationship holds the file's values; Salesforce accepted the update, but the values did not read back within the budget.
 
 ## Why the plugin stops
 
-The create was sent, but its result is not confirmed. The plugin does not send it again.
+The create or update was sent, but its result is not confirmed. The plugin does not send it again.
 
 ## How to fix
 
@@ -27,7 +29,7 @@ The create was sent, but its result is not confirmed. The plugin does not send i
 Deploy execution: failed. No automatic retry or rollback performed.
 Failed: relationship:Order_CustomerId_map_Customer_Id_1794467679481; mutation: unknown.
 RELATIONSHIP_PERSISTENCE_UNCONFIRMED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Write outcome is unknown; list the source DMO relationships before another attempt. No automatic retry.
-Hint: The relationship create was sent, but it did not read back as active with the requested settings in time. Check the source DMO's relationships before deploying again.
+Hint: The relationship create or update was sent, but it did not read back with the file's values in time (a create also as active). Check the source DMO's relationships before deploying again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/relationship/RELATIONSHIP_PERSISTENCE_UNCONFIRMED.md
 Mutation may have occurred. Inspect target before any further attempt.
 Deployed: 0 (0 created / 0 updated / 1 failed)

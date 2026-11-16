@@ -1,3 +1,52 @@
+# Relationship update through the Metadata API — 2026-11-16
+
+Plan `.claude/plans/sf_plugin_data_guide_cli_metadata_gaps_20261116.plan.md` (workspace root),
+W5, on W2's evidence (DB `data360:w2.relationship.cli-metadata.api68`: the Connect API has no
+relationship update). Deploy now updates a changed relationship instead of refusing it:
+
+- File: optional `spec.label` (nonblank text). Retrieve saves it from the Metadata API
+  (`FieldSrcTrgtRelationship` `masterLabel`, read ten names per call); a name without a record
+  gets no label. A file without `label` leaves the org's label alone.
+- Deploy finds the org relationship by the file's name first, then by binding. Equal values
+  (and stated label) are `unchanged`; otherwise it reads the Metadata API record, overlays the
+  file's label, cardinality, owner, `sourceFieldName` (`Obj.Field`) and `targetFieldName`, drops
+  `xsi:nil` values (`targetEntity`) and sends one `updateMetadata`. Readback: the relationship list
+  by name (and the record for a label) until it holds the file (`RELATIONSHIP_PERSISTENCE_UNCONFIRMED`
+  otherwise). Result `updated` / `confirmed-updated`; preview `update` with `changes`.
+- A create with a label sets it with one update after ACTIVE (the POST has no label); if that is
+  refused the item fails with mutation `unknown` and says the relationship was created.
+- New `RELATIONSHIP_UPDATE_REJECTED` (SaveResult `success: false` or a `soapenv:`/`sf:` SOAP
+  fault): Salesforce's code and filtered text, mutation `rejected` when it was the item's only
+  write. `RELATIONSHIP_CHANGE_UNSUPPORTED` removed (code, page renamed, index row).
+- Transport: `BoundSsot.metadata()` exposes jsforce `connection.metadata` read/update of the same
+  lazily opened Connection; `createRelationshipClient` adds `readDefinitions` / `update` only when
+  the bound sender has it (no child process). The relationship create POST still uses the CLI
+  runner (unchanged, open).
+
+Live, isolated-source (00Daj000010xkZNEAY), evidence `F:/Temp/w5-relupd-0gMz7x/logs`:
+
+- Raw `updateMetadata` on an ACTIVE plugin-created relationship between mapped custom DMOs
+  (`CliW5_b9080a_*`): label, cardinality ManyToOne->OneToOne and source field accepted in place
+  (same 0ge id, still ACTIVE), also all three in one call; target field, target object and owner
+  `SObject` refused with `success: false` `UNKNOWN_EXCEPTION`; cardinality `ManyToMany` a SOAP
+  fault `soapenv:Client`. Refusals changed nothing. The Metadata record name equals the Connect
+  name; `masterLabel` defaults to the name; `lookupFieldName` is `<Src>.rel_<ts>_end__c`.
+- The Data Cloud UI (Data Model, DMO, Relationships, Edit) has no label input and disables the
+  field, cardinality and related field of an existing relationship (only Active and delete); it
+  loads through internal Aura `DataModeling.getEntityActiveAndInactiveRelationships`. No public
+  route; nothing saved.
+- Plugin round trip: create (19 s), retrieve (label = name), file edited (label, OneToOne),
+  preview `update` `[cardinality, label]`, deploy `updated` (7 s), retrieve byte-identical, repeat
+  `unchanged` (4 s), then delete of relationship, both DMOs and DLOs; DMOs `ITEM_NOT_FOUND`, DLOs
+  not found, no `CliW5` relationship or object in `listMetadata`.
+
+Tests: `test/native-relationship.test.mjs` (update body, name-first match, label compare and
+noop, create plus label, unconfirmed readback, rejected and partial execution, Metadata calls
+batching and refusal mapping), `test/native-relationship-command.test.mjs` (deploy `updated`,
+preview `changes`), `test/cli.test.mjs` (README row and contract). Open: create POST still a CLI
+child process; the README read cell for relationships still says Partial although bare retrieve
+exists; owner/target changes need delete and redeploy.
+
 # Bare stream, transform, graph and relationship retrieve — 2026-11-16
 
 `sf data360 retrieve -m data-stream`, `-m data-transform`, `-m data-graph` and `-m relationship`

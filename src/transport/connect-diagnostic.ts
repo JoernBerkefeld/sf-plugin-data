@@ -289,6 +289,15 @@ export function retainConnectDiagnostic<T extends object>(
   return target;
 }
 
+/**
+ * A remote problem text that passes the display filter of REST errors, else undefined.
+ * @param {unknown} value Candidate text from a Salesforce answer.
+ * @returns {string | undefined} The text when it is safe to show.
+ */
+export function displayableApiText(value: unknown): string | undefined {
+  return safeMessage(value);
+}
+
 const metadataProblems = new WeakMap<object, readonly string[]>();
 
 /**

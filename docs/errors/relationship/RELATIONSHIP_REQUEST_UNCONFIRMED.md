@@ -1,6 +1,6 @@
 # `RELATIONSHIP_REQUEST_UNCONFIRMED`
 
-> A relationship request ended without a clear HTTP result. For a create or delete, list the source DMO's relationships before trying again; nothing is retried.
+> A relationship request ended without a clear result (an HTTP request, or a Metadata API read or update). For a create, update or delete, list the source DMO's relationships before trying again; nothing is retried.
 
 |              |                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------ |
@@ -28,7 +28,7 @@ For a create or delete the request may have taken effect. The plugin reports the
 Deploy execution: failed. No automatic retry or rollback performed.
 Failed: relationship:Order_CustomerId_map_Customer_Id_1794467679481; mutation: unknown.
 RELATIONSHIP_REQUEST_UNCONFIRMED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Write outcome is unknown; list the source DMO relationships before another attempt. No automatic retry.
-Hint: A relationship request ended without a clear HTTP result. For a create or delete, list the source DMO's relationships before trying again; nothing is retried.
+Hint: A relationship request ended without a clear result (an HTTP request, or a Metadata API read or update). For a create, update or delete, list the source DMO's relationships before trying again; nothing is retried.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/relationship/RELATIONSHIP_REQUEST_UNCONFIRMED.md
 Mutation may have occurred. Inspect target before any further attempt.
 Deployed: 0 (0 created / 0 updated / 1 failed)

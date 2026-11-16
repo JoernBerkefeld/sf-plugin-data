@@ -22,6 +22,7 @@ import {
   retrieveNativeRelationships,
 } from '../lib/services/native-relationship.js';
 import { executeRelationship } from '../lib/services/command-native-relationship.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
 const spec = {
   sourceObjectName: 'A__dlm',
@@ -80,6 +81,8 @@ test('relationship documents validate structurally and leave cardinality and own
     // A CRM target (owner SObject): any object and field API name.
     { ...spec, targetObjectName: 'Account', targetFieldName: 'Id', relationshipOwner: 'SObject' },
     { ...spec, targetObjectName: 'B' },
+    // The label is optional.
+    { ...spec, label: 'Order to customer' },
   ])
     validateNativeRelationshipDocument({ ...document, spec: value });
   for (const broken of [
@@ -96,6 +99,8 @@ test('relationship documents validate structurally and leave cardinality and own
     { ...document, spec: { ...spec, cardinality: '' } },
     { ...document, spec: { ...spec, relationshipOwner: 7 } },
     { ...document, spec: { ...spec, id: '0ge' } },
+    { ...document, spec: { ...spec, label: '' } },
+    { ...document, spec: { ...spec, label: 7 } },
   ])
     assert.throws(
       () => validateNativeRelationshipDocument(broken),
@@ -186,6 +191,25 @@ test('retrieve keeps only relationships whose source is the DMO, ordered by name
   assert.deepEqual(documents[0].spec, spec);
 });
 
+test('retrieve saves the Metadata API label of each kept relationship', async () => {
+  const names = Array.from({ length: 12 }, (_, index) => `R${String(index).padStart(2, '0')}`);
+  const asked = [];
+  const documents = await retrieveNativeRelationships('A__dlm', {
+    list: async () => page(names.map((entry) => wire({ name: entry }))),
+    // The client batches; the service asks once for every kept name.
+    readDefinitions: async (requested) => {
+      asked.push(requested);
+      // R11 has no Metadata API record: its file has no label.
+      return requested
+        .filter((entry) => entry !== 'R11')
+        .map((entry) => ({ fullName: entry, masterLabel: `Label ${entry}` }));
+    },
+  });
+  assert.deepEqual(asked, [names]);
+  assert.deepEqual(documents[0].spec, { ...spec, label: 'Label R00' });
+  assert.equal(Object.hasOwn(documents[11].spec, 'label'), false);
+});
+
 /**
  * A fake relationship client over a mutable inventory.
  * @param {object[]} entries Initial native entries of the source DMO.
@@ -195,6 +219,49 @@ function fakeClient(entries) {
   const calls = [];
   const client = {
     state: [...entries],
+    // Metadata API records by name, as readMetadata returns them.
+    definitions: new Map(
+      entries.map((entry) => [
+        entry.name,
+        {
+          fullName: entry.name,
+          definitionCreationType: 'Custom',
+          lookupFieldName: `${entry.sourceObject.name}.rel_end__c`,
+          masterLabel: entry.name,
+          owner: entry.owner,
+          relationshipCardinality: entry.cardinality,
+          sourceFieldName: `${entry.sourceObject.name}.${entry.sourceField.name}`,
+          targetEntity: { $: { 'xsi:nil': 'true' } },
+          targetFieldName: `${entry.targetObject.name}.${entry.targetField.name}`,
+        },
+      ]),
+    ),
+    readDefinitions: async (requested) => {
+      calls.push(['read', requested]);
+      return requested.flatMap((entry) =>
+        client.definitions.has(entry) ? [client.definitions.get(entry)] : [],
+      );
+    },
+    update: async (definition) => {
+      calls.push(['update', definition]);
+      const [object, field] = definition.sourceFieldName.split('.');
+      const [targetObject, targetField] = definition.targetFieldName.split('.');
+      client.definitions.set(definition.fullName, { ...definition });
+      client.state = client.state.map((entry) =>
+        entry.name === definition.fullName
+          ? wire({
+              name: entry.name,
+              status: entry.status,
+              cardinality: definition.relationshipCardinality,
+              relationshipOwner: definition.owner,
+              sourceObjectName: object,
+              sourceFieldName: field,
+              targetObjectName: targetObject,
+              targetFieldName: targetField,
+            })
+          : entry,
+      );
+    },
     list: async (dmo, offset) => {
       calls.push(['list', dmo, offset]);
       return client.state.length === 0 ? undefined : page(client.state);
@@ -202,6 +269,14 @@ function fakeClient(entries) {
     create: async (body) => {
       calls.push(['create', body]);
       client.state.push(wire({ status: 'CREATING' }));
+      client.definitions.set(name, {
+        fullName: name,
+        masterLabel: name,
+        owner: body.relationshipOwner,
+        relationshipCardinality: body.cardinality,
+        sourceFieldName: `${body.sourceObjectName}.${body.sourceFieldName}`,
+        targetFieldName: `${body.targetObjectName}.${body.targetFieldName}`,
+      });
       return { relationships: [wire({ status: 'CREATING' })] };
     },
     remove: async (relationshipName) => {
@@ -241,15 +316,95 @@ test('deploy creates an absent relationship once and reads back until ACTIVE', a
   assert.equal(reads, 3);
 });
 
-test('deploy refuses a changed cardinality or owner before any write', async () => {
-  for (const change of [{ cardinality: 'OneToOne' }, { relationshipOwner: 'Other' }]) {
-    const { client, calls } = fakeClient([wire(change)]);
-    await assert.rejects(
-      deployNativeRelationship(document, client),
-      code('RELATIONSHIP_CHANGE_UNSUPPORTED'),
-    );
-    assert.ok(!calls.some(([kind]) => kind === 'create'));
-  }
+test('deploy updates a changed relationship with one Metadata API update of the whole record', async () => {
+  const { client, calls } = fakeClient([wire({ cardinality: 'OneToOne' })]);
+  assert.deepEqual(await deployNativeRelationship(document, client), {
+    operation: 'update',
+    apiName: name,
+  });
+  const updates = calls.filter(([kind]) => kind === 'update');
+  assert.equal(updates.length, 1);
+  // The org's record with the file's values; the explicit nil targetEntity is not sent back.
+  assert.deepEqual(updates[0][1], {
+    fullName: name,
+    definitionCreationType: 'Custom',
+    lookupFieldName: 'A__dlm.rel_end__c',
+    masterLabel: name,
+    owner: 'DataCloud',
+    relationshipCardinality: 'ManyToOne',
+    sourceFieldName: 'A__dlm.BRef__c',
+    targetFieldName: 'B__dlm.Id__c',
+  });
+  assert.ok(!calls.some(([kind]) => kind === 'create'));
+  // Read back through the relationship list: the repeat is a no-op.
+  assert.deepEqual(await deployNativeRelationship(document, client), {
+    operation: 'noop',
+    apiName: name,
+  });
+});
+
+test('deploy finds the file by its name first, so a changed source field is an update', async () => {
+  const { client, calls } = fakeClient([wire({ sourceFieldName: 'Other__c' })]);
+  const plan = await preflightNativeRelationship(document, client);
+  assert.deepEqual(
+    [plan.operation, plan.existing, plan.changes],
+    ['update', name, ['sourceFieldName']],
+  );
+  assert.equal(plan.definition.sourceFieldName, 'A__dlm.BRef__c');
+  assert.ok(!calls.some(([kind]) => kind === 'update'), 'preview never writes');
+});
+
+test('a stated label is compared with the Metadata API label and updated when it differs', async () => {
+  const labelled = { ...document, spec: { ...spec, label: 'Order to customer' } };
+  const { client, calls } = fakeClient([wire()]);
+  const plan = await preflightNativeRelationship(labelled, client);
+  assert.deepEqual([plan.operation, plan.changes], ['update', ['label']]);
+  assert.deepEqual(await deployNativeRelationship(labelled, client), {
+    operation: 'update',
+    apiName: name,
+  });
+  assert.equal(calls.find(([kind]) => kind === 'update')[1].masterLabel, 'Order to customer');
+  calls.length = 0;
+  assert.deepEqual(await deployNativeRelationship(labelled, client), {
+    operation: 'noop',
+    apiName: name,
+  });
+  assert.deepEqual(calls, [
+    ['list', 'A__dlm', 0],
+    ['read', [name]],
+  ]);
+  // Without a label the deploy never reads the Metadata API.
+  calls.length = 0;
+  await deployNativeRelationship(document, client);
+  assert.deepEqual(calls, [['list', 'A__dlm', 0]]);
+});
+
+test('a create with a label sets it after the relationship is ACTIVE', async () => {
+  const labelled = { ...document, spec: { ...spec, label: 'Order to customer' } };
+  const { client, calls } = fakeClient([]);
+  const list = client.list;
+  client.list = async (...arguments_) => {
+    client.state = client.state.map((entry) => ({ ...entry, status: 'ACTIVE' }));
+    return list(...arguments_);
+  };
+  assert.deepEqual(await deployNativeRelationship(labelled, client), {
+    operation: 'create',
+    apiName: name,
+  });
+  assert.deepEqual(
+    calls.filter(([kind]) => kind === 'create' || kind === 'update').map(([kind]) => kind),
+    ['create', 'update'],
+  );
+  assert.equal(client.definitions.get(name).masterLabel, 'Order to customer');
+});
+
+test('an update that never reads back is unconfirmed', async () => {
+  const { client } = fakeClient([wire({ cardinality: 'OneToOne' })]);
+  client.update = async () => {};
+  await assert.rejects(
+    deployNativeRelationship(document, client),
+    code('RELATIONSHIP_PERSISTENCE_UNCONFIRMED'),
+  );
 });
 
 test('deploy reports an unconfirmed create when the relationship never turns ACTIVE', async () => {
@@ -291,12 +446,37 @@ test('execution surfaces the Salesforce 400 of the create as a rejected write', 
     [unchanged.outcome, unchanged.mutation, unchanged.targetApiName],
     ['unchanged', 'not-attempted', name],
   );
-  const refused = await executeRelationship(
+  const updated = await executeRelationship(
     document,
-    fakeClient([wire({ cardinality: 'X' })]).client,
+    fakeClient([wire({ cardinality: 'OneToOne' })]).client,
   );
-  assert.deepEqual([refused.outcome, refused.mutation], ['blocked', 'not-attempted']);
-  assert.equal(refused.diagnostics[0].code, 'RELATIONSHIP_CHANGE_UNSUPPORTED');
+  assert.deepEqual(
+    [updated.outcome, updated.mutation, updated.targetApiName],
+    ['updated', 'confirmed-updated', name],
+  );
+});
+
+test('execution surfaces Salesforce refusing the update as rejected, nothing written', async () => {
+  const refusing = fakeClient([wire({ cardinality: 'OneToOne' })]).client;
+  refusing.update = async () => {
+    throw new NativeRelationshipError('RELATIONSHIP_UPDATE_REJECTED');
+  };
+  const refused = await executeRelationship(document, refusing);
+  assert.deepEqual([refused.outcome, refused.mutation], ['failed', 'rejected']);
+  assert.equal(refused.diagnostics[0].code, 'RELATIONSHIP_UPDATE_REJECTED');
+  assert.match(refused.diagnostics[0].message, /nothing was written/u);
+  // After a create, a refused label leaves the outcome unknown: the relationship exists.
+  const labelled = { ...document, spec: { ...spec, label: 'Order to customer' } };
+  const created = fakeClient([]).client;
+  const list = created.list;
+  created.list = async (...arguments_) => {
+    created.state = created.state.map((entry) => ({ ...entry, status: 'ACTIVE' }));
+    return list(...arguments_);
+  };
+  created.update = refusing.update;
+  const partial = await executeRelationship(labelled, created);
+  assert.deepEqual([partial.outcome, partial.mutation], ['failed', 'unknown']);
+  assert.match(partial.diagnostics[0].message, /was created, but its label was not set/u);
 });
 
 test('delete is unchanged when absent and confirms absence after one DELETE', async () => {
@@ -421,6 +601,62 @@ test('bound sender carries GET and DELETE on the exact routes, once each', async
   ]);
   await assert.rejects(client.remove('bad/name'), code('INVALID_RELATIONSHIP_NAME'));
   await assert.rejects(client.list('A__dll', 0), code('INVALID_RELATIONSHIP_BINDING'));
+});
+
+test('Metadata API read and update go over the bound sender, ten names per read', async () => {
+  const calls = [];
+  let answer = { fullName: name, success: true, errors: [] };
+  const sender = {
+    request: async () => assert.fail('no REST call'),
+    metadata: async () => ({
+      read: async (type, names) => {
+        calls.push(['read', type, names]);
+        // One record answers as an object; an unknown name as an empty record.
+        return names.length === 1
+          ? { fullName: names[0] }
+          : [...names.map((entry) => ({ fullName: entry })), {}];
+      },
+      update: async (type, definition) => {
+        calls.push(['update', type, definition.fullName]);
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    }),
+  };
+  const runner = async () => assert.fail('Metadata API calls never start a CLI process');
+  const client = createRelationshipClient('target', '68.0', runner, undefined, sender);
+  const names = Array.from({ length: 11 }, (_, index) => `R${index}`);
+  const definitions = await client.readDefinitions(names);
+  assert.equal(definitions.length, 11);
+  assert.deepEqual(
+    calls.map(([kind, type, value]) => [kind, type, value.length]),
+    [
+      ['read', 'FieldSrcTrgtRelationship', 10],
+      ['read', 'FieldSrcTrgtRelationship', 1],
+    ],
+  );
+  await client.update({ fullName: name });
+  answer = {
+    fullName: name,
+    success: false,
+    errors: { statusCode: 'UNKNOWN_EXCEPTION', message: 'An unexpected error occurred.' },
+  };
+  await assert.rejects(client.update({ fullName: name }), (error) => {
+    assert.equal(error.code, 'RELATIONSHIP_UPDATE_REJECTED');
+    return true;
+  });
+  const refused = await client.update({ fullName: name }).catch((error) => error);
+  assert.match(
+    operationDiagnostic(refused, ''),
+    /refused the Metadata API update of the relationship .*UNKNOWN_EXCEPTION: An unexpected error occurred\..*Nothing was changed/u,
+  );
+  answer = Object.assign(new Error('not a valid value for the enum'), { name: 'soapenv:Client' });
+  await assert.rejects(client.update({ fullName: name }), code('RELATIONSHIP_UPDATE_REJECTED'));
+  answer = new Error('socket hang up');
+  await assert.rejects(client.update({ fullName: name }), code('RELATIONSHIP_REQUEST_UNCONFIRMED'));
+  await assert.rejects(client.update({ fullName: 'bad/name' }), code('INVALID_RELATIONSHIP_NAME'));
+  // Without a bound sender, there are no Metadata API calls.
+  assert.equal(createRelationshipClient('target', '68.0', runner).update, undefined);
 });
 
 test('bound failures map to typed HTTP errors without a retry', async () => {

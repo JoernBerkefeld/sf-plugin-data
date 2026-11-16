@@ -80,6 +80,20 @@ const fakeClient = (entries) => {
       client.calls.push(`remove:${relationshipName}`);
       client.state = client.state.filter((entry) => entry.name !== relationshipName);
     },
+    readDefinitions: async (names) => {
+      client.calls.push(`read:${names.join(',')}`);
+      return client.state
+        .filter((entry) => names.includes(entry.name))
+        .map((entry) => ({ fullName: entry.name, masterLabel: entry.name }));
+    },
+    update: async (definition) => {
+      client.calls.push(`update:${definition.fullName}:${definition.relationshipCardinality}`);
+      client.state = client.state.map((entry) =>
+        entry.name === definition.fullName
+          ? { ...entry, cardinality: definition.relationshipCardinality }
+          : entry,
+      );
+    },
   };
   return client;
 };
@@ -179,7 +193,7 @@ test('deploy creates an absent relationship once and confirms it ACTIVE', async 
   );
 });
 
-test('deploy leaves a present relationship unchanged and refuses a changed one', async () => {
+test('deploy leaves a present relationship unchanged and updates a changed one', async () => {
   const present = await deployFixture({ entries: [wire({ name: 'Org_1' })] });
   const unchanged = await run(present.command);
   assert.equal(unchanged.status, 'success');
@@ -188,10 +202,28 @@ test('deploy leaves a present relationship unchanged and refuses a changed one',
     ['unchanged', 'not-attempted'],
   );
   const changed = await deployFixture({ entries: [wire({ cardinality: 'OneToOne' })] });
-  const refused = await run(changed.command);
-  assert.equal(refused.status, 'blocked');
-  assert.equal(refused.result.items[0].diagnostics[0].code, 'RELATIONSHIP_CHANGE_UNSUPPORTED');
-  assert.ok(!changed.client.calls.some((call) => call.startsWith('create')));
+  const updated = await run(changed.command);
+  assert.equal(updated.status, 'success', JSON.stringify(updated));
+  assert.deepEqual(
+    [updated.result.items[0].outcome, updated.result.items[0].mutation],
+    ['updated', 'confirmed-updated'],
+  );
+  assert.deepEqual(changed.client.calls, [
+    'list:A__dlm:0',
+    `read:${name}`,
+    `update:${name}:ManyToOne`,
+    'list:A__dlm:0',
+  ]);
+  const preview = await deployFixture({
+    preview: true,
+    entries: [wire({ cardinality: 'OneToOne' })],
+  });
+  const planned = await run(preview.command);
+  assert.deepEqual(
+    [planned.result.items[0].outcome, planned.result.items[0].changes],
+    ['update', ['cardinality']],
+  );
+  assert.ok(!preview.client.calls.some((call) => call.startsWith('update')));
 });
 
 /**

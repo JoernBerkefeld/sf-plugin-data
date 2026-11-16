@@ -1,5 +1,5 @@
 import { paceReadback, readbackPace } from './readback-pace.js';
-import { replaceExplanation } from './operation-diagnostic.js';
+import { explanationOf, replaceExplanation } from './operation-diagnostic.js';
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import {
   NativeRelationshipError,
@@ -94,37 +94,61 @@ export async function listNativeRelationships(
  */
 export async function retrieveNativeRelationships(
   dmoName: string,
-  client: Pick<RelationshipClient, 'list'>,
+  client: Pick<RelationshipClient, 'list' | 'readDefinitions'>,
   requestScope?: string,
   mode: DocumentMode = 'deploy',
 ): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
   const inventory = await listNativeRelationships(dmoName, client, mode);
-  const documents = inventory
-    .filter((entry) => entry.sourceObjectName === dmoName)
-    .map((entry): NativeRelationshipDocument | VerbatimDocument => {
-      const native = carriedNativeResponse(entry);
-      try {
-        return carryNativeResponse(
-          normalizeNativeRelationship(entryToWire(entry), requestScope, mode),
-          native?.native,
-        );
-      } catch (error) {
-        const reason = verbatimReason(error);
-        const verbatim =
-          reason === undefined || native === undefined
-            ? undefined
-            : createVerbatimDocument(
-                'relationship',
-                { dataSpace: requestScope ?? 'default', apiName: entry.name },
-                reason,
-                native.native,
-              );
-        if (verbatim === undefined) throw error;
-        return verbatim;
-      }
-    });
+  const kept = inventory.filter((entry) => entry.sourceObjectName === dmoName);
+  const labels = await readLabels(
+    kept.map((entry) => entry.name).filter((name) => typeof name === 'string'),
+    client,
+  );
+  const documents = kept.map((entry): NativeRelationshipDocument | VerbatimDocument => {
+    const native = carriedNativeResponse(entry);
+    try {
+      const document = normalizeNativeRelationship(entryToWire(entry), requestScope, mode);
+      const label = labels.get(entry.name);
+      return carryNativeResponse(
+        label === undefined ? document : { ...document, spec: { ...document.spec, label } },
+        native?.native,
+      );
+    } catch (error) {
+      const reason = verbatimReason(error);
+      const verbatim =
+        reason === undefined || native === undefined
+          ? undefined
+          : createVerbatimDocument(
+              'relationship',
+              { dataSpace: requestScope ?? 'default', apiName: entry.name },
+              reason,
+              native.native,
+            );
+      if (verbatim === undefined) throw error;
+      return verbatim;
+    }
+  });
   // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh mapped array within the ES2022 library target.
   return documents.sort((a, b) => a.identity.apiName.localeCompare(b.identity.apiName));
+}
+
+/**
+ * The labels (Metadata API masterLabel) of relationships, read in batches over the bound
+ * Connection. Without a Metadata API reader, or for a name without a record, there is none.
+ * @param {string[]} names Relationship names.
+ * @param {Pick<RelationshipClient, 'readDefinitions'>} client Relationship reader.
+ * @returns {Promise<Map<string, string>>} Label by name.
+ */
+async function readLabels(
+  names: string[],
+  client: Pick<RelationshipClient, 'readDefinitions'>,
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (names.length === 0 || !client.readDefinitions) return labels;
+  for (const definition of await client.readDefinitions(names))
+    if (typeof definition.masterLabel === 'string' && typeof definition.fullName === 'string')
+      labels.set(definition.fullName, definition.masterLabel);
+  return labels;
 }
 
 /**
@@ -179,60 +203,211 @@ function findBinding(
 }
 
 export type NativeRelationshipDeployPlan = {
-  operation: 'create' | 'noop';
+  operation: 'create' | 'update' | 'noop';
   desired: NativeRelationshipDocument;
-  /** Name of the org relationship carrying the binding, when present. */
+  /** Name of the org relationship the file means, when present. */
   existing?: string;
+  /** Update only: the file keys whose values differ from the org. */
+  changes?: string[];
+  /** Update only: the whole Metadata API record to send. */
+  definition?: Record<string, unknown>;
 };
 
 /**
- * Plan a relationship deployment read-only. The org relationship is matched by its binding, not by
- * the generated name; a different cardinality or owner is refused, as no update route exists.
- * @param {unknown} value Portable relationship.
- * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope.
- * @returns {Promise<NativeRelationshipDeployPlan>} Create or no-op.
+ * Whether a Metadata API value is an explicit nil (`xsi:nil`), which a write must not send back.
+ * @param {unknown} value Record value.
+ * @returns {boolean} Explicit nil.
  */
-export async function preflightNativeRelationship(
-  value: unknown,
-  client: Pick<RelationshipClient, 'list'>,
-  requestScope?: string,
-): Promise<NativeRelationshipDeployPlan> {
-  const desired = admit(value, requestScope);
-  const found = findBinding(
-    desired,
-    await listNativeRelationships(desired.spec.sourceObjectName, client),
+function metadataNil(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const attributes = (value as Record<string, unknown>).$;
+  return (
+    !!attributes &&
+    typeof attributes === 'object' &&
+    (attributes as Record<string, unknown>)['xsi:nil'] === 'true'
   );
-  if (!found) return { operation: 'create', desired };
-  if (
-    found.cardinality !== desired.spec.cardinality ||
-    found.relationshipOwner !== desired.spec.relationshipOwner
-  ) {
-    const error = new NativeRelationshipError('RELATIONSHIP_CHANGE_UNSUPPORTED');
-    replaceExplanation(
-      error,
-      `The relationship ${found.name} with this binding exists with cardinality ${found.cardinality} and owner ${found.relationshipOwner}; the file asks for ${desired.spec.cardinality} and ${desired.spec.relationshipOwner}. Salesforce has no route to change a relationship: delete it (sf data360 delete --metadata relationship:${found.sourceObjectName}:${found.name}) and deploy the file again.`,
-    );
-    throw error;
-  }
-  return { operation: 'noop', desired, existing: found.name };
 }
 
 /**
- * Deploy one relationship: no-op when present, otherwise one POST and a readback of the source
- * DMO's inventory until the binding is ACTIVE with the requested cardinality and owner.
+ * Read the Metadata API record of one relationship.
+ * @param {string} name Relationship name.
+ * @param {Pick<RelationshipClient, 'readDefinitions'>} client Relationship reader.
+ * @returns {Promise<Record<string, unknown>>} The record.
+ */
+async function readDefinition(
+  name: string,
+  client: Pick<RelationshipClient, 'readDefinitions'>,
+): Promise<Record<string, unknown>> {
+  if (!client.readDefinitions)
+    throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+  const definitions = await client.readDefinitions([name]);
+  const found = definitions.find((entry) => entry.fullName === name);
+  if (!found) {
+    const error = new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+    replaceExplanation(
+      error,
+      `The relationship ${name} is listed for its DMO, but the Metadata API returns no FieldSrcTrgtRelationship record of that name. Nothing was changed.`,
+    );
+    throw error;
+  }
+  return found;
+}
+
+/**
+ * The record to send: the org's record with the file's values, without explicit nil values.
+ * @param {Record<string, unknown>} current Org record.
+ * @param {NativeRelationshipDocument['spec']} spec File values.
+ * @returns {Record<string, unknown>} Whole record for `updateMetadata`.
+ */
+function updateDefinition(
+  current: Record<string, unknown>,
+  spec: NativeRelationshipDocument['spec'],
+): Record<string, unknown> {
+  const kept = Object.fromEntries(
+    Object.entries(current).filter(([, value]) => !metadataNil(value)),
+  );
+  return {
+    ...kept,
+    ...(spec.label === undefined ? {} : { masterLabel: spec.label }),
+    owner: spec.relationshipOwner,
+    relationshipCardinality: spec.cardinality,
+    sourceFieldName: `${spec.sourceObjectName}.${spec.sourceFieldName}`,
+    targetFieldName: `${spec.targetObjectName}.${spec.targetFieldName}`,
+  };
+}
+
+/**
+ * The spec keys of the file whose values the listed relationship does not hold (label aside).
+ * @param {ObservedRelationship} found Listed relationship.
+ * @param {NativeRelationshipDocument['spec']} spec File values.
+ * @returns {string[]} Differing keys.
+ */
+function listedChanges(
+  found: ObservedRelationship,
+  spec: NativeRelationshipDocument['spec'],
+): string[] {
+  const keys = [
+    'sourceObjectName',
+    'sourceFieldName',
+    'targetObjectName',
+    'targetFieldName',
+    'cardinality',
+    'relationshipOwner',
+  ] as const;
+  return keys.filter((key) => found[key] !== spec[key]);
+}
+
+/**
+ * Plan a relationship deployment read-only. The org relationship is the one named like the file
+ * (`identity.apiName`) in the source DMO's list, otherwise the one carrying the file's binding
+ * (Salesforce generates the name on create). Absent is a create; present with every value of the
+ * file (the label only when the file states one) is a no-op; otherwise an update of the whole
+ * Metadata API record with the file's values. Salesforce decides which changes it accepts.
+ * @param {unknown} value Portable relationship.
+ * @param {Pick<RelationshipClient, 'list' | 'readDefinitions'>} client Relationship reader.
+ * @param {string} [requestScope] Optional request scope.
+ * @returns {Promise<NativeRelationshipDeployPlan>} Create, update or no-op.
+ */
+export async function preflightNativeRelationship(
+  value: unknown,
+  client: Pick<RelationshipClient, 'list' | 'readDefinitions'>,
+  requestScope?: string,
+): Promise<NativeRelationshipDeployPlan> {
+  const desired = admit(value, requestScope);
+  const inventory = await listNativeRelationships(desired.spec.sourceObjectName, client);
+  const found =
+    inventory.find((entry) => entry.name === desired.identity.apiName) ??
+    findBinding(desired, inventory);
+  if (!found) return { operation: 'create', desired };
+  const changes = listedChanges(found, desired.spec);
+  if (changes.length === 0 && desired.spec.label === undefined)
+    return { operation: 'noop', desired, existing: found.name };
+  const current = await readDefinition(found.name, client);
+  if (desired.spec.label !== undefined && current.masterLabel !== desired.spec.label)
+    changes.push('label');
+  if (changes.length === 0) return { operation: 'noop', desired, existing: found.name };
+  return {
+    operation: 'update',
+    desired,
+    existing: found.name,
+    changes,
+    definition: updateDefinition(current, desired.spec),
+  };
+}
+
+/**
+ * Whether the relationship's Metadata API label is the file's (always true without one).
+ * @param {string} name Relationship name.
+ * @param {NativeRelationshipDocument} desired File.
+ * @param {Pick<RelationshipClient, 'readDefinitions'>} client Relationship reader.
+ * @returns {Promise<boolean>} Label confirmed.
+ */
+async function holdsLabel(
+  name: string,
+  desired: NativeRelationshipDocument,
+  client: Pick<RelationshipClient, 'readDefinitions'>,
+): Promise<boolean> {
+  if (desired.spec.label === undefined) return true;
+  const current = await readDefinition(name, client);
+  return current.masterLabel === desired.spec.label;
+}
+
+/**
+ * Send one update and read the relationship back by name until it holds the file.
+ * @param {string} name Relationship name.
+ * @param {Record<string, unknown>} definition Whole Metadata API record.
+ * @param {NativeRelationshipDocument} desired File.
+ * @param {Pick<RelationshipClient, 'list' | 'readDefinitions' | 'update'>} client Transport.
+ */
+async function updateAndConfirm(
+  name: string,
+  definition: Record<string, unknown>,
+  desired: NativeRelationshipDocument,
+  client: Pick<RelationshipClient, 'list' | 'readDefinitions' | 'update'>,
+): Promise<void> {
+  if (!client.update) throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+  await client.update(definition);
+  for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
+    await paceReadback(attempt);
+    const inventory = await listNativeRelationships(desired.spec.sourceObjectName, client);
+    const found = inventory.find((entry) => entry.name === name);
+    if (
+      found !== undefined &&
+      listedChanges(found, desired.spec).length === 0 &&
+      (await holdsLabel(name, desired, client))
+    )
+      return;
+  }
+  const error = new NativeRelationshipError('RELATIONSHIP_PERSISTENCE_UNCONFIRMED');
+  replaceExplanation(
+    error,
+    `Salesforce accepted the update of the relationship ${name}, but it did not read back with the file's values in time. Retrieve it before another attempt.`,
+  );
+  throw error;
+}
+
+/**
+ * Deploy one relationship: no-op when the org holds the file; an update of the whole Metadata API
+ * record when it differs; otherwise one POST, a readback of the source DMO's inventory until the
+ * binding is ACTIVE with the requested cardinality and owner, and an update of the label when the
+ * file states another one than Salesforce generated.
  * @param {unknown} value Portable relationship.
  * @param {RelationshipClient} client Relationship transport.
  * @param {string} [requestScope] Optional request scope.
- * @returns {Promise<{operation: 'create' | 'noop'; apiName: string}>} Confirmed outcome and org name.
+ * @returns {Promise<{operation: 'create' | 'update' | 'noop'; apiName: string}>} Confirmed outcome
+ * and org name.
  */
 export async function deployNativeRelationship(
   value: unknown,
-  client: Pick<RelationshipClient, 'list' | 'create'>,
+  client: Pick<RelationshipClient, 'list' | 'create' | 'readDefinitions' | 'update'>,
   requestScope?: string,
-): Promise<{ operation: 'create' | 'noop'; apiName: string }> {
+): Promise<{ operation: 'create' | 'update' | 'noop'; apiName: string }> {
   const plan = await preflightNativeRelationship(value, client, requestScope);
   if (plan.operation === 'noop') return { operation: 'noop', apiName: plan.existing! };
+  if (plan.operation === 'update') {
+    await updateAndConfirm(plan.existing!, plan.definition!, plan.desired, client);
+    return { operation: 'update', apiName: plan.existing! };
+  }
   await client.create(relationshipSpec(plan.desired.spec));
   for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
     await paceReadback(attempt);
@@ -253,10 +428,39 @@ export async function deployNativeRelationship(
       found?.status === 'ACTIVE' &&
       found.cardinality === plan.desired.spec.cardinality &&
       found.relationshipOwner === plan.desired.spec.relationshipOwner
-    )
+    ) {
+      if (plan.desired.spec.label !== undefined)
+        await labelCreated(found.name, plan.desired, client);
       return { operation: 'create', apiName: found.name };
+    }
   }
   throw new NativeRelationshipError('RELATIONSHIP_PERSISTENCE_UNCONFIRMED');
+}
+
+/**
+ * Set the file's label on a relationship just created: the create body has no label, and
+ * Salesforce names the label like the relationship.
+ * @param {string} name Created relationship.
+ * @param {NativeRelationshipDocument} desired File with a label.
+ * @param {Pick<RelationshipClient, 'list' | 'readDefinitions' | 'update'>} client Transport.
+ */
+async function labelCreated(
+  name: string,
+  desired: NativeRelationshipDocument,
+  client: Pick<RelationshipClient, 'list' | 'readDefinitions' | 'update'>,
+): Promise<void> {
+  try {
+    const current = await readDefinition(name, client);
+    if (current.masterLabel === desired.spec.label) return;
+    await updateAndConfirm(name, updateDefinition(current, desired.spec), desired, client);
+  } catch (error) {
+    if (error instanceof NativeRelationshipError)
+      replaceExplanation(
+        error,
+        `The relationship ${name} was created, but its label was not set: ${explanationOf(error) ?? error.message}`,
+      );
+    throw error;
+  }
 }
 
 /**

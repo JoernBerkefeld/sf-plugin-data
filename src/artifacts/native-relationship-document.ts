@@ -8,6 +8,8 @@ export type NativeRelationshipSpec = {
   targetFieldName: string;
   cardinality: string;
   relationshipOwner: string;
+  /** Optional label (Metadata API masterLabel); absent leaves the org's label as it is. */
+  label?: string;
 };
 
 export type NativeRelationshipDocument = {
@@ -103,18 +105,25 @@ function objectAt(value: unknown, keyPath: string): Record<string, unknown> {
  * Refuse a key outside the given set and a missing one.
  * @param {Record<string, unknown>} value Object of the file.
  * @param {string} prefix Key path of the object, with a trailing dot (empty at the top).
- * @param {string[]} keys Keys it must hold, and only these.
+ * @param {string[]} keys Keys it must hold.
+ * @param {string[]} [optional] Keys it may hold besides.
  */
-function closedKeys(value: Record<string, unknown>, prefix: string, keys: string[]): void {
+function closedKeys(
+  value: Record<string, unknown>,
+  prefix: string,
+  keys: string[],
+  optional: string[] = [],
+): void {
   for (const key of Object.keys(value))
-    if (!keys.includes(key))
+    if (!keys.includes(key) && !optional.includes(key))
       throw refuse(`${prefix}${printableKey(key)}`, 'is not a key a relationship file can hold');
   for (const key of keys)
     if (!Object.hasOwn(value, key)) throw refuse(`${prefix}${key}`, 'is missing');
 }
 
 /**
- * Validate the portable relationship structurally. Cardinality and owner are sent as authored;
+ * Validate the portable relationship structurally. Cardinality, owner and the optional label are
+ * sent as authored;
  * Salesforce decides which values it accepts. Deploy mode (the default) names the first offending
  * key path; retrieve mode keeps what the org returned (unknown keys, null or missing values, any
  * field names) and checks only what names and places the file.
@@ -137,7 +146,7 @@ export function validateNativeRelationshipDocument(
   if (mode === 'retrieve') return structuredClone(value) as NativeRelationshipDocument;
   closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
   closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
-  closedKeys(spec, 'spec.', specKeys);
+  closedKeys(spec, 'spec.', specKeys, ['label']);
   const checks: Array<[string, (value: unknown) => boolean, string]> = [
     [
       'sourceObjectName',
@@ -164,6 +173,8 @@ export function validateNativeRelationshipDocument(
   ];
   for (const [key, check, problem] of checks)
     if (!check(spec[key])) throw refuse(`spec.${key}`, problem);
+  if (Object.hasOwn(spec, 'label') && !plain(spec.label))
+    throw refuse('spec.label', 'must be a non-empty text');
   return structuredClone(value) as NativeRelationshipDocument;
 }
 
@@ -231,9 +242,10 @@ export function normalizeNativeRelationship(
 }
 
 /**
- * The authored part of a relationship, in the order of the create body.
+ * The authored binding, cardinality and owner of a relationship, in the order of the create body
+ * (the label is not part of it).
  * @param {NativeRelationshipSpec} value Observation or document spec.
- * @returns {NativeRelationshipSpec} Exactly the six authored values.
+ * @returns {NativeRelationshipSpec} Exactly the six values of the create body.
  */
 export function relationshipSpec(value: NativeRelationshipSpec): NativeRelationshipSpec {
   return {

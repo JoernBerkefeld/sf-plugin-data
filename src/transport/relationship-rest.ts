@@ -3,9 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   apiReceiptDiagnostic,
+  displayableApiText,
   getConnectDiagnostic,
   retainConnectDiagnostic,
 } from './connect-diagnostic.js';
+import { replaceExplanation } from '../services/operation-diagnostic.js';
 import { ConnectError } from './connect-client.js';
 import { runProjectMetadata, verifyTemporaryDirectory } from './project-metadata.js';
 import type { MetadataRunner } from './project-metadata.js';
@@ -30,7 +32,59 @@ export type RelationshipClient = {
   create: (relationship: NativeRelationshipSpec) => Promise<unknown>;
   /** One DELETE by exact relationship name; never retried. */
   remove: (relationshipName: string) => Promise<void>;
+  /**
+   * Metadata API records (`FieldSrcTrgtRelationship`) by exact name, on the bound Connection;
+   * a name Salesforce returns no record for is left out. Absent without a bound sender.
+   */
+  readDefinitions?: (names: string[]) => Promise<Array<Record<string, unknown>>>;
+  /** One Metadata API `updateMetadata` of a whole record on the bound Connection; never retried. */
+  update?: (definition: Record<string, unknown>) => Promise<void>;
 };
+
+/** Metadata API type of a Data Cloud relationship; the record name is the relationship name. */
+export const relationshipMetadataType = 'FieldSrcTrgtRelationship';
+/** Names per Metadata API read call (the API's limit). */
+const readBatch = 10;
+
+/**
+ * Salesforce's refusal of an update: nothing was changed. Codes and texts pass the display
+ * filter of REST errors; a text that does not pass is left out.
+ * @param {string} name Relationship name.
+ * @param {Array<{code?: unknown; message?: unknown}>} problems Salesforce's answers.
+ * @returns {NativeRelationshipError} RELATIONSHIP_UPDATE_REJECTED with an explanation.
+ */
+function updateRefusal(
+  name: string,
+  problems: Array<{ code?: unknown; message?: unknown }>,
+): NativeRelationshipError {
+  const parts = problems
+    .slice(0, 3)
+    .map(({ code, message }) =>
+      [
+        typeof code === 'string' && /^[\w:.-]{1,80}$/u.test(code) ? code : undefined,
+        displayableApiText(message),
+      ]
+        .filter(Boolean)
+        .join(': '),
+    );
+  const said = parts.filter(Boolean);
+  const error = new NativeRelationshipError('RELATIONSHIP_UPDATE_REJECTED');
+  replaceExplanation(
+    error,
+    `Salesforce refused the Metadata API update of the relationship ${name}${said.length > 0 ? `: ${said.join('; ')}` : ' without a text the plugin can show'}. Nothing was changed.`,
+  );
+  return error;
+}
+
+/**
+ * A Metadata API answer as a list of records.
+ * @param {unknown} value One record or several.
+ * @returns {unknown[]} Records.
+ */
+function records(value: unknown): unknown[] {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
 
 /**
  * Build a single-attempt native relationship client. GET and DELETE go through the bound sender
@@ -189,6 +243,75 @@ export function createRelationshipClient(
       if (!nativeRelationshipName.test(relationshipName))
         throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
       await request('DELETE', `${endpoint}/relationships/${relationshipName}${scopeQuery}`);
+    },
+    ...(sender?.metadata ? metadataCalls(sender.metadata) : {}),
+  };
+}
+
+/**
+ * Metadata API read and update of relationships on the bound Connection.
+ * @param {Function} open The bound sender's Metadata API.
+ * @returns {Pick<RelationshipClient, 'readDefinitions' | 'update'>} Both calls.
+ */
+function metadataCalls(
+  open: NonNullable<BoundSsot['metadata']>,
+): Required<Pick<RelationshipClient, 'readDefinitions' | 'update'>> {
+  return {
+    readDefinitions: async (names) => {
+      if (names.some((name) => !nativeRelationshipName.test(name)))
+        throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
+      const api = await open();
+      const found: Array<Record<string, unknown>> = [];
+      for (let start = 0; start < names.length; start += readBatch) {
+        let answer: unknown;
+        try {
+          answer = await api.read(relationshipMetadataType, names.slice(start, start + readBatch));
+        } catch (error) {
+          const failure = new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+          const text = displayableApiText((error as { message?: unknown } | null)?.message);
+          replaceExplanation(
+            failure,
+            `The Metadata API read of ${relationshipMetadataType} failed${text ? `: ${text}` : ''}.`,
+          );
+          throw failure;
+        }
+        for (const entry of records(answer))
+          if (
+            entry &&
+            typeof entry === 'object' &&
+            !Array.isArray(entry) &&
+            typeof (entry as Record<string, unknown>).fullName === 'string'
+          )
+            found.push(entry as Record<string, unknown>);
+      }
+      return found;
+    },
+    update: async (definition) => {
+      const name = definition.fullName;
+      if (typeof name !== 'string' || !nativeRelationshipName.test(name))
+        throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
+      const api = await open();
+      let answer: unknown;
+      try {
+        answer = await api.update(relationshipMetadataType, definition);
+      } catch (error) {
+        // A SOAP fault (soapenv:Client, sf:INVALID_...) is Salesforce refusing the request.
+        const fault = error as { name?: unknown; message?: unknown } | null;
+        if (typeof fault?.name === 'string' && /^(?:soapenv|sf):/u.test(fault.name))
+          throw updateRefusal(name, [{ code: fault.name, message: fault.message }]);
+        throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+      }
+      const [result] = records(answer) as Array<Record<string, unknown> | undefined>;
+      if (result?.success === true) return;
+      if (result?.success === false)
+        throw updateRefusal(
+          name,
+          records(result.errors).map((entry) => {
+            const problem = (entry ?? {}) as Record<string, unknown>;
+            return { code: problem.statusCode, message: problem.message };
+          }),
+        );
+      throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
     },
   };
 }

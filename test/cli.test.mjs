@@ -192,8 +192,9 @@ test('README documents native relationships without the removed XML export', () 
     'sf data360 retrieve -m relationship:Order__dlm',
     'bare `relationship` selector reads the relationships of every DMO',
     'RELATIONSHIP_INVENTORY_INCOMPLETE',
-    'deploy finds the relationship by its binding',
-    'RELATIONSHIP_CHANGE_UNSUPPORTED',
+    "deploy finds the relationship by the file's name",
+    'RELATIONSHIP_UPDATE_REJECTED',
+    'one `updateMetadata` of the whole `FieldSrcTrgtRelationship`',
     'Deploy never deletes relationships',
     'Salesforce requires the source DMO, and a target DMO, to be mapped',
     'a CRM object such as `Account`',
@@ -205,17 +206,16 @@ test('README documents native relationships without the removed XML export', () 
   ])
     assert.ok(section.includes(required), `missing relationship contract: ${required}`);
   const row = readme.split('\n').find((line) => line.startsWith('| DMO field relationships'));
-  // Only the bare-type retrieve refusal is the plugin's own limit; Salesforce has no update.
-  assert.equal((row.match(/Partial/gu) ?? []).length, 1);
+  // Read is Partial (retrieve by source DMO); update is Partial: Salesforce refuses a changed
+  // target or owner through the Metadata API.
+  assert.equal((row.match(/Partial/gu) ?? []).length, 2);
   assert.equal((row.match(/Available </gu) ?? []).length, 2);
-  assert.match(row, /\|\s*Unavailable\s*\|/u);
+  assert.match(row, /title="Metadata API update of label, cardinality and source field"/u);
+  assert.doesNotMatch(row, /\|\s*Unavailable\s*\|/u);
   for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
     const text = readFileSync(new URL(file, import.meta.url), 'utf8');
-    for (const removed of [
-      'fieldSrcTrgtRelationship-meta.xml',
-      'FieldSrcTrgtRelationship',
-      'definitionOnly: true',
-    ])
+    // FieldSrcTrgtRelationship stays named: it is the Metadata API type of the update.
+    for (const removed of ['fieldSrcTrgtRelationship-meta.xml', 'definitionOnly: true'])
       assert.ok(!text.includes(removed), `${file} mentions ${removed}`);
   }
 });

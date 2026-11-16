@@ -12,8 +12,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce answered the relationship list in a shape the plugin does not expect. Rerun the command; if it repeats, inspect the raw list response for the DMO.',
   PARTIAL_RELATIONSHIP_OUTPUT:
     'The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again with --overwrite.',
-  RELATIONSHIP_CHANGE_UNSUPPORTED:
-    'The relationship exists with a different cardinality or owner, and Salesforce cannot change it. Delete it with sf data360 delete -m relationship:SourceDmo__dlm:Name, then deploy the file again.',
   RELATIONSHIP_DATASPACE_COLLISION:
     'A local file with this relationship name was saved from a different data space. Retrieve into a separate project folder, or remove the old file first.',
   RELATIONSHIP_DELETION_UNCONFIRMED:
@@ -29,9 +27,11 @@ export const hints: Readonly<Record<string, string>> = {
   RELATIONSHIP_NAME_MISMATCH:
     "No relationship has this name, but another one carries the file's binding. Retrieve the source DMO's relationships and delete that one by its name.",
   RELATIONSHIP_PERSISTENCE_UNCONFIRMED:
-    "The relationship create was sent, but it did not read back as active with the requested settings in time. Check the source DMO's relationships before deploying again.",
+    "The relationship create or update was sent, but it did not read back with the file's values in time (a create also as active). Check the source DMO's relationships before deploying again.",
   RELATIONSHIP_REQUEST_UNCONFIRMED:
-    "A relationship request ended without a clear HTTP result. For a create or delete, list the source DMO's relationships before trying again; nothing is retried.",
+    "A relationship request ended without a clear result (an HTTP request, or a Metadata API read or update). For a create, update or delete, list the source DMO's relationships before trying again; nothing is retried.",
+  RELATIONSHIP_UPDATE_REJECTED:
+    "Salesforce refused the Metadata API update of the relationship, and nothing was changed. Read Salesforce's answer in the message; it accepts label, cardinality and source field changes, not a changed target or owner.",
   RELATIONSHIP_TARGET_BINDING_MISMATCH:
     'The relationship with this name links other objects or fields than expected: another source DMO than the selector names, or with --changed-since another binding than the deleted file. Check it before deleting.',
   UNSUPPORTED_RELATIONSHIP_DATASPACE:

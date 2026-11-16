@@ -5,9 +5,17 @@ import { getConnectDiagnostic } from './connect-diagnostic.js';
 /** Supplies the authenticated Connection; tests inject a synthetic JSforce one. */
 export type BoundConnection = () => Promise<ConstructorParameters<typeof ConnectClient>[0]>;
 
+/** The Metadata API CRUD calls of the bound Connection (jsforce `connection.metadata`). */
+export type BoundMetadata = {
+  read: (type: string, fullNames: string[]) => Promise<unknown>;
+  update: (type: string, metadata: Record<string, unknown>) => Promise<unknown>;
+};
+
 /** One bound SSOT route sender; see BoundTransport for its only resend. */
 export type BoundSsot = {
   request: (method: 'GET' | 'DELETE', route: string, noContent?: unknown) => Promise<unknown>;
+  /** Metadata API calls on the same Connection; never a child CLI process. */
+  metadata?: () => Promise<BoundMetadata>;
 };
 
 /**
@@ -72,12 +80,14 @@ class BoundTransport extends ConnectClient {
 }
 
 /**
- * Bind GET and DELETE routes to one lazily opened authenticated Connection.
+ * Bind GET and DELETE routes, and the Metadata API calls, to one lazily opened authenticated
+ * Connection.
  * Failures surface as ConnectError with the retained API diagnostic; callers map them.
  * @param {string} targetOrg Resolved username of the target org.
  * @param {string} version Numeric API version such as 68.0, already normalized by the caller.
  * @param {BoundConnection} [connect] Supplies the Connection; defaults to the CLI auth for targetOrg.
  * @returns {BoundSsot} Sender; a GET is resent once after an expired-session refresh, a DELETE never.
+ * Its Metadata API calls use the same Connection.
  */
 export function openBoundSsot(
   targetOrg: string,
@@ -91,12 +101,25 @@ export function openBoundSsot(
         authInfo: await AuthInfo.create({ username: targetOrg }),
         connectionOptions: { version },
       }));
+  let session: ReturnType<typeof open> | undefined;
   let transport: Promise<BoundTransport> | undefined;
   return {
     request: async (method, route, noContent) => {
-      transport ??= (async () => new BoundTransport(await open(), version))();
+      session ??= open();
+      const opened = session;
+      transport ??= (async () => new BoundTransport(await opened, version))();
       const client = await transport;
       return client.request(method, route, noContent);
+    },
+    metadata: async () => {
+      session ??= open();
+      const api = ((await session) as { metadata?: BoundMetadata }).metadata;
+      if (!api || typeof api.read !== 'function' || typeof api.update !== 'function')
+        throw new ConnectError('REQUEST_FAILED');
+      return {
+        read: async (type, fullNames) => api.read(type, fullNames),
+        update: async (type, metadata) => api.update(type, metadata),
+      };
     },
   };
 }
