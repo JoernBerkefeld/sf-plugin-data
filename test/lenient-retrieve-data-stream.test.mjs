@@ -9,7 +9,10 @@ import { validateDataStreamDocument } from '../lib/artifacts/data-stream-documen
 import { writeDataStreamDocument } from '../lib/artifacts/write-data-stream.js';
 import { DeployInputError, readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import { sortKeysDeep } from '../lib/artifacts/verbatim-document.js';
-import { retrieveNativeDataStream } from '../lib/services/native-data-stream.js';
+import {
+  retrieveNativeDataStream,
+  sortedStreamMappings,
+} from '../lib/services/native-data-stream.js';
 import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
 
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-lenient-stream-'));
@@ -175,6 +178,10 @@ async function retrieveCommand(stream, connectionDetail) {
 
 const streamFile = (cwd, name) =>
   path.join(cwd, 'data360', 'data-stream', `${name}.data-stream-meta.json`);
+// An as-is stream file keeps the GET with its mappings in a stable order.
+const asIs = (stream) =>
+  sortKeysDeep({ ...stream, mappings: sortedStreamMappings(stream.mappings) });
+const savedBytes = (run) => readFile(streamFile(run.cwd, 'Account_Home'), 'utf8');
 
 test('a CRM-connector stream is written as its GET without connection or schema reads', async () => {
   const stream = crmStream();
@@ -186,10 +193,26 @@ test('a CRM-connector stream is written as its GET without connection or schema 
   const saved = JSON.parse(await readFile(streamFile(cwd, 'Account_Home'), 'utf8'));
   assert.equal(saved.kind, 'data-stream');
   assert.deepEqual(saved.identity, { dataSpace: 'default', apiName: 'Account_Home' });
-  assert.deepEqual(saved.verbatim.native, sortKeysDeep(stream));
+  assert.deepEqual(saved.verbatim.native, asIs(stream));
   await assert.rejects(readDeployInputs({ cwd, metadata: ['data-stream:Account_Home'] }), {
     code: 'VERBATIM_NOT_DEPLOYABLE',
   });
+});
+
+test('an as-is stream file does not change when Salesforce reorders its mappings', async () => {
+  const pairs = [
+    { sourceFieldName: 'Name', targetFieldName: 'Name' },
+    { sourceFieldName: 'AnnualRevenue', targetFieldName: 'AnnualRevenue' },
+    { sourceFieldName: 'Id', targetFieldName: 'Id' },
+  ];
+  const first = await retrieveCommand({ ...crmStream(), mappings: pairs });
+  const second = await retrieveCommand({ ...crmStream(), mappings: pairs.toReversed() });
+  assert.equal(await savedBytes(first), await savedBytes(second));
+  const saved = JSON.parse(await savedBytes(first));
+  assert.deepEqual(
+    saved.verbatim.native.mappings.map((mapping) => mapping.targetFieldName),
+    ['AnnualRevenue', 'Id', 'Name'],
+  );
 });
 
 test('each IngestApi variant the file cannot hold is named from the stream GET alone', async () => {
@@ -235,7 +258,7 @@ test('an IngestApi stream with a real formula is written as its GET', async () =
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(result.result.items[0].verbatim, { reason: 'UNSUPPORTED_STREAM_PROJECTION' });
   const saved = JSON.parse(await readFile(streamFile(cwd, 'GeneratedStream'), 'utf8'));
-  assert.deepEqual(saved.verbatim.native, sortKeysDeep(stream));
+  assert.deepEqual(saved.verbatim.native, asIs(stream));
   await assert.rejects(readDeployInputs({ cwd, metadata: ['data-stream:GeneratedStream'] }), {
     code: 'VERBATIM_NOT_DEPLOYABLE',
   });
@@ -358,5 +381,5 @@ test('a stream whose connection is not CONNECTED is written verbatim, not refuse
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(result.result.items[0].verbatim, { reason: 'STREAM_CONNECTION_MISMATCH' });
   const saved = JSON.parse(await readFile(streamFile(cwd, 'GeneratedStream'), 'utf8'));
-  assert.deepEqual(saved.verbatim.native, sortKeysDeep(ingestStream()));
+  assert.deepEqual(saved.verbatim.native, asIs(ingestStream()));
 });

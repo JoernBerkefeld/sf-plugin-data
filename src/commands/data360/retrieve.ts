@@ -17,7 +17,10 @@ import {
   createDataStreamClient,
   createDataStreamReferenceReader,
 } from '../../transport/data-stream-rest.js';
-import { retrieveNativeDataStream } from '../../services/native-data-stream.js';
+import {
+  retrieveNativeDataStream,
+  sortedStreamMappings,
+} from '../../services/native-data-stream.js';
 import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
 import { retrieveLeanNativeMapping } from '../../services/native-mapping.js';
 import type { MappingDependencies } from '../../services/native-mapping.js';
@@ -320,6 +323,20 @@ function inventoryCode(error: unknown): string {
 }
 
 /** Retrieve selected DMO configuration through existing service-owned capability checks. */
+/**
+ * The raw stream GET a verbatim file keeps, with its mappings in a stable order.
+ * @param {unknown} response Stream GET body.
+ * @returns {{ native: unknown }} Response with sorted mappings.
+ */
+function verbatimStreamNative(response: unknown): { native: unknown } {
+  if (!response || typeof response !== 'object' || Array.isArray(response))
+    return { native: response };
+  const body = response as Record<string, unknown>;
+  return Array.isArray(body.mappings)
+    ? { native: { ...body, mappings: sortedStreamMappings(body.mappings) } }
+    : { native: response };
+}
+
 export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly aliases = ['datacloud:retrieve', 'd360:retrieve', 'dc:retrieve'];
   public static readonly summary =
@@ -810,8 +827,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           let nativeOf = nothingRead;
           try {
             const clients = this.createDataStreamClients(connection, target, version);
-            // The stream's own GET is the raw response a verbatim file keeps.
-            const reads = recordNativeReads(clients.streams);
+            // The stream's own GET is the raw response a verbatim file keeps. Salesforce lists
+            // the mappings in varying order, so sort them as a modelled file does.
+            const reads = recordNativeReads(clients.streams, verbatimStreamNative);
             nativeOf = reads.nativeOf;
             const document = await this.acquireDataStream(
               apiName,
