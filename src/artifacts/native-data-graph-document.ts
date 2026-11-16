@@ -103,12 +103,16 @@ const serverTopKeys = [
   'lastRefreshedDate',
   'kind',
   'status',
+  'lastRunStatus',
   'version',
   'extendedProperties',
   'idDmoLabel',
   'valuesDmoLabel',
   'primaryObjectLabel',
 ];
+// Request spellings of the schedule granularity (Data 360 input schema, API68); GET reads them
+// in lowercase (`day`, `hour`).
+const timeGranularities = ['Minute', 'Hour', 'Day', 'Month', 'Year', 'Streaming', 'OnDemand'];
 const serverNodeKeys = [
   'id',
   'categoryDevName',
@@ -442,9 +446,11 @@ export function validateNativeDataGraphDocument(
     );
     graphRequire(Number.isSafeInteger(schedule.frequency) && (schedule.frequency as number) > 0);
     graphText(schedule.timeGranularity);
+    const spelling = schedule.timeGranularity.toLowerCase();
+    // A known value takes its request spelling; any other value is kept as written.
     schedule.timeGranularity =
-      schedule.timeGranularity.charAt(0).toUpperCase() +
-      schedule.timeGranularity.slice(1).toLowerCase();
+      timeGranularities.find((value) => value.toLowerCase() === spelling) ??
+      schedule.timeGranularity;
   }
   if (Object.hasOwn(d, 'incrementalRefreshConfig')) {
     if (strict)

@@ -1,3 +1,21 @@
+# Draft data graphs and schedule spelling (C3 fixes) — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C3 graph
+findings (evidence: verification DB `data360:graph.schedule-jsonpath-shapes.api68`).
+A graph whose GET reads `status: draft` is written as-is with reason `DATA_GRAPH_DRAFT` (new code,
+hint and page; thrown in `retrieveNativeDataGraph` after the identity check). Chosen over carrying
+`creationMode: DRAFT` with a create-only deploy: POST of a draft works, but a draft GET has no
+`creationMode`, no schedule and no root node type (strict deploy needs it), never reaches `ready`
+(create settlement would wait for the whole `--wait-timeout` and report failed), cannot be PUT
+("only when Active or Error") and is refused by delete (needs `ready`); a draft path through
+create, settlement, update and delete is far larger than one verbatim reason. `lastRunStatus` is
+now a server-owned top-level key (dropped on retrieve, admitted in deploy-mode GET projection).
+`fullRefreshConfig.schedule.timeGranularity` is written in the known request spelling
+(`Minute`, `Hour`, `Day`, `Month`, `Year`, `Streaming`, `OnDemand`, matched case-insensitively);
+an unknown value is kept as written (was capitalised-first, turning `OnDemand` into `Ondemand`).
+Offline only (OnDemand is gated off in the org). Tests: `test/lenient-retrieve-data-graph.test.mjs`.
+Open: deleting a draft graph from its verbatim file is still refused (delete requires `ready`).
+
 # UI segments (C2) — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C-implement, variant C2.

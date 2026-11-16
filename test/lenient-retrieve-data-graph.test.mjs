@@ -323,6 +323,62 @@ for (const [label, change] of [
     });
   });
 
+test('a draft graph is written verbatim with reason DATA_GRAPH_DRAFT', async () => {
+  // Shape of a live API68 draft GET (2026-11-16): status draft, lastRunStatus none, no
+  // schedule and no root node type.
+  const body = graph('draft');
+  body.lastRunStatus = 'none';
+  delete body.fullRefreshConfig;
+  delete body.incrementalRefreshConfig;
+  delete body.sourceObject.type;
+  const { result, cwd } = await retrieveCommand(body);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.result.items[0].verbatim, { reason: 'DATA_GRAPH_DRAFT' });
+  const saved = JSON.parse(await readFile(graphFile(cwd), 'utf8'));
+  assert.deepEqual(saved.verbatim.native, sortKeysDeep(body));
+  await assert.rejects(readDeployInputs({ cwd, metadata: [`data-graph:${name}`] }), {
+    code: 'VERBATIM_NOT_DEPLOYABLE',
+  });
+});
+
+test('lastRunStatus is a server fact left out of a retrieved file', async () => {
+  const body = graph();
+  body.lastRunStatus = 'active';
+  assert.equal(
+    Object.hasOwn(nativeDataGraphDocumentFromResponse(body).definition, 'lastRunStatus'),
+    false,
+  );
+  const { result, cwd } = await retrieveCommand(body);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.items[0].verbatim, undefined);
+  const saved = JSON.parse(await readFile(graphFile(cwd), 'utf8'));
+  assert.equal(Object.hasOwn(saved.definition, 'lastRunStatus'), false);
+  const [input] = await readDeployInputs({ cwd, metadata: [`data-graph:${name}`] });
+  assert.equal(input.document.definition.name, name);
+});
+
+test('schedule granularities keep their request spelling, OnDemand included', () => {
+  for (const [read, written] of [
+    ['day', 'Day'],
+    ['HOUR', 'Hour'],
+    ['ondemand', 'OnDemand'],
+    ['OnDemand', 'OnDemand'],
+    ['ONDEMAND', 'OnDemand'],
+    ['streaming', 'Streaming'],
+    ['futureUnit', 'futureUnit'],
+  ]) {
+    const body = graph();
+    body.fullRefreshConfig.schedule.timeGranularity = read;
+    for (const mode of ['retrieve', 'deploy'])
+      assert.equal(
+        nativeDataGraphDocumentFromResponse(body, mode).definition.fullRefreshConfig.schedule
+          .timeGranularity,
+        written,
+        `${read} (${mode})`,
+      );
+  }
+});
+
 test('the item failure names the code behind NATIVE_GRAPH_RETRIEVE_BLOCKED', async () => {
   const cwd = await project();
   await mkdir(path.dirname(graphFile(cwd)), { recursive: true });

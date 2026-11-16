@@ -436,7 +436,8 @@ model. One failing item never stops the other items or families.
   the check that failed, or `UNMODELLED_RESPONSE` when there is none. Examples: streams
   that are not Ingestion API streams, segments other than DBT and UI ones (or with a schedule or parameters), mappings that
   are not DLO to DMO, Visual Builder calculated-insight drafts, system or packaged data
-  transforms, and data graph schedules the format does not hold.
+  transforms, data graph schedules the format does not hold, and draft data graphs
+  (`DATA_GRAPH_DRAFT`).
 - **As-is files are not deployed.** A folder or Git-range deploy skips them with a
   warning. Naming one (`-m type:Name` or an exact `--source-dir` file) refuses with
   `VERBATIM_NOT_DEPLOYABLE`; so does `sf data360 publish`.
@@ -501,7 +502,9 @@ types and its refresh schedule. Retrieve writes
 `force-app/main/default/data360/dataGraphs/ExampleGraph.native-dataGraph.json`
 (or the configured source package), a `kind: native-data-graph`, `apiVersion: 68.0`
 document. Retained bindings are matched to the target again; source-org record IDs do
-not become target authority.
+not become target authority. A draft graph (never built) is written as-is with reason
+`DATA_GRAPH_DRAFT`: Salesforce does not let the API edit a draft, and a normal file would
+build it.
 
 ```sh
 sf data360 retrieve -o source -m data-graph:ExampleGraph -d ./project --json

@@ -48,6 +48,9 @@ export async function retrieveNativeDataGraph(
   const raw = graphRecord(read.body);
   // A GET answering with another graph is an item failure, never a verbatim file.
   if (raw.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+  // A draft (created with creationMode DRAFT, never built) reads without its draft status in
+  // the file, and a draft cannot be edited by PUT (live, API68, 2026-11-16): keep it as read.
+  if (raw.status === 'draft') throw new DataGraphError('DATA_GRAPH_DRAFT');
   const document = nativeDataGraphDocumentFromResponse(raw, 'retrieve');
   const observed = observeNativeDataGraph(raw, document, 'retrieve');
   const fresh = await acquireNativeDataGraph(context, document, false, 'retrieve');
