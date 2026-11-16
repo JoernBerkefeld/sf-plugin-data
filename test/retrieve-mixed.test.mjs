@@ -542,8 +542,17 @@ test('bare dlo beside identity resolution retrieves every listed DLO; a failing 
     assert.deepEqual([version, family, scope], ['68.0', 'dlo', 'default']);
     return ['Zeta_Home__dll', 'Broken__dll', 'Account_Home__dll'];
   };
-  command.createDloClient = (target, version) => {
-    assert.deepEqual([target, version], ['synthetic', '68.0']);
+  // Every DLO read shares one bound sender: no CLI process per read.
+  const opened = [];
+  command.createSsotSender = (target, version, connect) => {
+    const sender = { request: () => assert.fail('stubbed client') };
+    opened.push([target, version, sender, connect]);
+    return sender;
+  };
+  const senders = [];
+  command.createDloClient = (target, version, runner, sender) => {
+    assert.deepEqual([target, version, runner], ['synthetic', '68.0', undefined]);
+    senders.push(sender);
     return {};
   };
   command.acquireDlo = async (apiName) => {
@@ -576,6 +585,13 @@ test('bare dlo beside identity resolution retrieves every listed DLO; a failing 
     calls.filter((call) => call.startsWith('dlo:')),
     ['dlo:Account_Home__dll', 'dlo:Broken__dll', 'dlo:Zeta_Home__dll'],
   );
+  assert.equal(opened.length, 1);
+  assert.deepEqual(opened[0].slice(0, 2), ['synthetic', '68.0']);
+  // The sender is bound to the run's own authenticated Connection, not a fresh login.
+  const bound = await opened[0][3]();
+  assert.equal(bound.getUsername(), 'synthetic');
+  assert.equal(senders.length, 3);
+  assert.ok(senders.every((sender) => sender === opened[0][2]));
 });
 
 test('the removed DLO inventory refusal code is no longer registered', () => {

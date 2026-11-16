@@ -43,6 +43,7 @@ import { writeNativeRelationshipDocument } from '../../artifacts/write-native-re
 import { retrieveNativeRelationships } from '../../services/native-relationship.js';
 import { createRelationshipClient } from '../../transport/relationship-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
+import type { BoundSsot } from '../../transport/bound-ssot.js';
 import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
 import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
@@ -411,19 +412,48 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected createMappingClient = createMappingClient;
   protected createMappingInventoryReader = createMappingInventoryReader;
   protected writeNativeMapping = writeNativeMappingDocument;
+  // Native DLO/DMO/mapping reads share one bound sender per org and version on the run's own
+  // authenticated Connection instead of one CLI process per read. Tests replace this seam.
+  protected createSsotSender = openBoundSsot;
+  private ssotSenders?: Map<string, BoundSsot>;
+  /**
+   * One shared bound sender per org and API version.
+   * @param {string} target Target org alias or username.
+   * @param {string} version Numeric API version.
+   * @param {Connection} connection The run's authenticated Connection for that org.
+   * @returns {BoundSsot} Shared sender.
+   */
+  protected ssotSender(target: string, version: string, connection: Connection): BoundSsot {
+    const key = `${target}\n${version}`;
+    // Tests build commands without field initializers, so both fields may be absent.
+    this.ssotSenders ??= new Map();
+    let sender = this.ssotSenders.get(key);
+    if (!sender) {
+      sender = (this.createSsotSender ?? openBoundSsot)(target, version, async () => connection);
+      this.ssotSenders.set(key, sender);
+    }
+    return sender;
+  }
   /**
    * Readers of a mapping's source DLO and target DMO; clients are created on the first read.
-   * @param {string} target Resolved username.
+   * @param {string} target Target org alias or username.
    * @param {string} version Native API version.
+   * @param {BoundSsot} sender Shared bound sender for the reads.
    * @returns {MappingDependencies} Lazy source and target readers.
    */
-  protected mappingParents(target: string, version: string): MappingDependencies {
+  protected mappingParents(
+    target: string,
+    version: string,
+    sender: BoundSsot,
+  ): MappingDependencies {
     return {
       source: {
-        get: async (name) => (this.createDloClient ?? createDloClient)(target, version).get(name),
+        get: async (name) =>
+          (this.createDloClient ?? createDloClient)(target, version, undefined, sender).get(name),
       },
       target: {
-        get: async (name) => (this.createDmoClient ?? createDmoClient)(target, version).get(name),
+        get: async (name) =>
+          (this.createDmoClient ?? createDmoClient)(target, version, undefined, sender).get(name),
       },
     };
   }
@@ -1161,23 +1191,47 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   ? await this.acquireNativeMapping(
                       apiName,
                       reads.wrap(
-                        this.createMappingClient(target, version, undefined, requestScope),
+                        this.createMappingClient(
+                          target,
+                          version,
+                          undefined,
+                          requestScope,
+                          this.ssotSender(target, version, connection),
+                        ),
                       ),
                       requestScope,
-                      this.mappingParents(target, version),
+                      this.mappingParents(
+                        target,
+                        version,
+                        this.ssotSender(target, version, connection),
+                      ),
                       'retrieve',
                     )
                   : family === 'dlo'
                     ? await this.acquireDlo(
                         apiName,
-                        reads.wrap(this.createDloClient(target, version)),
+                        reads.wrap(
+                          this.createDloClient(
+                            target,
+                            version,
+                            undefined,
+                            this.ssotSender(target, version, connection),
+                          ),
+                        ),
                         // The scope it is read in binds a DLO that belongs to several spaces.
                         effectiveScope,
                         'retrieve',
                       )
                     : await (this.acquireNativeDmo ?? retrieveNativeDmo)(
                         apiName,
-                        reads.wrap(this.createDmoClient(target, version)),
+                        reads.wrap(
+                          this.createDmoClient(
+                            target,
+                            version,
+                            undefined,
+                            this.ssotSender(target, version, connection),
+                          ),
+                        ),
                         requestScope,
                         'retrieve',
                       );
@@ -1502,7 +1556,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               const target =
                 flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
               if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
-              const reads = recordNativeReads(this.createDloClient(target, '68.0'));
+              const reads = recordNativeReads(
+                this.createDloClient(
+                  target,
+                  '68.0',
+                  undefined,
+                  this.ssotSender(target, '68.0', org.getConnection()),
+                ),
+              );
               nativeOf = reads.nativeOf;
               const document = await this.acquireDlo(apiName, reads.client, 'default', 'retrieve');
               const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
@@ -1548,14 +1609,24 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               const target = flags['target-org'] ?? org.getConnection(version).getUsername();
               if (!target) throw new MappingDefinitionError('TARGET_ORG_REQUIRED');
               const reads = recordNativeReads(
-                this.createMappingClient(target, version, undefined, requestScope),
+                this.createMappingClient(
+                  target,
+                  version,
+                  undefined,
+                  requestScope,
+                  this.ssotSender(target, version, org.getConnection()),
+                ),
               );
               nativeOf = reads.nativeOf;
               const document = await this.acquireNativeMapping(
                 apiName,
                 reads.client,
                 requestScope,
-                this.mappingParents(target, version),
+                this.mappingParents(
+                  target,
+                  version,
+                  this.ssotSender(target, version, org.getConnection()),
+                ),
                 'retrieve',
               );
               const receipt = await this.writeNativeMapping(
@@ -1693,6 +1764,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                       return (this.createDmoClient ?? createDmoClient)(
                         target,
                         nativeDmoVersion,
+                        undefined,
+                        this.ssotSender(target, nativeDmoVersion, connection),
                       ).get(apiName);
                     },
                   },

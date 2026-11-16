@@ -1,3 +1,24 @@
+# Retrieve speed (B) — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), step B.
+Retrieve now builds its DLO, DMO and mapping clients (including a mapping's source DLO and target
+DMO readers, and the DMO read inside `acquireRetrieveSelection`) with one shared bound sender per
+org and API version (`ssotSender(target, version, connection)`, seam `createSsotSender`, default
+`openBoundSsot`). The sender is bound to the run's own authenticated Connection, because the target
+may be an alias that a fresh `AuthInfo.create` cannot open. GETs no longer start a child
+`sf api request rest` and now get the A retries. Writes are untouched (retrieve has none); every read
+still goes through `recordNativeReads`/`nativeReadRecorder`. No parallelism was added.
+Measured live on isolated-source (00Daj000010xkZNEAY), counting with an uncommitted lib patch:
+- subset (20 DLOs + 20 DMOs, exact selectors): before 404 s and 40 child processes (about 10 s per
+  read); after 22 s, 0 child processes, 40 in-process GETs. Output directories identical
+  (`diff -r`); JSON envelopes identical apart from `generatedAt` and the output path.
+- full bare `-m dlo -m dmo`: after 666 s (11 min), 0 child processes, 1332 GETs, 1296 files
+  (98 DLOs, 1198 DMOs). Before, extrapolated: about 1302 reads x 10 s, about 3.6 h.
+  6 DLO 404s were `CliIngEng_*` probe DLOs listed and then deleted by a parallel research worker.
+Tests: `native-retrieve.test.mjs` (one sender shared by DLO, DMO, mapping and both mapping
+parents; no runner) and `retrieve-mixed.test.mjs` (mixed path DLOs share the sender bound to the
+run's Connection). Open: the bound path never refreshes an expired access token (as in deploy).
+
 # Retries (A) — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), step A.

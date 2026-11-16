@@ -667,7 +667,7 @@ for (const metadata of [['dlo'], ['dlo:Rates_Home__dll'], undefined])
     assert.deepEqual(dlo.identity, { dataSpace: 'default', apiName: 'Rates_Home__dll' });
   });
 
-test('public mapping inventory uses owned connection while artifact acquisition retains CLI client', async () => {
+test('public mapping inventory uses owned connection; artifact acquisition gets a bound sender', async () => {
   const command = invocation({ metadata: ['mapping'], 'api-version': '61.0' });
   const requests = [];
   const owner = connection(async ({ url }) => {
@@ -685,11 +685,17 @@ test('public mapping inventory uses owned connection while artifact acquisition 
   command.listNativeMappingNames = listNativeMappingNames;
   let acquired = 0;
   const cliClient = {};
-  command.createMappingClient = (target, version, runner, scope) => {
+  const sender = { request: () => assert.fail('stubbed client') };
+  command.createSsotSender = (target, version) => {
+    assert.deepEqual([target, version], ['synthetic', '61.0']);
+    return sender;
+  };
+  command.createMappingClient = (target, version, runner, scope, bound) => {
     assert.equal(runner, undefined);
     assert.equal(scope, 'default');
     assert.equal(target, 'synthetic');
     assert.equal(version, '61.0');
+    assert.equal(bound, sender);
     acquired++;
     return cliClient;
   };
@@ -703,6 +709,40 @@ test('public mapping inventory uses owned connection while artifact acquisition 
   assert.deepEqual(requests, [
     'https://synthetic.example/services/data/v61.0/ssot/data-model-object-mappings?dataspace=default&dmoDeveloperName=Target__dlm',
   ]);
+});
+
+test('retrieve reads DLOs, DMOs, mappings and mapping parents through one shared bound sender', async () => {
+  const command = invocation({ metadata: ['dlo', 'dmo', 'mapping'] });
+  const opened = [];
+  command.createSsotSender = (target, version) => {
+    const sender = { request: () => assert.fail('stubbed client') };
+    opened.push([target, version, sender]);
+    return sender;
+  };
+  const senders = [];
+  // No runner argument: the clients' GETs never start a CLI process.
+  command.createDloClient = command.createDmoClient = (_target, _version, runner, sender) => {
+    assert.equal(runner, undefined);
+    senders.push(sender);
+    return { get: async (name) => ({ name }) };
+  };
+  command.createMappingClient = (_target, _version, runner, _scope, sender) => {
+    assert.equal(runner, undefined);
+    senders.push(sender);
+    return {};
+  };
+  command.acquireNativeMapping = async (apiName, _client, _scope, parents) => {
+    await parents.source.get('Source__dll');
+    await parents.target.get('Target__dlm');
+    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'success');
+  assert.equal(opened.length, 1);
+  assert.deepEqual(opened[0].slice(0, 2), ['synthetic', '68.0']);
+  // DLO, DMO, mapping, and the mapping's source DLO and target DMO reads.
+  assert.equal(senders.length, 5);
+  assert.ok(senders.every((sender) => sender === opened[0][2]));
 });
 
 test('public mapping inventory transport failure leaves the mapping family empty', async () => {
