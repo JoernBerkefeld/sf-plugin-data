@@ -24,7 +24,7 @@
     "lib",
     "README.md",
     "LICENSE",
-    "docs"
+    "docs/*.md"
   ],
   "oclif": {
     "bin": "sf",

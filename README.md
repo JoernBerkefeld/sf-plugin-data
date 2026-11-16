@@ -36,6 +36,24 @@ necessary permissions. Sign in with `sf org login web --alias source` and select
 explicitly with `--target-org source`. Linking a plugin does not grant org access.
 See [Local development](#local-development) for verification commands.
 
+## Beyond the Data Cloud GUI
+
+What the plugin does that the Data Cloud UI does not offer, each observed live at API 68:
+
+- **Change an existing relationship's label and cardinality in place** (same id). The
+  UI's Edit Relationships dialog has no label field and locks field, cardinality and
+  related field of an existing relationship; only Active and delete work there.
+- **Create, update and delete SQL (DBT) segments**, with the SQL in its own `.sql` file.
+  The UI's New Segment wizard offers only visually built Standard, Waterfall, Real-Time
+  and Dynamic segments.
+- **Retrieve many components in one command** into files you keep in Git: one
+  `sf data360 retrieve -m data-stream -m data-transform -m data-graph -m relationship`
+  saved 3,878 items.
+- **Deploy only what changed in a Git range** with `--changed-since`.
+- **Deploy or delete related objects of several types in one command**, in dependency
+  order: for example DLOs, DMOs, mappings and a relationship in one deploy, or data graphs
+  before the identity resolution ruleset they use in one delete.
+
 ## Resource and operation support
 
 The four support columns describe **this plugin's public commands**, not everything
