@@ -180,6 +180,9 @@ test('only projection and validation errors with a code are written verbatim', (
   // A DLO whose fields differ from its stream's is content: written verbatim.
   const dloDrift = Object.assign(new Error('drift'), { code: 'STREAM_DLO_DRIFT' });
   assert.equal(verbatimReason(dloDrift), 'STREAM_DLO_DRIFT');
+  // Source fields that differ from the event schema are lasting content too.
+  const sourceDrift = Object.assign(new Error('drift'), { code: 'STREAM_SOURCE_DRIFT' });
+  assert.equal(verbatimReason(sourceDrift), 'STREAM_SOURCE_DRIFT');
   assert.equal(verbatimReason(new NativeDmoError('OVERWRITE_REQUIRED')), undefined);
   assert.equal(
     verbatimReason(Object.assign(new Error('x'), { code: 'SOME_CODE', status: 500 })),

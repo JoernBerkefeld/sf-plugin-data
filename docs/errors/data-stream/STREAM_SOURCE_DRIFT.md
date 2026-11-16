@@ -6,7 +6,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Family**   | Data stream                                                                                                                                                                                   |
 | **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                      |
-| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; `failed` on retrieve — no file was written; `failed` with mutation `unknown` when it appears in the checks after a write |
+| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; retrieve writes the stream as-is (verbatim) with this reason; `failed` with mutation `unknown` when it appears in the checks after a write |
 
 ## What it means
 
@@ -14,7 +14,7 @@ The plugin reads the fields of the connection's event and the source fields reco
 
 ## Why the plugin stops
 
-Mappings refer to source fields. If the stream and the event disagree, the plugin cannot tell which fields a mapping can use, so it stops.
+Mappings refer to source fields. If the stream and the event disagree, the plugin cannot tell which fields a mapping can use. Retrieve still saves the stream as Salesforce returns it, marked with this reason; deploy refuses that file with `VERBATIM_NOT_DEPLOYABLE`, and deploy or delete of a modelled stream stops here.
 
 ## How to fix
 
@@ -25,11 +25,10 @@ Mappings refer to source fields. If the stream and the event disagree, the plugi
 ## Example output
 
 ```text
-Retrieve: failed.
-data-stream:WebOrders_Order_1a2b3c4d: STREAM_SOURCE_DRIFT: Plugin verification failed during connection/stream source field agreement for "WebOrders_Order_1a2b3c4d": sourceFields.length: expected 4; observed 3. Data stream retrieval did not complete; no write attempted.
+Deploy: blocked.
+data-stream:WebOrders_Order_1a2b3c4d: STREAM_SOURCE_DRIFT: Plugin verification failed during connection/stream source field agreement for "WebOrders_Order_1a2b3c4d": sourceFields.length: expected 4; observed 3.
 Hint: The stream's source fields differ from the fields of its connection event. Check the event schema in the org; the stream may need to be refreshed in Salesforce.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/STREAM_SOURCE_DRIFT.md
-Downloaded data-stream: 0
 ```
 
 ## Related codes

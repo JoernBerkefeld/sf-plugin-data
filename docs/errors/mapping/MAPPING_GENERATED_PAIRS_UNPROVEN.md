@@ -6,7 +6,7 @@
 | ------------ | ------------------------------------------------------ |
 | **Family**   | Mapping                                                |
 | **Commands** | `sf data360 retrieve`                                  |
-| **Outcome**  | `failed` for this mapping — no file was written for it |
+| **Outcome**  | `failed` for this mapping when the read failed in transport — no file was written for it |
 
 ## What it means
 

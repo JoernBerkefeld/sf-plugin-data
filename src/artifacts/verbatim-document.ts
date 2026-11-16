@@ -49,11 +49,12 @@ const safeReason = /^[A-Z][A-Z0-9_]{0,99}$/u;
 // response's content: HTTP and read failures, dependency binding, target org, selection, project,
 // path and output checks. Read-state codes say the org was caught mid-change or an inventory was
 // not complete (`INCOMPLETE*`, `*PENDING`, `PROCESSING_ACKNOWLEDGEMENT_REQUIRED`, `*_DRIFT` between
-// two reads); they are not about the content either. `STREAM_DLO_DRIFT` is the exception: a DLO
-// whose fields differ from its stream's is content the plugin cannot model. Every other check (including variant checks such as
+// two reads); they are not about the content either. Two drift codes are lasting content the plugin
+// cannot model and stay verbatim reasons: `STREAM_DLO_DRIFT` (the DLO's fields differ from the
+// stream's) and `STREAM_SOURCE_DRIFT` (the stream's source fields differ from its event schema). Every other check (including variant checks such as
 // `STREAM_CONNECTION_MISMATCH`, a connection that is not CONNECTED) writes the GET verbatim.
 const itemFailure =
-  /DATASPACE|NOT_FOUND|IDENTITY_MISMATCH|TARGET_MISMATCH|NAME_MISMATCH|IDENTITY_CHANGED|DEPENDENCY|TARGET_ORG|HTTP|RUNTIME_UNKNOWN|INVALID_SCOPE|INVALID_SELECTION|INVALID_PROJECT|UNSAFE|OUTPUT|OVERWRITE|PARTIAL|COLLISION|LIMIT_EXCEEDED|ACQUISITION_FAILED|RETRIEVE_FAILED|INCOMPLETE|PENDING|PROCESSING_ACKNOWLEDGEMENT|(?<!STREAM_DLO_)DRIFT/u;
+  /DATASPACE|NOT_FOUND|IDENTITY_MISMATCH|TARGET_MISMATCH|NAME_MISMATCH|IDENTITY_CHANGED|DEPENDENCY|TARGET_ORG|HTTP|RUNTIME_UNKNOWN|INVALID_SCOPE|INVALID_SELECTION|INVALID_PROJECT|UNSAFE|OUTPUT|OVERWRITE|PARTIAL|COLLISION|LIMIT_EXCEEDED|ACQUISITION_FAILED|RETRIEVE_FAILED|INCOMPLETE|PENDING|PROCESSING_ACKNOWLEDGEMENT|(?<!STREAM_DLO_|STREAM_SOURCE_)DRIFT/u;
 
 /** Reason of a verbatim file whose projection failed without a usable error code. */
 export const unmodelledResponseReason = 'UNMODELLED_RESPONSE';
