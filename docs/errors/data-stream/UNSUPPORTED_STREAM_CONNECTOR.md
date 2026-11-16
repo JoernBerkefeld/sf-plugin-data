@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_CONNECTOR`
 
-> The stream does not use the Ingestion API connector, for example a CRM, S3 or Engagement stream. Retrieve wrote it as-is without connection reads; manage it in Salesforce.
+> The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3 or Engagement stream. Retrieve wrote it as-is; manage it in Salesforce.
 
 |              |                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------- |
@@ -10,9 +10,9 @@
 
 ## What it means
 
-The stream file format describes one kind of data stream: an Ingestion API stream. This code means the stream GET reports another stream type or connector, for example a Salesforce CRM, Amazon S3 or Marketing Cloud Engagement stream.
+The stream file format describes two kinds of data stream: Ingestion API streams and Salesforce CRM streams (`connectorInfo.connectorType` `SalesforceDotCom`). This code means the stream GET reports another connector, for example an Amazon S3, Marketing Cloud Engagement or streaming app stream.
 
-Retrieve decides this from the stream GET alone and does not read the connection list or the event schema, which only exist for Ingestion API connections.
+Retrieve decides this from the stream GET alone and does not read the connection list or the event schema.
 
 ## Why the plugin reports it
 
@@ -27,8 +27,8 @@ The plugin cannot represent the connector in its normal file, so it does not gue
 
 ```text
 Retrieve: success.
-Warning: data-stream:Account_Home: retrieved as-is (verbatim, reason UNSUPPORTED_STREAM_CONNECTOR) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
-Downloaded data-stream:Account_Home (retrieved).
+Warning: data-stream:Orders_S3: retrieved as-is (verbatim, reason UNSUPPORTED_STREAM_CONNECTOR) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-stream:Orders_S3 (retrieved).
 ```
 
 ## Related codes

@@ -267,14 +267,13 @@ export function inspectNativeDataStream(value: unknown): Json {
 }
 
 /**
- * Retrieve-mode triage of a stream GET, before any connection or schema read: a stream of another
- * name stays an item failure, as does one whose DLO is in another data space (selection is per
- * data space); a stream outside the IngestApi model is refused with a code naming the variant,
- * so retrieve writes the GET as-is. Anything else goes on to the normal projection.
+ * The item checks of a retrieved stream GET: a stream of another name, or one whose DLO is in
+ * another data space (selection is per data space), stays an item failure.
  * @param {unknown} value Stream GET response.
  * @param {string} apiName Requested stream name.
+ * @returns {Json} The GET.
  */
-function triageRetrievedStream(value: unknown, apiName: string): void {
+export function checkRetrievedStreamScope(value: unknown, apiName: string): Json {
   const raw = object(value);
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
   const bag = (entry: unknown): Json =>
@@ -285,6 +284,22 @@ function triageRetrievedStream(value: unknown, apiName: string): void {
     : [];
   if (spaces.some((space) => typeof space === 'string' && space !== 'default'))
     throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  return raw;
+}
+
+/**
+ * Retrieve-mode triage of a stream GET, before any connection or schema read: a stream of another
+ * name stays an item failure, as does one whose DLO is in another data space (selection is per
+ * data space); a stream outside the IngestApi model is refused with a code naming the variant,
+ * so retrieve writes the GET as-is. Anything else goes on to the normal projection.
+ * @param {unknown} value Stream GET response.
+ * @param {string} apiName Requested stream name.
+ */
+function triageRetrievedStream(value: unknown, apiName: string): void {
+  const raw = checkRetrievedStreamScope(value, apiName);
+  const bag = (entry: unknown): Json =>
+    entry && typeof entry === 'object' && !Array.isArray(entry) ? (entry as Json) : {};
+  const dlo = bag(raw.dataLakeObjectInfo);
   if (raw.dataStreamType !== 'INGESTAPI' || bag(raw.connectorInfo).connectorType !== 'IngestApi')
     throw new DataStreamError('UNSUPPORTED_STREAM_CONNECTOR');
   if (bag(raw.refreshConfig).refreshMode !== 'UPSERT')
@@ -502,7 +517,34 @@ export async function retrieveNativeDataStream(
 ): Promise<DataStreamDocument> {
   if (!name.test(apiName) || dataSpace !== 'default')
     throw new DataStreamError('INVALID_STREAM_BINDING');
-  const read = await clients.streams.get(apiName);
+  return projectNativeDataStream(
+    await clients.streams.get(apiName),
+    apiName,
+    clients,
+    dataSpace,
+    postWrite,
+    mode,
+  );
+}
+
+/**
+ * Project an Ingestion API stream GET into its portable document (see retrieveNativeDataStream).
+ * @param {unknown} read Stream GET response.
+ * @param {string} apiName Exact stream name.
+ * @param {DataStreamReadClients} clients Internal read clients.
+ * @param {string} dataSpace Explicit observed-scope constraint.
+ * @param {boolean} postWrite Whether this read belongs to bounded create/update settlement.
+ * @param {DataStreamReadMode} mode `retrieve` lists connections leniently; `deploy` strictly.
+ * @returns {Promise<DataStreamDocument>} Detached validated portable document without runtime IDs.
+ */
+export async function projectNativeDataStream(
+  read: unknown,
+  apiName: string,
+  clients: DataStreamReadClients,
+  dataSpace = 'default',
+  postWrite = false,
+  mode: DataStreamReadMode = 'deploy',
+): Promise<DataStreamDocument> {
   // Decide from the stream GET alone whether the plugin can model it, before connection reads.
   if (mode === 'retrieve') triageRetrievedStream(read, apiName);
   const raw = inspectNativeDataStream(read);
@@ -668,7 +710,7 @@ export async function retrieveNativeDataStream(
 }
 
 export type DataStreamDeployClients = DataStreamReadClients & {
-  streams: DataStreamReadClients['streams'] & Pick<DataStreamClient, 'create' | 'update'>;
+  streams: DataStreamReadClients['streams'] & Pick<DataStreamClient, 'create' | 'update' | 'patch'>;
 };
 export type DataStreamCreatePlan = {
   operation: 'create';

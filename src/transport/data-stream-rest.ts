@@ -11,6 +11,9 @@ import {
   DataStreamError,
   buildDataStreamCreateBody,
   buildDataStreamPatchBody,
+  crmDataStreamWriteBody,
+  isCrmDataStreamDocument,
+  validateCrmDataStreamDocument,
 } from '../artifacts/data-stream-document.js';
 import { dataStreamApiVersion } from './api-version.js';
 import { ConnectClient, ConnectError } from './connect-client.js';
@@ -23,6 +26,8 @@ export type DataStreamClient = {
   list: (connectionName: string) => Promise<Array<Record<string, unknown>>>;
   create: (document: unknown) => Promise<unknown>;
   update: (recordId: string, document: unknown) => Promise<unknown>;
+  /** One PATCH with a prepared body (CRM streams: `datastreamType` plus the changed parts). */
+  patch: (recordId: string, body: Record<string, unknown>) => Promise<unknown>;
   delete: (recordId: string, deleteDlo: boolean) => Promise<void>;
 };
 type JsonObject = Record<string, unknown>;
@@ -323,10 +328,23 @@ export function createDataStreamClient(
       }
     },
     list,
-    create: async (document) => send('POST', '', buildDataStreamCreateBody(document)),
+    create: async (document) =>
+      send(
+        'POST',
+        '',
+        isCrmDataStreamDocument(document)
+          ? crmDataStreamWriteBody(validateCrmDataStreamDocument(document).spec)
+          : buildDataStreamCreateBody(document),
+      ),
     update: async (recordId, document) => {
       if (!id.test(recordId)) throw new DataStreamError('INVALID_STREAM_TARGET_ID');
       return send('PATCH', `/${recordId}`, buildDataStreamPatchBody(document));
+    },
+    patch: async (recordId, body) => {
+      if (!id.test(recordId)) throw new DataStreamError('INVALID_STREAM_TARGET_ID');
+      if (!body || typeof body !== 'object' || Array.isArray(body) || !body.datastreamType)
+        throw new DataStreamError('EMPTY_STREAM_PATCH');
+      return send('PATCH', `/${recordId}`, body);
     },
     delete: async (recordId, deleteDlo) => {
       if (!id.test(recordId) || typeof deleteDlo !== 'boolean')

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { link, mkdir, mkdtemp, open, readdir, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DataStreamError, validateDataStreamDocument } from './data-stream-document.js';
+import { DataStreamError, validateAnyDataStreamDocument } from './data-stream-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
 import {
   isVerbatimDocument,
@@ -104,7 +104,7 @@ export async function writeDataStreamDocument(
   overwrite: boolean,
 ): Promise<{ path: string; outcome: 'retrieved' | 'unchanged' }> {
   const verbatim = isVerbatimDocument(value, 'data-stream') ? value : undefined;
-  const document = verbatim ?? validateDataStreamDocument(value, 'retrieve');
+  const document = verbatim ?? validateAnyDataStreamDocument(value, 'retrieve');
   const bytes = Buffer.from(
     verbatim ? serializeVerbatimDocument(verbatim) : `${JSON.stringify(document, undefined, 2)}\n`,
   );
@@ -130,7 +130,7 @@ export async function writeDataStreamDocument(
     if (previous) {
       const saved = previousIdentity(
         previous.toString('utf8'),
-        (previousValue) => validateDataStreamDocument(previousValue).identity,
+        (previousValue) => validateAnyDataStreamDocument(previousValue).identity,
       );
       if (saved.apiName !== undefined && saved.apiName !== document.identity.apiName)
         throw new DataStreamError('STREAM_FILENAME_COLLISION');

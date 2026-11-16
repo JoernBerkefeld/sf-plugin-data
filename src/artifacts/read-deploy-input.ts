@@ -2,8 +2,8 @@ import { dataTransformName, validateDataTransformDocument } from './data-transfo
 import type { DataTransformDocument } from './data-transform-document.js';
 import { validateNativeDataGraphDocument } from './native-data-graph-document.js';
 import type { NativeDataGraphDocument } from './native-data-graph-document.js';
-import { validateDataStreamDocument } from './data-stream-document.js';
-import type { DataStreamDocument } from './data-stream-document.js';
+import { validateAnyDataStreamDocument } from './data-stream-document.js';
+import type { CrmDataStreamDocument, DataStreamDocument } from './data-stream-document.js';
 import { nativeMappingName, validateNativeMappingDocument } from './native-mapping-document.js';
 import type { NativeMappingDocument } from './native-mapping-document.js';
 import {
@@ -247,7 +247,7 @@ async function readMappingInput(file: string): Promise<MappingDeployInput> {
 
 export type DataStreamDeployInput = {
   path: string;
-  document: DataStreamDocument;
+  document: DataStreamDocument | CrmDataStreamDocument;
   inputDigest: string;
 };
 
@@ -267,9 +267,9 @@ async function readDataStreamInput(file: string): Promise<DataStreamDeployInput>
   )
     throw new DeployInputError('INVALID_SELECTION');
   const bytes = await memberBytes(file);
-  let document: DataStreamDocument;
+  let document: DataStreamDocument | CrmDataStreamDocument;
   try {
-    document = validateDataStreamDocument(strictJson(decode(bytes)));
+    document = validateAnyDataStreamDocument(strictJson(decode(bytes)));
     if (document.identity.apiName !== name) throw new Error('Identity mismatch');
   } catch (error) {
     throw invalidSource(error);
@@ -1500,7 +1500,7 @@ export function admitDeletedArtifact(
         break;
       }
       case 'data-stream': {
-        document = validateDataStreamDocument(value, 'retrieve');
+        document = validateAnyDataStreamDocument(value, 'retrieve');
         ({ identity } = document);
         break;
       }

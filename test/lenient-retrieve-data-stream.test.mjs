@@ -55,13 +55,14 @@ const ingestStream = () => ({
     ],
   },
 });
-const crmStream = () => ({
+// A connector the stream file cannot hold (CRM streams have their own file: crm-data-stream tests).
+const s3Stream = () => ({
   name: 'Account_Home',
   recordId: '1ds000000000002AAA',
   label: 'Account Home',
-  dataSource: 'Salesforce_Home',
-  dataStreamType: 'SFDC',
-  connectorInfo: { connectorType: 'SalesforceDotCom', connectorDetails: { object: 'Account' } },
+  dataSource: 'AmazonS3_Home',
+  dataStreamType: 'S3',
+  connectorInfo: { connectorType: 'S3', connectorDetails: { object: 'Account' } },
   status: 'ACTIVE',
   refreshConfig: { refreshMode: 'FULL_REFRESH', frequency: { frequencyType: 'Daily' } },
   sourceFields: [{ name: 'AnnualRevenue', datatype: 'Number' }],
@@ -183,8 +184,8 @@ const asIs = (stream) =>
   sortKeysDeep({ ...stream, mappings: sortedStreamMappings(stream.mappings) });
 const savedBytes = (run) => readFile(streamFile(run.cwd, 'Account_Home'), 'utf8');
 
-test('a CRM-connector stream is written as its GET without connection or schema reads', async () => {
-  const stream = crmStream();
+test('an S3-connector stream is written as its GET without connection or schema reads', async () => {
+  const stream = s3Stream();
   const { result, cwd, calls } = await retrieveCommand(stream);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(calls, ['streams.get']);
@@ -205,8 +206,8 @@ test('an as-is stream file does not change when Salesforce reorders its mappings
     { sourceFieldName: 'AnnualRevenue', targetFieldName: 'AnnualRevenue' },
     { sourceFieldName: 'Id', targetFieldName: 'Id' },
   ];
-  const first = await retrieveCommand({ ...crmStream(), mappings: pairs });
-  const second = await retrieveCommand({ ...crmStream(), mappings: pairs.toReversed() });
+  const first = await retrieveCommand({ ...s3Stream(), mappings: pairs });
+  const second = await retrieveCommand({ ...s3Stream(), mappings: pairs.toReversed() });
   assert.equal(await savedBytes(first), await savedBytes(second));
   const saved = JSON.parse(await savedBytes(first));
   assert.deepEqual(
@@ -235,7 +236,7 @@ test('each IngestApi variant the file cannot hold is named from the stream GET a
 });
 
 test('a stream whose DLO is in another data space stays an item failure', async () => {
-  const stream = crmStream();
+  const stream = s3Stream();
   stream.dataLakeObjectInfo.dataSpaceInfo = [{ name: 'Europe' }];
   const { result, cwd, calls } = await retrieveCommand(stream);
   assert.equal(result.status, 'failed');

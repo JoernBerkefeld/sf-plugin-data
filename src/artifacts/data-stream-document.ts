@@ -329,3 +329,363 @@ export function dataStreamTargetFieldName(value: string): string {
   if (target.endsWith('__c')) throw new DataStreamError('INVALID_STREAM_MAPPING');
   return `${target}__c`;
 }
+
+/**
+ * A data stream of the Salesforce CRM connector (`connectorInfo.connectorType` `SalesforceDotCom`):
+ * `spec` is the stream GET without server-owned keys and without the fields and mappings
+ * Salesforce adds itself. Formulas are stored decoded (the GET HTML-escapes them).
+ */
+export type CrmDataStreamDocument = {
+  schemaVersion: 1;
+  kind: 'data-stream';
+  identity: { apiName: string; dataSpace: string };
+  spec: Record<string, unknown>;
+};
+
+type Bag = Record<string, unknown>;
+const crmConnector = 'SalesforceDotCom';
+// Keys of a stream GET that Salesforce owns: identifiers, run state and values it derives.
+const ownedStreamKeys = ['recordId', 'status', 'lastRunStatus', 'isEnabled', 'dataSource'];
+// Keys the GET returns as empty objects; kept when Salesforce fills them.
+const emptyStreamKeys = ['advancedAttributes', 'capabilities'];
+const ownedDloKeys = [
+  'id',
+  'status',
+  'capabilities',
+  'columnMappingProperties',
+  'dataLakeFieldInfoRepresentation',
+];
+const ownedRefreshKeys = [
+  'hasHeaders',
+  'shouldFetchImmediately',
+  'shouldTreatMissingFilesAsFailures',
+];
+
+/**
+ * Whether a value is a plain JSON object.
+ * @param {unknown} value Candidate.
+ * @returns {boolean} Object and not an array.
+ */
+function isBag(value: unknown): value is Bag {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Whether a field, source field or mapping target is one Salesforce adds to every CRM stream.
+ * @param {unknown} fieldName Field name.
+ * @returns {boolean} A system field the create input must not carry.
+ */
+export function isCrmSystemField(fieldName: unknown): boolean {
+  return (
+    typeof fieldName === 'string' &&
+    (['DataSource', 'DataSourceObject', 'SfdcOrganizationId'].includes(fieldName) ||
+      fieldName.startsWith('KQ_') ||
+      fieldName.startsWith('cdp_sys_'))
+  );
+}
+
+/**
+ * Decode the HTML entities the stream GET puts into formulas.
+ * @param {string} value Escaped formula.
+ * @returns {string} Formula as written.
+ */
+function decodeFormula(value: string): string {
+  return value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}
+
+/**
+ * Sort key of one entry: name, then target field, source field and formula.
+ * @param {unknown} value Array entry.
+ * @returns {string} Key.
+ */
+function key(value: unknown): string {
+  const entry = isBag(value) ? value : {};
+  return [entry.name, entry.targetFieldName, entry.sourceFieldName, entry.formula]
+    .map((part) => (typeof part === 'string' ? part : ''))
+    .join('\u0000');
+}
+
+/**
+ * Order entries by name, then target field, source field and formula.
+ * @param {unknown[]} values Array entries.
+ * @returns {unknown[]} Sorted copy.
+ */
+function byName(values: unknown[]): unknown[] {
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort a copied array within the existing ES2022 library target.
+  return [...values].sort((left, right) =>
+    key(left) < key(right) ? -1 : key(left) > key(right) ? 1 : 0,
+  );
+}
+
+/**
+ * Whether a stream GET (or a CRM stream spec) uses the Salesforce CRM connector.
+ * @param {unknown} value Stream GET or spec.
+ * @returns {boolean} CRM connector.
+ */
+export function isCrmDataStream(value: unknown): boolean {
+  return (
+    isBag(value) && isBag(value.connectorInfo) && value.connectorInfo.connectorType === crmConnector
+  );
+}
+
+/**
+ * Whether a stream document is a CRM stream document (its spec names the CRM connector).
+ * @param {unknown} value Candidate document.
+ * @returns {boolean} CRM stream document.
+ */
+export function isCrmDataStreamDocument(value: unknown): value is CrmDataStreamDocument {
+  return isBag(value) && isCrmDataStream(value.spec);
+}
+
+/**
+ * The spec of a CRM stream file: the GET without server-owned keys, system fields and system
+ * mappings, formulas decoded, fields, source fields and mappings in a stable order.
+ * @param {unknown} value Stream GET response.
+ * @returns {Bag} Spec as stored in the file.
+ */
+export function crmDataStreamSpec(value: unknown): Bag {
+  if (!isBag(value)) throw new DataStreamError('INVALID_STREAM_READ');
+  const spec = structuredClone(value);
+  for (const key of ownedStreamKeys) delete spec[key];
+  for (const key of emptyStreamKeys)
+    if (isBag(spec[key]) && Object.keys(spec[key]).length === 0) delete spec[key];
+  if (isBag(spec.connectorInfo) && isBag(spec.connectorInfo.connectorDetails))
+    delete spec.connectorInfo.connectorDetails.type;
+  if (isBag(spec.dataLakeObjectInfo)) {
+    const dlo = spec.dataLakeObjectInfo;
+    for (const key of ownedDloKeys) delete dlo[key];
+    if (Array.isArray(dlo.fields))
+      dlo.fields = byName(
+        dlo.fields.filter((field) => !isCrmSystemField(isBag(field) && field.name)),
+      );
+  }
+  if (isBag(spec.refreshConfig)) for (const key of ownedRefreshKeys) delete spec.refreshConfig[key];
+  if (Array.isArray(spec.sourceFields))
+    spec.sourceFields = byName(
+      spec.sourceFields
+        .filter((field) => !isCrmSystemField(isBag(field) && field.name))
+        .map((field) => {
+          if (!isBag(field) || field.format === undefined) return field;
+          // Salesforce derives the date format of a CRM source field; the create input has none.
+          const copy = { ...field };
+          delete copy.format;
+          return copy;
+        }),
+    );
+  if (Array.isArray(spec.mappings))
+    spec.mappings = byName(
+      spec.mappings
+        .filter((mapping) => !isCrmSystemField(isBag(mapping) && mapping.targetFieldName))
+        .map((mapping) =>
+          isBag(mapping) && typeof mapping.formula === 'string'
+            ? { ...mapping, formula: decodeFormula(mapping.formula) }
+            : mapping,
+        ),
+    );
+  return spec;
+}
+
+/**
+ * Validate a CRM stream document. Only what names and places the file is checked; everything
+ * else is sent as written on deploy and Salesforce decides.
+ * @param {unknown} value Untrusted document.
+ * @param {DocumentMode} [mode] `deploy` bounds the label length; `retrieve` does not.
+ * @returns {CrmDataStreamDocument} Detached deeply frozen document.
+ */
+export function validateCrmDataStreamDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): CrmDataStreamDocument {
+  const document = object(value, '', ['schemaVersion', 'kind', 'identity', 'spec']);
+  const identity = object(document.identity, 'identity', ['apiName', 'dataSpace']);
+  identifier(identity.apiName, 'identity.apiName');
+  text(identity.dataSpace, 'identity.dataSpace');
+  if (document.schemaVersion !== 1 || document.kind !== 'data-stream')
+    throw new DataStreamError('UNSUPPORTED_STREAM_SPEC');
+  const spec = object(
+    document.spec,
+    'spec',
+    ['name', 'label', 'connectorInfo', 'dataLakeObjectInfo'],
+    [],
+    true,
+  );
+  if (spec.name !== identity.apiName)
+    throw refuse('INVALID_STREAM_DOCUMENT', 'spec.name', 'must equal identity.apiName');
+  text(spec.label, 'spec.label', mode === 'deploy');
+  const dlo = object(spec.dataLakeObjectInfo, 'spec.dataLakeObjectInfo', ['name'], [], true);
+  identifier(dlo.name, 'spec.dataLakeObjectInfo.name', true);
+  return freeze(structuredClone(value) as CrmDataStreamDocument);
+}
+
+/**
+ * Validate either stream document: a CRM stream document, otherwise an Ingestion API one.
+ * @param {unknown} value Untrusted document.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (lenient).
+ * @returns {DataStreamDocument | CrmDataStreamDocument} Detached deeply frozen document.
+ */
+export function validateAnyDataStreamDocument(
+  value: unknown,
+  mode: DocumentMode = 'deploy',
+): DataStreamDocument | CrmDataStreamDocument {
+  return isCrmDataStreamDocument(value)
+    ? validateCrmDataStreamDocument(value, mode)
+    : validateDataStreamDocument(value, mode);
+}
+
+/**
+ * Rename one key of an object in place, when present.
+ * @param {Bag} bag Object.
+ * @param {string} from GET spelling.
+ * @param {string} to Input spelling.
+ */
+function rename(bag: Bag, from: string, to: string): void {
+  if (!Object.hasOwn(bag, from)) return;
+  bag[to] = bag[from];
+  delete bag[from];
+}
+
+/**
+ * Translate a CRM stream spec into the create input: the GET spellings the input names
+ * differently are renamed, the data space keeps its name only, plain field mappings are left
+ * out (Salesforce maps source fields itself) and formula mappings carry the DLO field type.
+ * @param {Bag} spec CRM stream spec.
+ * @returns {Bag} Create (POST) body.
+ */
+export function crmDataStreamWriteBody(spec: Bag): Bag {
+  const body = structuredClone(spec);
+  rename(body, 'dataStreamType', 'datastreamType');
+  rename(body, 'dataSource', 'datasource');
+  const types = new Map<string, unknown>();
+  if (isBag(body.dataLakeObjectInfo)) {
+    const dlo = body.dataLakeObjectInfo;
+    if (Array.isArray(dlo.dataSpaceInfo))
+      dlo.dataSpaceInfo = dlo.dataSpaceInfo.map((space) =>
+        isBag(space) ? { name: space.name } : space,
+      );
+    rename(dlo, 'dataSpaceInfo', 'dataspaceInfo');
+    if (Array.isArray(dlo.fields))
+      for (const field of dlo.fields)
+        if (isBag(field)) types.set(String(field.name), field.dataType);
+    rename(dlo, 'fields', 'dataLakeFieldInputRepresentations');
+  }
+  if (Array.isArray(body.sourceFields))
+    body.sourceFields = body.sourceFields.map((field) => {
+      if (!isBag(field)) return field;
+      const copy = { ...field };
+      rename(copy, 'datatype', 'dataType');
+      return copy;
+    });
+  if (Array.isArray(body.mappings))
+    body.mappings = body.mappings
+      .filter((mapping): mapping is Bag => isBag(mapping) && typeof mapping.formula === 'string')
+      .map((mapping) => {
+        const entry: Bag = { ...mapping, transformationFormula: mapping.formula };
+        delete entry.formula;
+        delete entry.sourceFieldName;
+        const type = types.get(String(entry.targetFieldName));
+        if (entry.targetFieldReturntype === undefined && type !== undefined)
+          entry.targetFieldReturntype = type;
+        return entry;
+      });
+  return body;
+}
+
+/**
+ * A copy with object keys sorted and every array of named entries ordered by name.
+ * @param {unknown} value JSON value.
+ * @returns {unknown} Copy for comparison only.
+ */
+function comparable(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const entries = value.map((entry) => comparable(entry));
+    return entries.every((entry) => isBag(entry) && typeof entry.name === 'string')
+      ? byName(entries)
+      : entries;
+  }
+  if (!isBag(value)) return value;
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh key array within the ES2022 library target.
+  const keys = Object.keys(value).sort();
+  return Object.fromEntries(keys.map((key) => [key, comparable(value[key])]));
+}
+
+/**
+ * Whether two JSON values are equal, ignoring key order and the order of named entries.
+ * @param {unknown} left First value.
+ * @param {unknown} right Second value.
+ * @returns {boolean} Equal.
+ */
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+}
+
+/**
+ * The PATCH that brings a CRM stream from its current spec to the file's spec: `datastreamType`
+ * plus each changed part only. Formula mappings are compared one by one (a removed formula is
+ * sent with an empty formula); refresh settings key by key; every other changed key is sent
+ * whole. The DLO fields of formula targets are left to the mappings. No parts means unchanged.
+ * @param {Bag} wanted Spec of the file.
+ * @param {Bag} current Spec of the org's stream.
+ * @returns {{body: Bag; parts: string[]}} PATCH body and the changed key paths.
+ */
+export function crmDataStreamPatch(wanted: Bag, current: Bag): { body: Bag; parts: string[] } {
+  const want = crmDataStreamWriteBody(wanted);
+  const have = crmDataStreamWriteBody(current);
+  const body: Bag = { datastreamType: want.datastreamType };
+  const parts: string[] = [];
+  const formulas = (value: Bag): Map<string, Bag> =>
+    new Map(
+      (Array.isArray(value.mappings) ? (value.mappings as Bag[]) : []).map((mapping) => [
+        String(mapping.targetFieldName),
+        mapping,
+      ]),
+    );
+  const wantFormulas = formulas(want);
+  const haveFormulas = formulas(have);
+  const mappings: Bag[] = [];
+  for (const [target, mapping] of wantFormulas)
+    if (haveFormulas.get(target)?.transformationFormula !== mapping.transformationFormula)
+      mappings.push(mapping);
+  for (const target of haveFormulas.keys())
+    if (!wantFormulas.has(target))
+      mappings.push({ targetFieldName: target, transformationFormula: '' });
+  if (mappings.length > 0) {
+    body.mappings = mappings;
+    parts.push('mappings');
+  }
+  const formulaTargets = new Set([...wantFormulas.keys(), ...haveFormulas.keys()]);
+  const withoutFormulaFields = (value: unknown): unknown =>
+    isBag(value) && Array.isArray(value.dataLakeFieldInputRepresentations)
+      ? {
+          ...value,
+          dataLakeFieldInputRepresentations: value.dataLakeFieldInputRepresentations.filter(
+            (field) => !(isBag(field) && formulaTargets.has(String(field.name))),
+          ),
+        }
+      : value;
+  for (const key of new Set([...Object.keys(want), ...Object.keys(have)])) {
+    if (key === 'mappings' || key === 'name' || !Object.hasOwn(want, key)) continue;
+    if (key === 'refreshConfig' && isBag(want.refreshConfig)) {
+      const wantRefresh = want.refreshConfig;
+      const haveRefresh = isBag(have.refreshConfig) ? have.refreshConfig : {};
+      const refresh: Bag = {};
+      for (const setting of Object.keys(wantRefresh))
+        if (!sameValue(wantRefresh[setting], haveRefresh[setting])) {
+          refresh[setting] = wantRefresh[setting];
+          parts.push(`refreshConfig.${setting}`);
+        }
+      if (Object.keys(refresh).length > 0) body.refreshConfig = refresh;
+      continue;
+    }
+    const left = key === 'dataLakeObjectInfo' ? withoutFormulaFields(want[key]) : want[key];
+    const right = key === 'dataLakeObjectInfo' ? withoutFormulaFields(have[key]) : have[key];
+    if (sameValue(left, right)) continue;
+    parts.push(key);
+    if (key !== 'datastreamType') body[key] = want[key];
+  }
+  return { body, parts };
+}

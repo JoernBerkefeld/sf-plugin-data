@@ -1,5 +1,10 @@
 import { operationDiagnostic } from './operation-diagnostic.js';
-import { DataStreamError, validateDataStreamDocument } from '../artifacts/data-stream-document.js';
+import {
+  DataStreamError,
+  isCrmDataStreamDocument,
+  validateDataStreamDocument,
+} from '../artifacts/data-stream-document.js';
+import { executeCrmDataStream, preflightCrmDataStream } from './native-crm-data-stream.js';
 import {
   resolveDataStreamBinding,
   preflightNativeDataStreamCreate,
@@ -188,6 +193,7 @@ async function planDataStream(value: unknown, clients: DataStreamDeployClients) 
  * @returns {Promise<object>} Public payload-free read-only preview.
  */
 export async function preflightDataStream(value: unknown, clients: DataStreamDeployClients) {
+  if (isCrmDataStreamDocument(value)) return preflightCrmDataStream(value, clients);
   const plan = await planDataStream(value, clients);
   return {
     family: 'data-stream' as const,
@@ -211,6 +217,7 @@ export async function executeDataStream(
   clients: DataStreamDeployClients,
   options: DataStreamDeployOptions,
 ) {
+  if (isCrmDataStreamDocument(value)) return executeCrmDataStream(value, clients, options);
   let dispatched = false;
   const guarded: DataStreamDeployClients = {
     ...clients,
@@ -224,6 +231,10 @@ export async function executeDataStream(
       update: async (name, document) => {
         dispatched = true;
         return clients.streams.update(name, document);
+      },
+      patch: async (name, body) => {
+        dispatched = true;
+        return clients.streams.patch(name, body);
       },
     },
   };

@@ -62,6 +62,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The stream file was written, but the final check of its contents failed. Open data360/data-stream/<ApiName>.data-stream-meta.json, then retrieve again with --overwrite.',
   STREAM_BINDING_DRIFT:
     'The stream, its event or its connection changed between two reads, or reads disagreed. Wait until nobody changes the stream, then rerun; inspect the org first if mutation is unknown.',
+  STREAM_CHANGE_NOT_APPLIED:
+    'Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a CRM stream label). Retrieve the stream; change the rest in Salesforce.',
   STREAM_CONNECTION_MISMATCH:
     "The stream's Ingestion API connection was found but is not connected or its details differ. Check the connection's status in the org, then rerun.",
   STREAM_CREATE_IDENTITY_UNCONFIRMED:
@@ -121,7 +123,7 @@ export const hints: Readonly<Record<string, string>> = {
   UNSUPPORTED_STREAM_CATEGORY:
     'The landing DLO of the stream has a category other than Other, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_CONNECTOR:
-    'The stream does not use the Ingestion API connector, for example a CRM, S3 or Engagement stream. Retrieve wrote it as-is without connection reads; manage it in Salesforce.',
+    'The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3 or Engagement stream. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_DATASPACE:
     'Data streams are supported only in the default data space: deploy refuses another identity.dataSpace, and retrieve does not write a stream whose DLO is in another space.',
   UNSUPPORTED_STREAM_FIELD_TYPE:

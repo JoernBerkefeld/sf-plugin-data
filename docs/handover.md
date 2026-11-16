@@ -1,3 +1,34 @@
+# CRM-connector data streams (C1) — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C-implement,
+variant C1 (evidence: verification DB `data360:data-stream.asis-variants-crud.api68`).
+A stream with `connectorInfo.connectorType` `SalesforceDotCom` is no longer written as-is: retrieve
+writes `CrmDataStreamDocument` (`spec` = the GET minus server-owned keys `recordId`, `status`,
+`lastRunStatus`, `isEnabled`, `dataSource`, empty `advancedAttributes`/`capabilities`,
+`connectorDetails.type`, DLO `id`/`status`/`capabilities`/`columnMappingProperties`/
+`dataLakeFieldInfoRepresentation`, refresh `hasHeaders`/`shouldFetchImmediately`/
+`shouldTreatMissingFilesAsFailures`, source `format`; system fields and mappings `KQ_*`,
+`DataSource`, `DataSourceObject`, `SfdcOrganizationId`, `cdp_sys_*` dropped; formulas decoded;
+fields, source fields and mappings sorted). Code: `crmDataStreamSpec`, `crmDataStreamWriteBody`
+(GET to create input: renames, data space name only, formula mappings only with the DLO field
+type), `crmDataStreamPatch` (`datastreamType` plus changed parts: formulas one by one, an empty
+formula removes, refresh settings key by key, other keys whole; DLO fields of formula targets
+ignored) in `data-stream-document.ts`; `native-crm-data-stream.ts` (`retrieveDataStreamDocument`,
+the retrieve command's acquire; preflight/execute: GET by name, 404 creates, else PATCH or
+unchanged; `--allow-processing` for writes; readback until ACTIVE, parts still differing after 3
+ACTIVE reads become notice `STREAM_CHANGE_NOT_APPLIED`; `WriteLedger` reports a 4xx as rejected).
+Transport `create` dispatches on the document; new `patch(recordId, body)`. Delete is unchanged
+(the unmodelled by-name path). IngestApi model and tests unchanged; S3/Engagement/streaming-app
+streams stay as-is (`UNSUPPORTED_STREAM_CONNECTOR`, hint and page rescoped).
+Live on isolated-source (00Daj000010xkZNEAY), stream `CliCrmC1` on Pricebook2 (body of the
+research probe): preview create, create (created), retrieve (identical bytes), repeat deploy
+`unchanged`, formula `CliNameLower` added through the file (one PATCH, updated, no notice),
+retrieve/repeat unchanged, delete `--delete-dlo` (deleted), stream and DLO GET 404, stream list 37
+with no `Cli*`. Evidence `F:/Temp/crm-live-lMjzDh/logs`. Tests: `test/crm-data-stream.test.mjs`.
+Open: label/refreshMode notices are offline-tested only (API behaviour from the research probes);
+`dataSource` is dropped on retrieve (a hand-written one is renamed to `datasource`); changes of
+other parts (source fields, DLO, connector) are sent whole but unproven on PATCH.
+
 # Draft data graphs and schedule spelling (C3 fixes) — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C3 graph

@@ -164,7 +164,13 @@ export function transformDloNames(input: PlanInput): string[] {
  * @returns {string | undefined} The landing DLO name.
  */
 export function streamLandingDlo(input: PlanInput): string | undefined {
-  const name = (input.document as { spec?: { newDlo?: { name?: unknown } } }).spec?.newDlo?.name;
+  // An Ingestion API stream names it in spec.newDlo, a CRM stream in spec.dataLakeObjectInfo.
+  const spec = (
+    input.document as {
+      spec?: { newDlo?: { name?: unknown }; dataLakeObjectInfo?: { name?: unknown } };
+    }
+  ).spec;
+  const name = spec?.newDlo?.name ?? spec?.dataLakeObjectInfo?.name;
   return typeof name === 'string' ? name : undefined;
 }
 
