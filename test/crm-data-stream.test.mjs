@@ -416,6 +416,60 @@ test('a label Salesforce keeps is reported; a refused refresh mode is reported a
   assert.match(failure.diagnostics[0].message, /invalid refresh mode/u);
 });
 
+test('a plain mapping or formula return type change is refused before any write', async () => {
+  const cases = [
+    [
+      (spec) => {
+        spec.mappings.find((entry) => entry.targetFieldName === 'Name').sourceFieldName = 'Id';
+      },
+      /mappings\[Name\]/u,
+    ],
+    [
+      (spec) => {
+        spec.mappings = spec.mappings.filter((entry) => entry.targetFieldName !== 'IsActive');
+      },
+      /mappings\[IsActive\]/u,
+    ],
+    [
+      (spec) => {
+        spec.mappings.find(
+          (entry) => entry.targetFieldName === 'CliNameUpper',
+        ).targetFieldReturntype = 'Number';
+      },
+      /mappings\[CliNameUpper\]\.targetFieldReturntype/u,
+    ],
+  ];
+  for (const [edit, named] of cases) {
+    const document = structuredClone(crmDocument());
+    edit(document.spec);
+    const { clients, requests } = org(() => crmGet());
+    await assert.rejects(preflightDataStream(document, clients), (error) => {
+      assert.equal(error.code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
+      assert.match(error.message, named);
+      return true;
+    });
+    const result = await executeDataStream(document, clients, options);
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(result.diagnostics[0].code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
+    assert.equal(requests.length, 0);
+  }
+});
+
+test('create reports plain mappings Salesforce mapped otherwise than the file', async () => {
+  const document = structuredClone(crmDocument());
+  document.spec.mappings.find((entry) => entry.targetFieldName === 'Name').sourceFieldName = 'Id';
+  const { clients, requests } = org((done) => (done.length > 0 ? crmGet() : undefined));
+  const result = await executeDataStream(document, clients, options);
+  assert.equal(result.outcome, 'created', JSON.stringify(result.diagnostics));
+  assert.equal(requests.length, 1);
+  assert.deepEqual(
+    result.diagnostics.map((entry) => entry.code),
+    ['STREAM_CHANGE_NOT_APPLIED'],
+  );
+  assert.match(result.diagnostics[0].message, /mappings\[Name\]/u);
+});
+
 test('delete removes a CRM stream and, with --delete-dlo, its DLO by the stream record ID', async () => {
   let deleted = false;
   const sent = [];

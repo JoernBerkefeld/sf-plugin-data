@@ -259,8 +259,9 @@ type), the formulas and, with formulas, the event's typed source fields. On upda
 PATCH carries the added or changed formulas, an empty formula for each one removed
 from the file (Salesforce refuses that; it is reported as rejected) and a changed
 label (Salesforce answers success but keeps its label: `STREAM_CHANGE_NOT_APPLIED`).
-A change of the DLO label, category, event time field or primary key is refused
-before any write (`UNSUPPORTED_STREAM_SETTINGS_CHANGE`). A stream whose source fields
+A change of the DLO label, category, event time field or primary key, or of the
+return type of an existing formula, is refused before any write
+(`UNSUPPORTED_STREAM_SETTINGS_CHANGE`). A stream whose source fields
 differ from its event schema (`STREAM_SOURCE_DRIFT`) or whose DLO fields differ from
 its own (`STREAM_DLO_DRIFT`) stays as-is: the file holds neither the source fields nor
 the DLO fields, so a deploy could not reproduce them. Verified live at API68 on one
@@ -285,7 +286,11 @@ out (Salesforce maps the source fields) and each formula is sent as
 `transformationFormula` with the DLO field's type. Absent (HTTP 404) creates the stream
 and its DLO; otherwise one PATCH carries `datastreamType` and only the changed parts
 (formula mappings one by one, an empty formula removes one, refresh settings key by key),
-and an equal file is `unchanged` without `--allow-processing`. Create and update need
+and an equal file is `unchanged` without `--allow-processing`. A plain mapping added,
+removed or changed, or a new return type for an existing formula, has no known update
+and is refused before any write (`UNSUPPORTED_STREAM_SETTINGS_CHANGE`); on create, plain
+mappings that differ from what Salesforce maps are reported as
+`STREAM_CHANGE_NOT_APPLIED`. Create and update need
 `--allow-processing` and are read back until the stream is `ACTIVE`. Salesforce decides:
 it checks each `sourceFields[].dataType` against the source object, refuses a change of
 `refreshConfig.refreshMode` (reported as rejected), and answers a label change with

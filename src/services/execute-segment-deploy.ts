@@ -229,7 +229,7 @@ export async function executeSegmentDeploy(
       if (!isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)))
         return result('blocked', 'not-attempted', 'SEGMENT_DEPENDENCY_DRIFT');
       await options.verifyInput();
-      if (isDeepStrictEqual(desired, projected.candidate))
+      if (carriesDefinition(projected.candidate, desired))
         return result('unchanged', 'not-attempted');
       if (options.allowProcessing !== true)
         return result('blocked', 'not-attempted', 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');

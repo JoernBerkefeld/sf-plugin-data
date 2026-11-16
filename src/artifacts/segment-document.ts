@@ -382,10 +382,47 @@ export function joinSegmentFiles(
   );
 }
 
+/** Keys Salesforce adds to each comparison (an object with `subject`) of UI criteria it stores. */
+const serverCriteriaKeys = new Set([
+  'selfReference',
+  'subjectFieldBusinessType',
+  'subjectFieldDataType',
+  'subjectFieldSourceType',
+]);
+
 /**
- * Whether a segment read from the org carries the desired definition. A UI segment's criteria
- * match when every authored key holds the same value in the org: Salesforce adds keys of its own
- * (`selfReference`, `subjectField*`) to the criteria it stores. Everything else must be equal.
+ * Whether stored UI criteria equal the authored ones. Equal except that a comparison (an object
+ * with `subject`) may carry the keys Salesforce adds to it; any other extra key differs.
+ * @param {unknown} wanted Authored criteria value.
+ * @param {unknown} found Stored criteria value.
+ * @returns {boolean} Equal.
+ */
+function sameCriteria(wanted: unknown, found: unknown): boolean {
+  if (Array.isArray(wanted))
+    return (
+      Array.isArray(found) &&
+      wanted.length === found.length &&
+      wanted.every((entry, index) => sameCriteria(entry, found[index]))
+    );
+  if (!wanted || typeof wanted !== 'object') return isDeepStrictEqual(wanted, found);
+  if (!found || typeof found !== 'object' || Array.isArray(found)) return false;
+  const stored = found as Record<string, unknown>;
+  const added = Object.hasOwn(stored, 'subject');
+  return (
+    Object.keys(stored).every(
+      (key) => Object.hasOwn(wanted, key) || (added && serverCriteriaKeys.has(key)),
+    ) &&
+    Object.entries(wanted).every(
+      ([key, entry]) => Object.hasOwn(stored, key) && sameCriteria(entry, stored[key]),
+    )
+  );
+}
+
+/**
+ * Whether a segment read from the org carries the desired definition: the one comparison that
+ * preflight, execute and delete use. A UI segment's criteria match when they are equal except
+ * for the keys Salesforce adds to each comparison it stores (`selfReference`, `subjectField*`
+ * beside `subject`). Everything else must be equal.
  * @param {unknown} observed Projected candidate from a read or write response.
  * @param {SegmentDocument} desired Admitted requested definition.
  * @returns {boolean} Whether the org holds the desired definition.
@@ -394,24 +431,12 @@ export function carriesDefinition(observed: unknown, desired: SegmentDocument): 
   if (desired.spec.segmentType !== 'UI') return isDeepStrictEqual(observed, desired);
   const other = observed as SegmentDocument | undefined;
   if (other?.spec?.segmentType !== 'UI') return false;
-  const covers = (wanted: unknown, found: unknown): boolean =>
-    wanted && typeof wanted === 'object' && found && typeof found === 'object'
-      ? Array.isArray(wanted)
-        ? Array.isArray(found) &&
-          wanted.length === found.length &&
-          wanted.every((entry, index) => covers(entry, found[index]))
-        : !Array.isArray(found) &&
-          Object.entries(wanted).every(
-            ([key, entry]) =>
-              Object.hasOwn(found, key) && covers(entry, (found as Record<string, unknown>)[key]),
-          )
-      : isDeepStrictEqual(wanted, found);
   const rest = (document: SegmentDocument): unknown => ({
     ...document,
     spec: { ...document.spec, includeCriteria: undefined },
   });
   return (
     isDeepStrictEqual(rest(other), rest(desired)) &&
-    covers(desired.spec.includeCriteria, other.spec.includeCriteria)
+    sameCriteria(desired.spec.includeCriteria, other.spec.includeCriteria)
   );
 }

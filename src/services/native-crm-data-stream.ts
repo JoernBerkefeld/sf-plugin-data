@@ -11,7 +11,7 @@ import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import type { DataStreamClient } from '../transport/data-stream-rest.js';
 import type { DataStreamDocument } from '../artifacts/data-stream-document.js';
 import { WriteLedger, rejectedNextAction } from './deploy-result.js';
-import { operationDiagnostic } from './operation-diagnostic.js';
+import { explainInput, operationDiagnostic } from './operation-diagnostic.js';
 import {
   checkRetrievedStreamScope,
   isStreamNotFound,
@@ -126,7 +126,15 @@ async function planCrmDataStream(
     throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
   const current = await readCrmStream(document.identity.apiName, clients);
   if (!current) return { operation: 'create' };
-  const { body, parts } = crmDataStreamPatch(document.spec, crmDataStreamSpec(current));
+  const { body, parts, unsupported } = crmDataStreamPatch(
+    document.spec,
+    crmDataStreamSpec(current),
+  );
+  if (unsupported.length > 0)
+    throw explainInput(
+      new DataStreamError('UNSUPPORTED_STREAM_SETTINGS_CHANGE'),
+      `The file differs from the stream in ${unsupported.join(', ')}, which no known stream update can change. Use the values from a freshly retrieved file, or change them in Salesforce.`,
+    );
   return { operation: parts.length > 0 ? 'update' : 'noop', current, body, parts };
 }
 
@@ -227,7 +235,9 @@ export async function executeCrmDataStream(
             : 'STREAM_UPDATE_SETTLEMENT_UNCONFIRMED',
         );
       if (current?.status === 'ACTIVE') {
-        remaining = crmDataStreamPatch(document.spec, crmDataStreamSpec(current)).parts;
+        const left = crmDataStreamPatch(document.spec, crmDataStreamSpec(current));
+        // Plain mappings are never sent: Salesforce maps source fields itself on create.
+        remaining = [...left.parts, ...left.unsupported];
         settledReads++;
         // Done when the stream holds the file; a part Salesforce ignores stays after 3 reads.
         if (remaining.length === 0 || settledReads >= 3) break;

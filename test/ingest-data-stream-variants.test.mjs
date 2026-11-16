@@ -370,6 +370,24 @@ test('a DLO setting the PATCH cannot change stays refused before any write', asy
   assert.equal(writes.length, 1);
 });
 
+test('a new return type for an existing formula is refused before any write', async () => {
+  const { clients, writes } = org();
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+  const changed = structuredClone(retrieved);
+  changed.spec.formulaMappings[0].targetFieldReturntype = 'Text';
+  await assert.rejects(preflightDataStream(changed, clients), (error) => {
+    assert.equal(error.code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
+    assert.match(error.message, /spec\.formulaMappings\[ScoreX2\]\.targetFieldReturntype/u);
+    return true;
+  });
+  const result = await executeDataStream(changed, clients, options);
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(result.diagnostics[0].code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
+  assert.equal(writes.length, 1);
+});
+
 test('deleting the last stream of a connection waits while the list still names it after its 404', async () => {
   const { clients, streams } = org();
   const created = await executeDataStream(file('CliEvA'), clients, options);

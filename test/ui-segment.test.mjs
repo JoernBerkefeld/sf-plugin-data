@@ -5,6 +5,7 @@ import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  carriesDefinition,
   decodeSegmentCriteria,
   joinSegmentFiles,
   serializeSegmentFiles,
@@ -13,6 +14,7 @@ import {
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { projectSegment } from '../lib/services/retrieve-segment.js';
 import { executeSegmentDeploy } from '../lib/services/execute-segment-deploy.js';
+import { preflightSegmentDeploy } from '../lib/services/preflight-segment-deploy.js';
 import { deleteSegment } from '../lib/services/delete-segment.js';
 import { ConnectClient } from '../lib/transport/connect-client.js';
 import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
@@ -247,6 +249,84 @@ test('UI segment deploy: create from hand-written criteria, repeat is a noop, th
     },
   );
   assert.equal(drift.mutation, 'unknown');
+});
+
+// UI criteria with one logical group around the given filters.
+const logical = (filters, extra = {}) => ({
+  type: 'LogicalComparison',
+  operator: 'and',
+  filters,
+  ...extra,
+});
+
+test('UI criteria tolerate only the keys Salesforce adds beside subject', async () => {
+  const stored = (criteria) => validateSegmentDocument(document(criteria));
+  const desired = validateSegmentDocument(document(authored()));
+  assert.equal(carriesDefinition(stored(normalized()), desired), true);
+  // Any other extra key differs, also one of the known keys where there is no subject.
+  assert.equal(carriesDefinition(stored({ ...normalized(), caseSensitive: true }), desired), false);
+  const nested = validateSegmentDocument(document(logical([authored()])));
+  assert.equal(carriesDefinition(stored(logical([normalized()])), nested), true);
+  assert.equal(
+    carriesDefinition(stored(logical([normalized()], { selfReference: false })), nested),
+    false,
+  );
+  // A key the file holds must be stored.
+  assert.equal(
+    carriesDefinition(stored(authored()), validateSegmentDocument(document(normalized()))),
+    false,
+  );
+
+  // Preflight and execute use the same comparison: the hand-written file is a noop.
+  const org = { current: runtime() };
+  const writes = [];
+  const run = options(org, writes);
+  const preview = await preflightSegmentDeploy(
+    document(authored()),
+    connection,
+    '68.0',
+    'default',
+    run.acquire,
+    run.bind,
+  );
+  assert.equal(preview.outcome, 'unchanged', JSON.stringify(preview.diagnostics));
+  const repeat = await executeSegmentDeploy(
+    document(authored()),
+    connection,
+    '68.0',
+    'default',
+    run,
+  );
+  assert.equal(repeat.outcome, 'unchanged', JSON.stringify(repeat.diagnostics));
+  assert.equal(writes.length, 0);
+});
+
+test('a user key removed from the file but kept by Salesforce fails settlement', async () => {
+  const kept = { ...normalized('CliNoMatchYY'), caseSensitive: true };
+  const org = { current: runtime({ ...normalized(), caseSensitive: true }) };
+  const writes = [];
+  const run = {
+    ...options(org, writes),
+    patch: async (body) => {
+      writes.push(['PATCH', body]);
+      org.current = runtime(kept);
+      return { ...org.current, segmentStatus: 'PROCESSING' };
+    },
+  };
+  const desired = document(authored('CliNoMatchYY'));
+  const preview = await preflightSegmentDeploy(
+    desired,
+    connection,
+    '68.0',
+    'default',
+    run.acquire,
+    run.bind,
+  );
+  assert.equal(preview.outcome, 'update');
+  const result = await executeSegmentDeploy(desired, connection, '68.0', 'default', run);
+  assert.equal(writes.length, 1);
+  assert.notEqual(result.outcome, 'updated', JSON.stringify(result));
+  assert.equal(result.mutation, 'unknown');
 });
 
 test('UI segment delete by its file confirms absence', async () => {

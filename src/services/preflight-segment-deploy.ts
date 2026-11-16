@@ -1,9 +1,8 @@
-import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { validateSegmentDocument } from '../artifacts/segment-document.js';
+import { carriesDefinition, validateSegmentDocument } from '../artifacts/segment-document.js';
 import { retrieveSegment } from './retrieve-segment.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -115,7 +114,7 @@ export async function preflightSegmentDeploy(
     const current = validateSegmentDocument(acquired.candidate);
     if (JSON.stringify(current.identity) !== JSON.stringify(desired.identity))
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
-    return result(isDeepStrictEqual(desired, current) ? 'unchanged' : 'update', 'present');
+    return result(carriesDefinition(current, desired) ? 'unchanged' : 'update', 'present');
   } catch (error) {
     return result(
       'blocked',

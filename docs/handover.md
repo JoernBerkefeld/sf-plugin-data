@@ -1,3 +1,26 @@
+# Review fixes: stream mappings, UI segment comparison, expired retrieve token — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), review
+of ec67817..97abbad. (1) Stream mappings: `crmDataStreamPatch` now also returns `unsupported`
+(plain source-to-target mappings added, removed or changed, compared on the file and GET specs;
+a new `targetFieldReturntype` for an existing formula target). The CRM plan refuses those before
+any write with `UNSUPPORTED_STREAM_SETTINGS_CHANGE`, naming the key paths; create still sends no
+plain mappings, and settlement counts `unsupported` as remaining, so plain mappings Salesforce
+mapped otherwise than the file are notice `STREAM_CHANGE_NOT_APPLIED`. The Ingest update plan
+refuses a changed return type of an existing formula the same way and now names the differing
+`newDlo` settings too (hint, page and README widened). (2) UI segments: `carriesDefinition` is
+the one comparison of preflight, execute (noop, write echo, readback, settlement) and delete. It
+tolerates only `selfReference`, `subjectFieldDataType`, `subjectFieldSourceType` and
+`subjectFieldBusinessType` on a criteria object with `subject` (evidence: A7 POST without them,
+A8 GET with them, `F:/Temp/c2-uiseg-Ciyd3L`); any other extra key differs. A hand-written file
+without those keys is `unchanged` once the org matches; a user key the org keeps fails settlement
+(mutation unknown). (3) Expired token: `BoundTransport` (bound-ssot) resends a GET once after a
+401 `INVALID_SESSION_ID`, after one core `refreshAuth()` shared by concurrent reads; a failed
+refresh reports the original `AUTHENTICATION_FAILED`; DELETE never refreshes or resends. Tests:
+`crm-data-stream`, `ingest-data-stream-variants`, `ui-segment`, `bound-read-clients`. Not live
+tested. Open: whether a PATCH can change plain CRM mappings or a formula return type is unknown
+(refused); other ConnectClient reads outside the bound sender still never refresh.
+
 # Ingestion API streams of any category, field type and formula (C1) — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C-implement,

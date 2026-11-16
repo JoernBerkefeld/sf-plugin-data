@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { explainMismatch } from './operation-diagnostic.js';
+import { explainInput, explainMismatch } from './operation-diagnostic.js';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
   DataStreamError,
@@ -1237,13 +1237,31 @@ export async function preflightNativeDataStreamUpdate(
       binding.target,
       confirmation,
     );
-  if (
-    document.spec.newDlo.label !== target.spec.newDlo.label ||
-    document.spec.newDlo.category !== target.spec.newDlo.category ||
-    document.spec.newDlo.eventDateTimeFieldName !== target.spec.newDlo.eventDateTimeFieldName ||
-    !isDeepStrictEqual(document.spec.newDlo.primaryKey, target.spec.newDlo.primaryKey)
-  )
-    throw new DataStreamError('UNSUPPORTED_STREAM_SETTINGS_CHANGE');
+  const settings = [
+    ...(document.spec.newDlo.label === target.spec.newDlo.label ? [] : ['spec.newDlo.label']),
+    ...(document.spec.newDlo.category === target.spec.newDlo.category
+      ? []
+      : ['spec.newDlo.category']),
+    ...(document.spec.newDlo.eventDateTimeFieldName === target.spec.newDlo.eventDateTimeFieldName
+      ? []
+      : ['spec.newDlo.eventDateTimeFieldName']),
+    ...(isDeepStrictEqual(document.spec.newDlo.primaryKey, target.spec.newDlo.primaryKey)
+      ? []
+      : ['spec.newDlo.primaryKey']),
+  ];
+  // The return type of an existing formula target is its DLO field type; no update changes it.
+  for (const mapping of document.spec.formulaMappings ?? []) {
+    const existing = (target.spec.formulaMappings ?? []).find(
+      (entry) => entry.targetFieldName === mapping.targetFieldName,
+    );
+    if (existing && existing.targetFieldReturntype !== mapping.targetFieldReturntype)
+      settings.push(`spec.formulaMappings[${mapping.targetFieldName}].targetFieldReturntype`);
+  }
+  if (settings.length > 0)
+    throw explainInput(
+      new DataStreamError('UNSUPPORTED_STREAM_SETTINGS_CHANGE'),
+      `The file differs from the stream in ${settings.join(', ')}, which no known stream update can change. Use the values from a freshly retrieved file, or change them in Salesforce.`,
+    );
   const dlo = await readUpdateStreamDlo(target, clients);
   if (
     binding.target.status !== 'ACTIVE' ||

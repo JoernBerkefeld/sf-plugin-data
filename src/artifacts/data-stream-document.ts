@@ -678,11 +678,17 @@ function sameValue(left: unknown, right: unknown): boolean {
  * plus each changed part only. Formula mappings are compared one by one (a removed formula is
  * sent with an empty formula); refresh settings key by key; every other changed key is sent
  * whole. The DLO fields of formula targets are left to the mappings. No parts means unchanged.
+ * Differences no proven write can send are returned as `unsupported`, never as parts: a plain
+ * source-to-target mapping added, removed or changed, and the return type of an existing formula.
  * @param {Bag} wanted Spec of the file.
  * @param {Bag} current Spec of the org's stream.
- * @returns {{body: Bag; parts: string[]}} PATCH body and the changed key paths.
+ * @returns {{body: Bag; parts: string[]; unsupported: string[]}} PATCH body, the changed key
+ * paths, and the differing key paths that cannot be sent.
  */
-export function crmDataStreamPatch(wanted: Bag, current: Bag): { body: Bag; parts: string[] } {
+export function crmDataStreamPatch(
+  wanted: Bag,
+  current: Bag,
+): { body: Bag; parts: string[]; unsupported: string[] } {
   const want = crmDataStreamWriteBody(wanted);
   const have = crmDataStreamWriteBody(current);
   const body: Bag = { datastreamType: want.datastreamType };
@@ -696,10 +702,31 @@ export function crmDataStreamPatch(wanted: Bag, current: Bag): { body: Bag; part
     );
   const wantFormulas = formulas(want);
   const haveFormulas = formulas(have);
+  const unsupported: string[] = [];
+  const plain = (value: Bag): Map<string, Bag> =>
+    new Map(
+      (Array.isArray(value.mappings) ? value.mappings : [])
+        .filter((mapping): mapping is Bag => isBag(mapping) && typeof mapping.formula !== 'string')
+        .map((mapping) => [String(mapping.targetFieldName), mapping]),
+    );
+  const wantPlain = plain(wanted);
+  const havePlain = plain(current);
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh key array within the ES2022 library target.
+  for (const target of [...new Set([...wantPlain.keys(), ...havePlain.keys()])].sort())
+    if (!sameValue(wantPlain.get(target), havePlain.get(target)))
+      unsupported.push(`mappings[${target}]`);
   const mappings: Bag[] = [];
-  for (const [target, mapping] of wantFormulas)
-    if (haveFormulas.get(target)?.transformationFormula !== mapping.transformationFormula)
-      mappings.push(mapping);
+  for (const [target, mapping] of wantFormulas) {
+    const existing = haveFormulas.get(target);
+    if (
+      existing !== undefined &&
+      existing.targetFieldReturntype !== mapping.targetFieldReturntype
+    ) {
+      unsupported.push(`mappings[${target}].targetFieldReturntype`);
+      continue;
+    }
+    if (existing?.transformationFormula !== mapping.transformationFormula) mappings.push(mapping);
+  }
   for (const target of haveFormulas.keys())
     if (!wantFormulas.has(target))
       mappings.push({ targetFieldName: target, transformationFormula: '' });
@@ -737,5 +764,5 @@ export function crmDataStreamPatch(wanted: Bag, current: Bag): { body: Bag; part
     parts.push(key);
     if (key !== 'datastreamType') body[key] = want[key];
   }
-  return { body, parts };
+  return { body, parts, unsupported };
 }

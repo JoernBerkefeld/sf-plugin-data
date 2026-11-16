@@ -137,7 +137,7 @@ export const hints: Readonly<Record<string, string>> = {
   UNSUPPORTED_STREAM_REFRESH:
     'The stream refreshes in a mode other than UPSERT, for example full refresh, which the stream file cannot represent. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_SETTINGS_CHANGE:
-    'The file changes the DLO label, category, event time field or primary key of an existing stream, which a stream update cannot change. Use the values from a freshly retrieved file.',
+    'The file changes what no known stream update can change: the DLO label, category, event time field or primary key, a plain field mapping, or the return type of an existing formula. Use the values from a freshly retrieved file.',
   UNSUPPORTED_STREAM_SPEC:
     'The stream file uses a value outside the supported profile. Use schemaVersion 1, IngestApi, INGEST_API and UPSERT.',
 };
