@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import {
   SegmentError,
+  decodeSegmentCriteria,
   segmentName,
   validateSegmentDocument,
 } from '../artifacts/segment-document.js';
@@ -84,6 +85,78 @@ function validateObservations(raw: Record<string, unknown>): void {
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
 }
 
+const uiConfiguration = [
+  'apiName',
+  'displayName',
+  'dataSpace',
+  'segmentType',
+  'segmentOnApiName',
+  'includeCriteria',
+  'publishInterval',
+  'lookbackPeriod',
+];
+// Server-owned keys of a UI segment GET beyond the DBT observations.
+const uiObservations = ['lastPublishedEndDateTime', 'publishStatus'];
+
+/**
+ * Project a UI segment (built in the segment canvas): the GET minus server-owned keys, with
+ * `includeCriteria` decoded from its HTML-entity-encoded JSON string into an object. What the
+ * write cannot carry stays as-is (UNSUPPORTED_SEGMENT_VARIANT): a key the plugin does not know,
+ * parameters, criteria that are not a JSON object, a schedule other than NO_REFRESH.
+ * @param {Record<string, unknown>} raw The segment inside the GET response.
+ * @param {string} apiName Requested exact identity.
+ * @param {DocumentMode} mode `deploy` (strict observed fields) or `retrieve`.
+ * @returns {{candidate: SegmentDocument; runtime: Record<string, unknown>}} Detached portable and private projections.
+ */
+function projectUiSegment(
+  raw: Record<string, unknown>,
+  apiName: string,
+  mode: DocumentMode,
+): { candidate: SegmentDocument; runtime: Record<string, unknown> } {
+  const known = new Set([
+    ...uiConfiguration,
+    ...observations,
+    ...uiObservations,
+    'description',
+    'parameters',
+  ]);
+  if (
+    uiConfiguration.some((key) => !Object.hasOwn(raw, key)) ||
+    Object.keys(raw).some((key) => !known.has(key)) ||
+    (Object.hasOwn(raw, 'parameters') && !isDeepStrictEqual(raw.parameters, [])) ||
+    typeof raw.includeCriteria !== 'string'
+  )
+    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  let criteria: unknown;
+  try {
+    criteria = JSON.parse(decodeSegmentCriteria(raw.includeCriteria));
+  } catch {
+    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  }
+  if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria))
+    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  const candidate = validateSegmentDocument(
+    {
+      schemaVersion: 1,
+      kind: 'segment',
+      identity: { dataSpace: 'default', apiName },
+      spec: {
+        displayName: raw.displayName,
+        // Salesforce leaves description out of the GET when it is empty.
+        description: Object.hasOwn(raw, 'description') ? raw.description : '',
+        segmentType: 'UI',
+        segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
+        includeCriteria: criteria,
+        publishInterval: raw.publishInterval,
+        lookbackPeriod: raw.lookbackPeriod,
+      },
+    },
+    mode,
+  );
+  if (mode !== 'retrieve') validateObservations(raw);
+  return { candidate, runtime: structuredClone(raw) };
+}
+
 /**
  * Admit an exact response without discarding unknown potentially meaningful fields. Retrieve mode
  * reads `segments[0]` of any wrapper, keeps keys the plugin does not know in `spec` (and extra
@@ -116,6 +189,7 @@ export function projectSegment(
   const raw = value as Record<string, unknown>;
   if (raw.apiName !== apiName || raw.dataSpace !== 'default')
     throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
+  if (raw.segmentType === 'UI') return projectUiSegment(raw, apiName, mode);
   const known = new Set([
     ...configuration,
     ...observations,

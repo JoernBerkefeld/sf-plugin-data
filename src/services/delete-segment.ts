@@ -1,7 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
-import { SegmentError, validateSegmentDocument } from '../artifacts/segment-document.js';
+import {
+  SegmentError,
+  carriesDefinition,
+  validateSegmentDocument,
+} from '../artifacts/segment-document.js';
+import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
@@ -212,7 +217,7 @@ export async function deleteSegment(
       if (!['ACTIVE', 'PROCESSING', 'COUNTING'].includes(String(runtime.segmentStatus)))
         throw new Error('Target status');
     } else if (
-      !isDeepStrictEqual(baseline.candidate, desired) ||
+      !carriesDefinition(baseline.candidate, desired as SegmentDocument) ||
       !['ACTIVE', 'PROCESSING', 'COUNTING'].includes(String(runtime.segmentStatus)) ||
       typeof runtime.marketSegmentId !== 'string' ||
       !/^1sg[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/u.test(runtime.marketSegmentId) ||

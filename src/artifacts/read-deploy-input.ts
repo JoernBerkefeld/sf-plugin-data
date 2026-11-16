@@ -850,7 +850,8 @@ async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput>
   freeze(document);
   // The files as found on disk, in model order.
   const byModel = new Map(codeFiles.map((code) => [code.name.toLowerCase(), code.path]));
-  const codePaths = document.spec.models.map((model) => byModel.get(model.name.toLowerCase())!);
+  const models = document.spec.segmentType === 'DBT' ? document.spec.models : [];
+  const codePaths = models.map((model) => byModel.get(model.name.toLowerCase())!);
   return Object.freeze({
     path: jsonPath,
     codePaths: Object.freeze(codePaths),

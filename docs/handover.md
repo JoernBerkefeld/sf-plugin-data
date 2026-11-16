@@ -1,3 +1,30 @@
+# UI segments (C2) — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C-implement, variant C2.
+A segment built in the segment canvas (`segmentType` `UI`) is now a normal segment file: the GET
+minus server-owned keys, with `includeCriteria` HTML-entity-decoded and stored as a JSON object,
+`segmentOn` as for DBT and no SQL files (`SegmentDocument.spec` is `DbtSegmentSpec | UiSegmentSpec`;
+`codeFieldsOf` gives no code fields for UI). Deploy (`uiSegmentWriteBody`): create POST with
+`developerName`, `publishSchedule: NoRefresh` and `segmentCreationFlow: Headless`; update is a
+full-body PATCH without `publishSchedule`; criteria go as a JSON string. Readback and delete
+compare with `carriesDefinition`: every authored criteria key must hold the same value in the org
+(Salesforce adds `selfReference`/`subjectField*`); the noop check stays exact equality, so a
+retrieved file redeploys as `unchanged`. DBT behaviour is unchanged (preflight now compares with
+`isDeepStrictEqual` instead of JSON text; preservation also drops `segmentType`, `publishInterval`,
+`lookbackPeriod` (compared via the projection) and `publishStatus`/`lastPublishedEndDateTime`).
+Still as-is (`UNSUPPORTED_SEGMENT_VARIANT`): UI segments with a schedule other than `NO_REFRESH`
+(the write enum mapping is unproven and a refresh would publish), non-empty `parameters`, any
+unknown key (for example `excludeCriteria`, untested), criteria that are not a JSON object; other
+segment types (waterfall, real-time, lookalike). Wizard-built criteria over related paths may be
+refused by the API on deploy; the plugin reports that answer.
+Live on isolated-source (00Daj000010xkZNEAY): create of `CliUiLive_A` from a hand-written file
+(created), retrieve (normalized criteria), repeat deploy `unchanged`, update of criteria value and
+lookback P90D to P30D (first attempt 403 `ENTITY_SAVE_ERROR` while still PROCESSING after the create,
+nothing written; the retry once ACTIVE: updated, GET read P30D/`CliNoMatchYY`), retrieve
+`unchanged`, delete by name (deleted), GET 404 `ITEM_NOT_FOUND`; list shows 4 segments, none `Cli*`.
+Tests: `test/ui-segment.test.mjs`. Open: the 403 text is not disclosed by the plugin; whether a
+PATCH while PROCESSING is always refused is not proven.
+
 # Retrieve speed (B) — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), step B.

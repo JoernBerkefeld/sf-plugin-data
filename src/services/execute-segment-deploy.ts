@@ -3,7 +3,11 @@ import { setTimeout } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
-import { SegmentError, validateSegmentDocument } from '../artifacts/segment-document.js';
+import {
+  SegmentError,
+  carriesDefinition,
+  validateSegmentDocument,
+} from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -54,6 +58,12 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
     'includeDbt',
     'segmentOnApiName',
     'segmentOnId',
+    // Authored (compared via the projection) or server-owned UI keys.
+    'segmentType',
+    'publishInterval',
+    'lookbackPeriod',
+    'publishStatus',
+    'lastPublishedEndDateTime',
   ])
     delete result[key];
   for (const key of ['marketSegmentId', 'marketSegmentDefinitionId']) {
@@ -94,7 +104,7 @@ function acknowledgedUpdate(
   return (
     ['PROCESSING', 'ACTIVE'].includes(String(response.runtime.segmentStatus)) &&
     isDeepStrictEqual(preservation(response.runtime), expected) &&
-    isDeepStrictEqual(response.candidate, desired)
+    carriesDefinition(response.candidate, desired)
   );
 }
 
@@ -250,7 +260,7 @@ export async function executeSegmentDeploy(
       baseline = preservation(response.runtime);
       responseQualified =
         ['PROCESSING', 'ACTIVE'].includes(String(response.runtime.segmentStatus)) &&
-        isDeepStrictEqual(response.candidate, desired);
+        carriesDefinition(response.candidate, desired);
     } else responseQualified = acknowledgedUpdate(await patch(desired), desired, baseline);
   } catch (error) {
     writeFailure = error;
@@ -326,7 +336,7 @@ export async function executeSegmentDeploy(
       )
         return expired();
       if (creating && !responseQualified) return unknown;
-      if (!matches(observed.runtime) || !isDeepStrictEqual(observed.candidate, desired))
+      if (!matches(observed.runtime) || !carriesDefinition(observed.candidate, desired))
         return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH', writeFailure);
       if (['PROCESSING', 'COUNTING'].includes(String(observed.runtime.segmentStatus))) {
         if (!responseQualified) continue;
@@ -352,8 +362,8 @@ export async function executeSegmentDeploy(
         !settled.expectations ||
         settled.blockers.length > 0 ||
         settled.expectations.runtime.segmentStatus !== 'ACTIVE' ||
-        !isDeepStrictEqual(validateSegmentDocument(settled.candidate), desired) ||
-        !isDeepStrictEqual(
+        !carriesDefinition(validateSegmentDocument(settled.candidate), desired) ||
+        !carriesDefinition(
           projectSegment({ segments: [settled.expectations.runtime] }, desired.identity.apiName)
             .candidate,
           desired,

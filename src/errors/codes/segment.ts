@@ -47,7 +47,7 @@ export const hints: Readonly<Record<string, string>> = {
   UNKNOWN_SEGMENT_CONFIGURATION:
     'The segment has a setting the plugin does not know, or misses one. Retrieve keeps unknown settings in the file; deploy refuses them and names the key. Remove the key, or manage the segment in Data Cloud.',
   UNSUPPORTED_SEGMENT_VARIANT:
-    'Only SQL (DBT) segments on a DMO without refresh schedule, with a 90-day lookback and no parameters fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.',
+    'Only DBT segments with a 90-day lookback and UI segments, on a DMO without refresh schedule, parameters or unknown UI settings, fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.',
   UNSUPPORTED_SEGMENT_XML:
     "Segment XML files cannot be deployed. Select the segment's .segment.json file instead; retrieve one with sf data360 retrieve -m segment:Name if you do not have it.",
 };

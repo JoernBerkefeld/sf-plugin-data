@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
@@ -114,10 +115,7 @@ export async function preflightSegmentDeploy(
     const current = validateSegmentDocument(acquired.candidate);
     if (JSON.stringify(current.identity) !== JSON.stringify(desired.identity))
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
-    return result(
-      JSON.stringify(desired) === JSON.stringify(current) ? 'unchanged' : 'update',
-      'present',
-    );
+    return result(isDeepStrictEqual(desired, current) ? 'unchanged' : 'update', 'present');
   } catch (error) {
     return result(
       'blocked',

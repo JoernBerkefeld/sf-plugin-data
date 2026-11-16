@@ -14,7 +14,7 @@ import {
 } from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import type { Connection } from '@salesforce/core';
-import { validateSegmentDocument } from '../artifacts/segment-document.js';
+import { uiSegmentWriteBody, validateSegmentDocument } from '../artifacts/segment-document.js';
 import type { ApiVersionSelection } from './api-version.js';
 
 export type TransportErrorCode = 'INVALID_REQUEST' | 'AUTHENTICATION_FAILED' | 'REQUEST_FAILED';
@@ -204,15 +204,19 @@ export class ConnectClient {
       {
         method: 'POST',
         url: this.safeUrl(`${this.prefix}segments`),
-        body: JSON.stringify({
-          developerName: document.identity.apiName,
-          displayName: document.spec.displayName,
-          description: document.spec.description,
-          segmentOnApiName: document.spec.segmentOn.apiName,
-          segmentType: 'Dbt',
-          includeDbt: { models: { models: document.spec.models } },
-          publishSchedule: 'NoRefresh',
-        }),
+        body: JSON.stringify(
+          document.spec.segmentType === 'UI'
+            ? uiSegmentWriteBody(document, true)
+            : {
+                developerName: document.identity.apiName,
+                displayName: document.spec.displayName,
+                description: document.spec.description,
+                segmentOnApiName: document.spec.segmentOn.apiName,
+                segmentType: 'Dbt',
+                includeDbt: { models: { models: document.spec.models } },
+                publishSchedule: 'NoRefresh',
+              },
+        ),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),
@@ -220,8 +224,8 @@ export class ConnectClient {
   }
 
   /**
-   * PATCH the authored DBT definition on the native API68 Segment route.
-   * Neither schedule field nor lookback is writable through this boundary.
+   * PATCH the authored definition on the native API68 Segment route. A DBT PATCH writes neither
+   * schedule nor lookback; a UI PATCH sends the full definition with its lookback.
    * @param {unknown} value Complete independently admitted desired Segment document.
    * @returns {Promise<unknown>} Untrusted single-attempt response, never settlement evidence.
    */
@@ -232,13 +236,17 @@ export class ConnectClient {
       {
         method: 'PATCH',
         url: this.safeUrl(`${this.prefix}segments/${document.identity.apiName}`),
-        body: JSON.stringify({
-          displayName: document.spec.displayName,
-          description: document.spec.description,
-          segmentOnApiName: document.spec.segmentOn.apiName,
-          segmentType: 'Dbt',
-          includeDbt: { models: { models: document.spec.models } },
-        }),
+        body: JSON.stringify(
+          document.spec.segmentType === 'UI'
+            ? uiSegmentWriteBody(document, false)
+            : {
+                displayName: document.spec.displayName,
+                description: document.spec.description,
+                segmentOnApiName: document.spec.segmentOn.apiName,
+                segmentType: 'Dbt',
+                includeDbt: { models: { models: document.spec.models } },
+              },
+        ),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

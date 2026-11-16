@@ -1,6 +1,6 @@
 # `UNSUPPORTED_SEGMENT_VARIANT`
 
-> Only SQL (DBT) segments on a DMO without refresh schedule, with a 90-day lookback and no parameters fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.
+> Only DBT segments with a 90-day lookback and UI segments, on a DMO without refresh schedule, parameters or unknown UI settings, fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.
 
 |              |                                                                                                              |
 | ------------ | ------------------------------------------------------------------------------------------------------------ |
@@ -10,11 +10,16 @@
 
 ## What it means
 
-The plugin's segment file holds SQL (DBT) segments: type `DBT` with a list of SQL models, publish interval `NO_REFRESH`, lookback `P90D`, built on a DMO in the default data space, without parameters. The segment uses another type (for example one built in the segment canvas, without DBT configuration), schedule, lookback or source kind, or it has parameters. The SQL itself is not checked; Salesforce decides about it.
+The plugin's segment file holds two kinds of segments, both built on a DMO in the default data space, with publish interval `NO_REFRESH` and without parameters:
+
+- SQL (DBT) segments: type `DBT` with a list of SQL models and lookback `P90D`.
+- Segments built in the segment canvas: type `UI` with criteria that are a JSON object, any lookback, and no settings the plugin does not know (for example exclusion criteria).
+
+The segment uses another type (for example a waterfall or real-time segment), schedule, lookback or source kind, it has parameters, or a UI segment has an unknown setting or criteria that are not a JSON object. The SQL and the criteria themselves are not checked; Salesforce decides about them.
 
 ## Why the plugin reports it
 
-Create and update send the SQL models with no refresh schedule and send no lookback or parameters. Another value would be silently ignored on deploy. So retrieve writes such a segment as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, and no SQL files; SQL files left from an earlier retrieve are removed. Deploy refuses a file with another value and names the key, for example `spec.publishInterval`.
+Create and update send no refresh schedule and no parameters; a DBT write sends no lookback either, and a UI write sends only the settings the plugin knows. Another value would be silently ignored on deploy. So retrieve writes such a segment as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, and no SQL files; SQL files left from an earlier retrieve are removed. Deploy refuses a file with another value and names the key, for example `spec.publishInterval`.
 
 ## How to fix
 
