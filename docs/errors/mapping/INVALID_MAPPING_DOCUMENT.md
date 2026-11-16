@@ -2,11 +2,11 @@
 
 > The mapping file, or the mapping read from the org, does not match the mapping format. Check schemaVersion, kind, identity, the __dll and __dlm names and that fieldMappings is not empty.
 
-|              |                                                                 |
-| ------------ | --------------------------------------------------------------- |
-| **Family**   | Mapping                                                         |
-| **Commands** | `sf data360 deploy`, `sf data360 retrieve`, `sf data360 delete` |
-| **Outcome**  | `blocked` — nothing was changed                                 |
+|              |                                                                                                                                                                      |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Mapping                                                                                                                                                              |
+| **Commands** | `sf data360 deploy`, `sf data360 retrieve`, `sf data360 delete`                                                                                                      |
+| **Outcome**  | `blocked` — nothing was changed; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning |
 
 ## What it means
 
@@ -25,7 +25,7 @@ The plugin only deploys or saves what it fully understands. A file with unknown 
 
 1. Compare the file under `data360/mapping/` with the format above; remove extra keys and add missing ones.
 2. If you wrote the file by hand, retrieve a mapping with `sf data360 retrieve --metadata mapping:<Name>` and use it as a template.
-3. If the error comes from a retrieve, rerun it; if it repeats, the org returned an unexpected mapping shape.
+3. On retrieve, the mapping is written as-is with this code as reason; manage it in Salesforce or retrieve it again once the org returns a supported shape.
 
 ## Example output
 
@@ -40,3 +40,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/m
 
 - [`INVALID_MAPPING_FIELD`](../mapping/INVALID_MAPPING_FIELD.md) — a single field pair breaks the file format.
 - [`MAPPING_DATASPACE_MISMATCH`](../mapping/MAPPING_DATASPACE_MISMATCH.md) — the mapping file names another data space than the command.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

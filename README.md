@@ -245,7 +245,9 @@ by synthetic plugin tests. It uses default/`auto` API 68 (or explicit `68.0`), t
 **default data space**, one existing Ingestion API source event, `UPSERT`, category
 `Other` and the qualified Text-field profile only. It is not general connector or
 schema support. Streams deploy alone or as the first phase of a mixed deploy
-(explicit or `--changed-since`); inventory retrieval is not supported.
+(explicit or `--changed-since`); inventory retrieval is not supported. Retrieve by name
+takes any stream: one outside this profile is written as-is with the failed check as
+reason, and deploy does not send it.
 
 Installed API68 qualification passed source create/retrieve, then target
 create/retrieve after changing only `spec.connectionName` to an existing compatible
@@ -416,6 +418,35 @@ and JSON diagnostics include a server `Retry-After` value only when it passes
 validation. Reduce request frequency and try later; effective limits can vary
 with load and change. Inspect the target before rerunning a write whose outcome
 is unknown. The plugin does not automatically replay the write.
+
+### Retrieve is lenient, deploy is strict
+
+Retrieve never refuses an object because the org returns something the plugin does not
+model. One failing item never stops the other items or families.
+
+- **Unknown keys are kept.** A key the plugin does not know stays in the retrieved file.
+  Deploy checks the file strictly and refuses it, naming the key path. Unknown keys under
+  a data stream's read-only `observed` section do not block deploy.
+- **Unsupported variants are written as-is.** An object the file format cannot represent
+  is written at its normal path as Salesforce returned it, with a warning:
+  `{schemaVersion, kind, identity, verbatim: {reason, native}}`. `reason` is the code of
+  the check that failed, or `UNMODELLED_RESPONSE` when there is none. Examples: streams
+  that are not Ingestion API streams, UI-built and other non-DBT segments, mappings that
+  are not DLO to DMO, Visual Builder calculated-insight drafts, system or packaged data
+  transforms, and data graph schedules the format does not hold.
+- **As-is files are not deployed.** A folder or Git-range deploy skips them with a
+  warning. Naming one (`-m type:Name` or an exact `--source-dir` file) refuses with
+  `VERBATIM_NOT_DEPLOYABLE`; so does `sf data360 publish`.
+- **Deleting still works.** An as-is file deleted in a Git range, or an object selected
+  with `sf data360 delete -m type:Name`, is deleted by type and name with the normal
+  safeguards.
+- **What still fails an item:** HTTP and transport errors, an object that does not
+  exist, a read that names another object, another data space, and read state (an
+  incomplete listing, an object still processing, or a change between two reads).
+
+Listings are read page by page until the org has no more pages; an entry that cannot be
+used is skipped with a warning. Known limit: the deploy dependency walk stops at 256
+components and 512 links (`DEPENDENCY_LIMIT_EXCEEDED`).
 
 ### Error codes
 
@@ -2351,8 +2382,12 @@ qualified column name") and a table alias ("Need api name of DMO") with HTTP 400
 plugin reports that answer. Only DBT segments without refresh
 schedule (`NO_REFRESH`), with a 90-day lookback (`P90D`) and without parameters can be
 expressed: create and update cannot carry another schedule or lookback, so another value
-is refused with `UNSUPPORTED_SEGMENT_VARIANT` instead of being silently ignored. Segment
-inventory and Segment XML input are not supported.
+is refused with `UNSUPPORTED_SEGMENT_VARIANT` instead of being silently ignored. Retrieve
+writes any other segment (another schedule or lookback, parameters, or a segment built in
+the UI without DBT models) as-is with that code as reason, and deploy does not send it. An
+unknown key of a segment is kept in its normal file, and deploy refuses it
+(`UNKNOWN_SEGMENT_CONFIGURATION`). Segment inventory and Segment XML input are not
+supported.
 
 Deploy with `sf data360 deploy --source-dir <file>` (or `-m segment:<name>`); check it
 with `--preview` first. The segment is read by its exact name: HTTP 404

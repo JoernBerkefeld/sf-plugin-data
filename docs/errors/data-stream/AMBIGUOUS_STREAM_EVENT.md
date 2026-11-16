@@ -2,11 +2,11 @@
 
 > The connection does not have exactly one uploaded event schema. Use a connection whose schema holds only the event named in spec.event.
 
-|              |                                                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| **Family**   | Data stream                                                                                                              |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete` |
-| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; `failed` on retrieve — no file was written          |
+|              |                                                                                                                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data stream                                                                                                                                                                                              |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                                 |
+| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning |
 
 ## What it means
 
@@ -28,14 +28,13 @@ The stream read does not say which event it uses. With several events on one con
 ## Example output
 
 ```text
-Retrieve: failed.
-data-stream:WebOrders_Order_1a2b3c4d: AMBIGUOUS_STREAM_EVENT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Data stream retrieval did not complete; no write attempted.
-Hint: The connection does not have exactly one uploaded event schema. Use a connection whose schema holds only the event named in spec.event.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/AMBIGUOUS_STREAM_EVENT.md
-Downloaded data-stream: 0
+Retrieve: success.
+Warning: data-stream:WebOrders_Order_1a2b3c4d: retrieved as-is (verbatim, reason AMBIGUOUS_STREAM_EVENT) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-stream: 1
 ```
 
 ## Related codes
 
 - [`INVALID_STREAM_SCHEMA`](../data-stream/INVALID_STREAM_SCHEMA.md) — the single event exists but does not match.
 - [`AMBIGUOUS_STREAM_CONNECTION`](../data-stream/AMBIGUOUS_STREAM_CONNECTION.md) — the connection itself could not be identified.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

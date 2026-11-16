@@ -2,11 +2,11 @@
 
 > A data stream document does not have the expected JSON structure. Retrieve the stream again, or compare the local file with a freshly retrieved one.
 
-|              |                                                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Family**   | Data stream                                                                                                                                                                                   |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                      |
-| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; `failed` on retrieve — no file was written; `failed` with mutation `unknown` when it appears in the checks after a write |
+|              |                                                                                                                                                                                                                                                                                        |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data stream                                                                                                                                                                                                                                                                            |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                                                                                                               |
+| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning; `failed` with mutation `unknown` when it appears in the checks after a write |
 
 ## What it means
 
@@ -27,11 +27,9 @@ The plugin only reads and writes the exact structure it knows. An unknown key co
 ## Example output
 
 ```text
-Retrieve: failed.
-data-stream:WebOrders_Order_1a2b3c4d: INVALID_STREAM_DOCUMENT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Data stream retrieval did not complete; no write attempted.
-Hint: A data stream document does not have the expected JSON structure. Retrieve the stream again, or compare the local file with a freshly retrieved one.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/INVALID_STREAM_DOCUMENT.md
-Downloaded data-stream: 0
+Retrieve: success.
+Warning: data-stream:WebOrders_Order_1a2b3c4d: retrieved as-is (verbatim, reason INVALID_STREAM_DOCUMENT) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-stream: 1
 ```
 
 ## Related codes
@@ -39,3 +37,4 @@ Downloaded data-stream: 0
 - [`INVALID_SOURCE`](../general/INVALID_SOURCE.md) — the deploy-side report for a stream file that fails these checks.
 - [`INVALID_STREAM_NAME`](../data-stream/INVALID_STREAM_NAME.md) — a name in the document is not a valid developer name.
 - [`UNSUPPORTED_STREAM_SPEC`](../data-stream/UNSUPPORTED_STREAM_SPEC.md) — the structure is valid but a fixed value is unsupported.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

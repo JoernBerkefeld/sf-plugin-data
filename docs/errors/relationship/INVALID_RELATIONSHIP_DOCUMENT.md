@@ -2,11 +2,11 @@
 
 > A relationship does not fit the file format: the source must be a DMO API name with a custom field (__c), the target any object and field API name (a DMO or a CRM object), and cardinality and owner must be set. Check it in the org.
 
-|              |                                                                 |
-| ------------ | --------------------------------------------------------------- |
-| **Family**   | Relationship                                                    |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`                      |
-| **Outcome**  | `failed` on retrieve, `blocked` on deploy — nothing was changed |
+|              |                                                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Family**   | Relationship                                                                                                                                                                   |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`                                                                                                                                     |
+| **Outcome**  | on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning; `blocked` on deploy — nothing was changed |
 
 ## What it means
 
@@ -26,14 +26,13 @@ The plugin writes and sends only relationships it can describe completely in its
 ## Example output
 
 ```text
-Retrieve: failed.
-relationship:Order__dlm: INVALID_RELATIONSHIP_DOCUMENT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Relationship retrieval did not complete for this item; the org was not changed.
-Hint: A relationship does not fit the file format: the source must be a DMO API name with a custom field (__c), the target any object and field API name (a DMO or a CRM object), and cardinality and owner must be set. Check it in the org.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/relationship/INVALID_RELATIONSHIP_DOCUMENT.md
-Downloaded relationship: 0
+Retrieve: success.
+Warning: relationship:Order__dlm: retrieved as-is (verbatim, reason INVALID_RELATIONSHIP_DOCUMENT) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded relationship: 1
 ```
 
 ## Related codes
 
 - [`INVALID_SOURCE`](../general/INVALID_SOURCE.md) — A local relationship file that is not valid.
 - [`INVALID_RELATIONSHIP_RESPONSE`](../relationship/INVALID_RELATIONSHIP_RESPONSE.md) — The list answer itself is malformed.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

@@ -2,11 +2,11 @@
 
 > The DMO definition from the org does not fit the plugin file format. Inspect the DMO in the org (name, data space, label, category, fields) and report it if it looks normal.
 
-|              |                                                                                                                    |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| **Family**   | Data model object                                                                                                  |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                    |
-| **Outcome**  | `blocked` on a read before any write; `failed` with mutation `unknown` when it is the answer to a create or update |
+|              |                                                                                                                                                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data model object                                                                                                                                                                                                                                       |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                                                                                                                                                         |
+| **Outcome**  | `blocked` on a read before any write; `failed` with mutation `unknown` when it is the answer to a create or update; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning |
 
 ## What it means
 
@@ -33,11 +33,9 @@ Every file the plugin writes and every write decision rests on this checked defi
 ## Example output
 
 ```text
-Retrieve: failed.
-dmo:Customer__dlm: INVALID_DMO_DOCUMENT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Native component retrieval did not complete; no write attempted.
-Hint: The DMO definition from the org does not fit the plugin file format. Inspect the DMO in the org (name, data space, label, category, fields) and report it if it looks normal.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dmo/INVALID_DMO_DOCUMENT.md
-Downloaded dmo: 0
+Retrieve: success.
+Warning: dmo:Customer__dlm: retrieved as-is (verbatim, reason INVALID_DMO_DOCUMENT) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded dmo: 1
 ```
 
 ## Related codes
@@ -45,3 +43,4 @@ Downloaded dmo: 0
 - [`INVALID_SOURCE`](../general/INVALID_SOURCE.md) — the local file of a deploy is invalid.
 - [`INVALID_DMO_FIELD`](../dmo/INVALID_DMO_FIELD.md) — one field of the definition is invalid.
 - [`INVALID_DLO_DOCUMENT`](../dlo/INVALID_DLO_DOCUMENT.md) — the same check for data lake objects.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

@@ -2,11 +2,11 @@
 
 > A field of the DLO read from the org does not fit the plugin file format. Inspect the field names and types of the DLO in the org.
 
-|              |                                                                                                                    |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| **Family**   | Data lake object                                                                                                   |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                    |
-| **Outcome**  | `blocked` on a read before any write; `failed` with mutation `unknown` when it is the answer to a create or update |
+|              |                                                                                                                                                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data lake object                                                                                                                                                                                                                                        |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                                                                                                                                                         |
+| **Outcome**  | `blocked` on a read before any write; `failed` with mutation `unknown` when it is the answer to a create or update; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning |
 
 ## What it means
 
@@ -34,14 +34,13 @@ The plugin matches fields by name between the file and the org and sends new fie
 ## Example output
 
 ```text
-Retrieve: failed.
-dlo:Orders__dll: INVALID_DLO_FIELD: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Native component retrieval did not complete; no write attempted.
-Hint: A field of the DLO read from the org does not fit the plugin file format. Inspect the field names and types of the DLO in the org.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dlo/INVALID_DLO_FIELD.md
-Downloaded dlo: 0
+Retrieve: success.
+Warning: dlo:Orders__dll: retrieved as-is (verbatim, reason INVALID_DLO_FIELD) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded dlo: 1
 ```
 
 ## Related codes
 
 - [`INVALID_DLO_DOCUMENT`](../dlo/INVALID_DLO_DOCUMENT.md) — the definition around the fields is invalid.
 - [`INVALID_SOURCE`](../general/INVALID_SOURCE.md) — the local file of a deploy is invalid.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

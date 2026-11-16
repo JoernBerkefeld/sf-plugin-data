@@ -2,11 +2,11 @@
 
 > A stream, connection, event, DLO or field name is not a valid developer name. Use a letter first, then only letters, digits and underscores; DLO names end in __dll.
 
-|              |                                                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| **Family**   | Data stream                                                                                                              |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete` |
-| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; `failed` on retrieve — no file was written          |
+|              |                                                                                                                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data stream                                                                                                                                                                                              |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                                 |
+| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning |
 
 ## What it means
 
@@ -27,14 +27,13 @@ Names go into request paths and must match the org exactly. A name outside the p
 ## Example output
 
 ```text
-Retrieve: failed.
-data-stream:WebOrders_Order_1a2b3c4d: INVALID_STREAM_NAME: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Data stream retrieval did not complete; no write attempted.
-Hint: A stream, connection, event, DLO or field name is not a valid developer name. Use a letter first, then only letters, digits and underscores; DLO names end in __dll.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/INVALID_STREAM_NAME.md
-Downloaded data-stream: 0
+Retrieve: success.
+Warning: data-stream:WebOrders_Order_1a2b3c4d: retrieved as-is (verbatim, reason INVALID_STREAM_NAME) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-stream: 1
 ```
 
 ## Related codes
 
 - [`INVALID_STREAM_DOCUMENT`](../data-stream/INVALID_STREAM_DOCUMENT.md) — the document structure is wrong.
 - [`INVALID_STREAM_BINDING`](../data-stream/INVALID_STREAM_BINDING.md) — the selection names are outside the supported scope.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

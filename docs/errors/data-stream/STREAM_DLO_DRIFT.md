@@ -2,11 +2,11 @@
 
 > The stream's DLO fields or identity differ from what the stream reports. Wait until the DLO is not being changed, then rerun; inspect the org first if mutation is unknown.
 
-|              |                                                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Family**   | Data stream                                                                                                                                                                                   |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                      |
-| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; `failed` on retrieve — no file was written; `failed` with mutation `unknown` when it appears in the checks after a write |
+|              |                                                                                                                                                                                                                                                                                        |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data stream                                                                                                                                                                                                                                                                            |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                                                                                                               |
+| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning; `failed` with mutation `unknown` when it appears in the checks after a write |
 
 ## What it means
 
@@ -27,14 +27,13 @@ A DLO that does not match its stream points to a change in progress or a change 
 ## Example output
 
 ```text
-Retrieve: failed.
-data-stream:WebOrders_Order_1a2b3c4d: STREAM_DLO_DRIFT: Plugin verification failed during retrieve linked DLO field agreement for "WebOrders_Order_1a2b3c4d__dll": fields.length: expected 3; observed 4. Data stream retrieval did not complete; no write attempted.
-Hint: The stream's DLO fields or identity differ from what the stream reports. Wait until the DLO is not being changed, then rerun; inspect the org first if mutation is unknown.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/STREAM_DLO_DRIFT.md
-Downloaded data-stream: 0
+Retrieve: success.
+Warning: data-stream:WebOrders_Order_1a2b3c4d: retrieved as-is (verbatim, reason STREAM_DLO_DRIFT) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-stream: 1
 ```
 
 ## Related codes
 
 - [`INVALID_STREAM_DLO`](../data-stream/INVALID_STREAM_DLO.md) — the DLO could not be read as exactly one.
 - [`STREAM_BINDING_DRIFT`](../data-stream/STREAM_BINDING_DRIFT.md) — the stream itself differed between reads.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

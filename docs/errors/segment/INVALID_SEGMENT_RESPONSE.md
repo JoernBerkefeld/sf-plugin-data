@@ -2,11 +2,11 @@
 
 > Salesforce answered the segment read in a shape the plugin does not expect (not exactly one segment). Rerun the retrieve; if it repeats, inspect the raw API response.
 
-|              |                                                  |
-| ------------ | ------------------------------------------------ |
-| **Family**   | Segment                                          |
-| **Commands** | `sf data360 retrieve`                            |
-| **Outcome**  | `blocked` — nothing was written for this segment |
+|              |                                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------------------------------- |
+| **Family**   | Segment                                                                                                    |
+| **Commands** | `sf data360 retrieve`                                                                                      |
+| **Outcome**  | warning — retrieve writes the segment as-is (verbatim) with this code as reason; it is not an item failure |
 
 ## What it means
 
@@ -24,14 +24,13 @@ The plugin cannot tell which definition to save when the answer does not clearly
 ## Example output
 
 ```text
-Retrieve: blocked.
-segment:Example_Segment: INVALID_SEGMENT_RESPONSE: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
-Hint: Salesforce answered the segment read in a shape the plugin does not expect (not exactly one segment). Rerun the retrieve; if it repeats, inspect the raw API response.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/segment/INVALID_SEGMENT_RESPONSE.md
-Downloaded segment: 0
+Retrieve: success.
+Warning: segment:Example_Segment: retrieved as-is (verbatim, reason INVALID_SEGMENT_RESPONSE) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded segment: 1
 ```
 
 ## Related codes
 
 - [`SEGMENT_IDENTITY_MISMATCH`](../segment/SEGMENT_IDENTITY_MISMATCH.md) — The answer holds one segment, but a different one.
 - [`SEGMENT_ACQUISITION_FAILED`](../segment/SEGMENT_ACQUISITION_FAILED.md) — The read failed.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

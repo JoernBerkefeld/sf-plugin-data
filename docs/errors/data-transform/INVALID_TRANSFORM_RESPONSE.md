@@ -2,11 +2,11 @@
 
 > Salesforce returned something other than a data transform record when the plugin read it. Nothing was changed; check the transform in Data Cloud and rerun.
 
-|              |                                                                              |
-| ------------ | ---------------------------------------------------------------------------- |
-| **Family**   | Data transform                                                               |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`              |
-| **Outcome**  | `failed` for retrieve; `blocked` for deploy and delete — nothing was changed |
+|              |                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Family**   | Data transform                                                                                                                                                                             |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                                                                                            |
+| **Outcome**  | on retrieve, an object read from the org that fails this check is written as-is (verbatim) with this code as reason, with a warning; `blocked` for deploy and delete — nothing was changed |
 
 ## What it means
 
@@ -25,14 +25,13 @@ Every later step relies on reading fields from the record. The plugin stops inst
 ## Example output
 
 ```text
-Retrieve: failed.
-data-transform:Orders_Copy: INVALID_TRANSFORM_RESPONSE: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Transform retrieval did not complete; no org write attempted.
-Hint: Salesforce returned something other than a data transform record when the plugin read it. Nothing was changed; check the transform in Data Cloud and rerun.
-Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/INVALID_TRANSFORM_RESPONSE.md
-Downloaded data-transform: 0
+Retrieve: success.
+Warning: data-transform:Orders_Copy: retrieved as-is (verbatim, reason INVALID_TRANSFORM_RESPONSE) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-transform: 1
 ```
 
 ## Related codes
 
 - [`TRANSFORM_IDENTITY_MISMATCH`](../data-transform/TRANSFORM_IDENTITY_MISMATCH.md) — a record came back, but for a different transform.
 - [`TRANSFORM_RETRIEVE_FAILED`](../data-transform/TRANSFORM_RETRIEVE_FAILED.md) — the read failed with an HTTP or other error.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.
