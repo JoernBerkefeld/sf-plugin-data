@@ -1,4 +1,5 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import { foldEnums } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
 
 export type DataTransformDocument = {
@@ -209,6 +210,39 @@ export function serializeDataTransformDocument(
   };
   // eslint-disable-next-line unicorn/no-null -- JSON indentation requires a null replacer, not a field policy.
   return `${JSON.stringify(canonical(document), null, 2)}\n`;
+}
+
+/**
+ * Transform keys whose values are enums Salesforce stores in its own letter case
+ * (`fullRunFrequency` `Weekly` reads `WEEKLY`, live API 68): the transform, definition, output
+ * object and field `type`, the output `category` and an output node's `writeMode`.
+ */
+const transformEnumKeys: ReadonlySet<string> = new Set([
+  'category',
+  'fullRunFrequency',
+  'type',
+  'writeMode',
+]);
+
+/**
+ * Whether the org transform already holds the file: the same canonical document, with enum
+ * values compared ignoring letter case. Names, labels, SQL and other text compare exactly.
+ * @param {DataTransformDocument} current Org document as projected.
+ * @param {DataTransformDocument} desired Document from the file.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
+ * @returns {boolean} True when nothing would change.
+ */
+export function sameDataTransformDocument(
+  current: DataTransformDocument,
+  desired: DataTransformDocument,
+  mode: DocumentMode = 'deploy',
+): boolean {
+  const comparable = (document: DataTransformDocument): string =>
+    serializeDataTransformDocument(
+      { ...document, definition: foldEnums(document.definition, transformEnumKeys) },
+      mode,
+    );
+  return comparable(current) === comparable(desired);
 }
 
 /**

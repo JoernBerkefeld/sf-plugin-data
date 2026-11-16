@@ -1,6 +1,6 @@
 import {
   DataTransformError,
-  serializeDataTransformDocument,
+  sameDataTransformDocument,
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
 import type {
@@ -21,8 +21,8 @@ export type DataTransformDeployPlan = {
 
 /**
  * Preflight a create, or an update of the target the deploy resolved by name. The file is
- * unchanged when it equals the org's projected input; otherwise it is sent as written and
- * Salesforce decides.
+ * unchanged when it equals the org's projected input (enum values ignoring letter case);
+ * otherwise it is sent as written and Salesforce decides.
  * @param {unknown} value Portable artifact.
  * @param {DataTransformDeploySelection} selection Create, or update with the resolved target ID.
  * @param {DataTransformClient} client Native API68 transform transport.
@@ -43,10 +43,7 @@ export async function preflightDataTransformDeploy(
     if (current.document.definition.name !== document.definition.name)
       throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
   }
-  if (
-    current &&
-    serializeDataTransformDocument(current.document) === serializeDataTransformDocument(document)
-  )
+  if (current && sameDataTransformDocument(current.document, document))
     return { operation: 'unchanged', document, targetId: current.targetId, current };
   // The validation endpoint rejects an existing owner's own output (live-observed), so only create is validated.
   if (selection.operation === 'create' && !options.skipServerValidation) {

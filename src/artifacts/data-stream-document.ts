@@ -1,4 +1,5 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import { foldEnums, sameEnum } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
 
 export type DataStreamMapping = {
@@ -646,6 +647,21 @@ export function crmDataStreamWriteBody(spec: Bag): Bag {
 }
 
 /**
+ * Stream keys whose values are enums Salesforce may store in its own letter case (a DLO
+ * category or field type, a refresh mode); a case-only difference is no change. Names, labels
+ * and formulas are compared exactly.
+ */
+export const streamEnumKeys: ReadonlySet<string> = new Set([
+  'category',
+  'dataType',
+  'datastreamType',
+  'datatype',
+  'frequencyType',
+  'refreshMode',
+  'targetFieldReturntype',
+]);
+
+/**
  * A copy with object keys sorted and every array of named entries ordered by name.
  * @param {unknown} value JSON value.
  * @returns {unknown} Copy for comparison only.
@@ -670,7 +686,10 @@ function comparable(value: unknown): unknown {
  * @returns {boolean} Equal.
  */
 function sameValue(left: unknown, right: unknown): boolean {
-  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+  return (
+    JSON.stringify(comparable(foldEnums(left, streamEnumKeys))) ===
+    JSON.stringify(comparable(foldEnums(right, streamEnumKeys)))
+  );
 }
 
 /**
@@ -720,7 +739,7 @@ export function crmDataStreamPatch(
     const existing = haveFormulas.get(target);
     if (
       existing !== undefined &&
-      existing.targetFieldReturntype !== mapping.targetFieldReturntype
+      !sameEnum(existing.targetFieldReturntype, mapping.targetFieldReturntype)
     ) {
       unsupported.push(`mappings[${target}].targetFieldReturntype`);
       continue;
@@ -751,7 +770,8 @@ export function crmDataStreamPatch(
       const haveRefresh = isBag(have.refreshConfig) ? have.refreshConfig : {};
       const refresh: Bag = {};
       for (const setting of Object.keys(wantRefresh))
-        if (!sameValue(wantRefresh[setting], haveRefresh[setting])) {
+        // Compared under its key, so an enum setting ignores letter case.
+        if (!sameValue({ [setting]: wantRefresh[setting] }, { [setting]: haveRefresh[setting] })) {
           refresh[setting] = wantRefresh[setting];
           parts.push(`refreshConfig.${setting}`);
         }

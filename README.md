@@ -540,6 +540,15 @@ model. One failing item never stops the other items or families.
 - **What still fails an item:** HTTP and transport errors, an object that does not
   exist, a read that names another object, another data space, and read state (an
   incomplete listing, an object still processing, or a change between two reads).
+- **Enum values ignore letter case when compared.** Salesforce stores some enum values in
+  its own spelling (a DLO created with category `other` and field type `text` reads `Other`
+  and `Text`; a transform `fullRunFrequency` `Daily` reads `DAILY`). Deploy sends the value
+  as written, and a value that differs only in letter case counts as unchanged, so a
+  hand-written file deploys `unchanged` the second time. Retrieve keeps Salesforce's
+  spelling. This covers DLO and DMO categories and field types, a stream's DLO category,
+  field types, refresh mode, frequency type and formula return type, a relationship's
+  cardinality and owner, the calculated-insight enum keys, and the transform enums. Names,
+  labels, SQL, formulas and other text are compared exactly.
 
 Listings are read page by page until the org has no more pages; an entry that cannot be
 used is skipped with a warning. Known limit: the deploy dependency walk stops at 256
@@ -1911,8 +1920,11 @@ Salesforce (`fullRunFrequency` to `DAILY`, `writeMode` to `OVERWRITE`), so keep 
 retrieved file complete. The schedule is not in the file and is not changed by a
 deploy; set it in Data Cloud. Salesforce stores a normalized form (upper-case values
 such as `WEEKLY`; a DCSQL definition without `version` and with empty `macros` and
-`sources`), so retrieve after a deploy of a hand-written file to get the stored form; a
-file that differs only in that form is updated again on each deploy.
+`sources`), so retrieve after a deploy of a hand-written file to get the stored form.
+Enum values (`type`, `fullRunFrequency`, an output's `category`, `type` and field `type`,
+`writeMode`) are sent as written and compared ignoring letter case, so `Daily` against a
+stored `DAILY` is `unchanged`; any other difference from the stored form is updated again
+on each deploy.
 
 Deploy reads the complete transform list and looks for the name in the file, ignoring
 letter case: no match sends one create POST, one match updates that record with one PUT

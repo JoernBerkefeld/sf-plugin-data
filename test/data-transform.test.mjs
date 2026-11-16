@@ -1293,6 +1293,24 @@ test('Transform deletion polls the list until the transform is gone, within a bo
   assert.equal(stuck.calls.filter(([op]) => op === 'delete').length, 1);
 });
 
+test('Transform delete accepts a base file whose enums differ only in letter case', async () => {
+  // A hand-written file (`Daily`, `batch`) against the stored `DAILY` / `BATCH` is no drift.
+  const cased = document();
+  cased.definition.fullRunFrequency = 'Daily';
+  cased.definition.type = 'batch';
+  const h = deleteHarness();
+  const result = await deleteDataTransform(cased, h.client, h.options);
+  assert.equal(result.outcome, 'deleted');
+  const relabelled = document();
+  relabelled.definition.label = 'synthetic transform';
+  const drift = deleteHarness();
+  await assert.rejects(
+    deleteDataTransform(relabelled, drift.client, drift.options),
+    /TRANSFORM_TARGET_DRIFT/u,
+  );
+  assert.equal(drift.calls.filter(([op]) => op === 'delete').length, 0);
+});
+
 test('Transform deletion previews zero writes, requires confirmation and independently settles one DELETE', async () => {
   for (const [options, outcome, writes] of [
     [{ preview: true }, 'preview', 0],

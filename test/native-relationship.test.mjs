@@ -812,3 +812,17 @@ test('a second unexpected error is rejected; other refusals and a changed org ar
   assert.match(unknown.diagnostics[0].message, /unexpected error, but the relationship changed/u);
   assert.equal(changed.sent(), 1);
 });
+
+test('cardinality and owner that differ only in letter case are no change', async () => {
+  const cased = {
+    ...document,
+    spec: { ...spec, cardinality: 'manytoone', relationshipOwner: 'DATACLOUD' },
+  };
+  const { client, calls } = fakeClient([wire()]);
+  const plan = await preflightNativeRelationship(cased, client);
+  assert.deepEqual([plan.operation, plan.changes ?? []], ['noop', []]);
+  assert.ok(!calls.some(([kind]) => kind === 'update'));
+  const other = { ...document, spec: { ...spec, cardinality: 'OneToOne' } };
+  const changed = await preflightNativeRelationship(other, fakeClient([wire()]).client);
+  assert.deepEqual(changed.changes, ['cardinality']);
+});

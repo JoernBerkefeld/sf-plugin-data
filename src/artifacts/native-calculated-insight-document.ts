@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util';
+import { sameProperty } from './enum-case.js';
 import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
 
@@ -214,6 +214,20 @@ export const calculatedInsightInputEnums: readonly string[] = [
 ];
 
 /**
+ * Whether one insight key holds the same value in the file and the org; the enum keys above
+ * ignore letter case (`not_scheduled` equals `NOT_SCHEDULED`).
+ * @param {string} key Document key.
+ * @param {unknown} left One value.
+ * @param {unknown} right The other value.
+ * @returns {boolean} Whether the key is unchanged.
+ */
+function sameCalculatedInsightValue(key: string, left: unknown, right: unknown): boolean {
+  return sameProperty(key, left, right, calculatedInsightEnumKeys);
+}
+
+const calculatedInsightEnumKeys: ReadonlySet<string> = new Set(calculatedInsightInputEnums);
+
+/**
  * `NOT_SCHEDULED` → `NotScheduled`; any other value stays as authored.
  * @param {unknown} value Authored value.
  * @returns {unknown} Input form.
@@ -266,7 +280,7 @@ export function calculatedInsightInputBody(
       operation === 'update' &&
       unchangedOnUpdate.has(key) &&
       observed &&
-      isDeepStrictEqual(value, observed[key])
+      sameCalculatedInsightValue(key, value, observed[key])
     )
       continue;
     if (value === null || (operation === 'update' && key === 'apiName')) continue;
@@ -289,7 +303,9 @@ export function calculatedInsightMatches(
   desired: NativeCalculatedInsight,
   observed: NativeCalculatedInsight,
 ): boolean {
-  return Object.keys(desired).every((key) => isDeepStrictEqual(desired[key], observed[key]));
+  return Object.keys(desired).every((key) =>
+    sameCalculatedInsightValue(key, desired[key], observed[key]),
+  );
 }
 
 /** The planning view of one insight: kind, identity and what its SQL reads (ordering only). */

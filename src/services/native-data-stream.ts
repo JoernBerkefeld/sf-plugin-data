@@ -16,6 +16,7 @@ import type {
 } from '../artifacts/data-stream-document.js';
 import { DataStreamHttpError } from '../transport/data-stream-rest.js';
 import { verbatimReason } from '../artifacts/verbatim-document.js';
+import { sameEnum, sameRecord } from '../artifacts/enum-case.js';
 import type { DataStreamClient, DataStreamReferenceReader } from '../transport/data-stream-rest.js';
 
 type Json = Record<string, unknown>;
@@ -36,6 +37,8 @@ export type DataStreamBinding = {
 };
 const name = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 const recordId = /^[A-Za-z0-9]{18}$/u;
+/** The primary-key field type is stored in Salesforce's letter case; a case-only difference is no change. */
+const dloTypeKey: ReadonlySet<string> = new Set(['dataType']);
 /** Retrieve reads leniently; deploy (the default) keeps every strict check. */
 export type DataStreamReadMode = 'retrieve' | 'deploy';
 const connectionPageSize = 200;
@@ -1251,13 +1254,13 @@ export async function preflightNativeDataStreamUpdate(
     );
   const settings = [
     ...(document.spec.newDlo.label === target.spec.newDlo.label ? [] : ['spec.newDlo.label']),
-    ...(document.spec.newDlo.category === target.spec.newDlo.category
+    ...(sameEnum(document.spec.newDlo.category, target.spec.newDlo.category)
       ? []
       : ['spec.newDlo.category']),
     ...(document.spec.newDlo.eventDateTimeFieldName === target.spec.newDlo.eventDateTimeFieldName
       ? []
       : ['spec.newDlo.eventDateTimeFieldName']),
-    ...(isDeepStrictEqual(document.spec.newDlo.primaryKey, target.spec.newDlo.primaryKey)
+    ...(sameRecord(document.spec.newDlo.primaryKey, target.spec.newDlo.primaryKey, dloTypeKey)
       ? []
       : ['spec.newDlo.primaryKey']),
   ];
@@ -1266,7 +1269,7 @@ export async function preflightNativeDataStreamUpdate(
     const existing = (target.spec.formulaMappings ?? []).find(
       (entry) => entry.targetFieldName === mapping.targetFieldName,
     );
-    if (existing && existing.targetFieldReturntype !== mapping.targetFieldReturntype)
+    if (existing && !sameEnum(existing.targetFieldReturntype, mapping.targetFieldReturntype))
       settings.push(`spec.formulaMappings[${mapping.targetFieldName}].targetFieldReturntype`);
   }
   if (settings.length > 0)

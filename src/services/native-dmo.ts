@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { sameProperty } from '../artifacts/enum-case.js';
 import { explainMismatch } from './operation-diagnostic.js';
 import {
   isGeneratedDmoField,
@@ -102,6 +103,8 @@ const readOnlyFieldKeys = new Set(['creationType', 'isDistinct', 'usageTag', 'ke
 const writeOnlyFieldKeys = new Set(['description', 'isDynamicLookup']);
 // The API answers 200 to these edits of an existing field and silently ignores them.
 const immutableFieldKeys = new Set(['dataType', 'isPrimaryKey']);
+// Field keys Salesforce may store in its own letter case; a case-only difference is no change.
+const fieldEnumKeys: ReadonlySet<string> = new Set(['dataType']);
 // Mapping state reported on a field; it belongs to the mapping, not to the DMO definition,
 // so it is never sent, compared or confirmed here.
 const observedFieldKeys = new Set(['isMapped']);
@@ -154,7 +157,7 @@ function fieldChange(
     const after = incoming[key];
     // Read-only keys are never sent; a differing one is reported by notSentFieldKeys.
     if (observedFieldKeys.has(key) || readOnlyFieldKeys.has(key)) continue;
-    if (isDeepStrictEqual(before, after)) continue;
+    if (sameProperty(key, before, after, fieldEnumKeys)) continue;
     if (writeOnlyFieldKeys.has(key) && before === undefined) continue;
     if (immutableFieldKeys.has(key) || isGeneratedDmoField(target)) return { blocked: key };
     change = 'edit';
@@ -221,7 +224,7 @@ function protectedFieldDifference(
     const before = target[key];
     const after = incoming[key];
     if (observedFieldKeys.has(key) || key === 'keyQualifierName') continue;
-    if (isDeepStrictEqual(before, after)) continue;
+    if (sameProperty(key, before, after, fieldEnumKeys)) continue;
     if (writeOnlyFieldKeys.has(key) && before === undefined) continue;
     if (readOnlyFieldKeys.has(key) && after === undefined) continue;
     return key;
@@ -534,7 +537,7 @@ export function nativeDmoConfirmed(
           observedFieldKeys.has(key) ||
           readOnlyFieldKeys.has(key) ||
           (writeOnlyFieldKeys.has(key) && found[key] === undefined) ||
-          isDeepStrictEqual(entry, found[key]),
+          sameProperty(key, entry, found[key], fieldEnumKeys),
       )
     );
   });

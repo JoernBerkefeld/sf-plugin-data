@@ -1,4 +1,5 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import { sameEnum } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
 
 export type NativeDmoField = {
@@ -29,7 +30,7 @@ export type NativeDmoDocument = {
  * @returns {boolean} Whether both name the same category.
  */
 export function sameDmoCategory(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
+  return sameEnum(left, right);
 }
 
 /**

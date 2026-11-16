@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util';
+import { sameEnum, sameRecord } from '../artifacts/enum-case.js';
 import { explainMismatch } from './operation-diagnostic.js';
 import {
   DloError,
@@ -28,6 +28,9 @@ export type DloDeployPlan =
       targetId: string;
       document: DloDocument;
     };
+
+/** Field keys Salesforce stores in its own letter case (`text` reads `Text`, live API 68). */
+const dloFieldEnums: ReadonlySet<string> = new Set(['dataType']);
 
 /**
  * Identify qualified generated qualifier/system fields, never generic Id-bearing fields.
@@ -142,7 +145,8 @@ export async function preflightNativeDlo(
     };
   }
   // Neither can change after create: a PATCH naming them is rejected (HTTP 400, live API 68).
-  if (desired.spec.category !== target.document.spec.category)
+  // Salesforce stores the category and field types in its own letter case (`other` reads `Other`).
+  if (!sameEnum(desired.spec.category, target.document.spec.category))
     throw new DloError('UNSUPPORTED_DLO_CATEGORY_CHANGE');
   if (
     desired.spec.eventDateTimeFieldName !== undefined &&
@@ -168,7 +172,7 @@ export async function preflightNativeDlo(
     const observed = listed
       ? Object.fromEntries(Object.entries(field).filter(([key]) => key in listed))
       : field;
-    if (!isDeepStrictEqual(observed, listed))
+    if (!listed || !sameRecord(observed, listed, dloFieldEnums))
       throw explainMismatch(
         new DloError('UNSUPPORTED_DLO_FIELD_CHANGE'),
         'update field preservation',

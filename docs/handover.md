@@ -1,3 +1,28 @@
+# Enum values that differ only in letter case are unchanged — 2026-11-16
+
+Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),
+A5 step 1, user decision "Ignore case when comparing".
+
+- `src/artifacts/enum-case.ts`: `sameEnum`, `sameProperty`, `sameRecord`, `foldEnums`. Deploy
+  still sends the value as written; the unchanged/no-op comparison treats values differing only
+  in letter case as equal. Retrieve keeps Salesforce's spelling.
+- Applied to: DLO `category` and field `dataType` (live: `other`/`text` read `Other`/`Text`;
+  before the change the lower-case file failed the preview); DMO `category` (already) and field
+  `dataType`; CRM stream `category`, `dataType`, `datatype`, `datastreamType`, `frequencyType`,
+  `refreshMode`, `targetFieldReturntype` (patch planning) and the Ingestion API stream update
+  checks (new DLO category, primary-key type, formula return type); relationship `cardinality`
+  and `relationshipOwner`; calculated-insight `definitionType`, `queryDialect`,
+  `publishScheduleInterval`, `historyPublishScheduleInterval`; transform `type`,
+  `fullRunFrequency`, `category`, `writeMode` at any depth of the definition (deploy unchanged
+  check and the delete drift check). Names, labels, SQL, formulas and free text compare exactly.
+- Graph `timeGranularity` and IR enums already map known spellings; unchanged.
+- Live (isolated-source): CliA5Src__dll created from `other`/`text`, preview `unchanged`;
+  transform CliA5T created with `type: Batch`, `fullRunFrequency: Daily` (stored `BATCH`,
+  `DAILY`; a definition `type: DcSql` is refused by Salesforce, JSON_PARSER_ERROR); the retrieved
+  file with only enum case changed previews and deploys `unchanged`.
+- Tests: `test/enum-case.test.mjs`, a relationship case in `native-relationship.test.mjs`, a
+  delete case in `data-transform.test.mjs`.
+
 # Relationship update through the Metadata API — 2026-11-16
 
 Plan `.claude/plans/sf_plugin_data_guide_cli_metadata_gaps_20261116.plan.md` (workspace root),

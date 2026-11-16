@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { sameEnum } from '../artifacts/enum-case.js';
 import { paceReadback, readbackPace } from './readback-pace.js';
 import { explanationOf, replaceExplanation } from './operation-diagnostic.js';
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
@@ -348,7 +349,12 @@ function listedChanges(
     'cardinality',
     'relationshipOwner',
   ] as const;
-  return keys.filter((key) => found[key] !== spec[key]);
+  // Cardinality and owner are enum values; a case-only difference is no change.
+  return keys.filter((key) =>
+    key === 'cardinality' || key === 'relationshipOwner'
+      ? !sameEnum(found[key], spec[key])
+      : found[key] !== spec[key],
+  );
 }
 
 /**
@@ -514,8 +520,8 @@ export async function deployNativeRelationship(
     }
     if (
       found?.status === 'ACTIVE' &&
-      found.cardinality === plan.desired.spec.cardinality &&
-      found.relationshipOwner === plan.desired.spec.relationshipOwner
+      sameEnum(found.cardinality, plan.desired.spec.cardinality) &&
+      sameEnum(found.relationshipOwner, plan.desired.spec.relationshipOwner)
     ) {
       if (plan.desired.spec.label !== undefined)
         await labelCreated(found.name, plan.desired, client);

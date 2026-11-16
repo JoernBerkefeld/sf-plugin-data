@@ -4,6 +4,7 @@ import {
   DataTransformError,
   dataTransformId,
   dataTransformName,
+  sameDataTransformDocument,
   serializeDataTransformDocument,
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
@@ -199,7 +200,14 @@ export async function deleteDataTransform(
     }
     const observed = await retrieveDataTransform(targetId, client, 'retrieve');
     check();
-    if (serializeDataTransformDocument(observed.document, 'retrieve') !== canonical)
+    // Enum values the org stores in its own letter case are no drift.
+    if (
+      !sameDataTransformDocument(
+        observed.document,
+        validateDataTransformDocument(value, 'retrieve'),
+        'retrieve',
+      )
+    )
       throw new DataTransformError('TRANSFORM_TARGET_DRIFT');
   };
   await verify();
