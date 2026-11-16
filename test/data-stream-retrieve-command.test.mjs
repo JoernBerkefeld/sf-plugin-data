@@ -119,7 +119,7 @@ for (const flags of [
   { metadata: ['data-stream:*'] },
   { metadata: ['data-stream:Alpha:Other'] },
   { metadata: ['data-stream:../Alpha'] },
-  { metadata: ['data-stream:Alpha', 'segment'] },
+  { metadata: ['data-stream:Alpha', 'segment:1bad'] },
   { dataspace: 'other' },
   ...['61.0', '65.0', '67.0', '69.0', 'latest'].map((version) => ({ 'api-version': version })),
 ])

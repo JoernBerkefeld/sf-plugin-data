@@ -30,8 +30,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Right before writing this segment in a batch, a fresh check no longer allowed a create, update or no change, or --allow-processing was missing. Preview the batch again.',
   SEGMENT_IDENTITY_MISMATCH:
     'Salesforce returned a segment with a different name or data space than requested. Check the exact segment name (case matters) and that it lives in the default data space.',
-  SEGMENT_INVENTORY_UNQUALIFIED:
-    'Retrieving every segment at once is not supported. Select each segment by name with -m segment:Name.',
   SEGMENT_READBACK_MISMATCH:
     'After the write, the segment read back differently from the file, or other settings or its DMO changed. Inspect the segment in the org before any further deploy.',
   SEGMENT_SETTLEMENT_UNQUALIFIED:

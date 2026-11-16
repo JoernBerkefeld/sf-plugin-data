@@ -16,8 +16,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Right before writing, a fresh check of the ruleset gave a different result than the first check, so the batch stopped. Preview again to see the current state, then rerun.',
   IDENTITY_RESOLUTION_IDENTITY_MISMATCH:
     'The org returned a ruleset whose name or data space differs from the one requested, so no file was written. Check the exact ruleset API name, then rerun.',
-  IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED:
-    'Retrieving all identity resolution rulesets at once is not supported. Name each ruleset with --metadata identity-resolution:<Name>.',
   IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH:
     'A new ruleset must be named after its configuration type, as <type> or <type>_<rulesetId>. Rename the file and its apiName to match, then rerun.',
   IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED:

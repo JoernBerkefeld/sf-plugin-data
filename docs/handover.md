@@ -1,3 +1,25 @@
+# Bare segment and identity-resolution retrieve — 2026-11-16
+
+`sf data360 retrieve -m segment` and `-m identity-resolution` now list, then retrieve each
+item through the exact path (modelled on bare `calculated-insight`). Paging, live on
+isolated-source (00Daj000010xkZNEAY, read-only): `GET /ssot/segments` pages by `batchSize`
+(1-200, 201 is 400 `INVALID_BATCH_REQUEST`) and `offset` with `totalSize`; `GET
+/ssot/identity-resolutions` has no paging (one `identityResolutions` array; `batchSize`,
+`limit`, `offset` ignored). New `listSegmentNames` (retrieve-segment.ts, 200 per page until
+`totalSize`, else a short page; repeated page ends) and `listIdentityResolutionNames`
+(retrieve-identity-resolution.ts, by `objectApiName`); both skip an entry without usable name or
+data space with a warning, leave out other spaces, and a malformed answer is
+`SEGMENT_ACQUISITION_FAILED` / `IDENTITY_RESOLUTION_ACQUISITION_FAILED` for that inventory only.
+One failing item never blocks the others. `SEGMENT_INVENTORY_UNQUALIFIED` and
+`IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED` removed (codes, pages, index rows). Retrieve help:
+UI segments are normal files; as-is list (refresh other than no refresh, parameters, exclusion
+criteria, Waterfall/Real-Time/Lookalike, DBT lookback other than 90 days); bare inventory for
+both. Tests: `test/retrieve-segment-ir-inventory.test.mjs`. Live: 4 segments (3 DBT normal, 1 UI
+as-is), 7 rulesets normal, no errors; evidence `F:/Temp/seg-ir-inv-live-VnOauX/logs`, DB entry
+`data360:retrieve.segment-ir-inventory.api68`. Open: the UI segment
+`Annual_Promo_Segment_1789248847753` is written as-is because its GET carries
+`segmentMembershipTable`, which the UI projection does not know (exact selection the same).
+
 # Stream delete settlement: DELETING reads are pending, not drift — 2026-11-16
 
 Live bug (evidence `F:/Temp/fx-live-Bb46v5/logs/i17-delete.json`): `sf data360 delete --delete-dlo`

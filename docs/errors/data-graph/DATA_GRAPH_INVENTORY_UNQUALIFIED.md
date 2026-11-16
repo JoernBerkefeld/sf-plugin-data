@@ -35,4 +35,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED`](../identity-resolution/IDENTITY_RESOLUTION_INVENTORY_UNQUALIFIED.md) — the same rule for identity resolution.
+- [`RELATIONSHIP_INVENTORY_UNQUALIFIED`](../relationship/RELATIONSHIP_INVENTORY_UNQUALIFIED.md) — the same rule for relationships.

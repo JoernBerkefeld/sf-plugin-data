@@ -362,7 +362,7 @@ for (const [metadata, overrides, code, family] of [
   [['dmo:Sample__dlm', 'data-graph:Alpha'], { dataspace: 'other' }, 'INVALID_SCOPE', 'data-graph'],
   [['data-graph', 'dmo:Sample__dlm'], {}, 'DATA_GRAPH_INVENTORY_UNQUALIFIED', 'data-graph'],
   [['data-graph:1bad', 'dmo:Sample__dlm'], {}, 'INVALID_SELECTION', 'data-graph'],
-  [['data-stream:Alpha', 'segment'], {}, 'SEGMENT_INVENTORY_UNQUALIFIED', 'segment'],
+  [['data-stream:Alpha', 'segment:1bad'], {}, 'INVALID_SELECTION', 'segment'],
   [['data-graph:Alpha', 'dlo:bad name'], {}, 'INVALID_SELECTION', 'dlo'],
 ])
   test(`a refused group blocks the whole run before org access ${JSON.stringify([metadata, overrides])}`, async () => {

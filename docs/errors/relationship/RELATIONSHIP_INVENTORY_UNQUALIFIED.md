@@ -31,4 +31,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/r
 
 ## Related codes
 
-- [`SEGMENT_INVENTORY_UNQUALIFIED`](../segment/SEGMENT_INVENTORY_UNQUALIFIED.md) — The same rule for segments.
+- [`DATA_GRAPH_INVENTORY_UNQUALIFIED`](../data-graph/DATA_GRAPH_INVENTORY_UNQUALIFIED.md) — The same rule for data graphs.

@@ -299,3 +299,63 @@ export async function retrieveSegment(
     return read ? carryNativeResponse(result, read.native) : result;
   }
 }
+
+/** Largest page the segment list accepts (`batchSize` 1 to 200). */
+const segmentPageSize = 200;
+
+/**
+ * Every default-space segment the API 68 list returns, following its `batchSize`/`offset` paging
+ * until `totalSize` (or, without it, until a short or empty page). Extra envelope keys are
+ * ignored; a malformed page stops the listing (SEGMENT_ACQUISITION_FAILED). An entry without a
+ * usable API name or data space is skipped with a warning, a segment of another data space is
+ * left out and a repeated name is listed once. A page that adds no new name ends the listing (a
+ * server ignoring the offset).
+ * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
+ * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @returns {Promise<string[]>} Sorted API names.
+ */
+export async function listSegmentNames(
+  connection: Pick<Connection, 'instanceUrl' | 'request'>,
+  warnings?: string[],
+): Promise<string[]> {
+  const client = new ConnectClient(connection, '68.0');
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (let offset = 0; ;) {
+    const page = await client.get<unknown>(
+      `/services/data/v68.0/ssot/segments?batchSize=${segmentPageSize}&offset=${offset}`,
+    );
+    const entries = (page as { segments?: unknown } | undefined)?.segments;
+    if (!page || typeof page !== 'object' || !Array.isArray(entries))
+      throw new SegmentError('SEGMENT_ACQUISITION_FAILED');
+    let named = 0;
+    let added = 0;
+    for (const [index, entry] of (entries as unknown[]).entries()) {
+      const item = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+      const apiName = typeof item.apiName === 'string' ? item.apiName : undefined;
+      const usable = apiName !== undefined && segmentName.test(apiName);
+      if (!usable || typeof item.dataSpace !== 'string' || !item.dataSpace) {
+        warnings?.push(
+          `segment inventory: skipped ${apiName === undefined ? `the entry at position ${offset + index}` : `"${apiName}"`} because it has no usable ${usable ? 'data space' : 'API name'}.`,
+        );
+        continue;
+      }
+      named++;
+      if (seen.has(apiName)) continue;
+      seen.add(apiName);
+      added++;
+      if (item.dataSpace === 'default') names.push(apiName);
+    }
+    offset += entries.length;
+    const total = (page as { totalSize?: unknown }).totalSize;
+    const more =
+      typeof total === 'number' && Number.isSafeInteger(total)
+        ? offset < total
+        : entries.length >= segmentPageSize;
+    // A page of names listed already means the server ignores the offset.
+    if (entries.length === 0 || !more || (named > 0 && added === 0)) {
+      names.sort();
+      return names;
+    }
+  }
+}

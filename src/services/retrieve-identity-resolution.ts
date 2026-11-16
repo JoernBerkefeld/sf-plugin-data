@@ -75,3 +75,40 @@ export async function retrieveIdentityResolution(
     return read ? carryNativeResponse(result, read.native) : result;
   }
 }
+
+/**
+ * Every default-space identity resolution ruleset the API 68 list returns, by owner
+ * `objectApiName`. The list has no paging (it answers every ruleset at once and ignores
+ * `batchSize`, `limit` and `offset`); extra envelope keys are ignored and a malformed answer is
+ * IDENTITY_RESOLUTION_ACQUISITION_FAILED. An entry without a usable name or data space is skipped
+ * with a warning, a ruleset of another data space is left out and a repeated name is listed once.
+ * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
+ * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @returns {Promise<string[]>} Sorted owner names.
+ */
+export async function listIdentityResolutionNames(
+  connection: Pick<Connection, 'instanceUrl' | 'request'>,
+  warnings?: string[],
+): Promise<string[]> {
+  const response = await new ConnectClient(connection, '68.0').get<unknown>(
+    '/services/data/v68.0/ssot/identity-resolutions',
+  );
+  const entries = (response as { identityResolutions?: unknown } | undefined)?.identityResolutions;
+  if (!response || typeof response !== 'object' || !Array.isArray(entries))
+    throw new IdentityResolutionError('IDENTITY_RESOLUTION_ACQUISITION_FAILED');
+  const names = new Set<string>();
+  for (const [index, entry] of (entries as unknown[]).entries()) {
+    const item = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+    const apiName = typeof item.objectApiName === 'string' ? item.objectApiName : undefined;
+    const usable = apiName !== undefined && identityResolutionName.test(apiName);
+    if (!usable || typeof item.dataSpaceName !== 'string' || !item.dataSpaceName) {
+      warnings?.push(
+        `identity-resolution inventory: skipped ${apiName === undefined ? `the entry at position ${index}` : `"${apiName}"`} because it has no usable ${usable ? 'data space' : 'API name'}.`,
+      );
+      continue;
+    }
+    if (item.dataSpaceName === 'default') names.add(apiName);
+  }
+  // eslint-disable-next-line unicorn/no-array-sort -- Sorting a new array.
+  return [...names].sort();
+}

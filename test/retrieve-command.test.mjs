@@ -526,9 +526,8 @@ for (const apiVersion of ['68.0', 'auto']) {
     }
   });
 }
-test('Segment bare inventory/latest/invalid identity refuse before auth', async () => {
+test('Segment latest/invalid identity refuse before auth', async () => {
   for (const flags of [
-    { metadata: ['segment'] },
     { metadata: ['segment:../unsafe'] },
     { metadata: ['segment:Audience'], 'api-version': 'latest' },
   ]) {

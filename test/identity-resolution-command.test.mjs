@@ -60,7 +60,8 @@ test('IR retrieve terminal and JSON share safe API explanations with unchanged f
 });
 
 test('IR retrieve help describes native68 routing without claiming installed lifecycle acceptance', () => {
-  assert.match(Retrieve.description, /IR uses native API68 exact owner reads in default space/u);
+  assert.match(Retrieve.description, /IR uses native API68 owner reads in default space/u);
+  assert.match(Retrieve.description, /bare -m identity-resolution every default-space ruleset/u);
   assert.match(Retrieve.description, /auto and explicit numeric68 are supported/u);
   assert.match(Retrieve.description, /numeric67 is rejected/u);
   assert.doesNotMatch(Retrieve.description, /IR requires auto or numeric67/u);
@@ -168,7 +169,6 @@ test('IR explicit65/latest and unsupported numeric mixed routes block before org
     { 'api-version': '65.0' },
     { 'api-version': 'latest' },
     { 'api-version': '67.0' },
-    { metadata: ['identity-resolution'] },
     { metadata: ['identity-resolution:../unsafe'] },
     { dataspace: 'other' },
     { 'api-version': '65.0', metadata: ['identity-resolution:Individual_A1b2', 'dmo:Sample__dlm'] },
