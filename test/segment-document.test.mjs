@@ -219,10 +219,12 @@ test('writer writes one SQL file per model, repeats unchanged and removes a drop
   ];
   const first = await writeSegmentDocument(value, directory, false);
   const folder = path.dirname(first.path);
-  assert.deepEqual(await readdir(folder), [
+  // Directory order differs between file systems; compare sorted names.
+  const written = await readdir(folder);
+  assert.deepEqual(written.toSorted(), [
     'Audience.segment.First.sql',
-    'Audience.segment.json',
     'Audience.segment.Second.sql',
+    'Audience.segment.json',
   ]);
   assert.deepEqual(await readFile(first.codePaths[0]), Buffer.from(value.spec.models[0].sql));
   const bytes = await Promise.all([first.path, ...first.codePaths].map((file) => readFile(file)));
@@ -240,7 +242,8 @@ test('writer writes one SQL file per model, repeats unchanged and removes a drop
   assert.equal(kept.length, 3);
   const overwritten = await writeSegmentDocument(value, directory, true);
   assert.equal(overwritten.outcome, 'retrieved');
-  assert.deepEqual(await readdir(folder), ['Audience.segment.First.sql', 'Audience.segment.json']);
+  const remaining = await readdir(folder);
+  assert.deepEqual(remaining.toSorted(), ['Audience.segment.First.sql', 'Audience.segment.json']);
   const settled = await writeSegmentDocument(value, directory, false);
   assert.equal(settled.outcome, 'unchanged');
 });

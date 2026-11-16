@@ -624,7 +624,9 @@ test('REST parses receipt-proven raw status/body shapes and corrected empty DELE
     const body = arguments_.indexOf('--body');
     if (body !== -1)
       requests.push(JSON.parse(await readFile(arguments_[body + 1].slice(1), 'utf8')));
-    assert.ok(cwd.toLowerCase().startsWith(String.raw`f:\temp\data360-native-dlo-`));
+    assert.ok(
+      cwd.toLowerCase().startsWith(path.join(os.tmpdir(), 'data360-native-dlo-').toLowerCase()),
+    );
     return http(
       method === 'POST' ? 201 : 200,
       method === 'GET' ? { dataLakeObjects: [native()] } : native(),

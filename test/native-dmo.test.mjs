@@ -921,7 +921,9 @@ test('native DMO transport uses API65 full-name GET/PATCH/DELETE URLs, retained 
     assert.ok(arguments_.includes('--include'));
     assert.ok(!arguments_.includes('--json'));
     assert.equal(arguments_[arguments_.indexOf('--target-org') + 1], 'target');
-    assert.ok(cwd.toLowerCase().startsWith(String.raw`f:\temp\data360-native-dmo-`));
+    assert.ok(
+      cwd.toLowerCase().startsWith(path.join(os.tmpdir(), 'data360-native-dmo-').toLowerCase()),
+    );
     if (arguments_.includes('--file')) {
       const request = JSON.parse(
         await readFile(arguments_[arguments_.indexOf('--file') + 1], 'utf8'),

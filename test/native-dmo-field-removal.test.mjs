@@ -1,6 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { NativeDmoError, normalizeNativeDmo } from '../lib/artifacts/native-dmo-document.js';
@@ -383,7 +384,11 @@ test('field removal transport sends one argument-array Metadata destructive depl
   await client.removeFields(apiName, ['Note__c', 'Link__c']);
   assert.equal(runs.length, 1);
   const [{ arguments_, cwd }] = runs;
-  assert.ok(cwd.toLowerCase().startsWith(String.raw`f:\temp\data360-dmo-field-removal-`));
+  assert.ok(
+    cwd
+      .toLowerCase()
+      .startsWith(path.join(os.tmpdir(), 'data360-dmo-field-removal-').toLowerCase()),
+  );
   assert.deepEqual(arguments_, [
     'project',
     'deploy',

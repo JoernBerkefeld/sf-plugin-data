@@ -244,7 +244,7 @@ test('mapping removal transport sends one argument-array Metadata destructive de
   assert.equal(await client.remove(name), undefined);
   assert.equal(runs.length, 1);
   const [{ arguments_, cwd }] = runs;
-  assert.equal(path.dirname(cwd).toLowerCase(), String.raw`f:\temp`);
+  assert.equal(path.dirname(cwd).toLowerCase(), path.resolve(os.tmpdir()).toLowerCase());
   assert.ok(path.basename(cwd).startsWith(scratchPrefix));
   assert.deepEqual(arguments_, [
     'project',
