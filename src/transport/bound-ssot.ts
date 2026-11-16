@@ -126,6 +126,16 @@ export function openBoundSsot(
       }));
   let session: ReturnType<typeof open> | undefined;
   let transport: Promise<BoundTransport> | undefined;
+  // Metadata API calls go one at a time even when REST reads run in parallel: they are cheap
+  // (about 0.15 s each) and the Metadata API answers REQUEST_LIMIT_EXCEEDED to every call once an
+  // org has sent about a thousand in an hour (DB entry data360:a2.retrieve-speed.api68), so
+  // they are never sent faster than one after another.
+  let metadataQueue: Promise<unknown> = Promise.resolve();
+  const oneAtATime = async <T>(call: () => Promise<T>): Promise<T> => {
+    const turn = metadataQueue.then(call);
+    metadataQueue = turn.catch(() => {});
+    return turn;
+  };
   return {
     request: async (method, route, noContent, body) => {
       session ??= open();
@@ -140,8 +150,8 @@ export function openBoundSsot(
       if (!api || typeof api.read !== 'function' || typeof api.update !== 'function')
         throw new ConnectError('REQUEST_FAILED');
       return {
-        read: async (type, fullNames) => api.read(type, fullNames),
-        update: async (type, metadata) => api.update(type, metadata),
+        read: async (type, fullNames) => oneAtATime(async () => api.read(type, fullNames)),
+        update: async (type, metadata) => oneAtATime(async () => api.update(type, metadata)),
       };
     },
   };

@@ -1,5 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { ConnectClient } from '../transport/connect-client.js';
+import type { SettledRead } from './bounded-reads.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
 import {
   NativeMappingError,
@@ -7,6 +8,9 @@ import {
   mappingDmoName,
   nativeMappingName,
 } from '../artifacts/native-mapping-document.js';
+
+// Listing pages in flight at once (the one being read and those fetched ahead of it).
+const pageReads = 4;
 
 /**
  * The data spaces an inventory entry belongs to; an unusable space is left out.
@@ -41,6 +45,25 @@ function entryObject(value: unknown): Record<string, unknown> {
 }
 
 /**
+ * Whether a listing entry can stand in for its item GET. Live on API68 every DLO list entry, and
+ * every DMO list entry, equalled its item GET byte for byte (the DLO item GET wraps it in a
+ * one-element `dataLakeObjects` array), except that a few standard DMOs list their fields in
+ * varying order in both reads; see DB entry data360:a2.retrieve-speed.api68. An entry without the
+ * field list the item GET carries is not that shape, so its object is read on its own.
+ * @param {'dlo' | 'dmo'} family Inventory family.
+ * @param {Record<string, unknown>} item Listing entry.
+ * @returns {boolean} The entry is the item GET's object.
+ */
+export function listedEntryReplacesGet(
+  family: 'dlo' | 'dmo',
+  item: Record<string, unknown>,
+): boolean {
+  return family === 'dlo'
+    ? Array.isArray(item.dataLakeFieldInfoRepresentation) && Array.isArray(item.fields)
+    : Array.isArray(item.fields);
+}
+
+/**
  * Name a skipped listing entry in a warning.
  * @param {string | undefined} name Its name, when it has one.
  * @param {number} position Its position in the listing.
@@ -61,6 +84,8 @@ function entryLabel(name: string | undefined, position: number): string {
  * @param {'dlo' | 'dmo'} family Inventory family.
  * @param {string} [requestScope] Local response-space filter; omission lists the default space.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {Map<string, unknown>} [listed] Receives each listed name's entry, when the entry is
+ * proven to equal its item GET (see listedEntryReplacesGet).
  * @returns {Promise<string[]>} Sorted names in the selected space.
  */
 export async function listNativeNames(
@@ -69,6 +94,7 @@ export async function listNativeNames(
   family: 'dlo' | 'dmo',
   requestScope?: string,
   warnings?: string[],
+  listed?: Map<string, unknown>,
 ): Promise<string[]> {
   const client = new ConnectClient(connection, version);
   const key = family === 'dmo' ? 'dataModelObject' : 'dataLakeObjects';
@@ -77,10 +103,33 @@ export async function listNativeNames(
   const pattern = family === 'dmo' ? mappingDmoName : mappingDloName;
   const seen = new Set<string>();
   const names: string[] = [];
-  for (let offset = 0; ; offset += limit) {
-    const page = await client.get<unknown>(
+  // Pages fetched ahead of the one being read, by offset (below totalSize when it is known).
+  // A page fetched past the end is never read; the pages are used in order as before.
+  const ahead = new Map<number, Promise<SettledRead<unknown>>>();
+  const fetchPage = async (offset: number): Promise<unknown> =>
+    client.get<unknown>(
       `/services/data/v${version}/ssot/${resource}?limit=${limit}&offset=${offset}&orderBy=ASC`,
     );
+  const prefetch = (from: number, total = Number.POSITIVE_INFINITY): void => {
+    for (let offset = from; offset < total && offset < from + pageReads * limit; offset += limit)
+      if (!ahead.has(offset))
+        ahead.set(
+          offset,
+          fetchPage(offset).then(
+            (value) => ({ value }),
+            (error: unknown) => ({ error }),
+          ),
+        );
+  };
+  for (let offset = 0; ; offset += limit) {
+    const early = ahead.get(offset);
+    ahead.delete(offset);
+    let page: unknown;
+    if (early) {
+      const settled = await early;
+      if ('error' in settled) throw settled.error;
+      page = settled.value;
+    } else page = await fetchPage(offset);
     if (!page || typeof page !== 'object' || Array.isArray(page))
       throw new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED');
     const wrapper = page as Record<string, unknown>;
@@ -102,7 +151,9 @@ export async function listNativeNames(
       if (seen.has(identity)) continue;
       seen.add(identity);
       added++;
-      if (spaces.includes(requestScope ?? 'default')) names.push(name);
+      if (!spaces.includes(requestScope ?? 'default')) continue;
+      names.push(name);
+      if (listed && listedEntryReplacesGet(family, item)) listed.set(name, value);
     }
     const total =
       typeof wrapper.totalSize === 'number' &&
@@ -118,6 +169,8 @@ export async function listNativeNames(
             entries.length >= limit)
         : offset + limit < total;
     if (!more) break;
+    // The next pages are read in parallel; they are still used in order.
+    prefetch(offset + limit, total);
   }
   names.sort();
   return names;

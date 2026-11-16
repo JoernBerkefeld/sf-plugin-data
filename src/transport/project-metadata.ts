@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import os from 'node:os';
@@ -36,20 +37,52 @@ export function verifyTemporaryDirectory(): void {
   }
 }
 
+// Directories already checked in the current run (see withCheckedDirectories), by exact path.
+const checkedDirectories = new AsyncLocalStorage<Map<string, import('node:fs').Stats>>();
+
+/**
+ * Run work in which every directory's ancestor chain is checked once. A later check of a path
+ * below a checked directory still resolves that path's own real path, which proves that no
+ * ancestor has since become a link or junction; a path that does not exist proves it through
+ * its parent's real path instead. Files are never remembered.
+ * @template T
+ * @param {() => Promise<T>} work The run.
+ * @returns {Promise<T>} Its result.
+ */
+export async function withCheckedDirectories<T>(work: () => Promise<T>): Promise<T> {
+  return checkedDirectories.run(new Map(), work);
+}
+
 /**
  * Inspect the exact ancestor chain without following filesystem aliases or links.
  * @param {string} file Absolute path to inspect.
  * @returns {Promise<import('node:fs').Stats>} Checked entry.
  */
 export async function inspectSegmentPath(file: string): Promise<import('node:fs').Stats> {
+  const checked = checkedDirectories.getStore();
+  const known = checked?.get(file);
+  if (known) return known;
   const parent = path.dirname(file);
   if (parent !== file) {
     const ancestor = await inspectSegmentPath(parent);
     if (!ancestor.isDirectory()) throw new SegmentError('UNSAFE_PATH');
   }
-  const stat = await lstat(file);
+  let stat: import('node:fs').Stats;
+  try {
+    stat = await lstat(file);
+  } catch (error) {
+    // A remembered parent may have become a link since; its real path shows it.
+    if (
+      checked?.has(parent) &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT' &&
+      normalize(await realpath(parent)) !== normalize(parent)
+    )
+      throw new SegmentError('UNSAFE_PATH');
+    throw error;
+  }
   if (stat.isSymbolicLink() || normalize(await realpath(file)) !== normalize(file))
     throw new SegmentError('UNSAFE_PATH');
+  if (checked && stat.isDirectory()) checked.set(file, stat);
   return stat;
 }
 

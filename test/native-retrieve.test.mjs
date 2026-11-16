@@ -83,7 +83,9 @@ test('DMO inventory paginates documented offsets, includes standard names and fi
     '61.0',
     'dmo',
   );
-  assert.deepEqual(offsets, [0, 50]);
+  // Without totalSize the next pages are read ahead in parallel; those past the end are unused.
+  assert.deepEqual(offsets.slice(0, 2), [0, 50]);
+  assert.ok(offsets.length <= 5);
   assert.equal(names.length, 50);
 });
 
@@ -226,7 +228,8 @@ test('DLO listing follows an absolute nextPageUrl when the answer has no totalSi
     '68.0',
     'dlo',
   );
-  assert.deepEqual(offsets, [0, 20]);
+  assert.deepEqual(offsets.slice(0, 2), [0, 20]);
+  assert.ok(Math.max(...offsets) <= 80);
   assert.deepEqual(names, ['Source0__dll', 'Source20__dll', 'Source22__dll', 'Source2__dll']);
 });
 
@@ -249,7 +252,8 @@ test('DMO listing pages past 2000 entries until the API is exhausted', async () 
     'dmo',
   );
   assert.equal(names.length, 2507);
-  assert.equal(offsets.at(-1), 2500);
+  assert.ok(offsets.includes(2500));
+  assert.ok(Math.max(...offsets) <= 2650);
 });
 
 test('a listing that repeats its page (offset ignored) ends instead of looping', async () => {
@@ -267,7 +271,8 @@ test('a listing that repeats its page (offset ignored) ends instead of looping',
     '68.0',
     'dmo',
   );
-  assert.equal(calls, 2);
+  // The repeated page ends the listing; at most three pages were read ahead of it.
+  assert.ok(calls >= 2 && calls <= 5);
   assert.equal(names.length, 50);
 });
 

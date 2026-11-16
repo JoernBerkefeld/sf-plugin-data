@@ -48,6 +48,9 @@ export function manifest(version: string, lines: string[]): string {
  * @param {string} apiVersion Numeric >=61 or default/auto 68; admission is not live qualification.
  * @param {MetadataRunner} runner Installed CLI runner, used only for the destructive field removal.
  * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
+ * @param {ReadonlyMap<string, unknown>} [listed] Entries of this run's DMO listing at the same
+ * version, by name. A listed name's GET answers with its entry, which Salesforce returns byte for
+ * byte the same as the item GET, instead of another request.
  * @returns {DmoClient} Name-bound operations; field-removal scratch is retained.
  */
 export function createDmoClient(
@@ -55,6 +58,7 @@ export function createDmoClient(
   apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
   sender?: BoundSsot,
+  listed?: ReadonlyMap<string, unknown>,
 ): DmoClient {
   const version = nativeApiVersion(apiVersion);
   const endpoint = `/services/data/v${version}/ssot/data-model-objects`;
@@ -195,7 +199,11 @@ export function createDmoClient(
 
   return {
     removeFields,
-    get: async (apiName) => request('GET', nameSuffix(apiName)),
+    get: async (apiName) => {
+      const suffix = nameSuffix(apiName);
+      const entry = listed?.get(apiName);
+      return entry === undefined ? request('GET', suffix) : structuredClone(entry);
+    },
     create: async (body) => request('POST', '', body),
     update: async (targetApiName, body) => request('PATCH', nameSuffix(targetApiName), body),
     delete: async (targetApiName) => {

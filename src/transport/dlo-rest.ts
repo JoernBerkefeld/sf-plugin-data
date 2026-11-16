@@ -19,12 +19,16 @@ const recordId = /^[A-Za-z0-9]{18}$/u;
  * @param {string} targetOrg Explicit authenticated org alias or username.
  * @param {string} apiVersion Numeric >=61 or default/auto 68; admission is not live qualification.
  * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
+ * @param {ReadonlyMap<string, unknown>} [listed] Entries of this run's DLO listing at the same
+ * version, by name. A listed name's GET answers with its entry in the item GET's envelope,
+ * which Salesforce returns byte for byte the same, instead of another request.
  * @returns {DloClient} Four operations; the caller's read-back decides what a write did.
  */
 export function createDloClient(
   targetOrg: string,
   apiVersion = '68.0',
   sender?: BoundSsot,
+  listed?: ReadonlyMap<string, unknown>,
 ): DloClient {
   const version = nativeApiVersion(apiVersion);
   const endpoint = `/services/data/v${version}/ssot/data-lake-objects`;
@@ -78,6 +82,8 @@ export function createDloClient(
   return {
     get: async (apiName) => {
       if (!dloName.test(apiName)) throw new DloError('INVALID_DLO_NAME');
+      const entry = listed?.get(apiName);
+      if (entry !== undefined) return { dataLakeObjects: [structuredClone(entry)] };
       return request('GET', `/${apiName}`);
     },
     create: async (body) => request('POST', '', body),

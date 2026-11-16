@@ -45,6 +45,8 @@ import { retrieveNativeRelationships } from '../../services/native-relationship.
 import { createRelationshipClient } from '../../transport/relationship-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../transport/bound-ssot.js';
+import { withCheckedDirectories } from '../../transport/project-metadata.js';
+import { readInOrder } from '../../services/bounded-reads.js';
 import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
 import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
@@ -182,6 +184,8 @@ type VerbatimTarget = {
 };
 /** The raw GET response remembered for a name, if it was read. */
 type NativeOf = (name: string) => { native: unknown } | undefined;
+/** One run's DLO and DMO listing entries by name, filled by listNativeNames. */
+type ListedEntries = { dlo: Map<string, unknown>; dmo: Map<string, unknown> };
 // Before an item's client exists nothing was read.
 const noReads = new Map<string, { native: unknown }>();
 const nothingRead: NativeOf = (name) => noReads.get(name);
@@ -210,6 +214,8 @@ const retrieveFamilies = [
 export type RetrieveFamily = (typeof retrieveFamilies)[number];
 type RetrieveDiagnostic = RetrieveEnvelope['diagnostics']['errors'][number];
 const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
+// Relationship reads in flight at once during one retrieve (bounded; see readInOrder).
+const relationshipReads = 6;
 /** Selector groups, in run order; `rest` holds every family without its own group. */
 const selectorGroups = ['rest', 'data-stream', 'data-transform', 'data-graph'] as const;
 type RetrieveFlags = {
@@ -448,21 +454,29 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    * @param {string} target Target org alias or username.
    * @param {string} version Native API version.
    * @param {BoundSsot} sender Shared bound sender for the reads.
+   * @param {ListedEntries} [listed] This run's DLO and DMO listing entries at the same version.
    * @returns {MappingDependencies} Lazy source and target readers.
    */
   protected mappingParents(
     target: string,
     version: string,
     sender: BoundSsot,
+    listed?: ListedEntries,
   ): MappingDependencies {
     return {
       source: {
         get: async (name) =>
-          (this.createDloClient ?? createDloClient)(target, version, sender).get(name),
+          (this.createDloClient ?? createDloClient)(target, version, sender, listed?.dlo).get(name),
       },
       target: {
         get: async (name) =>
-          (this.createDmoClient ?? createDmoClient)(target, version, undefined, sender).get(name),
+          (this.createDmoClient ?? createDmoClient)(
+            target,
+            version,
+            undefined,
+            sender,
+            listed?.dmo,
+          ).get(name),
       },
     };
   }
@@ -676,19 +690,23 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         family: 'relationship',
       });
     };
-    for (const dmo of dmoNames) {
-      let documents;
-      try {
-        documents = await (this.acquireRelationships ?? retrieveNativeRelationships)(
-          dmo,
-          this.createRelationshipClient(connection, target, version, requestScope),
-          requestScope,
-          'retrieve',
-        );
-      } catch (error) {
-        diagnose(error, dmo);
+    // Up to relationshipReads DMOs are read at once; results, files and diagnostics still follow
+    // the DMO order, one DMO after another.
+    const reads = readInOrder(dmoNames, relationshipReads, async (dmo) =>
+      (this.acquireRelationships ?? retrieveNativeRelationships)(
+        dmo,
+        this.createRelationshipClient(connection, target, version, requestScope),
+        requestScope,
+        'retrieve',
+      ),
+    );
+    for (const [index, dmo] of dmoNames.entries()) {
+      const read = await reads[index];
+      if ('error' in read) {
+        diagnose(read.error, dmo);
         continue;
       }
+      const documents = read.value;
       const routes: RetrieveRoute[] = [
         { operation: 'relationship.list', apiVersion: version, transport: 'native' },
       ];
@@ -1198,6 +1216,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         const inventoryFailures: Array<{ family: RetrieveFamily; error: unknown }> = [];
         // The DMO inventory, read once for both the DMO and the mapping family.
         let dmoInventory: Promise<string[]> | undefined;
+        // The listing entries; a listed object's GET answers with its entry (see createDloClient).
+        const listed: ListedEntries = { dlo: new Map(), dmo: new Map() };
         const listDmos = async (): Promise<string[]> =>
           (dmoInventory ??= this.listNativeNames(
             connection,
@@ -1205,6 +1225,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             'dmo',
             requestScope,
             warnings,
+            listed.dmo,
           ));
         // Finish every inventory before publishing any file.
         for (const family of nativeFamilies) {
@@ -1243,6 +1264,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         family,
                         requestScope,
                         warnings,
+                        listed.dlo,
                       )),
                 );
             } catch (error) {
@@ -1321,6 +1343,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         target,
                         version,
                         this.ssotSender(target, version, connection),
+                        listed,
                       ),
                       'retrieve',
                     )
@@ -1332,6 +1355,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                             target,
                             version,
                             this.ssotSender(target, version, connection),
+                            listed.dlo,
                           ),
                         ),
                         // The scope it is read in binds a DLO that belongs to several spaces.
@@ -1346,6 +1370,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                             version,
                             undefined,
                             this.ssotSender(target, version, connection),
+                            listed.dmo,
                           ),
                         ),
                         requestScope,
@@ -1653,6 +1678,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           // Definition-only members are independent; retain successes across read/output failures.
 
           let dlos = dloSelectors.filter((value) => value !== 'dlo').map((value) => value.slice(4));
+          // The listing entries; a listed object's GET answers with its entry (see createDloClient).
+          const listed: ListedEntries = { dlo: new Map(), dmo: new Map() };
           // Bare dlo: every DLO the API lists, read before any file is written.
           if (dloSelectors.includes('dlo'))
             try {
@@ -1663,6 +1690,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   'dlo',
                   'default',
                   envelope.diagnostics.warnings,
+                  listed.dlo,
                 )),
               );
             } catch (error: unknown) {
@@ -1684,6 +1712,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   target,
                   '68.0',
                   this.ssotSender(target, '68.0', org.getConnection()),
+                  listed.dlo,
                 ),
               );
               nativeOf = reads.nativeOf;
@@ -1862,6 +1891,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     'dmo',
                     effectiveScope,
                     envelope.diagnostics.warnings,
+                    listed.dmo,
                   )),
                 );
               } catch (error: unknown) {
@@ -1923,6 +1953,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         nativeDmoVersion,
                         undefined,
                         this.ssotSender(target, nativeDmoVersion, connection),
+                        listed.dmo,
                       ).get(apiName);
                     },
                   },
@@ -2145,6 +2176,15 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
    */
   public async run(): Promise<RetrieveEnvelope> {
+    // Each output directory's ancestor chain is checked once per run; every file still is.
+    return withCheckedDirectories(async () => this.retrieveAll());
+  }
+
+  /**
+   * The run itself; see run.
+   * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
+   */
+  private async retrieveAll(): Promise<RetrieveEnvelope> {
     const { flags } = await this.parse(Retrieve);
     const requestScope = flags.dataspace;
     const effectiveScope = requestScope ?? 'default';
