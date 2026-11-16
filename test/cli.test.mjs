@@ -206,10 +206,10 @@ test('README documents native relationships without the removed XML export', () 
   ])
     assert.ok(section.includes(required), `missing relationship contract: ${required}`);
   const row = readme.split('\n').find((line) => line.startsWith('| DMO field relationships'));
-  // Read is Partial (retrieve by source DMO); update is Partial: Salesforce refuses a changed
-  // target or owner through the Metadata API.
-  assert.equal((row.match(/Partial/gu) ?? []).length, 2);
-  assert.equal((row.match(/Available </gu) ?? []).length, 2);
+  // Read is Available (by source DMO or every relationship); update is Partial: Salesforce
+  // refuses a changed target or owner through the Metadata API.
+  assert.equal((row.match(/Partial/gu) ?? []).length, 1);
+  assert.equal((row.match(/Available </gu) ?? []).length, 3);
   assert.match(row, /title="Metadata API update of label, cardinality and source field"/u);
   assert.doesNotMatch(row, /\|\s*Unavailable\s*\|/u);
   for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
