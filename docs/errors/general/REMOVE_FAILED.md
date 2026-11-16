@@ -29,8 +29,8 @@ The plugin removes each file with a single attempt and never retries or forces i
 ```text
 Delete: failed.
 deleted segment High_Value_Customers
-local file removal failed (REMOVE_FAILED): /work/project/force-app/main/default/data360/segments/High_Value_Customers.segment.json
-LOCAL_FILE_REMOVAL_FAILED: The deletion in the org is confirmed, but this local file was not removed: /work/project/force-app/main/default/data360/segments/High_Value_Customers.segment.json (REMOVE_FAILED). Do not repeat the delete; remove the file yourself.
+local file removal failed (REMOVE_FAILED): /work/project/data360/segments/High_Value_Customers.segment.json
+LOCAL_FILE_REMOVAL_FAILED: The deletion in the org is confirmed, but this local file was not removed: /work/project/data360/segments/High_Value_Customers.segment.json (REMOVE_FAILED). Do not repeat the delete; remove the file yourself.
 Hint: The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/LOCAL_FILE_REMOVAL_FAILED.md
 ```

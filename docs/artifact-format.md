@@ -23,8 +23,7 @@ with all prior configuration preserved; no XML companion or request file is need
 ## Public Graph document
 
 Exact `data-graph:ApiName` retrieval writes
-`force-app/main/default/data360/dataGraphs/ApiName.dataGraph.json`; the configured
-package directory replaces `force-app`. The single JSON document uses
+`data360/dataGraphs/ApiName.dataGraph.json` at the project root. The single JSON document uses
 `schemaVersion: 1`, `kind: data-graph`, exact default-space `identity.apiName` and
 complete qualified `spec`: label, description, logical unified Individual root,
 NONE type, seven-day full-refresh schedule, incremental disabled, and root source
@@ -68,11 +67,10 @@ decides.
 ## Public segment files
 
 Retrieve writes each segment as
-`<package>/main/default/data360/segments/<Name>.segment.json` (identity, label,
+`data360/segments/<Name>.segment.json` at the project root (identity, label,
 description, `segmentOn` DMO, schedule and lookback, and the list of model names) and one
 `<Name>.segment.<model>.sql` per model beside it (that model's `sql`, plain text, bytes as
-returned). `<package>` is the default package directory of `sfdx-project.json`
-(`force-app` when absent). A model name must start with a letter or digit and hold only
+returned). A model name must start with a letter or digit and hold only
 letters, digits and underscores, and two model names may not differ only in case; another
 name is refused with `INVALID_SEGMENT_DOCUMENT`. A repeat retrieve of an unchanged segment
 writes nothing (`unchanged`); with `--overwrite`, the SQL file of a model the segment no
@@ -357,9 +355,9 @@ that name or the hand-written file whose binding matches; for a data transform
 `data360/calculatedInsights/<Name>.calculatedInsight-meta.json` and
 `.calculatedInsight-meta.sql` in the current directory; for a segment
 `data360/segments/<Name>.segment.json` and every `<Name>.segment.*.sql` beside it; and for
-an identity resolution or data graph its canonical file. Segment, identity resolution and
-data graph files live under the default package directory of `sfdx-project.json`
-(`force-app/main/default` without one). Files are found by name at these paths; only the
+an identity resolution or data graph its canonical file
+(`data360/identityResolution/<Name>.identityResolution.json`,
+`data360/dataGraphs/<Name>.native-dataGraph.json`), all in the current directory. Files are found by name at these paths; only the
 segments folder is listed, for the segment's SQL files. Mapping files of mappings
 Salesforce removes together with a deleted DMO are not removed, because those
 mappings are not items of the command.
@@ -367,7 +365,7 @@ mappings are not items of the command.
 Each file is removed on its own with one unlink. Only regular files are removed:
 directories, symbolic links, junctions, files reached through a linked folder and
 hard-linked files are refused (`UNSAFE_PATH`), as is any path outside the project's
-`data360` folder or the package directory. Each result item lists
+`data360` folder. Each result item lists
 `removedLocalFiles` with an outcome per file: `removed`, `not-present`, `kept` or
 `failed`. A failed removal keeps the confirmed org result, and the command exits
 nonzero with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps every file

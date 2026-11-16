@@ -56,13 +56,10 @@ for (const configured of [false, true]) {
     const cwd = await fixture(configured);
     const value = document();
     const receipt = await writeIdentityResolutionDocument(value, cwd, false);
+    // The file lives under data360/ at the project root; sfdx-project.json is not consulted.
     assert.equal(
       receipt.path,
-      path.join(
-        cwd,
-        configured ? 'custom' : 'force-app',
-        'main/default/data360/identityResolution/Individual_A1b2.identityResolution.json',
-      ),
+      path.join(cwd, 'data360/identityResolution/Individual_A1b2.identityResolution.json'),
     );
     const bytes = await readFile(receipt.path);
     const before = await stat(receipt.path);
@@ -251,12 +248,12 @@ for (const preview of [true, false]) {
   }
 }
 
-test('IR rejects linked ancestors, unsafe roots, directory targets and configured escapes', async () => {
+test('IR rejects linked ancestors, unsafe roots and directory targets; ignores the package directory', async () => {
   const cwd = await fixture();
   const elsewhere = await fixture();
   await symlink(
     elsewhere,
-    path.join(cwd, 'force-app'),
+    path.join(cwd, 'data360'),
     process.platform === 'win32' ? 'junction' : 'dir',
   );
   await assert.rejects(writeIdentityResolutionDocument(document(), cwd, false));
@@ -267,7 +264,9 @@ test('IR rejects linked ancestors, unsafe roots, directory targets and configure
     path.join(configured, 'sfdx-project.json'),
     JSON.stringify({ packageDirectories: [{ path: '../escape', default: true }] }),
   );
-  await assert.rejects(writeIdentityResolutionDocument(document(), configured, false));
+  // The package directory is not used for IR files, so an escaping one does not matter.
+  const ignored = await writeIdentityResolutionDocument(document(), configured, false);
+  assert.equal(path.dirname(path.dirname(path.dirname(ignored.path))), configured);
   const clean = await fixture();
   const receipt = await writeIdentityResolutionDocument(document(), clean, false);
   await unlink(receipt.path);

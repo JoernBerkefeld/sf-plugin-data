@@ -80,8 +80,7 @@ const segmentGet = () => ({
     },
   ],
 });
-const segmentDirectory = (cwd) =>
-  path.join(cwd, 'force-app', 'main', 'default', 'data360', 'segments');
+const segmentDirectory = (cwd) => path.join(cwd, 'data360', 'segments');
 
 /**
  * Retrieve the Audience segment through the command.
@@ -205,15 +204,7 @@ test('retrieve keeps unknown DBT segment keys and warns about an unbound DMO; de
 
 const irName = 'Individual_A1b2';
 const irFile = (cwd) =>
-  path.join(
-    cwd,
-    'force-app',
-    'main',
-    'default',
-    'data360',
-    'identityResolution',
-    `${irName}.identityResolution.json`,
-  );
+  path.join(cwd, 'data360', 'identityResolution', `${irName}.identityResolution.json`);
 
 /**
  * Retrieve the synthetic identity resolution through the command.

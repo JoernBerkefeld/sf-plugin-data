@@ -18,12 +18,11 @@ Selected files, by family (each file's content identity must equal its file name
 | Data stream | `data360/data-stream/<Name>.data-stream-meta.json` |
 | Data transform | `data360/dataTransforms/<Name>.dataTransform.json` |
 | Calculated insight | `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json` and `.calculatedInsight-meta.sql` (a change to either file selects the insight) |
-| Data graph | `<package>/main/default/data360/dataGraphs/<Name>.native-dataGraph.json` |
-| Identity resolution | `<package>/main/default/data360/identityResolution/<Name>.identityResolution.json` |
-| Segment | `<package>/main/default/data360/segments/<Name>.segment.json` and one `<Name>.segment.<model>.sql` per model (a change to any of them selects the segment) |
+| Data graph | `data360/dataGraphs/<Name>.native-dataGraph.json` |
+| Identity resolution | `data360/identityResolution/<Name>.identityResolution.json` |
+| Segment | `data360/segments/<Name>.segment.json` and one `<Name>.segment.<model>.sql` per model (a change to any of them selects the segment) |
 
-The first seven live under the repository root; the others under the default package
-directory from `sfdx-project.json` (`force-app` when absent). A changed file of a known
+All of them live under `data360/` at the repository root. A changed file of a known
 family in another place, an invalid document or Segment XML refuses the whole selection
 (`INVALID_GIT_SELECTION`). Each admitted file's bytes are captured and checked again
 before the target is read and before each write.

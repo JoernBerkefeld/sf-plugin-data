@@ -220,7 +220,7 @@ test('bare segment and identity-resolution retrieve every listed item; one faili
     result.diagnostics.warnings.join('\n'),
     /segment inventory: skipped the entry at position 2 because it has no usable API name/u,
   );
-  const root = path.join(cwd, 'force-app', 'main', 'default', 'data360');
+  const root = path.join(cwd, 'data360');
   const segmentFiles = await readdir(path.join(root, 'segments'));
   assert.deepEqual(segmentFiles.toSorted(), ['Alpha.segment.Alpha.sql', 'Alpha.segment.json']);
   assert.deepEqual(await readdir(path.join(root, 'identityResolution')), [

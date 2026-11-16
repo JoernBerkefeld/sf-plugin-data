@@ -1,3 +1,31 @@
+# Graph, segment and identity resolution files under data360/ — 2026-11-16
+
+Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),
+A5 step 2.
+
+- Data graph, Segment (JSON and SQL) and identity resolution files moved from
+  `<package>/main/default/data360/<type>/` to `data360/<type>/` at the project root, like the
+  other families; folder names `dataGraphs`, `segments` and `identityResolution` kept.
+- Changed: the three writers (`write-data-graph.ts`, `write-segment.ts`,
+  `write-identity-resolution.ts`), `read-deploy-input.ts` (`-m` paths and the folder checks of the
+  three readers), `git-deploy-selection.ts` (family table; the package-base plumbing and
+  `needsPackage` removed since no family needs it), `delete.ts` local file candidates.
+  `segmentSourceRoot` stays for `objectSourceTargetMap-meta.xml`.
+- No backward compatibility (user decision): files at the old location are not read by `-m`,
+  retrieve or delete; nothing detects or warns. As for every family, an explicit `--source-dir`
+  file path is checked only by its `data360/<type>/` parent folders, and a `--changed-since`
+  range with a changed file of a known family outside `data360/<type>/` at the root is refused
+  (`INVALID_GIT_SELECTION`, unchanged behaviour).
+- Help (delete local files, deploy Git selection message), `INVALID_PROJECT` page, README,
+  `docs/artifact-format.md`, `docs/capabilities.md`, `docs/git-workflow.md`,
+  `INVALID_GIT_SELECTION` and `REMOVE_FAILED` pages updated; tests moved to the new paths plus
+  an old-location test in `segment-deploy.test.mjs`.
+- Live (isolated-source, read-only): retrieve of segments mvp360_260915_1358_seg (DBT) and
+  Annual_Promo_Segment_1789248847753 (UI), graph GraphOmit6b9e637589e24112 and IR Individual_t1
+  wrote `data360/segments/…`, `data360/dataGraphs/…`, `data360/identityResolution/…` (nothing
+  under `force-app`); deploy `--preview` by `--source-dir data360` and by `-m`: all 4
+  `unchanged`; delete `--preview` lists the new local paths.
+
 # Enum values that differ only in letter case are unchanged — 2026-11-16
 
 Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),

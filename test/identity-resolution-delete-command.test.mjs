@@ -29,14 +29,7 @@ const harness = async (overrides = {}, shape = () => {}) => {
   const raw = { ...nativeIrFixture(), id: '1ir000000000001AAA' };
   shape(raw);
   const desired = projectNativeIdentityResolution(raw, raw.objectApiName).candidate;
-  const directory = path.join(
-    root,
-    'force-app',
-    'main',
-    'default',
-    'data360',
-    'identityResolution',
-  );
+  const directory = path.join(root, 'data360', 'identityResolution');
   await mkdir(directory, { recursive: true });
   const file = path.join(directory, `${desired.identity.apiName}.identityResolution.json`);
   await writeFile(file, `${JSON.stringify(desired)}\n`);

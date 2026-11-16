@@ -4,7 +4,6 @@ import { link, mkdir, mkdtemp, open, rename, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DataGraphError } from './data-graph-document.js';
-import { segmentSourceRoot } from './write-segment.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
 import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
@@ -111,8 +110,7 @@ export async function writeDataGraphDocument(
   if (path.dirname(root) === root) throw new DataGraphError('UNSAFE_PATH');
   let published = false;
   try {
-    const base = await segmentSourceRoot(root);
-    const destination = path.join(base, 'data360', 'dataGraphs', `${name}.native-dataGraph.json`);
+    const destination = path.join(root, 'data360', 'dataGraphs', `${name}.native-dataGraph.json`);
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };

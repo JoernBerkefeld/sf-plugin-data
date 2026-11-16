@@ -10,7 +10,7 @@
 
 ## What it means
 
-Segments, calculated insights, identity resolutions and data graphs live under the default package directory of the project (for example `force-app/main/default/data360/...`). The plugin reads `sfdx-project.json` to find it. `INVALID_PROJECT` means `packageDirectories` is missing or empty, more than one entry is marked `default` (or none is, with several entries), or the chosen `path` is absolute, empty or leads outside the project.
+The plugin's own files (DLOs, DMOs, mappings, relationships, data streams, data transforms, calculated insights, Segments, identity resolutions and data graphs) live under `data360/` at the project root and never use a package directory, so no command raises this code for them. It belongs to the check of the default package directory of `sfdx-project.json` (`<package>/main/default/...`), which is used only for Salesforce metadata files in source format, such as an `objectSourceTargetMap-meta.xml`. `INVALID_PROJECT` means `packageDirectories` is missing or empty, more than one entry is marked `default` (or none is, with several entries), or the chosen `path` is absolute, empty or leads outside the project.
 
 When there is no `sfdx-project.json` at all, the plugin uses `force-app`.
 
@@ -29,10 +29,9 @@ Writing or reading files in a folder the project does not clearly define could p
 
 ```text
 Retrieve: blocked.
-segment:High_Value_Customers: INVALID_PROJECT: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
+INVALID_PROJECT: sfdx-project.json does not name one usable package directory.
 Hint: sfdx-project.json does not name one usable package directory. Give packageDirectories exactly one default entry with a relative path inside the project, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/INVALID_PROJECT.md
-Downloaded segment: 0
 ```
 
 ## Related codes

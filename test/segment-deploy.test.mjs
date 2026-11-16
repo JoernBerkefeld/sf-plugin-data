@@ -1,7 +1,16 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, readFile, writeFile, unlink, symlink, link } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  writeFile,
+  unlink,
+  symlink,
+  link,
+} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
@@ -241,12 +250,12 @@ test('stale Segment XML is ignored recursively but explicit XML is rejected with
     p.cwd,
     'force-app/main/default/marketSegmentDefinitions/Audience.marketSegmentDefinition-meta.xml',
   );
-  await mkdir(path.dirname(xmlPath));
+  await mkdir(path.dirname(xmlPath), { recursive: true });
   await writeFile(xmlPath, '<stale/>');
   for (const selection of [
     { metadata: ['segment:Audience'] },
     { sourceDir: [p.path] },
-    { sourceDir: [path.join(p.cwd, 'force-app/main/default')] },
+    { sourceDir: [path.join(p.cwd, 'data360')] },
   ]) {
     const inputs = await readDeployInputs({ cwd: p.cwd, ...selection });
     assert.equal(inputs.length, 1);
@@ -257,15 +266,39 @@ test('stale Segment XML is ignored recursively but explicit XML is rejected with
   });
   assert.equal(await readFile(xmlPath, 'utf8'), '<stale/>');
 });
-test('selector honors configured package directory', async () => {
+test('selector reads data360/segments at the project root whatever the package directory', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-a2a-config-'));
   await writeFile(
     path.join(cwd, 'sfdx-project.json'),
     JSON.stringify({ packageDirectories: [{ path: 'custom', default: true }] }),
   );
   const p = await writeSegmentDocument(document(), cwd, false);
+  assert.equal(p.path, path.join(cwd, 'data360', 'segments', 'Audience.segment.json'));
   const inputs = await readDeployInputs({ cwd, metadata: ['segment:Audience'] });
   assert.equal(inputs[0].path, p.path);
+});
+test('files under <package>/main/default/data360 are not read: -m finds no file, like a missing one', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-a5-old-location-'));
+  const p = await writeSegmentDocument(document(), cwd, false);
+  const old = path.join(cwd, 'force-app', 'main', 'default', 'data360', 'segments');
+  await mkdir(old, { recursive: true });
+  await rename(p.path, path.join(old, path.basename(p.path)));
+  for (const [selector, folder, file] of [
+    ['segment:Audience', 'segments', 'Audience.segment.json'],
+    ['data-graph:Graph1', 'dataGraphs', 'Graph1.native-dataGraph.json'],
+    [
+      'identity-resolution:Individual_A1b2',
+      'identityResolution',
+      'Individual_A1b2.identityResolution.json',
+    ],
+  ]) {
+    const legacy = path.join(cwd, 'force-app', 'main', 'default', 'data360', folder, file);
+    await mkdir(path.dirname(legacy), { recursive: true });
+    if (folder !== 'segments') await writeFile(legacy, '{}');
+    await assert.rejects(readDeployInputs({ cwd, metadata: [selector] }), {
+      code: 'UNSAFE_SOURCE',
+    });
+  }
 });
 test('missing, divergent, duplicate-key, wrong-identity and invalid UTF8 companion blocks complete selection', async () => {
   for (const variant of ['missing', 'unknown', 'duplicate', 'identity', 'utf8']) {

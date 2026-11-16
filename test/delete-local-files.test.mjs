@@ -434,13 +434,13 @@ test('a data stream deletion removes its file, and with --delete-dlo the linked 
 });
 
 /**
- * Write one file of the default package directory (no sfdx-project.json: force-app).
+ * Write one file under data360/ of the project root.
  * @param {string} root Project root.
- * @param {string[]} segments Path below force-app/main/default/data360.
+ * @param {string[]} segments Path below data360.
  * @returns {Promise<string>} Absolute file path.
  */
 async function packageFile(root, ...segments) {
-  const file = path.join(root, 'force-app', 'main', 'default', 'data360', ...segments);
+  const file = path.join(root, 'data360', ...segments);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, '{}\n');
   return file;

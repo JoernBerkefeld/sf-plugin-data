@@ -168,16 +168,7 @@ async function retrieveCommand(body, cwd) {
   }
 }
 
-const graphFile = (cwd) =>
-  path.join(
-    cwd,
-    'force-app',
-    'main',
-    'default',
-    'data360',
-    'dataGraphs',
-    `${name}.native-dataGraph.json`,
-  );
+const graphFile = (cwd) => path.join(cwd, 'data360', 'dataGraphs', `${name}.native-dataGraph.json`);
 
 /**
  * Assert that deploy refuses the file and names the key path.

@@ -2598,7 +2598,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           message:
             error.code === 'BLOCKED_GIT_LIFECYCLE'
               ? 'Git selection blocks renames, conflicts, unstaged or unidentifiable deletions of plugin files, half-deleted calculated insight pairs and a relevant untracked addition combined with any tracked worktree deletion. Stage intended changes to permit Git-inferred rename detection, then resolve unsupported lifecycle changes. Git cannot guarantee historical rename intent.'
-              : 'Git selection failed. Use a valid commit reference and canonical files under data360/ (DLO, DMO, mapping, relationship, data stream, data transform) or the configured package directory (data graph, identity resolution, calculated insight, Segment JSON) with matching identities and unchanged admitted bytes.',
+              : 'Git selection failed. Use a valid commit reference and canonical files under data360/ (DLO, DMO, mapping, relationship, data stream, data transform, data graph, identity resolution, calculated insight, Segment JSON and SQL) with matching identities and unchanged admitted bytes.',
           retryable: false,
         });
         return finish('blocked');

@@ -165,14 +165,8 @@ const relationshipDocument = {
   },
 };
 const files = {
-  graph: [
-    'force-app/main/default/data360/dataGraphs/SyntheticGraph.native-dataGraph.json',
-    graphDocument,
-  ],
-  ir: [
-    'force-app/main/default/data360/identityResolution/Individual_A1b2.identityResolution.json',
-    irDocument(),
-  ],
+  graph: ['data360/dataGraphs/SyntheticGraph.native-dataGraph.json', graphDocument],
+  ir: ['data360/identityResolution/Individual_A1b2.identityResolution.json', irDocument()],
   transform: ['data360/dataTransforms/SyntheticTransform.dataTransform.json', transformDocument],
   dmo: ['data360/dmo/Example__dlm.dmo-meta.json', dmoDocument('Example__dlm')],
   stream: ['data360/data-stream/Example_Probe.data-stream-meta.json', streamDocument],
@@ -706,7 +700,7 @@ files.lenientMapping = [
     value.spec.futureSpec = 'kept';
   }),
 ];
-const segmentFolder = 'force-app/main/default/data360/segments';
+const segmentFolder = 'data360/segments';
 files.lenientSegment = [
   `${segmentFolder}/Audience.segment.json`,
   {

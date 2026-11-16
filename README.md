@@ -461,12 +461,12 @@ the selector ignoring case (`-m data-transform:copy` deletes `Copy` and removes
 | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dlo`, `dmo`, `relationship`, `data-stream`, `data-transform`, `calculated-insight` | its file under `data360/` in the current directory (`data360/dataTransforms/<Name>.dataTransform.json` for a transform; both `data360/calculatedInsights/<Name>.calculatedInsight-meta.json` and `.calculatedInsight-meta.sql` for a calculated insight); with `--delete-dlo` (or its landing DLO selected) also the linked DLO's file |
 | `mapping`                                                                           | `data360/mapping/<Name>.mapping-meta.json`, or the hand-written mapping file whose binding matches                                                                                                                                                                                                                                     |
-| `segment`, `identity-resolution`, `data-graph`                                      | its canonical file under the default package directory of `sfdx-project.json` (`force-app/main/default` without one), for example `data360/segments/<Name>.segment.json` together with every `<Name>.segment.*.sql` beside it                                                                                                          |
+| `segment`, `identity-resolution`, `data-graph`                                      | its file under `data360/` in the current directory: `data360/segments/<Name>.segment.json` together with every `<Name>.segment.*.sql` beside it, `data360/identityResolution/<Name>.identityResolution.json`, `data360/dataGraphs/<Name>.native-dataGraph.json`                                                                        |
 
 Files are removed one at a time and only when they are regular files: directories,
 symbolic links, junctions, files reached through a linked folder and hard-linked
-files are refused, and so is any path outside the project's `data360` folder or the
-package directory. Each result item lists
+files are refused, and so is any path outside the project's `data360` folder. Each
+result item lists
 `removedLocalFiles` with the outcome of every file: `removed`, `not-present`,
 `kept` or `failed`. A failed removal keeps the confirmed org outcome; the command
 then exits nonzero with `LOCAL_FILE_REMOVAL_FAILED`. Remove that file by hand; do
@@ -607,9 +607,8 @@ Retrieve (default/`auto` or `--api-version 68.0`) a graph in the default data sp
 object (standard, such as `ssot__Individual__dlm`, or unified, such as
 `UnifiedssotIndividualMkt__dlm`), its related objects with their join paths, all field
 types and its refresh schedule. Retrieve writes
-`force-app/main/default/data360/dataGraphs/ExampleGraph.native-dataGraph.json`
-(or the configured source package), a `kind: native-data-graph`, `apiVersion: 68.0`
-document. Retained bindings are matched to the target again; source-org record IDs do
+`data360/dataGraphs/ExampleGraph.native-dataGraph.json` at the project root, a
+`kind: native-data-graph`, `apiVersion: 68.0` document. Retained bindings are matched to the target again; source-org record IDs do
 not become target authority. A draft graph (never built) is written as-is with reason
 `DATA_GRAPH_DRAFT`: Salesforce does not let the API edit a draft, and a normal file would
 build it. A delete (`-m data-graph:Name`, or `--changed-since` after deleting the file)
@@ -617,8 +616,8 @@ removes the draft.
 
 ```sh
 sf data360 retrieve -o source -m data-graph:ExampleGraph -d ./project --json
-sf data360 deploy -o target --source-dir ./project/force-app/main/default/data360/dataGraphs/ExampleGraph.native-dataGraph.json --preview --json
-sf data360 deploy -o target --source-dir ./project/force-app/main/default/data360/dataGraphs/ExampleGraph.native-dataGraph.json --allow-processing --json
+sf data360 deploy -o target --source-dir ./project/data360/dataGraphs/ExampleGraph.native-dataGraph.json --preview --json
+sf data360 deploy -o target --source-dir ./project/data360/dataGraphs/ExampleGraph.native-dataGraph.json --allow-processing --json
 sf data360 delete -o target -m data-graph:ExampleGraph --preview --json
 sf data360 delete -o target -m data-graph:ExampleGraph --json
 ```
@@ -2762,8 +2761,8 @@ that canonical file from the Salesforce project root:
 
 ```sh
 sf data360 retrieve --metadata identity-resolution:Individual_ir01 --target-org source --api-version 68.0 --data-space default --json
-sf data360 deploy --source-dir force-app/main/default/data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --api-version 68.0 --data-space default --preview --json
-sf data360 deploy --source-dir force-app/main/default/data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --api-version 68.0 --data-space default --allow-processing --json
+sf data360 deploy --source-dir data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --api-version 68.0 --data-space default --preview --json
+sf data360 deploy --source-dir data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --api-version 68.0 --data-space default --allow-processing --json
 ```
 
 The portable definition retains labels/description, automatic-run and case settings,
@@ -2804,7 +2803,7 @@ Salesforce's immediate answer names this ruleset (its API name, or on an update
 its existing ID), and returns without that wait:
 
 ```sh
-sf data360 deploy --source-dir force-app/main/default/data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --allow-processing --async --json
+sf data360 deploy --source-dir data360/identityResolution/Individual_ir01.identityResolution.json --target-org source --allow-processing --async --json
 ```
 
 The item reports `creation-processing` or `update-processing` with mutation

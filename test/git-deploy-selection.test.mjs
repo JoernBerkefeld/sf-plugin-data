@@ -249,7 +249,7 @@ test('legacy Segment XML Git selection refuses rather than discovering or rewrit
   );
 });
 
-test('Segment Git selection honors configured package and refuses aliased or duplicate pair paths', async () => {
+test('Segment Git selection reads data360/ at the root whatever the package directory and refuses aliased or duplicate pair paths', async () => {
   const cwd = await fixture();
   await put(cwd, 'sfdx-project.json', {
     packageDirectories: [{ path: 'custom space', default: true }],
@@ -282,7 +282,7 @@ for (const mode of ['identity', 'duplicate-key', 'nested', 'suffix-case', 'junct
         text.replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1'),
       );
     if (mode === 'nested') {
-      await put(cwd, 'force-app/main/default/data360/segments/nested/Audience.segment.json', text);
+      await put(cwd, 'data360/segments/nested/Audience.segment.json', text);
     }
     if (mode === 'suffix-case')
       await rename(p.path, p.path.replace('.segment.json', '.SEGMENT.JSON'));

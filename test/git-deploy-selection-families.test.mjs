@@ -178,7 +178,7 @@ const families = {
   },
   'data-graph': {
     kind: 'native-data-graph',
-    file: 'force-app/main/default/data360/dataGraphs/SyntheticGraph.native-dataGraph.json',
+    file: 'data360/dataGraphs/SyntheticGraph.native-dataGraph.json',
     apiName: 'SyntheticGraph',
     value: {
       schemaVersion: 1,

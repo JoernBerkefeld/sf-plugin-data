@@ -22,7 +22,6 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { joinSegmentFiles, segmentName } from './segment-document.js';
 import type { SegmentDocument } from './segment-document.js';
-import { segmentSourceRoot } from './write-segment.js';
 import {
   identityResolutionName,
   validateIdentityResolutionDocument,
@@ -119,7 +118,7 @@ function verbatimRefusal(document: VerbatimDocument): DeployInputError {
 }
 
 export type SegmentDeployInput = {
-  /** `data360/segments/<apiName>.segment.json` under the package directory. */
+  /** `data360/segments/<apiName>.segment.json` under the project root. */
   path: string;
   /** The SQL file of each model next to it, `<apiName>.segment.<model>.sql`, in model order. */
   codePaths: readonly string[];
@@ -315,13 +314,10 @@ export type NativeDataGraphDeployInput = {
 async function readNativeDataGraphInput(file: string): Promise<NativeDataGraphDeployInput> {
   const name = path.basename(file).slice(0, -'.native-dataGraph.json'.length);
   const directory = path.dirname(file);
-  const base = path.dirname(path.dirname(directory));
   if (
     !dataGraphName.test(name) ||
     path.basename(directory) !== 'dataGraphs' ||
-    path.basename(path.dirname(directory)) !== 'data360' ||
-    path.basename(base) !== 'default' ||
-    path.basename(path.dirname(base)) !== 'main'
+    path.basename(path.dirname(directory)) !== 'data360'
   )
     throw new DeployInputError('INVALID_SELECTION');
   const bytes = await memberBytes(file);
@@ -554,14 +550,11 @@ async function readIdentityResolutionInput(file: string): Promise<IdentityResolu
   const suffix = '.identityResolution.json';
   const name = path.basename(file).slice(0, -suffix.length);
   const directory = path.dirname(file);
-  const base = path.dirname(path.dirname(directory));
   if (
     !file.endsWith(suffix) ||
     !identityResolutionName.test(name) ||
     path.basename(directory) !== 'identityResolution' ||
-    path.basename(path.dirname(directory)) !== 'data360' ||
-    path.basename(base) !== 'default' ||
-    path.basename(path.dirname(base)) !== 'main'
+    path.basename(path.dirname(directory)) !== 'data360'
   )
     throw new DeployInputError('INVALID_SELECTION');
   const bytes = await memberBytes(file);
@@ -791,10 +784,7 @@ async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput>
   const marker = entry.indexOf(segmentMemberInfix);
   const name = marker > 0 ? entry.slice(0, marker) : '';
   const directory = path.dirname(file);
-  const base = path.dirname(path.dirname(directory));
   if (
-    path.basename(base) !== 'default' ||
-    path.basename(path.dirname(base)) !== 'main' ||
     path.basename(directory) !== 'segments' ||
     path.basename(path.dirname(directory)) !== 'data360'
   )
@@ -1088,18 +1078,6 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       return { kind: 'segment', name: value.slice(8) };
     throw new DeployInputError('INVALID_SELECTION');
   });
-  const base = selectors?.some(
-    (item) =>
-      item.kind !== 'dmo' &&
-      item.kind !== 'dlo' &&
-      item.kind !== 'mapping' &&
-      item.kind !== 'relationship' &&
-      item.kind !== 'data-stream' &&
-      item.kind !== 'data-transform' &&
-      item.kind !== 'calculated-insight',
-  )
-    ? await segmentSourceRoot(flags.cwd)
-    : undefined;
   const roots = selectors
     ? selectors.map(({ kind, name }) =>
         kind === 'data-transform'
@@ -1120,7 +1098,12 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
                   : kind === 'dlo'
                     ? path.join(flags.cwd, 'data360', 'dlo', `${name}.dlo-meta.json`)
                     : kind === 'data-graph'
-                      ? path.join(base!, 'data360', 'dataGraphs', `${name}.native-dataGraph.json`)
+                      ? path.join(
+                          flags.cwd,
+                          'data360',
+                          'dataGraphs',
+                          `${name}.native-dataGraph.json`,
+                        )
                       : kind === 'calculated-insight'
                         ? path.join(
                             flags.cwd,
@@ -1130,12 +1113,12 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
                           )
                         : kind === 'identity-resolution'
                           ? path.join(
-                              base!,
+                              flags.cwd,
                               'data360',
                               'identityResolution',
                               `${name}.identityResolution.json`,
                             )
-                          : path.join(base!, 'data360', 'segments', `${name}.segment.json`),
+                          : path.join(flags.cwd, 'data360', 'segments', `${name}.segment.json`),
       )
     : sourceDir!.map((value) => {
         if (

@@ -51,9 +51,8 @@ rerun the same delete once it reads absent). A `-m` delete needs no confirmation
   `ITEM_NOT_FOUND`; any other list error stops the delete), 2+ `AMBIGUOUS_RELATIONSHIP_TARGET`, a match whose source object is another
   DMO `RELATIONSHIP_TARGET_BINDING_MISMATCH`. No local file is read.
 - Local files after a confirmed deletion are removed at their canonical paths by name:
-  `data360/dataTransforms/<Name>.dataTransform.json` under the current directory; the
-  Segment, IR, graph file and both CI members under the default package directory of
-  `sfdx-project.json`. `--keep-local-files` keeps them. The name in those paths and in the
+  `data360/dataTransforms/<Name>.dataTransform.json`, the Segment, IR and graph file and
+  both CI members under `data360/` in the current directory. `--keep-local-files` keeps them. The name in those paths and in the
   result item is the org's spelling when the read matched ignoring case (absent: the
   selector's spelling).
 
@@ -908,7 +907,7 @@ its DMO deleted in one command (15 s). DMOs have no dependency route (`/dependen
 After a confirmed deletion (`deleted`/`confirmed-deleted`, or
 `deletion-processing`/`acknowledged-processing`) delete removes the component's local
 file at its canonical path by name, one regular file at a time and only inside the
-project's `data360` folder or the default package directory of `sfdx-project.json`. Results list `removedLocalFiles` (`removed`, `not-present`,
+project's `data360` folder. Results list `removedLocalFiles` (`removed`, `not-present`,
 `kept`, `failed`); a failed removal keeps the org outcome and exits nonzero with
 `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps the files and `--preview` lists
 them as `localFiles`. Details are in [artifact formats](artifact-format.md).

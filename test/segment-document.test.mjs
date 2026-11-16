@@ -316,10 +316,7 @@ test('writer preserves a racing companion and reports incomplete pair rather tha
         calls++;
         await link(from, to);
         if (calls === 1) {
-          const companion = path.join(
-            directory,
-            'force-app/main/default/data360/segments/Audience.segment.json',
-          );
+          const companion = path.join(directory, 'data360/segments/Audience.segment.json');
           await writeFile(companion, 'racing author');
         }
       },
@@ -327,10 +324,7 @@ test('writer preserves a racing companion and reports incomplete pair rather tha
     { code: 'PARTIAL_SEGMENT_OUTPUT' },
   );
   assert.equal(
-    await readFile(
-      path.join(directory, 'force-app/main/default/data360/segments/Audience.segment.json'),
-      'utf8',
-    ),
+    await readFile(path.join(directory, 'data360/segments/Audience.segment.json'), 'utf8'),
     'racing author',
   );
 });
@@ -357,19 +351,19 @@ test('writer fails before publication when the first filesystem publication fail
   );
 });
 
-test('writer honors configured package and refuses junction output', async () => {
+test('writer ignores the configured package and refuses junction output', async () => {
   const directory = await root();
   await writeFile(
     path.join(directory, 'sfdx-project.json'),
     JSON.stringify({ packageDirectories: [{ path: 'custom', default: true }] }),
   );
   const receipt = await writeSegmentDocument(candidate(), directory, false);
-  assert.ok(receipt.path.includes(`${path.sep}custom${path.sep}`));
+  assert.equal(receipt.path, path.join(directory, 'data360', 'segments', 'Audience.segment.json'));
   const outside = await root();
   const linked = await root();
   await symlink(
     outside,
-    path.join(linked, 'force-app'),
+    path.join(linked, 'data360'),
     process.platform === 'win32' ? 'junction' : 'dir',
   );
   await assert.rejects(writeSegmentDocument(candidate(), linked, true));

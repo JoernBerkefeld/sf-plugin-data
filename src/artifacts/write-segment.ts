@@ -144,9 +144,8 @@ export async function writeSegmentDocument(
   const root = path.resolve(projectRoot);
   let published = 0;
   try {
-    const base = await segmentSourceRoot(root);
     const jsonPath = path.join(
-      base,
+      root,
       'data360',
       'segments',
       `${document.identity.apiName}.segment.json`,

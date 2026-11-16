@@ -28,7 +28,7 @@ Deploying from a change list the plugin could not read completely might skip or 
 ```text
 Deploy execution: blocked. No automatic retry or rollback performed.
 Deployed: 0 (0 created / 0 updated / 0 failed)
-INVALID_GIT_SELECTION: Git selection failed. Use a valid commit reference and canonical files under data360/ (DLO, DMO, mapping, relationship, data stream, data transform) or the configured package directory (data graph, identity resolution, calculated insight, Segment JSON) with matching identities and unchanged admitted bytes.
+INVALID_GIT_SELECTION: Git selection failed. Use a valid commit reference and canonical files under data360/ (DLO, DMO, mapping, relationship, data stream, data transform, data graph, identity resolution, calculated insight, Segment JSON and SQL) with matching identities and unchanged admitted bytes.
 Hint: The --changed-since reference or the Git output could not be used. Pass a commit, branch or tag that exists locally and run the command inside the Git repository.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/INVALID_GIT_SELECTION.md
 ```

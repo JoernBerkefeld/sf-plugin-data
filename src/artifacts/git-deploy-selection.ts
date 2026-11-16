@@ -14,7 +14,6 @@ import { codeFilePath } from './code-fields.js';
 import { nativeDmoName } from './native-dmo-document.js';
 import { identityResolutionName } from './identity-resolution-document.js';
 import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
-import { segmentSourceRoot } from './write-segment.js';
 import { segmentName } from './segment-document.js';
 import { calculatedInsightName } from './native-calculated-insight-document.js';
 import type { CalculatedInsightDeployInput } from './read-deploy-input.js';
@@ -123,82 +122,71 @@ function tokens(output: string): string[] {
 const ciJsonSuffix = '.calculatedInsight-meta.json';
 const ciSqlSuffix = '.calculatedInsight-meta.sql';
 
-/** Family by file suffix; `package` families live under the sfdx package directory. */
+/** Family by file suffix; every family lives under `data360/` at the repository root. */
 const families: ReadonlyArray<{
   kind: DeletedArtifactKind;
   suffix: string;
   directory: readonly string[];
-  base: 'root' | 'package';
   name: (value: string) => boolean;
 }> = [
   {
     kind: 'dmo',
     suffix: '.dmo-meta.json',
     directory: ['data360', 'dmo'],
-    base: 'root',
     name: (value) => nativeDmoName.test(value),
   },
   {
     kind: 'dlo',
     suffix: '.dlo-meta.json',
     directory: ['data360', 'dlo'],
-    base: 'root',
     name: (value) => dloName.test(value) && value.endsWith('__dll'),
   },
   {
     kind: 'mapping',
     suffix: '.mapping-meta.json',
     directory: ['data360', 'mapping'],
-    base: 'root',
     name: (value) => nativeMappingName.test(value),
   },
   {
     kind: 'relationship',
     suffix: '.relationship-meta.json',
     directory: ['data360', 'relationship'],
-    base: 'root',
     name: (value) => nativeRelationshipName.test(value),
   },
   {
     kind: 'data-stream',
     suffix: '.data-stream-meta.json',
     directory: ['data360', 'data-stream'],
-    base: 'root',
     name: (value) => /^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value),
   },
   {
     kind: 'data-transform',
     suffix: '.dataTransform.json',
     directory: ['data360', 'dataTransforms'],
-    base: 'root',
     name: (value) => dataTransformName.test(value),
   },
   {
     kind: 'data-graph',
     suffix: '.native-dataGraph.json',
     directory: ['data360', 'dataGraphs'],
-    base: 'package',
     name: (value) => dataGraphName.test(value),
   },
   {
     kind: 'identity-resolution',
     suffix: '.identityResolution.json',
     directory: ['data360', 'identityResolution'],
-    base: 'package',
     name: (value) => identityResolutionName.test(value),
   },
   {
     kind: 'calculated-insight',
     suffix: ciJsonSuffix,
     directory: ['data360', 'calculatedInsights'],
-    base: 'root',
     name: (value) => calculatedInsightName.test(value),
   },
   {
     kind: 'segment',
     suffix: '.segment.json',
     directory: ['data360', 'segments'],
-    base: 'package',
     name: (value) => segmentName.test(value),
   },
 ];
@@ -219,24 +207,16 @@ const relevant = (file: string): boolean =>
   families.some(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
 // A deleted path in a plugin folder must resolve to a known family.
 const watched = (file: string): boolean => relevant(file) || file.split('/').includes('data360');
-const needsPackage = (file: string): boolean =>
-  segmentXml(file) ||
-  segmentSql(file) ||
-  families.some(
-    ({ suffix, base }) => base === 'package' && file.toLowerCase().endsWith(suffix.toLowerCase()),
-  );
 
 /**
  * Map one repository-relative path to its family and canonical name, or refuse it.
  * @param {string} file Repository-relative POSIX path.
  * @param {string} repositoryRoot Absolute repository root.
- * @param {string | undefined} packageBase Absolute sfdx package directory.
  * @returns {object} Family and canonical name (`__cio` included for calculated insights).
  */
 function classify(
   file: string,
   repositoryRoot: string,
-  packageBase: string | undefined,
 ): { kind: DeletedArtifactKind; name: string } {
   const relative = (absolute: string): string =>
     path.relative(repositoryRoot, absolute).split(path.sep).join('/');
@@ -257,7 +237,7 @@ function classify(
     if (
       !match ||
       !segmentName.test(match[1]) ||
-      file !== relative(path.join(packageBase!, 'data360', 'segments', match[0]))
+      file !== relative(path.join(repositoryRoot, 'data360', 'segments', match[0]))
     )
       throw new GitSelectionError('INVALID_GIT_SELECTION');
     return { kind: 'segment', name: match[1] };
@@ -265,11 +245,7 @@ function classify(
   const family = families.find(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
   if (!family) throw new GitSelectionError('INVALID_GIT_SELECTION');
   const name = path.posix.basename(file).slice(0, -family.suffix.length);
-  const expected = path.join(
-    family.base === 'root' ? repositoryRoot : packageBase!,
-    ...family.directory,
-    `${name}${family.suffix}`,
-  );
+  const expected = path.join(repositoryRoot, ...family.directory, `${name}${family.suffix}`);
   if (!family.name(name) || file !== relative(expected))
     throw new GitSelectionError('INVALID_GIT_SELECTION');
   return { kind: family.kind, name };
@@ -386,24 +362,23 @@ function identityKey(document: DeployInput['document'] | VerbatimDocument): stri
 /**
  * A deleted segment: its JSON and the SQL file of every base model, all gone from the worktree,
  * read from the merge base and joined.
- * @param {object} context Repository, merge base and package directory.
+ * @param {object} context Repository and merge base.
  * @param {string} context.repositoryRoot Absolute repository root.
  * @param {string} context.mergeBase Resolved merge base.
- * @param {string | undefined} context.packageBase Absolute sfdx package directory.
  * @param {string} file Deleted repository-relative path (the JSON or a SQL file).
  * @param {string} name Segment name.
  * @returns {Promise<GitDeleteCandidate | undefined>} Candidate, or undefined when the segment did not exist at the merge base.
  */
 async function segmentDeleteCandidate(
-  context: { repositoryRoot: string; mergeBase: string; packageBase: string | undefined },
+  context: { repositoryRoot: string; mergeBase: string },
   file: string,
   name: string,
 ): Promise<GitDeleteCandidate | undefined> {
-  const { repositoryRoot, mergeBase, packageBase } = context;
+  const { repositoryRoot, mergeBase } = context;
   const relative = (value: string): string =>
     path.relative(repositoryRoot, value).split(path.sep).join('/');
   const absolute = (value: string): string => path.join(repositoryRoot, ...value.split('/'));
-  const jsonPath = path.join(packageBase!, 'data360', 'segments', `${name}.segment.json`);
+  const jsonPath = path.join(repositoryRoot, 'data360', 'segments', `${name}.segment.json`);
   const json = await revisionBytes(repositoryRoot, mergeBase, relative(jsonPath));
   if (json === undefined) {
     // Added after the merge base and removed again: nothing changed in the range.
@@ -459,18 +434,17 @@ async function segmentDeleteCandidate(
 
 /**
  * Turn deleted paths into delete candidates identified from merge-base content.
- * @param {object} context Repository, merge base and package directory.
+ * @param {object} context Repository and merge base.
  * @param {string} context.repositoryRoot Absolute repository root.
  * @param {string} context.mergeBase Resolved merge base.
- * @param {string | undefined} context.packageBase Absolute sfdx package directory.
  * @param {string[]} removed Deleted watched paths absent from the worktree.
  * @returns {Promise<GitDeleteCandidate[]>} Candidates sorted by path.
  */
 async function deleteCandidates(
-  context: { repositoryRoot: string; mergeBase: string; packageBase: string | undefined },
+  context: { repositoryRoot: string; mergeBase: string },
   removed: string[],
 ): Promise<GitDeleteCandidate[]> {
-  const { repositoryRoot, mergeBase, packageBase } = context;
+  const { repositoryRoot, mergeBase } = context;
   const absolute = (file: string): string => path.join(repositoryRoot, ...file.split('/'));
   const candidates = new Map<string, GitDeleteCandidate>();
   // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the existing TypeScript library target.
@@ -478,7 +452,7 @@ async function deleteCandidates(
     let kind: DeletedArtifactKind;
     let name: string;
     try {
-      ({ kind, name } = classify(file, repositoryRoot, packageBase));
+      ({ kind, name } = classify(file, repositoryRoot));
     } catch {
       // A deleted file of no known family cannot be turned into an org delete.
       throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
@@ -663,15 +637,12 @@ export async function selectGitDeployInputs(options: {
       paths.delete(file);
       removed.push(file);
     }
-    const packageBase = [...paths, ...removed].some((file) => needsPackage(file))
-      ? await segmentSourceRoot(repositoryRoot)
-      : undefined;
     const metadata = [...paths].map((file) => {
       if (segmentXml(file)) throw new GitSelectionError('INVALID_GIT_SELECTION');
-      const { kind, name } = classify(file, repositoryRoot, packageBase);
+      const { kind, name } = classify(file, repositoryRoot);
       return `${kind}:${name}`;
     });
-    const deletions = await deleteCandidates({ repositoryRoot, mergeBase, packageBase }, removed);
+    const deletions = await deleteCandidates({ repositoryRoot, mergeBase }, removed);
     // Existing admission checks canonical filename, document identity and no-link regular files.
     // A Git range names every changed file; verbatim ones are skipped with a warning.
     const inputs =

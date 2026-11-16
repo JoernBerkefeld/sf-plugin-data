@@ -7,7 +7,6 @@ import {
   serializeIdentityResolutionDocument,
   validateIdentityResolutionDocument,
 } from './identity-resolution-document.js';
-import { segmentSourceRoot } from './write-segment.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
 import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
@@ -118,9 +117,8 @@ export async function writeIdentityResolutionDocument(
   if (path.dirname(root) === root) throw new IdentityResolutionError('UNSAFE_PATH');
   let published = false;
   try {
-    const base = await segmentSourceRoot(root);
     const destination = path.join(
-      base,
+      root,
       'data360',
       'identityResolution',
       `${document.identity.apiName}.identityResolution.json`,
