@@ -107,6 +107,12 @@ test('retrieve of a UI segment GET writes a normal document with decoded criteri
   assert.equal(decodeSegmentCriteria('&amp;quot;&#65;&#x42;&lt;'), '&quot;AB<');
 });
 
+test('a UI segment GET with server-owned segmentMembershipTable is a normal document', () => {
+  const read = { ...runtime(), segmentMembershipTable: 'Audience_Membership__dlm' };
+  const projected = projectSegment({ segments: [read] }, 'Audience', 'retrieve');
+  assert.deepEqual(projected.candidate, document());
+});
+
 test('what the UI segment write cannot carry stays as-is', () => {
   for (const change of [
     { excludeCriteria: '{}' },

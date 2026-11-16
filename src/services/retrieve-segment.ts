@@ -96,7 +96,7 @@ const uiConfiguration = [
   'lookbackPeriod',
 ];
 // Server-owned keys of a UI segment GET beyond the DBT observations.
-const uiObservations = ['lastPublishedEndDateTime', 'publishStatus'];
+const uiObservations = ['lastPublishedEndDateTime', 'publishStatus', 'segmentMembershipTable'];
 
 /**
  * Project a UI segment (built in the segment canvas): the GET minus server-owned keys, with
