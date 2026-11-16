@@ -2,15 +2,15 @@
 
 > A relationship request ended without a clear result (an HTTP request, or a Metadata API read or update). For a create, update or delete, list the source DMO's relationships before trying again; nothing is retried.
 
-|              |                                                                                                        |
-| ------------ | ------------------------------------------------------------------------------------------------------ |
-| **Family**   | Relationship                                                                                           |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                        |
-| **Outcome**  | `failed` with mutation `unknown` after a create or delete; otherwise `failed` on retrieve or `blocked` |
+|              |                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Relationship                                                                                                   |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`                                                |
+| **Outcome**  | `failed` with mutation `unknown` after a create, update or delete; otherwise `failed` on retrieve or `blocked` |
 
 ## What it means
 
-A relationship request finished, but the plugin could not read a clear result: the CLI output had no HTTP status line, the CLI exited with an error despite a success status, the status was a success code the plugin does not expect for that request, or the connection failed without an HTTP status.
+A relationship request finished, but the plugin could not read a clear result: the CLI output had no HTTP status line, the CLI exited with an error despite a success status, the status was a success code the plugin does not expect for that request, or the connection failed without an HTTP status. For a Metadata API update of the relationship, it also covers a server SOAP fault (`soapenv:Server`, `sf:UNKNOWN_EXCEPTION`), any other fault that is not a client refusal, and an update without a readable answer.
 
 ## Why the plugin stops
 

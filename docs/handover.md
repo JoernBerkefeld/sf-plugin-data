@@ -1,3 +1,15 @@
+# Relationship update: a server fault is unconfirmed, not rejected — 2026-11-16
+
+Same defect as the stream label entry below, in the `update` call of
+`src/transport/relationship-rest.ts`. Only client faults (`soapenv:Client`, `sf:INVALID_*`,
+`sf:MALFORMED_*`, `sf:REQUEST_LIMIT_EXCEEDED`, `sf:INSUFFICIENT_ACCESS`, `sf:API_DISABLED_FOR_ORG`,
+`sf:UNSUPPORTED_API_VERSION`) and a `success: false` result are `RELATIONSHIP_UPDATE_REJECTED`;
+`soapenv:Server`, `sf:UNKNOWN_EXCEPTION` and any other fault are `RELATIONSHIP_REQUEST_UNCONFIRMED`
+(mutation `unknown`, no resend). The single resend is unchanged: only a `success: false`
+`UNKNOWN_EXCEPTION` "An unexpected error occurred." with an unchanged re-read is sent once more; a
+server fault on that resend is unconfirmed. Tests in `test/native-relationship.test.mjs`; error
+pages of both codes updated.
+
 # Stream label update: a server fault is unconfirmed, not rejected — 2026-11-16
 
 Review must-fix. `relabelCall` in `src/transport/data-stream-rest.ts` treated every
@@ -334,15 +346,16 @@ may be an alias that a fresh `AuthInfo.create` cannot open. GETs no longer start
 `sf api request rest` and now get the A retries. Writes are untouched (retrieve has none); every read
 still goes through `recordNativeReads`/`nativeReadRecorder`. No parallelism was added.
 Measured live on isolated-source (00Daj000010xkZNEAY), counting with an uncommitted lib patch:
+
 - subset (20 DLOs + 20 DMOs, exact selectors): before 404 s and 40 child processes (about 10 s per
   read); after 22 s, 0 child processes, 40 in-process GETs. Output directories identical
   (`diff -r`); JSON envelopes identical apart from `generatedAt` and the output path.
 - full bare `-m dlo -m dmo`: after 666 s (11 min), 0 child processes, 1332 GETs, 1296 files
   (98 DLOs, 1198 DMOs). Before, extrapolated: about 1302 reads x 10 s, about 3.6 h.
   6 DLO 404s were `CliIngEng_*` probe DLOs listed and then deleted by a parallel research worker.
-Tests: `native-retrieve.test.mjs` (one sender shared by DLO, DMO, mapping and both mapping
-parents; no runner) and `retrieve-mixed.test.mjs` (mixed path DLOs share the sender bound to the
-run's Connection). Open: the bound path never refreshes an expired access token (as in deploy).
+  Tests: `native-retrieve.test.mjs` (one sender shared by DLO, DMO, mapping and both mapping
+  parents; no runner) and `retrieve-mixed.test.mjs` (mixed path DLOs share the sender bound to the
+  run's Connection). Open: the bound path never refreshes an expired access token (as in deploy).
 
 # Retries (A) — 2026-11-16
 
@@ -1139,7 +1152,7 @@ decision of the same day). Version stays 0.1.0. Committed as 5a9b989; live read-
   `data360:delete-by-name.segment-execute.api68`.
 - Several transforms in one delete (user decision 2026-11-14): allowed; each is resolved by
   name and deleted on its own in P2. Test: `one delete takes several transforms and deletes
-  each in P2` (test/crud-delete-pipeline.test.mjs).
+each in P2` (test/crud-delete-pipeline.test.mjs).
 - `sf data360 delete` selects by name with `-m` only. `-d`/`--source-dir` and
   `--transform-target-id` are removed from the command. `--confirm-delete` has
   `dependsOn: ['changed-since']` (oclif refuses it beside `-m`) and is required only for a

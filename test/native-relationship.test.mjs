@@ -637,7 +637,30 @@ test('Metadata API read and update go over the bound sender, ten names per read'
     operationDiagnostic(refused, ''),
     /refused the Metadata API update of the relationship .*UNKNOWN_EXCEPTION: An unexpected error occurred\..*Nothing was changed/u,
   );
-  answer = Object.assign(new Error('not a valid value for the enum'), { name: 'soapenv:Client' });
+  // Client faults are refusals; server and other faults may follow an applied update.
+  for (const [fault, expected] of [
+    ['soapenv:Client', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['sf:INVALID_CROSS_REFERENCE_KEY', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['sf:MALFORMED_ID', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['sf:REQUEST_LIMIT_EXCEEDED', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['sf:INSUFFICIENT_ACCESS', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['sf:API_DISABLED_FOR_ORG', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['sf:UNSUPPORTED_API_VERSION', 'RELATIONSHIP_UPDATE_REJECTED'],
+    ['soapenv:Server', 'RELATIONSHIP_REQUEST_UNCONFIRMED'],
+    ['sf:UNKNOWN_EXCEPTION', 'RELATIONSHIP_REQUEST_UNCONFIRMED'],
+    ['sf:SOME_OTHER_FAULT', 'RELATIONSHIP_REQUEST_UNCONFIRMED'],
+  ]) {
+    answer = Object.assign(new Error('fault'), { name: fault });
+    const before = calls.length;
+    await assert.rejects(client.update({ fullName: name }), code(expected), fault);
+    assert.equal(calls.length, before + 1, `${fault} is sent once`);
+  }
+  // A success:false validation answer is a refusal.
+  answer = {
+    fullName: name,
+    success: false,
+    errors: { statusCode: 'FIELD_INTEGRITY_EXCEPTION', message: 'Not a valid field.' },
+  };
   await assert.rejects(client.update({ fullName: name }), code('RELATIONSHIP_UPDATE_REJECTED'));
   answer = new Error('socket hang up');
   await assert.rejects(client.update({ fullName: name }), code('RELATIONSHIP_REQUEST_UNCONFIRMED'));
@@ -736,7 +759,8 @@ test('writer publishes data360/relationship/<Name>.relationship-meta.json and gu
 /**
  * A fake client whose update goes through the real Metadata API transport: each answer in turn
  * (`ok` applies the update to the fake org).
- * @param {string[]} answers `ok`, `unexpected` or `refused` per update call.
+ * @param {string[]} answers `ok`, `unexpected`, `refused`, or a `server`/`client` SOAP fault per
+ *   update call.
  * @returns {object} Client, calls and update count.
  */
 const metadataAnswers = (answers) => {
@@ -749,6 +773,10 @@ const metadataAnswers = (answers) => {
       read: async () => assert.fail('reads go through the fake client'),
       update: async (_type, definition) => {
         const answer = answers[sent++];
+        if (answer === 'server' || answer === 'client')
+          throw Object.assign(new Error('fault'), {
+            name: answer === 'server' ? 'soapenv:Server' : 'soapenv:Client',
+          });
         if (answer === 'ok') {
           await apply(definition);
           return { fullName: definition.fullName, success: true, errors: [] };
@@ -811,6 +839,25 @@ test('a second unexpected error is rejected; other refusals and a changed org ar
   assert.equal(unknown.diagnostics[0].code, 'RELATIONSHIP_PERSISTENCE_UNCONFIRMED');
   assert.match(unknown.diagnostics[0].message, /unexpected error, but the relationship changed/u);
   assert.equal(changed.sent(), 1);
+});
+
+test('a server fault on update is unconfirmed and never resent; a client fault is rejected', async () => {
+  const server = metadataAnswers(['server', 'ok']);
+  const unknown = await executeRelationship(document, server.client);
+  assert.deepEqual([unknown.outcome, unknown.mutation], ['failed', 'unknown']);
+  assert.equal(unknown.diagnostics[0].code, 'RELATIONSHIP_REQUEST_UNCONFIRMED');
+  assert.equal(server.sent(), 1);
+  const client = metadataAnswers(['client', 'ok']);
+  const rejected = await executeRelationship(document, client.client);
+  assert.deepEqual([rejected.outcome, rejected.mutation], ['failed', 'rejected']);
+  assert.equal(rejected.diagnostics[0].code, 'RELATIONSHIP_UPDATE_REJECTED');
+  assert.equal(client.sent(), 1);
+  // The one resend after an unexpected error on an unchanged org ends in a server fault: unknown.
+  const resent = metadataAnswers(['unexpected', 'server', 'ok']);
+  const afterResend = await executeRelationship(document, resent.client);
+  assert.deepEqual([afterResend.outcome, afterResend.mutation], ['failed', 'unknown']);
+  assert.equal(afterResend.diagnostics[0].code, 'RELATIONSHIP_REQUEST_UNCONFIRMED');
+  assert.equal(resent.sent(), 2);
 });
 
 test('cardinality and owner that differ only in letter case are no change', async () => {

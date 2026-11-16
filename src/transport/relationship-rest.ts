@@ -92,6 +92,10 @@ function updateRefusal(
   return error;
 }
 
+/** SOAP faults where Salesforce refused the request itself, so nothing was applied. */
+const clientFault =
+  /^(?:soapenv:Client|sf:(?:INVALID_\w+|MALFORMED_\w+|REQUEST_LIMIT_EXCEEDED|INSUFFICIENT_ACCESS|API_DISABLED_FOR_ORG|UNSUPPORTED_API_VERSION))$/u;
+
 /**
  * A Metadata API answer as a list of records.
  * @param {unknown} value One record or several.
@@ -250,9 +254,10 @@ function metadataCalls(
       try {
         answer = await api.update(relationshipMetadataType, definition);
       } catch (error) {
-        // A SOAP fault (soapenv:Client, sf:INVALID_...) is Salesforce refusing the request.
+        // Only a client fault is Salesforce refusing the request; a server fault (soapenv:Server,
+        // sf:UNKNOWN_EXCEPTION) may follow an applied update, so it stays unconfirmed.
         const fault = error as { name?: unknown; message?: unknown } | null;
-        if (typeof fault?.name === 'string' && /^(?:soapenv|sf):/u.test(fault.name))
+        if (typeof fault?.name === 'string' && clientFault.test(fault.name))
           throw updateRefusal(name, [{ code: fault.name, message: fault.message }]);
         throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
       }
