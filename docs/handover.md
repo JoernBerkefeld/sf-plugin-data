@@ -1,3 +1,27 @@
+# Stream delete settlement: DELETING reads are pending, not drift — 2026-11-16
+
+Live bug (evidence `F:/Temp/fx-live-Bb46v5/logs/i17-delete.json`): `sf data360 delete --delete-dlo`
+of an Ingest stream removed stream and DLO, but the plugin reported failed/unknown
+`STREAM_BINDING_DRIFT` ("stream inventory/detail agreement"). Root cause: the settlement loop of
+`deleteNativeDataStream` ran the full `resolveDataStreamBinding` while the stream still read
+(mid-deletion GET differing from the list entry), and its list/detail comparison treated that as
+drift. Fix (`native-data-stream.ts`): after the DELETE, a stream that still reads (any status) is
+pending, only its name and record ID are checked (`STREAM_DELETE_GUARD_DRIFT` otherwise);
+binding resolution runs only after the stream reads 404, and `STREAM_BINDING_DRIFT`,
+`STREAM_SNAPSHOT_PENDING`, `STREAM_TARGET_MISMATCH`, `UNSUPPORTED_STREAM_READ` and 404 there
+are pending too; with `--delete-dlo` a DLO that still reads by name or ID is pending
+(`streamDloAbsent`) instead of `STREAM_PROPOSED_DLO_EXISTS`. The unmodelled (CRM and other
+connectors) delete had the same DLO case and waits the same way. Timeout stays
+`STREAM_DELETE_SETTLEMENT_UNCONFIRMED`; the preflight comparisons are unchanged, so drift
+before the write still refuses. `STREAM_PROPOSED_DLO_EXISTS` is create-only now (hint and
+docs page); `STREAM_DELETE_SETTLEMENT_UNCONFIRMED` docs name the waited states. Tests:
+`test/ingest-data-stream-variants.test.mjs` (logged sequence: three DELETING reads with the
+ACTIVE list entry, list naming it after the 404, event still In Use, DLO reading once more; and
+pre-write list/detail drift still blocked). Live on isolated-source (00Daj000010xkZNEAY): new
+connection `CliIngDd` (MCP), stream `CliIngDd_CliEvA_1D99DB14` created by the plugin, delete
+`--delete-dlo` reported deleted/confirmed-deleted, connection deleted; stream, DLO and
+connection GET 404. Evidence `F:/Temp/dlodel-live-KuHkMg/logs`.
+
 # Review fixes: stream mappings, UI segment comparison, expired retrieve token — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), review

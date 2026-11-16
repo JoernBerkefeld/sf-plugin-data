@@ -10,7 +10,7 @@
 
 ## What it means
 
-After the DELETE request, the plugin reads the stream, the connection's stream list and the event up to 20 times, about every 5 seconds, for at most 15 minutes. It reports success only when the stream reads as not found, the connection lists no stream, and the event is `Available` again (and, with `--delete-dlo`, the DLO is gone too).
+After the DELETE request, the plugin reads the stream, the connection's stream list and the event up to 20 times, about every 5 seconds, for at most 15 minutes. It reports success only when the stream reads as not found, the connection lists no stream, and the event is `Available` again (and, with `--delete-dlo`, the DLO reads as not found too). States in between are waited for, not reported: a stream or DLO that still reads (for example as `DELETING`), a list that still names the stream after its 404, an event still `In Use`.
 
 This code means that state was not reached in time.
 
@@ -37,4 +37,3 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 ## Related codes
 
 - [`STREAM_DELETE_UNCONFIRMED`](../data-stream/STREAM_DELETE_UNCONFIRMED.md) — the DELETE answer itself was unexpected.
-- [`STREAM_PROPOSED_DLO_EXISTS`](../data-stream/STREAM_PROPOSED_DLO_EXISTS.md) — with `--delete-dlo`, the DLO was still there.

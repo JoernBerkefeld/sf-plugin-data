@@ -105,7 +105,7 @@ export const hints: Readonly<Record<string, string>> = {
   STREAM_NOT_READY:
     'The stream or its DLO is not ACTIVE, for example still processing. Wait until both show ACTIVE in the org, then rerun.',
   STREAM_PROPOSED_DLO_EXISTS:
-    'A DLO with the name in spec.newDlo.name exists. For a create, choose another name; after a delete with --delete-dlo, check the DLO in the org.',
+    'A DLO with the name in spec.newDlo.name exists. Choose another name, or delete the old DLO first if it is no longer needed.',
   STREAM_REQUEST_UNCONFIRMED:
     'A stream request did not return a readable HTTP status. For a create, update or delete, the change may have happened; inspect the org, then rerun.',
   STREAM_SNAPSHOT_PENDING:

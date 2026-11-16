@@ -5,6 +5,7 @@ import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
 import { buildDataStreamCreateBody } from '../lib/artifacts/data-stream-document.js';
 import {
   executeDataStream,
+  executeDeleteDataStream,
   preflightDataStream,
 } from '../lib/services/command-native-data-stream.js';
 import {
@@ -399,4 +400,120 @@ test('deleting the last stream of a connection waits while the list still names 
   });
   assert.equal(result.operation, 'delete');
   assert.equal(streams.size, 0);
+});
+
+/**
+ * The org of `org()` with the live delete sequence of `F:/Temp/fx-live-Bb46v5/logs/i17-delete.json`:
+ * after the DELETE the stream still reads three times (DELETING, disabled) while the list returns its
+ * earlier ACTIVE entry, then reads 404 while the list still names it and the event stays In Use,
+ * and its DLO still reads once (DELETING) after the stream's 404.
+ * @returns {object} Clients, the deleted stream count and the DELETE calls.
+ */
+async function deletingOrg() {
+  const { clients, streams } = org();
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  const before = structuredClone(streams.get(created.targetApiName));
+  const deletes = [];
+  let deleted = false;
+  let deleting = 3;
+  let listed = 3;
+  let inUse = 4;
+  let dloReads = 1;
+  const base = clients;
+  const wrapped = {
+    ...base,
+    streams: {
+      ...base.streams,
+      get: async (identity) => {
+        if (deleted && deleting > 0 && [before.name, before.recordId].includes(identity)) {
+          deleting--;
+          return {
+            ...structuredClone(before),
+            status: 'DELETING',
+            isEnabled: false,
+            dataLakeObjectInfo: {
+              ...structuredClone(before.dataLakeObjectInfo),
+              status: 'DELETING',
+            },
+          };
+        }
+        return base.streams.get(identity);
+      },
+      list: async (name) => {
+        if (deleted && listed > 0) {
+          listed--;
+          return [structuredClone(before)];
+        }
+        return base.streams.list(name);
+      },
+      delete: async (recordId, cascade) => {
+        deletes.push([recordId, cascade]);
+        deleted = true;
+        await base.streams.delete(recordId, cascade);
+      },
+    },
+    connections: {
+      ...base.connections,
+      schema: async (id) => {
+        const result = await base.connections.schema(id);
+        if (deleted && inUse > 0) {
+          inUse--;
+          result.schemas.find((entry) => entry.name === 'CliEvA').availabilityStatus = 'In Use';
+        }
+        return result;
+      },
+    },
+    dlo: {
+      get: async (identity) => {
+        if (deleted && deleting === 0 && dloReads > 0) {
+          dloReads--;
+          return {
+            dataLakeObjects: [
+              {
+                name: before.dataLakeObjectInfo.name,
+                status: 'DELETING',
+                id: '1dl000000000001AAA',
+              },
+            ],
+          };
+        }
+        return base.dlo.get(identity);
+      },
+    },
+  };
+  return { clients: wrapped, streams, deletes, apiName: created.targetApiName };
+}
+
+test('a stream and DLO deleted with --delete-dlo through DELETING reads is reported as deleted', async () => {
+  const { clients, streams, deletes, apiName } = await deletingOrg();
+  const result = await executeDeleteDataStream(apiName, clients, {
+    deleteDlo: true,
+    verifyInput: async () => {},
+    wait: async () => {},
+  });
+  assert.equal(result.outcome, 'deleted', JSON.stringify(result.diagnostics));
+  assert.equal(result.mutation, 'confirmed-deleted');
+  assert.equal(deletes.length, 1);
+  assert.equal(deletes[0][1], true);
+  assert.equal(streams.size, 0);
+});
+
+test('list and detail of a stream that disagree before the DELETE still refuse it', async () => {
+  const { clients, deletes, apiName } = await deletingOrg();
+  const drifted = {
+    ...clients,
+    streams: {
+      ...clients.streams,
+      get: async (identity) => ({ ...(await clients.streams.get(identity)), isEnabled: false }),
+    },
+  };
+  const result = await executeDeleteDataStream(apiName, drifted, {
+    deleteDlo: true,
+    verifyInput: async () => {},
+    wait: async () => {},
+  });
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(result.diagnostics[0].code, 'STREAM_BINDING_DRIFT');
+  assert.equal(deletes.length, 0);
 });

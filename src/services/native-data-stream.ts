@@ -848,8 +848,19 @@ async function requireAbsentStreamDlo(
   apiName: string,
   clients: DataStreamReadClients,
 ): Promise<void> {
+  if (!(await streamDloAbsent(apiName, clients)))
+    throw new DataStreamError('STREAM_PROPOSED_DLO_EXISTS');
+}
+
+/**
+ * Observe DLO absence by name or ID: true only on a genuine native HTTP 404.
+ * @param {string} identity DLO name or ID.
+ * @param {DataStreamReadClients} clients Native DLO reader.
+ * @returns {Promise<boolean>} True when the DLO reads 404; false while it still reads.
+ */
+async function streamDloAbsent(identity: string, clients: DataStreamReadClients): Promise<boolean> {
   try {
-    await clients.dlo.get(apiName);
+    await clients.dlo.get(identity);
   } catch (error) {
     if (
       (error instanceof ConnectError &&
@@ -859,10 +870,10 @@ async function requireAbsentStreamDlo(
         ['REQUEST_FAILED', 'STREAM_HTTP_ERROR'].includes(error.code) &&
         error.status === 404)
     )
-      return;
+      return true;
     throw error;
   }
-  throw new DataStreamError('STREAM_PROPOSED_DLO_EXISTS');
+  return false;
 }
 
 /**
@@ -1990,24 +2001,26 @@ export async function preflightNativeDataStreamDelete(
 
 /**
  * Observe typed native stream absence without interpreting arbitrary errors as missing state.
+ * While deletion runs the stream may still read with any status; only its identity is checked.
  * @param {string} apiName Previously proven exact selected name.
+ * @param {string} streamId Record ID of the deleted stream.
  * @param {DataStreamReadClients} clients Native stream reader.
  * @returns {Promise<boolean>} True only for genuine HTTP404; existing DELETING remains pending.
  */
 async function deletedStreamAbsent(
   apiName: string,
+  streamId: string,
   clients: DataStreamReadClients,
 ): Promise<boolean> {
   try {
-    const current = inspectNativeDataStream(await clients.streams.get(apiName));
-    if (current.name !== apiName)
+    const current = object(await clients.streams.get(apiName));
+    if (current.name !== apiName || current.recordId !== streamId)
       throw explainMismatch(
-        new DataStreamError('STREAM_BINDING_DRIFT'),
-        'delete absence identity check',
+        new DataStreamError('STREAM_DELETE_GUARD_DRIFT'),
+        'delete remaining stream identity check',
         apiName,
-        apiName,
-        current.name,
-        'name',
+        { name: apiName, recordId: streamId },
+        { name: current.name, recordId: current.recordId },
       );
     return false;
   } catch (error) {
@@ -2056,9 +2069,9 @@ async function deleteUnmodelledDataStream(
       if (!isStreamNotFound(error)) throw error;
       absent = true;
     }
-    if (absent) {
-      if (plan.deleteDlo) await requireAbsentStreamDlo(dloName, clients);
-      else {
+    // With --delete-dlo the DLO can still read for a while after its stream answers 404.
+    if (absent && (!plan.deleteDlo || (await streamDloAbsent(dloName, clients)))) {
+      if (!plan.deleteDlo) {
         const released = streamDeleteDependencies(await clients.dependencies.dlo(dloName));
         if (released.totalSize !== 0)
           throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
@@ -2106,9 +2119,17 @@ export async function deleteNativeDataStream(
   const now = options.now ?? Date.now;
   const pause = options.wait ?? wait;
   const deadline = now() + 15 * 60 * 1000;
-  await clients.streams.delete(plan.binding.target!.recordId as string, selection.deleteDlo);
+  const streamId = plan.binding.target!.recordId as string;
+  await clients.streams.delete(streamId, selection.deleteDlo);
   for (let attempt = 0; attempt < 20 && now() < deadline; attempt++) {
-    const absent = await deletedStreamAbsent(apiName, clients);
+    const next = async (): Promise<void> => {
+      if (attempt < 19 && now() < deadline) await pause(Math.min(5000, deadline - now()));
+    };
+    // While the stream still reads (any status, e.g. DELETING) its deletion is running: wait.
+    if (!(await deletedStreamAbsent(apiName, streamId, clients))) {
+      await next();
+      continue;
+    }
     let binding: DataStreamBinding;
     try {
       binding = await resolveDataStreamBinding(
@@ -2121,9 +2142,22 @@ export async function deleteNativeDataStream(
         clients,
       );
     } catch (error) {
-      // The stream list can still name a stream whose own read already answers 404: pending.
-      if (!absent || !isStreamNotFound(error)) throw error;
-      if (attempt < 19 && now() < deadline) await pause(Math.min(5000, deadline - now()));
+      // After its 404 the list can still name the stream, list and detail can disagree and the
+      // event can still be In Use for a while: pending, never drift of the deleted stream.
+      if (
+        !isStreamNotFound(error) &&
+        !(
+          error instanceof DataStreamError &&
+          [
+            'STREAM_BINDING_DRIFT',
+            'STREAM_SNAPSHOT_PENDING',
+            'STREAM_TARGET_MISMATCH',
+            'UNSUPPORTED_STREAM_READ',
+          ].includes(error.code)
+        )
+      )
+        throw error;
+      await next();
       continue;
     }
     if (
@@ -2151,15 +2185,13 @@ export async function deleteNativeDataStream(
           );
       }
     }
-    if (
-      absent &&
-      !binding.target &&
-      binding.inventory.length === 0 &&
-      binding.availability === 'Available'
-    ) {
+    if (!binding.target && binding.inventory.length === 0 && binding.availability === 'Available') {
+      let settled = true;
       if (selection.deleteDlo) {
-        await requireAbsentStreamDlo(plan.dlo.name as string, clients);
-        await requireAbsentStreamDlo(plan.dlo.id as string, clients);
+        // The DLO can still read (e.g. DELETING) after its stream answers 404: pending.
+        settled =
+          (await streamDloAbsent(plan.dlo.name as string, clients)) &&
+          (await streamDloAbsent(plan.dlo.id as string, clients));
       } else {
         for (const identity of [plan.dlo.name, plan.dlo.id]) {
           const wrapper = object(await clients.dlo.get(identity as string));
@@ -2179,13 +2211,15 @@ export async function deleteNativeDataStream(
         if (released.totalSize !== 0)
           throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
       }
-      await options.verifyInput();
-      if (now() >= deadline) break;
-      return {
-        operation: 'delete',
-        targetApiName: apiName,
-        targetDloName: plan.dlo.name as string,
-      };
+      if (settled) {
+        await options.verifyInput();
+        if (now() >= deadline) break;
+        return {
+          operation: 'delete',
+          targetApiName: apiName,
+          targetDloName: plan.dlo.name as string,
+        };
+      }
     }
     if (
       binding.target &&
@@ -2198,7 +2232,7 @@ export async function deleteNativeDataStream(
         { name: apiName, recordId: plan.binding.target!.recordId },
         { name: binding.target.name, recordId: binding.target.recordId },
       );
-    if (attempt < 19 && now() < deadline) await pause(Math.min(5000, deadline - now()));
+    await next();
   }
   throw new DataStreamError('STREAM_DELETE_SETTLEMENT_UNCONFIRMED');
 }
