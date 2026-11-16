@@ -132,7 +132,6 @@ for (const version of ['auto', '68.0'])
     });
 
 for (const flags of [
-  { metadata: ['data-transform'] },
   { metadata: ['data-transform:'] },
   { metadata: ['data-transform:*'] },
   { metadata: ['data-transform:../Escape'] },

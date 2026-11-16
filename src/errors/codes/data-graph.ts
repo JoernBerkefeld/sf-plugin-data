@@ -6,8 +6,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The data graph is a draft that was never built, so it was retrieved as-is. A draft cannot be deployed or edited through the API; build or edit it in Salesforce.',
   DATA_GRAPH_IDENTITY_MISMATCH:
     'The org answered the read of a data graph with a different graph name than the one selected. Check the exact name, including case, in --metadata data-graph:<Name> and in the file, then rerun.',
-  DATA_GRAPH_INVENTORY_UNQUALIFIED:
-    'Retrieving all data graphs at once is not supported. Name each graph with --metadata data-graph:<Name>; repeat it for several.',
   DATA_GRAPH_OWNER:
     'The graph root is a unified DMO created by the named identity resolution ruleset, which is published. No action is needed.',
   DATA_GRAPH_OWNER_NOT_FOUND:

@@ -114,7 +114,6 @@ for (const json of [true, false])
     });
 
 for (const flags of [
-  { metadata: ['data-stream'] },
   { metadata: ['data-stream:'] },
   { metadata: ['data-stream:*'] },
   { metadata: ['data-stream:Alpha:Other'] },

@@ -26,8 +26,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce rejected a relationship request with an HTTP error. Read the status and API detail in the message; for a create, the source DMO (and a target DMO) must already be mapped.',
   RELATIONSHIP_INVENTORY_INCOMPLETE:
     'The relationship list of the DMO did not add up (page count, total or duplicate names), possibly because it changed during the read. Rerun the command.',
-  RELATIONSHIP_INVENTORY_UNQUALIFIED:
-    'Retrieving every relationship of the org is not supported. Select a source DMO with -m relationship:Name__dlm to retrieve the relationships that start from it.',
   RELATIONSHIP_NAME_MISMATCH:
     "No relationship has this name, but another one carries the file's binding. Retrieve the source DMO's relationships and delete that one by its name.",
   RELATIONSHIP_PERSISTENCE_UNCONFIRMED:

@@ -760,8 +760,8 @@ Not qualified:
       `cardinality` and `relationshipOwner`. Cardinality and owner are sent as written.
 - [x] Native route only, default/auto API68; numeric pins from 61 are kept.
 - [x] Retrieve `-m relationship:<Dmo__dlm>`: every relationship whose source is that
-      DMO, one file each. Bare `relationship` is refused
-      (`RELATIONSHIP_INVENTORY_UNQUALIFIED`). The list is read in pages of 200 by
+      DMO, one file each. Bare `relationship` reads those of every listed DMO,
+      one DMO after another. The list is read in pages of 200 by
       offset and must add up to `totalSize` without duplicate names
       (`RELATIONSHIP_INVENTORY_INCOMPLETE` otherwise).
 - [x] Deploy matches by binding (source object and field, target object and field), so

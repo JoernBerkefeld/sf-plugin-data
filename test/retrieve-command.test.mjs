@@ -799,16 +799,12 @@ for (const override of [
   { 'api-version': 'latest' },
   { metadata: ['relationship:Alpha'] },
   { metadata: ['relationship:../escape__dlm'] },
-  { metadata: ['relationship'] },
-  { metadata: ['relationship', 'dmo:Sample__dlm'] },
 ]) {
   test(`relationship selection refuses before auth ${JSON.stringify(override)}`, async () => {
     const command = invocation({ metadata: ['relationship:Alpha__dlm'], ...override });
     command.resolveOrg = () => assert.fail('invalid selection must precede auth');
     const { result } = await run(command);
     assert.equal(result.status, 'blocked');
-    if (override.metadata?.includes('relationship'))
-      assert.equal(result.diagnostics.errors[0].code, 'RELATIONSHIP_INVENTORY_UNQUALIFIED');
   });
 }
 

@@ -1,3 +1,33 @@
+# Bare stream, transform, graph and relationship retrieve — 2026-11-16
+
+`sf data360 retrieve -m data-stream`, `-m data-transform`, `-m data-graph` and `-m relationship`
+now list, then retrieve each item through the exact path (modelled on bare segment, c48fdd0).
+Routes, live on isolated-source (00Daj000010xkZNEAY, read-only): `GET /ssot/data-streams` pages
+by `limit` (max 200; 201 is HTTP 500) and `offset` with `totalSize`; `GET /ssot/data-transforms`
+by `limit` (largest page 20, larger values are echoed as 20) and `offset` with `totalSize`; graphs
+are one unpaged `GET /ssot/data-graphs/metadata?dataspace=default` (`dataGraphMetadata[]`,
+`developerName`; `/ssot/data-graphs` alone is 500 "Empty Data Graph Name"). No org-wide
+relationship list exists (`/ssot/relationships` and two other candidates are 404), so bare
+relationship reads every DMO the DMO inventory lists. No GUI was needed. New
+`src/services/retrieve-inventory.ts` (`listDataStreamNames`, `listDataTransformNames`,
+`listDataGraphNames`, one shared paged lister): an entry without a usable name is skipped with a
+warning, an entry that names only other data spaces is left out, an entry naming no space is left
+to its exact read, a malformed answer is `NATIVE_INVENTORY_UNCONFIRMED` for that inventory only,
+and a page with no new name ends the listing. One failing item never blocks the others; a
+named item still runs when its family listing fails. All list and item reads use the run's
+in-process connection; `createRelationshipClient` is now a method on the run's shared
+`ssotSender` (one bound sender for every DMO, not one per DMO). `DATA_GRAPH_INVENTORY_UNQUALIFIED`
+and `RELATIONSHIP_INVENTORY_UNQUALIFIED` removed (codes, pages, index rows). Tests:
+`test/retrieve-stream-transform-graph-relationship-inventory.test.mjs`. Live bare run of all four
+families: success, 0 errors, 986 s; streams 37 (2 as-is connector), transforms 9 (7 SYSTEM as-is),
+graphs 6, relationships 3826 from 1198 DMOs (1199 GETs, median 294 ms, 60% of the wall time);
+1393 in-process GETs, no plugin child process (the preload saw only 2 powershell process-name
+probes at CLI startup). Evidence `F:/Temp/stgr-inv-live-3xr10z/logs`, DB entry
+`data360:retrieve.all-stream-transform-graph-relationship.api68`. Open: bare relationship over
+about 1,200 DMOs is sequential (about 10 min); streams, transforms and relationships are written
+under the output directory's `data360/` while graphs go to `force-app/main/default/data360/`
+(existing behaviour).
+
 # Bare segment and identity-resolution retrieve — 2026-11-16
 
 `sf data360 retrieve -m segment` and `-m identity-resolution` now list, then retrieve each

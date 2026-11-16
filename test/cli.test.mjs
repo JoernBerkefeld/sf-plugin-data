@@ -190,7 +190,7 @@ test('README documents native relationships without the removed XML export', () 
   for (const required of [
     'data360/relationship/<Name>.relationship-meta.json',
     'sf data360 retrieve -m relationship:Order__dlm',
-    'RELATIONSHIP_INVENTORY_UNQUALIFIED',
+    'bare `relationship` selector reads the relationships of every DMO',
     'RELATIONSHIP_INVENTORY_INCOMPLETE',
     'deploy finds the relationship by its binding',
     'RELATIONSHIP_CHANGE_UNSUPPORTED',

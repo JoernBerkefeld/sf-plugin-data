@@ -255,10 +255,10 @@ test('a failing segment listing fails that inventory only; a named segment is st
 
 test('retrieve help keeps the other inventory statements', () => {
   for (const text of [
-    'Transform inventory is unsupported.',
-    'Stream inventory is unsupported.',
-    'bare relationship inventory is unavailable.',
-    'Graph inventory is blocked.',
+    'Bare -m data-transform retrieves every transform the API lists',
+    'Bare -m data-stream retrieves every stream the API lists',
+    'bare -m relationship does so for every DMO the API lists',
+    'Bare -m data-graph retrieves every default-space graph the API lists.',
     'bare -m calculated-insight every insight the API lists',
     'bare -m segment every default-space segment the API lists',
     'a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json',
@@ -269,8 +269,9 @@ test('retrieve help keeps the other inventory statements', () => {
     Retrieve.description,
     /Segment inventory is not available|IR inventory is blocked/u,
   );
+  assert.doesNotMatch(Retrieve.description, /inventory is (?:unsupported|unavailable|blocked)/u);
   assert.match(
     Retrieve.flags.metadata.summary,
-    /data-stream:ApiName, data-transform:Name and data-graph:ApiName are exact-only; .*bare segment, identity-resolution or calculated-insight/u,
+    /or the bare family name for every one the API lists/u,
   );
 });

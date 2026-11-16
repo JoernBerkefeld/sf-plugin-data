@@ -81,6 +81,11 @@ import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
 import { writeSegmentDocument } from '../../artifacts/write-segment.js';
 import { listSegmentNames, retrieveSegment } from '../../services/retrieve-segment.js';
 import {
+  listDataGraphNames,
+  listDataStreamNames,
+  listDataTransformNames,
+} from '../../services/retrieve-inventory.js';
+import {
   acquireRetrieveSelection,
   RetrieveSelectionError,
 } from '../../services/acquire-retrieve-selection.js';
@@ -347,7 +352,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve any mix of Data360 DLOs, DMOs, mappings, relationships, data streams, data transforms, data graphs, Segments, calculated insights and identity resolution configuration.';
   public static readonly description =
-    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves a custom transform without package namespace at API68/default only into data360/dataTransforms/<Name>.dataTransform.json: its create/update input as Salesforce returns it (definition or definitions, fullRunFrequency, write mode and the rest as read), without the schedule and without server-owned output object fields; the schedule is not retrieved or deployed. A system-generated or packaged transform is written as-is (verbatim), and deploy refuses that file. Transform inventory is unsupported. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only; a Salesforce CRM stream (connector SalesforceDotCom) is written as its GET without server-owned keys and the system fields and mappings Salesforce adds, formulas decoded. Stream inventory is unsupported. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare relationship inventory is unavailable. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Graph inventory is blocked. Calculated insights use the API68 GET only (auto or 68.0, default space): -m calculated-insight:ApiName__cio retrieves that insight and bare -m calculated-insight every insight the API lists, whatever its status, schedule or SQL; each is written as data360/calculatedInsights/<ApiName>.calculatedInsight-meta.json (the GET body as returned, without status, run history, source-CI links, creation type, sub type and the dimensions and measures Salesforce derives from the SQL) plus its SQL as plain text in <ApiName>.calculatedInsight-meta.sql. IR uses native API68 owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. -m identity-resolution:ExactObjectApiName retrieves that ruleset and bare -m identity-resolution every default-space ruleset the API lists. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto or 68.0 in default space (other versions are refused): -m segment:ApiName retrieves that segment and bare -m segment every default-space segment the API lists. A SQL (DBT) segment is written as one portable data360/segments/<Name>.segment.json with its DBT model names, and the SQL of each model as Salesforce returns it in <Name>.segment.<model>.sql beside it; a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json with its criteria as JSON. A segment with a refresh schedule other than no refresh, parameters, exclusion criteria or the Waterfall, Real-Time or Lookalike type, and a SQL segment with a lookback other than 90 days, is written as-is (verbatim) and deploy refuses that file. Use -m dmo or omit selectors for existing DMO inventory; omitted selectors do not include segments. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves a custom transform without package namespace at API68/default only into data360/dataTransforms/<Name>.dataTransform.json: its create/update input as Salesforce returns it (definition or definitions, fullRunFrequency, write mode and the rest as read), without the schedule and without server-owned output object fields; the schedule is not retrieved or deployed. A system-generated or packaged transform is written as-is (verbatim), and deploy refuses that file. Bare -m data-transform retrieves every transform the API lists (unless it names another data space), each through the same path; one failing transform never blocks the others. Exact -m data-stream:ApiName retrieves the qualified Ingestion API subset as portable JSON using native API68 reads, in default space only; a Salesforce CRM stream (connector SalesforceDotCom) is written as its GET without server-owned keys and the system fields and mappings Salesforce adds, formulas decoded. Bare -m data-stream retrieves every stream the API lists (unless its DLO names only other data spaces), each through the same path. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses only native APIs, never Metadata fallback. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare -m relationship does so for every DMO the API lists, one DMO after another. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Bare -m data-graph retrieves every default-space graph the API lists. Calculated insights use the API68 GET only (auto or 68.0, default space): -m calculated-insight:ApiName__cio retrieves that insight and bare -m calculated-insight every insight the API lists, whatever its status, schedule or SQL; each is written as data360/calculatedInsights/<ApiName>.calculatedInsight-meta.json (the GET body as returned, without status, run history, source-CI links, creation type, sub type and the dimensions and measures Salesforce derives from the SQL) plus its SQL as plain text in <ApiName>.calculatedInsight-meta.sql. IR uses native API68 owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. -m identity-resolution:ExactObjectApiName retrieves that ruleset and bare -m identity-resolution every default-space ruleset the API lists. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto or 68.0 in default space (other versions are refused): -m segment:ApiName retrieves that segment and bare -m segment every default-space segment the API lists. A SQL (DBT) segment is written as one portable data360/segments/<Name>.segment.json with its DBT model names, and the SQL of each model as Salesforce returns it in <Name>.segment.<model>.sql beside it; a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json with its criteria as JSON. A segment with a refresh schedule other than no refresh, parameters, exclusion criteria or the Waterfall, Real-Time or Lookalike type, and a SQL segment with a lookback other than 90 days, is written as-is (verbatim) and deploy refuses that file. Use -m dmo or omit selectors for existing DMO inventory; omitted selectors do not include segments. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -370,7 +375,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       multiple: true,
       multipleNonGreedy: true,
       summary:
-        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; bare dlo is every DLO the API lists; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO); data-stream:ApiName, data-transform:Name and data-graph:ApiName are exact-only; segment:ApiName, identity-resolution:ExactObjectApiName and calculated-insight:ApiName__cio, or bare segment, identity-resolution or calculated-insight for every one the API lists.',
+        'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; bare dlo is every DLO the API lists; omitted selects all native families. relationship:Dmo__dlm (relationships whose source is that DMO), data-stream:ApiName, data-transform:Name, data-graph:ApiName, segment:ApiName, identity-resolution:ExactObjectApiName and calculated-insight:ApiName__cio, or the bare family name for every one the API lists (bare relationship: those of every listed DMO).',
     }),
     'output-dir': Flags.directory({
       char: 'd',
@@ -464,19 +469,29 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   protected listNativeNames = listNativeNames;
   protected listNativeMappingNames = listNativeMappingNames;
   protected acquireRelationships = retrieveNativeRelationships;
-  protected createRelationshipClient = (
+  /**
+   * A relationship client on the run's shared bound sender: every DMO's reads go through one
+   * in-process connection, never a CLI process. Tests replace this seam.
+   * @param {Connection} connection The run's authenticated Connection.
+   * @param {string} target Target org alias or username.
+   * @param {string} version Native API version.
+   * @param {string} [requestScope] Optional request scope.
+   * @returns {ReturnType<typeof createRelationshipClient>} Relationship client.
+   */
+  protected createRelationshipClient(
     connection: Connection,
     target: string,
     version: string,
     requestScope?: string,
-  ): ReturnType<typeof createRelationshipClient> =>
-    createRelationshipClient(
+  ): ReturnType<typeof createRelationshipClient> {
+    return createRelationshipClient(
       target,
       version,
       undefined,
       requestScope,
-      openBoundSsot(target, version, async () => connection),
+      this.ssotSender(target, version, connection),
     );
+  }
   protected writeRelationship = writeNativeRelationshipDocument;
   protected writeDataGraph = writeDataGraphDocument;
   protected createCalculatedInsightClient = createCalculatedInsightClient;
@@ -485,6 +500,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   // Optional: tests built with Object.create skip class fields and fall back to the real listing.
   protected listSegmentNames?: typeof listSegmentNames;
   protected listIdentityResolutionNames?: typeof listIdentityResolutionNames;
+  protected listDataStreamNames?: typeof listDataStreamNames;
+  protected listDataTransformNames?: typeof listDataTransformNames;
+  protected listDataGraphNames?: typeof listDataGraphNames;
   protected writeCalculatedInsight = writeNativeCalculatedInsightDocument;
   protected acquireIdentityResolution = retrieveIdentityResolution;
   protected writeIdentityResolution = writeIdentityResolutionDocument;
@@ -709,7 +727,30 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   }
 
   /**
-   * Validate exact data transform selectors, then read them one after another.
+   * Report a family listing that could not be read; the family's named items are still read.
+   * @param {RetrieveEnvelope} envelope Shared envelope.
+   * @param {Map<RetrieveDiagnostic, string>} errorTypes Output type of each diagnostic.
+   * @param {unknown} error The listing failure.
+   * @param {RetrieveFamily} family Family whose listing failed.
+   */
+  private inventoryFailure(
+    envelope: RetrieveEnvelope,
+    errorTypes: Map<RetrieveDiagnostic, string>,
+    error: unknown,
+    family: RetrieveFamily,
+  ): void {
+    const diagnostic: RetrieveDiagnostic = {
+      code: error instanceof ConnectError ? error.code : inventoryCode(error),
+      message: retrievalMessage(error),
+      retryable: false,
+      family,
+    };
+    envelope.diagnostics.errors.push(diagnostic);
+    errorTypes.set(diagnostic, family);
+  }
+
+  /**
+   * Validate exact and bare data transform selectors, then read them one after another.
    * @param {string[]} selectors The data-transform group.
    * @param {RetrieveRun} context Shared command state.
    * @returns {GroupPlan} A refusal, or the group's read.
@@ -719,7 +760,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     const family = 'data-transform';
     if (
       selectors.some(
-        (value) => !value.startsWith('data-transform:') || !dataTransformName.test(value.slice(15)),
+        (value) =>
+          value !== 'data-transform' &&
+          (!value.startsWith('data-transform:') || !dataTransformName.test(value.slice(15))),
       )
     )
       return { refusal: 'INVALID_SELECTION', family };
@@ -741,11 +784,27 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         const connection = org.getConnection('68.0');
         envelope.provenance.sourceOrgId ??= org.getOrgId();
         envelope.metadata.soapApiVersion ??= '68.0';
-        const names = [...new Set(selectors.map((value) => value.slice(15)))];
-        names.sort();
-        outputTypes.add('data-transform');
         const before = envelope.diagnostics.errors.length;
         let failed = false;
+        const listed = selectors
+          .filter((value) => value !== 'data-transform')
+          .map((value) => value.slice(15));
+        // Bare data-transform: every transform the API lists, each read on its own.
+        if (selectors.includes('data-transform'))
+          try {
+            listed.push(
+              ...(await (this.listDataTransformNames ?? listDataTransformNames)(
+                connection,
+                envelope.diagnostics.warnings,
+              )),
+            );
+          } catch (error) {
+            failed = true;
+            this.inventoryFailure(envelope, errorTypes, error, family);
+          }
+        const names = [...new Set(listed)];
+        names.sort();
+        outputTypes.add('data-transform');
         const routes: RetrieveRoute[] = [
           { operation: 'data-transform.get', apiVersion: '68.0', transport: 'native' },
           {
@@ -826,7 +885,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   private prepareDataStreams(selectors: string[], context: RetrieveRun): GroupPlan {
     const { flags, envelope, outputTypes, errorTypes, effectiveScope, outputDirectory } = context;
     const family = 'data-stream';
-    if (selectors.some((value) => !/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
+    if (
+      selectors.some(
+        (value) =>
+          value !== 'data-stream' && !/^data-stream:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value),
+      )
+    )
       return { refusal: 'INVALID_SELECTION', family };
     let version: string;
     try {
@@ -850,11 +914,28 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
         envelope.provenance.sourceOrgId ??= org.getOrgId();
         envelope.metadata.soapApiVersion ??= version;
-        const names = [...new Set(selectors.map((value) => value.slice('data-stream:'.length)))];
-        names.sort();
-        outputTypes.add('data-stream');
         const before = envelope.diagnostics.errors.length;
         let failed = false;
+        const listed = selectors
+          .filter((value) => value !== 'data-stream')
+          .map((value) => value.slice('data-stream:'.length));
+        // Bare data-stream: every stream the API lists, each read on its own.
+        if (selectors.includes('data-stream'))
+          try {
+            listed.push(
+              ...(await (this.listDataStreamNames ?? listDataStreamNames)(
+                connection,
+                version,
+                envelope.diagnostics.warnings,
+              )),
+            );
+          } catch (error) {
+            failed = true;
+            this.inventoryFailure(envelope, errorTypes, error, family);
+          }
+        const names = [...new Set(listed)];
+        names.sort();
+        outputTypes.add('data-stream');
         const routes: RetrieveRoute[] = [
           { operation: 'data-stream.get', apiVersion: version, transport: 'native' },
           { operation: 'dlo.get', apiVersion: version, transport: 'native' },
@@ -934,18 +1015,23 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     } catch {
       return { refusal: 'INVALID_SCOPE', family };
     }
-    if (selectors.includes('data-graph'))
-      return { refusal: 'DATA_GRAPH_INVENTORY_UNQUALIFIED', family };
-    if (selectors.some((value) => !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value)))
+    if (
+      selectors.some(
+        (value) =>
+          value !== 'data-graph' && !/^data-graph:[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value),
+      )
+    )
       return { refusal: 'INVALID_SELECTION', family };
     if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
     return {
       family,
       run: async (): Promise<GroupOutcome> => {
         let graphContext: Awaited<ReturnType<typeof nativeDataGraphReadContext>>;
+        let connection: Connection;
         try {
           const org = await this.resolveOrg(flags['target-org']);
-          graphContext = await this.nativeGraphContext(org.getConnection('68.0'), 'default');
+          connection = org.getConnection('68.0');
+          graphContext = await this.nativeGraphContext(connection, 'default');
         } catch (error) {
           return {
             status: 'blocked',
@@ -962,10 +1048,27 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           return read?.status === 200 ? { native: read.body } : undefined;
         });
         graphContext = reads.client;
-        const names = [...new Set(selectors.map((value) => value.slice('data-graph:'.length)))];
+        const before = envelope.diagnostics.errors.length;
+        let failed = false;
+        const listed = selectors
+          .filter((value) => value !== 'data-graph')
+          .map((value) => value.slice('data-graph:'.length));
+        // Bare data-graph: every default-space graph the API lists, each read on its own.
+        if (selectors.includes('data-graph'))
+          try {
+            listed.push(
+              ...(await (this.listDataGraphNames ?? listDataGraphNames)(
+                connection,
+                envelope.diagnostics.warnings,
+              )),
+            );
+          } catch (error) {
+            failed = true;
+            this.inventoryFailure(envelope, errorTypes, error, family);
+          }
+        const names = [...new Set(listed)];
         names.sort();
         outputTypes.add('data-graph');
-        const before = envelope.diagnostics.errors.length;
         const routes: RetrieveRoute[] = [
           { operation: 'data-graph.get', apiVersion: '68.0', transport: 'native' },
         ];
@@ -1006,7 +1109,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           }
         }
         return {
-          status: groupStatus(envelope, before, false),
+          status: groupStatus(envelope, before, failed),
           selection: names.map((name) => `data-graph:${name}`),
         };
       },
@@ -1021,9 +1124,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    * @returns {GroupPlan} A refusal, or the group's read.
    */
   private prepareRest(selectors: string[], context: RetrieveRun): GroupPlan {
-    // A relationship is retrieved per source DMO; an inventory of all of them is not offered.
-    if (selectors.includes('relationship'))
-      return { refusal: 'RELATIONSHIP_INVENTORY_UNQUALIFIED', family: 'relationship' };
+    // Relationships are read per source DMO; bare relationship reads those of every listed DMO.
     const relationshipDmos = [
       ...new Set(
         selectors
@@ -1034,7 +1135,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     relationshipDmos.sort();
     return selectors.every(
       (value) =>
-        value.startsWith('relationship:') ||
+        inGroup('relationship', value) ||
         nativeFamilies.some((family) => value === family || value.startsWith(`${family}:`)),
     )
       ? this.prepareNativeRest(selectors, relationshipDmos, context)
@@ -1062,7 +1163,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
         return { refusal: 'INVALID_SELECTION', family: 'relationship' };
       for (const selector of selectors) {
-        if (selector.startsWith('relationship:')) continue;
+        if (inGroup('relationship', selector)) continue;
         const [family, name, extra] = selector.split(':');
         if (
           extra !== undefined ||
@@ -1152,10 +1253,20 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           names.sort();
           selected.set(family, names);
         }
+        // Bare relationship: the relationships of every DMO the API lists, one DMO at a time.
+        const relationshipSources = [...relationshipDmos];
+        if (selectors.includes('relationship'))
+          try {
+            relationshipSources.push(...(await listDmos()));
+          } catch (error) {
+            inventoryFailures.push({ family: 'relationship', error });
+          }
+        const relationshipNames = [...new Set(relationshipSources)];
+        relationshipNames.sort();
         // Nothing else to read: the one failed inventory is the group's outcome, as before.
         if (
           inventoryFailures.length === 1 &&
-          relationshipDmos.length === 0 &&
+          relationshipNames.length === 0 &&
           [...selected.values()].every((names) => names.length === 0) &&
           envelope.diagnostics.errors.length === before
         )
@@ -1177,7 +1288,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           // A family whose inventory failed stays in the selection under its bare name.
           ...inventoryFailures.map(({ family }) => family),
           ...[...selected].flatMap(([family, names]) => names.map((name) => `${family}:${name}`)),
-          ...relationshipDmos.map((name) => `relationship:${name}`),
+          ...relationshipNames.map((name) => `relationship:${name}`),
         ];
         let failed = false;
         for (const family of nativeFamilies) {
@@ -1294,10 +1405,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             }
           }
         }
-        if (relationshipDmos.length > 0) {
+        if (relationshipNames.length > 0 || selectors.includes('relationship')) {
           outputTypes.add('relationship');
           const relationships = await this.retrieveRelationshipFamily(
-            relationshipDmos,
+            relationshipNames,
             connection,
             target,
             version,
@@ -1344,7 +1455,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         value !== 'dlo' &&
         !value.startsWith('dlo:') &&
         !value.startsWith('mapping:') &&
-        !value.startsWith('relationship:') &&
+        !inGroup('relationship', value) &&
         !inGroup('segment', value) &&
         !inGroup('identity-resolution', value) &&
         !inGroup('calculated-insight', value),
@@ -1369,7 +1480,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           throw new MappingDefinitionError('INVALID_SELECTION');
       }
       family = 'relationship';
-      if (relationshipDmos.length > 0) {
+      if (relationshipDmos.length > 0 || selectors.includes('relationship')) {
         nativeApiVersion(flags['api-version']);
         if (relationshipDmos.some((name) => !relationshipDmoName.test(name)))
           throw new NativeRelationshipError('INVALID_SELECTION');
@@ -1692,11 +1803,31 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               });
             }
           }
-          if (relationshipDmos.length > 0) {
+          let relationshipNames = [...relationshipDmos];
+          if (selectors.includes('relationship')) {
+            // Bare relationship: the relationships of every DMO the API lists.
+            const version = nativeApiVersion(flags['api-version']);
+            try {
+              relationshipNames.push(
+                ...(await this.listNativeNames(
+                  org.getConnection(version),
+                  version,
+                  'dmo',
+                  effectiveScope,
+                  envelope.diagnostics.warnings,
+                )),
+              );
+            } catch (error: unknown) {
+              inventoryFailure(error, 'relationship');
+            }
+            relationshipNames = [...new Set(relationshipNames)];
+            relationshipNames.sort();
+          }
+          if (relationshipNames.length > 0) {
             const target = flags['target-org'] ?? org.getConnection().getUsername();
             if (target) {
               const relationships = await this.retrieveRelationshipFamily(
-                relationshipDmos,
+                relationshipNames,
                 org.getConnection(),
                 target,
                 nativeApiVersion(flags['api-version']),
@@ -1764,7 +1895,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           selection = [
             ...dlos.map((name) => `dlo:${name}`),
             ...mappings.map((name) => `mapping:${name}`),
-            ...relationshipDmos.map((name) => `relationship:${name}`),
+            ...relationshipNames.map((name) => `relationship:${name}`),
             ...names.map((name) => `dmo:${name}`),
             ...segments.map((name) => `segment:${name}`),
           ];
@@ -1942,7 +2073,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           selection = [
             ...dlos.map((name) => `dlo:${name}`),
             ...mappings.map((name) => `mapping:${name}`),
-            ...relationshipDmos.map((name) => `relationship:${name}`),
+            ...relationshipNames.map((name) => `relationship:${name}`),
             ...entries.map(({ document }) => `${document.kind}:${document.identity.apiName}`),
           ];
           for (const entry of entries) {
