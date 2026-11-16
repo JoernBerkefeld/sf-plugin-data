@@ -149,10 +149,15 @@ function entryToWire(entry: ObservedRelationship): Record<string, unknown> {
  * Admit a portable relationship for the request scope.
  * @param {unknown} value Portable input.
  * @param {string} [requestScope] Optional request scope; omission is the default data space.
+ * @param {DocumentMode} [mode] `retrieve` for a delete: values the plugin does not model are kept.
  * @returns {NativeRelationshipDocument} Checked document.
  */
-function admit(value: unknown, requestScope?: string): NativeRelationshipDocument {
-  const document = validateNativeRelationshipDocument(value);
+function admit(
+  value: unknown,
+  requestScope?: string,
+  mode: DocumentMode = 'deploy',
+): NativeRelationshipDocument {
+  const document = validateNativeRelationshipDocument(value, mode);
   if (document.identity.dataSpace !== (requestScope ?? 'default'))
     throw new NativeRelationshipError('UNSUPPORTED_RELATIONSHIP_DATASPACE');
   return document;
@@ -274,7 +279,8 @@ export async function findNativeRelationshipByName(
     throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
   let inventory: ObservedRelationship[];
   try {
-    inventory = await listNativeRelationships(sourceDmo, client);
+    // Delete reads the inventory as retrieve does: unmodelled values never block it.
+    inventory = await listNativeRelationships(sourceDmo, client, 'retrieve');
   } catch (error) {
     // A relationship cannot exist without its source DMO: only the list's exact HTTP404
     // ITEM_NOT_FOUND for that DMO is absence; any other error still blocks.
@@ -308,7 +314,7 @@ export async function findNativeRelationshipByName(
     );
     throw error;
   }
-  return normalizeNativeRelationship(entryToWire(found), requestScope);
+  return normalizeNativeRelationship(entryToWire(found), requestScope, 'retrieve');
 }
 
 /**
@@ -327,10 +333,16 @@ export async function preflightDeleteNativeRelationship(
 ): Promise<{ present: boolean; document: NativeRelationshipDocument }> {
   if (!nativeRelationshipName.test(apiName))
     throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
-  const document = admit(value, requestScope);
+  // A delete reads the file and the inventory as retrieve writes them: values the plugin does
+  // not model never block it; the name, data space and binding still must agree.
+  const document = admit(value, requestScope, 'retrieve');
   if (document.identity.apiName !== apiName)
     throw new NativeRelationshipError('RELATIONSHIP_FILE_IDENTITY_MISMATCH');
-  const inventory = await listNativeRelationships(document.spec.sourceObjectName, client);
+  const inventory = await listNativeRelationships(
+    document.spec.sourceObjectName,
+    client,
+    'retrieve',
+  );
   const found = inventory.find((entry) => entry.name === apiName);
   if (!found) {
     // The binding may exist under another generated name, e.g. created by a later deploy.
@@ -369,7 +381,11 @@ export async function deleteNativeRelationship(
   await client.remove(apiName);
   for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
     await paceReadback(attempt);
-    const inventory = await listNativeRelationships(plan.document.spec.sourceObjectName, client);
+    const inventory = await listNativeRelationships(
+      plan.document.spec.sourceObjectName,
+      client,
+      'retrieve',
+    );
     if (!inventory.some((entry) => entry.name === apiName)) return { outcome: 'deleted' };
   }
   throw new NativeRelationshipError('RELATIONSHIP_DELETION_UNCONFIRMED');

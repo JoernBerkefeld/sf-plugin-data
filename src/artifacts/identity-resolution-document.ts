@@ -596,6 +596,22 @@ const criterionKeys = [
 const settingKeys = ['ruleType', 'shouldIgnoreEmptyValue', 'sources'];
 
 /**
+ * The owner as the API returns it, without the run statistics it adds after a run: what a
+ * by-name delete of a verbatim file compares between its reads.
+ * @param {unknown} native Native response.
+ * @returns {Record<string, unknown>} Detached owner.
+ */
+export function observeIdentityResolutionOwner(native: unknown): Record<string, unknown> {
+  if (!native || typeof native !== 'object' || Array.isArray(native))
+    throw new IdentityResolutionError('INCOMPLETE_IDENTITY_RESOLUTION');
+  return structuredClone(
+    Object.fromEntries(
+      Object.entries(native as Record<string, unknown>).filter(([key]) => !runtimeKeys.has(key)),
+    ),
+  );
+}
+
+/**
  * Project the owner the API returns. Retrieve mode requires the configuration keys but keeps
  * unknown owner and nested keys (after the known ones), `null` values and any names, so only a
  * missing key or a shape that is not a list or object stops the projection (the ruleset is then

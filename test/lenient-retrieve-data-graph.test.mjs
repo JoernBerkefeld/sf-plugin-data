@@ -333,3 +333,13 @@ test('the item failure names the code behind NATIVE_GRAPH_RETRIEVE_BLOCKED', asy
   assert.equal(diagnostic.code, 'NATIVE_GRAPH_RETRIEVE_BLOCKED');
   assert.match(diagnostic.message, /Cause: OVERWRITE_REQUIRED\.$/u);
 });
+
+test('a graph GET answering with another name is an identity failure, never verbatim', async () => {
+  const { result, cwd } = await retrieveCommand({ ...graph(), name: 'OtherGraph' });
+  assert.notEqual(result.status, 'success');
+  assert.equal(result.result.items.length, 0);
+  const [diagnostic] = result.diagnostics.errors;
+  assert.equal(diagnostic.code, 'DATA_GRAPH_IDENTITY_MISMATCH');
+  assert.deepEqual(diagnostic.identity, { dataSpace: 'default', apiName: name });
+  await assert.rejects(readFile(graphFile(cwd), 'utf8'), { code: 'ENOENT' });
+});

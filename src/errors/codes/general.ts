@@ -80,6 +80,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The Salesforce CLI process ended without an exit code, for example after a timeout or with too much output. Check that sf runs on its own, then rerun the retrieve.',
   TARGET_ORG_REQUIRED:
     'No usable target org was found. Pass --target-org <alias or username>, or set a default with sf config set target-org, then rerun.',
+  UNMODELLED_RESPONSE:
+    'Retrieve wrote this object as-is because the plugin could not read its answer from the org, and the check gave no more specific reason. Manage the object in Salesforce, or report the output.',
   UNSAFE_PATH:
     'The plugin refused a file path because it is a link, a hard-linked file, a folder or lies outside the allowed folder. Use plain files and folders inside the project, then rerun.',
   UNSAFE_SOURCE:

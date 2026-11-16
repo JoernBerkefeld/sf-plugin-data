@@ -152,8 +152,8 @@ function freeze<T>(value: T): T {
 /**
  * Validate authored intent separately from retained, read-only schema evidence. Deploy mode (the
  * default) admits only what a deploy can send and names the first offending key path; retrieve
- * mode keeps unknown keys of observed mappings and source fields as returned, and lifts the
- * 500-character text limit and the 40-character DLO label limit.
+ * mode lifts the 500-character text limit and the 40-character DLO label limit. Unknown keys
+ * inside `observed`, which deploy never sends, are kept in both modes.
  * @param {unknown} value Untrusted portable document.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (lenient).
  * @returns {DataStreamDocument} Detached deeply frozen document.
@@ -218,13 +218,16 @@ export function validateDataStreamDocument(
       throw new DataStreamError('INVALID_STREAM_MAPPING');
     targets.add(target.toLowerCase());
   }
+  // Deploy never sends `observed` (read-only schema evidence), so in both modes a key the plugin
+  // does not model inside it is kept, never refused.
   if (document.observed !== undefined) {
-    const observed = object(document.observed, 'observed', [
-      'mappings',
-      'sourceFields',
-      'dloFields',
-      'actualDloName',
-    ]);
+    const observed = object(
+      document.observed,
+      'observed',
+      ['mappings', 'sourceFields', 'dloFields', 'actualDloName'],
+      [],
+      true,
+    );
     identifier(observed.actualDloName, 'observed.actualDloName', true);
     for (const key of ['mappings', 'sourceFields', 'dloFields'])
       if (!Array.isArray(observed[key])) throw new DataStreamError('INVALID_STREAM_OBSERVED');
@@ -233,13 +236,7 @@ export function validateDataStreamDocument(
     const fieldNames = new Set<string>();
     for (const [index, entry] of (observed.mappings as unknown[]).entries()) {
       const at = `observed.mappings[${index}]`;
-      const mapping = object(
-        entry,
-        at,
-        ['targetFieldName'],
-        ['sourceFieldName', 'formula'],
-        lenient,
-      );
+      const mapping = object(entry, at, ['targetFieldName'], ['sourceFieldName', 'formula'], true);
       const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`).toLowerCase();
       if (observedTargets.has(target)) throw new DataStreamError('INVALID_STREAM_OBSERVED');
       observedTargets.add(target);
@@ -251,7 +248,7 @@ export function validateDataStreamDocument(
     }
     for (const [index, entry] of (observed.sourceFields as unknown[]).entries()) {
       const at = `observed.sourceFields[${index}]`;
-      const field = object(entry, at, ['name', 'datatype'], [], lenient);
+      const field = object(entry, at, ['name', 'datatype'], [], true);
       const source = identifier(field.name, `${at}.name`).toLowerCase();
       if (sourceNames.has(source)) throw new DataStreamError('INVALID_STREAM_OBSERVED');
       sourceNames.add(source);
@@ -259,7 +256,7 @@ export function validateDataStreamDocument(
     }
     for (const [index, entry] of (observed.dloFields as unknown[]).entries()) {
       const at = `observed.dloFields[${index}]`;
-      const field = object(entry, at, ['name', 'label', 'dataType', 'isPrimaryKey']);
+      const field = object(entry, at, ['name', 'label', 'dataType', 'isPrimaryKey'], [], true);
       const fieldName = identifier(field.name, `${at}.name`).toLowerCase();
       if (fieldNames.has(fieldName)) throw new DataStreamError('INVALID_STREAM_OBSERVED');
       fieldNames.add(fieldName);

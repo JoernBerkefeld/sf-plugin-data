@@ -8,7 +8,13 @@ import type {
   GitDeploySelection,
 } from '../../artifacts/git-deploy-selection.js';
 import type { NativeRelationshipDocument } from '../../artifacts/native-relationship-document.js';
-import { isVerbatimDocument } from '../../artifacts/verbatim-document.js';
+import {
+  createVerbatimDocument,
+  isVerbatimDocument,
+  verbatimReason,
+} from '../../artifacts/verbatim-document.js';
+import type { VerbatimDocument, VerbatimKind } from '../../artifacts/verbatim-document.js';
+import { DataGraphError } from '../../artifacts/data-graph-document.js';
 import { createDataTransformClient } from '../../transport/data-transform-rest.js';
 import {
   DataTransformError,
@@ -107,7 +113,7 @@ import type { DloDeleteClient } from '../../transport/dlo-native-rest.js';
 import {
   admitDloDependents,
   deleteNativeDlo,
-  retrieveNativeDlo,
+  previewDeleteNativeDlo,
   waitForDloDependents,
 } from '../../services/native-dlo.js';
 import type { DloDependent } from '../../services/native-dlo.js';
@@ -298,7 +304,15 @@ async function readStreamLinkedDlo(
   } catch (error) {
     // A stream that is already gone links no DLO; its delete reports it unchanged.
     if (watched.absent()) return undefined;
-    throw error;
+    // A stream the plugin cannot model names its DLO in the raw GET.
+    if (verbatimReason(error) === undefined) throw error;
+    const raw = (await watched.clients.streams.get(apiName)) as {
+      name?: unknown;
+      dataLakeObjectInfo?: { name?: unknown };
+    } | null;
+    if (raw?.name !== apiName) throw error;
+    const dlo = raw.dataLakeObjectInfo?.name;
+    return typeof dlo === 'string' ? dlo : undefined;
   }
 }
 
@@ -346,6 +360,25 @@ async function readOrgSource(
     graphContext: typeof nativeDataGraphReadContext;
   },
 ): Promise<AdmittedSource> {
+  // A GET the plugin cannot model is deleted by type and name, like a verbatim file: the
+  // service then checks only identity, scope, protection and dependents. Read failures,
+  // absence and identity mismatches stay refusals.
+  const byName = (kind: VerbatimKind, error: unknown): { desired: unknown } => {
+    const reason = verbatimReason(error);
+    const document =
+      reason === undefined
+        ? undefined
+        : createVerbatimDocument(kind, { dataSpace: 'default', apiName: name }, reason);
+    if (document === undefined) throw error;
+    return { desired: document };
+  };
+  const project = (kind: VerbatimKind, projection: () => unknown): AdmittedSource => {
+    try {
+      return { desired: projection() };
+    } catch (error) {
+      return byName(kind, error);
+    }
+  };
   // Segment and IR: an exact GET; only ITEM_NOT_FOUND is absence.
   const exact = async (route: string): Promise<unknown> => {
     try {
@@ -365,28 +398,37 @@ async function readOrgSource(
       const client = readers.transformClient(connection, '68.0', 'default');
       const targetId = await resolveDataTransformTargetId(client, name);
       if (targetId === undefined) return { absent: true };
-      const observed = await retrieveDataTransform(targetId, client, 'retrieve');
-      return { desired: observed.document, transformTargetId: targetId };
+      try {
+        const observed = await retrieveDataTransform(targetId, client, 'retrieve');
+        return { desired: observed.document, transformTargetId: targetId };
+      } catch (error) {
+        return { ...byName('data-transform', error), transformTargetId: targetId };
+      }
     }
     case 'segment': {
       const raw = await exact(`/services/data/v68.0/ssot/segments/${name}`);
       return raw === undefined
         ? { absent: true }
-        : { desired: projectSegment(raw, name, 'retrieve').candidate };
+        : project('segment', () => projectSegment(raw, name, 'retrieve').candidate);
     }
     case 'identity-resolution': {
       const raw = await exact(`/services/data/v68.0/ssot/identity-resolutions/${name}`);
       return raw === undefined
         ? { absent: true }
-        : { desired: projectNativeIdentityResolution(raw, name, 'retrieve').candidate };
+        : project(
+            'identity-resolution',
+            () => projectNativeIdentityResolution(raw, name, 'retrieve').candidate,
+          );
     }
     case 'calculated-insight': {
       // The API 68 GET in any status; the delete itself reads it again by name. The planning
       // view orders it before the selected DMOs and insights its SQL names.
-      const acquired = await acquireCalculatedInsight(
-        readers.ciContext(connection, 'default'),
-        name,
-      );
+      let acquired: Awaited<ReturnType<typeof acquireCalculatedInsight>>;
+      try {
+        acquired = await acquireCalculatedInsight(readers.ciContext(connection, 'default'), name);
+      } catch (error) {
+        return byName('calculated-insight', error);
+      }
       return acquired.state === 'absent'
         ? { absent: true }
         : { desired: calculatedInsightReference(acquired.document) };
@@ -394,8 +436,19 @@ async function readOrgSource(
     default: {
       const context = await readers.graphContext(connection, 'default');
       const read = await context.get(name);
-      if (read.status === 200)
-        return { desired: nativeDataGraphDocumentFromResponse(read.body, 'retrieve') };
+      if (read.status === 200) {
+        // A GET answering with another graph is never deleted, also not by name.
+        const body = read.body as { name?: unknown } | null;
+        if (body?.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+        const admitted = project('native-data-graph', () =>
+          nativeDataGraphDocumentFromResponse(read.body, 'retrieve'),
+        );
+        const definition = (admitted as { desired: { definition?: { name?: unknown } } }).desired
+          .definition;
+        if (definition !== undefined && definition.name !== name)
+          throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+        return admitted;
+      }
       // HTTP400 alone is never absence: the item, metadata, inventory and SOQL reads must agree.
       const proof = await proveNativeDataGraphAbsent(context, name, read);
       if (proof.state === 'absent') return { absent: true };
@@ -828,7 +881,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected deleteDmo = deleteNativeDmo;
   protected createDloClient = createDloClient;
   protected createDloNativeDeleteClient = createNativeDloDeleteClient;
-  protected retrieveDlo = retrieveNativeDlo;
+  protected retrieveDlo = previewDeleteNativeDlo;
   protected deleteDlo = deleteNativeDlo;
   protected resolveTarget = async (alias?: string): Promise<string> => {
     const aggregator = await ConfigAggregator.create();
@@ -861,6 +914,27 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       ciContext: this.calculatedInsightContext ?? calculatedInsightReadContext,
       graphContext: this.nativeGraphContext ?? nativeDataGraphReadContext,
     });
+  }
+
+  /**
+   * Read-only: what a verbatim file deleted in a Git range deletes. It is the file itself (type,
+   * data space and name); a transform also carries the target ID its name resolves to.
+   * @param {VerbatimDocument} document Base content of the deleted verbatim file.
+   * @param {Connection} connection API68 connection of the target org.
+   * @returns {Promise<AdmittedSource>} The verbatim definition, or absent.
+   */
+  protected async verbatimDeleteSource(
+    document: VerbatimDocument,
+    connection: Connection,
+  ): Promise<AdmittedSource> {
+    if (document.kind !== 'data-transform') return { desired: document };
+    const targetId = await resolveDataTransformTargetId(
+      (this.createDataTransformClient ?? createDataTransformClient)(connection, '68.0', 'default'),
+      document.identity.apiName,
+    );
+    return targetId === undefined
+      ? { absent: true }
+      : { desired: document, transformTargetId: targetId };
   }
 
   /**
@@ -1560,7 +1634,19 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         const target = await connect();
         if (familyOf(selector) === 'data-transform' && !target.getUsername())
           throw new DloError('TARGET_ORG_REQUIRED');
-        if (!gitMode || verbatim) {
+        if (verbatim) {
+          // Deleted by type and name: the services check identity, scope, protection and
+          // dependents on the raw GET and never project it into the plugin's model.
+          admitted.set(
+            selector,
+            await this.verbatimDeleteSource(
+              gitBySelector.get(selector)!.document as VerbatimDocument,
+              target,
+            ),
+          );
+          continue;
+        }
+        if (!gitMode) {
           admitted.set(
             selector,
             await this.readDeleteSource(familyOf(selector), selectorName(selector), target),

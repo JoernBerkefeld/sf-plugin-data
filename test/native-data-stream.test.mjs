@@ -588,7 +588,9 @@ for (const operation of ['noop', 'update', 'delete']) {
       operation === 'delete'
         ? deleteNativeDataStream('GeneratedStream', scenario.clients, scenario.options)
         : updateNativeDataStream(scenario.desired, scenario.clients, scenario.options),
-      { code: 'INVALID_STREAM_DOCUMENT' },
+      // An unknown key in a native mapping is kept (deploy ignores `observed`), so the change
+      // is refused as drift between the reads, not as an invalid document.
+      { code: operation === 'delete' ? 'STREAM_DELETE_GUARD_DRIFT' : 'STREAM_BINDING_DRIFT' },
     );
     assert.equal(operation === 'delete' ? scenario.state.writes : scenario.counts().writes, 0);
   });
@@ -2030,7 +2032,8 @@ test('top-level stream lifecycle mismatch remains strict during retrieve and upd
                   survivorDloNames: [],
                 })
               : updateNativeDataStream(scenario.desired, scenario.clients, scenario.options),
-      { code: 'STREAM_BINDING_DRIFT' },
+      // A delete that cannot model the stream goes by name, which still requires ACTIVE.
+      { code: operation === 'delete-preflight' ? 'STREAM_NOT_READY' : 'STREAM_BINDING_DRIFT' },
     );
     assert.equal(scenario.counts().writes, 0);
     assert.equal(scenario.counts().pauses, 0);

@@ -2,6 +2,8 @@
 export const hints: Readonly<Record<string, string>> = {
   DATA_GRAPH_CREATE_UNCONFIRMED:
     'The graph create request was sent, but the graph could not be confirmed in time. It may exist: retrieve it or rerun the same deploy before changing anything.',
+  DATA_GRAPH_IDENTITY_MISMATCH:
+    'The org answered the read of a data graph with a different graph name than the one selected. Check the exact name, including case, in --metadata data-graph:<Name> and in the file, then rerun.',
   DATA_GRAPH_INVENTORY_UNQUALIFIED:
     'Retrieving all data graphs at once is not supported. Name each graph with --metadata data-graph:<Name>; repeat it for several.',
   DATA_GRAPH_OWNER:

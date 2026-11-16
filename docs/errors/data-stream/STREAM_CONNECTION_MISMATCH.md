@@ -2,11 +2,11 @@
 
 > The stream's Ingestion API connection was found but is not connected or its details differ. Check the connection's status in the org, then rerun.
 
-|              |                                                                                                                                                                                               |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Family**   | Data stream                                                                                                                                                                                   |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                      |
-| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; `failed` on retrieve — no file was written; `failed` with mutation `unknown` when it appears in the checks after a write |
+|              |                                                                                                                                                                                                                                                    |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | Data stream                                                                                                                                                                                                                                        |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy` (execution; `--preview` reports `DEPLOY_PREVIEW_FAILED`), `sf data360 delete`                                                                                                                           |
+| **Outcome**  | `blocked` on deploy and delete before a write — nothing was changed; retrieve writes the stream as-is (verbatim, reason `STREAM_CONNECTION_MISMATCH`) with a warning; `failed` with mutation `unknown` when it appears in the checks after a write |
 
 ## What it means
 

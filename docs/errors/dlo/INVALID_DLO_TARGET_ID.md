@@ -10,7 +10,9 @@
 
 ## What it means
 
-An update or delete of a DLO is sent to its record ID, which the plugin reads from the org just before the write. The ID must be 18 letters and digits. The ID it was about to use did not have that form.
+An update or delete of a DLO is sent to its record ID, which the plugin reads from the org just before the write. The ID must be 18 letters and digits. The ID it was about to use did not have that form, or the read returned no ID.
+
+`sf data360 retrieve` never refuses a DLO for this: it writes the read response as-is (verbatim, reason `INVALID_DLO_TARGET_ID`) at the DLO's normal path.
 
 ## Why the plugin stops
 

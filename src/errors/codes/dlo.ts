@@ -21,7 +21,7 @@ export const hints: Readonly<Record<string, string>> = {
   DLO_REQUEST_UNCONFIRMED:
     'A DLO request ended without a readable answer from Salesforce. Check the org connection, inspect the target if a write was sent, then rerun.',
   DLO_TARGET_IDENTITY_MISMATCH:
-    'The org returned a DLO whose name or ID does not match the one requested. Check the exact API name in the org and rerun; inspect the target first if a write was sent.',
+    'The org returned a DLO whose name does not match the one requested. Check the exact API name in the org and rerun; inspect the target first if a write was sent.',
   INVALID_DLO_DOCUMENT:
     'The DLO definition from the org does not fit the plugin file format. Inspect the DLO in the org (label, data space, event field) and report it if it looks normal.',
   INVALID_DLO_FIELD:

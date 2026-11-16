@@ -192,12 +192,6 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
       d.spec.additiveFieldMappings = [{ ...addition(), targetFieldName: 'QualificationValue__c' }];
     },
     (d) => {
-      d.observed.sourceFields[0].id = 'source-runtime';
-    },
-    (d) => {
-      d.observed.dloFields[0].status = 'ACTIVE';
-    },
-    (d) => {
       d.observed.mappings[0].formula = 'ambiguous';
     },
     (d) => {

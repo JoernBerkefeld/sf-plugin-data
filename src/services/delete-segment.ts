@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
-import { validateSegmentDocument } from '../artifacts/segment-document.js';
+import { SegmentError, validateSegmentDocument } from '../artifacts/segment-document.js';
+import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
@@ -52,9 +53,33 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
 }
 
 /**
+ * The segment inside a raw GET, checked only for what names and places it: the same API name in
+ * the default data space. Used for a verbatim file, whose segment the plugin cannot model.
+ * @param {unknown} response Raw GET response.
+ * @param {string} apiName Selected name.
+ * @returns {{candidate: undefined; runtime: Record<string, unknown>}} The raw segment.
+ */
+function rawSegment(
+  response: unknown,
+  apiName: string,
+): { candidate: undefined; runtime: Record<string, unknown> } {
+  const segments = (response as { segments?: unknown } | null)?.segments;
+  const value: unknown = Array.isArray(segments) ? segments[0] : undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new SegmentError('INVALID_SEGMENT_RESPONSE');
+  const raw = value as Record<string, unknown>;
+  if (raw.apiName !== apiName || raw.dataSpace !== 'default')
+    throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
+  return { candidate: undefined, runtime: structuredClone(raw) };
+}
+
+/**
  * Delete one exact native68 JSON-matched Segment, without replay or generated-resource cleanup.
  * Bindings establish selected source compatibility, not exhaustive external-consumer exclusion.
- * @param {unknown} value Complete local JSON expectation; not ownership authority.
+ * A verbatim file (a segment the plugin cannot model, such as one built in the UI) is deleted by
+ * name: the GET must name the same segment in the default data space and keep a deletable status,
+ * and must not change between the reads; its definition and source DMO are not compared.
+ * @param {unknown} value Complete local JSON expectation, or a verbatim file; not ownership authority.
  * @param {TargetConnection} connection Fixed authenticated target.
  * @param {ApiVersionSelection} selection Exact API68 selection.
  * @param {string} dataSpace Exact default space.
@@ -104,7 +129,12 @@ export async function deleteSegment(
     );
   try {
     // Read as retrieve writes it: the file and the GET may keep keys the plugin does not model.
-    const desired = validateSegmentDocument(value, 'retrieve');
+    const verbatim = isVerbatimDocument(value, 'segment');
+    const desired = verbatim
+      ? { identity: { ...value.identity } }
+      : validateSegmentDocument(value, 'retrieve');
+    const admit = (): unknown =>
+      verbatim ? { identity: { ...value.identity } } : validateSegmentDocument(value, 'retrieve');
     const frozen = { ...selection };
     const origin = connection.instanceUrl;
     const request = connection.request;
@@ -133,7 +163,7 @@ export async function deleteSegment(
         options.confirmDelete !== confirmed ||
         typeof verify !== 'function' ||
         options.verifyInput !== verify ||
-        !isDeepStrictEqual(validateSegmentDocument(value, 'retrieve'), desired)
+        !isDeepStrictEqual(admit(), desired)
       )
         throw new Error('Scope, intent or deadline drift');
       previous = current;
@@ -145,14 +175,20 @@ export async function deleteSegment(
     };
     check();
     const client = new ConnectClient(connection, frozen);
-    const read = async (): Promise<ReturnType<typeof projectSegment> | undefined> => {
+    type Observed = {
+      candidate: ReturnType<typeof projectSegment>['candidate'] | undefined;
+      runtime: Record<string, unknown>;
+    };
+    const read = async (): Promise<Observed | undefined> => {
       check();
       try {
         const raw = await client.get(
           `/services/data/v68.0/ssot/segments/${desired.identity.apiName}`,
         );
         check();
-        return projectSegment(raw, desired.identity.apiName, 'retrieve');
+        return verbatim
+          ? rawSegment(raw, desired.identity.apiName)
+          : projectSegment(raw, desired.identity.apiName, 'retrieve');
       } catch (error) {
         check();
         if (
@@ -172,7 +208,10 @@ export async function deleteSegment(
       return result('unchanged');
     }
     const runtime = baseline.runtime;
-    if (
+    if (verbatim) {
+      if (!['ACTIVE', 'PROCESSING', 'COUNTING'].includes(String(runtime.segmentStatus)))
+        throw new Error('Target status');
+    } else if (
       !isDeepStrictEqual(baseline.candidate, desired) ||
       !['ACTIVE', 'PROCESSING', 'COUNTING'].includes(String(runtime.segmentStatus)) ||
       typeof runtime.marketSegmentId !== 'string' ||
@@ -184,19 +223,24 @@ export async function deleteSegment(
       !runtime.segmentMembershipDmo
     )
       throw new Error('Target identity or definition');
+    // A verbatim file names no source DMO the plugin can bind; the segment goes by its name.
     const bind = options.bind ?? bindSegmentDependencies;
-    const bindings = await bind(desired, connection, frozen, dataSpace, undefined, 'retrieve');
+    const document = desired as ReturnType<typeof validateSegmentDocument>;
+    const bindings = verbatim
+      ? []
+      : await bind(document, connection, frozen, dataSpace, undefined, 'retrieve');
     check();
-    if (bindings.length !== 1 || runtime.segmentOnId !== bindings[0].targetId)
+    if (!verbatim && (bindings.length !== 1 || runtime.segmentOnId !== bindings[0].targetId))
       throw new Error('Source identity');
-    const matches = (observed: ReturnType<typeof projectSegment>): boolean =>
-      isDeepStrictEqual(observed.candidate, desired) &&
+    const matches = (observed: Observed): boolean =>
+      isDeepStrictEqual(observed.candidate, baseline.candidate) &&
       isDeepStrictEqual(preservation(observed.runtime), preservation(runtime));
     await input();
     if (
+      !verbatim &&
       !isDeepStrictEqual(
         bindings,
-        await bind(desired, connection, frozen, dataSpace, undefined, 'retrieve'),
+        await bind(document, connection, frozen, dataSpace, undefined, 'retrieve'),
       )
     )
       throw new Error('Dependency drift');

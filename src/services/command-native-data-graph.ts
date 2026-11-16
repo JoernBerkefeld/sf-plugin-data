@@ -1,7 +1,7 @@
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { isDeepStrictEqual } from 'node:util';
-import { graphRequire } from '../artifacts/data-graph-document.js';
+import { DataGraphError, graphRequire } from '../artifacts/data-graph-document.js';
 import {
   observeNativeDataGraph,
   nativeDataGraphDocumentFromResponse,
@@ -21,6 +21,8 @@ import {
 } from './native-data-graph-crd.js';
 import type { NativeGraphContext, NativeGraphCreateCheck } from './native-data-graph-crd.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
+import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { proveNativeDataGraphAbsent } from './native-data-graph-crd.js';
 
 /**
  * Project independently read native runtime configuration into a distinct authored artifact.
@@ -44,7 +46,8 @@ export async function retrieveNativeDataGraph(
       getConnectDiagnostic(read),
     );
   const raw = graphRecord(read.body);
-  graphRequire(raw.name === name);
+  // A GET answering with another graph is an item failure, never a verbatim file.
+  if (raw.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
   const document = nativeDataGraphDocumentFromResponse(raw, 'retrieve');
   const observed = observeNativeDataGraph(raw, document, 'retrieve');
   const fresh = await acquireNativeDataGraph(context, document, false, 'retrieve');
@@ -127,6 +130,46 @@ async function readNativeGraphRootOwner(
   graphRequire(owners.size <= 1);
   const [owner] = owners;
   return owner ? { name: owner[0], status: owner[1] } : undefined;
+}
+
+/**
+ * Read a graph named by a verbatim file for its delete, from the raw GET only: it must carry the
+ * selected name in the default data space, be ready with an ID, created date and all generated
+ * names, and no node or field may report dependencies or segments. Its definition is not
+ * projected.
+ * @param {NativeGraphContext} context Scope-checked readers.
+ * @param {string} name Name of the verbatim file.
+ * @returns {Promise<{state: 'absent'} | {state: 'present'; raw: unknown}>} Absent, or the GET body.
+ */
+async function readVerbatimGraphForDelete(
+  context: NativeGraphContext,
+  name: string,
+): Promise<{ state: 'absent' } | { state: 'present'; raw: unknown }> {
+  context.check();
+  const read = await context.get(name);
+  context.check();
+  if (read.status !== 200) {
+    const proof = await proveNativeDataGraphAbsent(context, name, read);
+    if (proof.state === 'absent') return { state: 'absent' };
+    throw retainConnectDiagnostic(
+      new Error('Native Graph read unavailable'),
+      getConnectDiagnostic(proof) ?? getConnectDiagnostic(read),
+    );
+  }
+  const raw = graphRecord(read.body);
+  if (raw.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+  graphRequire(
+    raw.dataspaceName === 'default' &&
+      raw.status === 'ready' &&
+      typeof raw.id === 'string' &&
+      raw.id.trim() !== '' &&
+      typeof raw.createdDate === 'string' &&
+      Number.isFinite(Date.parse(raw.createdDate)) &&
+      !nativeGraphStillGenerating(raw) &&
+      // Delete stays refused while any node or field reports dependencies or segments.
+      nativeDataGraphUnreferenced(raw.sourceObject),
+  );
+  return { state: 'present', raw: structuredClone(read.body) };
 }
 
 /**
@@ -233,7 +276,44 @@ export async function operateNativeDataGraph(
     diagnostic = getConnectDiagnostic(result) ?? diagnostic;
     return result;
   };
+  // A verbatim file (a graph the plugin cannot model) is deleted by its name.
+  const verbatimDelete = async (name: string): Promise<NativeGraphOperationResult> => {
+    context.check();
+    const orgId = context.orgId;
+    await options.verifyInput();
+    const before = await readVerbatimGraphForDelete(context, name);
+    if (before.state === 'absent') return { outcome: 'unchanged', mutation: 'not-attempted' };
+    await options.verifyInput();
+    graphRequire(
+      isDeepStrictEqual(before, await readVerbatimGraphForDelete(context, name)) &&
+        context.orgId === orgId,
+    );
+    if (options.preview) return { outcome: 'delete', mutation: 'not-attempted' };
+    graphRequire(options.confirmed === true);
+    await options.verifyInput();
+    graphRequire(isDeepStrictEqual(before, await readVerbatimGraphForDelete(context, name)));
+    context.check();
+    graphRequire(context.orgId === orgId);
+    try {
+      await sendNativeGraphWrite(async () => writer.delete(name), 'delete', {
+        now,
+        end,
+        pause: waitPause,
+        progress,
+      });
+    } catch (error) {
+      const evidence = getConnectDiagnostic(error);
+      if (error instanceof NativeGraphWriteRefused)
+        return retainConnectDiagnostic({ outcome: 'failed', mutation: 'not-attempted' }, evidence);
+      if (evidence?.kind === 'api-error' && evidence.statusCode >= 400 && evidence.statusCode < 500)
+        return retainConnectDiagnostic({ outcome: 'failed', mutation: 'rejected' }, evidence);
+      throw error;
+    }
+    return { outcome: 'deleted', mutation: 'confirmed-deleted' };
+  };
   const work = async (): Promise<NativeGraphOperationResult> => {
+    if (options.operation === 'delete' && isVerbatimDocument(value, 'native-data-graph'))
+      return verbatimDelete(value.identity.apiName);
     context.check();
     const document = validateNativeDataGraphDocument(value, mode);
     const orgId = context.orgId;

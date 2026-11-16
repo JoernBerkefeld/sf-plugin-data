@@ -1,3 +1,39 @@
+# Lenient retrieve review fixes: remaining refusals closed — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), Gate 4
+must-fixes after steps 0a–6b.
+
+- Retrieve catch-all (`verbatimReason`): a read GET whose projection fails is written verbatim
+  with the error code, or `UNMODELLED_RESPONSE` (new general code + page) when there is none or
+  it is not a code. Item failures are now only: HTTP/Connect/local system errors, absence,
+  `*IDENTITY_MISMATCH`/`*TARGET_MISMATCH`/`*NAME_MISMATCH`/`IDENTITY_CHANGED`, every
+  `*DATASPACE*` code and `INVALID_SCOPE`, plus the existing non-content checks (dependency,
+  selection, project, output, overwrite, limits). `STREAM_CONNECTION_MISMATCH` (connection not
+  CONNECTED) is a verbatim reason; a DLO without a usable ID now throws `INVALID_DLO_TARGET_ID`
+  (verbatim), `DLO_TARGET_IDENTITY_MISMATCH` is the name check only.
+- Graph identity: a GET of another name is `DATA_GRAPH_IDENTITY_MISMATCH` (new code + page), an
+  item failure on retrieve and a refusal in `delete.ts` `readOrgSource`.
+- Data stream `observed`: unknown keys anywhere inside it are kept in deploy mode too.
+- Delete by type and name: a Git-deleted verbatim file goes to the services unprojected
+  (`verbatimDeleteSource`); `-m` reads that cannot be projected fall back to the same by-name
+  definition. Segment (no DBT checks/binding; name, default space, status, no drift), IR (name,
+  space, `1ir` ID, in-flight status, no drift; no binder/outputs), transform (ID+name, CUSTOM,
+  no namespace, no drift), graph (name, space, ready, ID/date, generated names, empty
+  dependency/segment arrays, no drift), CI (`calculatedInsightPresence`: name and space only;
+  settlement to absent reads presence only). DLO/DMO deletes read identity from the raw GET
+  (`resolveDloDeleteTarget`, `previewDeleteNativeDlo`, DMO `readDeleteTarget`; custom-only kept);
+  relationship deletes read in retrieve mode; a stream the plugin cannot model is deleted by
+  record ID (`preflightUnmodelledDataStreamDelete`: name, record ID, space, ACTIVE, stream and DLO
+  dependents; survivors refused).
+- Tests: `test/verbatim-delete.test.mjs` (new), `crud-delete-git` (verbatim source families from
+  a range, guards), `lenient-retrieve-dlo-dmo`, `lenient-retrieve-data-stream`,
+  `lenient-retrieve-data-graph`, `verbatim-document`. Changed assertions: an error without a
+  code now gives `UNMODELLED_RESPONSE`; stream `observed` extra keys no longer refuse deploy
+  (`data-stream-document`, `lenient-retrieve-data-stream`); `native-data-stream` drift tests now
+  expect the drift codes, and a PROCESSING stream's delete preflight `STREAM_NOT_READY`.
+- Open: README/sfmc.guide (Gate 5), live acceptance (step 7). The stream by-name path has no
+  survivor support and no live evidence yet.
+
 # Lenient retrieve step 6b (delete): retrieved files that keep unmodelled keys can be deleted — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_lenient_retrieve_20261115.plan.md` (workspace root), gap left

@@ -42,11 +42,18 @@ const kinds = new Set<string>([
 // File-name safe: no separators, dots or spaces, so the normal path stays inside its folder.
 const safeName = /^[A-Za-z0-9_]{1,255}$/u;
 const safeReason = /^[A-Z][A-Z0-9_]{0,99}$/u;
-// Codes that stay item failures: HTTP errors, absence, identity/target mismatch, dependency
-// binding, the selection, scope and output checks around the projection, and a data stream in
-// another data space (selection is per data space).
+// Codes that stay item failures. On the GET of the item itself: absence, a name or identity
+// that differs from the selected one (`*_IDENTITY_MISMATCH`, `*_TARGET_MISMATCH`,
+// `*_NAME_MISMATCH`, `IDENTITY_CHANGED`) and data-space scope (every `*DATASPACE*` code such as
+// `UNSUPPORTED_DLO_DATASPACE`, and `INVALID_SCOPE`). Around the projection, never about the
+// response's content: HTTP and read failures, dependency binding, target org, selection, project,
+// path and output checks. Every other check (including variant checks such as
+// `STREAM_CONNECTION_MISMATCH`, a connection that is not CONNECTED) writes the GET verbatim.
 const itemFailure =
-  /UNSUPPORTED_STREAM_DATASPACE|NOT_FOUND|MISMATCH|IDENTITY_CHANGED|DEPENDENCY|TARGET_ORG|HTTP|RUNTIME_UNKNOWN|INVALID_SCOPE|INVALID_SELECTION|INVALID_PROJECT|UNSAFE|OUTPUT|OVERWRITE|PARTIAL|COLLISION|LIMIT_EXCEEDED|ACQUISITION_FAILED|RETRIEVE_FAILED/u;
+  /DATASPACE|NOT_FOUND|IDENTITY_MISMATCH|TARGET_MISMATCH|NAME_MISMATCH|IDENTITY_CHANGED|DEPENDENCY|TARGET_ORG|HTTP|RUNTIME_UNKNOWN|INVALID_SCOPE|INVALID_SELECTION|INVALID_PROJECT|UNSAFE|OUTPUT|OVERWRITE|PARTIAL|COLLISION|LIMIT_EXCEEDED|ACQUISITION_FAILED|RETRIEVE_FAILED/u;
+
+/** Reason of a verbatim file whose projection failed without a usable error code. */
+export const unmodelledResponseReason = 'UNMODELLED_RESPONSE';
 
 type Bag = Record<string, unknown>;
 
@@ -126,14 +133,14 @@ export function isVerbatimDocument(value: unknown, kind?: VerbatimKind): value i
  * @param {string} identity.dataSpace Data space.
  * @param {string} identity.apiName API name.
  * @param {string} reason Error code of the refused projection.
- * @param {unknown} native Raw GET response.
+ * @param {unknown} [native] Raw GET response (none for a delete by name: written as null).
  * @returns {VerbatimDocument | undefined} Document with sorted native keys.
  */
 export function createVerbatimDocument(
   kind: VerbatimKind,
   identity: { dataSpace: string; apiName: string },
   reason: string,
-  native: unknown,
+  native?: unknown,
 ): VerbatimDocument | undefined {
   const document = {
     schemaVersion: 1 as const,
@@ -291,24 +298,27 @@ export function recordNativeReads<T>(
 }
 
 /**
- * The reason a failed projection or validation is written verbatim: the error's code. HTTP
- * errors, absence, identity/target mismatch, scope, selection and output failures, and errors
- * without a code stay item failures.
+ * The reason a failed projection or validation is written verbatim: the error's code, or
+ * `UNMODELLED_RESPONSE` when it has none (such as a TypeError on an unexpected shape). HTTP and
+ * Connect errors, local system errors, and the item-failure codes above stay item failures.
  * @param {unknown} error Caught error.
  * @returns {string | undefined} Reason code, or undefined when the item stays a failure.
  */
 export function verbatimReason(error: unknown): string | undefined {
-  if (!(error instanceof Error) || error.name === 'ConnectError') return undefined;
-  const { code, status, statusCode } = error as Error & {
+  if (!(error instanceof Error)) return unmodelledResponseReason;
+  if (error.name === 'ConnectError') return undefined;
+  const { code, status, statusCode, syscall } = error as Error & {
     code?: unknown;
     status?: unknown;
     statusCode?: unknown;
+    syscall?: unknown;
   };
   if (typeof status === 'number' || typeof statusCode === 'number') return undefined;
   if (getConnectDiagnostic(error)) return undefined;
-  if (typeof code !== 'string' || !safeReason.test(code) || itemFailure.test(code))
-    return undefined;
-  return code;
+  // A local file-system error (EPERM, ENOENT) is not about the response.
+  if (typeof syscall === 'string') return undefined;
+  if (typeof code !== 'string' || !safeReason.test(code)) return unmodelledResponseReason;
+  return itemFailure.test(code) ? undefined : code;
 }
 
 /**

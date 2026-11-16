@@ -4,7 +4,10 @@ import {
   calculatedInsightMatches,
 } from '../artifacts/native-calculated-insight-document.js';
 import type { NativeCalculatedInsight } from '../artifacts/native-calculated-insight-document.js';
-import { acquireCalculatedInsight } from './native-calculated-insight.js';
+import {
+  acquireCalculatedInsight,
+  calculatedInsightPresence,
+} from './native-calculated-insight.js';
 import type { CalculatedInsightReadContext } from './native-calculated-insight.js';
 
 export const calculatedInsightPollBudget = Object.freeze({
@@ -42,12 +45,15 @@ export async function settleCalculatedInsight(
     if (read > 0) await pause(calculatedInsightPollBudget.intervalMs);
     if (now() >= deadline) break;
     context.check();
-    const acquired = await acquireCalculatedInsight(context, desired.apiName);
-    if (acquired.state === 'absent') {
-      if (target === 'absent') return 'absent';
-      throw new CalculatedInsightError('CI_UNEXPECTED_ABSENCE');
+    // After a delete only presence counts; the content of a lingering insight is not projected.
+    if (target === 'absent') {
+      const presence = await calculatedInsightPresence(context, desired.apiName);
+      if (presence.state === 'absent') return 'absent';
+      continue;
     }
-    if (target === 'absent' || acquired.status === 'PROCESSING') continue;
+    const acquired = await acquireCalculatedInsight(context, desired.apiName);
+    if (acquired.state === 'absent') throw new CalculatedInsightError('CI_UNEXPECTED_ABSENCE');
+    if (acquired.status === 'PROCESSING') continue;
     if (!calculatedInsightMatches(desired as NativeCalculatedInsight, acquired.document)) {
       last = 'CI_SETTLEMENT_MISMATCH';
       continue;

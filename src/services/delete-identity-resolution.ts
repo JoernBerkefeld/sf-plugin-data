@@ -1,9 +1,15 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  observeIdentityResolutionOwner,
   projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../artifacts/identity-resolution-document.js';
+import type {
+  IdentityResolutionDocument,
+  IdentityResolutionProjection,
+} from '../artifacts/identity-resolution-document.js';
+import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
@@ -37,6 +43,24 @@ export type IdentityResolutionDeleteResult = {
   requiredEffects: Array<'destructive'>;
   diagnostics: Array<{ code: string; message: string }>;
 };
+
+type Projection = Omit<IdentityResolutionProjection, 'candidate'> & {
+  candidate?: IdentityResolutionDocument;
+};
+
+/**
+ * The owner of a raw GET, checked only for what names and places it (the same name in the
+ * default data space); used for a verbatim file, whose ruleset the plugin cannot model.
+ * @param {unknown} raw Raw GET response.
+ * @param {string} apiName Selected name.
+ * @returns {Projection} The owner as read, without run statistics, and no outputs.
+ */
+function rawOwner(raw: unknown, apiName: string): Projection {
+  const native = observeIdentityResolutionOwner(raw);
+  if (native.objectApiName !== apiName || native.dataSpaceName !== 'default')
+    throw new Error('Owner identity');
+  return { expectations: { native, outputs: [] } };
+}
 
 /**
  * Delete one matching settled native68 owner definition without replay.
@@ -95,7 +119,13 @@ export async function deleteIdentityResolution(
     );
   try {
     // Read as retrieve writes it: the file and the GET may keep keys the plugin does not model.
-    const desired = validateIdentityResolutionDocument(value, 'retrieve');
+    // A verbatim file (a ruleset the plugin cannot model) is deleted by name.
+    const verbatim = isVerbatimDocument(value, 'identity-resolution');
+    const admit = (): IdentityResolutionDocument =>
+      verbatim
+        ? ({ identity: { ...value.identity } } as IdentityResolutionDocument)
+        : validateIdentityResolutionDocument(value, 'retrieve');
+    const desired = admit();
     const frozen = { ...selection };
     const origin = connection.instanceUrl;
     const request = connection.request;
@@ -139,7 +169,7 @@ export async function deleteIdentityResolution(
       if (
         (options.preview === true) !== preview ||
         options.confirmDelete !== confirmed ||
-        !isDeepStrictEqual(desired, validateIdentityResolutionDocument(value, 'retrieve'))
+        !isDeepStrictEqual(desired, admit())
       )
         throw new Error('Input drift');
     };
@@ -198,8 +228,10 @@ export async function deleteIdentityResolution(
         throw error;
       }
     };
-    const project = (raw: unknown) =>
-      projectNativeIdentityResolution(raw, desired.identity.apiName, 'retrieve');
+    const project = (raw: unknown): Projection =>
+      verbatim
+        ? rawOwner(raw, desired.identity.apiName)
+        : projectNativeIdentityResolution(raw, desired.identity.apiName, 'retrieve');
     const work = async (): Promise<IdentityResolutionDeleteResult> => {
       await input();
       const raw = await read(desired.identity.apiName);
@@ -213,7 +245,7 @@ export async function deleteIdentityResolution(
       if (
         typeof id !== 'string' ||
         !/^1ir[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/u.test(id) ||
-        !isDeepStrictEqual(baseline.candidate, desired)
+        (!verbatim && !isDeepStrictEqual(baseline.candidate, desired))
       )
         throw new Error('Owner mismatch');
       // A DELETE while the API is still processing the ruleset could not be told apart from it.
@@ -226,29 +258,34 @@ export async function deleteIdentityResolution(
       if (!isDeepStrictEqual(project(await read(id)), baseline))
         throw new Error('Identity mismatch');
       // Existing binders establish selected input/output compatibility, not reverse consumers.
-      const dependencies = await (options.verifyDependencies ?? bindIdentityResolutionDependencies)(
-        structuredClone(desired),
-        receiver,
-        { ...frozen },
-        dataSpace,
-        undefined,
-        'retrieve',
-      );
+      // A verbatim file names no inputs or outputs the plugin can bind; it goes by its name.
+      const dependencies = verbatim
+        ? { fingerprint: '0'.repeat(64) }
+        : await (options.verifyDependencies ?? bindIdentityResolutionDependencies)(
+            structuredClone(desired),
+            receiver,
+            { ...frozen },
+            dataSpace,
+            undefined,
+            'retrieve',
+          );
       check();
       if (!/^[a-f0-9]{64}$/u.test(dependencies?.fingerprint)) throw new Error('Dependency proof');
       const expected = baseline.expectations.outputs.map(({ identity, sourceApiName }) => ({
         identity: structuredClone(identity),
         targetApiName: sourceApiName,
       }));
-      const outputs = await (options.verifyOutputs ?? verifyIdentityResolutionOutputs)(
-        { targetApiName: desired.identity.apiName, targetId: id, dataSpace: 'default' },
-        expected,
-        receiver,
-        { ...frozen },
-        undefined,
-        undefined,
-        'retrieve',
-      );
+      const outputs = verbatim
+        ? []
+        : await (options.verifyOutputs ?? verifyIdentityResolutionOutputs)(
+            { targetApiName: desired.identity.apiName, targetId: id, dataSpace: 'default' },
+            expected,
+            receiver,
+            { ...frozen },
+            undefined,
+            undefined,
+            'retrieve',
+          );
       check();
       if (!Array.isArray(outputs) || outputs.length !== expected.length)
         throw new Error('Output proof');

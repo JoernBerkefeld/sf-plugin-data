@@ -9,6 +9,7 @@ import {
 } from '../artifacts/data-transform-document.js';
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
 import { retrieveDataTransform } from './retrieve-data-transform.js';
+import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
 import { replaceExplanation } from './operation-diagnostic.js';
 
 export type DataTransformDeleteOptions = {
@@ -107,7 +108,37 @@ export async function resolveDataTransformTargetId(
 }
 
 /**
+ * The raw GET of a transform named by a verbatim file, checked only for what a delete needs: the
+ * same record ID and name, and a custom transform without a namespace (system and packaged
+ * transforms are never deleted). Its definition is not projected.
+ * @param {string} targetId Resolved record ID.
+ * @param {string} name Name of the verbatim file.
+ * @param {Pick<DataTransformClient, 'get'>} client Transform reader.
+ * @returns {Promise<string>} The GET without run observations, as comparable JSON text.
+ */
+async function readVerbatimTransform(
+  targetId: string,
+  name: string,
+  client: Pick<DataTransformClient, 'get'>,
+): Promise<string> {
+  const runtime: unknown = await client.get(targetId);
+  if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime))
+    throw new DataTransformError('INVALID_TRANSFORM_RESPONSE');
+  const raw = runtime as Record<string, unknown>;
+  if (raw.id !== targetId || raw.name !== name)
+    throw new DataTransformError('TRANSFORM_DELETE_IDENTITY_MISMATCH');
+  if (raw.creationType !== 'CUSTOM')
+    throw new DataTransformError('UNSUPPORTED_TRANSFORM_OWNER_OR_STATE');
+  if (raw.namespace) throw new DataTransformError('UNSUPPORTED_TRANSFORM_VARIANT');
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(raw).filter(([key]) => !key.startsWith('lastRun'))),
+  );
+}
+
+/**
  * Delete one positively matched custom target; preview never writes and execution sends once.
+ * A verbatim file (a transform the plugin cannot model) is deleted by its name: the GET must
+ * carry the same ID and name, be custom and unpackaged, and not change between the reads.
  * A resolved DELETE is only acknowledgement; settlement is the transform's absence from one
  * bounded complete inventory, polled within a bound. Any read failure or partial list leaves
  * the deletion unconfirmed. Never deletes DLOs, retries mutations or treats GET404 as absence.
@@ -122,8 +153,18 @@ export async function deleteDataTransform(
   options: DataTransformDeleteOptions,
 ): Promise<DataTransformDeleteResult> {
   // Read as retrieve writes it: the file and the GET may keep keys the plugin does not model.
-  const desired = validateDataTransformDocument(value, 'retrieve');
-  const canonical = serializeDataTransformDocument(desired, 'retrieve');
+  const verbatim = isVerbatimDocument(value, 'data-transform');
+  const canonicalOf = (input: unknown): string =>
+    verbatim
+      ? JSON.stringify(input)
+      : serializeDataTransformDocument(
+          validateDataTransformDocument(input, 'retrieve'),
+          'retrieve',
+        );
+  const canonical = canonicalOf(value);
+  const name = verbatim
+    ? value.identity.apiName
+    : String(validateDataTransformDocument(value, 'retrieve').definition.name);
   const { targetId, confirmDelete, verifyInput } = options;
   const preview = options.preview === true;
   const methods = { ...client };
@@ -137,7 +178,7 @@ export async function deleteDataTransform(
       options.verifyInput !== verifyInput ||
       (options.preview === true) !== preview ||
       !isDeepStrictEqual({ ...client }, methods) ||
-      serializeDataTransformDocument(value, 'retrieve') !== canonical
+      canonicalOf(value) !== canonical
     )
       throw new DataTransformError('TRANSFORM_DELETE_INPUT_DRIFT');
   };
@@ -146,8 +187,16 @@ export async function deleteDataTransform(
     await verifyInput();
     check();
   };
+  let first: string | undefined;
   const read = async (): Promise<void> => {
     check();
+    if (verbatim) {
+      const observed = await readVerbatimTransform(targetId, name, client);
+      check();
+      first ??= observed;
+      if (observed !== first) throw new DataTransformError('TRANSFORM_TARGET_DRIFT');
+      return;
+    }
     const observed = await retrieveDataTransform(targetId, client, 'retrieve');
     check();
     if (serializeDataTransformDocument(observed.document, 'retrieve') !== canonical)
@@ -157,7 +206,7 @@ export async function deleteDataTransform(
   await read();
   check();
   const inventory = await listDataTransformInventory(client, check);
-  if (!inventory.some((row) => row.id === targetId && row.name === desired.definition.name))
+  if (!inventory.some((row) => row.id === targetId && row.name === name))
     throw new DataTransformError('TRANSFORM_DELETE_IDENTITY_MISMATCH');
   await verify();
   await read();
@@ -182,7 +231,7 @@ export async function deleteDataTransform(
     for (;;) {
       check();
       const after = await listDataTransformInventory(client, check);
-      listed = after.some((row) => row.id === targetId || row.name === desired.definition.name);
+      listed = after.some((row) => row.id === targetId || row.name === name);
       if (!listed || now() >= deadline) break;
       await delay(Math.min(SETTLE_INTERVAL_MS, Math.max(0, deadline - now())));
     }

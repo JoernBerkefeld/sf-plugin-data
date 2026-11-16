@@ -64,14 +64,15 @@ export async function resolveNativeDloTarget(
 ): Promise<{ document: DloDocument; targetId: string; runtime: Record<string, unknown> }> {
   const raw = unwrapDlo(await client.get(apiName));
   const document = normalizeDlo(raw, requestScope, mode);
+  if (document.identity.apiName !== apiName) throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
+  // A missing or unusual ID is a shape the plugin does not model, not another DLO.
   if (
-    document.identity.apiName !== apiName ||
     typeof raw.id !== 'string' ||
     !(mode === 'retrieve' ? /^[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?$/u : /^[A-Za-z0-9]{18}$/u).test(
       raw.id,
     )
   )
-    throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
+    throw new DloError('INVALID_DLO_TARGET_ID');
   return { document, targetId: raw.id, runtime: structuredClone(raw) };
 }
 
@@ -233,6 +234,57 @@ export async function deployNativeDlo(
 }
 
 /**
+ * Identity a delete needs from a DLO GET, without projecting the rest: the same name, membership
+ * in the requested data space (or exactly one) and an 18-character record ID. Fields, labels and
+ * keys the plugin does not model never block a delete.
+ * @param {string} apiName Requested full API name.
+ * @param {Pick<DloClient, 'get'>} client Target client.
+ * @param {string} [requestScope] Optional expected data space.
+ * @returns {Promise<{identity: {apiName: string; dataSpace: string}; targetId: string}>} Target.
+ */
+export async function resolveDloDeleteTarget(
+  apiName: string,
+  client: Pick<DloClient, 'get'>,
+  requestScope?: string,
+): Promise<{ identity: { apiName: string; dataSpace: string }; targetId: string }> {
+  const raw = unwrapDlo(await client.get(apiName));
+  if (raw.name !== apiName) throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
+  const memberships = Array.isArray(raw.dataSpaceInfo)
+    ? raw.dataSpaceInfo.map((entry) =>
+        entry && typeof entry === 'object' ? (entry as { name?: unknown }).name : undefined,
+      )
+    : [];
+  if (
+    memberships.length === 0 ||
+    memberships.some((name) => typeof name !== 'string' || !name.trim()) ||
+    (requestScope === undefined ? memberships.length !== 1 : !memberships.includes(requestScope))
+  )
+    throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  if (typeof raw.id !== 'string' || !/^[A-Za-z0-9]{18}$/u.test(raw.id))
+    throw new DloError('INVALID_DLO_TARGET_ID');
+  return {
+    identity: { apiName, dataSpace: requestScope ?? (memberships[0] as string) },
+    targetId: raw.id,
+  };
+}
+
+/**
+ * Read-only delete preview: the identity a delete would remove, from the same checks.
+ * @param {string} apiName Requested full API name.
+ * @param {Pick<DloClient, 'get'>} client Target client.
+ * @param {string} [requestScope] Optional expected data space.
+ * @returns {Promise<{identity: {apiName: string; dataSpace: string}}>} Identity to delete.
+ */
+export async function previewDeleteNativeDlo(
+  apiName: string,
+  client: Pick<DloClient, 'get'>,
+  requestScope?: string,
+): Promise<{ identity: { apiName: string; dataSpace: string } }> {
+  const { identity } = await resolveDloDeleteTarget(apiName, client, requestScope);
+  return { identity };
+}
+
+/**
  * Delete only a freshly resolved exact target ID, without cascade or retry.
  * The command executes by default; its preview path never invokes this operation.
  * One name read after the DELETE settles the result: 404 confirms deletion; the same target
@@ -248,9 +300,9 @@ export async function deleteNativeDlo(
   client: Pick<DloClient, 'get' | 'delete'>,
   requestScope?: string,
 ): Promise<{ apiName: string; targetId: string; dataSpace: string; processing?: true }> {
-  const { targetId, document } = await resolveNativeDloTarget(apiName, client, requestScope);
+  const { targetId, identity } = await resolveDloDeleteTarget(apiName, client, requestScope);
   await client.delete(targetId);
-  const deleted = { apiName, targetId, dataSpace: document.identity.dataSpace };
+  const deleted = { apiName, targetId, dataSpace: identity.dataSpace };
   let readback: unknown;
   try {
     readback = await client.get(apiName);

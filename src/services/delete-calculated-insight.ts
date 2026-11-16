@@ -9,7 +9,7 @@ import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import type { CalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import {
-  acquireCalculatedInsight,
+  calculatedInsightPresence,
   calculatedInsightReadContext,
 } from './native-calculated-insight.js';
 import type {
@@ -39,7 +39,7 @@ export type CalculatedInsightDeleteResult = {
 /**
  * Delete one insight by name: absent is unchanged; otherwise one DELETE, then reads until it
  * answers 404. The read before the DELETE must answer with the selected name and data space
- * (the identity check of `acquireCalculatedInsight`). Any status and content is deletable;
+ * (the name and data space check of `calculatedInsightPresence`). Any status and content is deletable;
  * Salesforce decides. No cascade, replay or rollback.
  * @param {object} value Identity of the insight (a document from the org or the base file).
  * @param {string} value.apiName Exact name ending in __cio.
@@ -108,7 +108,8 @@ export async function deleteCalculatedInsight(
     const context = options.context ?? calculatedInsightReadContext(connection, dataSpace);
     context.check();
     await options.verifyInput();
-    const acquired = await acquireCalculatedInsight(context, value.apiName);
+    // Name and data space only: an insight the plugin cannot represent is deleted by name.
+    const acquired = await calculatedInsightPresence(context, value.apiName);
     context.check();
     await options.verifyInput();
     if (acquired.state === 'absent') return result('unchanged', 'not-attempted');

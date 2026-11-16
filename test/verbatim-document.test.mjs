@@ -174,7 +174,30 @@ test('only projection and validation errors with a code are written verbatim', (
   const connect = Object.assign(new Error('x'), { code: 'SOME_CODE' });
   connect.name = 'ConnectError';
   assert.equal(verbatimReason(connect), undefined);
-  assert.equal(verbatimReason(new Error('no code')), undefined);
+  // No usable code: the generic reason. A local system error stays a failure.
+  assert.equal(verbatimReason(new Error('no code')), 'UNMODELLED_RESPONSE');
+  assert.equal(verbatimReason(new TypeError('shape')), 'UNMODELLED_RESPONSE');
+  assert.equal(
+    verbatimReason(Object.assign(new Error('x'), { code: 'lower' })),
+    'UNMODELLED_RESPONSE',
+  );
+  assert.equal(verbatimReason('thrown text'), 'UNMODELLED_RESPONSE');
+  assert.equal(
+    verbatimReason(Object.assign(new Error('x'), { code: 'EPERM', syscall: 'open' })),
+    undefined,
+  );
+  // Variant checks named *MISMATCH are verbatim reasons; identity and scope stay failures.
+  for (const code of ['STREAM_CONNECTION_MISMATCH', 'INVALID_DLO_TARGET_ID'])
+    assert.equal(verbatimReason(Object.assign(new Error('x'), { code })), code);
+  for (const code of [
+    'DLO_TARGET_IDENTITY_MISMATCH',
+    'STREAM_TARGET_MISMATCH',
+    'DATA_GRAPH_IDENTITY_MISMATCH',
+    'DMO_DATASPACE_MISMATCH',
+    'RELATIONSHIP_NAME_MISMATCH',
+    'UNSUPPORTED_STREAM_DATASPACE',
+  ])
+    assert.equal(verbatimReason(Object.assign(new Error('x'), { code })), undefined, code);
 });
 
 test('read recording keeps the first successful get per name and carries responses', async () => {

@@ -59,10 +59,30 @@ export async function acquireCalculatedInsight(
   context: Pick<CalculatedInsightReadContext, 'dataSpace' | 'get'>,
   apiName: string,
 ): Promise<CalculatedInsightAcquisition> {
+  const read = await readCalculatedInsight(context, apiName);
+  if (read.state === 'absent') return read;
+  const { raw } = read;
+  const document = observeNativeCalculatedInsight(raw);
+  if (document.apiName !== apiName || document.dataSpace !== context.dataSpace)
+    throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+  const status = (raw as { calculatedInsightStatus?: unknown }).calculatedInsightStatus;
+  return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN', document };
+}
+
+/**
+ * The raw GET of one insight by name: HTTP 404 ITEM_NOT_FOUND is absent, any other failure
+ * throws CI_RUNTIME_UNKNOWN with the Salesforce diagnostic.
+ * @param {Pick<CalculatedInsightReadContext, 'get'>} context Read context.
+ * @param {string} apiName Exact name ending in __cio.
+ * @returns {Promise<{state: 'absent'} | {state: 'present'; raw: unknown}>} Absent, or the GET.
+ */
+async function readCalculatedInsight(
+  context: Pick<CalculatedInsightReadContext, 'get'>,
+  apiName: string,
+): Promise<{ state: 'absent' } | { state: 'present'; raw: unknown }> {
   if (!calculatedInsightName.test(apiName)) throw new CalculatedInsightError('INVALID_SELECTION');
-  let raw: unknown;
   try {
-    raw = await context.get(apiName);
+    return { state: 'present', raw: await context.get(apiName) };
   } catch (error) {
     if (
       error instanceof ConnectError &&
@@ -75,11 +95,27 @@ export async function acquireCalculatedInsight(
       getConnectDiagnostic(error),
     );
   }
-  const document = observeNativeCalculatedInsight(raw);
-  if (document.apiName !== apiName || document.dataSpace !== context.dataSpace)
+}
+
+/**
+ * Whether one insight exists, for a delete: like {@link acquireCalculatedInsight}, but only the
+ * name and data space of the GET are checked (CI_IDENTITY_CHANGED otherwise), so an insight the
+ * plugin cannot represent (no SQL, a Visual Builder draft) can still be deleted by name.
+ * @param {Pick<CalculatedInsightReadContext, 'dataSpace' | 'get'>} context Read context.
+ * @param {string} apiName Exact name ending in __cio.
+ * @returns {Promise<{state: 'absent'} | {state: 'present'; status: string}>} Absent, or its status.
+ */
+export async function calculatedInsightPresence(
+  context: Pick<CalculatedInsightReadContext, 'dataSpace' | 'get'>,
+  apiName: string,
+): Promise<{ state: 'absent' } | { state: 'present'; status: string }> {
+  const read = await readCalculatedInsight(context, apiName);
+  if (read.state === 'absent') return read;
+  const raw = (read.raw && typeof read.raw === 'object' ? read.raw : {}) as Record<string, unknown>;
+  if (raw.apiName !== apiName || raw.dataSpace !== context.dataSpace)
     throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
-  const status = (raw as { calculatedInsightStatus?: unknown }).calculatedInsightStatus;
-  return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN', document };
+  const status = raw.calculatedInsightStatus;
+  return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN' };
 }
 
 /** What the API 68 GET returns as `expression` for an unpublished Visual Builder draft. */

@@ -1,6 +1,6 @@
 # `DLO_TARGET_IDENTITY_MISMATCH`
 
-> The org returned a DLO whose name or ID does not match the one requested. Check the exact API name in the org and rerun; inspect the target first if a write was sent.
+> The org returned a DLO whose name does not match the one requested. Check the exact API name in the org and rerun; inspect the target first if a write was sent.
 
 |              |                                                                                                                                  |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin reads a DLO by its full API name and expects the answer to carry that same name and an 18-character record ID. The answer named another DLO, or had no usable ID.
+The plugin reads a DLO by its full API name and expects the answer to carry that same name. The answer named another DLO. A missing or malformed record ID is reported as [`INVALID_DLO_TARGET_ID`](../dlo/INVALID_DLO_TARGET_ID.md) instead.
 
 The same check runs on the answer to a create or update: the DLO Salesforce returns must be the one the file describes.
 

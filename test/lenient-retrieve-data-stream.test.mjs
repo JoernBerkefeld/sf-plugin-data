@@ -75,9 +75,10 @@ const crmStream = () => ({
 /**
  * Offline read clients over one stream; every read is recorded.
  * @param {object} stream Stream GET response.
+ * @param {object} [connectionDetail] Connection read by ID.
  * @returns {{clients: object, calls: string[]}} Clients and observed reads.
  */
-function reads(stream) {
+function reads(stream, connectionDetail = connection) {
   const calls = [];
   const schemas = {
     schemas: [
@@ -108,7 +109,7 @@ function reads(stream) {
       },
       get: async () => {
         calls.push('connections.get');
-        return structuredClone(connection);
+        return structuredClone(connectionDetail);
       },
       schema: async () => {
         calls.push('connections.schema');
@@ -140,11 +141,12 @@ function reads(stream) {
 /**
  * Retrieve one stream through the command with offline clients and the real writer.
  * @param {object} stream Stream GET response.
+ * @param {object} [connectionDetail] Connection read by ID.
  * @returns {Promise<object>} Envelope, output root and observed reads.
  */
-async function retrieveCommand(stream) {
+async function retrieveCommand(stream, connectionDetail) {
   const cwd = await scratch();
-  const { clients, calls } = reads(stream);
+  const { clients, calls } = reads(stream, connectionDetail);
   const command = Object.create(Retrieve.prototype);
   command.parse = async () => ({
     flags: {
@@ -268,13 +270,11 @@ test('retrieve keeps unknown mapping and source field keys and a long DLO label;
         'The data stream file cannot be deployed: spec.newDlo.label is longer than 40 characters',
       ),
   );
+  // Deploy never sends `observed`, so the kept mapping key does not block it.
   saved.spec.newDlo.label = 'Actual DLO';
-  assert.throws(
-    () => validateDataStreamDocument(saved),
-    (error) =>
-      error.code === 'INVALID_STREAM_DOCUMENT' &&
-      error.message.includes(`observed.mappings[${index}].futureKey is not a key`),
-  );
+  assert.deepEqual(validateDataStreamDocument(saved).observed.mappings[index].futureKey, {
+    nested: true,
+  });
 });
 
 const validStream = () => ({
@@ -314,16 +314,6 @@ test('deploy validation names the key path of each limit retrieve lifts', () => 
       /observed\.mappings\[0\]\.formula is longer than 500/u,
     ],
     [
-      (d) => (d.observed.mappings[0].extra = 1),
-      'INVALID_STREAM_DOCUMENT',
-      /observed\.mappings\[0\]\.extra is not a key/u,
-    ],
-    [
-      (d) => (d.observed.sourceFields[0].label = 'x'),
-      'INVALID_STREAM_DOCUMENT',
-      /observed\.sourceFields\[0\]\.label is not a key/u,
-    ],
-    [
       (d) => (d.spec.newDlo.label = 'x'.repeat(41)),
       'INVALID_STREAM_LABEL',
       /spec\.newDlo\.label is longer than 40/u,
@@ -340,8 +330,33 @@ test('deploy validation names the key path of each limit retrieve lifts', () => 
     // Retrieve mode keeps each of them.
     assert.deepEqual(validateDataStreamDocument(document, 'retrieve'), document);
   }
-  // An unknown key outside the observed mappings and source fields stays refused in both modes.
+  // Deploy ignores `observed`: unknown keys anywhere inside it are kept in both modes.
+  const observed = validStream();
+  observed.observed.mappings[0].extra = 1;
+  observed.observed.sourceFields[0].label = 'x';
+  observed.observed.dloFields.push({
+    name: 'ProbeId',
+    label: 'ProbeId',
+    dataType: 'Text',
+    isPrimaryKey: true,
+    status: 'ACTIVE',
+  });
+  observed.observed.futureSection = { kept: true };
+  for (const mode of ['deploy', 'retrieve'])
+    assert.deepEqual(validateDataStreamDocument(observed, mode), observed);
+  // An unknown key outside `observed` stays refused in both modes.
   const other = validStream();
   other.spec.extra = 1;
   assert.throws(() => validateDataStreamDocument(other, 'retrieve'), /spec\.extra is not a key/u);
+});
+
+test('a stream whose connection is not CONNECTED is written verbatim, not refused', async () => {
+  const { result, cwd } = await retrieveCommand(ingestStream(), {
+    ...connection,
+    status: 'DISCONNECTED',
+  });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.result.items[0].verbatim, { reason: 'STREAM_CONNECTION_MISMATCH' });
+  const saved = JSON.parse(await readFile(streamFile(cwd, 'GeneratedStream'), 'utf8'));
+  assert.deepEqual(saved.verbatim.native, sortKeysDeep(ingestStream()));
 });

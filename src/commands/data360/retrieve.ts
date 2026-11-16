@@ -43,6 +43,7 @@ import { openBoundSsot } from '../../transport/bound-ssot.js';
 import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
 import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
+import { DataGraphError } from '../../artifacts/data-graph-document.js';
 import path from 'node:path';
 import {
   calculatedInsightName,
@@ -936,7 +937,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             });
             if (error === undefined) continue;
             const diagnostic: RetrieveDiagnostic = {
-              code: 'NATIVE_GRAPH_RETRIEVE_BLOCKED',
+              code:
+                error instanceof DataGraphError && error.code === 'DATA_GRAPH_IDENTITY_MISMATCH'
+                  ? error.code
+                  : 'NATIVE_GRAPH_RETRIEVE_BLOCKED',
               message: withInnerCode(retrievalMessage(error), error),
               retryable: false,
               identity: { dataSpace: 'default', apiName },

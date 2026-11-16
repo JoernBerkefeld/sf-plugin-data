@@ -681,21 +681,54 @@ export async function deployNativeDmo(
 }
 
 /**
+ * Identity a delete needs from a DMO GET, without projecting its fields: the same name and the
+ * requested data space (a read without one takes the requested one), plus the raw read for the
+ * custom-only guard. Fields and keys the plugin does not model never block a delete.
+ * @param {string} apiName Requested full name.
+ * @param {Pick<DmoClient, 'get'>} client Target client.
+ * @param {string} [requestScope] Optional expected data space.
+ * @returns {Promise<{raw: Record<string, unknown>; identity: {apiName: string; dataSpace: string}}>} Target.
+ */
+async function readDeleteTarget(
+  apiName: string,
+  client: Pick<DmoClient, 'get'>,
+  requestScope?: string,
+): Promise<{ raw: Record<string, unknown>; identity: { apiName: string; dataSpace: string } }> {
+  if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
+  const response: unknown = await client.get(apiName);
+  if (!response || typeof response !== 'object' || Array.isArray(response))
+    throw new NativeDmoError('INVALID_DMO_RESPONSE');
+  const raw = response as Record<string, unknown>;
+  if (raw.name !== apiName) throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
+  const observed =
+    raw.dataSpaceName === undefined || raw.dataSpaceName === null
+      ? requestScope
+      : raw.dataSpaceName;
+  if (
+    typeof observed !== 'string' ||
+    !observed.trim() ||
+    (requestScope !== undefined && observed !== requestScope)
+  )
+    throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
+  return { raw, identity: { apiName, dataSpace: observed } };
+}
+
+/**
  * Read-only delete preview: resolve the exact target and apply the same custom-only guard as delete.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space.
- * @returns {Promise<NativeDmoDocument>} Definition that a delete would remove.
+ * @returns {Promise<{identity: {apiName: string; dataSpace: string}}>} Identity a delete would remove.
  */
 export async function previewDeleteNativeDmo(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
   requestScope?: string,
-): Promise<NativeDmoDocument> {
-  const { raw, document } = await readTarget(apiName, client, requestScope);
+): Promise<{ identity: { apiName: string; dataSpace: string } }> {
+  const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
   // Only a custom DMO is deleted; a standard one is open to field and label writes only.
   if (nativeDmoWriteScope(raw) !== 'custom') throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
-  return document;
+  return { identity };
 }
 
 /**
@@ -731,12 +764,12 @@ export async function deleteNativeDmo(
   client: Pick<DmoClient, 'get' | 'delete'>,
   requestScope?: string,
 ): Promise<{ apiName: string; targetApiName: string; dataSpace: string; processing?: true }> {
-  const { raw, document: target } = await readTarget(apiName, client, requestScope);
+  const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
   // Standard, namespaced and platform-generated DMOs are never deleted.
   if (nativeDmoWriteScope(raw) !== 'custom') throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
-  const targetApiName = target.identity.apiName;
+  const targetApiName = identity.apiName;
   await client.delete(targetApiName);
-  const deleted = { apiName, targetApiName, dataSpace: target.identity.dataSpace };
+  const deleted = { apiName, targetApiName, dataSpace: identity.dataSpace };
   let readback: unknown;
   try {
     readback = await client.get(targetApiName);

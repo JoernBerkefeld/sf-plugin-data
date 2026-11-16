@@ -10,6 +10,7 @@ import {
 import { ConnectError } from '../transport/connect-client.js';
 import type { DataStreamDocument, DataStreamMapping } from '../artifacts/data-stream-document.js';
 import { DataStreamHttpError } from '../transport/data-stream-rest.js';
+import { verbatimReason } from '../artifacts/verbatim-document.js';
 import type { DataStreamClient, DataStreamReferenceReader } from '../transport/data-stream-rest.js';
 
 type Json = Record<string, unknown>;
@@ -1429,6 +1430,24 @@ export type DataStreamDeletePlan = {
   /** Preview only: dependents of the stream or its DLO that the same delete deletes earlier. */
   plannedDependencies?: StreamDependent[];
 };
+/**
+ * Delete plan of a stream the plugin cannot model (any connector, any settings): it is deleted
+ * by name from its raw GET. Name, record ID, data space, ACTIVE status and the stream's and its
+ * DLO's dependents are still checked; the IngestApi connection and schema are not read.
+ */
+export type UnmodelledDataStreamDeletePlan = {
+  operation: 'delete';
+  unmodelled: true;
+  apiName: string;
+  deleteDlo: boolean;
+  recordId: string;
+  label: unknown;
+  /** The landing DLO named in the GET. */
+  dlo: Json;
+  streamDependencies: Json;
+  dloDependencies: Json;
+  plannedDependencies?: StreamDependent[];
+};
 /** One dependent of a stream or its DLO, by type and name. */
 export type StreamDependent = { componentType: string; name: string };
 
@@ -1463,6 +1482,115 @@ function streamDeleteDependencies(value: unknown): Json {
 }
 
 /**
+ * Check the dependents of a stream and its DLO: only the DLO's own entry for this stream may be
+ * listed. In a preview, `covered` admits dependents the same delete deletes earlier.
+ * @param {Json} streamDependencies Stream dependents.
+ * @param {Json} dloDependencies DLO dependents.
+ * @param {object} target The stream.
+ * @param {unknown} target.recordId Its record ID.
+ * @param {unknown} target.label Its label.
+ * @param {string} dloName Landing DLO name.
+ * @param {Function} [covered] Preview only: a dependent the same delete deletes earlier.
+ * @returns {Promise<StreamDependent[] | undefined>} Planned dependents, or undefined when none.
+ */
+async function checkStreamDeleteDependents(
+  streamDependencies: Json,
+  dloDependencies: Json,
+  target: { recordId: unknown; label: unknown },
+  dloName: string,
+  covered: DataStreamDeleteOptions['covered'],
+): Promise<StreamDependent[] | undefined> {
+  const dependencies = dloDependencies.dependencies as unknown[];
+  // The DLO's own entry for this stream.
+  const ownEntry = (value: unknown): boolean =>
+    object(value).componentType === 'DataStream' &&
+    object(value).id === target.recordId &&
+    object(value).name === target.label &&
+    !Object.keys(object(value)).some((key) => !['id', 'name', 'componentType'].includes(key));
+  // Both modes refuse unknown/shared dependencies; cascade additionally has an explicit opt-in.
+  if (streamDependencies.totalSize === 0 && dependencies.length === 1 && ownEntry(dependencies[0]))
+    return undefined;
+  // Preview only: dependents an earlier phase of the same delete plans to delete.
+  if (covered === undefined || dependencies.filter((entry) => ownEntry(entry)).length > 1)
+    throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
+  const planned: StreamDependent[] = [];
+  for (const entry of [
+    ...(streamDependencies.dependencies as unknown[]),
+    ...dependencies.filter((value) => !ownEntry(value)),
+  ]) {
+    const { componentType, name: dependent } = object(entry);
+    if (
+      typeof componentType !== 'string' ||
+      typeof dependent !== 'string' ||
+      !(await covered({ componentType, name: dependent }, dloName))
+    )
+      throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
+    planned.push({ componentType, name: dependent });
+  }
+  return planned;
+}
+
+/**
+ * Plan the by-name delete of a stream the plugin cannot model, from its raw GET only.
+ * @param {string} apiName Exact selected stream name.
+ * @param {DataStreamReadClients} clients Native readers.
+ * @param {object} options Cascade choice, survivors and preview planning.
+ * @param {boolean} options.deleteDlo Whether the landing DLO is deleted too.
+ * @param {readonly string[]} options.survivorDloNames Must be empty on this path.
+ * @param {Function} [options.covered] Preview only: a dependent the same delete deletes earlier.
+ * @returns {Promise<UnmodelledDataStreamDeletePlan>} Guarded plan.
+ */
+async function preflightUnmodelledDataStreamDelete(
+  apiName: string,
+  clients: DataStreamReadClients,
+  options: Pick<DataStreamDeleteOptions, 'deleteDlo' | 'survivorDloNames' | 'covered'>,
+): Promise<UnmodelledDataStreamDeletePlan> {
+  const raw = object(await clients.streams.get(apiName));
+  if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
+  if (typeof raw.recordId !== 'string' || !recordId.test(raw.recordId))
+    throw new DataStreamError('INVALID_STREAM_TARGET_ID');
+  const info =
+    raw.dataLakeObjectInfo && typeof raw.dataLakeObjectInfo === 'object'
+      ? (raw.dataLakeObjectInfo as Json)
+      : {};
+  // A data space the GET names must be the selected one (default); none named is the default.
+  const spaces = Array.isArray(info.dataSpaceInfo)
+    ? info.dataSpaceInfo.map((entry) => object(entry).name)
+    : [];
+  if (spaces.some((space) => space !== 'default'))
+    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  if (raw.status !== 'ACTIVE') throw new DataStreamError('STREAM_NOT_READY');
+  if (typeof info.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*__dll$/u.test(info.name))
+    throw new DataStreamError('INVALID_STREAM_DLO');
+  const dloName = info.name;
+  if (options.survivorDloNames.length > 0)
+    throw new DataStreamError('INVALID_STREAM_DELETE_SURVIVOR');
+  const streamDependencies = streamDeleteDependencies(
+    await clients.dependencies.stream(raw.recordId),
+  );
+  const dloDependencies = streamDeleteDependencies(await clients.dependencies.dlo(dloName));
+  const plannedDependencies = await checkStreamDeleteDependents(
+    streamDependencies,
+    dloDependencies,
+    { recordId: raw.recordId, label: raw.label },
+    dloName,
+    options.covered,
+  );
+  return {
+    operation: 'delete',
+    unmodelled: true,
+    apiName,
+    deleteDlo: options.deleteDlo,
+    recordId: raw.recordId,
+    label: raw.label,
+    dlo: { name: dloName },
+    streamDependencies,
+    dloDependencies,
+    ...(plannedDependencies === undefined ? {} : { plannedDependencies }),
+  };
+}
+
+/**
  * Snapshot exact selected target, source, linked parent and explicitly protected survivors.
  * @param {string} apiName Exact selected target developer name, never a portable proposal.
  * @param {DataStreamReadClients} clients Independent native readers.
@@ -1476,10 +1604,18 @@ export async function preflightNativeDataStreamDelete(
   apiName: string,
   clients: DataStreamReadClients,
   options: Pick<DataStreamDeleteOptions, 'deleteDlo' | 'survivorDloNames' | 'covered'>,
-): Promise<DataStreamDeletePlan> {
+): Promise<DataStreamDeletePlan | UnmodelledDataStreamDeletePlan> {
   if (!name.test(apiName) || typeof options.deleteDlo !== 'boolean')
     throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
-  const document = await retrieveNativeDataStream(apiName, clients);
+  let document: DataStreamDocument;
+  try {
+    document = await retrieveNativeDataStream(apiName, clients);
+  } catch (error) {
+    // A stream the plugin cannot model (another connector, settings it does not know) is
+    // deleted by name from its raw GET. Read failures, absence and identity stay refusals.
+    if (verbatimReason(error) === undefined) throw error;
+    return preflightUnmodelledDataStreamDelete(apiName, clients, options);
+  }
   const binding = await resolveDataStreamBinding(
     {
       ...document.identity,
@@ -1527,39 +1663,13 @@ export async function preflightNativeDataStreamDelete(
   const dloDependencies = streamDeleteDependencies(
     await clients.dependencies.dlo(dlo.name as string),
   );
-  const dependencies = dloDependencies.dependencies as unknown[];
-  // The DLO's own entry for this stream.
-  const ownEntry = (value: unknown): boolean =>
-    object(value).componentType === 'DataStream' &&
-    object(value).id === target.recordId &&
-    object(value).name === target.label &&
-    !Object.keys(object(value)).some((key) => !['id', 'name', 'componentType'].includes(key));
-  // Both modes refuse unknown/shared dependencies; cascade additionally has an explicit opt-in.
-  let plannedDependencies: StreamDependent[] | undefined;
-  if (
-    streamDependencies.totalSize !== 0 ||
-    dependencies.length !== 1 ||
-    !ownEntry(dependencies[0])
-  ) {
-    // Preview only: dependents an earlier phase of the same delete plans to delete.
-    const covered = options.covered;
-    if (covered === undefined || dependencies.filter((entry) => ownEntry(entry)).length > 1)
-      throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
-    plannedDependencies = [];
-    for (const entry of [
-      ...(streamDependencies.dependencies as unknown[]),
-      ...dependencies.filter((value) => !ownEntry(value)),
-    ]) {
-      const { componentType, name: dependent } = object(entry);
-      if (
-        typeof componentType !== 'string' ||
-        typeof dependent !== 'string' ||
-        !(await covered({ componentType, name: dependent }, String(dlo.name)))
-      )
-        throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
-      plannedDependencies.push({ componentType, name: dependent });
-    }
-  }
+  const plannedDependencies = await checkStreamDeleteDependents(
+    streamDependencies,
+    dloDependencies,
+    { recordId: target.recordId, label: target.label },
+    String(dlo.name),
+    options.covered,
+  );
   const survivors: Json[] = [];
   const seen = new Set<string>();
   for (const survivor of options.survivorDloNames) {
@@ -1626,6 +1736,61 @@ async function deletedStreamAbsent(
 }
 
 /**
+ * Delete a stream the plugin cannot model by its record ID once both guarded plans agree, then
+ * wait (bounded) until the stream reads 404 and, with --delete-dlo, its DLO too; without it the
+ * DLO must no longer list dependents.
+ * @param {DataStreamDeletePlan | UnmodelledDataStreamDeletePlan} plan First plan.
+ * @param {DataStreamDeletePlan | UnmodelledDataStreamDeletePlan} fresh Plan read right before the DELETE.
+ * @param {DataStreamDeleteClients} clients Native DELETE and readers.
+ * @param {DataStreamDeleteOptions} options Cascade, input guard and read bounds.
+ * @returns {Promise<object>} Confirmed deletion.
+ */
+async function deleteUnmodelledDataStream(
+  plan: DataStreamDeletePlan | UnmodelledDataStreamDeletePlan,
+  fresh: DataStreamDeletePlan | UnmodelledDataStreamDeletePlan,
+  clients: DataStreamDeleteClients,
+  options: DataStreamDeleteOptions,
+): Promise<{ operation: 'delete'; targetApiName: string; targetDloName: string }> {
+  if (!('unmodelled' in plan) || !isDeepStrictEqual(plan, fresh))
+    throw explainMismatch(
+      new DataStreamError('STREAM_DELETE_GUARD_DRIFT'),
+      'delete pre-dispatch guard recheck',
+      plan.apiName,
+      plan,
+      fresh,
+    );
+  await options.verifyInput();
+  const now = options.now ?? Date.now;
+  const pause = options.wait ?? wait;
+  const deadline = now() + 15 * 60 * 1000;
+  const dloName = plan.dlo.name as string;
+  await clients.streams.delete(plan.recordId, plan.deleteDlo);
+  for (let attempt = 0; attempt < 20 && now() < deadline; attempt++) {
+    let absent = false;
+    try {
+      const current = object(await clients.streams.get(plan.apiName));
+      if (current.name !== plan.apiName || current.recordId !== plan.recordId)
+        throw new DataStreamError('STREAM_DELETE_GUARD_DRIFT');
+    } catch (error) {
+      if (!isStreamNotFound(error)) throw error;
+      absent = true;
+    }
+    if (absent) {
+      if (plan.deleteDlo) await requireAbsentStreamDlo(dloName, clients);
+      else {
+        const released = streamDeleteDependencies(await clients.dependencies.dlo(dloName));
+        if (released.totalSize !== 0)
+          throw new DataStreamError('STREAM_DELETE_DEPENDENCIES_BLOCKED');
+      }
+      await options.verifyInput();
+      return { operation: 'delete', targetApiName: plan.apiName, targetDloName: dloName };
+    }
+    if (attempt < 19 && now() < deadline) await pause(Math.min(5000, deadline - now()));
+  }
+  throw new DataStreamError('STREAM_DELETE_SETTLEMENT_UNCONFIRMED');
+}
+
+/**
  * Delete once after fresh complete guards; HTTP204 never substitutes for independent settlement.
  * @param {string} apiName Exact target developer name.
  * @param {DataStreamDeleteClients} clients Native single-attempt DELETE and independent readers.
@@ -1646,6 +1811,8 @@ export async function deleteNativeDataStream(
   const plan = await preflightNativeDataStreamDelete(apiName, clients, selection);
   await options.verifyInput();
   const fresh = await preflightNativeDataStreamDelete(apiName, clients, selection);
+  if ('unmodelled' in plan || 'unmodelled' in fresh)
+    return deleteUnmodelledDataStream(plan, fresh, clients, options);
   if (!sameStreamSnapshot(plan, fresh))
     throw explainMismatch(
       new DataStreamError('STREAM_DELETE_GUARD_DRIFT'),

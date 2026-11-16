@@ -834,3 +834,87 @@ test('a lenient Git-range delete still needs --confirm-delete and a name that ma
   assert.deepEqual(codes(outcome), ['INVALID_GIT_SELECTION']);
   assert.deepEqual(refused.calls, ['git']);
 });
+
+// Verbatim files of the source families: deleted by type and name, never projected.
+files.verbatimSegment = [
+  `${segmentFolder}/Audience.segment.json`,
+  verbatim('segment', 'Audience', { segments: [{ apiName: 'Audience', segmentType: 'UI' }] }),
+];
+files.verbatimIr = [
+  files.ir[0],
+  verbatim('identity-resolution', 'Individual_A1b2', { reconciliationRules: [] }),
+];
+files.verbatimGraph = [files.graph[0], verbatim('native-data-graph', 'SyntheticGraph', {})];
+files.verbatimTransform = [
+  files.transform[0],
+  verbatim('data-transform', 'SyntheticTransform', {}),
+];
+files.verbatimInsight = [
+  'data360/calculatedInsights/Draft__cio.calculatedInsight-meta.json',
+  verbatim('calculated-insight', 'Draft__cio', {}),
+];
+const verbatimSources = [
+  'verbatimSegment',
+  'verbatimIr',
+  'verbatimGraph',
+  'verbatimTransform',
+  'verbatimInsight',
+];
+
+/**
+ * The lenient harness, recording what each source-family service receives; the org is never
+ * read to project a verbatim file.
+ * @param {string} cwd Repository.
+ * @param {object} flags Flag overrides.
+ * @returns {object} Harness.
+ */
+const verbatimHarness = (cwd, flags) => {
+  const h = lenientHarness(cwd, flags);
+  h.command.readDeleteSource = async () => assert.fail('a verbatim file is not projected');
+  h.command.operateNativeGraph = async (document, _context, _client, options) => {
+    await options.verifyInput();
+    h.calls.push(`graph:${document.identity.apiName}`);
+    h.desired.graph = document;
+    return { outcome: 'deleted', mutation: 'confirmed-deleted' };
+  };
+  h.command.calculatedInsightContext = () => ({});
+  h.command.deleteCalculatedInsight = async (identity, _connection, _version, _space, options) => {
+    await options.verifyInput();
+    h.calls.push(`insight:${identity.apiName}`);
+    return { outcome: 'deleted', mutation: 'confirmed-deleted', diagnostics: [] };
+  };
+  return h;
+};
+
+test('verbatim source-family files deleted in a range are deleted by type and name', async () => {
+  const { cwd, base } = await repository(verbatimSources);
+  const h = verbatimHarness(cwd, { 'changed-since': base });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  for (const call of [
+    'graph:SyntheticGraph',
+    'ir:Individual_A1b2',
+    'segment:Audience',
+    'transform:1dt000000000001AAA',
+    'insight:Draft__cio',
+  ])
+    assert.ok(h.calls.includes(call), call);
+  // Each service gets the verbatim file itself, not a projection of the org's GET.
+  for (const kind of ['segment', 'ir', 'graph', 'transform'])
+    assert.ok('verbatim' in h.desired[kind], kind);
+  // The guards before any org call still hold: confirmation and the name of the path.
+  const unconfirmed = verbatimHarness(cwd, { 'changed-since': base, 'confirm-delete': false });
+  const blocked = await run(unconfirmed.command);
+  assert.deepEqual(codes(blocked), ['DESTRUCTIVE_CONFIRMATION_REQUIRED']);
+  assert.deepEqual(unconfirmed.calls, ['git']);
+  files.verbatimSegmentRenamed = [
+    files.verbatimSegment[0],
+    verbatim('segment', 'Other', { segments: [] }),
+  ];
+  const renamed = await repository(['verbatimSegmentRenamed']);
+  const refused = verbatimHarness(renamed.cwd, { 'changed-since': renamed.base });
+  const outcome = await run(refused.command);
+  assert.equal(outcome.status, 'blocked');
+  assert.deepEqual(codes(outcome), ['INVALID_GIT_SELECTION']);
+  assert.deepEqual(refused.calls, ['git']);
+});

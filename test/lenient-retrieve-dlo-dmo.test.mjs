@@ -323,3 +323,59 @@ test('an unprintable key is not echoed', () => {
       /\[unnamed key\] is not a key/u.test(error.message) && !/secret/u.test(error.message),
   );
 });
+
+/**
+ * Retrieve one DLO through the command with an offline client.
+ * @param {object} raw DLO GET response.
+ * @param {Function} [acquire] Acquisition seam (default: the real one).
+ * @returns {Promise<{result: object, file: string}>} Envelope and the DLO's file path.
+ */
+async function retrieveDlo(raw, acquire = retrieveNativeDlo) {
+  const cwd = await scratch();
+  const retrieve = command(Retrieve, { metadata: [`dlo:${dloName}`], 'output-dir': cwd });
+  retrieve.acquireDlo = acquire;
+  retrieve.writeDlo = writeDloDocument;
+  retrieve.resolveOrg = async () => ({
+    getOrgId: () => 'org',
+    getConnection: () => ({ getUsername: () => 'target' }),
+  });
+  retrieve.createDloClient = () => ({ get: async () => structuredClone(raw) });
+  return {
+    result: await run(retrieve),
+    file: path.join(cwd, 'data360', 'dlo', `${dloName}.dlo-meta.json`),
+  };
+}
+
+test('a DLO without a usable ID is written verbatim; a DLO of another name stays a failure', async () => {
+  for (const id of [undefined, '1dlaj00000Ae4VNAA']) {
+    const raw = { ...looseDlo(), id };
+    const { result, file } = await retrieveDlo(raw);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(result.result.items[0].verbatim, { reason: 'INVALID_DLO_TARGET_ID' });
+    const saved = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(saved.verbatim.reason, 'INVALID_DLO_TARGET_ID');
+  }
+  const other = await retrieveDlo({ ...looseDlo(), name: 'Other__dll' });
+  assert.notEqual(other.result.status, 'success');
+  assert.equal(other.result.result.items.length, 0);
+  assert.match(JSON.stringify(other.result.diagnostics.errors), /DLO_TARGET_IDENTITY_MISMATCH/u);
+  await assert.rejects(readFile(other.file, 'utf8'), { code: 'ENOENT' });
+});
+
+test('a projection that fails without an error code is written verbatim as UNMODELLED_RESPONSE', async () => {
+  const { result, file } = await retrieveDlo(looseDlo(), async (name, client) => {
+    await client.get(name);
+    throw new TypeError('unexpected shape');
+  });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.result.items[0].verbatim, { reason: 'UNMODELLED_RESPONSE' });
+  const saved = JSON.parse(await readFile(file, 'utf8'));
+  assert.equal(saved.verbatim.reason, 'UNMODELLED_RESPONSE');
+  assert.equal(saved.verbatim.native.name, dloName);
+  // Without a read, the same failure stays an item failure.
+  const unread = await retrieveDlo(looseDlo(), async () => {
+    throw new TypeError('before any read');
+  });
+  assert.notEqual(unread.result.status, 'success');
+  assert.equal(unread.result.result.items.length, 0);
+});
