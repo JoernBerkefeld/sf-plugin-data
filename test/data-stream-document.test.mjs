@@ -118,6 +118,47 @@ test('proven create body uses object DLO, PK only and empty arrays, never observ
   assert.throws(() => buildDataStreamCreateBody(input), /CREATE_ADDITIONS_UNSUPPORTED/);
 });
 
+test('an Engagement stream with a formula creates with the PK field only, its event time and typed source fields', () => {
+  const input = document();
+  input.spec.newDlo.category = 'Engagement';
+  input.spec.newDlo.eventDateTimeFieldName = 'EventTime';
+  input.spec.formulaMappings = [
+    {
+      targetFieldName: 'ScoreX2',
+      formula: "sourceField['Score'] * 2",
+      targetFieldReturntype: 'Number',
+    },
+  ];
+  const sourceFields = [
+    { name: 'ProbeId', dataType: 'Text' },
+    { name: 'EventTime', dataType: 'DateTime' },
+    { name: 'Score', dataType: 'Number' },
+  ];
+  const body = buildDataStreamCreateBody(input, sourceFields);
+  // The proven create (research probe c15): only the key as DLO field; Salesforce adds the rest.
+  assert.deepEqual(body.dataLakeObjectInfo, {
+    name: input.spec.newDlo.name,
+    label: 'Requested stream',
+    category: 'Engagement',
+    eventDateTimeFieldName: 'EventTime',
+    dataspaceInfo: [{ name: 'default' }],
+    dataLakeFieldInputRepresentations: [
+      { name: 'ProbeId', label: 'ProbeId', dataType: 'Text', isPrimaryKey: true },
+    ],
+  });
+  assert.deepEqual(body.mappings, [
+    {
+      targetFieldName: 'ScoreX2',
+      transformationFormula: "sourceField['Score'] * 2",
+      targetFieldReturntype: 'Number',
+    },
+  ]);
+  assert.deepEqual(body.sourceFields, sourceFields);
+  // Without formulas the source fields stay empty (the proven create without formulas).
+  delete input.spec.formulaMappings;
+  assert.deepEqual(buildDataStreamCreateBody(input, sourceFields).sourceFields, []);
+});
+
 test('PATCH serializes sourceFieldLabel Text additions only, target normalizes to DLO __c', () => {
   const input = document();
   assert.throws(() => buildDataStreamPatchBody(input), /EMPTY_STREAM_PATCH/);
@@ -158,11 +199,43 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
     (d) => {
       d.spec.refreshMode = 'FULL_REFRESH';
     },
+    // Any category and key type is Salesforce's to decide; only an empty or non-text one is refused.
     (d) => {
-      d.spec.newDlo.category = 'Profile';
+      d.spec.newDlo.category = '';
     },
     (d) => {
-      d.spec.newDlo.primaryKey.dataType = 'Number';
+      d.spec.newDlo.primaryKey.dataType = 7;
+    },
+    (d) => {
+      d.spec.newDlo.eventDateTimeFieldName = '../escape';
+    },
+    (d) => {
+      d.spec.formulaMappings = {};
+    },
+    (d) => {
+      d.spec.formulaMappings = [
+        { targetFieldName: 'ProbeId', formula: 'x', targetFieldReturntype: 'Text' },
+      ];
+    },
+    (d) => {
+      d.spec.formulaMappings = [
+        { targetFieldName: 'Score2', formula: '', targetFieldReturntype: 'Number' },
+      ];
+    },
+    (d) => {
+      d.spec.formulaMappings = [
+        { targetFieldName: 'Score2', formula: 'x', targetFieldReturntype: 'Number', extra: 1 },
+      ];
+    },
+    (d) => {
+      d.spec.additiveFieldMappings = [addition()];
+      d.spec.formulaMappings = [
+        {
+          targetFieldName: addition().targetFieldName,
+          formula: 'x',
+          targetFieldReturntype: 'Text',
+        },
+      ];
     },
     (d) => {
       d.spec.newDlo = [d.spec.newDlo];

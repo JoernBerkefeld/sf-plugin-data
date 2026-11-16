@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_CATEGORY`
 
-> The landing DLO of the stream has a category other than Other, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.
+> The landing DLO of the stream reports no category, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.
 
 |              |                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------- |
@@ -10,16 +10,16 @@
 
 ## What it means
 
-The stream file format creates landing DLOs with category `Other`. This code means the landing DLO of the stream has another category, for example `Profile` or `Engagement`.
+The stream file keeps the category of the landing DLO (`spec.newDlo.category`, for example `Other`, `Profile` or `Engagement`). This code means the stream read reports no category for its DLO.
 
 ## Why the plugin reports it
 
-The plugin cannot represent the category in its normal file, so it does not guess. It writes the stream GET as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, so nothing in the org is hidden.
+The plugin cannot create a DLO without a category, so it does not guess. It writes the stream GET as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, so nothing in the org is hidden.
 
 ## How to fix
 
-1. Manage the stream in Salesforce. Deploy skips the verbatim file in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
-2. Retrieve again after the plugin supports the category; the normal file then replaces the verbatim one.
+1. Check the stream and its DLO in Data Cloud Setup.
+2. Manage the stream in Salesforce. Deploy skips the verbatim file in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
 
 ## Example output
 
@@ -31,5 +31,5 @@ Downloaded data-stream:Web_Events (retrieved).
 
 ## Related codes
 
-- [`UNSUPPORTED_STREAM_FIELD_TYPE`](../data-stream/UNSUPPORTED_STREAM_FIELD_TYPE.md) — a source field that is not Text.
+- [`UNSUPPORTED_STREAM_REFRESH`](../data-stream/UNSUPPORTED_STREAM_REFRESH.md) — a refresh mode other than UPSERT.
 - [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy of the verbatim file.

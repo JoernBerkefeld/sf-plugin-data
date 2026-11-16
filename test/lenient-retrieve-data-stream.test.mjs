@@ -219,8 +219,6 @@ test('an as-is stream file does not change when Salesforce reorders its mappings
 test('each IngestApi variant the file cannot hold is named from the stream GET alone', async () => {
   const cases = [
     [(s) => (s.refreshConfig.refreshMode = 'FULL_REFRESH'), 'UNSUPPORTED_STREAM_REFRESH'],
-    [(s) => (s.dataLakeObjectInfo.category = 'Engagement'), 'UNSUPPORTED_STREAM_CATEGORY'],
-    [(s) => (s.sourceFields[1].datatype = 'Number'), 'UNSUPPORTED_STREAM_FIELD_TYPE'],
     [(s) => (s.connectorInfo.connectorType = 'S3'), 'UNSUPPORTED_STREAM_CONNECTOR'],
   ];
   for (const [change, code] of cases) {
@@ -246,9 +244,12 @@ test('a stream whose DLO is in another data space stays an item failure', async 
   await assert.rejects(stat(streamFile(cwd, 'Account_Home')), { code: 'ENOENT' });
 });
 
-test('an IngestApi stream with a real formula is written as its GET', async () => {
+test('an IngestApi stream with a real formula is written as a stream file that deploys', async () => {
   const stream = ingestStream();
-  stream.mappings.push({ formula: 'UPPER(ProbeValue)', targetFieldName: 'Upper' });
+  stream.mappings.push({
+    formula: 'UPPER(sourceField[&#39;ProbeValue&#39;])',
+    targetFieldName: 'Upper',
+  });
   stream.dataLakeObjectInfo.fields.push({
     name: 'Upper',
     label: 'Upper',
@@ -257,12 +258,131 @@ test('an IngestApi stream with a real formula is written as its GET', async () =
   });
   const { result, cwd } = await retrieveCommand(stream);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
-  assert.deepEqual(result.result.items[0].verbatim, { reason: 'UNSUPPORTED_STREAM_PROJECTION' });
+  assert.equal(result.result.items[0].verbatim, undefined);
   const saved = JSON.parse(await readFile(streamFile(cwd, 'GeneratedStream'), 'utf8'));
-  assert.deepEqual(saved.verbatim.native, asIs(stream));
-  await assert.rejects(readDeployInputs({ cwd, metadata: ['data-stream:GeneratedStream'] }), {
-    code: 'VERBATIM_NOT_DEPLOYABLE',
+  assert.deepEqual(saved.spec.formulaMappings, [
+    {
+      targetFieldName: 'Upper',
+      formula: "UPPER(sourceField['ProbeValue'])",
+      targetFieldReturntype: 'Text',
+    },
+  ]);
+  const inputs = await readDeployInputs({ cwd, metadata: ['data-stream:GeneratedStream'] });
+  assert.ok(inputs);
+});
+
+/**
+ * An Engagement stream with non-Text fields and a formula, one of two streams on its connection.
+ * @param {string} event Event name.
+ * @param {string} hash Generated name suffix.
+ * @returns {object} Stream GET.
+ */
+function engagementStream(event, hash) {
+  const name = `CliConn_${event}_${hash}`;
+  const typed = [
+    ['EventId', 'Text'],
+    ['EventTime', 'DateTime'],
+    ['Score', 'Number'],
+  ];
+  return {
+    ...ingestStream(),
+    name,
+    label: `CliConn-${event}`,
+    sourceFields: typed.map(([field, datatype]) => ({ name: field, datatype })),
+    mappings: [
+      ...typed.map(([field]) => ({ sourceFieldName: field, targetFieldName: field })),
+      { formula: '&quot;SyntheticConnection&quot;', targetFieldName: 'DataSource' },
+      { formula: `&quot;${name}&quot;`, targetFieldName: 'DataSourceObject' },
+      {
+        formula:
+          'if(ISEMPTY(formulaField[&#39;EventTime__c&#39;])) { null; } else { DAYPRECISION(formulaField[&#39;EventTime__c&#39;]); }',
+        targetFieldName: 'cdp_sys_PartitionDate',
+      },
+      { formula: 'sourceField[&#39;Score&#39;] * 2', targetFieldName: 'ScoreX2' },
+    ],
+    dataLakeObjectInfo: {
+      name: `${name}__dll`,
+      label: event,
+      category: 'Engagement',
+      eventDateTimeFieldName: 'EventTime',
+      dataSpaceInfo: [{ name: 'default' }],
+      fields: [
+        ...typed.map(([field, dataType]) => ({
+          name: field,
+          label: field,
+          dataType,
+          isPrimaryKey: field === 'EventId',
+        })),
+        ...[
+          ['KQ_EventId', 'Text'],
+          ['DataSource', 'Text'],
+          ['DataSourceObject', 'Text'],
+          ['cdp_sys_PartitionDate', 'DateTime'],
+          ['cdp_sys_SourceVersion', 'Text'],
+          ['ScoreX2', 'Number'],
+        ].map(([field, dataType]) => ({
+          name: field,
+          label: field,
+          dataType,
+          isPrimaryKey: false,
+        })),
+      ],
+    },
+  };
+}
+
+test('an Engagement stream with typed fields and a formula, one of two on its connection, retrieves to a stream file', async () => {
+  const first = engagementStream('CliEvA', '1A2B3C4D');
+  const second = engagementStream('CliEvB', '5E6F7A8B');
+  const { clients } = reads(first);
+  const schema = (event) => ({
+    name: event,
+    schemaType: 'IngestApi',
+    availabilityStatus: 'In Use',
+    fields: first.sourceFields.map((field) => ({
+      name: field.name,
+      label: field.name,
+      dataType: field.datatype,
+    })),
   });
+  // Both events have the same fields: the stream is matched to its event by its generated name.
+  clients.connections.schema = async () => ({ schemas: [schema('CliEvA'), schema('CliEvB')] });
+  clients.streams.list = async () => [structuredClone(second), structuredClone(first)];
+  const document = await retrieveNativeDataStream(
+    first.name,
+    clients,
+    'default',
+    false,
+    'retrieve',
+  );
+  assert.equal(document.spec.event, 'CliEvA');
+  assert.deepEqual(document.spec.newDlo, {
+    name: first.dataLakeObjectInfo.name,
+    label: 'CliEvA',
+    category: 'Engagement',
+    eventDateTimeFieldName: 'EventTime',
+    primaryKey: { name: 'EventId', label: 'EventId', dataType: 'Text' },
+  });
+  assert.deepEqual(document.spec.additiveFieldMappings, []);
+  assert.deepEqual(document.spec.formulaMappings, [
+    {
+      targetFieldName: 'ScoreX2',
+      formula: "sourceField['Score'] * 2",
+      targetFieldReturntype: 'Number',
+    },
+  ]);
+  // The same deploy-mode read admits it, so the file deploys.
+  const strict = await retrieveNativeDataStream(first.name, clients);
+  assert.deepEqual(strict.spec, document.spec);
+  // A stream no event name or label fits stays as-is with the event reason.
+  const unmatched = engagementStream('Other', '00000000');
+  unmatched.label = 'Renamed';
+  const { clients: other } = reads(unmatched);
+  other.connections.schema = clients.connections.schema;
+  await assert.rejects(
+    retrieveNativeDataStream(unmatched.name, other, 'default', false, 'retrieve'),
+    { code: 'AMBIGUOUS_STREAM_EVENT' },
+  );
 });
 
 test('retrieve keeps unknown mapping and source field keys and a long DLO label; deploy names the key', async () => {

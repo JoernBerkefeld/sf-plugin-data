@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_READ`
 
-> The stream is outside the supported profile: Ingestion API, UPSERT, category Other, default data space. Manage this stream in Salesforce.
+> The stream is outside the supported profile: Ingestion API, UPSERT, a DLO category, default data space. Manage this stream in Salesforce.
 
 |              |                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin supports one kind of data stream: an Ingestion API stream with refresh mode `UPSERT` whose landing DLO has category `Other` and is in the `default` data space only. This code means a stream it read is different: another stream or connector type, another refresh mode, another DLO category or data space, or a stream without a name, record ID, data source, status, label, source field list or mapping list.
+The plugin supports one kind of data stream: an Ingestion API stream with refresh mode `UPSERT` whose landing DLO has a category and is in the `default` data space only. This code means a stream it read is different: another stream or connector type, another refresh mode, a DLO without category, another data space, or a stream without a name, record ID, data source, status, label, source field list or mapping list.
 
 It also appears when another stream of a different kind shares the connection.
 

@@ -1,6 +1,6 @@
 # `STREAM_CHANGE_NOT_APPLIED`
 
-> Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a CRM stream label). Retrieve the stream; change the rest in Salesforce.
+> Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a stream label). Retrieve the stream; change the rest in Salesforce.
 
 |              |                                                                              |
 | ------------ | ---------------------------------------------------------------------------- |
@@ -10,13 +10,13 @@
 
 ## What it means
 
-Deploy sent the create or the PATCH of a CRM stream, Salesforce answered with success, and the stream became ACTIVE. Read back afterwards, the stream still differs from the file in the parts the notice names.
+Deploy sent the create or the PATCH of a CRM or Ingestion API stream, Salesforce answered with success, and the stream became ACTIVE. Read back afterwards, the stream still differs from the file in the parts the notice names.
 
-The known case is the label: Salesforce answers a PATCH of a CRM stream label with HTTP 200 and keeps the old label.
+The known case is the label: Salesforce answers a PATCH of a stream label with HTTP 200 and keeps the old label. For an Ingestion API stream the notice also says when a created stream does not hold every formula of the file.
 
 ## Why the plugin reports it
 
-The plugin sends the file and lets Salesforce decide. A success answer alone does not prove the change, so the plugin reads the stream back and names every part that did not change instead of reporting a plain success.
+The plugin sends the file and lets Salesforce decide. A success answer alone does not prove the change, so the plugin reads the stream back and names what did not change instead of reporting a plain success.
 
 ## How to fix
 
@@ -33,4 +33,4 @@ STREAM_CHANGE_NOT_APPLIED: Salesforce accepted the label change but kept the old
 
 ## Related codes
 
-- [`STREAM_HTTP_ERROR`](../data-stream/STREAM_HTTP_ERROR.md) — Salesforce refused the write, for example a change of `refreshConfig.refreshMode`.
+- [`STREAM_HTTP_ERROR`](../data-stream/STREAM_HTTP_ERROR.md) — Salesforce refused the write, for example a change of `refreshConfig.refreshMode` or the removal of an Ingestion API formula.

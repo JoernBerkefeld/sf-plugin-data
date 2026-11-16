@@ -1,3 +1,38 @@
+# Ingestion API streams of any category, field type and formula (C1) — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C-implement,
+variant C1, Ingest part (evidence: verification DB `data360:data-stream.asis-variants-crud.api68`
+and `data360:data-stream.ingest-variants-deploy.api68`). The existing Ingest model was widened,
+no parallel one: `spec.newDlo.category` any text, optional `spec.newDlo.eventDateTimeFieldName`,
+`primaryKey.dataType` and source field types any text, optional `spec.formulaMappings`
+(`targetFieldName`, decoded `formula`, `targetFieldReturntype` = DLO field type). Retrieve skips
+the system formulas (`DataSource`, `DataSourceObject`, `cdp_sys_*`); a formula equal to a source
+label onto a Text field stays an `additiveFieldMappings` entry. Event per stream: `streamEvent` in
+`native-data-stream.ts` (sole event; else generated name `_<event>_<8 hex>` or label `-<event>`,
+then equal source fields; else `AMBIGUOUS_STREAM_EVENT`); the binding keeps only the streams of
+`spec.event` (`inventory`), so several streams per connection work. Create (`buildDataStreamCreateBody`
+with the binding's typed source fields when there are formulas) sends PK-only DLO fields,
+`eventDateTimeFieldName` and formulas; a formula missing after create is notice
+`STREAM_CHANGE_NOT_APPLIED`. Update plan adds `formulaChanges` (added/changed, removed with empty
+formula) and `labelChange`; those go as one `patch()` (`ingestDataStreamPatchBody`), pure additive
+Text mappings keep `update()`. Settlement excludes changed/removed formula targets and the label
+from preservation; a label still different is notice `STREAM_CHANGE_NOT_APPLIED`. DLO label,
+category, event time and PK changes stay `UNSUPPORTED_STREAM_SETTINGS_CHANGE`. The Ingest execute
+uses `WriteLedger`, so a 4xx (formula removal) is `rejected`, not `unknown` (changed from before).
+Drift: `STREAM_SOURCE_DRIFT` and `STREAM_DLO_DRIFT` stay as-is (the file holds neither source nor
+DLO fields, so a deploy could not reproduce them). `UNSUPPORTED_STREAM_FIELD_TYPE` removed;
+`UNSUPPORTED_STREAM_CATEGORY` only for a DLO without category. Two live fixes: post-write reads
+where stream and DLO status flip PROCESSING/ACTIVE together are pending (was STREAM_BINDING_DRIFT
+after a PATCH); a delete whose stream reads 404 while the list still names it waits (was a raw
+404 on the last stream of a connection). Tests: `test/ingest-data-stream-variants.test.mjs`,
+`lenient-retrieve-data-stream`, `data-stream-document`, `native-data-stream` (formula case).
+Live on isolated-source (00Daj000010xkZNEAY): new connection `CliIngC1` (events CliEvA, CliEvB;
+Text, DateTime, Number, Boolean, Email) via MCP; two Engagement streams with formula created from
+files, retrieved (normal files), unchanged repeat, formulas added (update), deleted with DLOs,
+connection deleted; all 404. Evidence `F:/Temp/c1ing-live-syTabJ/logs`. Open: changing the
+formula of an existing target is unproven live (sent like an addition); DLO setting changes are
+refused locally because no PATCH input for them is known.
+
 # CRM-connector data streams (C1) — 2026-11-16
 
 Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), C-implement,

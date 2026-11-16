@@ -1,6 +1,6 @@
 # `AMBIGUOUS_STREAM_EVENT`
 
-> The connection does not have exactly one uploaded event schema. Use a connection whose schema holds only the event named in spec.event.
+> The stream could not be tied to exactly one event of its connection: the connection has no event, names one twice, or several events fit the stream. Retrieve wrote the stream as-is.
 
 |              |                                                                                                                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,19 +10,19 @@
 
 ## What it means
 
-An Ingestion API connection carries an uploaded schema with one or more events (objects). The plugin reads that schema to find the event named in `spec.event` and its source fields.
+An Ingestion API connection carries an uploaded schema with one or more events (objects), and each event can feed one data stream. The stream read does not name its event, so the plugin ties a stream to its event: a connection with one event needs no match; otherwise the event is the one the generated stream name (`<connection>_<event>_<hash>`) or label (`<connection>-<event>`) names, and when several fit, the one whose fields equal the stream's source fields.
 
-This code means the schema has no event at all or more than one event. The plugin only supports connections with exactly one event.
+This code means that did not lead to exactly one event: the connection has no event, its schema names an event twice, or several events (or none) fit the stream.
 
 ## Why the plugin stops
 
-The stream read does not say which event it uses. With several events on one connection the plugin cannot tie a stream to its event, so it could compare the wrong source fields or change the wrong stream.
+Tied to the wrong event, the plugin would compare the wrong source fields or change the wrong stream, so it writes the stream as-is on retrieve and stops on deploy and delete.
 
 ## How to fix
 
-1. Open the connection in Data Cloud Setup and look at its uploaded schema.
+1. Open the connection in Data Cloud Setup and look at its uploaded schema and its streams.
 2. If it has no event, upload the schema for the event the stream uses.
-3. If it has several events, use a separate connection that carries only the event this stream needs.
+3. If the stream was renamed or relabelled so that it names no event, or several events have the same fields and fit the stream, manage that stream in Salesforce.
 4. Rerun the command.
 
 ## Example output
@@ -35,6 +35,6 @@ Downloaded data-stream: 1
 
 ## Related codes
 
-- [`INVALID_STREAM_SCHEMA`](../data-stream/INVALID_STREAM_SCHEMA.md) — the single event exists but does not match.
-- [`AMBIGUOUS_STREAM_CONNECTION`](../data-stream/AMBIGUOUS_STREAM_CONNECTION.md) — the connection itself could not be identified.
+- [`INVALID_STREAM_SCHEMA`](../data-stream/INVALID_STREAM_SCHEMA.md) — the event exists but does not match.
+- [`AMBIGUOUS_STREAM_BINDING`](../data-stream/AMBIGUOUS_STREAM_BINDING.md) — several streams read the same event.
 - [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy refuses a named as-is file.

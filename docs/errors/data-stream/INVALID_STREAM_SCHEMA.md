@@ -1,6 +1,6 @@
 # `INVALID_STREAM_SCHEMA`
 
-> The connection's event does not match the stream: wrong event name, unsupported availability, or fields that are not unique Text fields. Check spec.event and the schema.
+> The connection's event does not match the stream: no event of that name, unsupported availability, or fields without a type or label, or named twice. Check spec.event and the schema.
 
 |              |                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,23 +10,23 @@
 
 ## What it means
 
-The plugin reads the single event of the stream's connection. This code means that event does not fit the supported profile:
+The plugin reads the event named in `spec.event` from the stream's connection schema. This code means that event does not fit:
 
-- its name differs from `spec.event`,
+- the schema has no event of that name,
 - its schema type is not Ingestion API,
 - its availability is neither `Available` nor `In Use`,
 - it has no fields, or
-- a field is not Text, has no label, or appears twice.
+- a field has no type or label, or appears twice.
 
 ## Why the plugin stops
 
-The plugin supports Text source fields only and compares them with the stream. A schema outside that profile could lead to mappings the plugin cannot check, so it stops.
+The plugin compares the event fields with the stream and sends their types on create. A schema it cannot read that way could lead to mappings the plugin cannot check, so it stops.
 
 ## How to fix
 
 1. Open the connection's schema in Data Cloud Setup and check the event name and its fields.
 2. Set `spec.event` to the exact event name.
-3. If the event has non-Text fields, the plugin cannot handle this stream; manage it in Salesforce.
+3. Give every field a name, label and type, each name once, then rerun.
 
 ## Example output
 
@@ -34,7 +34,7 @@ The plugin supports Text source fields only and compares them with the stream. A
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: data-stream:WebOrders_Order_1a2b3c4d; mutation: not-attempted.
 INVALID_STREAM_SCHEMA: Plugin verification or request completion failed; no Salesforce rejection was confirmed. No write attempted; correct the reported check before another attempt.
-Hint: The connection's event does not match the stream: wrong event name, unsupported availability, or fields that are not unique Text fields. Check spec.event and the schema.
+Hint: The connection's event does not match the stream: no event of that name, unsupported availability, or fields without a type or label, or named twice. Check spec.event and the schema.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/INVALID_STREAM_SCHEMA.md
 Deployed: 0 (0 created / 0 updated / 0 failed)
 ```

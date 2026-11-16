@@ -1,6 +1,6 @@
 # `INVALID_STREAM_PRIMARY_KEY`
 
-> The primary key does not match: it must be one Text source field of the event, and the only key field of the DLO. Check spec.newDlo.primaryKey against the org.
+> The primary key does not match: it must be one source field of the event, and the only key field of the DLO. Check spec.newDlo.primaryKey against the org.
 
 |              |                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -32,7 +32,7 @@ The primary key decides how incoming records are matched. The plugin does not ch
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: data-stream:WebOrders_Order_1a2b3c4d; mutation: not-attempted.
 INVALID_STREAM_PRIMARY_KEY: Plugin verification or request completion failed; no Salesforce rejection was confirmed. No write attempted; correct the reported check before another attempt.
-Hint: The primary key does not match: it must be one Text source field of the event, and the only key field of the DLO. Check spec.newDlo.primaryKey against the org.
+Hint: The primary key does not match: it must be one source field of the event, and the only key field of the DLO. Check spec.newDlo.primaryKey against the org.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/INVALID_STREAM_PRIMARY_KEY.md
 Deployed: 0 (0 created / 0 updated / 0 failed)
 ```

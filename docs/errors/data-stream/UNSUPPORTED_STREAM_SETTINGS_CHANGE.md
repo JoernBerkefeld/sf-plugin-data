@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_SETTINGS_CHANGE`
 
-> The file changes the stream label, DLO label or primary key of an existing stream, which is not supported. Use the values from a freshly retrieved file.
+> The file changes the DLO label, category, event time field or primary key of an existing stream, which a stream update cannot change. Use the values from a freshly retrieved file.
 
 |              |                                                                              |
 | ------------ | ---------------------------------------------------------------------------- |
@@ -10,19 +10,19 @@
 
 ## What it means
 
-For an existing stream, the plugin compares `spec.label`, `spec.newDlo.label` and `spec.newDlo.primaryKey` with the stream in the org. This code means at least one of them differs.
+For an existing stream, the plugin compares `spec.newDlo.label`, `spec.newDlo.category`, `spec.newDlo.eventDateTimeFieldName` and `spec.newDlo.primaryKey` with the stream in the org. This code means at least one of them differs.
 
-A common cause is deploying a file to another org where the stream and DLO have different labels, or editing the labels by hand.
+A common cause is deploying a file to another org where the DLO has another label, or editing these values by hand. The stream label itself is sent (Salesforce keeps its own; see [`STREAM_CHANGE_NOT_APPLIED`](../data-stream/STREAM_CHANGE_NOT_APPLIED.md)).
 
 ## Why the plugin stops
 
-Updates only add mappings. The plugin has no supported way to rename a stream or DLO or change its key, and it does not ignore the difference silently.
+These are settings of the landing DLO, which a stream update does not carry. The plugin has no way to send them and does not ignore the difference silently.
 
 ## How to fix
 
 1. Retrieve the existing stream: `sf data360 retrieve -m data-stream:<ApiName> --overwrite`.
-2. Keep the retrieved `label`, `newDlo.label` and `primaryKey`, and only add entries to `spec.additiveFieldMappings`.
-3. Change labels in Salesforce if you need to.
+2. Keep the retrieved `newDlo` values; change mappings and formulas only.
+3. Change the DLO in Salesforce if you need to.
 
 ## Example output
 
@@ -30,7 +30,7 @@ Updates only add mappings. The plugin has no supported way to rename a stream or
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: data-stream:WebOrders_Order_1a2b3c4d; mutation: not-attempted.
 UNSUPPORTED_STREAM_SETTINGS_CHANGE: Plugin verification or request completion failed; no Salesforce rejection was confirmed. No write attempted; correct the reported check before another attempt.
-Hint: The file changes the stream label, DLO label or primary key of an existing stream, which is not supported. Use the values from a freshly retrieved file.
+Hint: The file changes the DLO label, category, event time field or primary key of an existing stream, which a stream update cannot change. Use the values from a freshly retrieved file.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/UNSUPPORTED_STREAM_SETTINGS_CHANGE.md
 Deployed: 0 (0 created / 0 updated / 0 failed)
 ```

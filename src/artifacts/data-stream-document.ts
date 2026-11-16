@@ -7,6 +7,13 @@ export type DataStreamMapping = {
   targetFieldReturntype: 'Text';
 };
 
+/** A formula mapping onto a DLO field Salesforce creates from it; the formula is stored decoded. */
+export type DataStreamFormulaMapping = {
+  targetFieldName: string;
+  formula: string;
+  targetFieldReturntype: string;
+};
+
 export type DataStreamDocument = {
   schemaVersion: 1;
   kind: 'data-stream';
@@ -21,10 +28,12 @@ export type DataStreamDocument = {
     newDlo: {
       name: string;
       label: string;
-      category: 'Other';
-      primaryKey: { name: string; label: string; dataType: 'Text' };
+      category: string;
+      eventDateTimeFieldName?: string;
+      primaryKey: { name: string; label: string; dataType: string };
     };
     additiveFieldMappings: DataStreamMapping[];
+    formulaMappings?: DataStreamFormulaMapping[];
   };
   observed?: {
     mappings: { sourceFieldName?: string; formula?: string; targetFieldName: string }[];
@@ -168,35 +177,49 @@ export function validateDataStreamDocument(
   const identity = object(document.identity, 'identity', ['apiName', 'dataSpace']);
   identifier(identity.apiName, 'identity.apiName');
   text(identity.dataSpace, 'identity.dataSpace');
-  const spec = object(document.spec, 'spec', [
-    'connectorType',
-    'connectionName',
-    'event',
-    'datastreamType',
-    'refreshMode',
-    'label',
-    'newDlo',
-    'additiveFieldMappings',
-  ]);
+  const spec = object(
+    document.spec,
+    'spec',
+    [
+      'connectorType',
+      'connectionName',
+      'event',
+      'datastreamType',
+      'refreshMode',
+      'label',
+      'newDlo',
+      'additiveFieldMappings',
+    ],
+    ['formulaMappings'],
+  );
   identifier(spec.connectionName, 'spec.connectionName');
   identifier(spec.event, 'spec.event');
   text(spec.label, 'spec.label', bounded);
-  const dlo = object(spec.newDlo, 'spec.newDlo', ['name', 'label', 'category', 'primaryKey']);
+  const dlo = object(
+    spec.newDlo,
+    'spec.newDlo',
+    ['name', 'label', 'category', 'primaryKey'],
+    ['eventDateTimeFieldName'],
+  );
   identifier(dlo.name, 'spec.newDlo.name', true);
   if (text(dlo.label, 'spec.newDlo.label', bounded).length > 40 && !lenient)
     throw refuse('INVALID_STREAM_LABEL', 'spec.newDlo.label', 'is longer than 40 characters');
   const pk = object(dlo.primaryKey, 'spec.newDlo.primaryKey', ['name', 'label', 'dataType']);
   identifier(pk.name, 'spec.newDlo.primaryKey.name');
   text(pk.label, 'spec.newDlo.primaryKey.label', bounded);
+  // Category and field types are Salesforce's to accept or refuse; only their shape is checked.
+  text(dlo.category, 'spec.newDlo.category');
+  text(pk.dataType, 'spec.newDlo.primaryKey.dataType');
+  if (dlo.eventDateTimeFieldName !== undefined)
+    identifier(dlo.eventDateTimeFieldName, 'spec.newDlo.eventDateTimeFieldName');
   if (
     document.schemaVersion !== 1 ||
     document.kind !== 'data-stream' ||
     spec.connectorType !== 'IngestApi' ||
     spec.datastreamType !== 'INGEST_API' ||
     spec.refreshMode !== 'UPSERT' ||
-    dlo.category !== 'Other' ||
-    pk.dataType !== 'Text' ||
-    !Array.isArray(spec.additiveFieldMappings)
+    !Array.isArray(spec.additiveFieldMappings) ||
+    (spec.formulaMappings !== undefined && !Array.isArray(spec.formulaMappings))
   )
     throw new DataStreamError('UNSUPPORTED_STREAM_SPEC');
   const targets = new Set<string>();
@@ -215,6 +238,16 @@ export function validateDataStreamDocument(
       targets.has(target.toLowerCase()) ||
       mapping.targetFieldReturntype !== 'Text'
     )
+      throw new DataStreamError('INVALID_STREAM_MAPPING');
+    targets.add(target.toLowerCase());
+  }
+  for (const [index, entry] of ((spec.formulaMappings ?? []) as unknown[]).entries()) {
+    const at = `spec.formulaMappings[${index}]`;
+    const mapping = object(entry, at, ['targetFieldName', 'formula', 'targetFieldReturntype']);
+    const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`);
+    text(mapping.formula, `${at}.formula`, false);
+    text(mapping.targetFieldReturntype, `${at}.targetFieldReturntype`);
+    if (target.toLowerCase() === String(pk.name).toLowerCase() || targets.has(target.toLowerCase()))
       throw new DataStreamError('INVALID_STREAM_MAPPING');
     targets.add(target.toLowerCase());
   }
@@ -270,17 +303,24 @@ export function validateDataStreamDocument(
 }
 
 /**
- * Build only the proven PK-only object-shaped POST; no observed fields are replayed.
+ * Build the proven PK-only object-shaped POST; no observed fields are replayed. Salesforce creates
+ * every other DLO field from the event schema. Formula mappings are sent with the event's typed
+ * source fields (the proven formula create); without formulas both lists stay empty.
  * @param {unknown} value Portable document.
+ * @param {Array<{name: string; dataType: string}>} [sourceFields] Event schema fields (name, type).
  * @returns {object} Native create body, not dispatch authorization.
  */
-export function buildDataStreamCreateBody(value: unknown) {
+export function buildDataStreamCreateBody(
+  value: unknown,
+  sourceFields: ReadonlyArray<{ name: string; dataType: string }> = [],
+) {
   const document = validateDataStreamDocument(value);
   if (document.identity.dataSpace !== 'default')
     throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
   const { spec } = document;
   if (spec.additiveFieldMappings.length > 0)
     throw new DataStreamError('CREATE_ADDITIONS_UNSUPPORTED');
+  const formulas = spec.formulaMappings ?? [];
   return freeze({
     name: document.identity.apiName,
     label: spec.label,
@@ -293,11 +333,21 @@ export function buildDataStreamCreateBody(value: unknown) {
       name: spec.newDlo.name,
       label: spec.newDlo.label,
       category: spec.newDlo.category,
+      ...(spec.newDlo.eventDateTimeFieldName === undefined
+        ? {}
+        : { eventDateTimeFieldName: spec.newDlo.eventDateTimeFieldName }),
       dataspaceInfo: [{ name: document.identity.dataSpace }],
       dataLakeFieldInputRepresentations: [{ ...spec.newDlo.primaryKey, isPrimaryKey: true }],
     },
-    mappings: [],
-    sourceFields: [],
+    mappings: formulas.map((mapping) => ({
+      targetFieldName: mapping.targetFieldName,
+      transformationFormula: mapping.formula,
+      targetFieldReturntype: mapping.targetFieldReturntype,
+    })),
+    sourceFields:
+      formulas.length > 0
+        ? sourceFields.map((field) => ({ name: field.name, dataType: field.dataType }))
+        : [],
     refreshConfig: { refreshMode: spec.refreshMode },
   });
 }
@@ -389,7 +439,7 @@ export function isCrmSystemField(fieldName: unknown): boolean {
  * @param {string} value Escaped formula.
  * @returns {string} Formula as written.
  */
-function decodeFormula(value: string): string {
+export function decodeFormula(value: string): string {
   return value
     .replaceAll('&quot;', '"')
     .replaceAll('&#39;', "'")

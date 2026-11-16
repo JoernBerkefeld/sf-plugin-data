@@ -1,11 +1,11 @@
 /** CLI hints for Data stream error codes. Long-form pages: docs/errors/data-stream/<CODE>.md */
 export const hints: Readonly<Record<string, string>> = {
   AMBIGUOUS_STREAM_BINDING:
-    'The connection has more than one data stream, or a listed stream belongs to another connection. Use a connection that feeds exactly one Ingestion API stream.',
+    'Several data streams on the connection read the same event, or a listed stream belongs to another connection. Keep one stream per event in Salesforce, then rerun.',
   AMBIGUOUS_STREAM_CONNECTION:
     'The Ingestion API connection could not be identified exactly once in the org. Check that spec.connectionName names one existing connection, then rerun.',
   AMBIGUOUS_STREAM_EVENT:
-    'The connection does not have exactly one uploaded event schema. Use a connection whose schema holds only the event named in spec.event.',
+    'The stream could not be tied to exactly one event of its connection: the connection has no event, names one twice, or several events fit the stream. Retrieve wrote the stream as-is.',
   CREATE_ADDITIONS_UNSUPPORTED:
     'A new data stream cannot be created together with additive field mappings. Remove them from the file, deploy to create the stream, then add the mappings and deploy again.',
   DATA_STREAM_DELETE_UNCONFIRMED:
@@ -49,13 +49,13 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_STREAM_PAGE:
     "A page of the connection's data stream list had an unexpected shape or page link. Rerun the command; report it if it keeps happening.",
   INVALID_STREAM_PRIMARY_KEY:
-    'The primary key does not match: it must be one Text source field of the event, and the only key field of the DLO. Check spec.newDlo.primaryKey against the org.',
+    'The primary key does not match: it must be one source field of the event, and the only key field of the DLO. Check spec.newDlo.primaryKey against the org.',
   INVALID_STREAM_READ:
     'Salesforce returned a stream, connection or DLO answer that is not a JSON object where one was expected. Rerun the command; report it if it keeps happening.',
   INVALID_STREAM_RESPONSE:
     'Salesforce accepted the stream create or update but its answer was not a JSON object. The write may have happened; inspect the stream in the org before you deploy again.',
   INVALID_STREAM_SCHEMA:
-    "The connection's event does not match the stream: wrong event name, unsupported availability, or fields that are not unique Text fields. Check spec.event and the schema.",
+    "The connection's event does not match the stream: no event of that name, unsupported availability, or fields without a type or label, or named twice. Check spec.event and the schema.",
   INVALID_STREAM_TARGET_ID:
     'The stream record ID or delete option for an update or delete request was not valid. Nothing was sent; rerun the command and report it if it happens again.',
   PARTIAL_STREAM_OUTPUT:
@@ -63,7 +63,7 @@ export const hints: Readonly<Record<string, string>> = {
   STREAM_BINDING_DRIFT:
     'The stream, its event or its connection changed between two reads, or reads disagreed. Wait until nobody changes the stream, then rerun; inspect the org first if mutation is unknown.',
   STREAM_CHANGE_NOT_APPLIED:
-    'Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a CRM stream label). Retrieve the stream; change the rest in Salesforce.',
+    'Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a stream label). Retrieve the stream; change the rest in Salesforce.',
   STREAM_CONNECTION_MISMATCH:
     "The stream's Ingestion API connection was found but is not connected or its details differ. Check the connection's status in the org, then rerun.",
   STREAM_CREATE_IDENTITY_UNCONFIRMED:
@@ -121,25 +121,23 @@ export const hints: Readonly<Record<string, string>> = {
   STREAM_UPDATE_TARGET_ABSENT:
     'The stream to update was no longer found on the connection. Check whether it was deleted, then rerun the deploy with --preview.',
   UNSUPPORTED_STREAM_CATEGORY:
-    'The landing DLO of the stream has a category other than Other, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
+    'The landing DLO of the stream reports no category, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_CONNECTOR:
-    'The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3 or Engagement stream. Retrieve wrote it as-is; manage it in Salesforce.',
+    'The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3, Marketing Cloud Engagement or streaming-app stream. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_DATASPACE:
     'Data streams are supported only in the default data space: deploy refuses another identity.dataSpace, and retrieve does not write a stream whose DLO is in another space.',
-  UNSUPPORTED_STREAM_FIELD_TYPE:
-    'The stream has a source field that is not Text, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_MAPPING_SOURCE:
     'A sourceFieldLabel in spec.additiveFieldMappings matches no source field, several fields, or the primary key. Use the exact label of one non-key source field.',
   UNSUPPORTED_STREAM_MAPPING_TARGET:
     'A targetFieldName in spec.additiveFieldMappings is a source field name or a reserved system name such as DataSource or KQ_. Choose a new, ordinary field name.',
   UNSUPPORTED_STREAM_PROJECTION:
-    'The stream has a mapping the plugin cannot represent in the file, such as a formula or a mapping onto a key or non-Text field. Manage those mappings in Salesforce.',
+    'The stream has a mapping the plugin cannot represent in the file, such as a formula onto the primary key, a source field or a field the DLO lacks. Manage those mappings in Salesforce.',
   UNSUPPORTED_STREAM_READ:
-    'The stream is outside the supported profile: Ingestion API, UPSERT, category Other, default data space. Manage this stream in Salesforce.',
+    'The stream is outside the supported profile: Ingestion API, UPSERT, a DLO category, default data space. Manage this stream in Salesforce.',
   UNSUPPORTED_STREAM_REFRESH:
     'The stream refreshes in a mode other than UPSERT, for example full refresh, which the stream file cannot represent. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_SETTINGS_CHANGE:
-    'The file changes the stream label, DLO label or primary key of an existing stream, which is not supported. Use the values from a freshly retrieved file.',
+    'The file changes the DLO label, category, event time field or primary key of an existing stream, which a stream update cannot change. Use the values from a freshly retrieved file.',
   UNSUPPORTED_STREAM_SPEC:
-    'The stream file uses a value outside the supported profile. Use schemaVersion 1, IngestApi, INGEST_API, UPSERT, category Other and a Text primary key.',
+    'The stream file uses a value outside the supported profile. Use schemaVersion 1, IngestApi, INGEST_API and UPSERT.',
 };

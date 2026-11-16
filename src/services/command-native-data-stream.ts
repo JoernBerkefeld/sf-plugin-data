@@ -1,4 +1,5 @@
 import { operationDiagnostic } from './operation-diagnostic.js';
+import { WriteLedger, rejectedNextAction } from './deploy-result.js';
 import {
   DataStreamError,
   isCrmDataStreamDocument,
@@ -218,24 +219,18 @@ export async function executeDataStream(
   options: DataStreamDeployOptions,
 ) {
   if (isCrmDataStreamDocument(value)) return executeCrmDataStream(value, clients, options);
-  let dispatched = false;
+  // A 4xx answer to the single write is Salesforce's refusal and is reported as rejected.
+  const ledger = new WriteLedger();
   const guarded: DataStreamDeployClients = {
     ...clients,
     streams: {
       get: (name) => clients.streams.get(name),
       list: (connection) => clients.streams.list(connection),
-      create: async (document) => {
-        dispatched = true;
-        return clients.streams.create(document);
-      },
-      update: async (name, document) => {
-        dispatched = true;
-        return clients.streams.update(name, document);
-      },
-      patch: async (name, body) => {
-        dispatched = true;
-        return clients.streams.patch(name, body);
-      },
+      create: async (document, sourceFields) =>
+        ledger.run(async () => clients.streams.create(document, sourceFields)),
+      update: async (name, document) =>
+        ledger.run(async () => clients.streams.update(name, document)),
+      patch: async (name, body) => ledger.run(async () => clients.streams.patch(name, body)),
     },
   };
   try {
@@ -262,21 +257,24 @@ export async function executeDataStream(
             : ('confirmed-updated' as const),
       targetApiName: result.targetApiName,
       targetDloName: result.targetDloName,
-      diagnostics: [],
+      diagnostics: result.notices,
     };
   } catch (error) {
+    const { outcome, mutation } = ledger.failure(error);
     return {
       family: 'data-stream' as const,
-      outcome: dispatched ? ('failed' as const) : ('blocked' as const),
-      mutation: dispatched ? ('unknown' as const) : ('not-attempted' as const),
+      outcome,
+      mutation,
       diagnostics: [
         {
           code: error instanceof DataStreamError ? error.code : 'DATA_STREAM_REQUEST_UNCONFIRMED',
           message: operationDiagnostic(
             error,
-            dispatched
-              ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
-              : 'No write attempted; correct the reported check before another attempt.',
+            mutation === 'rejected'
+              ? rejectedNextAction
+              : mutation === 'unknown'
+                ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
+                : 'No write attempted; correct the reported check before another attempt.',
           ),
         },
       ],

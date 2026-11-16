@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_PROJECTION`
 
-> The stream has a mapping the plugin cannot represent in the file, such as a formula or a mapping onto a key or non-Text field. Manage those mappings in Salesforce.
+> The stream has a mapping the plugin cannot represent in the file, such as a formula onto the primary key, a source field or a field the DLO lacks. Manage those mappings in Salesforce.
 
 |              |                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-When the plugin turns a stream into a file, it keeps three kinds of mappings: each source field mapped to the field of the same name, the two system mappings for data source and data source object, and extra mappings from a source field label to a new non-key Text field. This code means the stream has a mapping of another kind, for example a real formula, a mapping onto the primary key or a non-Text field, or a source field mapped under another name.
+When the plugin turns a stream into a file, it keeps each source field mapped to the field of the same name, the system mappings Salesforce adds (data source, data source object and the partition date of an Engagement DLO), extra mappings from a source field label to a new non-key Text field (`spec.additiveFieldMappings`) and formula mappings onto a DLO field (`spec.formulaMappings`). This code means the stream has a mapping of another kind, for example a formula onto the primary key, onto a source field or onto a field the DLO does not have, or a source field mapped under another name.
 
 Deploy and delete read the stream the same way, so they stop too.
 
@@ -21,7 +21,7 @@ Leaving such a mapping out of the file would hide part of the stream. A later de
 ## How to fix
 
 1. Look at the stream's mappings in Data Cloud Setup.
-2. If you need the plugin to manage the stream, remove or simplify the unsupported mappings there.
+2. If you need the plugin to manage the stream, remove or change the unsupported mappings there.
 3. Otherwise manage this stream in Salesforce directly.
 
 ## Example output

@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_SPEC`
 
-> The stream file uses a value outside the supported profile. Use schemaVersion 1, IngestApi, INGEST_API, UPSERT, category Other and a Text primary key.
+> The stream file uses a value outside the supported profile. Use schemaVersion 1, IngestApi, INGEST_API and UPSERT.
 
 |              |                                                                                                                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

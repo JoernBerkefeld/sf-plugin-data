@@ -1052,8 +1052,21 @@ test('retrieval retains generated inventory, classifies only proven source Text 
   for (const id of [streamId, connectionId, dloId])
     assert.equal(JSON.stringify(result).includes(id), false);
   assert.ok(Object.isFrozen(result.observed.mappings));
+  // A real formula is carried, decoded, with the type of its DLO field.
+  const formula = reads();
+  formula.target.mappings.at(-1).formula = 'UPPER(sourceField[&#39;ProbeValue&#39;])';
+  const withFormula = await retrieveNativeDataStream('GeneratedStream', formula.clients);
+  assert.deepEqual(withFormula.spec.additiveFieldMappings, []);
+  assert.deepEqual(withFormula.spec.formulaMappings, [
+    {
+      targetFieldName: 'AddedValue',
+      formula: "UPPER(sourceField['ProbeValue'])",
+      targetFieldReturntype: 'Text',
+    },
+  ]);
+  // A formula onto a field the DLO does not have stays outside the file.
   const broken = reads();
-  broken.target.mappings.at(-1).formula = 'UPPER(ProbeValue)';
+  broken.target.mappings.at(-1).targetFieldName = 'Missing';
   await assert.rejects(retrieveNativeDataStream('GeneratedStream', broken.clients), {
     code: 'UNSUPPORTED_STREAM_PROJECTION',
   });
@@ -1848,14 +1861,22 @@ for (const operation of ['create', 'update']) {
         }
         return value;
       };
+      // A stream and its DLO both PROCESSING after a write is the normal transient state (seen
+      // live): the plugin waits for it, then reports unconfirmed settlement, never drift.
+      const transient = label === 'linked';
       await assert.rejects(
         operation === 'create'
           ? createNativeDataStream(authored, scenario.clients, scenario.options)
           : updateNativeDataStream(scenario.desired, scenario.clients, scenario.options),
-        { code: 'STREAM_BINDING_DRIFT' },
+        {
+          code: transient
+            ? `STREAM_${operation.toUpperCase()}_SETTLEMENT_UNCONFIRMED`
+            : 'STREAM_BINDING_DRIFT',
+        },
       );
       assert.equal(scenario.counts().writes, 1);
-      assert.equal(scenario.counts().pauses, 0);
+      if (transient) assert.ok(scenario.counts().pauses > 0);
+      else assert.equal(scenario.counts().pauses, 0);
     });
   }
 }
@@ -1991,14 +2012,22 @@ for (const operation of ['create', 'update']) {
         target.dataLakeObjectInfo.status = 'ACTIVE';
         settlementMismatch(scenario, operation, boundary, 'PROCESSING', mutate);
         useProductionTransport(scenario, operation === 'create' ? authored : scenario.desired);
+        // Stream and DLO both PROCESSING is the normal transient state after a write (seen
+        // live): the plugin waits, then reports unconfirmed settlement, never drift.
+        const transient = label === 'linked';
         await assert.rejects(
           operation === 'create'
             ? createNativeDataStream(authored, scenario.clients, scenario.options)
             : updateNativeDataStream(scenario.desired, scenario.clients, scenario.options),
-          { code: 'STREAM_BINDING_DRIFT' },
+          {
+            code: transient
+              ? `STREAM_${operation.toUpperCase()}_SETTLEMENT_UNCONFIRMED`
+              : 'STREAM_BINDING_DRIFT',
+          },
         );
         assert.equal(scenario.counts().writes, 1);
-        assert.equal(scenario.counts().pauses, 0);
+        if (transient) assert.ok(scenario.counts().pauses > 0);
+        else assert.equal(scenario.counts().pauses, 0);
       });
     }
   }

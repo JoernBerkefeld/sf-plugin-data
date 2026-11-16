@@ -5,10 +5,15 @@ import {
   DataStreamError,
   buildDataStreamCreateBody,
   buildDataStreamPatchBody,
+  decodeFormula,
   validateDataStreamDocument,
 } from '../artifacts/data-stream-document.js';
 import { ConnectError } from '../transport/connect-client.js';
-import type { DataStreamDocument, DataStreamMapping } from '../artifacts/data-stream-document.js';
+import type {
+  DataStreamDocument,
+  DataStreamFormulaMapping,
+  DataStreamMapping,
+} from '../artifacts/data-stream-document.js';
 import { DataStreamHttpError } from '../transport/data-stream-rest.js';
 import { verbatimReason } from '../artifacts/verbatim-document.js';
 import type { DataStreamClient, DataStreamReferenceReader } from '../transport/data-stream-rest.js';
@@ -25,7 +30,7 @@ export type DataStreamBinding = {
   connectionName: string;
   event: string;
   availability: 'Available' | 'In Use';
-  sourceFields: Array<{ name: string; label: string; dataType: 'Text' }>;
+  sourceFields: Array<{ name: string; label: string; dataType: string }>;
   inventory: Json[];
   target?: Json;
 };
@@ -152,6 +157,18 @@ function streamMappingKey(value: unknown): string[] {
 }
 
 /**
+ * Order locally derived mapping entries by target field.
+ * @param {T[]} entries Derived entries.
+ * @returns {T[]} The same array, sorted.
+ */
+function byTarget<T extends { targetFieldName: string }>(entries: T[]): T[] {
+  // eslint-disable-next-line unicorn/no-array-sort -- Sort a locally derived array within the existing ES2022 library target.
+  return entries.sort((a, b) =>
+    a.targetFieldName < b.targetFieldName ? -1 : a.targetFieldName > b.targetFieldName ? 1 : 0,
+  );
+}
+
+/**
  * Compare snapshots allowing only observed native mapping inventory permutations.
  * All other properties and arrays, including unknown fields, remain strictly compared.
  * @param {unknown} left Native stream or lifecycle plan snapshot.
@@ -215,6 +232,17 @@ function sameStreamSnapshot(left: unknown, right: unknown, postWrite = false): b
     ) {
       rightInfo.status = leftInfo.status;
       if (isDeepStrictEqual(first, second)) throw new DataStreamError('STREAM_SNAPSHOT_PENDING');
+      // After a write the stream and its DLO can move between PROCESSING and ACTIVE together.
+      const leftStream = first as Json;
+      const rightStream = second as Json;
+      if (
+        postWrite &&
+        leftStream.status !== rightStream.status &&
+        ['ACTIVE', 'PROCESSING'].includes(leftStream.status as string) &&
+        ['ACTIVE', 'PROCESSING'].includes(rightStream.status as string) &&
+        isDeepStrictEqual(first, { ...rightStream, status: leftStream.status })
+      )
+        throw new DataStreamError('STREAM_SNAPSHOT_PENDING');
     }
   }
   return false;
@@ -250,7 +278,8 @@ export function inspectNativeDataStream(value: unknown): Json {
     raw.dataStreamType !== 'INGESTAPI' ||
     object(raw.connectorInfo).connectorType !== 'IngestApi' ||
     object(raw.refreshConfig).refreshMode !== 'UPSERT' ||
-    dlo.category !== 'Other' ||
+    typeof dlo.category !== 'string' ||
+    !dlo.category ||
     typeof dlo.name !== 'string' ||
     !/^[A-Za-z][A-Za-z0-9_]*__dll$/u.test(dlo.name) ||
     !Array.isArray(spaces) ||
@@ -288,6 +317,33 @@ export function checkRetrievedStreamScope(value: unknown, apiName: string): Json
 }
 
 /**
+ * An object, or an empty one for anything else.
+ * @param {unknown} entry Candidate.
+ * @returns {Json} The object or {}.
+ */
+function bag(entry: unknown): Json {
+  return entry && typeof entry === 'object' && !Array.isArray(entry) ? (entry as Json) : {};
+}
+
+/**
+ * Field names with their types, sorted, as one comparable string.
+ * @param {unknown} values Field list.
+ * @param {string} typeKey Key of the type (`dataType` in a schema, `datatype` in a stream GET).
+ * @returns {string} Comparable text.
+ */
+function fieldsOf(values: unknown, typeKey: string): string {
+  return JSON.stringify(
+    (Array.isArray(values) ? values : [])
+      .map((value) => {
+        const field = object(value);
+        return `${String(field.name)}:${String(field[typeKey])}`;
+      })
+      // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh array within the existing ES2022 library target.
+      .sort(),
+  );
+}
+
+/**
  * Retrieve-mode triage of a stream GET, before any connection or schema read: a stream of another
  * name stays an item failure, as does one whose DLO is in another data space (selection is per
  * data space); a stream outside the IngestApi model is refused with a code naming the variant,
@@ -297,19 +353,40 @@ export function checkRetrievedStreamScope(value: unknown, apiName: string): Json
  */
 function triageRetrievedStream(value: unknown, apiName: string): void {
   const raw = checkRetrievedStreamScope(value, apiName);
-  const bag = (entry: unknown): Json =>
-    entry && typeof entry === 'object' && !Array.isArray(entry) ? (entry as Json) : {};
   const dlo = bag(raw.dataLakeObjectInfo);
   if (raw.dataStreamType !== 'INGESTAPI' || bag(raw.connectorInfo).connectorType !== 'IngestApi')
     throw new DataStreamError('UNSUPPORTED_STREAM_CONNECTOR');
   if (bag(raw.refreshConfig).refreshMode !== 'UPSERT')
     throw new DataStreamError('UNSUPPORTED_STREAM_REFRESH');
-  if (dlo.category !== 'Other') throw new DataStreamError('UNSUPPORTED_STREAM_CATEGORY');
-  if (
-    Array.isArray(raw.sourceFields) &&
-    (raw.sourceFields as unknown[]).some((field) => bag(field).datatype !== 'Text')
-  )
-    throw new DataStreamError('UNSUPPORTED_STREAM_FIELD_TYPE');
+  if (typeof dlo.category !== 'string' || !dlo.category)
+    throw new DataStreamError('UNSUPPORTED_STREAM_CATEGORY');
+}
+
+/**
+ * The event of a connection a stream reads. The stream GET does not name it; Salesforce names an
+ * Ingestion API stream `<connection>_<event>_<hash>` and labels it `<connection>-<event>`. A
+ * connection with one event needs no match. When several events fit the name or label, the one
+ * whose fields equal the stream's source fields is taken.
+ * @param {Json} stream Stream GET.
+ * @param {unknown[]} events Event schemas of the stream's connection.
+ * @returns {string} Event name.
+ */
+export function streamEvent(stream: Json, events: unknown[]): string {
+  const schemas = events.map((value) => object(value));
+  if (schemas.length === 1 && typeof schemas[0].name === 'string') return schemas[0].name;
+  const fits = (event: string): boolean =>
+    (typeof stream.name === 'string' &&
+      new RegExp(`_${event}_[0-9A-Fa-f]{8}$`, 'u').test(stream.name)) ||
+    (typeof stream.label === 'string' && stream.label.endsWith(`-${event}`));
+  let candidates = schemas.filter(
+    (schema) => typeof schema.name === 'string' && name.test(schema.name) && fits(schema.name),
+  );
+  if (candidates.length > 1)
+    candidates = candidates.filter(
+      (schema) => fieldsOf(schema.fields, 'dataType') === fieldsOf(stream.sourceFields, 'datatype'),
+    );
+  if (candidates.length !== 1) throw new DataStreamError('AMBIGUOUS_STREAM_EVENT');
+  return candidates[0].name as string;
 }
 
 /**
@@ -378,10 +455,15 @@ export async function resolveDataStreamBinding(
   )
     throw new DataStreamError('STREAM_CONNECTION_MISMATCH');
   const schemas = await clients.connections.schema(connectionId);
-  // GET lacks event identity. Initial scope accepts only a sole independently uploaded event.
-  if (!Array.isArray(schemas.schemas) || schemas.schemas.length !== 1)
+  // The connection may hold several events, one stream each; the selected event is named.
+  if (!Array.isArray(schemas.schemas) || schemas.schemas.length === 0)
     throw new DataStreamError('AMBIGUOUS_STREAM_EVENT');
-  const event = object(schemas.schemas[0]);
+  const events = schemas.schemas as unknown[];
+  const named = events
+    .map((value) => object(value))
+    .filter((value) => value.name === selection.event);
+  if (named.length > 1) throw new DataStreamError('AMBIGUOUS_STREAM_EVENT');
+  const event = named[0] ?? {};
   if (
     event.name !== selection.event ||
     event.schemaType !== 'IngestApi' ||
@@ -396,28 +478,31 @@ export async function resolveDataStreamBinding(
     if (
       typeof field.name !== 'string' ||
       !name.test(field.name) ||
-      field.dataType !== 'Text' ||
+      typeof field.dataType !== 'string' ||
+      !field.dataType ||
       typeof field.label !== 'string' ||
       !field.label ||
       fieldNames.has(field.name.toLowerCase())
     )
       throw new DataStreamError('INVALID_STREAM_SCHEMA');
     fieldNames.add(field.name.toLowerCase());
-    return { name: field.name, label: field.label, dataType: 'Text' as const };
+    return { name: field.name, label: field.label, dataType: field.dataType as string };
   });
   if (!sourceFields.some((field) => field.name === selection.primaryKey))
     throw new DataStreamError('INVALID_STREAM_PRIMARY_KEY');
-  const listedStreams = await clients.streams.list(selection.connectionName);
-  const inventory = listedStreams.map((value) => inspectNativeDataStream(value));
-  if (
-    inventory.some((stream) => stream.dataSource !== selection.connectionName) ||
-    inventory.length > 1
-  )
+  const listed = await clients.streams.list(selection.connectionName);
+  const listedStreams = listed.map((value) => object(value));
+  if (listedStreams.some((stream) => stream.dataSource !== selection.connectionName))
     throw new DataStreamError('AMBIGUOUS_STREAM_BINDING');
-  let named: Json | undefined;
+  // Only the streams of the selected event; the connection's other events have their own.
+  const inventory = listedStreams
+    .filter((stream) => streamEvent(stream, events) === selection.event)
+    .map((value) => inspectNativeDataStream(value));
+  if (inventory.length > 1) throw new DataStreamError('AMBIGUOUS_STREAM_BINDING');
+  let existing: Json | undefined;
   try {
-    named = inspectNativeDataStream(await clients.streams.get(selection.apiName));
-    if (named.name !== selection.apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
+    existing = inspectNativeDataStream(await clients.streams.get(selection.apiName));
+    if (existing.name !== selection.apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
   } catch (error) {
     if (
       !(error instanceof DataStreamHttpError) ||
@@ -428,11 +513,11 @@ export async function resolveDataStreamBinding(
   }
   const target = inventory[0];
   if (
-    named &&
+    existing &&
     (!target ||
-      named.recordId !== target.recordId ||
-      named.name !== target.name ||
-      named.dataSource !== selection.connectionName)
+      existing.recordId !== target.recordId ||
+      existing.name !== target.name ||
+      existing.dataSource !== selection.connectionName)
   )
     throw new DataStreamError('STREAM_TARGET_MISMATCH');
   if (target) {
@@ -477,15 +562,15 @@ export async function resolveDataStreamBinding(
     const keys = fields
       .map((value) => object(value))
       .filter((field) => field.isPrimaryKey === true);
-    if (keys.length !== 1 || keys[0].name !== selection.primaryKey || keys[0].dataType !== 'Text')
+    if (keys.length !== 1 || keys[0].name !== selection.primaryKey)
       throw new DataStreamError('INVALID_STREAM_PRIMARY_KEY');
-  } else if (event.availabilityStatus !== 'Available' || named)
+  } else if (event.availabilityStatus !== 'Available' || existing)
     throw explainMismatch(
       new DataStreamError('STREAM_BINDING_DRIFT'),
       'resolve absent stream binding',
       selection.apiName,
       { availabilityStatus: 'Available', target: undefined },
-      { availabilityStatus: event.availabilityStatus, target: named },
+      { availabilityStatus: event.availabilityStatus, target: existing },
     );
   return structuredClone({
     connectionId,
@@ -563,8 +648,9 @@ export async function projectNativeDataStream(
   if (matches.length !== 1 || typeof matches[0].id !== 'string' || !recordId.test(matches[0].id))
     throw new DataStreamError('AMBIGUOUS_STREAM_CONNECTION');
   const schema = await clients.connections.schema(matches[0].id);
-  if (!Array.isArray(schema.schemas) || schema.schemas.length !== 1)
+  if (!Array.isArray(schema.schemas) || schema.schemas.length === 0)
     throw new DataStreamError('AMBIGUOUS_STREAM_EVENT');
+  const eventName = streamEvent(raw, schema.schemas as unknown[]);
   const info = object(raw.dataLakeObjectInfo);
   if (!Array.isArray(info.fields)) throw new DataStreamError('INVALID_STREAM_PRIMARY_KEY');
   const keys = info.fields
@@ -576,7 +662,7 @@ export async function projectNativeDataStream(
     {
       apiName,
       connectionName: raw.dataSource as string,
-      event: object(schema.schemas[0]).name as string,
+      event: eventName,
       primaryKey: keys[0].name,
       dataSpace,
     },
@@ -600,7 +686,7 @@ export async function projectNativeDataStream(
     dlo.name !== info.name ||
     typeof dlo.id !== 'string' ||
     !recordId.test(dlo.id) ||
-    dlo.category !== 'Other' ||
+    dlo.category !== info.category ||
     !Array.isArray(dlo.dataSpaceInfo) ||
     dlo.dataSpaceInfo.length !== 1 ||
     object(dlo.dataSpaceInfo[0]).name !== dataSpace ||
@@ -638,6 +724,7 @@ export async function projectNativeDataStream(
       'fields',
     );
   const additions: DataStreamMapping[] = [];
+  const formulas: DataStreamFormulaMapping[] = [];
   for (const value of raw.mappings as unknown[]) {
     const mapping = object(value);
     const source = binding.sourceFields.find((field) => field.name === mapping.sourceFieldName);
@@ -647,7 +734,11 @@ export async function projectNativeDataStream(
       (mapping.targetFieldName === 'DataSource' &&
         mapping.formula === `&quot;${binding.connectionName}&quot;`) ||
       (mapping.targetFieldName === 'DataSourceObject' &&
-        mapping.formula === `&quot;${apiName}&quot;`)
+        mapping.formula === `&quot;${apiName}&quot;`) ||
+      // Salesforce adds the partition-date formula of an Engagement DLO itself.
+      (typeof mapping.targetFieldName === 'string' &&
+        mapping.targetFieldName.startsWith('cdp_sys_') &&
+        typeof mapping.formula === 'string')
     )
       continue;
     const formulaSource = binding.sourceFields.find((field) => field.label === mapping.formula);
@@ -655,19 +746,26 @@ export async function projectNativeDataStream(
       .map((value) => object(value))
       .find((field) => field.name === mapping.targetFieldName);
     if (
-      !formulaSource ||
+      typeof mapping.formula !== 'string' ||
       mapping.sourceFieldName !== undefined ||
       !target ||
-      target.dataType !== 'Text' ||
+      typeof target.dataType !== 'string' ||
       target.isPrimaryKey !== false ||
       binding.sourceFields.some((field) => field.name === target.name)
     )
       throw new DataStreamError('UNSUPPORTED_STREAM_PROJECTION');
-    additions.push({
-      sourceFieldLabel: formulaSource.label,
-      targetFieldName: target.name as string,
-      targetFieldReturntype: 'Text',
-    });
+    if (formulaSource && target.dataType === 'Text')
+      additions.push({
+        sourceFieldLabel: formulaSource.label,
+        targetFieldName: target.name as string,
+        targetFieldReturntype: 'Text',
+      });
+    else
+      formulas.push({
+        targetFieldName: target.name as string,
+        formula: decodeFormula(mapping.formula),
+        targetFieldReturntype: target.dataType,
+      });
   }
   return validateDataStreamDocument(
     {
@@ -684,18 +782,15 @@ export async function projectNativeDataStream(
         newDlo: {
           name: dlo.name,
           label: dlo.label,
-          category: 'Other',
-          primaryKey: { name: keys[0].name, label: keys[0].label, dataType: 'Text' },
+          category: info.category,
+          ...(typeof info.eventDateTimeFieldName === 'string'
+            ? { eventDateTimeFieldName: info.eventDateTimeFieldName }
+            : {}),
+          primaryKey: { name: keys[0].name, label: keys[0].label, dataType: keys[0].dataType },
         },
         // Canonicalize only projections derived here; caller-authored mapping order stays strict.
-        // eslint-disable-next-line unicorn/no-array-sort -- Sort this locally derived array within the existing ES2022 library target.
-        additiveFieldMappings: additions.sort((a, b) =>
-          a.targetFieldName < b.targetFieldName
-            ? -1
-            : a.targetFieldName > b.targetFieldName
-              ? 1
-              : 0,
-        ),
+        additiveFieldMappings: byTarget(additions),
+        ...(formulas.length > 0 ? { formulaMappings: byTarget(formulas) } : {}),
       },
       observed: {
         // Salesforce lists stream mappings in varying order; sort so one org state writes one file.
@@ -725,7 +820,17 @@ export type DataStreamUpdatePlan = {
   target: DataStreamDocument;
   dlo: Json;
   additions: DataStreamMapping[];
+  /** Formula mappings to send: added or changed formulas, and removed ones with an empty formula. */
+  formulaChanges: Array<{
+    targetFieldName: string;
+    transformationFormula: string;
+    targetFieldReturntype?: string;
+  }>;
+  /** Whether the file's stream label differs from the org's (sent; Salesforce keeps its own). */
+  labelChange: boolean;
 };
+/** A part of the file Salesforce accepted but did not apply. */
+export type DataStreamNotice = { code: string; message: string };
 export type DataStreamDeployOptions = {
   allowProcessing: boolean;
   verifyInput: () => Promise<void>;
@@ -829,6 +934,7 @@ export async function createNativeDataStream(
   targetApiName: string;
   targetDloName: string;
   document: DataStreamDocument;
+  notices: DataStreamNotice[];
 }> {
   const document = validateDataStreamDocument(value);
   if (options.allowProcessing !== true)
@@ -849,7 +955,12 @@ export async function createNativeDataStream(
   const now = options.now ?? Date.now;
   const pause = options.wait ?? wait;
   const deadline = now() + 15 * 60 * 1000;
-  const echo = object(await clients.streams.create(document));
+  const echo = object(
+    await clients.streams.create(
+      document,
+      plan.binding.sourceFields.map((field) => ({ name: field.name, dataType: field.dataType })),
+    ),
+  );
   if (
     typeof echo.name !== 'string' ||
     !name.test(echo.name) ||
@@ -918,7 +1029,7 @@ export async function createNativeDataStream(
         dlo.name !== actual.spec.newDlo.name ||
         typeof dlo.id !== 'string' ||
         !recordId.test(dlo.id) ||
-        dlo.category !== 'Other' ||
+        dlo.category !== actual.spec.newDlo.category ||
         !Array.isArray(dlo.dataSpaceInfo) ||
         dlo.dataSpaceInfo.length !== 1 ||
         object(dlo.dataSpaceInfo[0]).name !== 'default' ||
@@ -942,7 +1053,7 @@ export async function createNativeDataStream(
           actual.spec.newDlo.name,
           {
             name: actual.spec.newDlo.name,
-            category: 'Other',
+            category: actual.spec.newDlo.category,
             dataSpaceInfo: [{ name: 'default' }],
             fields: actual.observed?.dloFields,
             id: true,
@@ -986,11 +1097,26 @@ export async function createNativeDataStream(
       ) {
         await options.verifyInput();
         if (now() >= deadline) break;
+        const formulasOf = (entries: DataStreamFormulaMapping[] | undefined): string[] =>
+          (entries ?? []).map((entry) => JSON.stringify(entry));
+        const missing = formulasOf(document.spec.formulaMappings).filter(
+          (entry) => !formulasOf(actual.spec.formulaMappings).includes(entry),
+        );
         return {
           operation: 'create',
           targetApiName: echo.name,
           targetDloName: actual.spec.newDlo.name,
           document: actual,
+          notices:
+            missing.length > 0
+              ? [
+                  {
+                    code: 'STREAM_CHANGE_NOT_APPLIED',
+                    message:
+                      'Salesforce created the stream but it does not hold every formula of the file. Retrieve the stream to see what it holds.',
+                  },
+                ]
+              : [],
         };
       }
       if (
@@ -1026,7 +1152,7 @@ async function readUpdateStreamDlo(
     dlo.name !== document.spec.newDlo.name ||
     typeof dlo.id !== 'string' ||
     !recordId.test(dlo.id) ||
-    dlo.category !== 'Other' ||
+    dlo.category !== document.spec.newDlo.category ||
     !Array.isArray(dlo.dataSpaceInfo) ||
     dlo.dataSpaceInfo.length !== 1 ||
     object(dlo.dataSpaceInfo[0]).name !== 'default' ||
@@ -1050,7 +1176,7 @@ async function readUpdateStreamDlo(
       document.spec.newDlo.name,
       {
         name: document.spec.newDlo.name,
-        category: 'Other',
+        category: document.spec.newDlo.category,
         dataSpaceInfo: [{ name: 'default' }],
         fields: document.observed?.dloFields,
         id: true,
@@ -1112,8 +1238,9 @@ export async function preflightNativeDataStreamUpdate(
       confirmation,
     );
   if (
-    document.spec.label !== target.spec.label ||
     document.spec.newDlo.label !== target.spec.newDlo.label ||
+    document.spec.newDlo.category !== target.spec.newDlo.category ||
+    document.spec.newDlo.eventDateTimeFieldName !== target.spec.newDlo.eventDateTimeFieldName ||
     !isDeepStrictEqual(document.spec.newDlo.primaryKey, target.spec.newDlo.primaryKey)
   )
     throw new DataStreamError('UNSUPPORTED_STREAM_SETTINGS_CHANGE');
@@ -1168,15 +1295,67 @@ export async function preflightNativeDataStreamUpdate(
     spec: { ...document.spec, additiveFieldMappings: additions },
   });
   if (additions.length > 0) buildDataStreamPatchBody(patch);
+  // Formulas are sent as the file holds them; Salesforce decides (it refuses a removal).
+  const wanted = document.spec.formulaMappings ?? [];
+  const have = target.spec.formulaMappings ?? [];
+  const formulaChanges: DataStreamUpdatePlan['formulaChanges'] = [];
+  for (const mapping of wanted)
+    if (
+      have.find((entry) => entry.targetFieldName === mapping.targetFieldName)?.formula !==
+      mapping.formula
+    )
+      formulaChanges.push({
+        targetFieldName: mapping.targetFieldName,
+        transformationFormula: mapping.formula,
+        targetFieldReturntype: mapping.targetFieldReturntype,
+      });
+  for (const mapping of have)
+    if (!wanted.some((entry) => entry.targetFieldName === mapping.targetFieldName))
+      formulaChanges.push({ targetFieldName: mapping.targetFieldName, transformationFormula: '' });
+  const labelChange = document.spec.label !== target.spec.label;
   return {
-    operation: additions.length > 0 ? 'update' : 'noop',
+    operation: additions.length > 0 || formulaChanges.length > 0 || labelChange ? 'update' : 'noop',
     document,
     patch,
     binding,
     target,
     dlo,
     additions,
+    formulaChanges,
+    labelChange,
   };
+}
+
+/**
+ * The PATCH of an update with formula or label parts: `datastreamType` plus the mappings to add,
+ * change or remove and the label.
+ * @param {DataStreamUpdatePlan} plan Update plan.
+ * @returns {Json} PATCH body.
+ */
+export function ingestDataStreamPatchBody(plan: DataStreamUpdatePlan): Json {
+  const mappings = [...plan.additions, ...plan.formulaChanges];
+  return {
+    datastreamType: plan.document.spec.datastreamType,
+    ...(mappings.length > 0 ? { mappings: structuredClone(mappings) } : {}),
+    ...(plan.labelChange ? { label: plan.document.spec.label } : {}),
+  };
+}
+
+/**
+ * The notice for a label Salesforce accepted but did not apply.
+ * @param {boolean} kept Whether the stream still has another label than the file.
+ * @returns {DataStreamNotice[]} Notices.
+ */
+function labelNotApplied(kept: boolean): DataStreamNotice[] {
+  return kept
+    ? [
+        {
+          code: 'STREAM_CHANGE_NOT_APPLIED',
+          message:
+            'Salesforce accepted the label change but kept the old label; change it in Salesforce. Retrieve the stream to see what it holds.',
+        },
+      ]
+    : [];
 }
 
 /**
@@ -1230,6 +1409,7 @@ export async function updateNativeDataStream(
   targetApiName: string;
   targetDloName: string;
   document: DataStreamDocument;
+  notices: DataStreamNotice[];
 }> {
   const document = validateDataStreamDocument(value);
   await options.verifyInput();
@@ -1254,11 +1434,29 @@ export async function updateNativeDataStream(
       targetApiName: apiName,
       targetDloName: plan.target.spec.newDlo.name,
       document: plan.target,
+      notices: [],
     };
   const now = options.now ?? Date.now;
   const pause = options.wait ?? wait;
   const deadline = now() + 15 * 60 * 1000;
-  await clients.streams.update(plan.binding.target!.recordId as string, plan.patch);
+  const targetId = plan.binding.target!.recordId as string;
+  await (plan.formulaChanges.length === 0 && !plan.labelChange
+    ? clients.streams.update(targetId, plan.patch)
+    : clients.streams.patch(targetId, ingestDataStreamPatchBody(plan)));
+  // Targets whose existing mapping the PATCH changes or removes, and new formula targets.
+  const priorFormulas = new Set(
+    (plan.target.spec.formulaMappings ?? []).map((entry) => entry.targetFieldName),
+  );
+  const changed = new Set(
+    plan.formulaChanges
+      .map((entry) => entry.targetFieldName)
+      .filter((target) => priorFormulas.has(target)),
+  );
+  const newFormulas = plan.formulaChanges.filter(
+    (entry) => !priorFormulas.has(entry.targetFieldName),
+  );
+  const unchanged = (entries: unknown[], key: string): unknown[] =>
+    entries.filter((entry) => !changed.has(object(entry)[key] as string));
   for (let attempt = 0; attempt < 20 && now() < deadline; attempt++) {
     try {
       const actual = await retrieveNativeDataStream(apiName, clients, 'default', true);
@@ -1298,12 +1496,18 @@ export async function updateNativeDataStream(
       const dlo = await readUpdateStreamDlo(actual, clients);
       const oldInfo = object(old.dataLakeObjectInfo);
       const info = object(raw.dataLakeObjectInfo);
-      const added = plan.additions.map((entry) => entry.targetFieldName);
+      const added = [
+        ...plan.additions.map((entry) => entry.targetFieldName),
+        ...newFormulas.map((entry) => entry.targetFieldName),
+      ];
+      const mutable = [
+        'status',
+        'mappings',
+        'dataLakeObjectInfo',
+        ...(plan.labelChange ? ['label'] : []),
+      ];
       if (
-        !isDeepStrictEqual(
-          streamProtected(old, ['status', 'mappings', 'dataLakeObjectInfo']),
-          streamProtected(raw, ['status', 'mappings', 'dataLakeObjectInfo']),
-        ) ||
+        !isDeepStrictEqual(streamProtected(old, mutable), streamProtected(raw, mutable)) ||
         !isDeepStrictEqual(
           streamProtected(oldInfo, ['status', 'fields', 'dataLakeFieldInfoRepresentation']),
           streamProtected(info, ['status', 'fields', 'dataLakeFieldInfoRepresentation']),
@@ -1336,7 +1540,7 @@ export async function updateNativeDataStream(
       const newMappings = raw.mappings as unknown[];
       const newFields = info.fields as unknown[];
       if (
-        !(old.mappings as unknown[]).every((entry) =>
+        !unchanged(old.mappings as unknown[], 'targetFieldName').every((entry) =>
           newMappings.some((current) => isDeepStrictEqual(entry, current)),
         ) ||
         !(oldInfo.fields as unknown[]).every((entry) =>
@@ -1347,32 +1551,48 @@ export async function updateNativeDataStream(
         )
       )
         throw new DataStreamError('STREAM_UPDATE_PRESERVATION_FAILED');
-      const mappingsReady = plan.additions.every((entry) =>
-        newMappings.some((value) => {
-          const mapping = object(value);
-          return (
-            mapping.targetFieldName === entry.targetFieldName &&
-            mapping.formula === entry.sourceFieldLabel &&
-            mapping.sourceFieldName === undefined
-          );
-        }),
-      );
-      const fieldsReady = plan.additions.every((entry) =>
-        newFields.some((value) => {
-          const field = object(value);
-          return (
-            field.name === entry.targetFieldName &&
-            field.label === entry.targetFieldName &&
-            field.dataType === 'Text' &&
-            field.isPrimaryKey === false
-          );
-        }),
-      );
+      const mappingsReady =
+        plan.additions.every((entry) =>
+          newMappings.some((value) => {
+            const mapping = object(value);
+            return (
+              mapping.targetFieldName === entry.targetFieldName &&
+              mapping.formula === entry.sourceFieldLabel &&
+              mapping.sourceFieldName === undefined
+            );
+          }),
+        ) &&
+        plan.formulaChanges.every((entry) => {
+          const formula = newMappings
+            .map((value) => object(value))
+            .find((mapping) => mapping.targetFieldName === entry.targetFieldName)?.formula;
+          return entry.transformationFormula === ''
+            ? formula === undefined
+            : typeof formula === 'string' && decodeFormula(formula) === entry.transformationFormula;
+        });
+      const fieldsReady =
+        plan.additions.every((entry) =>
+          newFields.some((value) => {
+            const field = object(value);
+            return (
+              field.name === entry.targetFieldName &&
+              field.label === entry.targetFieldName &&
+              field.dataType === 'Text' &&
+              field.isPrimaryKey === false
+            );
+          }),
+        ) &&
+        newFormulas.every((entry) =>
+          newFields.some((value) => {
+            const field = object(value);
+            return field.name === entry.targetFieldName && field.isPrimaryKey === false;
+          }),
+        );
       if (mappingsReady && fieldsReady) {
         if (
           !streamEntriesPreserved(
-            old.mappings as unknown[],
-            newMappings,
+            unchanged(old.mappings as unknown[], 'targetFieldName'),
+            unchanged(newMappings, 'targetFieldName'),
             'targetFieldName',
             added,
           ) ||
@@ -1425,6 +1645,7 @@ export async function updateNativeDataStream(
             targetApiName: apiName,
             targetDloName: actual.spec.newDlo.name,
             document: actual,
+            notices: labelNotApplied(plan.labelChange && raw.label !== plan.document.spec.label),
           };
         }
       }
@@ -1870,15 +2091,23 @@ export async function deleteNativeDataStream(
   await clients.streams.delete(plan.binding.target!.recordId as string, selection.deleteDlo);
   for (let attempt = 0; attempt < 20 && now() < deadline; attempt++) {
     const absent = await deletedStreamAbsent(apiName, clients);
-    const binding = await resolveDataStreamBinding(
-      {
-        ...plan.document.identity,
-        connectionName: plan.binding.connectionName,
-        event: plan.binding.event,
-        primaryKey: plan.document.spec.newDlo.primaryKey.name,
-      },
-      clients,
-    );
+    let binding: DataStreamBinding;
+    try {
+      binding = await resolveDataStreamBinding(
+        {
+          ...plan.document.identity,
+          connectionName: plan.binding.connectionName,
+          event: plan.binding.event,
+          primaryKey: plan.document.spec.newDlo.primaryKey.name,
+        },
+        clients,
+      );
+    } catch (error) {
+      // The stream list can still name a stream whose own read already answers 404: pending.
+      if (!absent || !isStreamNotFound(error)) throw error;
+      if (attempt < 19 && now() < deadline) await pause(Math.min(5000, deadline - now()));
+      continue;
+    }
     if (
       binding.connectionId !== plan.binding.connectionId ||
       !isDeepStrictEqual(binding.sourceFields, plan.binding.sourceFields)

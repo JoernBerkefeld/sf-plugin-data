@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_CONNECTOR`
 
-> The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3 or Engagement stream. Retrieve wrote it as-is; manage it in Salesforce.
+> The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3, Marketing Cloud Engagement or streaming-app stream. Retrieve wrote it as-is; manage it in Salesforce.
 
 |              |                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------- |

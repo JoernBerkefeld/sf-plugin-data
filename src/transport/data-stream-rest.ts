@@ -24,9 +24,13 @@ import type { MetadataRunner } from './project-metadata.js';
 export type DataStreamClient = {
   get: (nameOrId: string) => Promise<unknown>;
   list: (connectionName: string) => Promise<Array<Record<string, unknown>>>;
-  create: (document: unknown) => Promise<unknown>;
+  /** Ingestion API streams with formulas also send the event's typed source fields. */
+  create: (
+    document: unknown,
+    sourceFields?: ReadonlyArray<{ name: string; dataType: string }>,
+  ) => Promise<unknown>;
   update: (recordId: string, document: unknown) => Promise<unknown>;
-  /** One PATCH with a prepared body (CRM streams: `datastreamType` plus the changed parts). */
+  /** One PATCH with a prepared body: `datastreamType` plus the changed parts. */
   patch: (recordId: string, body: Record<string, unknown>) => Promise<unknown>;
   delete: (recordId: string, deleteDlo: boolean) => Promise<void>;
 };
@@ -328,13 +332,13 @@ export function createDataStreamClient(
       }
     },
     list,
-    create: async (document) =>
+    create: async (document, sourceFields) =>
       send(
         'POST',
         '',
         isCrmDataStreamDocument(document)
           ? crmDataStreamWriteBody(validateCrmDataStreamDocument(document).spec)
-          : buildDataStreamCreateBody(document),
+          : buildDataStreamCreateBody(document, sourceFields),
       ),
     update: async (recordId, document) => {
       if (!id.test(recordId)) throw new DataStreamError('INVALID_STREAM_TARGET_ID');

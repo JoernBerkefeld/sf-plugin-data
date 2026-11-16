@@ -36,4 +36,4 @@ Deployed: 0 (0 created / 0 updated / 0 failed)
 ## Related codes
 
 - [`STREAM_UPDATE_TARGET_ABSENT`](../data-stream/STREAM_UPDATE_TARGET_ABSENT.md) — the opposite case: an update found no stream.
-- [`AMBIGUOUS_STREAM_BINDING`](../data-stream/AMBIGUOUS_STREAM_BINDING.md) — more than one stream on the connection.
+- [`AMBIGUOUS_STREAM_BINDING`](../data-stream/AMBIGUOUS_STREAM_BINDING.md) — more than one stream for the event.

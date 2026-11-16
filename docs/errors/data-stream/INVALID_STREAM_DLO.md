@@ -10,7 +10,7 @@
 
 ## What it means
 
-Every Ingestion API stream writes into a landing DLO. The plugin reads that DLO by name and expects exactly one result with the same name, a record ID, category `Other`, the `default` data space and a field list.
+Every Ingestion API stream writes into a landing DLO. The plugin reads that DLO by name and expects exactly one result with the same name, a record ID, the stream's DLO category, the `default` data space and a field list.
 
 This code means the read returned no DLO, several DLOs, or one that differs on one of those points.
 
@@ -21,7 +21,7 @@ The stream file describes the DLO's fields and primary key, and deletes may remo
 ## How to fix
 
 1. Open the stream in Data Cloud Setup and note the name of its DLO.
-2. Check that the DLO exists, is in the default data space and has category Other.
+2. Check that the DLO exists, is in the default data space and has the stream's category.
 3. Rerun the command. If `mutation` is `unknown`, check the stream and DLO before you rerun a deploy or delete.
 
 ## Example output
