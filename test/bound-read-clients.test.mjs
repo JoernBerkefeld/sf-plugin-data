@@ -99,7 +99,8 @@ for (const [label, family] of Object.entries(families)) {
   for (const status of [404, 401, 503])
     test(`bound ${label} GET ${status} keeps the ${family.prefix} HTTP error code`, async () => {
       const { attempts, outcome } = await wire(family, status);
-      assert.equal(attempts, 1);
+      // A 503 read is retried by the transport (three attempts in all); others are sent once.
+      assert.equal(attempts, status === 503 ? 3 : 1);
       assert.ok(outcome.error instanceof family.Error);
       assert.equal(outcome.error.code, `${family.prefix}_HTTP_ERROR`);
       assert.equal(outcome.error.status, status);
@@ -108,6 +109,8 @@ for (const [label, family] of Object.entries(families)) {
   test(`bound ${label} GET network failure, 204 and array body are unconfirmed or invalid`, async () => {
     const network = await wire(family, 'network');
     assert.equal(network.outcome.error.code, `${family.prefix}_REQUEST_UNCONFIRMED`);
+    // The real fetch failure carries ECONNRESET as its cause; the read is retried twice.
+    assert.equal(network.attempts, 3);
     const empty = await wire(family, 204);
     assert.equal(empty.outcome.error.code, `${family.prefix}_REQUEST_UNCONFIRMED`);
     assert.equal(empty.outcome.error.status, 204);

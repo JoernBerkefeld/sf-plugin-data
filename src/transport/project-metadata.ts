@@ -64,6 +64,7 @@ export async function runProjectMetadata(
   arguments_: string[],
   cwd: string,
 ): Promise<{ exitCode: number; stdout: string }> {
+  // Never retried: the child's network error is not visible, so a retry could write twice.
   const executable = process.platform === 'win32' ? process.execPath : 'sf';
   let parameters = arguments_;
   if (process.platform === 'win32') {

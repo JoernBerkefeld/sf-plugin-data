@@ -23,6 +23,7 @@ const documentationRoot = path.join(root, 'docs', 'errors');
 const NOT_PLUGIN_CODES = new Set([
   'ANSI_SQL',
   'CALCULATED_METRIC',
+  'EAI_AGAIN',
   'INGEST_API',
   'INTERNAL_ERROR',
   'INVALID_SESSION_ID',

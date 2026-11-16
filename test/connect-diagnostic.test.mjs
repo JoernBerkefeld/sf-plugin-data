@@ -326,7 +326,8 @@ for (const status of [429, 503]) {
         assert.ok(!inspect(error).includes('secret'));
         return true;
       });
-      assert.equal(f.count(), 1);
+      // The transport retries a throttled GET (three attempts); writes go once.
+      assert.equal(f.count(), method === 'GET' ? 3 : 1);
     });
   for (const family of ['dlo', 'dmo', 'mapping', 'stream'])
     for (const method of family === 'stream' ? ['DELETE'] : ['GET', 'POST', 'PATCH', 'DELETE'])

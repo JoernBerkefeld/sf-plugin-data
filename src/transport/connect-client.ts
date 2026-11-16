@@ -9,6 +9,7 @@ import {
   connectDiagnostic,
   diagnosticDataProperty,
   diagnosticRequestId,
+  getConnectDiagnostic,
   retainConnectDiagnostic,
 } from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
@@ -32,6 +33,76 @@ export class ConnectError extends Error {
     );
     this.name = 'ConnectError';
   }
+}
+
+/**
+ * Bounded retry of in-process requests. GETs retry after network errors and HTTP 429/503;
+ * writes retry only when the request provably never reached Salesforce. `sleep` and `warn`
+ * are replaceable (tests, commands); `warn` defaults to one stderr line so JSON stdout stays clean.
+ */
+export const connectRetry = {
+  attempts: 3,
+  delaysMs: [1000, 2000],
+  maxRetryAfterMs: 60_000,
+  sleep: async (milliseconds: number): Promise<void> => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, milliseconds);
+    });
+  },
+  warn: (message: string): void => {
+    process.stderr.write(`Warning: ${message}\n`);
+  },
+};
+
+// Codes raised before a connection exists: the request never reached Salesforce.
+const unsentCodes = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'EAI_AGAIN']);
+const readRetryCodes = new Set([...unsentCodes, 'ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED']);
+const networkCodes = new WeakMap<object, string>();
+
+/**
+ * Find a Node network error code on the error or its first two causes.
+ * @param {unknown} error Raw transport failure.
+ * @returns {string | undefined} A known retry candidate code.
+ */
+function networkCode(error: unknown): string | undefined {
+  let current = error;
+  for (let depth = 0; depth < 3 && current && typeof current === 'object'; depth++) {
+    const code = diagnosticDataProperty(current, 'code');
+    if (typeof code === 'string' && readRetryCodes.has(code)) return code;
+    current = diagnosticDataProperty(current, 'cause');
+  }
+  return undefined;
+}
+
+/**
+ * Decide whether and how long to wait before the next attempt.
+ * @param {string} method HTTP method.
+ * @param {number} attempt One-based number of the failed attempt.
+ * @param {unknown} error The failure thrown by that attempt.
+ * @returns {{ wait: number; reason: string } | undefined} Wait in ms, or undefined to give up.
+ */
+function retryPlan(
+  method: string,
+  attempt: number,
+  error: unknown,
+): { wait: number; reason: string } | undefined {
+  if (attempt >= connectRetry.attempts || !error || typeof error !== 'object') return;
+  const backoff = connectRetry.delaysMs[Math.min(attempt, connectRetry.delaysMs.length) - 1] ?? 0;
+  const code = networkCodes.get(error);
+  if (code) {
+    if (method !== 'GET' && !unsentCodes.has(code)) return;
+    return { wait: backoff, reason: code };
+  }
+  const diagnostic = getConnectDiagnostic(error);
+  if (method !== 'GET' || !diagnostic || diagnostic.kind === 'api-error') return;
+  let wait = backoff;
+  if (diagnostic.retryAfter !== undefined) {
+    wait = /^\d+$/u.test(diagnostic.retryAfter)
+      ? Number(diagnostic.retryAfter) * 1000
+      : Math.max(0, Date.parse(diagnostic.retryAfter) - Date.now());
+    wait = Math.min(wait, connectRetry.maxRetryAfterMs);
+  }
+  return { wait, reason: `HTTP ${diagnostic.statusCode}` };
 }
 
 type AuthenticatedConnection = Pick<Connection, 'instanceUrl' | 'request'>;
@@ -112,7 +183,7 @@ export class ConnectClient {
   }
 
   /**
-   * Read a single SSOT response. Does not infer pagination or retry a failed call.
+   * Read a single SSOT response. Does not infer pagination; see `connectRetry` for the bounded retry.
    * @template T
    * @param {string} path Root-relative SSOT path or same-origin absolute URL, with optional query.
    * @returns {Promise<T>} The unmodified resource response; callers must validate its schema.
@@ -270,6 +341,29 @@ export class ConnectClient {
     receiver: AuthenticatedConnection,
     noContentResponse?: unknown,
   ): Promise<T> {
+    const method =
+      typeof request === 'object' ? String(request.method ?? 'GET').toUpperCase() : 'GET';
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.sendOnce<T>(request, receiver, noContentResponse);
+      } catch (error: unknown) {
+        const plan = retryPlan(method, attempt, error);
+        if (!plan) throw error;
+        const url = typeof request === 'object' ? request.url : request;
+        const route = typeof url === 'string' ? url.split('?')[0].replace(this.origin, '') : '';
+        connectRetry.warn(
+          `${method} ${route} failed (${plan.reason}); retrying in ${Math.ceil(plan.wait / 1000)} s (attempt ${attempt + 1} of ${connectRetry.attempts}).`,
+        );
+        await connectRetry.sleep(plan.wait);
+      }
+    }
+  }
+
+  private async sendOnce<T>(
+    request: Parameters<Connection['request']>[0],
+    receiver: AuthenticatedConnection,
+    noContentResponse?: unknown,
+  ): Promise<T> {
     let responseStatus: number | undefined;
     let diagnostic: ConnectDiagnostic | undefined;
     const transport =
@@ -351,7 +445,8 @@ export class ConnectClient {
         typeof data.message === 'string'
           ? 'ITEM_NOT_FOUND'
           : undefined;
-      throw retainConnectDiagnostic(
+      const code = statusCode === undefined && !expired ? networkCode(error) : undefined;
+      const failure = retainConnectDiagnostic(
         new ConnectError(
           statusCode === 401 || expired ? 'AUTHENTICATION_FAILED' : 'REQUEST_FAILED',
           statusCode,
@@ -361,6 +456,8 @@ export class ConnectClient {
           apiDiagnostic(statusCode, diagnosticDataProperty(error, 'data')) ??
           connectDiagnostic(statusCode),
       );
+      if (code) networkCodes.set(failure, code);
+      throw failure;
     }
   }
 

@@ -1220,9 +1220,11 @@ test('Transform transport never retries 400, 404, permission or unknown failures
     };
     const client = createDataTransformClient(connection, '68.0', 'default');
     await assert.rejects(client.get('SyntheticTransform'));
-    assert.equal(calls, 1);
+    // A 503 read is retried by the shared transport (three attempts); the DELETE never is.
+    const reads = statusCode === 503 ? 3 : 1;
+    assert.equal(calls, reads);
     await assert.rejects(client.delete(id));
-    assert.equal(calls, 2);
+    assert.equal(calls, reads + 1);
   }
 });
 

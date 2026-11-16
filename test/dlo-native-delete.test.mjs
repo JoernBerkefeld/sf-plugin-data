@@ -75,11 +75,12 @@ async function wire(method, response, operation, body) {
 
 for (const response of [420, 429, 500, 503, 'network', 401])
   for (const method of ['GET', 'DELETE'])
-    test(`bound DLO ${method} ${response} is sent once without refresh or replay`, async () => {
+    test(`bound DLO ${method} ${response} has no refresh or write replay`, async () => {
       const { attempts, outcome } = await wire(method, response, (client) =>
         method === 'GET' ? client.get(name) : client.delete(id),
       );
-      assert.equal(attempts, 1);
+      // Only a GET after a network error, 429 or 503 is retried by the transport (three attempts).
+      assert.equal(attempts, method === 'GET' && [429, 503, 'network'].includes(response) ? 3 : 1);
       assert.ok(outcome.error instanceof DloError);
     });
 
@@ -110,7 +111,7 @@ test('bound DLO dependencies GET reads the dependency route once; 404 is DLO_HTT
   assert.equal(missing.outcome.error.status, 404);
   for (const status of [500, 'network']) {
     const failed = await wire('GET', status, (client) => client.dependencies('X__dll'));
-    assert.equal(failed.attempts, 1);
+    assert.equal(failed.attempts, status === 'network' ? 3 : 1);
     assert.ok(failed.outcome.error instanceof DloError);
   }
 });

@@ -14,7 +14,7 @@ const id = '1dt000000000001AAA';
 
 for (const method of ['GET', 'PUT', 'DELETE']) {
   for (const response of [420, 429, 503, 'network', 401]) {
-    test(`real JSforce ${method} ${response} dispatches once without refresh or replay`, async () => {
+    test(`real JSforce ${method} ${response} has no refresh or write replay`, async () => {
       const agent = new MockAgent();
       agent.disableNetConnect();
       requestModule.setDispatcher(agent);
@@ -63,7 +63,11 @@ for (const method of ['GET', 'PUT', 'DELETE']) {
               ? client.delete(id)
               : client.update(id, input());
         await assert.rejects(operation);
-        assert.equal(attempts, 1);
+        // Only a GET after a network error, 429 or 503 is retried by the transport (three attempts).
+        assert.equal(
+          attempts,
+          method === 'GET' && [429, 503, 'network'].includes(response) ? 3 : 1,
+        );
         assert.equal(connection._refreshDelegate, refresh);
       } finally {
         requestModule.setDispatcher();

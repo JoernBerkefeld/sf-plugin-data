@@ -418,6 +418,9 @@ and JSON diagnostics include a server `Retry-After` value only when it passes
 validation. Reduce request frequency and try later; effective limits can vary
 with load and change. Inspect the target before rerunning a write whose outcome
 is unknown. The plugin does not automatically replay the write.
+Reads sent in-process are tried up to three times after a network error, HTTP 429 or 503
+(waiting 1 s, then 2 s, or the server's `Retry-After` up to 60 s), with one stderr warning per
+retry; writes are resent only when the connection was never established.
 
 ### Retrieve is lenient, deploy is strict
 

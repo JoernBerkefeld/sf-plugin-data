@@ -396,7 +396,8 @@ for (const [operation, execute] of Object.entries(operations)) {
           assert.equal(inspect(error).includes('secret detail'), false);
           return true;
         });
-      assert.equal(calls, 1);
+      // The transport retries a GET answered 429/503 (three attempts); everything else goes once.
+      assert.equal(calls, verbs[operation] === 'GET' && [429, 503].includes(statusCode) ? 3 : 1);
       assert.deepEqual(Object.getOwnPropertyDescriptors(connection), descriptors);
     });
   test(`native Graph ${operation} redirect/network failures never replay`, async () => {

@@ -1,3 +1,17 @@
+# Retries (A) — 2026-11-16
+
+Plan: `.claude/plans/sf_plugin_data_retry_speed_asis_20261116.plan.md` (workspace root), step A.
+`ConnectClient.send` (in-process jsforce path; jsforce's own retries stay off) now loops over
+`sendOnce`. GETs: up to 3 attempts on `ETIMEDOUT`, `ECONNRESET`, `ECONNABORTED`, `EHOSTUNREACH`,
+`ENOTFOUND`, `ECONNREFUSED`, `EAI_AGAIN` (on the error or its causes) and on HTTP 429/503 as
+classified by `connect-diagnostic.ts`; backoff 1 s then 2 s, a validated `Retry-After` wins,
+capped at 60 s. POST/PATCH/PUT/DELETE retry only on `ECONNREFUSED`, `ENOTFOUND`,
+`EHOSTUNREACH`, `EAI_AGAIN`. The exported `connectRetry` object holds `attempts`, `delaysMs`,
+`maxRetryAfterMs`, `sleep` and `warn`; `warn` writes one `Warning:` line to stderr per retry
+(stdout/JSON untouched) and commands may replace it. `test/support/fast-readback.mjs` stubs
+`sleep`/`warn`; tests in `test/connect-retry.test.mjs`. `runProjectMetadata` (child `sf`
+process) is never retried. Next: B2 moves retrieve's DLO/DMO/mapping GETs onto a bound sender.
+
 # Lenient retrieve review round 2: read-state codes stay item failures — 2026-11-16
 
 Gate 4 round 2 must-fix. Codes about read state rather than content are now item failures in

@@ -117,7 +117,8 @@ for (const family of ['dlo', 'dmo', 'mapping'])
           );
           if (json) assert.deepEqual(output, []);
           else assert.equal(output.filter((line) => line.includes(`HTTP ${status}`)).length, 1);
-          assert.equal(requests.length, family === 'mapping' ? 2 : 1);
+          // The failing GET is tried three times by the transport before the command reports it.
+          assert.equal(requests.length, family === 'mapping' ? 4 : 3);
           if (family === 'mapping') assert.match(requests[1].url, /data-model-object-mappings/u);
           assert.equal(writes, 0);
         });

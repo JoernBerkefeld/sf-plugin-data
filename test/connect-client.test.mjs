@@ -315,7 +315,8 @@ for (const [method, statusCode, route = segmentRoute] of [
         String(observed),
       );
     }
-    assert.equal(requests, 1);
+    // Only a GET 503 is retried (see connect-retry.test.mjs); writes and other statuses go once.
+    assert.equal(requests, method === 'GET' && statusCode === 503 ? 3 : 1);
     assert.deepEqual(Object.getOwnPropertyDescriptors(connection), original);
     assert.equal(Object.getPrototypeOf(connection), Connection.prototype);
     assert.equal(connection._refreshDelegate, refresh);
