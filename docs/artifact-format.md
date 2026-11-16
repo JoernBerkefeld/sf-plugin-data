@@ -218,9 +218,10 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   existing data lake object may omit the fields Salesforce generated:
   `cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
   `InternalOrganization__c`, `cdp_sys_PartitionDate__c` on Engagement data lake
-  objects and the key qualifier of the primary key (`KQ_<Key>__c`, for example
-  `KQ_Id__c`). They stay as they are, and retrieve leaves them out of the file; the
-  field named by `eventDateTimeFieldName` is always saved. Any other field of the target that the file
+  objects and the key qualifier `KQ_<Name>__c` of another field (`KQ_Id__c` for the
+  primary key, `KQ_RefId__c` for a relationship source field). They stay as they
+  are, and retrieve leaves them out of the file; the fields named by
+  `eventDateTimeFieldName` and `recordModifiedFieldName` are always saved. Any other field of the target that the file
   omits is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on
   the keys the file states: keys only the org's copy carries are ignored, and a
   stated key that differs is refused with the same code.
@@ -231,6 +232,12 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   Salesforce decides. Neither the category nor the event field can change after
   create: a changed value is refused with `UNSUPPORTED_DLO_CATEGORY_CHANGE` or
   `UNSUPPORTED_DLO_EVENT_FIELD_CHANGE` before any write.
+- The data lake object `spec` may also hold `recordModifiedFieldName`, the full name
+  (with `__c`) of the field that marks the newest version of a record. Create sends
+  it without the suffix; an update sends it only when it differs from the org, and
+  Salesforce decides (it sets the field on a DLO without one and refuses a change once
+  one is set). The data model object file never holds `isSegmentable`: Salesforce
+  derives it and rejects it as input.
 
 - A custom field that exists in the target and is missing from the file is a
   removal. `sf data360 deploy --allow-field-removal` removes such fields with one

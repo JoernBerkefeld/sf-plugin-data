@@ -18,6 +18,8 @@ export type DloDocument = {
     category: string;
     /** Engagement DLOs: the DateTime field that dates each record; fixed after create. */
     eventDateTimeFieldName?: string;
+    /** The field whose value tells which version of a record is newest; set once, then fixed. */
+    recordModifiedFieldName?: string;
     fields: DloField[];
   };
 };
@@ -132,17 +134,17 @@ export function validateDloDocument(value: unknown, mode: DocumentMode = 'deploy
   if (mode === 'retrieve') return structuredClone(value) as DloDocument;
   closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
   closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
-  closedKeys(spec, 'spec.', ['category', 'fields', 'label'], ['eventDateTimeFieldName']);
-  if (
-    Object.hasOwn(spec, 'eventDateTimeFieldName') &&
-    (typeof spec.eventDateTimeFieldName !== 'string' ||
-      !fieldName.test(spec.eventDateTimeFieldName))
-  )
-    throw refuse(
-      'INVALID_DLO_DOCUMENT',
-      'spec.eventDateTimeFieldName',
-      'must be a field API name ending in __c',
-    );
+  closedKeys(
+    spec,
+    'spec.',
+    ['category', 'fields', 'label'],
+    ['eventDateTimeFieldName', 'recordModifiedFieldName'],
+  );
+  for (const key of ['eventDateTimeFieldName', 'recordModifiedFieldName']) {
+    const named = spec[key];
+    if (Object.hasOwn(spec, key) && (typeof named !== 'string' || !fieldName.test(named)))
+      throw refuse('INVALID_DLO_DOCUMENT', `spec.${key}`, 'must be a field API name ending in __c');
+  }
   if (typeof spec.label !== 'string' || !spec.label.trim() || spec.label.length > 40)
     throw refuse('INVALID_DLO_DOCUMENT', 'spec.label', 'must be a text of 1 to 40 characters');
   if (typeof spec.category !== 'string' || !spec.category)
@@ -194,9 +196,11 @@ export const dloSystemFields: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether a field of an existing DLO is one Salesforce generated: a system field or the key
- * qualifier of a primary key, never a primary key or a custom field. A deploy keeps such a field
- * when the file leaves it out, and a retrieve leaves it out; both use this one predicate.
+ * Whether a field of an existing DLO is one Salesforce generated: a system field or a key
+ * qualifier `KQ_<Name>__c` of another field of the same DLO (Salesforce adds one for the primary
+ * key on create, and one for a field that a relationship uses as its source, live API 68), never a
+ * primary key or a custom field. A deploy keeps such a field when the file leaves it out, and a
+ * retrieve leaves it out; both use this one predicate.
  * @param {DloField} field Field of the DLO.
  * @param {DloField[]} fields Every field of the same DLO.
  * @returns {boolean} Whether the field is generated, not authored.
@@ -205,13 +209,13 @@ export function isGeneratedDloField(field: DloField, fields: readonly DloField[]
   if (field.isPrimaryKey || field.creationType === 'Custom') return false;
   return (
     dloSystemFields.has(field.name) ||
-    fields.some((key) => key.isPrimaryKey && field.name === `KQ_${key.name}`)
+    fields.some((other) => other !== field && field.name === `KQ_${other.name}`)
   );
 }
 
 /**
  * Keep the authored content of a DLO definition: generated fields are left out, except a field
- * the event field names, which the document has to list.
+ * the event field or the record-modified field names, which the document has to list.
  * @param {DloDocument} document Complete definition as read.
  * @returns {DloDocument} Independent copy without generated fields.
  */
@@ -220,6 +224,7 @@ export function leanDloDocument(document: DloDocument): DloDocument {
   lean.spec.fields = document.spec.fields.filter(
     (field) =>
       field.name === document.spec.eventDateTimeFieldName ||
+      field.name === document.spec.recordModifiedFieldName ||
       !isGeneratedDloField(field, document.spec.fields),
   );
   return lean;
@@ -275,6 +280,12 @@ export function normalizeDlo(
           object.eventDateTimeFieldName !== undefined &&
           object.eventDateTimeFieldName !== null)
           ? { eventDateTimeFieldName: object.eventDateTimeFieldName }
+          : {}),
+        ...(typeof object.recordModifiedFieldName === 'string' ||
+        (mode === 'retrieve' &&
+          object.recordModifiedFieldName !== undefined &&
+          object.recordModifiedFieldName !== null)
+          ? { recordModifiedFieldName: object.recordModifiedFieldName }
           : {}),
         fields: fields.map((field) =>
           Object.fromEntries(

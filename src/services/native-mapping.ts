@@ -100,7 +100,9 @@ function isStandardKeyQualifierPair(
 
 /**
  * Recognise a pair Salesforce generates on a custom DMO: a system field onto its namesake, or
- * the key qualifier of the target's primary key.
+ * the key qualifier of a target field. Salesforce adds one for the primary key and one for a field
+ * that a relationship uses as its source (`KQ_RefId__c` for `RefId__c`, live API 68); the
+ * target field names it in `keyQualifierName`.
  * @param {DloField} from Source field.
  * @param {NativeDmoField} to Target field.
  * @param {Map<string, DloField>} sources Source fields by name.
@@ -123,12 +125,10 @@ function isCustomGeneratedPair(
     return true;
   const qualifier = keyQualifierField.exec(to.name);
   if (!qualifier || to.creationType !== 'System' || to.usageTag !== 'KeyQualifier') return false;
-  // The qualifier belongs to the target's primary key, whatever its name and type.
+  // The qualifier belongs to a target field that names it, whatever its name and type.
   return (
     [...sources.values()].some((field) => field.isPrimaryKey) &&
-    [...targets.values()].some(
-      (field) => field.isPrimaryKey && field.keyQualifierName === `KQ_${qualifier[1]}`,
-    )
+    [...targets.values()].some((field) => field.keyQualifierName === `KQ_${qualifier[1]}`)
   );
 }
 

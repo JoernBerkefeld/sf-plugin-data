@@ -297,15 +297,16 @@ category, data-space, primary-key and field-preservation admission. Equal labels
 and no added fields return `unchanged` / `not-attempted`, without POST or PATCH.
 Field order is immaterial. A file may omit the fields Salesforce generated
 (`cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,
-`InternalOrganization__c` and the key qualifier of the primary key, `KQ_<Key>__c`,
-for example `KQ_Id__c`); they stay as they are, so a hand-written file with only the
+`InternalOrganization__c` and the key qualifier `KQ_<Name>__c` of another field,
+for example `KQ_Id__c` for the primary key or `KQ_RefId__c` for a relationship
+source field); they stay as they are, so a hand-written file with only the
 authored fields deploys onto its existing DLO. Any other omitted field is refused
 (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on the keys the file
 states; keys only the org's copy carries are ignored, and a differing stated key is
 refused with the same code. On Engagement DLOs the file may also omit
 `cdp_sys_PartitionDate__c`, the DateTime field Salesforce adds with the event field.
-Retrieve leaves all of these generated fields out of the file; the field named by
-`eventDateTimeFieldName` is always saved, so retrieved files redeploy `unchanged`.
+Retrieve leaves all of these generated fields out of the file; the fields named by
+`eventDateTimeFieldName` and `recordModifiedFieldName` are always saved, so retrieved files redeploy `unchanged`.
 Label changes and nonprimary field additions of any type Salesforce accepts use the
 update route; changed or removed existing fields are refused with the same code.
 Create sends the category as the file states it, and for Engagement the event field
@@ -315,6 +316,16 @@ is refused with `UNSUPPORTED_DLO_CATEGORY_CHANGE` and a changed event field with
 the plugin on 2026-11-11: a Profile and an Engagement DLO created, redeployed and
 round-tripped through retrieval unchanged, a field added to the Engagement DLO, and
 a changed event field refused with nothing written.
+
+The optional `spec.recordModifiedFieldName` is carried through retrieve, create and
+update. Observed at API 68 on 2026-11-16: create set it, an update set it on a DLO
+without one, a repeat deploy of the retrieved file was `unchanged`, and a changed
+value was answered by Salesforce with HTTP 400 `Record modified field already present`
+(reported as `DLO_HTTP_ERROR`). A hand-written DLO, DMO and mapping file deployed
+`unchanged` after a relationship made Salesforce add `KQ_RefId__c` and its mapping
+pair. `capabilities` (DLO) and `isSegmentable` (DMO) are not authorable: Salesforce
+answers HTTP 403 to non-empty `capabilities` and HTTP 400 `JSON_PARSER_ERROR` to
+`isSegmentable` on create and update, so neither is saved in a file.
 
 Fresh isolated-installed API68 acceptance retrieved an empty standalone Other/default
 DLO from the source and deployed the exact saved file into the target, with differing

@@ -1263,6 +1263,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       actual.spec.category === desired.category &&
                       (desired.eventDateTimeFieldName === undefined ||
                         actual.spec.eventDateTimeFieldName === desired.eventDateTimeFieldName) &&
+                      (desired.recordModifiedFieldName === undefined ||
+                        actual.spec.recordModifiedFieldName === desired.recordModifiedFieldName) &&
                       desired.fields.every((field) => {
                         const found = fields.get(field.name);
                         return (

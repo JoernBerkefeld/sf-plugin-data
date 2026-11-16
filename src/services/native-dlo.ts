@@ -96,7 +96,8 @@ export async function retrieveNativeDlo(
 
 /**
  * Preflight one native deploy: only authoritative absence selects create.
- * Updates permit label and ordinary field additions, refusing any removed/changed field or key.
+ * Updates permit label, record-modified field and ordinary field additions, refusing any
+ * removed/changed field or key.
  * @param {unknown} value Saved document.
  * @param {DloClient} client Authenticated target client.
  * @param {string} [requestScope] Optional expected data space, never a URL query.
@@ -132,6 +133,9 @@ export async function preflightNativeDlo(
         ...(desired.spec.eventDateTimeFieldName === undefined
           ? {}
           : { eventDateTimeFieldName: desired.spec.eventDateTimeFieldName.slice(0, -3) }),
+        ...(desired.spec.recordModifiedFieldName === undefined
+          ? {}
+          : { recordModifiedFieldName: desired.spec.recordModifiedFieldName.slice(0, -3) }),
         dataspaceInfo: [{ name: desired.identity.dataSpace }],
         dataLakeFieldInputRepresentations: fields.map((field) => fieldInput(field)),
       },
@@ -156,7 +160,7 @@ export async function preflightNativeDlo(
   const existing = new Map(target.document.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
   for (const [name, field] of existing) {
-    // Fields Salesforce generated (system fields and the key qualifier of the primary key) stay
+    // Fields Salesforce generated (system fields and the key qualifier of another field) stay
     // as they are when the file does not list them; retrieve leaves out exactly these.
     if (!incoming.has(name) && isGeneratedDloField(field, target.document.spec.fields)) continue;
     const listed = incoming.get(name);
@@ -178,7 +182,19 @@ export async function preflightNativeDlo(
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))
     throw new DloError('UNSUPPORTED_DLO_FIELD_ADDITION');
-  if (added.length === 0 && desired.spec.label === target.document.spec.label)
+  // Salesforce sets the record-modified field once: a PATCH naming one while the DLO has one is
+  // answered with HTTP 400 "Record modified field already present" (live API 68), and that answer
+  // is reported. A file without the key leaves the org's value as it is.
+  const recordModified =
+    desired.spec.recordModifiedFieldName !== undefined &&
+    desired.spec.recordModifiedFieldName !== target.document.spec.recordModifiedFieldName
+      ? { recordModifiedFieldName: desired.spec.recordModifiedFieldName.slice(0, -3) }
+      : {};
+  if (
+    added.length === 0 &&
+    desired.spec.label === target.document.spec.label &&
+    Object.keys(recordModified).length === 0
+  )
     return {
       operation: 'unchanged',
       apiName,
@@ -191,6 +207,7 @@ export async function preflightNativeDlo(
     targetId: target.targetId,
     body: {
       label: desired.spec.label,
+      ...recordModified,
       ...(added.length > 0
         ? { dataLakeFieldInputRepresentations: added.map((field) => fieldInput(field)) }
         : {}),

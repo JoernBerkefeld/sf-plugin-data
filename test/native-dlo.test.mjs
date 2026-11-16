@@ -9,6 +9,7 @@ import test from 'node:test';
 import {
   DloError,
   dloName,
+  leanDloDocument,
   normalizeDlo,
   validateDloDocument,
 } from '../lib/artifacts/dlo-document.js';
@@ -283,9 +284,6 @@ test('DLO update keeps only omitted generated fields; other omissions and listed
     'omitted qualifier of another field': (_input, raw) => {
       raw.dataLakeFieldInfoRepresentation.push(field('KQ_Other__c'));
     },
-    'omitted qualifier of a non-key field': (_input, raw) => {
-      raw.dataLakeFieldInfoRepresentation.push(field('KQ_Note__c'));
-    },
     'omitted system field reported as Custom': (_input, raw) => {
       raw.dataLakeFieldInfoRepresentation.find((f) => f.name === 'DataSource__c').creationType =
         'Custom';
@@ -319,6 +317,19 @@ test('DLO update keeps only omitted generated fields; other omissions and listed
     await assert.rejects(deployNativeDlo(input, client), refusedChange, name);
     assert.equal(writes, 0, name);
   }
+  // Each generated field may be left out on its own, or listed exactly as the org has it. Salesforce
+  // also adds the key qualifier of a non-key field (KQ_RefId__c for a relationship source field,
+  // live API 68), so the qualifier of any field of the DLO counts as generated.
+  const qualified = native();
+  qualified.dataLakeFieldInfoRepresentation.push(field('KQ_Note__c'));
+  for (const input of [handWritten(), document()]) {
+    const plan = await preflightNativeDlo(input, { get: async () => qualified });
+    assert.equal(plan.operation, 'unchanged');
+  }
+  assert.equal(
+    leanDloDocument(normalizeDlo(qualified)).spec.fields.some((f) => f.name === 'KQ_Note__c'),
+    false,
+  );
   // Each generated field may be left out on its own, or listed exactly as the org has it.
   for (const name of [
     'cdp_sys_SourceVersion__c',
@@ -751,4 +762,66 @@ test('the event field matches a listed field exactly, round-trips through the wr
   other.spec.category = 'Other';
   const sent = await preflightNativeDlo(other, { get: absent });
   assert.equal(sent.body.eventDateTimeFieldName, 'EventAt');
+});
+
+// The record-modified field (live API 68): POST and a PATCH of a DLO without one set it; a PATCH
+// naming any value while the DLO has one is answered with HTTP 400.
+const recordModified = () => {
+  const raw = native();
+  raw.recordModifiedFieldName = 'ModAt__c';
+  raw.dataLakeFieldInfoRepresentation.push({ ...field('ModAt__c'), dataType: 'DateTime' });
+  return raw;
+};
+
+test('the record-modified field is retrieved, created, compared and sent only when it differs', async () => {
+  // Retrieve keeps it, and keeps the field it names; the writer and the deploy reader agree.
+  const file = normalizeDlo(recordModified());
+  assert.equal(file.spec.recordModifiedFieldName, 'ModAt__c');
+  assert.equal(
+    leanDloDocument(file).spec.fields.some((f) => f.name === 'ModAt__c'),
+    true,
+  );
+  const root = await mkdtemp(path.join(os.tmpdir(), 'data360-dlo-modified-'));
+  const saved = await writeDloDocument(file, root, false);
+  const reread = JSON.parse(await readFile(saved.path, 'utf8'));
+  assert.equal(reread.spec.recordModifiedFieldName, 'ModAt__c');
+  assert.deepEqual(validateDloDocument(reread), reread);
+  for (const bad of ['ModAt', 'bad name', 7])
+    assert.throws(
+      () => validateDloDocument({ ...file, spec: { ...file.spec, recordModifiedFieldName: bad } }),
+      (error) =>
+        error.code === 'INVALID_DLO_DOCUMENT' &&
+        /spec.recordModifiedFieldName/u.test(error.message),
+    );
+  // Create sends the bare name.
+  const create = await preflightNativeDlo(reread, { get: absent });
+  assert.equal(create.body.recordModifiedFieldName, 'ModAt');
+  // The same value is unchanged; a file without the key leaves the org's value alone.
+  const same = await preflightNativeDlo(reread, { get: async () => recordModified() });
+  assert.equal(same.operation, 'unchanged');
+  const unmanaged = structuredClone(reread);
+  delete unmanaged.spec.recordModifiedFieldName;
+  const left = await preflightNativeDlo(unmanaged, { get: async () => recordModified() });
+  assert.equal(left.operation, 'unchanged');
+  // A DLO without one gets it by PATCH; a different value is sent too, for Salesforce to answer.
+  const without = native();
+  without.dataLakeFieldInfoRepresentation.push({ ...field('ModAt__c'), dataType: 'DateTime' });
+  const set = await preflightNativeDlo(reread, { get: async () => without });
+  assert.deepEqual(set.body, { label: 'Example', recordModifiedFieldName: 'ModAt' });
+  const moved = structuredClone(reread);
+  moved.spec.fields.push({ ...field('ModAt2__c'), dataType: 'DateTime' });
+  moved.spec.recordModifiedFieldName = 'ModAt2__c';
+  const changed = await preflightNativeDlo(moved, { get: async () => recordModified() });
+  assert.equal(changed.operation, 'update');
+  assert.equal(changed.body.recordModifiedFieldName, 'ModAt2');
+  // Server-owned keys of the read stay out of the file and are refused in it.
+  const raw = recordModified();
+  raw.capabilities = {};
+  raw.columnMappingProperties = {};
+  raw.totalRecords = 3;
+  assert.equal(Object.hasOwn(normalizeDlo(raw).spec, 'capabilities'), false);
+  assert.throws(
+    () => validateDloDocument({ ...file, spec: { ...file.spec, capabilities: {} } }),
+    /INVALID_DLO_DOCUMENT/u,
+  );
 });

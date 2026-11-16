@@ -1104,3 +1104,14 @@ test('DMO command reports DMO_FIELD_KEY_NOT_SENT as a warning without changing t
   const plain = await executeDmo(document(), { get: async () => native() });
   assert.deepEqual(plain.diagnostics, []);
 });
+
+test('isSegmentable stays out of the DMO file: Salesforce derives it and rejects it as input', () => {
+  // POST and PATCH answer HTTP 400 JSON_PARSER_ERROR to isSegmentable true or false (live API 68).
+  const raw = { ...native(), isSegmentable: true, isEnabled: true, isEditable: true };
+  const file = normalizeNativeDmo(raw, 'default');
+  assert.equal(Object.hasOwn(file.spec, 'isSegmentable'), false);
+  assert.throws(
+    () => validateNativeDmoDocument({ ...file, spec: { ...file.spec, isSegmentable: true } }),
+    (error) => error.code === 'INVALID_DMO_DOCUMENT' && /spec\.isSegmentable/u.test(error.message),
+  );
+});

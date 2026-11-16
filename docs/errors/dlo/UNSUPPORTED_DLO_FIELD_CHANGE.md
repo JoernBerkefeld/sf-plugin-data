@@ -12,7 +12,7 @@
 
 On an existing DLO the plugin compares every field in the org with the file. A field differs on one of the keys the file lists (for example `dataType` or `label`), or a field you created is missing from the file. The message names the field and the first difference.
 
-Fields Salesforce generated (system fields and the key qualifier of the primary key) may be left out of the file; they are kept as they are.
+Fields Salesforce generated (system fields and the key qualifier `KQ_<Name>__c` of another field, such as `KQ_Id__c` for the primary key or `KQ_RefId__c` for a relationship source field) may be left out of the file; they are kept as they are.
 
 ## Why the plugin stops
 

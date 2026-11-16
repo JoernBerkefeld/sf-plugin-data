@@ -14,7 +14,8 @@ The plugin turns every DLO it reads from the org into its portable file format a
 
 - `identity.apiName` ends in `__dll`; `identity.dataSpace` is a non-empty name without leading or trailing spaces or control characters;
 - `spec.label` is 1–40 characters; `spec.category` is set; `spec.fields` has at least one field;
-- `spec.eventDateTimeFieldName`, when present, names one of the listed fields exactly.
+- `spec.eventDateTimeFieldName`, when present, names one of the listed fields exactly;
+- `spec.recordModifiedFieldName`, when present, is a field API name ending in `__c`.
 
 The definition built from the org's answer broke one of these rules, for example a label longer than 40 characters or an event field that is not in the field list.
 

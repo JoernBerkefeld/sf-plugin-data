@@ -411,3 +411,40 @@ test('retrieve command passes lazy source and target readers to the mapping acqu
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(pairs(written[0]), ['Id__c->Id__c', 'Note__c->Note__c']);
 });
+
+const textField = (name, extra = {}) => ({ name, label: name, dataType: 'Text', ...extra });
+const samePair = (name) => ({ sourceFieldDeveloperName: name, targetFieldDeveloperName: name });
+
+test('the key qualifier of a relationship source field is a generated pair on a custom DMO', () => {
+  // Live API 68: a relationship from RefId__c makes Salesforce add KQ_RefId__c to the DLO and the
+  // DMO, name it in the DMO field's keyQualifierName and map it, although RefId__c is no key.
+  const sources = new Map(
+    [
+      textField('Id__c', { isPrimaryKey: true }),
+      textField('RefId__c', { isPrimaryKey: false }),
+      textField('KQ_Id__c', { isPrimaryKey: false }),
+      textField('KQ_RefId__c', { isPrimaryKey: false }),
+      textField('KQ_Other__c', { isPrimaryKey: false }),
+    ].map((field) => [field.name, field]),
+  );
+  const system = { creationType: 'System', usageTag: 'KeyQualifier', isPrimaryKey: false };
+  const targets = new Map(
+    [
+      textField('Id__c', { creationType: 'Custom', isPrimaryKey: true, keyQualifierName: 'KQ_Id' }),
+      textField('RefId__c', {
+        creationType: 'Custom',
+        isPrimaryKey: false,
+        keyQualifierName: 'KQ_RefId',
+      }),
+      textField('KQ_Id__c', system),
+      textField('KQ_RefId__c', system),
+      textField('KQ_Other__c', system),
+    ].map((field) => [field.name, field]),
+  );
+  const context = { sources, targets, standard: false };
+  assert.equal(isGeneratedMappingPair(samePair('KQ_Id__c'), context), true);
+  assert.equal(isGeneratedMappingPair(samePair('KQ_RefId__c'), context), true);
+  // A qualifier no target field names stays an authored pair.
+  assert.equal(isGeneratedMappingPair(samePair('KQ_Other__c'), context), false);
+  assert.equal(isGeneratedMappingPair(samePair('RefId__c'), context), false);
+});
