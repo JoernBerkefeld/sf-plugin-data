@@ -20,6 +20,7 @@ import {
   carriedNativeResponse,
   carryNativeResponse,
   createVerbatimDocument,
+  isVerbatimDocument,
   verbatimReason,
 } from '../artifacts/verbatim-document.js';
 import type { DocumentMode, VerbatimDocument } from '../artifacts/verbatim-document.js';
@@ -98,19 +99,33 @@ export async function retrieveNativeRelationships(
   requestScope?: string,
   mode: DocumentMode = 'deploy',
 ): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
+  const documents = await retrieveUnlabelledRelationships(dmoName, client, requestScope, mode);
+  return labelRelationships(documents, await readLabels(relationshipLabelNames(documents), client));
+}
+
+/**
+ * The relationships whose source object is the DMO, as {@link retrieveNativeRelationships}
+ * returns them but without their labels (no Metadata API read), so the labels of many DMOs can
+ * be read together.
+ * @param {string} dmoName Exact source DMO.
+ * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
+ * @param {string} [requestScope] Optional request scope; omission is the default data space.
+ * @param {DocumentMode} [mode] `retrieve` keeps values as listed.
+ * @returns {Promise<Array<NativeRelationshipDocument | VerbatimDocument>>} Documents ordered by name.
+ */
+export async function retrieveUnlabelledRelationships(
+  dmoName: string,
+  client: Pick<RelationshipClient, 'list'>,
+  requestScope?: string,
+  mode: DocumentMode = 'deploy',
+): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
   const inventory = await listNativeRelationships(dmoName, client, mode);
   const kept = inventory.filter((entry) => entry.sourceObjectName === dmoName);
-  const labels = await readLabels(
-    kept.map((entry) => entry.name).filter((name) => typeof name === 'string'),
-    client,
-  );
   const documents = kept.map((entry): NativeRelationshipDocument | VerbatimDocument => {
     const native = carriedNativeResponse(entry);
     try {
-      const document = normalizeNativeRelationship(entryToWire(entry), requestScope, mode);
-      const label = labels.get(entry.name);
       return carryNativeResponse(
-        label === undefined ? document : { ...document, spec: { ...document.spec, label } },
+        normalizeNativeRelationship(entryToWire(entry), requestScope, mode),
         native?.native,
       );
     } catch (error) {
@@ -133,13 +148,48 @@ export async function retrieveNativeRelationships(
 }
 
 /**
+ * The names whose label a retrieve reads: those of the documents it can save (a verbatim file
+ * keeps the list entry as read and takes no label).
+ * @param {Array<NativeRelationshipDocument | VerbatimDocument>} documents Unlabelled documents.
+ * @returns {string[]} Relationship names.
+ */
+export function relationshipLabelNames(
+  documents: Array<NativeRelationshipDocument | VerbatimDocument>,
+): string[] {
+  return documents
+    .filter((document) => !isVerbatimDocument(document))
+    .map((document) => document.identity.apiName);
+}
+
+/**
+ * Put each read label into its saved document; the raw list entry each carries is kept.
+ * @param {Array<NativeRelationshipDocument | VerbatimDocument>} documents Unlabelled documents.
+ * @param {Map<string, string>} labels Label by relationship name.
+ * @returns {Array<NativeRelationshipDocument | VerbatimDocument>} Documents in the same order.
+ */
+export function labelRelationships(
+  documents: Array<NativeRelationshipDocument | VerbatimDocument>,
+  labels: Map<string, string>,
+): Array<NativeRelationshipDocument | VerbatimDocument> {
+  return documents.map((document) => {
+    if (isVerbatimDocument(document)) return document;
+    const label = labels.get(document.identity.apiName);
+    if (label === undefined) return document;
+    return carryNativeResponse(
+      { ...document, spec: { ...document.spec, label } },
+      carriedNativeResponse(document)?.native,
+    );
+  });
+}
+
+/**
  * The labels (Metadata API masterLabel) of relationships, read in batches over the bound
  * Connection. Without a Metadata API reader, or for a name without a record, there is none.
  * @param {string[]} names Relationship names.
  * @param {Pick<RelationshipClient, 'readDefinitions'>} client Relationship reader.
  * @returns {Promise<Map<string, string>>} Label by name.
  */
-async function readLabels(
+export async function readLabels(
   names: string[],
   client: Pick<RelationshipClient, 'readDefinitions'>,
 ): Promise<Map<string, string>> {

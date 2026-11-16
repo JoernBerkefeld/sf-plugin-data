@@ -467,3 +467,129 @@ test('Metadata API calls on one bound sender go one at a time, also after a fail
     ['fulfilled', 'rejected', 'fulfilled', 'fulfilled'],
   );
 });
+
+/**
+ * A relationship list entry of the source DMO in the live API68 shape.
+ * @param {string} dmo Source DMO.
+ * @param {string} name Relationship name.
+ * @returns {object} Native entry.
+ */
+const relationshipEntry = (dmo, name) => ({
+  cardinality: 'ManyToOne',
+  creationType: 'Custom',
+  id: '0geSYNTHETIC',
+  name,
+  owner: 'DataCloud',
+  sourceField: { label: 'Ref', name: 'Ref__c', type: 'MktDataModelField' },
+  sourceObject: { label: dmo, name: dmo },
+  status: 'ACTIVE',
+  targetField: { label: 'Id', name: 'Id__c', type: 'MktDataModelField' },
+  targetObject: { label: 'T', name: 'T__dlm' },
+});
+
+/**
+ * Run a bare relationship retrieve over synthetic DMOs with a fake Metadata API label reader.
+ * @param {string[]} dmos DMO names, as listed.
+ * @param {Function} readDefinitions Label reader.
+ * @returns {Promise<{result: object, written: object[]}>} Envelope and written documents.
+ */
+async function bareRelationshipRun(dmos, readDefinitions) {
+  const command = Object.create(Retrieve.prototype);
+  const flags = { 'api-version': 'auto', 'target-org': 'synthetic', metadata: ['relationship'] };
+  command.parse = async () => ({ flags });
+  command.jsonEnabled = () => true;
+  command.resolveOrg = async () => ({ getOrgId: () => 'org', getConnection: () => ({}) });
+  command.listNativeNames = async () => dmos;
+  // Three relationships per DMO; a DMO ending in 0 has none (204).
+  command.createRelationshipClient = () => ({
+    list: async (dmo) =>
+      dmo.endsWith('0__dlm')
+        ? undefined
+        : {
+            relationships: ['A', 'B', 'C'].map((suffix) =>
+              relationshipEntry(dmo, `${dmo.slice(0, -5)}_${suffix}`),
+            ),
+            totalSize: 3,
+          },
+    readDefinitions,
+  });
+  const written = [];
+  command.writeRelationship = async (document) => {
+    written.push(structuredClone(document));
+    return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
+  };
+  const previous = process.exitCode;
+  try {
+    return { result: await command.run(), written };
+  } finally {
+    process.exitCode = previous;
+  }
+}
+
+test('bare relationship reads the labels of all DMOs together, 10 names per Metadata API read', async () => {
+  const { retrieveNativeRelationships } = await import('../lib/services/native-relationship.js');
+  const dmos = Array.from({ length: 30 }, (_, index) => `D${String(index).padStart(2, '0')}__dlm`);
+  const asked = [];
+  const readDefinitions = async (names) => {
+    asked.push(names);
+    // The last name has no Metadata API record: its file has no label.
+    return names
+      .filter((name) => name !== 'D29_C')
+      .map((name) => ({ fullName: name, masterLabel: `Label ${name}` }));
+  };
+  const { result, written } = await bareRelationshipRun(dmos, readDefinitions);
+  assert.equal(result.status, 'success');
+  // 27 DMOs with 3 relationships: 81 names in 9 reads instead of one or more per DMO (27).
+  assert.equal(asked.length, 9);
+  assert.ok(asked.every((names) => names.length <= 10));
+  assert.equal(asked.flat().length, 81);
+  // Output equals the per-DMO read with its own label read.
+  const expected = [];
+  for (const dmo of dmos)
+    expected.push(
+      ...(await retrieveNativeRelationships(
+        dmo,
+        {
+          list: async () =>
+            dmo.endsWith('0__dlm')
+              ? undefined
+              : {
+                  relationships: ['A', 'B', 'C'].map((suffix) =>
+                    relationshipEntry(dmo, `${dmo.slice(0, -5)}_${suffix}`),
+                  ),
+                  totalSize: 3,
+                },
+          readDefinitions,
+        },
+        undefined,
+        'retrieve',
+      )),
+    );
+  assert.deepEqual(written, structuredClone(expected));
+  assert.equal(written[0].spec.label, 'Label D01_A');
+  assert.equal(Object.hasOwn(written.at(-1).spec, 'label'), false);
+});
+
+test('a failed label read fails only the DMOs whose names it carried, in DMO order', async () => {
+  const dmos = Array.from({ length: 9 }, (_, index) => `E${index + 1}__dlm`);
+  let reads = 0;
+  const { result, written } = await bareRelationshipRun(dmos, async (names) => {
+    // The second read (names 11-20: E4_B .. E7_A) fails.
+    if (++reads === 2) throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+    return names.map((name) => ({ fullName: name, masterLabel: name }));
+  });
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => [error.code, error.identity.apiName]),
+    [
+      ['RELATIONSHIP_REQUEST_UNCONFIRMED', 'E4__dlm'],
+      ['RELATIONSHIP_REQUEST_UNCONFIRMED', 'E5__dlm'],
+      ['RELATIONSHIP_REQUEST_UNCONFIRMED', 'E6__dlm'],
+      ['RELATIONSHIP_REQUEST_UNCONFIRMED', 'E7__dlm'],
+    ],
+  );
+  assert.deepEqual(
+    [...new Set(written.map((document) => document.identity.apiName.slice(0, 2)))],
+    ['E1', 'E2', 'E3', 'E8', 'E9'],
+  );
+});

@@ -188,9 +188,10 @@ test('DMO save leaves generated qualifiers out but keeps a primary key; a defini
     const receipt = await writeNativeDmoDocument(value, cwd, false);
     // Every generated field (System, system-named or KQ_) is left out, a primary key never.
     const lean = structuredClone(value);
-    lean.spec.fields = lean.spec.fields.filter(
-      (f) => f.isPrimaryKey || (f.creationType !== 'System' && !f.name.startsWith('KQ_')),
-    );
+    // Saved fields are sorted by name.
+    lean.spec.fields = lean.spec.fields
+      .filter((f) => f.isPrimaryKey || (f.creationType !== 'System' && !f.name.startsWith('KQ_')))
+      .toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     assert.deepEqual(JSON.parse(await readFile(receipt.path, 'utf8')), lean);
     const target = native();
     target.fields = value.spec.fields.map(({ dataType, ...f }) => ({ ...f, type: dataType }));
@@ -1114,4 +1115,31 @@ test('isSegmentable stays out of the DMO file: Salesforce derives it and rejects
     () => validateNativeDmoDocument({ ...file, spec: { ...file.spec, isSegmentable: true } }),
     (error) => error.code === 'INVALID_DMO_DOCUMENT' && /spec\.isSegmentable/u.test(error.message),
   );
+});
+
+test('DMO save sorts fields by name, so a read in another field order writes the same bytes', async () => {
+  const value = document();
+  value.spec.fields.push(authored('Zeta__c'), authored('alpha__c'), authored('Beta__c'));
+  const reordered = structuredClone(value);
+  reordered.spec.fields.reverse();
+  const first = await mkdtemp(path.join(os.tmpdir(), 'dmo-field-order-'));
+  const second = await mkdtemp(path.join(os.tmpdir(), 'dmo-field-order-'));
+  const firstReceipt = await writeNativeDmoDocument(value, first, false);
+  const secondReceipt = await writeNativeDmoDocument(reordered, second, false);
+  const a = await readFile(firstReceipt.path, 'utf8');
+  const b = await readFile(secondReceipt.path, 'utf8');
+  assert.equal(a, b);
+  const names = JSON.parse(a).spec.fields.map((field) => field.name);
+  assert.deepEqual(
+    names,
+    names.toSorted((x, y) => (x < y ? -1 : x > y ? 1 : 0)),
+  );
+  assert.ok(names.indexOf('Beta__c') < names.indexOf('Zeta__c'));
+  assert.ok(names.indexOf('Zeta__c') < names.indexOf('alpha__c'));
+  // A deploy matches fields by name: the file in another order than the org is unchanged.
+  const target = native();
+  target.fields = value.spec.fields.map(({ dataType, ...f }) => ({ ...f, type: dataType }));
+  assert.equal(await planOperation(JSON.parse(a), { get: async () => target }), 'unchanged');
+  target.fields.reverse();
+  assert.equal(await planOperation(JSON.parse(a), { get: async () => target }), 'unchanged');
 });

@@ -593,7 +593,8 @@ types and its refresh schedule. Retrieve writes
 document. Retained bindings are matched to the target again; source-org record IDs do
 not become target authority. A draft graph (never built) is written as-is with reason
 `DATA_GRAPH_DRAFT`: Salesforce does not let the API edit a draft, and a normal file would
-build it.
+build it. A delete (`-m data-graph:Name`, or `--changed-since` after deleting the file)
+removes the draft.
 
 ```sh
 sf data360 retrieve -o source -m data-graph:ExampleGraph -d ./project --json
@@ -1513,7 +1514,9 @@ definitions without generated fields: fields read as `System`, `DataSource__c`,
 `DataSourceObject__c`, `InternalOrganization__c` and `KQ_` names are left out.
 Primary keys and the standard fields of a standard DMO are always saved, and deploy
 keeps the generated fields from the org, so a retrieved file deploys back
-`unchanged`. Source record IDs and
+`unchanged`. Fields are saved sorted by name: Salesforce returns some DMOs' fields
+in an order that changes between reads, and deploy matches fields by name, so a
+repeat retrieve writes the same bytes. Source record IDs and
 runtime observations are excluded. Keys that only reads return (`creationType`,
 `isDistinct`, `usageTag`, `keyQualifierName`) stay in the file and are never sent.
 Differing files require `--overwrite`; identical bytes are unchanged. Standard,
@@ -2308,8 +2311,11 @@ connection; one DMO failing never blocks the others. The plugin reads the DMO's
 relationship list in pages of 200 by offset; the pages must add up to the reported
 `totalSize` without duplicate names, otherwise that DMO stops with
 `RELATIONSHIP_INVENTORY_INCOMPLETE`. The file keeps the six authored values and
-the label, which is read from the Metadata API (`FieldSrcTrgtRelationship`, ten
-relationships per read, over the same connection); the id, object and field labels,
+the label, which is read from the Metadata API (`FieldSrcTrgtRelationship`, over the
+same connection) after every selected DMO's list is read: the labels of all DMOs are
+read together, ten relationships per read, so a bare retrieve stays well below the
+org's hourly Metadata API request limit (`REQUEST_LIMIT_EXCEEDED`). A failed label
+read fails only the DMOs whose relationships it carried. The id, object and field labels,
 status and creation type are not saved. Identical files are
 unchanged; a differing file requires `--overwrite`.
 

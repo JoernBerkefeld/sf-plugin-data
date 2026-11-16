@@ -39,7 +39,7 @@ export type RelationshipClient = {
 /** Metadata API type of a Data Cloud relationship; the record name is the relationship name. */
 export const relationshipMetadataType = 'FieldSrcTrgtRelationship';
 /** Names per Metadata API read call (the API's limit). */
-const readBatch = 10;
+export const relationshipReadBatch = 10;
 
 /**
  * Salesforce's refusal of an update: nothing was changed. Codes and texts pass the display
@@ -193,10 +193,13 @@ function metadataCalls(
         throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
       const api = await open();
       const found: Array<Record<string, unknown>> = [];
-      for (let start = 0; start < names.length; start += readBatch) {
+      for (let start = 0; start < names.length; start += relationshipReadBatch) {
         let answer: unknown;
         try {
-          answer = await api.read(relationshipMetadataType, names.slice(start, start + readBatch));
+          answer = await api.read(
+            relationshipMetadataType,
+            names.slice(start, start + relationshipReadBatch),
+          );
         } catch (error) {
           const failure = new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
           const text = displayableApiText((error as { message?: unknown } | null)?.message);

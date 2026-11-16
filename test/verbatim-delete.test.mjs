@@ -608,3 +608,65 @@ test('-m delete of a GET the plugin cannot model goes by name; a graph of anothe
     code: 'SEGMENT_IDENTITY_MISMATCH',
   });
 });
+
+test('a draft graph (no ID or created date) is deleted by name, from its file or with -m', async () => {
+  // A draft GET in the live API68 shape: status draft, no id, createdDate or generated names.
+  const draft = {
+    name: 'SyntheticGraph',
+    dataspaceName: 'default',
+    status: 'draft',
+    type: 'none',
+    lastRunStatus: 'none',
+    primaryObjectName: 'Root__dlm',
+    sourceObject: {
+      name: 'Root__dlm',
+      dependency: [],
+      relatedSegments: [],
+      fields: [{ sourceFieldName: 'Id__c', dependency: [] }],
+      relatedObjects: [],
+    },
+  };
+  const run = async (body, preview = false) => {
+    const ledger = [];
+    const result = await operateNativeDataGraph(
+      verbatim('native-data-graph', 'SyntheticGraph'),
+      graphContext(body),
+      {
+        get: async () => ({ status: 200, body }),
+        create: async () => assert.fail('no create'),
+        delete: async (name) => {
+          ledger.push(`delete:${name}`);
+          return { status: 204 };
+        },
+      },
+      { operation: 'delete', preview, confirmed: true, verifyInput: async () => {} },
+    );
+    return { result, ledger };
+  };
+  const previewed = await run(draft, true);
+  assert.deepEqual(previewed.result, {
+    outcome: 'delete',
+    mutation: 'not-attempted',
+  });
+  const ok = await run(draft);
+  assert.deepEqual(ok.result, { outcome: 'deleted', mutation: 'confirmed-deleted' });
+  assert.deepEqual(ok.ledger, ['delete:SyntheticGraph']);
+  // The delete safeguards still apply to a draft.
+  for (const body of [
+    { ...draft, dataspaceName: 'other' },
+    { ...draft, sourceObject: { ...draft.sourceObject, relatedSegments: [{ name: 'Audience' }] } },
+    // A ready graph still needs its ID and created date.
+    { ...draft, status: 'ready' },
+  ]) {
+    const refused = await run(body);
+    assert.equal(refused.result.outcome, 'blocked');
+    assert.deepEqual(refused.ledger, []);
+  }
+  // -m reads the draft by name and deletes it like its verbatim file.
+  const command = Object.create(Delete.prototype);
+  command.nativeGraphContext = async () => graphContext(draft);
+  const admitted = await command.readDeleteSource('data-graph', 'SyntheticGraph', {});
+  assert.equal(admitted.desired.kind, 'native-data-graph');
+  assert.deepEqual(admitted.desired.identity, { dataSpace: 'default', apiName: 'SyntheticGraph' });
+  assert.equal(admitted.desired.verbatim.reason, 'DATA_GRAPH_DRAFT');
+});

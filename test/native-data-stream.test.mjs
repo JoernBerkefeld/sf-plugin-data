@@ -2439,3 +2439,33 @@ test('delete stale204, read400/500, pending, timeout and preservation drift neve
     if (controls.pending) assert.equal(fixture.state.pauses, controls.expire ? 1 : 19);
   }
 });
+
+test('delete settlement waits while the stream list is still inconsistent after the 404 (INCOMPLETE_STREAM_LIST), never resending', async () => {
+  const { DataStreamError } = await import('../lib/artifacts/data-stream-document.js');
+  for (const deleteDlo of [false, true]) {
+    const fixture = await deleteLifecycle({ deleteDlo });
+    const list = fixture.clients.streams.list;
+    let stale = 2;
+    fixture.clients.streams.list = async (...arguments_) => {
+      if (fixture.state.writes && stale-- > 0) throw new DataStreamError('INCOMPLETE_STREAM_LIST');
+      return list(...arguments_);
+    };
+    const result = await deleteNativeDataStream(
+      'GeneratedStream',
+      fixture.clients,
+      fixture.options,
+    );
+    assert.equal(result.targetApiName, 'GeneratedStream');
+    assert.equal(fixture.state.writes, 1);
+    assert.equal(fixture.state.pauses, 2);
+  }
+  // A list that never becomes consistent ends unconfirmed after the bounded reads.
+  const stuck = await deleteLifecycle();
+  const stuckList = stuck.clients.streams.list;
+  stuck.clients.streams.list = async (...arguments_) => {
+    if (stuck.state.writes) throw new DataStreamError('INCOMPLETE_STREAM_LIST');
+    return stuckList(...arguments_);
+  };
+  await assert.rejects(deleteNativeDataStream('GeneratedStream', stuck.clients, stuck.options));
+  assert.equal(stuck.state.writes, 1);
+});

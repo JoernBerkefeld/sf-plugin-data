@@ -88,15 +88,18 @@ export function isGeneratedDmoField(field: NativeDmoField): boolean {
  * Keep the authored content of a DMO definition: generated fields (system fields, key qualifiers
  * and every field read as System) are left out; a deploy keeps them from the org when the file
  * omits them. Primary keys and the standard fields of a standard DMO stay: a deploy compares a
- * listed standard field, and a definition needs at least one field.
+ * listed standard field, and a definition needs at least one field. Fields are sorted by name:
+ * Salesforce returns them in an order that varies between reads, and a deploy matches them by
+ * name, so the order carries no meaning.
  * @param {NativeDmoDocument} document Complete definition as read.
- * @returns {NativeDmoDocument} Independent copy without generated fields.
+ * @returns {NativeDmoDocument} Independent copy without generated fields, fields sorted by name.
  */
 export function leanNativeDmoDocument(document: NativeDmoDocument): NativeDmoDocument {
   const lean = structuredClone(document);
-  lean.spec.fields = document.spec.fields.filter(
-    (field) => field.isPrimaryKey || !isGeneratedDmoField(field),
-  );
+  lean.spec.fields = lean.spec.fields
+    .filter((field) => field.isPrimaryKey || !isGeneratedDmoField(field))
+    // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh filtered array within the ES2022 library target.
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
   return lean;
 }
 

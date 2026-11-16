@@ -2142,13 +2142,16 @@ export async function deleteNativeDataStream(
         clients,
       );
     } catch (error) {
-      // After its 404 the list can still name the stream, list and detail can disagree and the
-      // event can still be In Use for a while: pending, never drift of the deleted stream.
+      // After its 404 the list can still name the stream, list and detail can disagree, the
+      // list's total can still count it (INCOMPLETE_STREAM_LIST, seen live after a successful
+      // --delete-dlo delete) and the event can still be In Use for a while: pending, never drift
+      // of the deleted stream. The DELETE is never sent again.
       if (
         !isStreamNotFound(error) &&
         !(
           error instanceof DataStreamError &&
           [
+            'INCOMPLETE_STREAM_LIST',
             'STREAM_BINDING_DRIFT',
             'STREAM_SNAPSHOT_PENDING',
             'STREAM_TARGET_MISMATCH',

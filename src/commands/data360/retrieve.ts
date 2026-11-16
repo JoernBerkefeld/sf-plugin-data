@@ -41,8 +41,16 @@ import {
   relationshipDmoName,
 } from '../../artifacts/native-relationship-document.js';
 import { writeNativeRelationshipDocument } from '../../artifacts/write-native-relationship.js';
-import { retrieveNativeRelationships } from '../../services/native-relationship.js';
-import { createRelationshipClient } from '../../transport/relationship-rest.js';
+import {
+  labelRelationships,
+  readLabels,
+  relationshipLabelNames,
+  retrieveUnlabelledRelationships,
+} from '../../services/native-relationship.js';
+import {
+  createRelationshipClient,
+  relationshipReadBatch,
+} from '../../transport/relationship-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../transport/bound-ssot.js';
 import { withCheckedDirectories } from '../../transport/project-metadata.js';
@@ -482,7 +490,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   }
   protected listNativeNames = listNativeNames;
   protected listNativeMappingNames = listNativeMappingNames;
-  protected acquireRelationships = retrieveNativeRelationships;
+  protected acquireRelationships = retrieveUnlabelledRelationships;
   /**
    * A relationship client on the run's shared bound sender: every DMO's reads go through one
    * in-process connection, never a CLI process. Tests replace this seam.
@@ -690,23 +698,48 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         family: 'relationship',
       });
     };
-    // Up to relationshipReads DMOs are read at once; results, files and diagnostics still follow
+    const client = this.createRelationshipClient(connection, target, version, requestScope);
+    // Up to relationshipReads DMOs are listed at once; results, files and diagnostics still follow
     // the DMO order, one DMO after another.
-    const reads = readInOrder(dmoNames, relationshipReads, async (dmo) =>
-      (this.acquireRelationships ?? retrieveNativeRelationships)(
-        dmo,
-        this.createRelationshipClient(connection, target, version, requestScope),
-        requestScope,
-        'retrieve',
+    const reads = await Promise.all(
+      readInOrder(dmoNames, relationshipReads, async (dmo) =>
+        (this.acquireRelationships ?? retrieveUnlabelledRelationships)(
+          dmo,
+          client,
+          requestScope,
+          'retrieve',
+        ),
       ),
     );
+    // The labels of all DMOs are then read together, up to 10 names per Metadata API read: one
+    // read per DMO exhausted the org's hourly Metadata API request limit on a full retrieve.
+    const labels = new Map<string, string>();
+    const labelFailures = new Map<string, unknown>();
+    if (client.readDefinitions) {
+      const names = reads.flatMap((read) =>
+        'error' in read ? [] : relationshipLabelNames(read.value),
+      );
+      for (let start = 0; start < names.length; start += relationshipReadBatch) {
+        const batch = names.slice(start, start + relationshipReadBatch);
+        try {
+          for (const [name, label] of await readLabels(batch, client)) labels.set(name, label);
+        } catch (error) {
+          for (const name of batch) labelFailures.set(name, error);
+        }
+      }
+    }
     for (const [index, dmo] of dmoNames.entries()) {
-      const read = await reads[index];
+      const read = reads[index];
       if ('error' in read) {
         diagnose(read.error, dmo);
         continue;
       }
-      const documents = read.value;
+      const failed = relationshipLabelNames(read.value).find((name) => labelFailures.has(name));
+      if (failed !== undefined) {
+        diagnose(labelFailures.get(failed), dmo);
+        continue;
+      }
+      const documents = labelRelationships(read.value, labels);
       const routes: RetrieveRoute[] = [
         { operation: 'relationship.list', apiVersion: version, transport: 'native' },
       ];

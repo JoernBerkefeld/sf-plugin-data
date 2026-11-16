@@ -166,13 +166,14 @@ test('standard DMO retrieve keeps standard fields, leaves out System ones, deplo
   const document = await retrieveNativeDmo('ssot__Brand__dlm', { get: async () => standardDmo() });
   const saved = await roundTrip(writeNativeDmoDocument, document, 'dmo:ssot__Brand__dlm');
   // Standard fields are compared by deploy when listed and keep the definition non-empty.
+  // Fields are saved sorted by name.
   assert.deepEqual(names(saved.spec.fields), [
-    'ssot__Id__c',
-    'ssot__Name__c',
+    'Note__c',
     'ssot__DataSourceId__c',
     'ssot__DataSourceObjectId__c',
+    'ssot__Id__c',
     'ssot__InternalOrganizationId__c',
-    'Note__c',
+    'ssot__Name__c',
   ]);
   const plan = await preflightNativeDmo(saved, { get: async () => standardDmo() });
   assert.equal(plan.operation, 'unchanged');

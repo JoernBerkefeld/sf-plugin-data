@@ -264,8 +264,13 @@ test('retrieve writes a normal DMO file; deploy of it refuses naming the key', a
   assert.equal(saved.kind, 'dmo');
   assert.equal(saved.verbatim, undefined);
   assert.equal(saved.spec.category, jsonNull);
+  // Fields are saved sorted by name: Id__c, Odd, Raw__c, Score__c.
+  assert.deepEqual(
+    saved.spec.fields.map((field) => field.name),
+    ['Id__c', 'Odd', 'Raw__c', 'Score__c'],
+  );
   assert.deepEqual(saved.spec.fields[0].futureKey, [1, 2]);
-  assert.equal(saved.spec.fields[1].type, 'Number');
+  assert.equal(saved.spec.fields[3].type, 'Number');
   // A repeat retrieve of the same lenient document is unchanged.
   const repeat = await writeNativeDmoDocument(document, cwd, false);
   assert.equal(repeat.outcome, 'unchanged');
@@ -276,13 +281,13 @@ test('retrieve writes a normal DMO file; deploy of it refuses naming the key', a
       error.code === 'INVALID_SOURCE' &&
       /The DMO file cannot be deployed: spec\.label/u.test(error.message),
   );
-  // With label and category fixed, the next refusal names the field key.
+  // With label and category fixed, the next refusal names the first field it cannot deploy.
   saved.spec.label = 'Loose';
   saved.spec.category = 'Other';
   await writeFile(receipt.path, `${JSON.stringify(saved, undefined, 2)}\n`);
   await assert.rejects(
     readDeployInputs({ cwd, metadata: [`dmo:${dmoName}`] }),
-    /spec\.fields\[1\]\.type is not a key a DMO file can hold/u,
+    /spec\.fields\[1\]\.name must be a field API name ending in __c/u,
   );
 });
 

@@ -163,12 +163,15 @@ async function readVerbatimGraphForDelete(
   if (raw.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
   graphRequire(
     raw.dataspaceName === 'default' &&
-      raw.status === 'ready' &&
-      typeof raw.id === 'string' &&
-      raw.id.trim() !== '' &&
-      typeof raw.createdDate === 'string' &&
-      Number.isFinite(Date.parse(raw.createdDate)) &&
-      !nativeGraphStillGenerating(raw) &&
+      // A draft (creationMode DRAFT, never built) reads without ID and created date; the
+      // DELETE removes it (live, API68, 2026-11-16).
+      (raw.status === 'draft' ||
+        (raw.status === 'ready' &&
+          typeof raw.id === 'string' &&
+          raw.id.trim() !== '' &&
+          typeof raw.createdDate === 'string' &&
+          Number.isFinite(Date.parse(raw.createdDate)) &&
+          !nativeGraphStillGenerating(raw))) &&
       // Delete stays refused while any node or field reports dependencies or segments.
       nativeDataGraphUnreferenced(raw.sourceObject),
   );

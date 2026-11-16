@@ -593,10 +593,10 @@ test('a field mapped by two mappings is removed once, its pairs drop from both, 
     { path: mappingFile(root, 'MapB'), outcome: 'not-present' },
   ]);
   const savedDmo = JSON.parse(await readFile(dmoFile(root), 'utf8'));
-  // Refreshed files are lean like a retrieve: the System field is left out.
+  // Refreshed files are lean like a retrieve: the System field is left out, fields by name.
   assert.deepEqual(
     savedDmo.spec.fields.map((field) => field.name),
-    ['Id__c', 'Extra__c'],
+    ['Extra__c', 'Id__c'],
   );
   const savedMapping = JSON.parse(await readFile(mappingFile(root, 'MapA'), 'utf8'));
   assert.deepEqual(
