@@ -2098,8 +2098,59 @@ test('native update preview and missing acknowledgement never dispatch', async (
       confirmed: false,
     });
     assert.equal(result.outcome, preview ? 'update' : 'blocked');
+    if (!preview) {
+      assert.equal(result.diagnostics[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+      assert.match(result.diagnostics[0].message, /Changing the data graph .+--allow-processing/u);
+    }
     assert.deepEqual(f.calls, []);
   }
+});
+
+test('a graph create names its block: missing --allow-processing or a graph still listed', async () => {
+  const unconfirmed = fixture();
+  const blocked = await operateNativeDataGraph(
+    document(),
+    unconfirmed.context,
+    unconfirmed.client,
+    options('deploy', { confirmed: false }),
+  );
+  assert.equal(blocked.outcome, 'blocked');
+  assert.equal(blocked.mutation, 'not-attempted');
+  assert.equal(blocked.diagnostics[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+  assert.match(blocked.diagnostics[0].message, /Creating the data graph .+--allow-processing/u);
+  // Just deleted: the item read says not found but the metadata read still answers.
+  const lingering = fixture();
+  lingering.context.metadata = async () => ({ status: 200, body: { dataGraphMetadata: [] } });
+  for (const preview of [false, true]) {
+    const result = await operateNativeDataGraph(
+      document(),
+      lingering.context,
+      lingering.client,
+      options('deploy', { preview }),
+    );
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.diagnostics[0].code, 'DATA_GRAPH_PENDING');
+    assert.match(result.diagnostics[0].message, /was deleted but Salesforce still lists it/u);
+  }
+  // Still building: the graph reads without its generated names.
+  const building = fixture();
+  const raw = runtime();
+  raw.idDmoName = '';
+  building.setGraph(raw);
+  const built = await operateNativeDataGraph(
+    document(),
+    building.context,
+    building.client,
+    options('deploy'),
+  );
+  assert.equal(built.diagnostics?.[0].code, 'DATA_GRAPH_PENDING');
+  assert.match(built.diagnostics[0].message, /still being built/u);
+  assert.deepEqual(
+    [...unconfirmed.calls, ...lingering.calls, ...building.calls].filter((call) =>
+      ['POST', 'PUT', 'DELETE'].includes(call),
+    ),
+    [],
+  );
 });
 
 test('native artifact is distinct, detached and binds generated names', () => {
@@ -3498,6 +3549,31 @@ test('deploy command surfaces the preview owner codes on the item', async () => 
   process.exitCode = 0;
 });
 
+test('deploy command names a blocked graph create on the item and blocks the run', async () => {
+  const cwd = await project();
+  const receipt = await writeDataGraphDocument(document(), cwd, false);
+  const f = fixture();
+  const command = Object.create(Deploy.prototype);
+  command.parse = async () => ({
+    flags: { 'api-version': '68.0', 'source-dir': [receipt.path] },
+  });
+  command.jsonEnabled = () => true;
+  command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+  command.resolveTargetOrg = async () => ({ getConnection: () => ({}) });
+  command.nativeGraphContext = async () => f.context;
+  command.nativeGraphClient = () => f.client;
+  command.operateNativeGraph = (value, context, client, intent) =>
+    operateNativeDataGraph(value, context, client, { ...intent, pause: async () => {} });
+  const result = await command.run();
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'DEPLOY_EXECUTION_BLOCKED');
+  assert.match(result.diagnostics.errors[0].message, /nothing was written/u);
+  assert.equal(result.result.items[0].outcome, 'blocked');
+  assert.equal(result.result.items[0].diagnostics[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+  assert.deepEqual(f.calls, []);
+  process.exitCode = 0;
+});
+
 test('graph absence needs item, metadata, inventory and SOQL agreement', async () => {
   const absent = fixture();
   assert.deepEqual(await proveNativeDataGraphAbsent(absent.context, name), {
@@ -3507,13 +3583,19 @@ test('graph absence needs item, metadata, inventory and SOQL agreement', async (
   // Metadata still answering 200 after the item route's not-found is pending, not absent.
   const stale = fixture();
   stale.context.metadata = async () => ({ status: 200, body: { dataGraphMetadata: [] } });
-  assert.deepEqual(await proveNativeDataGraphAbsent(stale.context, name), { state: 'pending' });
+  assert.deepEqual(await proveNativeDataGraphAbsent(stale.context, name), {
+    state: 'pending',
+    deleting: true,
+  });
   const listed = fixture();
   listed.context.inventory = async () => ({
     status: 200,
     body: { dataGraphMetadata: [{ developerName: name, dataspaceName: 'default' }] },
   });
-  assert.deepEqual(await proveNativeDataGraphAbsent(listed.context, name), { state: 'pending' });
+  assert.deepEqual(await proveNativeDataGraphAbsent(listed.context, name), {
+    state: 'pending',
+    deleting: true,
+  });
   // Any other item answer, HTTP400 included, proves nothing.
   const other = fixture();
   other.context.get = async () => ({

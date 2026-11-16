@@ -474,9 +474,10 @@ test('delete removes a CRM stream and, with --delete-dlo, its DLO by the stream 
   const sent = [];
   const clients = {
     streams: {
+      // Relabelled through the Metadata API: the DLO's entry keeps the old label (live API68).
       get: async () => {
         if (deleted) throw notFound();
-        return crmGet();
+        return { ...crmGet(), label: 'Relabelled' };
       },
       list: async () => [],
       delete: async (id, cascade) => {
@@ -507,4 +508,125 @@ test('delete removes a CRM stream and, with --delete-dlo, its DLO by the stream 
   assert.equal(result.outcome, 'deleted', JSON.stringify(result.diagnostics));
   assert.equal(result.targetDloName, 'CliCrmPb2__dll');
   assert.deepEqual(sent, [[recordId, true]]);
+});
+
+/**
+ * A stream client whose bound sender also has the Metadata API: the DataStreamDefinition label
+ * update changes the label the stream GET shows (live API68).
+ * @param {object} [refusal] Metadata API update answer instead of success.
+ * @returns {object} Clients, REST requests and Metadata API calls.
+ */
+function metadataOrg(refusal) {
+  const requests = [];
+  const metadata = [];
+  let label = crmGet().label;
+  const sender = {
+    request: async (method, url, noContent, body) => {
+      requests.push({ method, url, body });
+      return { name: 'CliCrmPb2', recordId, status: 'ACTIVE' };
+    },
+    metadata: async () => ({
+      read: async (type, names) => {
+        metadata.push(['read', type, names]);
+        return { fullName: names[0], masterLabel: label, dataConnectorType: 'SalesforceDotCom' };
+      },
+      update: async (type, record) => {
+        metadata.push(['update', type, record]);
+        if (refusal) return refusal;
+        label = record.masterLabel;
+        return { fullName: record.fullName, success: true, errors: [] };
+      },
+    }),
+  };
+  const reader = { get: async () => ({ ...crmGet(), label }) };
+  const streams = createDataStreamClient('synthetic', reader, '68.0', sender);
+  return { clients: { streams: { ...streams, get: reader.get } }, requests, metadata };
+}
+
+test('a stream label change goes through the Metadata API stream definition, not the PATCH', async () => {
+  const relabelled = structuredClone(crmDocument());
+  relabelled.spec.label = 'New label';
+  const only = metadataOrg();
+  const result = await executeDataStream(relabelled, only.clients, options);
+  assert.equal(result.outcome, 'updated', JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.diagnostics, []);
+  assert.deepEqual(only.requests, []);
+  assert.deepEqual(only.metadata, [
+    ['read', 'DataStreamDefinition', ['CliCrmPb2']],
+    [
+      'update',
+      'DataStreamDefinition',
+      { fullName: 'CliCrmPb2', masterLabel: 'New label', dataConnectorType: 'SalesforceDotCom' },
+    ],
+  ]);
+  // With a formula change too: the label first, then one PATCH without the label.
+  relabelled.spec.mappings = relabelled.spec.mappings.filter((entry) => !entry.formula);
+  const both = metadataOrg();
+  await executeDataStream(relabelled, both.clients, options);
+  assert.equal(both.metadata.at(-1)[0], 'update');
+  assert.deepEqual(both.requests[0].body, {
+    datastreamType: 'SFDC',
+    mappings: [{ targetFieldName: 'CliNameUpper', transformationFormula: '' }],
+  });
+});
+
+test('a refused stream label update is rejected with Salesforce text and sends nothing else', async () => {
+  const relabelled = structuredClone(crmDocument());
+  relabelled.spec.label = 'New label';
+  relabelled.spec.mappings = relabelled.spec.mappings.filter((entry) => !entry.formula);
+  const refused = metadataOrg({
+    fullName: 'CliCrmPb2',
+    success: false,
+    errors: { statusCode: 'FIELD_INTEGRITY_EXCEPTION', message: 'Label is too long.' },
+  });
+  const result = await executeDataStream(relabelled, refused.clients, options);
+  assert.deepEqual([result.outcome, result.mutation], ['failed', 'rejected']);
+  assert.equal(result.diagnostics[0].code, 'STREAM_LABEL_UPDATE_REJECTED');
+  assert.match(
+    result.diagnostics[0].message,
+    /DataStreamDefinition CliCrmPb2: FIELD_INTEGRITY_EXCEPTION: Label is too long\. The label was not changed/u,
+  );
+  assert.deepEqual(refused.requests, []);
+});
+
+test('the stream label transport refuses a missing record and leaves other failures unconfirmed', async () => {
+  let answer;
+  let record = {
+    fullName: 'CliCrmPb2',
+    masterLabel: 'Old',
+    dataSource: { $: { 'xsi:nil': 'true' } },
+  };
+  const sent = [];
+  const sender = {
+    request: async () => assert.fail('no REST call'),
+    metadata: async () => ({
+      read: async () => record,
+      update: async (_type, value) => {
+        sent.push(value);
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    }),
+  };
+  const { relabel } = createDataStreamClient(
+    'synthetic',
+    { get: async () => ({}) },
+    '68.0',
+    sender,
+  );
+  answer = { fullName: 'CliCrmPb2', success: true };
+  await relabel('CliCrmPb2', 'New');
+  // An explicit nil is not sent back.
+  assert.deepEqual(sent[0], { fullName: 'CliCrmPb2', masterLabel: 'New' });
+  answer = Object.assign(new Error('bad value'), { name: 'soapenv:Client' });
+  await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_LABEL_UPDATE_REJECTED' });
+  answer = new Error('socket hang up');
+  await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_REQUEST_UNCONFIRMED' });
+  record = {};
+  await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_LABEL_UPDATE_REJECTED' });
+  await assert.rejects(relabel('bad/name', 'New'), { code: 'INVALID_STREAM_NAME' });
+  const plain = createDataStreamClient('synthetic', { get: async () => ({}) }, '68.0', {
+    request: async () => ({}),
+  });
+  assert.equal(plain.relabel, undefined);
 });

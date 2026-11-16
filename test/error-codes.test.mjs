@@ -34,6 +34,7 @@ const NOT_PLUGIN_CODES = new Set([
   'NO_REFRESH',
   'STREAMING_DATA_MODEL',
   'SYSTEM_MANAGED',
+  'UNKNOWN_EXCEPTION',
 ]);
 
 const files = (directory) =>

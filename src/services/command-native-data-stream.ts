@@ -231,6 +231,12 @@ export async function executeDataStream(
       update: async (name, document) =>
         ledger.run(async () => clients.streams.update(name, document)),
       patch: async (name, body) => ledger.run(async () => clients.streams.patch(name, body)),
+      ...(clients.streams.relabel
+        ? {
+            relabel: async (name: string, label: string) =>
+              ledger.run(async () => clients.streams.relabel!(name, label)),
+          }
+        : {}),
     },
   };
   try {

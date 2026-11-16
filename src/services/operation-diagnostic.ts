@@ -239,7 +239,10 @@ export function operationDiagnostic(error: unknown, nextAction: string): string 
     connect?.statusCode ??
     diagnosticDataProperty(error, 'status') ??
     diagnosticDataProperty(error, 'statusCode');
-  if (connect && (status === 401 || status === 403))
+  // A 403 with Salesforce's text is a refusal of the request (the text was admitted only for
+  // codes that do not concern access), not an authentication failure.
+  const refusal = status === 403 && (connect?.errors ?? []).some(({ message }) => message);
+  if (connect && (status === 401 || (status === 403 && !refusal)))
     return `Salesforce API authentication or authorization failed (HTTP ${status}); no authentication response is disclosed.${remote} ${nextAction}`;
   if (typeof status === 'number' && Number.isInteger(status) && status >= 400 && status <= 599)
     return `Salesforce API rejected the request (HTTP ${status}); no response payload is disclosed.${remote} ${nextAction}`;

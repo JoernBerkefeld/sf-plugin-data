@@ -1,6 +1,6 @@
 # `STREAM_CHANGE_NOT_APPLIED`
 
-> Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a stream label). Retrieve the stream; change the rest in Salesforce.
+> Salesforce accepted the stream write, but the stream still differs from the file in the named parts. Retrieve the stream to see what it holds; change the rest in Salesforce.
 
 |              |                                                                              |
 | ------------ | ---------------------------------------------------------------------------- |
@@ -12,7 +12,7 @@
 
 Deploy sent the create or the PATCH of a CRM or Ingestion API stream, Salesforce answered with success, and the stream became ACTIVE. Read back afterwards, the stream still differs from the file in the parts the notice names.
 
-The known case is the label: Salesforce answers a PATCH of a stream label with HTTP 200 and keeps the old label. For an Ingestion API stream the notice also says when a created stream does not hold every formula of the file.
+Deploy sends a label change through the Metadata API (one `updateMetadata` of the stream's `DataStreamDefinition`), because Salesforce answers a PATCH of a stream label with HTTP 200 and keeps the old label. If the stream still reads the old label after three reads, the notice names it. For an Ingestion API stream the notice also says when a created stream does not hold every formula of the file.
 
 ## Why the plugin reports it
 
@@ -33,4 +33,5 @@ STREAM_CHANGE_NOT_APPLIED: Salesforce accepted the label change but kept the old
 
 ## Related codes
 
+- [`STREAM_LABEL_UPDATE_REJECTED`](../data-stream/STREAM_LABEL_UPDATE_REJECTED.md) — Salesforce refused the Metadata API update of the label.
 - [`STREAM_HTTP_ERROR`](../data-stream/STREAM_HTTP_ERROR.md) — Salesforce refused the write, for example a change of `refreshConfig.refreshMode` or the removal of an Ingestion API formula.

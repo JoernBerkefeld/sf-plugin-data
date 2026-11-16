@@ -34,8 +34,9 @@ export const rejectedNextAction =
 
 /**
  * Count the writes of one item, so a failure can say whether anything was applied. Only the
- * item's first write, answered by Salesforce with an HTTP 4xx status, is known to have changed
- * nothing; every other failure after the first dispatch stays unknown.
+ * item's first write, answered by Salesforce with an HTTP 4xx status or a Metadata API refusal
+ * (`*_UPDATE_REJECTED`), is known to have changed nothing; every other failure after the first
+ * dispatch stays unknown.
  */
 export class WriteLedger {
   private started = 0;
@@ -68,10 +69,12 @@ export class WriteLedger {
       if (
         this.started === 1 &&
         typeof code === 'string' &&
-        code.endsWith('_HTTP_ERROR') &&
-        typeof status === 'number' &&
-        status >= 400 &&
-        status < 500
+        ((code.endsWith('_HTTP_ERROR') &&
+          typeof status === 'number' &&
+          status >= 400 &&
+          status < 500) ||
+          // A Metadata API update Salesforce answered with success false or a SOAP fault.
+          code.endsWith('_UPDATE_REJECTED'))
       )
         this.refusal = error;
       throw error;

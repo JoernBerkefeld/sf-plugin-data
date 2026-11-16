@@ -373,3 +373,40 @@ for (const status of [429, 503]) {
         assert.equal(f.count(), method === 'GET' ? 3 : 1);
       });
 }
+
+test('a 403 save refusal keeps Salesforce text; access and 401 answers show their codes only', () => {
+  const saving = retainConnectDiagnostic(
+    new Error('refused'),
+    apiDiagnostic(403, [
+      {
+        errorCode: 'ENTITY_SAVE_ERROR',
+        message: 'Segment cannot be updated when it is in PROCESSING state',
+      },
+    ]),
+  );
+  assert.deepEqual(getConnectDiagnostic(saving).errors, [
+    {
+      code: 'ENTITY_SAVE_ERROR',
+      message: 'Segment cannot be updated when it is in PROCESSING state',
+    },
+  ]);
+  const shown = operationDiagnostic(saving, 'Next.');
+  assert.match(shown, /rejected the request \(HTTP 403\)/u);
+  assert.match(
+    shown,
+    /ENTITY_SAVE_ERROR: Segment cannot be updated when it is in PROCESSING state/u,
+  );
+  assert.doesNotMatch(shown, /authentication or authorization/u);
+  for (const [status, code] of [
+    [403, 'INSUFFICIENT_ACCESS'],
+    [403, 'API_DISABLED_FOR_ORG'],
+    [401, 'ENTITY_SAVE_ERROR'],
+  ]) {
+    const error = retainConnectDiagnostic(
+      new Error('refused'),
+      apiDiagnostic(status, [{ errorCode: code, message: 'Some server prose here' }]),
+    );
+    assert.deepEqual(getConnectDiagnostic(error).errors, [{ code }]);
+    assert.match(operationDiagnostic(error, 'Next.'), /authentication or authorization failed/u);
+  }
+});

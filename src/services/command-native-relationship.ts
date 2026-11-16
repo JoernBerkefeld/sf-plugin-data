@@ -44,6 +44,8 @@ export async function executeRelationship(
 ) {
   const ledger = new WriteLedger();
   let writes = 0;
+  // Updates Salesforce refused; a refused update is resent once only when the org is unchanged.
+  let refused = 0;
   const guarded = {
     list: client.list,
     readDefinitions: client.readDefinitions,
@@ -55,7 +57,16 @@ export async function executeRelationship(
       ? {
           update: async (definition: Record<string, unknown>) => {
             writes++;
-            return ledger.run(async () => client.update!(definition));
+            try {
+              return await ledger.run(async () => client.update!(definition));
+            } catch (error) {
+              if (
+                error instanceof NativeRelationshipError &&
+                error.code === 'RELATIONSHIP_UPDATE_REJECTED'
+              )
+                refused++;
+              throw error;
+            }
           },
         }
       : {}),
@@ -79,11 +90,12 @@ export async function executeRelationship(
       diagnostics: [] as Array<{ code: string; message: string }>,
     };
   } catch (error) {
-    // Salesforce refusing the only write (a Metadata API update) changed nothing.
+    // Salesforce refusing every write (a Metadata API update, and its one resend after an
+    // unexpected error on an unchanged org) changed nothing.
     const failure =
       error instanceof NativeRelationshipError &&
       error.code === 'RELATIONSHIP_UPDATE_REJECTED' &&
-      writes === 1
+      writes === refused
         ? { outcome: 'failed' as const, mutation: 'rejected' as const }
         : ledger.failure(error);
     return {

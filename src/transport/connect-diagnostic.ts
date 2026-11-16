@@ -173,10 +173,14 @@ export function connectDiagnostic(
   });
 }
 
+/** Error codes of a 403 that concern access, sessions or licences; their text is never shown. */
+const accessCode =
+  /SESSION|AUTH|LOGIN|ACCESS|PERMISSION|FORBIDDEN|DISABLED|PASSWORD|TOKEN|CREDENTIAL|LICENSE/u;
+
 /**
  * Normalize display evidence after a transport has independently confirmed HTTP failure.
  * Callers pass parsed REST error data (not an Error), and an optional extracted request ID.
- * Authentication responses never disclose server prose.
+ * Authentication responses never disclose server prose; a 403 save refusal keeps its text.
  * @param {unknown} statusCode Actual wire status, never inferred from prose.
  * @param {unknown} body Parsed error data or bounded JSON body.
  * @param {unknown} [headers] Actual headers for existing Retry-After handling only.
@@ -197,11 +201,21 @@ export function apiDiagnostic(
   )
     return;
   const admitted = apiErrors(body);
+  // An authentication answer (401, or a 403 about access) shows its codes only. A 403 that is a
+  // save refusal (for example ENTITY_SAVE_ERROR while a segment is PROCESSING) keeps its text.
   const errors =
     statusCode === 401 || statusCode === 403
       ? admitted &&
         Object.freeze(
-          admitted.filter(({ code }) => code).map(({ code }) => Object.freeze({ code })),
+          admitted
+            .filter(({ code }) => code)
+            .map(({ code, message }) =>
+              Object.freeze(
+                statusCode === 403 && message && !accessCode.test(code!)
+                  ? { code, message }
+                  : { code },
+              ),
+            ),
         )
       : admitted;
   const id =

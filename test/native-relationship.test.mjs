@@ -732,3 +732,83 @@ test('writer publishes data360/relationship/<Name>.relationship-meta.json and gu
   assert.equal(inputs.length, 1);
   assert.deepEqual(inputs[0].document, changed);
 });
+
+/**
+ * A fake client whose update goes through the real Metadata API transport: each answer in turn
+ * (`ok` applies the update to the fake org).
+ * @param {string[]} answers `ok`, `unexpected` or `refused` per update call.
+ * @returns {object} Client, calls and update count.
+ */
+const metadataAnswers = (answers) => {
+  const { client, calls } = fakeClient([wire({ cardinality: 'OneToOne' })]);
+  const apply = client.update;
+  let sent = 0;
+  const sender = {
+    request: async () => assert.fail('no REST call'),
+    metadata: async () => ({
+      read: async () => assert.fail('reads go through the fake client'),
+      update: async (_type, definition) => {
+        const answer = answers[sent++];
+        if (answer === 'ok') {
+          await apply(definition);
+          return { fullName: definition.fullName, success: true, errors: [] };
+        }
+        return {
+          fullName: definition.fullName,
+          success: false,
+          errors:
+            answer === 'unexpected'
+              ? {
+                  statusCode: 'UNKNOWN_EXCEPTION',
+                  message:
+                    'An unexpected error occurred. Please include this ErrorId if you contact support: 1-2 (3)',
+                }
+              : { statusCode: 'FIELD_INTEGRITY_EXCEPTION', message: 'Not a valid field.' },
+        };
+      },
+    }),
+  };
+  client.update = createRelationshipClient('target', '68.0', undefined, sender).update;
+  return { client, calls, sent: () => sent };
+};
+
+test('an unexpected-error update on an unchanged org is sent once more and then succeeds', async () => {
+  const { client, sent } = metadataAnswers(['unexpected', 'ok']);
+  assert.deepEqual(await deployNativeRelationship(document, client), {
+    operation: 'update',
+    apiName: name,
+  });
+  assert.equal(sent(), 2);
+  const result = await executeRelationship(document, metadataAnswers(['unexpected', 'ok']).client);
+  assert.deepEqual([result.outcome, result.mutation], ['updated', 'confirmed-updated']);
+});
+
+test('a second unexpected error is rejected; other refusals and a changed org are never resent', async () => {
+  const twice = metadataAnswers(['unexpected', 'unexpected', 'ok']);
+  const rejected = await executeRelationship(document, twice.client);
+  assert.deepEqual([rejected.outcome, rejected.mutation], ['failed', 'rejected']);
+  assert.equal(rejected.diagnostics[0].code, 'RELATIONSHIP_UPDATE_REJECTED');
+  assert.match(rejected.diagnostics[0].message, /UNKNOWN_EXCEPTION\. Nothing was changed/u);
+  assert.equal(twice.sent(), 2);
+  const other = metadataAnswers(['refused', 'ok']);
+  await assert.rejects(
+    deployNativeRelationship(document, other.client),
+    code('RELATIONSHIP_UPDATE_REJECTED'),
+  );
+  assert.equal(other.sent(), 1);
+  // The org changed between the refusal and the re-read: no resend, outcome unknown.
+  const changed = metadataAnswers(['unexpected', 'ok']);
+  const read = changed.client.readDefinitions;
+  let reads = 0;
+  changed.client.readDefinitions = async (names) => {
+    const found = await read(names);
+    return found.map((entry) =>
+      ++reads > 1 ? { ...entry, masterLabel: 'Changed elsewhere' } : entry,
+    );
+  };
+  const unknown = await executeRelationship(document, changed.client);
+  assert.deepEqual([unknown.outcome, unknown.mutation], ['failed', 'unknown']);
+  assert.equal(unknown.diagnostics[0].code, 'RELATIONSHIP_PERSISTENCE_UNCONFIRMED');
+  assert.match(unknown.diagnostics[0].message, /unexpected error, but the relationship changed/u);
+  assert.equal(changed.sent(), 1);
+});

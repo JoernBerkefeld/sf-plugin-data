@@ -805,7 +805,8 @@ export async function projectNativeDataStream(
 }
 
 export type DataStreamDeployClients = DataStreamReadClients & {
-  streams: DataStreamReadClients['streams'] & Pick<DataStreamClient, 'create' | 'update' | 'patch'>;
+  streams: DataStreamReadClients['streams'] &
+    Pick<DataStreamClient, 'create' | 'update' | 'patch' | 'relabel'>;
 };
 export type DataStreamCreatePlan = {
   operation: 'create';
@@ -1357,16 +1358,17 @@ export async function preflightNativeDataStreamUpdate(
 
 /**
  * The PATCH of an update with formula or label parts: `datastreamType` plus the mappings to add,
- * change or remove and the label.
+ * change or remove and, when it is not sent through the Metadata API, the label.
  * @param {DataStreamUpdatePlan} plan Update plan.
+ * @param {boolean} [withLabel] Whether the PATCH carries the label change.
  * @returns {Json} PATCH body.
  */
-export function ingestDataStreamPatchBody(plan: DataStreamUpdatePlan): Json {
+export function ingestDataStreamPatchBody(plan: DataStreamUpdatePlan, withLabel = true): Json {
   const mappings = [...plan.additions, ...plan.formulaChanges];
   return {
     datastreamType: plan.document.spec.datastreamType,
     ...(mappings.length > 0 ? { mappings: structuredClone(mappings) } : {}),
-    ...(plan.labelChange ? { label: plan.document.spec.label } : {}),
+    ...(plan.labelChange && withLabel ? { label: plan.document.spec.label } : {}),
   };
 }
 
@@ -1469,9 +1471,14 @@ export async function updateNativeDataStream(
   const pause = options.wait ?? wait;
   const deadline = now() + 15 * 60 * 1000;
   const targetId = plan.binding.target!.recordId as string;
-  await (plan.formulaChanges.length === 0 && !plan.labelChange
-    ? clients.streams.update(targetId, plan.patch)
-    : clients.streams.patch(targetId, ingestDataStreamPatchBody(plan)));
+  // Salesforce ignores a label in a stream PATCH; the Metadata API update of the stream
+  // definition changes it (live, API 68). It is sent first, while the stream is ACTIVE.
+  const relabel = plan.labelChange ? clients.streams.relabel : undefined;
+  if (relabel) await relabel(apiName, plan.document.spec.label);
+  if (plan.formulaChanges.length === 0 && (!plan.labelChange || relabel)) {
+    if (plan.additions.length > 0) await clients.streams.update(targetId, plan.patch);
+  } else await clients.streams.patch(targetId, ingestDataStreamPatchBody(plan, !relabel));
+  let labelReads = 0;
   // Targets whose existing mapping the PATCH changes or removes, and new formula targets.
   const priorFormulas = new Set(
     (plan.target.spec.formulaMappings ?? []).map((entry) => entry.targetFieldName),
@@ -1667,15 +1674,19 @@ export async function updateNativeDataStream(
             info.status === 'ACTIVE') &&
           now() < deadline
         ) {
-          await options.verifyInput();
-          if (now() >= deadline) break;
-          return {
-            operation: 'update',
-            targetApiName: apiName,
-            targetDloName: actual.spec.newDlo.name,
-            document: actual,
-            notices: labelNotApplied(plan.labelChange && raw.label !== plan.document.spec.label),
-          };
+          const labelKept = plan.labelChange && raw.label !== plan.document.spec.label;
+          // A label set through the Metadata API may show a read later; wait up to 3 reads.
+          if (!labelKept || ++labelReads >= 3) {
+            await options.verifyInput();
+            if (now() >= deadline) break;
+            return {
+              operation: 'update',
+              targetApiName: apiName,
+              targetDloName: actual.spec.newDlo.name,
+              document: actual,
+              notices: labelNotApplied(labelKept),
+            };
+          }
         }
       }
       if (
@@ -1780,7 +1791,7 @@ function streamDeleteDependencies(value: unknown): Json {
  * @param {Json} dloDependencies DLO dependents.
  * @param {object} target The stream.
  * @param {unknown} target.recordId Its record ID.
- * @param {unknown} target.label Its label.
+ * @param {unknown} target.label Its label (not compared: the entry may keep an older label).
  * @param {string} dloName Landing DLO name.
  * @param {Function} [covered] Preview only: a dependent the same delete deletes earlier.
  * @returns {Promise<StreamDependent[] | undefined>} Planned dependents, or undefined when none.
@@ -1793,11 +1804,12 @@ async function checkStreamDeleteDependents(
   covered: DataStreamDeleteOptions['covered'],
 ): Promise<StreamDependent[] | undefined> {
   const dependencies = dloDependencies.dependencies as unknown[];
-  // The DLO's own entry for this stream.
+  // The DLO's own entry for this stream, by record ID: after a label change through the
+  // Metadata API the entry still carries the old label (live, API 68).
   const ownEntry = (value: unknown): boolean =>
     object(value).componentType === 'DataStream' &&
     object(value).id === target.recordId &&
-    object(value).name === target.label &&
+    typeof object(value).name === 'string' &&
     !Object.keys(object(value)).some((key) => !['id', 'name', 'componentType'].includes(key));
   // Both modes refuse unknown/shared dependencies; cascade additionally has an explicit opt-in.
   if (streamDependencies.totalSize === 0 && dependencies.length === 1 && ownEntry(dependencies[0]))

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { paceReadback, readbackPace } from './readback-pace.js';
 import { explanationOf, replaceExplanation } from './operation-diagnostic.js';
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
@@ -16,6 +17,7 @@ import type {
   ObservedRelationship,
 } from '../artifacts/native-relationship-document.js';
 import type { RelationshipClient } from '../transport/relationship-rest.js';
+import { isUnexpectedUpdateRefusal } from '../transport/relationship-rest.js';
 import {
   carriedNativeResponse,
   carryNativeResponse,
@@ -261,6 +263,8 @@ export type NativeRelationshipDeployPlan = {
   changes?: string[];
   /** Update only: the whole Metadata API record to send. */
   definition?: Record<string, unknown>;
+  /** Update only: the Metadata API record as the org held it before the update. */
+  current?: Record<string, unknown>;
 };
 
 /**
@@ -382,6 +386,7 @@ export async function preflightNativeRelationship(
     existing: found.name,
     changes,
     definition: updateDefinition(current, desired.spec),
+    current,
   };
 }
 
@@ -403,20 +408,53 @@ async function holdsLabel(
 }
 
 /**
- * Send one update and read the relationship back by name until it holds the file.
+ * Send one update. When Salesforce answers its generic "unexpected error", re-read the record:
+ * if the org still holds it as before, send the same update once more (a valid change has
+ * succeeded on the second try, live API 68); never a third time, and never for another error.
  * @param {string} name Relationship name.
  * @param {Record<string, unknown>} definition Whole Metadata API record.
+ * @param {Record<string, unknown>} before The record as the org held it before the update.
+ * @param {Pick<RelationshipClient, 'readDefinitions' | 'update'>} client Transport.
+ */
+async function sendUpdate(
+  name: string,
+  definition: Record<string, unknown>,
+  before: Record<string, unknown>,
+  client: Pick<RelationshipClient, 'readDefinitions' | 'update'>,
+): Promise<void> {
+  if (!client.update) throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
+  try {
+    await client.update(definition);
+  } catch (error) {
+    if (!isUnexpectedUpdateRefusal(error)) throw error;
+    if (!isDeepStrictEqual(await readDefinition(name, client), before)) {
+      const changed = new NativeRelationshipError('RELATIONSHIP_PERSISTENCE_UNCONFIRMED');
+      replaceExplanation(
+        changed,
+        `Salesforce answered the update of the relationship ${name} with an unexpected error, but the relationship changed. Retrieve it before another attempt.`,
+      );
+      throw changed;
+    }
+    await client.update(definition);
+  }
+}
+
+/**
+ * Send one update (see sendUpdate) and read the relationship back by name until it holds the file.
+ * @param {string} name Relationship name.
+ * @param {Record<string, unknown>} definition Whole Metadata API record.
+ * @param {Record<string, unknown>} before The record as the org held it before the update.
  * @param {NativeRelationshipDocument} desired File.
  * @param {Pick<RelationshipClient, 'list' | 'readDefinitions' | 'update'>} client Transport.
  */
 async function updateAndConfirm(
   name: string,
   definition: Record<string, unknown>,
+  before: Record<string, unknown>,
   desired: NativeRelationshipDocument,
   client: Pick<RelationshipClient, 'list' | 'readDefinitions' | 'update'>,
 ): Promise<void> {
-  if (!client.update) throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
-  await client.update(definition);
+  await sendUpdate(name, definition, before, client);
   for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
     await paceReadback(attempt);
     const inventory = await listNativeRelationships(desired.spec.sourceObjectName, client);
@@ -455,7 +493,7 @@ export async function deployNativeRelationship(
   const plan = await preflightNativeRelationship(value, client, requestScope);
   if (plan.operation === 'noop') return { operation: 'noop', apiName: plan.existing! };
   if (plan.operation === 'update') {
-    await updateAndConfirm(plan.existing!, plan.definition!, plan.desired, client);
+    await updateAndConfirm(plan.existing!, plan.definition!, plan.current!, plan.desired, client);
     return { operation: 'update', apiName: plan.existing! };
   }
   await client.create(relationshipSpec(plan.desired.spec));
@@ -502,7 +540,7 @@ async function labelCreated(
   try {
     const current = await readDefinition(name, client);
     if (current.masterLabel === desired.spec.label) return;
-    await updateAndConfirm(name, updateDefinition(current, desired.spec), desired, client);
+    await updateAndConfirm(name, updateDefinition(current, desired.spec), current, desired, client);
   } catch (error) {
     if (error instanceof NativeRelationshipError)
       replaceExplanation(

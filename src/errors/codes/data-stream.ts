@@ -63,7 +63,7 @@ export const hints: Readonly<Record<string, string>> = {
   STREAM_BINDING_DRIFT:
     'The stream, its event or its connection changed between two reads, or reads disagreed. Wait until nobody changes the stream, then rerun; inspect the org first if mutation is unknown.',
   STREAM_CHANGE_NOT_APPLIED:
-    'Salesforce accepted the stream write, but the stream still differs from the file (Salesforce keeps a stream label). Retrieve the stream; change the rest in Salesforce.',
+    'Salesforce accepted the stream write, but the stream still differs from the file in the named parts. Retrieve the stream to see what it holds; change the rest in Salesforce.',
   STREAM_CONNECTION_MISMATCH:
     "The stream's Ingestion API connection was found but is not connected or its details differ. Check the connection's status in the org, then rerun.",
   STREAM_CREATE_IDENTITY_UNCONFIRMED:
@@ -100,6 +100,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The output folder has a file whose name differs from the stream file only by case or trailing dots or spaces, or the existing file holds another stream. Rename or move it.',
   STREAM_HTTP_ERROR:
     'Salesforce answered a stream create, update or delete with an error status. The change may still have happened; read the HTTP status, then inspect the org before you retry.',
+  STREAM_LABEL_UPDATE_REJECTED:
+    'Salesforce refused the Metadata API update of the stream label (DataStreamDefinition); the label was not changed. Read the message, correct the label in the file, then rerun.',
   STREAM_MAPPING_CONFLICT:
     'A target field in spec.additiveFieldMappings already exists on the stream with a different source, type or mapping. Use a new target name, or match the existing mapping exactly.',
   STREAM_NOT_READY:

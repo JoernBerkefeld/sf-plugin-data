@@ -31,7 +31,7 @@ export const hints: Readonly<Record<string, string>> = {
   RELATIONSHIP_REQUEST_UNCONFIRMED:
     "A relationship request ended without a clear result (an HTTP request, or a Metadata API read or update). For a create, update or delete, list the source DMO's relationships before trying again; nothing is retried.",
   RELATIONSHIP_UPDATE_REJECTED:
-    "Salesforce refused the Metadata API update of the relationship, and nothing was changed. Read Salesforce's answer in the message; it accepts label, cardinality and source field changes, not a changed target or owner.",
+    "Salesforce refused the Metadata API update of the relationship, and nothing was changed. Read Salesforce's answer in the message; a changed owner or target object is refused, for example.",
   RELATIONSHIP_TARGET_BINDING_MISMATCH:
     'The relationship with this name links other objects or fields than expected: another source DMO than the selector names, or with --changed-since another binding than the deleted file. Check it before deleting.',
   UNSUPPORTED_RELATIONSHIP_DATASPACE:

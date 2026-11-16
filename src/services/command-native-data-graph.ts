@@ -14,6 +14,7 @@ import {
   bindNativeGraphRoot,
   nativeDataGraphLifecycle,
   nativeGraphStillGenerating,
+  NativeGraphProcessingRequired,
   NativeGraphWriteRefused,
   sendNativeGraphWrite,
   settleNativeDataGraph,
@@ -85,7 +86,7 @@ export type NativeGraphOperationResult = {
     | 'unknown';
   /** After an attempted create: the step that could not confirm it. */
   failedCheck?: NativeGraphCreateCheck;
-  /** Deploy preview only: root/owner findings (blocking codes or the named owner). */
+  /** Root/owner findings of a preview, or why a deploy was blocked before any write. */
   diagnostics?: Array<{ code: string; message: string }>;
 };
 
@@ -372,6 +373,19 @@ export async function operateNativeDataGraph(
     graphRequire(context.orgId === orgId);
     if (before.state === 'absent' && options.operation === 'delete')
       return { outcome: 'unchanged', mutation: 'not-attempted' };
+    const graphName = document.definition.name as string;
+    if (before.state === 'pending' && options.operation === 'deploy')
+      return blocked(
+        'DATA_GRAPH_PENDING',
+        before.deleting
+          ? `A data graph named ${graphName} was deleted but Salesforce still lists it, so a graph of that name cannot be created yet. Wait a few minutes and rerun the deploy. Nothing was written.`
+          : `The data graph ${graphName} is still being built: Salesforce has not generated all its objects yet. Wait until it is ready and rerun the deploy. Nothing was written.`,
+      );
+    const processingRequired = (operation: 'create' | 'update'): NativeGraphOperationResult =>
+      blocked(
+        'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
+        `${operation === 'create' ? 'Creating' : 'Changing'} the data graph ${graphName} starts a graph build in Data Cloud and needs --allow-processing. Nothing was written.`,
+      );
     if (before.state === 'present' && options.operation === 'deploy') {
       let outcome: Awaited<ReturnType<typeof updateNativeDataGraph>>;
       try {
@@ -389,6 +403,7 @@ export async function operateNativeDataGraph(
           end,
         });
       } catch (error) {
+        if (error instanceof NativeGraphProcessingRequired) return processingRequired('update');
         // Every PUT was refused with HTTP429/503 until the budget ran out: nothing was processed.
         if (error instanceof NativeGraphWriteRefused)
           return retainConnectDiagnostic(
@@ -426,6 +441,8 @@ export async function operateNativeDataGraph(
         outcome: options.operation === 'deploy' ? 'create' : 'delete',
         mutation: 'not-attempted',
       });
+    if (options.operation === 'deploy' && options.confirmed !== true)
+      return processingRequired('create');
     graphRequire(options.confirmed === true);
     if (options.operation === 'deploy') {
       // Reuse the qualified create settlement; fixture ownership is not public delete authority.

@@ -12,6 +12,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The graph root is a unified DMO, but no identity resolution ruleset in the target creates it. Deploy the ruleset that produces it first, then preview the graph again.',
   DATA_GRAPH_OWNER_NOT_PUBLISHED:
     'The identity resolution ruleset that creates the graph root is not published yet. Wait until it is PUBLISHED (rerun its deploy to check), then preview the graph again.',
+  DATA_GRAPH_PENDING:
+    'A data graph of that name is still being built, or was just deleted and is still listed, so the deploy cannot write it now. Wait a few minutes, then rerun the same deploy.',
   DATA_GRAPH_ROOT_NOT_FOUND:
     'The root DMO of the graph does not exist in the target org. Deploy that DMO, or the identity resolution ruleset that creates it, then preview the graph again.',
   INVALID_NATIVE_DATA_GRAPH_NAME:

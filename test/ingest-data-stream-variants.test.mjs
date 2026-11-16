@@ -171,8 +171,8 @@ function org() {
         schemas: events.map((event) => ({
           name: event,
           schemaType: 'IngestApi',
-          availabilityStatus: [...streams.values(), ...lagging].some((stream) =>
-            stream.label.endsWith(`-${event}`),
+          availabilityStatus: [...streams.values(), ...lagging].some(
+            (stream) => stream.label.endsWith(`-${event}`) || stream.name.includes(`_${event}_`),
           )
             ? 'In Use'
             : 'Available',
@@ -357,6 +357,39 @@ test('two Engagement streams on one connection create, repeat unchanged, add a f
     label.diagnostics.map((entry) => entry.code),
     ['STREAM_CHANGE_NOT_APPLIED'],
   );
+});
+
+test('an Ingestion API stream label goes through the Metadata API; a formula still by PATCH', async () => {
+  const { clients, writes, streams } = org();
+  const relabels = [];
+  clients.streams.relabel = async (apiName, label) => {
+    relabels.push([apiName, label]);
+    streams.get(apiName).label = label;
+  };
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+  const relabelled = structuredClone(retrieved);
+  relabelled.spec.label = 'Another label';
+  const label = await executeDataStream(relabelled, clients, options);
+  assert.equal(label.outcome, 'updated', JSON.stringify(label.diagnostics));
+  assert.deepEqual(label.diagnostics, []);
+  assert.deepEqual(relabels, [[created.targetApiName, 'Another label']]);
+  assert.equal(writes.length, 1);
+  const repeat = await executeDataStream(relabelled, clients, options);
+  assert.equal(repeat.outcome, 'unchanged');
+  // Label and formula together: the label through the Metadata API, the formula by PATCH.
+  const both = structuredClone(relabelled);
+  both.spec.label = 'Third label';
+  both.spec.formulaMappings.push({
+    targetFieldName: 'ScoreX3',
+    formula: "sourceField['Score'] * 3",
+    targetFieldReturntype: 'Number',
+  });
+  const result = await executeDataStream(both, clients, options);
+  assert.equal(result.outcome, 'updated', JSON.stringify(result.diagnostics));
+  assert.deepEqual(relabels.at(-1), [created.targetApiName, 'Third label']);
+  assert.equal(writes.at(-1).method, 'PATCH');
+  assert.equal(Object.hasOwn(writes.at(-1).body, 'label'), false);
 });
 
 test('a DLO setting the PATCH cannot change stays refused before any write', async () => {

@@ -1,4 +1,9 @@
-import { getConnectDiagnostic, retainConnectDiagnostic } from './connect-diagnostic.js';
+import {
+  displayableApiText,
+  getConnectDiagnostic,
+  retainConnectDiagnostic,
+} from './connect-diagnostic.js';
+import { replaceExplanation } from '../services/operation-diagnostic.js';
 import {
   DataStreamError,
   buildDataStreamCreateBody,
@@ -24,7 +29,16 @@ export type DataStreamClient = {
   /** One PATCH with a prepared body: `datastreamType` plus the changed parts. */
   patch: (recordId: string, body: Record<string, unknown>) => Promise<unknown>;
   delete: (recordId: string, deleteDlo: boolean) => Promise<void>;
+  /**
+   * Set the stream label with one Metadata API `updateMetadata` of its DataStreamDefinition (the
+   * record read first, `masterLabel` replaced) on the bound Connection; never resent. Salesforce
+   * ignores a label in a stream PATCH. Absent without a bound Metadata API.
+   */
+  relabel?: (apiName: string, label: string) => Promise<void>;
 };
+
+/** Metadata API type of a data stream; its record name is the stream name. */
+export const streamMetadataType = 'DataStreamDefinition';
 type JsonObject = Record<string, unknown>;
 /** Native connection and dependency reads a stream binding/delete decision depends on. */
 export type DataStreamReferenceReader = {
@@ -310,5 +324,114 @@ export function createDataStreamClient(
         throw new DataStreamError('INVALID_STREAM_TARGET_ID');
       await send('DELETE', `/${recordId}?shouldDeleteDataLakeObject=${String(deleteDlo)}`);
     },
+    ...(bound.metadata ? { relabel: relabelCall(bound.metadata) } : {}),
+  };
+}
+
+/**
+ * Salesforce's refusal of a stream label update: nothing was changed. Texts pass the display
+ * filter of REST errors; a text that does not pass is left out.
+ * @param {string} apiName Stream name.
+ * @param {Array<{code?: unknown; message?: unknown}>} problems Salesforce's answers.
+ * @returns {DataStreamError} STREAM_LABEL_UPDATE_REJECTED with an explanation.
+ */
+function labelRefusal(
+  apiName: string,
+  problems: Array<{ code?: unknown; message?: unknown }>,
+): DataStreamError {
+  const said = problems
+    .slice(0, 3)
+    .map(({ code, message }) =>
+      [
+        typeof code === 'string' && /^[\w:.-]{1,80}$/u.test(code) ? code : undefined,
+        displayableApiText(message),
+      ]
+        .filter(Boolean)
+        .join(': '),
+    )
+    .filter(Boolean);
+  const error = new DataStreamError('STREAM_LABEL_UPDATE_REJECTED');
+  replaceExplanation(
+    error,
+    `Salesforce refused the Metadata API update of the ${streamMetadataType} ${apiName}${said.length > 0 ? `: ${said.join('; ').replace(/\.$/u, '')}` : ' without a text the plugin can show'}. The label was not changed.`,
+  );
+  return error;
+}
+
+/**
+ * A Metadata API answer as a list of records.
+ * @param {unknown} value One record or several.
+ * @returns {unknown[]} Records.
+ */
+function metadataRecords(value: unknown): unknown[] {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * Whether a Metadata API value is an explicit nil (`xsi:nil`), which a write must not send back.
+ * @param {unknown} value Record value.
+ * @returns {boolean} Explicit nil.
+ */
+function metadataNil(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const attributes = (value as Record<string, unknown>).$;
+  return (
+    !!attributes &&
+    typeof attributes === 'object' &&
+    (attributes as Record<string, unknown>)['xsi:nil'] === 'true'
+  );
+}
+
+/**
+ * The stream label update on the bound Connection: read the DataStreamDefinition, replace its
+ * label, send one `updateMetadata`. Salesforce decides; its refusal is reported with its text.
+ * @param {Function} open The bound sender's Metadata API.
+ * @returns {Function} relabel(apiName, label).
+ */
+function relabelCall(
+  open: NonNullable<BoundSsot['metadata']>,
+): NonNullable<DataStreamClient['relabel']> {
+  return async (apiName, label) => {
+    if (!name.test(apiName) || typeof label !== 'string' || label === '')
+      throw new DataStreamError('INVALID_STREAM_NAME');
+    const api = await open();
+    let current: Record<string, unknown> | undefined;
+    try {
+      current = metadataRecords(await api.read(streamMetadataType, [apiName])).find(
+        (entry): entry is Record<string, unknown> =>
+          !!entry &&
+          typeof entry === 'object' &&
+          (entry as Record<string, unknown>).fullName === apiName,
+      );
+    } catch {
+      throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
+    }
+    if (!current) throw labelRefusal(apiName, []);
+    const record = {
+      ...Object.fromEntries(Object.entries(current).filter(([, value]) => !metadataNil(value))),
+      masterLabel: label,
+    };
+    let answer: unknown;
+    try {
+      answer = await api.update(streamMetadataType, record);
+    } catch (error) {
+      // A SOAP fault (soapenv:Client, sf:INVALID_...) is Salesforce refusing the request.
+      const fault = error as { name?: unknown; message?: unknown } | null;
+      if (typeof fault?.name === 'string' && /^(?:soapenv|sf):/u.test(fault.name))
+        throw labelRefusal(apiName, [{ code: fault.name, message: fault.message }]);
+      throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
+    }
+    const [result] = metadataRecords(answer) as Array<Record<string, unknown> | undefined>;
+    if (result?.success === true) return;
+    if (result?.success === false)
+      throw labelRefusal(
+        apiName,
+        metadataRecords(result.errors).map((entry) => {
+          const problem = (entry ?? {}) as Record<string, unknown>;
+          return { code: problem.statusCode, message: problem.message };
+        }),
+      );
+    throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
   };
 }

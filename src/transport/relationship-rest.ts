@@ -41,6 +41,20 @@ export const relationshipMetadataType = 'FieldSrcTrgtRelationship';
 /** Names per Metadata API read call (the API's limit). */
 export const relationshipReadBatch = 10;
 
+/** Refusals that were Salesforce's generic "unexpected error" (UNKNOWN_EXCEPTION). */
+const unexpectedRefusals = new WeakSet<object>();
+
+/**
+ * Whether an update refusal was Salesforce's generic "An unexpected error occurred" answer
+ * (UNKNOWN_EXCEPTION). Salesforce gives it both for a change it refuses and, now and then, for a
+ * valid change that succeeds when sent again (live, API 68).
+ * @param {unknown} error Failure of `update`.
+ * @returns {boolean} The generic unexpected-error refusal.
+ */
+export function isUnexpectedUpdateRefusal(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && unexpectedRefusals.has(error);
+}
+
 /**
  * Salesforce's refusal of an update: nothing was changed. Codes and texts pass the display
  * filter of REST errors; a text that does not pass is left out.
@@ -64,6 +78,13 @@ function updateRefusal(
     );
   const said = parts.filter(Boolean);
   const error = new NativeRelationshipError('RELATIONSHIP_UPDATE_REJECTED');
+  if (
+    problems.length === 1 &&
+    problems[0].code === 'UNKNOWN_EXCEPTION' &&
+    typeof problems[0].message === 'string' &&
+    problems[0].message.startsWith('An unexpected error occurred.')
+  )
+    unexpectedRefusals.add(error);
   replaceExplanation(
     error,
     `Salesforce refused the Metadata API update of the relationship ${name}${said.length > 0 ? `: ${said.join('; ')}` : ' without a text the plugin can show'}. Nothing was changed.`,

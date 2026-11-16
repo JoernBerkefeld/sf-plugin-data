@@ -22,7 +22,7 @@ import type { DataStreamReadClients, DataStreamReadMode } from './native-data-st
 type Json = Record<string, unknown>;
 /** Native stream access a CRM stream deploy needs. */
 export type CrmDataStreamClients = {
-  streams: Pick<DataStreamClient, 'get' | 'create' | 'patch'>;
+  streams: Pick<DataStreamClient, 'get' | 'create' | 'patch' | 'relabel'>;
 };
 export type CrmDataStreamDeployOptions = {
   allowProcessing: boolean;
@@ -159,8 +159,8 @@ export async function preflightCrmDataStream(value: unknown, clients: CrmDataStr
 }
 
 /**
- * The parts Salesforce did not apply, as one notice. Salesforce answers a label PATCH with 200
- * and keeps the old label, so a label part gets its own sentence.
+ * The parts Salesforce did not apply, as one notice. A label still differing gets its own
+ * sentence (Salesforce answers a label PATCH with 200 and keeps the old label).
  * @param {string[]} parts Key paths that still differ after the write settled.
  * @returns {Array<{code: string; message: string}>} Notices.
  */
@@ -218,9 +218,18 @@ export async function executeCrmDataStream(
     if (options.allowProcessing !== true)
       throw new DataStreamError('PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
     await options.verifyInput();
-    await (plan.operation === 'create'
-      ? ledger.run(async () => clients.streams.create(document))
-      : ledger.run(async () => clients.streams.patch(String(plan.current.recordId), plan.body)));
+    if (plan.operation === 'create') await ledger.run(async () => clients.streams.create(document));
+    else {
+      // Salesforce ignores a label in a stream PATCH; the Metadata API update of the stream
+      // definition changes it (live, API 68). It is sent first, while the stream is ACTIVE.
+      const relabel = plan.parts.includes('label') ? clients.streams.relabel : undefined;
+      if (relabel) await ledger.run(async () => relabel(apiName, String(document.spec.label)));
+      const parts = relabel ? plan.parts.filter((part) => part !== 'label') : plan.parts;
+      const body = { ...plan.body };
+      if (relabel) delete body.label;
+      if (parts.length > 0)
+        await ledger.run(async () => clients.streams.patch(String(plan.current.recordId), body));
+    }
     const now = options.now ?? Date.now;
     const pause = options.wait ?? wait;
     const deadline = now() + 15 * 60 * 1000;

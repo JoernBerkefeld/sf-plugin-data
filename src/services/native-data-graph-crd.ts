@@ -36,7 +36,8 @@ export type NativeGraphContext = {
 export type NativeGraphAcquisition =
   | { state: 'present'; observation: NativeDataGraphObservation }
   | { state: 'absent'; proof: 'item+metadata+inventory+soql' }
-  | { state: 'pending' }
+  /** Still being built, or (`deleting`) no longer readable but still listed after a delete. */
+  | { state: 'pending'; deleting?: true }
   | { state: 'unknown' };
 
 /**
@@ -242,7 +243,7 @@ export async function proveNativeDataGraphAbsent(
   item?: NativeGraphRead,
 ): Promise<
   | { state: 'absent'; proof: 'item+metadata+inventory+soql' }
-  | { state: 'pending' }
+  | { state: 'pending'; deleting: true }
   | { state: 'unknown' }
 > {
   let diagnostic: ConnectDiagnostic | undefined;
@@ -261,7 +262,7 @@ export async function proveNativeDataGraphAbsent(
     const exact = await context.metadata(name);
     diagnostic = getConnectDiagnostic(exact);
     context.check();
-    if (exact.status === 200) return { state: 'pending' };
+    if (exact.status === 200) return { state: 'pending', deleting: true };
     graphRequire(exact.status === 404 && Array.isArray(exact.body) && exact.body.length === 1);
     const error = graphRecord(exact.body[0]);
     graphRequire(error.errorCode === 'INTERNAL_ERROR' && typeof error.message === 'string');
@@ -295,7 +296,7 @@ export async function proveNativeDataGraphAbsent(
         rows.totalSize === rows.records.length &&
         rows.records.length <= 1,
     );
-    if (names.has(name) || rows.records.length > 0) return { state: 'pending' };
+    if (names.has(name) || rows.records.length > 0) return { state: 'pending', deleting: true };
     return { state: 'absent', proof: 'item+metadata+inventory+soql' };
   } catch (error) {
     return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error) ?? diagnostic);
@@ -466,6 +467,9 @@ export async function settleNativeDataGraphCreation(
  * was not processed; the retained diagnostic is the last refusal.
  */
 export class NativeGraphWriteRefused extends Error {}
+
+/** An update that changes the graph was requested without --allow-processing; nothing was sent. */
+export class NativeGraphProcessingRequired extends Error {}
 
 /**
  * Send one Graph write; HTTP429/503 means Salesforce did not process it, so pause (Retry-After
@@ -670,7 +674,8 @@ export async function updateNativeDataGraph(
     nativeDataGraphDocumentFromResponse(baseline.target).definition,
   );
   if (!same && options.preview) return 'update';
-  if (!same) graphRequire(options.confirmed && typeof client.update === 'function');
+  if (!same && !options.confirmed) throw new NativeGraphProcessingRequired();
+  if (!same) graphRequire(typeof client.update === 'function');
   options.progress(
     'Data Graph processing can take seconds to many minutes, up to 30 minutes depending on objects, fields, data volume and service load.',
   );
