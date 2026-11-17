@@ -1258,34 +1258,38 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             warnings,
             listed.dmo,
           ));
+        // Mappings only the inventory named (not selected by name): one that reads 404 was
+        // deleted during the retrieve and is skipped with a warning.
+        const listedOnly = new Set<string>();
         // Finish every inventory before publishing any file.
         for (const family of nativeFamilies) {
           const all = selectors.length === 0 || selectors.includes(family);
           let names = selectors
             .filter((value) => value.startsWith(`${family}:`))
             .map((value) => value.slice(family.length + 1));
+          const named = new Set(names);
           if (all)
             try {
-              if (family === 'mapping')
-                names.push(
-                  ...(await this.listNativeMappingNames(
-                    await listDmos(),
-                    this.createMappingInventoryReader(connection, version, requestScope),
-                    requestScope,
-                    {
-                      warnings,
-                      failure: (dmo, error) =>
-                        envelope.diagnostics.errors.push({
-                          code: 'NATIVE_INVENTORY_FAILED',
-                          message: retrievalMessage(error),
-                          retryable: false,
-                          identity: { dataSpace: effectiveScope, apiName: dmo },
-                          family: 'mapping',
-                        }),
-                    },
-                  )),
+              if (family === 'mapping') {
+                const inventory = await this.listNativeMappingNames(
+                  await listDmos(),
+                  this.createMappingInventoryReader(connection, version, requestScope),
+                  requestScope,
+                  {
+                    warnings,
+                    failure: (dmo, error) =>
+                      envelope.diagnostics.errors.push({
+                        code: 'NATIVE_INVENTORY_FAILED',
+                        message: retrievalMessage(error),
+                        retryable: false,
+                        identity: { dataSpace: effectiveScope, apiName: dmo },
+                        family: 'mapping',
+                      }),
+                  },
                 );
-              else
+                for (const name of inventory) if (!named.has(name)) listedOnly.add(name);
+                names.push(...inventory);
+              } else
                 names.push(
                   ...(family === 'dmo'
                     ? await listDmos()
@@ -1426,6 +1430,18 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 ...receipt,
               });
             } catch (error_) {
+              if (
+                family === 'mapping' &&
+                listedOnly.has(apiName) &&
+                error_ instanceof NativeMappingError &&
+                error_.code === 'MAPPING_HTTP_ERROR' &&
+                error_.status === 404
+              ) {
+                warnings.push(
+                  `mapping:${apiName}: listed by Salesforce but not found when read (404), so it was deleted during the retrieve; skipped.`,
+                );
+                continue;
+              }
               const error = await this.verbatimFallback(error_, reads.nativeOf(apiName), {
                 kind: family,
                 identity: { dataSpace: effectiveScope, apiName },

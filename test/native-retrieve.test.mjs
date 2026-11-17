@@ -762,6 +762,40 @@ test('retrieve reads DLOs, DMOs, mappings and mapping parents through one shared
   assert.ok(senders.every((sender) => sender === opened[0][2]));
 });
 
+test('a listed mapping that reads 404 was deleted during the retrieve: skipped with a warning', async () => {
+  const command = invocation({ metadata: ['mapping'] });
+  command.listNativeMappingNames = async () => ['Gone', 'Kept'];
+  command.acquireNativeMapping = async (apiName) => {
+    if (apiName === 'Gone') throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+  };
+  const result = await run(command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(
+    result.result.items.map((item) => item.identity.apiName),
+    ['Kept'],
+  );
+  assert.deepEqual(result.diagnostics.errors, []);
+  assert.deepEqual(result.diagnostics.warnings, [
+    'mapping:Gone: listed by Salesforce but not found when read (404), so it was deleted during the retrieve; skipped.',
+  ]);
+  // Named exactly, or another failure: still an item failure.
+  for (const [metadata, error] of [
+    [['mapping', 'mapping:Gone'], new NativeMappingError('MAPPING_HTTP_ERROR', 404)],
+    [['mapping'], new NativeMappingError('MAPPING_HTTP_ERROR', 403)],
+  ]) {
+    const failing = invocation({ metadata });
+    failing.listNativeMappingNames = async () => ['Gone'];
+    failing.acquireNativeMapping = async () => {
+      throw error;
+    };
+    const failed = await run(failing);
+    assert.equal(failed.status, 'failed', metadata.join(' '));
+    assert.equal(failed.diagnostics.errors[0].code, 'MAPPING_HTTP_ERROR');
+    assert.deepEqual(failed.diagnostics.warnings, []);
+  }
+});
+
 test('public mapping inventory transport failure leaves the mapping family empty', async () => {
   const command = invocation({ metadata: ['mapping'] });
   command.resolveOrg = async () => ({

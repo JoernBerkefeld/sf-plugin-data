@@ -1,3 +1,19 @@
+# Q8 g: a listed mapping deleted during the retrieve is skipped with a warning — 2026-11-17
+
+Queue Q8 item g (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`).
+
+- Native retrieve (`prepareNativeRest`) remembers the mappings only the inventory named
+  (`listedOnly`: listed by a DMO's mapping list, not selected as `mapping:<Name>`). When such a
+  mapping's GET answers 404 (`MAPPING_HTTP_ERROR` status 404), it was deleted between the list and
+  the read: no item, no error, one warning `mapping:<Name>: listed by Salesforce but not found when
+  read (404), so it was deleted during the retrieve; skipped.` A mapping named exactly, and any
+  other failure (403, parent reads, verbatim fallback), stays an item failure as before.
+- Test: `test/native-retrieve.test.mjs` (listed 404 skipped with the warning and success; exact
+  selection 404 and listed 403 still fail).
+- Live: not reproducible on demand (it needs a delete between the list and the read); offline only.
+- Guide (sfmc.guide, not edited): dlo-dmo-mapping.md Retrieve tab: a mapping deleted while a bare
+  retrieve runs is skipped with a warning instead of failing the run.
+
 # Q8 small fixes: transform delete while PROCESSING, stream label read, INVALID_PROJECT, delete without org — 2026-11-17
 
 Queue Q8 items b, c, d, h (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`;
