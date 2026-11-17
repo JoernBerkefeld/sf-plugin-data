@@ -42,8 +42,8 @@ export type MemberQuery = {
 /** One page of the members route. */
 export type MemberPage = { rows: Array<Record<string, unknown>>; totalCount: number };
 
-/** One output column of the detail rows: a field of the DMO the segment is built on. */
-export type DetailColumn = { name: string; label: string };
+/** One output column of the detail rows: a field of the DMO the segment is built on, with its metadata type. */
+export type DetailColumn = { name: string; label: string; dataType?: string };
 
 /** Waits of the detail query; replaceable in tests. */
 export const detailQueryWait = { intervalMs: 1000, timeoutMs: 10 * 60 * 1000 };
@@ -415,6 +415,7 @@ export async function discoverMemberDetails(
         typeof field!.displayName === 'string' && field!.displayName.trim()
           ? field!.displayName.trim()
           : (field!.name as string),
+      ...(typeof field!.type === 'string' ? { dataType: field!.type } : {}),
     }));
   if (columns.length === 0)
     throw new SegmentMembersError(

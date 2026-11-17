@@ -53,6 +53,22 @@ export function memberColumnHeaders(
 }
 
 /**
+ * A detail value formatted like the mcnext member export: a DATE as `YYYY-MM-DD` (the time
+ * part dropped), a DATETIME with a space instead of the `T` (offset kept). Other types,
+ * non-text values and text that is not a date stay as they are.
+ * @param {unknown} value Cell value as Salesforce returned it.
+ * @param {string} [dataType] Metadata type of the field (case does not matter).
+ * @returns {unknown} Formatted value.
+ */
+export function formatMemberValue(value: unknown, dataType?: string): unknown {
+  if (typeof value !== 'string') return value;
+  const type = dataType?.trim().toLowerCase();
+  if (type === 'date') return /^(\d{4}-\d{2}-\d{2})(?:T.*)?$/u.exec(value)?.[1] ?? value;
+  if (type === 'datetime') return value.replace(/^(\d{4}-\d{2}-\d{2})T/u, '$1 ');
+  return value;
+}
+
+/**
  * A CSV cell: text as is, other values as JSON, quoted when needed.
  * @param {unknown} value Cell value.
  * @param {string} delimiter Column delimiter.

@@ -2670,6 +2670,9 @@ working directory (an existing `--output-file` is replaced). The command is read
   field labels (`--column-headers label`, the default; an empty label falls back to the
   API name, a repeated header gets `_2`, `_3`, … in column order) or the field API names
   (`--column-headers api-name`). Basic mode always uses the names Salesforce returns.
+  Detail values of `DATE` fields are written as `YYYY-MM-DD` (time dropped) and of
+  `DATETIME` fields with a space instead of the `T` (offset kept); basic mode writes
+  values as Salesforce returns them.
 - `--column-delimiter` sets the CSV separator, as a name or the character itself:
   `COMMA`/`,` (default), `SEMICOLON`/`;`, `TAB`, `PIPE`/`|`, `CARET`/`^`,
   `BACKQUOTE`/`` ` ``.

@@ -1,3 +1,31 @@
+# Segment members: DATE/DATETIME values formatted like mcnext — 2026-11-17
+
+Follow-up to Q6 (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`):
+port mcnext's `normalizeFieldValue` (`src/commands/mcnext/segment/members/export.ts`; mcnext not
+edited) so the export can replace mcnext's.
+
+- `formatMemberValue(value, dataType)` in `src/artifacts/write-member-export.ts`, same rules as
+  mcnext: type `date` (case-insensitive) keeps `YYYY-MM-DD` of a `YYYY-MM-DD[T...]` text,
+  `datetime` replaces the first `T` after the date with a space; other types, non-text values and
+  non-matching text unchanged. Applied, like mcnext, only in `--include-details` (CSV and JSON);
+  basic mode has no field types and writes values as returned (mcnext does the same).
+- `DetailColumn.dataType` from the `/ssot/metadata` field `type`; also in the envelope
+  `result.columns[].dataType`.
+- Tests: `test/segment-members-command.test.mjs` (mcnext's four `normalizeFieldValue` assertions
+  plus two; detail CSV and JSON with DATE/DATETIME columns and nulls).
+- Live (isolated-source `00Daj000010xkZNEAY`, read-only): `MCNEXT_Paging_Fixture_20261016
+  --include-details`, CSV and JSON, sf-plugin-data and mcnext (run unchanged from its repo,
+  `-o isolated-source`). The metadata types of the four date fields (Birth Date, Created Date,
+  Death Date, Last Modified Date) are `DATE_TIME`, which neither `date` nor `datetime` matches, so
+  both plugins write them as returned (`2026-10-16T19:19:51+00:00`; Birth/Death Date null). JSON:
+  1,100 rows, 20,900 cells, 0 differences. CSV: same size (313,749 bytes), but the column order
+  differs: mcnext reads the unfiltered `/ssot/metadata` (fields alphabetical), this plugin reads
+  `?entityName=` (another order).
+- Default file name (not changed, user decision): mcnext
+  `data/default/<sanitized display name>-<timestamp>.csv` (`MCNEXT-Pagination-Fixture-20261016-…`),
+  here `data/default/<API name>-<timestamp>.csv` (`MCNEXT_Paging_Fixture_20261016-…`).
+- DB entry `.claude/skills/_verification-db/entries/data360/data360-q6b-member-dates-api68.json`.
+
 # Segment members: lookup by display name or ID, column headers and delimiter — 2026-11-17
 
 Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),

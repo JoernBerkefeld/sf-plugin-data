@@ -6,7 +6,11 @@ import os from 'node:os';
 import path from 'node:path';
 import SegmentMembersExport from '../lib/commands/data360/segment/members/export.js';
 import { detailQueryWait } from '../lib/services/segment-members.js';
-import { memberColumnHeaders, memberDelimiter } from '../lib/artifacts/write-member-export.js';
+import {
+  formatMemberValue,
+  memberColumnHeaders,
+  memberDelimiter,
+} from '../lib/artifacts/write-member-export.js';
 import { connectRetry } from '../lib/transport/connect-client.js';
 import { errorCodeInfo } from '../lib/errors/registry.js';
 
@@ -484,6 +488,59 @@ test('--include-details joins the membership DMO to the segment DMO through one 
     'never past the end',
   );
   assert.deepEqual(waits, [detailQueryWait.intervalMs]);
+});
+
+// eslint-disable-next-line unicorn/no-null -- query-sql rows report an empty field as null.
+const wireNull = null;
+
+test('formatMemberValue formats DATE and DATETIME like the mcnext export', () => {
+  // The four assertions of mcnext's normalizeFieldValue test.
+  assert.equal(formatMemberValue('1982-12-16T00:00:00+00:00', 'DATE'), '1982-12-16');
+  assert.equal(
+    formatMemberValue('2026-10-01T13:15:16.123+02:00', 'DateTime'),
+    '2026-10-01 13:15:16.123+02:00',
+  );
+  assert.equal(formatMemberValue(wireNull, 'DATE'), wireNull);
+  assert.equal(formatMemberValue('not-a-date', 'DATE'), 'not-a-date');
+  assert.equal(formatMemberValue('2026-10-01T13:15:16Z', 'Text'), '2026-10-01T13:15:16Z');
+  assert.equal(formatMemberValue(42, 'DATE'), 42);
+});
+
+test('--include-details formats DATE and DATETIME values in CSV and JSON', async (t) => {
+  const fields = [
+    { name: 'Birth__c', displayName: 'Birth', type: 'DATE' },
+    { name: 'Seen__c', displayName: 'Seen', type: 'DATETIME' },
+  ];
+  const rows = [
+    ['1982-12-16T00:00:00+00:00', '2026-10-01T13:15:16.123+02:00', 'p0', 1],
+    [wireNull, wireNull, 'p1', 0],
+  ];
+  for (const format of ['csv', 'json']) {
+    const { command, cwd } = await harness(
+      {
+        metadata: 'segment:Members_Seg',
+        'include-details': true,
+        'result-format': format,
+        'output-file': `dates.${format}`,
+      },
+      details({ fields, rows, total: 2 }),
+      t,
+    );
+    const { result } = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(
+      result.result.columns.map(({ dataType }) => dataType),
+      ['DATE', 'DATETIME'],
+    );
+    const written = await readFile(path.join(cwd, `dates.${format}`), 'utf8');
+    if (format === 'csv')
+      assert.equal(written, 'Birth,Seen\n1982-12-16,2026-10-01 13:15:16.123+02:00\n,\n');
+    else
+      assert.deepEqual(JSON.parse(written), [
+        { Birth: '1982-12-16', Seen: '2026-10-01 13:15:16.123+02:00' },
+        { Birth: wireNull, Seen: wireNull },
+      ]);
+  }
 });
 
 test('detail mode: duplicate matches, missing relationship and the POST rule', async (t) => {
