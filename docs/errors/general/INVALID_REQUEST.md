@@ -5,7 +5,7 @@
 |              |                                                                                    |
 | ------------ | ---------------------------------------------------------------------------------- |
 | **Family**   | General                                                                            |
-| **Commands** | `sf data360 retrieve`                                                              |
+| **Commands** | `sf data360 retrieve`, `sf data360 segment members export`                         |
 | **Outcome**  | `failed` — no request was sent for the affected component; the org was not changed |
 
 ## What it means

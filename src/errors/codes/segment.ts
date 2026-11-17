@@ -30,6 +30,20 @@ export const hints: Readonly<Record<string, string>> = {
     'Right before writing this segment in a batch, a fresh check no longer allowed a create, update or no change, or --allow-processing was missing. Preview the batch again.',
   SEGMENT_IDENTITY_MISMATCH:
     'Salesforce returned a segment with a different name or data space than requested. Check the exact segment name (case matters) and that it lives in the default data space.',
+  SEGMENT_MEMBERS_CHANGED:
+    "The segment's member count changed during the export, so a publish finished mid-read and no file was written. Run the export again.",
+  SEGMENT_MEMBERS_NOT_FOUND:
+    'Salesforce does not know a segment with this exact API name in the default data space (HTTP 404). Check the name (case matters) and rerun the export.',
+  SEGMENT_MEMBERS_OUTPUT_FAILED:
+    'The members were read but the output file could not be written, so no file was left. Check that the folder is writable and has free space, then rerun.',
+  SEGMENT_MEMBERS_READ_FAILED:
+    'Salesforce answered a member read with an error, or the detail query did not finish, so no file was written. Read the API detail in the message, fix the cause and rerun.',
+  SEGMENT_MEMBERS_UNEXPECTED_RESPONSE:
+    'Salesforce answered a member read in a shape the plugin does not expect, so no file was written. Rerun the export; if it repeats, inspect the raw API response.',
+  SEGMENT_MEMBER_DETAILS_AMBIGUOUS:
+    'A segment member matched more than one row of the DMO the segment is built on, so --include-details cannot write one row per member. Export without --include-details.',
+  SEGMENT_MEMBER_DETAILS_UNAVAILABLE:
+    'The segment names no membership DMO or source DMO, or Salesforce lists no single relationship between them, so --include-details cannot join them. Export without it.',
   SEGMENT_PUBLISH_ADMISSION_FAILED:
     'The segment could not be read before the publish, or it does not exist in the default data space, so nothing was published. Deploy or check the segment, then rerun.',
   SEGMENT_PUBLISH_DEFINITION_MISMATCH:

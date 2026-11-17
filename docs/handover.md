@@ -1,3 +1,63 @@
+# Segment members: `sf data360 segment members export` — 2026-11-17
+
+Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),
+queue item Q5: port the member read of sf-plugin-mcnext (`mcnext segment members export`,
+`src/segment/segmentMembers.ts`, `src/segment/segmentMemberDetails.ts`; mcnext not edited).
+
+- Command shape: `sf data360 segment members export -m segment:Name` (aliases under
+  `datacloud`, `d360`, `dc`). A separate command, not a `retrieve` selector: members are data
+  rows, not a definition, so they never go to `data360/`. `-m segment:Name` matches
+  `sf data360 publish`. Default output `data/default/<Name>-<YYYY-MM-DD_HH-mm-ss>.csv` (mcnext's
+  `data/<dataSpace>/` layout); `--output-file` replaces an existing file. Flags: `--result-format
+csv|json` (mcnext's choice, default csv), `--include-details`, `--fields`, `--filters`,
+  `--order-by`, `--limit` (rows per request, default 1000), `--offset`, `--column-delimiter`,
+  `--api-version auto|67.0|68.0`, `--dataspace` (default only).
+- Services `src/services/segment-members.ts`: `readSegmentSummary` (GET `/ssot/segments/{Name}`,
+  404 ITEM_NOT_FOUND is `SEGMENT_MEMBERS_NOT_FOUND`), `readMemberPages` (GET
+  `.../members?fields&filters&orderBy&limit&offset` until `totalCount` or an empty page; a
+  changed `totalCount` is `SEGMENT_MEMBERS_CHANGED`), `discoverMemberDetails` (GET
+  `/ssot/metadata?entityType=DataModelObject&entityName=` for the latest membership DMO and the
+  `segmentOnApiName` DMO; exactly one relationship between them, else
+  `SEGMENT_MEMBER_DETAILS_UNAVAILABLE`), `readDetailPages` (POST `/ssot/query-sql?dataspace=default`
+  `{ sql, rowLimit }`, status GET until `Finished` (10 min bound), rows GET with offset/rowLimit
+  up to `rowCount`, never past it; a match count above 1 is `SEGMENT_MEMBER_DETAILS_AMBIGUOUS`).
+  Writer `src/artifacts/write-member-export.ts`: temporary file beside the output, renamed at the
+  end, removed on failure.
+- Transport: `openBoundSsot` on the command's one Connection (no child `sf`; mcnext used its own
+  `McnClient`). GETs retry after network errors, 429 and 503 (`connectRetry`); the query POST is
+  resent only when provably unsent. Other errors: `SEGMENT_MEMBERS_READ_FAILED` (HTTP status in
+  the message), `AUTHENTICATION_FAILED`, `INVALID_REQUEST`; unexpected shapes
+  `SEGMENT_MEMBERS_UNEXPECTED_RESPONSE`; write failures `SEGMENT_MEMBERS_OUTPUT_FAILED`.
+- Changed from mcnext: exact API name only (no display-name/record-ID lookup and no interactive
+  `@inquirer/select` prompt; the plugin selects by `-m type:Name`); default data space only (no
+  DataSpace SOQL check, `Data-Space` header replaced by `dataspace=default`); no
+  `--max-pages/--max-items/--max-duration-ms` (paging ends at `totalCount`); no
+  `--column-headers` and `--line-ending` (API names as headers, LF); detail values written as
+  returned (no date normalization); the detail SQL has no outer LIMIT; much of mcnext's envelope
+  cross-checking dropped (the API decides; `totalCount` and the column order are still checked).
+- Empty before publish: an empty export of a segment whose `publishStatus` is not SUCCESS warns
+  that members appear only after a publish finished.
+- Tests: `test/segment-members-command.test.mjs` (paging, query parameters, CSV quoting/JSON,
+  end at totalCount/empty page/offset past the end, 400 not retried and no file left, retries
+  after 503/429/reset, count change, unexpected shape, default path and unpublished warning,
+  404, refusals before auth, v67 route, detail join SQL/paging/poll, ambiguous match, missing
+  relationship, POST not resent, failed query, help); `test/cli.test.mjs` (20 command IDs,
+  subprocess refusal).
+- Docs: README (intro, segment row, "Export segment members"), seven segment error pages,
+  `docs/errors/README.md`, Commands rows of INVALID_SELECTION, INVALID_SCOPE,
+  TARGET_ORG_REQUIRED, AUTHENTICATION_FAILED, INVALID_REQUEST.
+- Live (isolated-source, `00Daj000010xkZNEAY`, read-only): `MCNEXT_Paging_Fixture_20261016`
+  (published, 1,100 members). Default (limit 1000): 2 pages, 1,100 rows, 6.7 s incl. CLI start;
+  `--limit 2000 --result-format json`: 1 page, 3.7 s; `--api-version 67.0`: 4.7 s;
+  `--offset 2000`: 200 with 0 rows (the members route does not answer 400 past the end; the query-sql rows
+  route does); absent segment: `SEGMENT_MEMBERS_NOT_FOUND`; `--include-details`: 1,100 rows, 19
+  columns, 5.8 s. Every export held the same 1,100 IDs as one direct GET (`totalCount` 1100,
+  0.93 s). Nothing in the org changed. DB entry
+  `.claude/skills/_verification-db/entries/data360/data360-q5-segment-members-api68.json`
+  (validated, not rebuilt, not committed); evidence `F:/Temp/cli-q5-9PtuRG` (member files removed).
+- Open: whether sf-plugin-mcnext drops its copy (user decision); sfmc.guide `segment-members.md`
+  not edited.
+
 # Segment publish: `sf data360 publish` publishes segments and waits — 2026-11-17
 
 Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),

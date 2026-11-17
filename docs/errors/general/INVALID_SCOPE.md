@@ -2,11 +2,11 @@
 
 > This family does not support the requested --api-version or --dataspace. Use --api-version auto (or a version the family allows) and the default data space, then rerun.
 
-|              |                                                                                       |
-| ------------ | ------------------------------------------------------------------------------------- |
-| **Family**   | General                                                                               |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish` |
-| **Outcome**  | `blocked` — nothing was read, written or deleted                                      |
+|              |                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                                    |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish`, `sf data360 segment members export` |
+| **Outcome**  | `blocked` — nothing was read, written or deleted                                                                           |
 
 ## What it means
 

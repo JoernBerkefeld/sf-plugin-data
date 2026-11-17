@@ -2,11 +2,11 @@
 
 > The selection is not valid for this command. Check the -m type:ApiName syntax, the --source-dir paths and flags that cannot be combined, then rerun.
 
-|              |                                                                                       |
-| ------------ | ------------------------------------------------------------------------------------- |
-| **Family**   | General                                                                               |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish` |
-| **Outcome**  | `blocked` — nothing was read, written or deleted                                      |
+|              |                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                                    |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish`, `sf data360 segment members export` |
+| **Outcome**  | `blocked` — nothing was read, written or deleted                                                                           |
 
 ## What it means
 

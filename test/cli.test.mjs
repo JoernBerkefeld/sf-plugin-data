@@ -812,7 +812,7 @@ test('Git selector flag declares parser exclusivity against both existing modes'
   assert.ok(Deploy.flags.metadata.exclusive.includes('changed-since'));
 });
 
-test('oclif discovers sixteen IDs backed by exactly four canonical implementations', async () => {
+test('oclif discovers twenty IDs backed by exactly five canonical implementations', async () => {
   const config = await Config.load({ root: process.cwd() });
   assert.deepEqual(
     config.commandIDs.toSorted(),
@@ -822,9 +822,20 @@ test('oclif discovers sixteen IDs backed by exactly four canonical implementatio
         `${topic}:retrieve`,
         `${topic}:delete`,
         `${topic}:publish`,
+        `${topic}:segment:members:export`,
       ])
       .toSorted(),
   );
+  const members = await config.findCommand('data360:segment:members:export', { must: true }).load();
+  assert.deepEqual(
+    members.aliases,
+    topics.slice(1).map((topic) => `${topic}:segment:members:export`),
+  );
+  for (const topic of topics.slice(1))
+    assert.equal(
+      await config.findCommand(`${topic}:segment:members:export`, { must: true }).load(),
+      members,
+    );
   const implementations = new Set();
   for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
     const canonical = await config.findCommand(`data360:${operation}`, { must: true }).load();
@@ -864,7 +875,8 @@ test('oclif discovers sixteen IDs backed by exactly four canonical implementatio
       implementations.add(implementation);
     }
   }
-  assert.equal(implementations.size, 4);
+  implementations.add(members);
+  assert.equal(implementations.size, 5);
 });
 
 for (const topic of topics) {
@@ -892,3 +904,18 @@ for (const topic of topics) {
     });
   }
 }
+
+test('segment members export refuses an invalid selection in a subprocess before auth', () => {
+  const result = spawnSync(
+    process.execPath,
+    ['bin/run.js', 'data360', 'segment', 'members', 'export', '-m', 'invalid', '--json'],
+    { encoding: 'utf8', env: environment },
+  );
+  assert.equal(result.status, 1, result.stderr);
+  const envelope = JSON.parse(result.stdout).result;
+  assert.equal(envelope.contract, 'sf-data360-segment-members');
+  assert.equal(envelope.provenance.command, 'sf data360 segment members export');
+  assert.equal(envelope.status, 'blocked');
+  assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
+  assert.equal(envelope.result.rowsWritten, 0);
+});
