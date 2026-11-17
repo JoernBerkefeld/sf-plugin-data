@@ -1987,7 +1987,11 @@ Omitted selectors retrieve all implemented native families (DLO, DMO and mapping
 a bare type retrieves its inventory, and exact members are sorted and deduplicated.
 A mapping the inventory lists but whose read answers 404 was deleted during the
 retrieve: it is skipped with a warning, not reported as a failure (one named with
-`mapping:<Name>` still fails).
+`mapping:<Name>` still fails). A bare `-m mapping` lists the mappings of up to six DMOs
+at once and reads up to six mappings at once; a listed mapping's entry, which Salesforce
+returns exactly as its item GET, is used instead of another read, and a source DLO or
+target DMO that several mappings name is read once per run. Files, items, warnings and
+diagnostics keep the name order; throttling (429) and network retries stay per request.
 Optional `--dataspace` selects explicit scope as described in the native workflow;
 omission retains default-space discovery. Nondefault scope is parameter plumbing,
 not live nondefault lifecycle qualification. Default/`auto` selects native API `68.0`;

@@ -478,18 +478,14 @@ for (const failure of [
     );
   });
 
-test('mapping inventory queries every confirmed parent serially with typed 404 and conflict checks', async () => {
+test('mapping inventory queries every confirmed parent in DMO order with typed 404 and conflict checks', async () => {
   const parents = ['ssot__Standard__dlm', 'Other__dlm', 'Target__dlm'];
   const calls = [];
-  let active = false;
   const reader = createMappingInventoryReader(
     connection(async ({ url }) => {
-      assert.equal(active, false);
-      active = true;
       const dmo = new URL(url).searchParams.get('dmoDeveloperName');
       calls.push(dmo);
       await Promise.resolve();
-      active = false;
       if (dmo !== 'Target__dlm') throw { statusCode: 404 };
       return { objectSourceTargetMaps: [mapping('Zed'), mapping('Alpha'), mapping('Zed')] };
     }),

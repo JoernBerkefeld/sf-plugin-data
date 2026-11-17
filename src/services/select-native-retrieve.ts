@@ -1,5 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { ConnectClient } from '../transport/connect-client.js';
+import { readInOrder } from './bounded-reads.js';
 import type { SettledRead } from './bounded-reads.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
 import {
@@ -182,7 +183,15 @@ export type MappingListingReport = {
   warnings?: string[];
   /** Receives a DMO whose mapping list could not be read; without it, that failure is thrown. */
   failure?: (dmo: string, error: unknown) => void;
+  /**
+   * Receives each listed mapping's entry by name. A mapping list entry is its item GET byte for
+   * byte (live API 68, 143 of 143 mappings), so the retrieve answers the GET with it.
+   */
+  listed?: Map<string, unknown>;
 };
+
+/** Mapping lists (one per DMO) read at once; results are still used in DMO order. */
+export const mappingListReads = 6;
 
 /**
  * Collect the names of the mappings of every selected-space DMO; each mapping is read and checked
@@ -203,15 +212,24 @@ export async function listNativeMappingNames(
 ): Promise<string[]> {
   const mappings = new Map<string, string>();
   const space = requestScope ?? 'default';
+  let stopped = false;
   const fail = (dmo: string, error: unknown): void => {
-    if (!report.failure) throw error;
+    if (!report.failure) {
+      stopped = true;
+      throw error;
+    }
     report.failure(dmo, error);
   };
-  for (const dmo of dmos) {
-    let response: unknown;
-    try {
-      response = await client.list(dmo);
-    } catch (error) {
+  // Up to mappingListReads DMOs are listed at once; names, warnings and failures follow the DMO
+  // order. Retries (429, 503, network) stay per request in the transport.
+  const reads = readInOrder(dmos, mappingListReads, async (dmo) => {
+    if (stopped) throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
+    return client.list(dmo);
+  });
+  for (const [index, dmo] of dmos.entries()) {
+    const read = await reads[index];
+    if ('error' in read) {
+      const { error } = read;
       if (!(
         error instanceof NativeMappingError &&
         error.code === 'MAPPING_HTTP_ERROR' &&
@@ -220,6 +238,7 @@ export async function listNativeMappingNames(
         fail(dmo, error);
       continue;
     }
+    const response = read.value;
     const entries: unknown = entryObject(response).objectSourceTargetMaps;
     if (!Array.isArray(entries)) {
       fail(dmo, new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED'));
@@ -241,7 +260,9 @@ export async function listNativeMappingNames(
         continue;
       }
       const identity = name.toLowerCase();
-      if (!mappings.has(identity)) mappings.set(identity, name);
+      if (mappings.has(identity)) continue;
+      mappings.set(identity, name);
+      if (Array.isArray(item.fieldMappings)) report.listed?.set(name, value);
     }
   }
   const names = [...mappings.values()];

@@ -1,3 +1,40 @@
+# Q8 f: mapping retrieve speed — 2026-11-17
+
+Queue Q8 item f (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`).
+
+- **Profile first** (timing preload `F:/Temp/sfdata-q8-6fatsY/profile.mjs`, observe-only; full
+  bare `-m mapping`, isolated-source `00Daj000010xkZNEAY`, read-only, HEAD 50dc2b6 build): 547 s,
+  1511 requests, all sequential except the DMO list. DMO list 27 pages (56 s, 4 at a time);
+  mapping list per DMO 1198 requests (382 s, about 0.3 s each, 70 % of the run); per mapping one
+  mapping GET (143, 53 s) and one source-DLO GET (143, 53 s; target DMO already answered from the
+  DMO list). Redundant: the 143 DLO GETs name only 61 DLOs, and every mapping GET equals its
+  entry in the mapping list (compared live as exact JSON for 143 of 143 mappings over 97 DMOs,
+  `F:/Temp/sfdata-q8-6fatsY/cmp/compare-list-item.mjs`).
+- **Changes:**
+  - `listNativeMappingNames` reads the per-DMO lists up to `mappingListReads` (6) at once with
+    `readInOrder`; names, warnings and failures are handled in DMO order; without a failure
+    receiver a failure stops further lists. `report.listed` receives each kept entry that has
+    `fieldMappings`.
+  - `createMappingClient(..., sender, listed?)`: a listed name's `get` answers with a copy of its
+    entry (no request); others GET as before. Used only by retrieve.
+  - `mappingParents(..., shared?)`: a per-run map of parent reads; a DLO/DMO several mappings name
+    is read once, each caller gets a `structuredClone`, a failed read is not kept.
+  - Per-mapping reads run up to `mappingReads` (6) at once (`readInOrder`); writes, items, the
+    404 skip warning (g), verbatim fallback and diagnostics stay in name order. Retries (429, 503,
+    network) stay per request in the transport.
+- **Measured** (same org, same command, profile on): before 547 s (9 m 8 s), after 138 s
+  (2 m 18 s); requests 1511 → 1286 (mapping GETs 143 → 0, DLO GETs 143 → 61); mapping lists 382 s
+  → 69 s span; DMO list unchanged (about 60 s, now the largest part with the lists). Output: 143
+  files byte-identical (`diff -r`), envelope equal (success, 143 items, no errors or warnings).
+- Tests (`test/retrieve-speed.test.mjs`): list concurrency 6 with DMO-ordered names, entries,
+  warnings and failures; a listing failure without receiver stops; a 429 on one parallel list is
+  retried for that request only; a listed mapping GET answers with a copy without a request;
+  command reads 6 mappings at once, parents once per run (failed read re-read), files and errors in
+  name order. `native-retrieve` "serially" test now checks DMO order only.
+- Guide (sfmc.guide, not edited): dlo-dmo-mapping.md Retrieve tab: a bare mapping retrieve reads
+  the mapping lists and mappings six at a time and uses the list entry instead of a second read
+  (143 mappings: about 9 min → about 2.3 min on the test org).
+
 # Q8 g: a listed mapping deleted during the retrieve is skipped with a warning — 2026-11-17
 
 Queue Q8 item g (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`).

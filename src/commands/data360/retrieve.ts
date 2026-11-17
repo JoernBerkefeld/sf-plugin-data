@@ -55,6 +55,7 @@ import { openBoundSsot } from '../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../transport/bound-ssot.js';
 import { withCheckedDirectories } from '../../transport/project-metadata.js';
 import { readInOrder } from '../../services/bounded-reads.js';
+import type { SettledRead } from '../../services/bounded-reads.js';
 import { MappingDefinitionError } from '../../artifacts/write-mapping-definition.js';
 import { mappingName } from '../../artifacts/mapping-document.js';
 import { writeDataGraphDocument } from '../../artifacts/write-data-graph.js';
@@ -194,6 +195,18 @@ type VerbatimTarget = {
 type NativeOf = (name: string) => { native: unknown } | undefined;
 /** One run's DLO and DMO listing entries by name, filled by listNativeNames. */
 type ListedEntries = { dlo: Map<string, unknown>; dmo: Map<string, unknown> };
+
+/**
+ * The value of a settled read, or what it threw.
+ * @template T
+ * @param {Promise<SettledRead<T>>} read One outcome of readInOrder.
+ * @returns {Promise<T>} The read's value.
+ */
+async function settledValue<T>(read: Promise<SettledRead<T>>): Promise<T> {
+  const outcome = await read;
+  if ('error' in outcome) throw outcome.error;
+  return outcome.value;
+}
 // Before an item's client exists nothing was read.
 const noReads = new Map<string, { native: unknown }>();
 const nothingRead: NativeOf = (name) => noReads.get(name);
@@ -224,6 +237,8 @@ type RetrieveDiagnostic = RetrieveEnvelope['diagnostics']['errors'][number];
 const nativeFamilies = ['dlo', 'dmo', 'mapping'] as const;
 // Relationship reads in flight at once during one retrieve (bounded; see readInOrder).
 const relationshipReads = 6;
+// Mappings read at once during one retrieve (each: its GET and its parents' reads).
+const mappingReads = 6;
 /** Selector groups, in run order; `rest` holds every family without its own group. */
 const selectorGroups = ['rest', 'data-stream', 'data-transform', 'data-graph'] as const;
 type RetrieveFlags = {
@@ -463,6 +478,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    * @param {string} version Native API version.
    * @param {BoundSsot} sender Shared bound sender for the reads.
    * @param {ListedEntries} [listed] This run's DLO and DMO listing entries at the same version.
+   * @param {Map<string, Promise<unknown>>} [shared] This run's parent reads: a DLO or DMO that
+   * several mappings name is read once (a failed read is not kept); each caller gets a copy.
    * @returns {MappingDependencies} Lazy source and target readers.
    */
   protected mappingParents(
@@ -470,21 +487,41 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     version: string,
     sender: BoundSsot,
     listed?: ListedEntries,
+    shared?: Map<string, Promise<unknown>>,
   ): MappingDependencies {
+    const once = async (key: string, read: () => Promise<unknown>): Promise<unknown> => {
+      if (!shared) return read();
+      let pending = shared.get(key);
+      if (!pending) {
+        const started = read();
+        pending = started;
+        shared.set(key, started);
+        started.catch(() => {
+          if (shared.get(key) === started) shared.delete(key);
+        });
+      }
+      return structuredClone(await pending);
+    };
     return {
       source: {
         get: async (name) =>
-          (this.createDloClient ?? createDloClient)(target, version, sender, listed?.dlo).get(name),
+          once(`dlo:${name}`, async () =>
+            (this.createDloClient ?? createDloClient)(target, version, sender, listed?.dlo).get(
+              name,
+            ),
+          ),
       },
       target: {
         get: async (name) =>
-          (this.createDmoClient ?? createDmoClient)(
-            target,
-            version,
-            undefined,
-            sender,
-            listed?.dmo,
-          ).get(name),
+          once(`dmo:${name}`, async () =>
+            (this.createDmoClient ?? createDmoClient)(
+              target,
+              version,
+              undefined,
+              sender,
+              listed?.dmo,
+            ).get(name),
+          ),
       },
     };
   }
@@ -1249,6 +1286,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         let dmoInventory: Promise<string[]> | undefined;
         // The listing entries; a listed object's GET answers with its entry (see createDloClient).
         const listed: ListedEntries = { dlo: new Map(), dmo: new Map() };
+        // Mapping list entries answer the mapping GET; parent reads are shared by the mappings.
+        const listedMappings = new Map<string, unknown>();
+        const parentReads = new Map<string, Promise<unknown>>();
         const listDmos = async (): Promise<string[]> =>
           (dmoInventory ??= this.listNativeNames(
             connection,
@@ -1277,6 +1317,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   requestScope,
                   {
                     warnings,
+                    listed: listedMappings,
                     failure: (dmo, error) =>
                       envelope.diagnostics.errors.push({
                         code: 'NATIVE_INVENTORY_FAILED',
@@ -1356,32 +1397,44 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           const routes: RetrieveRoute[] = [
             { operation: `${family}.get`, apiVersion: version, transport: 'native' },
           ];
-          for (const apiName of selected.get(family) ?? []) {
-            // The item's own client: its GET is the raw response a verbatim file keeps.
-            const reads = nativeReadRecorder();
+          const names = selected.get(family) ?? [];
+          // The item's own client: its GET is the raw response a verbatim file keeps.
+          const recorders = names.map(() => nativeReadRecorder());
+          // Mappings are read up to mappingReads at once; files, items, warnings and diagnostics
+          // still follow the name order. Retries (429, 503, network) stay per request.
+          const mappingDocuments =
+            family === 'mapping'
+              ? readInOrder([...names.keys()], mappingReads, async (index) =>
+                  this.acquireNativeMapping(
+                    names[index],
+                    recorders[index].wrap(
+                      this.createMappingClient(
+                        target,
+                        version,
+                        undefined,
+                        requestScope,
+                        this.ssotSender(target, version, connection),
+                        listedMappings,
+                      ),
+                    ),
+                    requestScope,
+                    this.mappingParents(
+                      target,
+                      version,
+                      this.ssotSender(target, version, connection),
+                      listed,
+                      parentReads,
+                    ),
+                    'retrieve',
+                  ),
+                )
+              : [];
+          for (const [index, apiName] of names.entries()) {
+            const reads = recorders[index];
             try {
               const document =
                 family === 'mapping'
-                  ? await this.acquireNativeMapping(
-                      apiName,
-                      reads.wrap(
-                        this.createMappingClient(
-                          target,
-                          version,
-                          undefined,
-                          requestScope,
-                          this.ssotSender(target, version, connection),
-                        ),
-                      ),
-                      requestScope,
-                      this.mappingParents(
-                        target,
-                        version,
-                        this.ssotSender(target, version, connection),
-                        listed,
-                      ),
-                      'retrieve',
-                    )
+                  ? await settledValue(mappingDocuments[index])
                   : family === 'dlo'
                     ? await this.acquireDlo(
                         apiName,

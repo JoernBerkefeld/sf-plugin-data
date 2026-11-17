@@ -7,7 +7,16 @@ import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import Retrieve from '../lib/commands/data360/retrieve.js';
-import { listNativeNames } from '../lib/services/select-native-retrieve.js';
+import {
+  listNativeMappingNames,
+  listNativeNames,
+  mappingListReads,
+} from '../lib/services/select-native-retrieve.js';
+import {
+  createMappingClient,
+  createMappingInventoryReader,
+} from '../lib/transport/mapping-rest.js';
+import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { readInOrder } from '../lib/services/bounded-reads.js';
 import { createDloClient } from '../lib/transport/dlo-rest.js';
 import { createDmoClient } from '../lib/transport/dmo-rest.js';
@@ -592,4 +601,214 @@ test('a failed label read fails only the DMOs whose names it carried, in DMO ord
     [...new Set(written.map((document) => document.identity.apiName.slice(0, 2)))],
     ['E1', 'E2', 'E3', 'E8', 'E9'],
   );
+});
+
+const mappingEntry = (name, dmo, dlo = 'Source__dll') => ({
+  developerName: name,
+  fieldMappings: [
+    {
+      developerName: `${name}_Id`,
+      sourceFieldDeveloperName: 'Id__c',
+      targetFieldDeveloperName: 'Id__c',
+    },
+  ],
+  sourceEntityDeveloperName: dlo,
+  status: 'ACTIVE',
+  targetEntityDeveloperName: dmo,
+});
+const dmoNames = (count) =>
+  Array.from({ length: count }, (_, index) => `D${String(index).padStart(2, '0')}__dlm`);
+
+test('mapping lists are read up to 6 DMOs at once; names, entries, warnings and failures keep DMO order', async () => {
+  const dmos = dmoNames(20);
+  let inFlight = 0;
+  let most = 0;
+  const listed = new Map();
+  const warnings = [];
+  const failures = [];
+  const names = await listNativeMappingNames(
+    dmos,
+    {
+      list: async (dmo) => {
+        inFlight++;
+        most = Math.max(most, inFlight);
+        const index = Number(dmo.slice(1, 3));
+        await tick(40 - index * 2);
+        inFlight--;
+        if (index === 3) throw Object.assign(new Error('x'), { statusCode: 400 });
+        if (index === 4) throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        return {
+          objectSourceTargetMaps: [
+            mappingEntry(`M${index}`, dmo),
+            { developerName: `bad name ${index}` },
+            // Listed under several DMOs: kept once, from the first DMO.
+            mappingEntry('Shared', dmo, `S${index}__dll`),
+          ],
+        };
+      },
+    },
+    undefined,
+    { warnings, failure: (dmo) => failures.push(dmo), listed },
+  );
+  assert.equal(mappingListReads, 6);
+  assert.equal(most, mappingListReads);
+  assert.deepEqual(failures, ['D03__dlm']);
+  assert.equal(names.length, 19);
+  assert.deepEqual(names, names.toSorted());
+  assert.equal(listed.get('Shared').sourceEntityDeveloperName, 'S0__dll');
+  assert.deepEqual(listed.get('M7'), mappingEntry('M7', 'D07__dlm'));
+  assert.equal(listed.has('M3'), false);
+  assert.deepEqual(
+    warnings.map((warning) => warning.split(':')[0]),
+    dmos
+      .filter((_, index) => index !== 3 && index !== 4)
+      .map((dmo) => `mapping inventory of ${dmo}`),
+  );
+});
+
+test('a mapping list failure without a failure receiver stops the listing', async () => {
+  const started = [];
+  await assert.rejects(
+    listNativeMappingNames(dmoNames(30), {
+      list: async (dmo) => {
+        started.push(dmo);
+        await tick(5);
+        if (dmo === 'D00__dlm') throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
+        return { objectSourceTargetMaps: [] };
+      },
+    }),
+    { code: 'MAPPING_INVENTORY_UNCONFIRMED' },
+  );
+  await tick(60);
+  assert.ok(started.length < 30, `${started.length} lists started`);
+});
+
+test('a 429 on one parallel mapping list is retried for that request only', async (t) => {
+  const waits = [];
+  t.mock.method(connectRetry, 'sleep', async (milliseconds) => {
+    waits.push(milliseconds);
+  });
+  t.mock.method(connectRetry, 'warn', () => {});
+  const requested = [];
+  const reader = createMappingInventoryReader(
+    connection(async ({ url }) => {
+      const dmo = new URL(url).searchParams.get('dmoDeveloperName');
+      requested.push(dmo);
+      await tick(5);
+      if (dmo === 'D05__dlm' && requested.filter((name) => name === dmo).length === 1)
+        throw Object.assign(new Error('x'), { statusCode: 429 });
+      return { objectSourceTargetMaps: [mappingEntry(`M_${dmo}`, dmo)] };
+    }),
+    '68.0',
+  );
+  const names = await listNativeMappingNames(dmoNames(12), reader);
+  assert.equal(names.length, 12);
+  assert.deepEqual(waits, [1000]);
+  assert.equal(requested.length, 13);
+});
+
+test('a listed mapping GET answers with a copy of its entry, without a request', async () => {
+  const entry = mappingEntry('Listed', 'Target__dlm');
+  const requests = [];
+  const client = createMappingClient(
+    'synthetic',
+    '68.0',
+    undefined,
+    undefined,
+    {
+      request: async (method, route) => {
+        requests.push(`${method} ${route}`);
+        return mappingEntry('Other', 'Target__dlm');
+      },
+    },
+    new Map([['Listed', entry]]),
+  );
+  const read = await client.get('Listed');
+  assert.deepEqual(read, entry);
+  read.fieldMappings.length = 0;
+  assert.equal(entry.fieldMappings.length, 1);
+  assert.deepEqual(requests, []);
+  await client.get('Other');
+  assert.deepEqual(requests, ['GET /services/data/v68.0/ssot/data-model-object-mappings/Other']);
+  await assert.rejects(client.get('bad/name'), { code: 'INVALID_MAPPING_NAME' });
+});
+
+test('mappings are read up to 6 at once, parents once per run, files and errors in name order', async () => {
+  const command = Object.create(Retrieve.prototype);
+  const flags = { 'api-version': 'auto', 'target-org': 'synthetic', metadata: ['mapping'] };
+  command.parse = async () => ({ flags });
+  command.jsonEnabled = () => true;
+  command.resolveOrg = async () => ({ getOrgId: () => 'org', getConnection: () => ({}) });
+  const names = Array.from({ length: 20 }, (_, index) => `M${String(index).padStart(2, '0')}`);
+  command.listNativeNames = async () => ['Target__dlm'];
+  command.createMappingInventoryReader = () => ({});
+  command.listNativeMappingNames = async () => names;
+  command.createSsotSender = () => ({});
+  command.createMappingClient = () => ({});
+  const parentGets = [];
+  let failParent = true;
+  command.createDloClient = () => ({
+    get: async (name) => {
+      parentGets.push(name);
+      await tick(5);
+      // The first read of Flaky__dll fails; a failed read is not kept for the next mapping.
+      if (name === 'Flaky__dll' && failParent) {
+        failParent = false;
+        throw new Error('flaky');
+      }
+      return { name, fields: [] };
+    },
+  });
+  command.createDmoClient = () => ({ get: async (name) => ({ name }) });
+  let inFlight = 0;
+  let most = 0;
+  command.acquireNativeMapping = async (apiName, _client, _scope, parents) => {
+    inFlight++;
+    most = Math.max(most, inFlight);
+    const index = Number(apiName.slice(1));
+    try {
+      // M00 starts first and reads Flaky__dll first.
+      if (index > 0) await tick(40 - index);
+      const source = index < 2 ? 'Flaky__dll' : index % 2 ? 'Odd__dll' : 'Even__dll';
+      const read = await parents.source.get(source);
+      // Each mapping gets its own copy of a shared parent read.
+      assert.deepEqual(read.fields, []);
+      read.fields.push('changed');
+      await parents.target.get('Target__dlm');
+    } finally {
+      inFlight--;
+    }
+    if (index === 7) throw new NativeMappingError('MAPPING_HTTP_ERROR', 403);
+    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+  };
+  const written = [];
+  command.writeNativeMapping = async (document) => {
+    written.push(document.identity.apiName);
+    return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
+  };
+  const previous = process.exitCode;
+  let result;
+  try {
+    result = await command.run();
+  } finally {
+    process.exitCode = previous;
+  }
+  assert.equal(most, 6);
+  assert.deepEqual(
+    written,
+    names.filter((name) => !['M00', 'M07'].includes(name)),
+  );
+  assert.deepEqual(
+    result.result.items.map((item) => item.identity.apiName),
+    written,
+  );
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => [error.identity.apiName, error.code]),
+    [
+      ['M00', 'NATIVE_RETRIEVE_FAILED'],
+      ['M07', 'MAPPING_HTTP_ERROR'],
+    ],
+  );
+  // Odd and Even once each; Flaky twice (the failed read was not kept).
+  assert.deepEqual(parentGets.toSorted(), ['Even__dll', 'Flaky__dll', 'Flaky__dll', 'Odd__dll']);
 });

@@ -111,6 +111,9 @@ function validateBody(body: MappingWriteBody): void {
  * @param {MetadataRunner} runner Installed CLI runner, used only for the destructive `remove`.
  * @param {string} dataSpace Optional explicit request scope.
  * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
+ * @param {ReadonlyMap<string, unknown>} [listed] Entries of this run's mapping lists at the same
+ * version and data space, by name. A listed name's GET answers with a copy of its entry, which
+ * Salesforce returns byte for byte the same, instead of another request.
  * @returns {MappingClient} Raw operations; `remove` scratch is retained.
  */
 export function createMappingClient(
@@ -119,6 +122,7 @@ export function createMappingClient(
   runner: MetadataRunner = runProjectMetadata,
   dataSpace?: string,
   sender?: BoundSsot,
+  listed?: ReadonlyMap<string, unknown>,
 ): MappingClient {
   const version = nativeApiVersion(apiVersion);
   if (
@@ -295,7 +299,12 @@ export function createMappingClient(
       if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
       return request('GET', `?${query}`);
     },
-    get: async (name) => request('GET', `${nameSuffix(name)}${scopeQuery}`),
+    get: async (name) => {
+      const suffix = nameSuffix(name);
+      const entry = listed?.get(name);
+      if (entry !== undefined) return structuredClone(entry);
+      return request('GET', `${suffix}${scopeQuery}`);
+    },
     create: async (body) => request('POST', scopeQuery, body),
     update: async (name, body) =>
       request('PATCH', `${nameSuffix(name)}/field-mappings${scopeQuery}`, body),
