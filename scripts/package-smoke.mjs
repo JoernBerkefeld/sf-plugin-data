@@ -52,8 +52,6 @@ assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/plugin.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/artifacts/read-deploy-input.d.ts'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/read-metadata.js'));
-assert.ok(artifact.files.some((file) => file.path === 'lib/services/read-metadata.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/deploy-result.js'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/deploy-result.d.ts'));
 assert.ok(artifact.files.some((file) => file.path === 'lib/services/native-dmo.js'));
@@ -74,6 +72,8 @@ for (const member of [
   'services/publish-calculated-insight',
   'commands/data360/delete',
   'services/delete-calculated-insight',
+  'commands/data360/segment/members/export',
+  'services/segment-members',
 ])
   for (const extension of ['js', 'd.ts'])
     assert.ok(artifact.files.some((file) => file.path === `lib/${member}.${extension}`));
@@ -114,8 +114,9 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
   } else {
     assert.match(result.stdout, /ALIASES/u);
     for (const flag of [
-      ...(command[1] === 'publish' ? ['--source-dir', '--allow-processing'] : ['--metadata']),
-      ...(command[1] === 'delete' ? ['--source-dir', '--confirm-delete'] : []),
+      '--metadata',
+      ...(command[1] === 'publish' ? ['--source-dir', '--wait-timeout'] : []),
+      ...(command[1] === 'delete' ? ['--confirm-delete'] : []),
       '--target-org',
       '--api-version',
       '--data-space',
@@ -148,6 +149,7 @@ assert.deepEqual(
       `${topic}:retrieve`,
       `${topic}:delete`,
       `${topic}:publish`,
+      `${topic}:segment:members:export`,
     ])
     .toSorted(),
 );
@@ -180,13 +182,21 @@ for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
 assert.equal(implementations.size, 4);
 for (const [arguments_, code] of [
   [[], 'INVALID_SELECTION'],
-  [['-d', 'Synthetic.calculatedInsight.json'], 'INVALID_SCOPE'],
+  [['-d', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
+  [['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'], 'INVALID_SCOPE'],
   [
-    ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--data-space', 'other'],
+    [
+      '-d',
+      'Synthetic__cio.calculatedInsight-meta.json',
+      '--api-version',
+      '68.0',
+      '--data-space',
+      'other',
+    ],
     'INVALID_SCOPE',
   ],
   [
-    ['-d', 'Synthetic.calculatedInsight.json', '--api-version', '68.0', '--preview'],
+    ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
     'UNSAFE_SOURCE',
   ],
 ]) {
@@ -203,16 +213,8 @@ for (const [arguments_, code] of [
   assert.deepEqual(envelope.result.items, []);
 }
 for (const [arguments_, code] of [
-  [[], 'INVALID_SCOPE'],
-  [['--api-version', '68.0'], 'INVALID_SELECTION'],
-  [
-    ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--data-space', 'other'],
-    'INVALID_SCOPE',
-  ],
-  [
-    ['--api-version', '68.0', '-d', 'Synthetic.calculatedInsight.json', '--preview'],
-    'UNSAFE_SOURCE',
-  ],
+  [['--api-version', '65.0'], 'INVALID_SCOPE'],
+  [['--api-version', '68.0', '--data-space', 'other'], 'INVALID_SCOPE'],
 ]) {
   const result = spawnSync(
     process.execPath,
@@ -320,13 +322,11 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
   const flags = {
     'api-version': '68.0',
     metadata: [`data-graph:InstalledGraph`],
-    'source-dir': operation === 'delete' ? graphReceipt.path : undefined,
     // Delete admits --output-dir only together with --field.
     'output-dir': operation === 'delete' ? undefined : graphProject,
     overwrite: true,
     preview: false,
-    'allow-processing': true,
-    'confirm-delete': true,
+    'allow-processing': operation === 'deploy',
   };
   command.parse = async () => ({ flags });
   command.jsonEnabled = () => true;
@@ -342,6 +342,12 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
     assert.equal(name, 'InstalledGraph');
     assert.equal(actual, context);
     return graphDocument;
+  };
+  // Delete -m reads the current definition from the org by name.
+  command.readDeleteSource = async (family, name) => {
+    assert.equal(family, 'data-graph');
+    assert.equal(name, 'InstalledGraph');
+    return { desired: graphDocument };
   };
   const { readDeployInputs } = await import(
     pathToFileURL(path.join(packageRoot, 'lib/artifacts/read-deploy-input.js')).href
