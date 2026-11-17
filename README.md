@@ -2641,14 +2641,21 @@ answered HTTP 201 with `publishStatus` `PUBLISHING`, and `SUCCESS` followed afte
 
 #### Export segment members
 
-`sf data360 segment members export -m segment:<name>` writes the members of one segment
+`sf data360 segment members export -m segment:<value>` writes the members of one segment
 as data rows (CSV by default, `--result-format json` for an array of row objects). The
 rows are data, not a definition, so the file never goes to a `data360/` folder: it goes to
-`--output-file`, by default `data/default/<name>-<YYYY-MM-DD_HH-mm-ss>.csv` below the
+`--output-file`, by default `data/default/<ApiName>-<YYYY-MM-DD_HH-mm-ss>.csv` below the
 working directory (an existing `--output-file` is replaced). The command is read-only.
 
-- The segment is read first by its exact API name in the default data space (absent:
-  `SEGMENT_MEMBERS_NOT_FOUND`). `--api-version` is `auto` (68.0), `67.0` or `68.0`.
+- `<value>` is the segment's API name, its MarketSegment record ID (`1sg…`, as in the
+  browser address bar) or its display name, as the Data Cloud UI shows them; quote values
+  with spaces. An API name is read directly (`GET /ssot/segments/<name>`); otherwise the
+  segment list (`GET /ssot/segments`) is searched for the exact ID or display name (case
+  matters, default data space only; no match: `SEGMENT_MEMBERS_NOT_FOUND`). When more than
+  one segment matches, a terminal asks "Multiple segments match that name. Choose one:";
+  with `--json` or without a terminal the export stops with `SEGMENT_SELECTION_AMBIGUOUS`
+  and lists each display name, API name and ID. `--api-version` is `auto` (68.0), `67.0`
+  or `68.0`.
 - Basic mode reads `GET /ssot/segments/<name>/members` page by page with `limit`
   (`--limit`, rows per request, default 1000) and `offset` (`--offset`, first row,
   default 0) until `totalCount` rows are read. `--fields`, `--filters` and `--order-by`
@@ -2659,7 +2666,13 @@ working directory (an existing `--output-file` is replaced). The command is read
   the latest membership DMO is joined to that DMO through the relationship
   `/ssot/metadata` lists between them, in one Data 360 SQL query (`POST /ssot/query-sql`),
   whose rows are read page by page up to its row count. A member with more than one
-  detail row is `SEGMENT_MEMBER_DETAILS_AMBIGUOUS`.
+  detail row is `SEGMENT_MEMBER_DETAILS_AMBIGUOUS`. The CSV header and JSON keys are the
+  field labels (`--column-headers label`, the default; an empty label falls back to the
+  API name, a repeated header gets `_2`, `_3`, … in column order) or the field API names
+  (`--column-headers api-name`). Basic mode always uses the names Salesforce returns.
+- `--column-delimiter` sets the CSV separator, as a name or the character itself:
+  `COMMA`/`,` (default), `SEMICOLON`/`;`, `TAB`, `PIPE`/`|`, `CARET`/`^`,
+  `BACKQUOTE`/`` ` ``.
 - Members exist only after a publish finished (`sf data360 publish`); before that the
   export is empty and warns.
 - Reads retry after network errors, HTTP 429 and 503 (the detail query POST only when it
@@ -2672,6 +2685,8 @@ working directory (an existing `--output-file` is replaced). The command is read
 sf data360 segment members export -o target -m segment:Example_Segment
 sf data360 segment members export -o target -m segment:Example_Segment --result-format json --output-file members.json
 sf data360 segment members export -o target -m segment:Example_Segment --include-details
+sf data360 segment members export -o target -m "segment:Example Segment" --column-delimiter ";"
+sf data360 segment members export -o target -m segment:1sgXXXXXXXXXXXXXXX --include-details --column-headers api-name
 ```
 
 Observed at API 67 and 68 (2026-11-16 and 2026-11-17, a published segment with 1,100
@@ -2681,6 +2696,12 @@ rows. The export wrote the same 1,100 member IDs as a direct read of the route, 
 3.7 to 6.7 seconds per run including CLI start; `--include-details` wrote 1,100 rows
 with the 19 fields of the source DMO in 5.8 seconds. The detail query's rows route
 answers HTTP 400 for an offset past its end, so the plugin never reads past the row count.
+On 2026-11-17 (API 68) the same segment exported by display name, by record ID and by API
+name gave byte-identical files of 1,100 rows (6 to 7 seconds each); the details export
+wrote the 19 field labels by default and the API names with `--column-headers api-name`,
+with identical rows. Salesforce refused to create or rename a segment to a display name
+another default-space segment already had (HTTP 400 "A Segment with name … already
+exists"), so an ambiguous display name is not expected; the check stays in place.
 
 ### Runtime data graph: standard CLI facade transport
 

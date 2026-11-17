@@ -15,6 +15,43 @@ export const memberDelimiters = {
   BACKQUOTE: '`',
 } as const;
 
+/** `--column-delimiter` values: a name of memberDelimiters or the character itself (not TAB). */
+export const memberDelimiterOptions = [
+  ...Object.keys(memberDelimiters),
+  ...Object.values(memberDelimiters).filter((character) => character !== '\t'),
+];
+
+/**
+ * The delimiter character of a `--column-delimiter` value.
+ * @param {string} value A name of memberDelimiters or the character itself.
+ * @returns {string} Delimiter character.
+ */
+export function memberDelimiter(value: string): string {
+  return (memberDelimiters as Record<string, string>)[value] ?? value;
+}
+
+/**
+ * Column headers of the detail output: each column's label (an empty label falls back to its
+ * API name) or its API name; a header used already gets a stable `_2`, `_3`, ... suffix in
+ * column order.
+ * @param {Array<{ name: string; label: string }>} columns Detail columns.
+ * @param {'label' | 'api-name'} mode Header source.
+ * @returns {string[]} One unique header per column.
+ */
+export function memberColumnHeaders(
+  columns: ReadonlyArray<{ name: string; label: string }>,
+  mode: 'label' | 'api-name',
+): string[] {
+  const used = new Set<string>();
+  return columns.map(({ name, label }) => {
+    const base = mode === 'label' ? label.trim() || name : name;
+    let header = base;
+    for (let suffix = 2; used.has(header); suffix++) header = `${base}_${suffix}`;
+    used.add(header);
+    return header;
+  });
+}
+
 /**
  * A CSV cell: text as is, other values as JSON, quoted when needed.
  * @param {unknown} value Cell value.

@@ -1,21 +1,28 @@
+import select from '@inquirer/select';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesforce/core';
 import { plugin } from '../../../../plugin.js';
-import { segmentName } from '../../../../artifacts/segment-document.js';
 import {
-  memberDelimiters,
+  memberColumnHeaders,
+  memberDelimiter,
+  memberDelimiterOptions,
   memberOutputFile,
   writeMemberExport,
 } from '../../../../artifacts/write-member-export.js';
 import type { MemberFormat } from '../../../../artifacts/write-member-export.js';
 import {
+  describeCandidate,
   discoverMemberDetails,
   readDetailPages,
   readMemberPages,
-  readSegmentSummary,
+  resolveSegmentSelection,
   SegmentMembersError,
 } from '../../../../services/segment-members.js';
-import type { DetailColumn, SegmentSummary } from '../../../../services/segment-members.js';
+import type {
+  DetailColumn,
+  SegmentCandidate,
+  SegmentSummary,
+} from '../../../../services/segment-members.js';
 import { operationDiagnostic } from '../../../../services/operation-diagnostic.js';
 import { openBoundSsot } from '../../../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../../../transport/bound-ssot.js';
@@ -40,10 +47,13 @@ export type SegmentMembersEnvelope = {
     rowsWritten: number;
     totalCount?: number;
     pages: number;
-    columns?: DetailColumn[];
+    columnHeaders?: ColumnHeaders;
+    columns?: Array<DetailColumn & { header: string }>;
     routes: Array<{ operation: string; apiVersion: string; transport: 'native' }>;
   };
 };
+
+type ColumnHeaders = 'label' | 'api-name';
 
 type ExportFlags = {
   'target-org'?: string;
@@ -56,7 +66,8 @@ type ExportFlags = {
   'order-by'?: string;
   limit: number;
   offset: number;
-  'column-delimiter': keyof typeof memberDelimiters;
+  'column-delimiter': string;
+  'column-headers': ColumnHeaders;
   'api-version'?: string;
   dataspace?: string;
 };
@@ -73,9 +84,12 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
   ];
   public static readonly summary = 'Export the members of one published segment as CSV or JSON.';
   public static readonly description =
-    'Reads the members of -m segment:Name (exact API name, default data space; --api-version auto (68.0), 67.0 or 68.0) and writes them as data rows to --output-file, by default data/default/<Name>-<YYYY-MM-DD_HH-mm-ss>.csv below the working directory (never a data360/ definition folder; an existing --output-file is replaced). The segment is read first (absent is SEGMENT_MEMBERS_NOT_FOUND). Basic mode reads GET /ssot/segments/{Name}/members page by page with limit (--limit rows per request, default 1000; Salesforce decides the maximum, 2000 worked in a test) and offset (--offset first row, default 0) until totalCount rows are read; --fields, --filters and --order-by are sent as given and Salesforce decides (its default is the member ID and a few membership columns). A member count that changes during the read (a publish finished) is SEGMENT_MEMBERS_CHANGED. --include-details instead joins the latest membership DMO to the DMO the segment is built on and writes every field of that DMO per member, through one Data 360 SQL query (POST /ssot/query-sql, rows read page by page up to the row count); a member with more than one detail row is SEGMENT_MEMBER_DETAILS_AMBIGUOUS. Members exist only after a publish finished (sf data360 publish); before that the export is empty with a warning. Reads retry after network errors, HTTP 429 and 503; any other Salesforce error ends the export (SEGMENT_MEMBERS_READ_FAILED) and no file is left. --result-format csv (default; header from the first row, --column-delimiter) or json (an array of row objects). Read-only: nothing in the org changes.';
+    'Reads the members of the segment named by -m segment:<API name, record ID or display name> (default data space; --api-version auto (68.0), 67.0 or 68.0) and writes them as data rows to --output-file, by default data/default/<ApiName>-<YYYY-MM-DD_HH-mm-ss>.csv below the working directory (never a data360/ definition folder; an existing --output-file is replaced). The segment is read first: an API name directly (GET /ssot/segments/{Name}); otherwise the segment list (GET /ssot/segments) is searched for the exact MarketSegment record ID or the exact display name, as the Data Cloud UI shows them (case matters; no match is SEGMENT_MEMBERS_NOT_FOUND). When several segments share that display name, a terminal asks which one ("Multiple segments match that name. Choose one:"); with --json or without a terminal the export stops with SEGMENT_SELECTION_AMBIGUOUS and lists each name, API name and ID. Basic mode reads GET /ssot/segments/{Name}/members page by page with limit (--limit rows per request, default 1000; Salesforce decides the maximum, 2000 worked in a test) and offset (--offset first row, default 0) until totalCount rows are read; --fields, --filters and --order-by are sent as given and Salesforce decides (its default is the member ID and a few membership columns). A member count that changes during the read (a publish finished) is SEGMENT_MEMBERS_CHANGED. --include-details instead joins the latest membership DMO to the DMO the segment is built on and writes every field of that DMO per member, through one Data 360 SQL query (POST /ssot/query-sql, rows read page by page up to the row count); a member with more than one detail row is SEGMENT_MEMBER_DETAILS_AMBIGUOUS. Its CSV header and JSON keys are the field labels (--column-headers label, default; an empty label uses the API name, a repeated header gets _2, _3, ...) or the field API names (--column-headers api-name); basic mode always uses the names Salesforce returns. Members exist only after a publish finished (sf data360 publish); before that the export is empty with a warning. Reads retry after network errors, HTTP 429 and 503; any other Salesforce error ends the export (SEGMENT_MEMBERS_READ_FAILED) and no file is left. --result-format csv (default; header from the first row, --column-delimiter as a name or the character: COMMA or ",", SEMICOLON or ";", TAB, PIPE or "|", CARET or "^", BACKQUOTE or "`") or json (an array of row objects). Read-only: nothing in the org changes.';
   public static readonly examples = [
     'sf data360 segment members export -o target -m segment:My_Segment',
+    'sf data360 segment members export -o target -m "segment:My Segment" --column-delimiter ";"',
+    'sf data360 segment members export -o target -m segment:1sgXXXXXXXXXXXXXXX',
+    'sf data360 segment members export -o target -m segment:My_Segment --include-details --column-headers api-name',
     'sf data360 segment members export -o target -m segment:My_Segment --result-format json --output-file members.json',
     'sf data360 segment members export -o target -m segment:My_Segment --include-details',
   ];
@@ -86,7 +100,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
     }),
     metadata: Flags.string({
       char: 'm',
-      summary: 'The segment to export: segment:Name (exact API name).',
+      summary: 'The segment to export: segment:<API name, record ID or display name>.',
     }),
     'output-file': Flags.string({
       char: 'f',
@@ -107,9 +121,14 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
     limit: Flags.integer({ default: 1000, min: 1, summary: 'Rows per request.' }),
     offset: Flags.integer({ default: 0, min: 0, summary: 'Basic mode: first row to read.' }),
     'column-delimiter': Flags.option({
-      options: Object.keys(memberDelimiters) as Array<keyof typeof memberDelimiters>,
-      default: 'COMMA' as const,
-      summary: 'CSV column delimiter.',
+      options: memberDelimiterOptions,
+      default: 'COMMA',
+      summary: 'CSV column delimiter: a name (COMMA, SEMICOLON, TAB, ...) or the character.',
+    })(),
+    'column-headers': Flags.option({
+      options: ['label', 'api-name'] as const,
+      default: 'label' as const,
+      summary: '--include-details: header from field labels (default) or API names.',
     })(),
     'api-version': Flags.string({ summary: 'auto (68.0), 67.0 or 68.0.' }),
     dataspace: Flags.string({ aliases: ['data-space'], summary: 'Default space only.' }),
@@ -132,6 +151,30 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
       connectionOptions: { version: '68.0' },
     });
   };
+
+  /**
+   * A person can answer a prompt: a terminal on stdin and no --json.
+   * @returns {boolean} Whether to ask.
+   */
+  protected interactive(): boolean {
+    return Boolean(process.stdin.isTTY) && !this.jsonEnabled();
+  }
+
+  /**
+   * Ask which of several segments to export.
+   * @param {SegmentCandidate[]} candidates Segments sharing the selection.
+   * @returns {Promise<SegmentCandidate>} The chosen segment.
+   */
+  protected async chooseSegment(candidates: SegmentCandidate[]): Promise<SegmentCandidate> {
+    const index = await select({
+      message: 'Multiple segments match that name. Choose one:',
+      choices: candidates.map((candidate, value) => ({
+        name: describeCandidate(candidate),
+        value,
+      })),
+    });
+    return candidates[index];
+  }
 
   /**
    * Validate the selection before auth, then read and write the members.
@@ -164,11 +207,12 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
       return this.finish(envelope);
     };
     const member = flags.metadata;
-    const apiName = member?.startsWith('segment:') ? member.slice(8) : undefined;
-    if (!apiName || !segmentName.test(apiName))
+    const selection = member?.startsWith('segment:') ? member.slice(8) : undefined;
+    // eslint-disable-next-line no-control-regex -- control characters are refused, not matched
+    if (!selection?.trim() || selection.length > 255 || /[\u0000-\u001F\u007F]/u.test(selection))
       return fail(
         'INVALID_SELECTION',
-        'Name exactly one segment with -m segment:Name (its exact API name).',
+        'Name exactly one segment with -m segment:<API name, record ID or display name>.',
       );
     if (
       flags['include-details'] &&
@@ -203,12 +247,30 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
     };
     try {
       route('segments.get');
-      const segment = await readSegmentSummary(sender, version, apiName);
+      const interactive = this.interactive();
+      const segment = await resolveSegmentSelection(sender, version, selection, {
+        listed: () => route('segments.list'),
+        ...(interactive
+          ? {
+              choose: async (candidates: SegmentCandidate[]): Promise<SegmentCandidate> => {
+                try {
+                  return await this.chooseSegment(candidates);
+                } catch {
+                  throw new SegmentMembersError(
+                    'SEGMENT_SELECTION_AMBIGUOUS',
+                    `"${selection}" matches ${candidates.length} segments in the default data space and none was chosen.`,
+                  );
+                }
+              },
+            }
+          : {}),
+      });
       if (!segment)
         return fail(
           'SEGMENT_MEMBERS_NOT_FOUND',
-          `Segment ${apiName} does not exist in the default data space of the org (HTTP 404 ITEM_NOT_FOUND). Check the exact API name.`,
+          `No segment in the default data space of the org has the API name, record ID or display name "${selection}". Check the exact value (case matters).`,
         );
+      const apiName = segment.apiName;
       envelope.result.segment = {
         apiName: segment.apiName,
         marketSegmentId: segment.marketSegmentId,
@@ -227,7 +289,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
         flags['result-format'],
         this.cwd(),
       );
-      const delimiter = memberDelimiters[flags['column-delimiter']];
+      const delimiter = memberDelimiter(flags['column-delimiter']);
       const report = (read: number, total: number): void => {
         envelope.result.pages++;
         envelope.result.totalCount = total;
@@ -237,14 +299,19 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
       if (flags['include-details']) {
         route('metadata.get');
         const { sql, columns } = await discoverMemberDetails(sender, version, segment);
-        envelope.result.columns = columns;
+        const headers = memberColumnHeaders(columns, flags['column-headers']);
+        envelope.result.columnHeaders = flags['column-headers'];
+        envelope.result.columns = columns.map((column, index) => ({
+          ...column,
+          header: headers[index],
+        }));
         route('query-sql.post');
         route('query-sql.rows');
         rows = await writeMemberExport(
           file,
           flags['result-format'],
           delimiter,
-          flags['result-format'] === 'csv' ? columns.map(({ name }) => name) : undefined,
+          flags['result-format'] === 'csv' ? headers : undefined,
           async (sink) => {
             let read = 0;
             for await (const page of readDetailPages(
@@ -257,7 +324,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
             )) {
               await sink.write(
                 page.rows.map((row) =>
-                  Object.fromEntries(columns.map(({ name }, index) => [name, row[index]])),
+                  Object.fromEntries(headers.map((header, index) => [header, row[index]])),
                 ),
               );
               read += page.rows.length;
@@ -266,6 +333,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
           },
         );
       } else {
+        envelope.result.columnHeaders = 'api-name';
         route('segments.members');
         rows = await writeMemberExport(
           file,

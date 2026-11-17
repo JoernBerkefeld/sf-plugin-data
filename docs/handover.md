@@ -1,3 +1,47 @@
+# Segment members: lookup by display name or ID, column headers and delimiter — 2026-11-17
+
+Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),
+queue item Q6: finish the port of mcnext's member export (`src/commands/mcnext/segment/members/export.ts`,
+`src/segment/segmentMembers.ts`; mcnext not edited) so that it can be removed there (Q7).
+
+- Selection: `-m segment:<API name, record ID or display name>`. A value that can be an API
+  name is read directly (GET `/ssot/segments/{Name}`); on 404 ITEM_NOT_FOUND, or for any other
+  value, `listSegmentCandidates` reads GET `/ssot/segments?batchSize=200&offset=` until
+  `totalSize` (default data space only) and `resolveSegmentSelection` matches the exact API name,
+  else the exact `marketSegmentId` or `displayName` (case-sensitive, as mcnext). The chosen
+  segment is then read by API name and its ID compared with the list. A non-identifier value
+  never goes into a URL path. Record IDs start with a digit, so they always take the list.
+- Several matches: in a terminal (`process.stdin.isTTY` and no `--json`) `@inquirer/select`
+  5.2.8 (new runtime dependency, pinned) asks "Multiple segments match that name. Choose one:";
+  otherwise, or when the prompt is cancelled, new code `SEGMENT_SELECTION_AMBIGUOUS` (blocked)
+  lists display name, API name and ID per match. Command hooks `interactive()`,
+  `chooseSegment()` are methods for tests.
+- `--column-headers label|api-name` (default label, `--include-details` only; basic mode
+  reports `api-name`): `memberColumnHeaders` in `src/artifacts/write-member-export.ts`, empty
+  label falls back to the API name, repeats get `_2`, `_3` (mcnext's algorithm). Applies to
+  the CSV header and the JSON keys. Envelope: `result.columnHeaders`, `result.columns[].header`.
+  This changes the default detail header from API names (Q5) to labels.
+- `--column-delimiter` also takes the character (`,` `;` `|` `^` `` ` ``), besides the names; TAB by name.
+- Left out (user): `--max-items`, `--max-pages`, `--max-duration-ms`, `--line-ending`,
+  non-default data spaces. Not ported and not in the user's list: mcnext's DATE/DATETIME value
+  normalization (`normalizeFieldValue`, it does exist in mcnext; Q5 dropped it) and the default
+  file name from the display name (here the API name).
+- Tests: `test/segment-members-command.test.mjs` (display name via list, URL path safety, ID via
+  list, exact/case/data-space misses, list paging with and without totalSize, malformed list,
+  ambiguity without terminal, prompt choice and cancel, API name beats display name, header
+  labels/fallback/suffixes/api-name, delimiter names and characters).
+- Live (isolated-source `00Daj000010xkZNEAY`): `MCNEXT_Paging_Fixture_20261016` ("MCNEXT Pagination
+  Fixture 20261016", `1sgaj000000XmQrAAK`) by display name, ID and API name: 1,100 rows each,
+  byte-identical files, 6.1 to 7.1 s; lower-case display name: `SEGMENT_MEMBERS_NOT_FOUND`;
+  `--column-delimiter ';'` and `--include-details` with both header modes (19 labels vs 19 API
+  names, identical rows). No two segments shared a display name; two probes
+  `CliQ6Dup_A/B_20261117` (DBT, `WHERE 1 = 0`, not published): the second create with the same
+  display name and a later rename to it were refused (HTTP 400 INVALID_FIELD /
+  ENTITY_SAVE_ERROR "A Segment with name … already exists"), so the no-TTY error could not be
+  run live; both probes deleted and confirmed absent. DB entry
+  `.claude/skills/_verification-db/entries/data360/data360-q6-segment-members-port-api68.json`.
+- Open: sfmc.guide `segment-members.md` not edited; Q7 removes the mcnext command.
+
 # Segment members: `sf data360 segment members export` — 2026-11-17
 
 Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),

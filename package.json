@@ -62,6 +62,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@inquirer/select": "5.2.8",
     "@oclif/core": "4.13.2",
     "@salesforce/core": "8.31.3",
     "@salesforce/sf-plugins-core": "12.2.0"

@@ -132,6 +132,139 @@ export async function readSegmentSummary(
   };
 }
 
+/** One default-space segment of the segment list, as offered when a selection is ambiguous. */
+export type SegmentCandidate = { apiName: string; marketSegmentId: string; displayName?: string };
+
+/** Largest page of the segment list (`batchSize` 1 to 200). */
+const listPageSize = 200;
+
+/**
+ * Every default-space segment of the segment list, page by page with `batchSize` and `offset`
+ * until `totalSize` (or, without it, a short or empty page). Entries without an API name or ID,
+ * and segments of other data spaces, are left out. A page that adds no new name ends the
+ * listing (a server ignoring the offset).
+ * @param {BoundSsot} sender Bound transport.
+ * @param {string} version Numeric API version.
+ * @returns {Promise<SegmentCandidate[]>} Segments in list order.
+ */
+export async function listSegmentCandidates(
+  sender: BoundSsot,
+  version: string,
+): Promise<SegmentCandidate[]> {
+  const seen = new Set<string>();
+  const candidates: SegmentCandidate[] = [];
+  for (let offset = 0; ;) {
+    const page = record(
+      await sender.request(
+        'GET',
+        `/services/data/v${version}/ssot/segments${query([
+          ['batchSize', listPageSize],
+          ['offset', offset],
+        ])}`,
+      ),
+    );
+    const entries = page?.segments;
+    if (!Array.isArray(entries))
+      throw new SegmentMembersError(
+        'SEGMENT_MEMBERS_UNEXPECTED_RESPONSE',
+        `Salesforce answered the segment list at offset ${offset} without a segments list.`,
+      );
+    let added = 0;
+    for (const entry of entries) {
+      const item = record(entry);
+      if (
+        typeof item?.apiName !== 'string' ||
+        !identifier.test(item.apiName) ||
+        typeof item.marketSegmentId !== 'string' ||
+        seen.has(item.apiName)
+      )
+        continue;
+      seen.add(item.apiName);
+      added++;
+      if (item.dataSpace === 'default')
+        candidates.push({
+          apiName: item.apiName,
+          marketSegmentId: item.marketSegmentId,
+          ...(typeof item.displayName === 'string' ? { displayName: item.displayName } : {}),
+        });
+    }
+    offset += entries.length;
+    const total = page?.totalSize;
+    const more =
+      typeof total === 'number' && Number.isSafeInteger(total)
+        ? offset < total
+        : entries.length >= listPageSize;
+    if (entries.length === 0 || !more || added === 0) return candidates;
+  }
+}
+
+/**
+ * One candidate as a line: display name, API name and record ID.
+ * @param {SegmentCandidate} candidate Segment.
+ * @returns {string} Description.
+ */
+export function describeCandidate(candidate: SegmentCandidate): string {
+  return `"${candidate.displayName ?? candidate.apiName}" (API name ${candidate.apiName}, ID ${candidate.marketSegmentId})`;
+}
+
+/**
+ * Find the segment a selection names in the default data space, like the Data Cloud UI shows it:
+ * by exact API name (read directly), otherwise through the segment list by exact record ID or
+ * exact display name (case matters). More than one match is passed to `choose`; without it,
+ * SEGMENT_SELECTION_AMBIGUOUS lists the candidates.
+ * @param {BoundSsot} sender Bound transport.
+ * @param {string} version Numeric API version.
+ * @param {string} selection API name, record ID or display name.
+ * @param {object} [options] Hooks.
+ * @param {(candidates: SegmentCandidate[]) => Promise<SegmentCandidate>} [options.choose] Picks one of several matches.
+ * @param {() => void} [options.listed] Called before the segment list is read.
+ * @returns {Promise<SegmentSummary | undefined>} The segment, or undefined when nothing matches.
+ */
+export async function resolveSegmentSelection(
+  sender: BoundSsot,
+  version: string,
+  selection: string,
+  options: {
+    choose?: (candidates: SegmentCandidate[]) => Promise<SegmentCandidate>;
+    listed?: () => void;
+  } = {},
+): Promise<SegmentSummary | undefined> {
+  if (identifier.test(selection)) {
+    const direct = await readSegmentSummary(sender, version, selection);
+    if (direct) return direct;
+  }
+  options.listed?.();
+  const candidates = await listSegmentCandidates(sender, version);
+  const exact = candidates.find(({ apiName }) => apiName === selection);
+  const matches = exact
+    ? [exact]
+    : candidates.filter(
+        ({ marketSegmentId, displayName }) =>
+          marketSegmentId === selection || displayName === selection,
+      );
+  if (matches.length === 0) return undefined;
+  let chosen = matches[0];
+  if (matches.length > 1) {
+    if (!options.choose)
+      throw new SegmentMembersError(
+        'SEGMENT_SELECTION_AMBIGUOUS',
+        [
+          `"${selection}" matches ${matches.length} segments in the default data space:`,
+          ...matches.map((candidate) => `- ${describeCandidate(candidate)}`),
+          'Rerun with -m segment:<API name>.',
+        ].join('\n'),
+      );
+    chosen = await options.choose(matches);
+  }
+  const summary = await readSegmentSummary(sender, version, chosen.apiName);
+  if (summary && summary.marketSegmentId !== chosen.marketSegmentId)
+    throw new SegmentMembersError(
+      'SEGMENT_MEMBERS_UNEXPECTED_RESPONSE',
+      `Salesforce lists segment ${chosen.apiName} with ID ${chosen.marketSegmentId}, but its read answers ID ${summary.marketSegmentId}.`,
+    );
+  return summary;
+}
+
 /**
  * Read the members route page by page with `limit` and `offset` until `totalCount` rows are
  * read or a page is empty. The query parameters are sent as given; Salesforce decides, and
@@ -278,7 +411,10 @@ export async function discoverMemberDetails(
     .filter((field) => typeof field?.name === 'string' && identifier.test(field.name))
     .map((field) => ({
       name: field!.name as string,
-      label: typeof field!.displayName === 'string' ? field!.displayName : (field!.name as string),
+      label:
+        typeof field!.displayName === 'string' && field!.displayName.trim()
+          ? field!.displayName.trim()
+          : (field!.name as string),
     }));
   if (columns.length === 0)
     throw new SegmentMembersError(

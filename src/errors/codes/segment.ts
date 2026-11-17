@@ -33,7 +33,7 @@ export const hints: Readonly<Record<string, string>> = {
   SEGMENT_MEMBERS_CHANGED:
     "The segment's member count changed during the export, so a publish finished mid-read and no file was written. Run the export again.",
   SEGMENT_MEMBERS_NOT_FOUND:
-    'Salesforce does not know a segment with this exact API name in the default data space (HTTP 404). Check the name (case matters) and rerun the export.',
+    'No segment in the default data space has this API name, record ID or display name. Check the exact value (case matters) and rerun the export.',
   SEGMENT_MEMBERS_OUTPUT_FAILED:
     'The members were read but the output file could not be written, so no file was left. Check that the folder is writable and has free space, then rerun.',
   SEGMENT_MEMBERS_READ_FAILED:
@@ -58,6 +58,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The publish was sent, but its answer or the status after it could not be read, so the publish may be running. Read the segment before publishing again; nothing was resent.',
   SEGMENT_READBACK_MISMATCH:
     'After the write, the segment read back differently from the file, or other settings or its DMO changed. Inspect the segment in the org before any further deploy.',
+  SEGMENT_SELECTION_AMBIGUOUS:
+    'More than one segment in the default data space matches this display name or record ID and none was chosen. Rerun with an API name listed in the message.',
   SEGMENT_SETTLEMENT_UNQUALIFIED:
     'After the write, the segment showed a status other than active, processing or counting. Inspect the segment status in the org before any further deploy.',
   SEGMENT_TARGET_DRIFT:
