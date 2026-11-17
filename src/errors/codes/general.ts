@@ -45,7 +45,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_SOURCE:
     'A selected file is not a valid definition for its file type, or its content names a different component than its file name. Fix the file, or retrieve it again, then rerun.',
   INVALID_WAIT_TIMEOUT_SCOPE:
-    '--wait-timeout applies only when the selection holds a data graph and must be whole seconds. Remove it, or select at least one data graph.',
+    '--wait-timeout applies only to a deploy that holds a data graph or to a segment publish, and must be whole seconds. Remove it, or select a data graph or a segment.',
   LOCAL_FILE_REMOVAL_FAILED:
     'The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.',
   LOCAL_REFRESH_FAILED:

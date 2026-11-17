@@ -1,3 +1,45 @@
+# Segment publish: `sf data360 publish` publishes segments and waits — 2026-11-17
+
+Plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md` (workspace root),
+queue item Q4. User decisions 2026-11-17: extend the existing publish command, no acknowledgement
+flag, wait for the result with a timeout, report a timeout as still processing.
+
+- Command shape: `sf data360 publish -m segment:Name` (new `-m`, segment only) or
+  `-d data360/segments/Name.segment.json` (or one of its SQL files). The calculated-insight path
+  (`-d` with a CI file) is unchanged. `-m` and `-d` are exclusive; another `-m` family is
+  `INVALID_SELECTION`. New `--wait-timeout <seconds>` (default 1800), segment only; with a CI
+  file or below 1 it is `INVALID_WAIT_TIMEOUT_SCOPE` (hint and page now name publish too).
+- Service `src/services/publish-segment.ts`: GET `/ssot/segments/{Name}` (404 is
+  `SEGMENT_PUBLISH_ADMISSION_FAILED`; name, data space and `1sg` ID are checked); with `-d` the
+  org must hold the file (`carriesDefinition` on the lenient projection, otherwise
+  `SEGMENT_PUBLISH_DEFINITION_MISMATCH`). Then one POST
+  `/services/data/v68.0/ssot/segments/{marketSegmentId}/actions/publish` with an empty body
+  (`ConnectClient.publishSegment`). Then the segment is read at once and every 30 s (stderr
+  progress) until `publishStatus` SUCCESS or FAILED counts for this publish: the segment had no
+  publish status before, a running status was seen, or `lastPublishedEndDateTime` changed.
+- Outcomes: `published` / `confirmed-published`; FAILED is `SEGMENT_PUBLISH_FAILED`
+  (`publish-failed`); a 4xx answer (not 429) or `success: false` is `SEGMENT_PUBLISH_REJECTED`
+  (`rejected`, Salesforce's text in the message); 429/5xx/network/no `success: true` or a failed
+  status read is `SEGMENT_PUBLISH_UNCONFIRMED` (`unknown`). Timeout: outcome `publishing`,
+  mutation `acknowledged-processing`, envelope status `processing` (new value), exit 0,
+  `SEGMENT_PUBLISH_STILL_PROCESSING` on the item only (not in `diagnostics.errors`). The POST is
+  never resent (transport rule: writes repeat only when provably unsent).
+- PROCESSING/COUNTING: not checked locally; Salesforce decides (memory rule "the API decides";
+  nothing local proves a refusal, and a refusal is reported with its text).
+- Verbatim `-d` file: `readDeployInputs` refuses it with `VERBATIM_NOT_DEPLOYABLE` before auth.
+  `-m` reads the org segment raw and needs no model of it.
+- Found live: JSforce never sends a POST whose `body` is undefined; the request hangs unsent (a
+  first live attempt hung, was stopped after two minutes, and the segment showed no publish
+  status). `body: ''` goes out as `Content-Length: 0`. The client test pins `body === ''`.
+- Tests: `test/segment-publish-command.test.mjs` (route/body/no resend on 503 and reset, wait to
+  SUCCESS, republish past an earlier SUCCESS, timeout, FAILED, preview, PROCESSING/COUNTING sent,
+  4xx text, unconfirmed answers, absent, `-d` match/mismatch, verbatim, flag refusals, help);
+  `test/cli.test.mjs` publish flags. CI tests unchanged and green.
+- Docs: README (segment table row, Public Segment workflow publish paragraph), error pages for the
+  six new codes and the `INVALID_WAIT_TIMEOUT_SCOPE` page, `docs/errors/README.md`.
+- Live (isolated-source, `00Daj000010xkZNEAY`): one `CliQ4Seg` DBT segment (`WHERE 1 = 0`, zero members) deployed with the plugin; `sf data360 publish -m segment:CliQ4Seg` sent one POST (PUBLISHING at once), read every 30 s and reported `published` / `confirmed-published`, `publishStatus` SUCCESS after 922 s (exit 0); then `sf data360 delete -m segment:CliQ4Seg` reported `deleted` and a GET answered ITEM_NOT_FOUND. Nothing else touched. DB entry `.claude/skills/_verification-db/entries/data360/data360-q4-segment-publish-api68.json` (validated, not rebuilt, not committed); evidence `F:/Temp/cli-q4-p6w2Im`.
+- Open: Q5 (member read). sfmc.guide not edited (segments page: publish row/command).
+
 # Relationship update: a server fault is unconfirmed, not rejected — 2026-11-16
 
 Same defect as the stream label entry below, in the `update` call of

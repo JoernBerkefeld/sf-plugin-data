@@ -30,6 +30,18 @@ export const hints: Readonly<Record<string, string>> = {
     'Right before writing this segment in a batch, a fresh check no longer allowed a create, update or no change, or --allow-processing was missing. Preview the batch again.',
   SEGMENT_IDENTITY_MISMATCH:
     'Salesforce returned a segment with a different name or data space than requested. Check the exact segment name (case matters) and that it lives in the default data space.',
+  SEGMENT_PUBLISH_ADMISSION_FAILED:
+    'The segment could not be read before the publish, or it does not exist in the default data space, so nothing was published. Deploy or check the segment, then rerun.',
+  SEGMENT_PUBLISH_DEFINITION_MISMATCH:
+    'The segment in the org does not hold the definition of the selected file, so it was not published. Deploy the file first, or publish the org segment with -m segment:Name.',
+  SEGMENT_PUBLISH_FAILED:
+    'Salesforce ran the publish and reports publishStatus FAILED. Check the segment and its source DMO in Data Cloud before publishing again; nothing was resent.',
+  SEGMENT_PUBLISH_REJECTED:
+    'Salesforce refused the publish request; its answer is in the message. Fix the cause it names, then run the publish again; nothing was resent.',
+  SEGMENT_PUBLISH_STILL_PROCESSING:
+    'Salesforce accepted the publish and is still processing it when --wait-timeout ran out. It did not fail and was not resent; read the segment later for the result.',
+  SEGMENT_PUBLISH_UNCONFIRMED:
+    'The publish was sent, but its answer or the status after it could not be read, so the publish may be running. Read the segment before publishing again; nothing was resent.',
   SEGMENT_READBACK_MISMATCH:
     'After the write, the segment read back differently from the file, or other settings or its DMO changed. Inspect the segment in the org before any further deploy.',
   SEGMENT_SETTLEMENT_UNQUALIFIED:

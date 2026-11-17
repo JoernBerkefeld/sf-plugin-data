@@ -330,6 +330,31 @@ export class ConnectClient {
     if (response !== noContent) throw new ConnectError('REQUEST_FAILED');
   }
 
+  /**
+   * Publish one native API68 Segment by its record ID: one POST without a body, never resent
+   * after a reset, timeout, 429 or 503 (only a request that provably never left is repeated).
+   * @param {string} marketSegmentId Freshly read `1sg` record ID of the segment.
+   * @returns {Promise<unknown>} Untrusted acknowledgement (publishStatus, jobId), not the result.
+   */
+  public async publishSegment(marketSegmentId: string): Promise<unknown> {
+    if (
+      this.selection.requested !== '68.0' ||
+      typeof marketSegmentId !== 'string' ||
+      !/^1sg[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/u.test(marketSegmentId)
+    )
+      throw new ConnectError('INVALID_REQUEST');
+    return this.send(
+      {
+        method: 'POST',
+        url: this.safeUrl(`${this.prefix}segments/${marketSegmentId}/actions/publish`),
+        // JSforce never sends a POST whose body is undefined (the request hangs unsent);
+        // an empty string goes out as Content-Length 0, the bodiless POST the route expects.
+        body: '',
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
   protected noRefreshReceiver(): AuthenticatedConnection {
     const receiver = Object.create(this.connection) as AuthenticatedConnection;
     Object.defineProperty(receiver, '_refreshDelegate', { value: undefined });
