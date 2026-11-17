@@ -54,15 +54,17 @@ export function memberColumnHeaders(
 
 /**
  * A detail value formatted like the mcnext member export: a DATE as `YYYY-MM-DD` (the time
- * part dropped), a DATETIME with a space instead of the `T` (offset kept). Other types,
- * non-text values and text that is not a date stay as they are.
+ * part dropped), a DATE_TIME with a space instead of the `T` (offset kept). The type is
+ * compared without case, spaces, `_` and `-`, so `/ssot/metadata`'s `DATE_TIME` counts as
+ * DATETIME (mcnext compares `datetime` only and leaves `DATE_TIME` values as returned).
+ * Other types, non-text values and text that is not a date stay as they are.
  * @param {unknown} value Cell value as Salesforce returned it.
- * @param {string} [dataType] Metadata type of the field (case does not matter).
+ * @param {string} [dataType] Metadata type of the field, e.g. `DATE` or `DATE_TIME`.
  * @returns {unknown} Formatted value.
  */
 export function formatMemberValue(value: unknown, dataType?: string): unknown {
   if (typeof value !== 'string') return value;
-  const type = dataType?.trim().toLowerCase();
+  const type = dataType?.toLowerCase().replaceAll(/[\s_-]/gu, '');
   if (type === 'date') return /^(\d{4}-\d{2}-\d{2})(?:T.*)?$/u.exec(value)?.[1] ?? value;
   if (type === 'datetime') return value.replace(/^(\d{4}-\d{2}-\d{2})T/u, '$1 ');
   return value;
@@ -96,20 +98,44 @@ function pad(value: number): string {
 }
 
 /**
- * A file name part made from a segment name (letters, digits and underscores only).
- * @param {string} apiName Segment API name.
- * @param {Date} now Time of the export.
- * @returns {string} `<Name>-<YYYY-MM-DD_HH-mm-ss>`.
+ * A file name part made from a segment display name, as the mcnext export makes it (its
+ * `sanitizeFilename`): control characters and `< > : " / \ | ? *` become `-`, whitespace runs
+ * `-`, repeated `-` one; trailing `-`, `.` and spaces and leading `.` and spaces are dropped
+ * (safe on Windows and Linux). An empty result is `segment-members`; a Windows device name
+ * (CON, PRN, AUX, NUL, COM1-9, LPT1-9) gets the prefix `segment-`.
+ * @param {string} value Segment display name.
+ * @returns {string} File-safe name part.
  */
-function defaultStem(apiName: string, now: Date): string {
-  return `${apiName}-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+export function memberFileName(value: string): string {
+  const sanitized = [...value]
+    // eslint-disable-next-line no-control-regex -- control characters are replaced, not matched as text
+    .map((character) => (/[\u0000-\u001F<>:"/\\|?*]/u.test(character) ? '-' : character))
+    .join('')
+    .replaceAll(/\s+/gu, '-')
+    .replaceAll(/-+/gu, '-')
+    .replace(/[-. ]+$/u, '')
+    .replace(/^[. ]+/u, '');
+  const safe = sanitized || 'segment-members';
+  return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/iu.test(safe) ? `segment-${safe}` : safe;
 }
 
 /**
- * The output file: the given path, or a new `data/<dataSpace>/<Name>-<timestamp>.<format>`
- * below the working directory (never a `data360/` definition folder).
+ * The default file name stem.
+ * @param {string} name File-safe name part.
+ * @param {Date} now Time of the export.
+ * @returns {string} `<name>-<YYYY-MM-DD_HH-mm-ss>`.
+ */
+function defaultStem(name: string, now: Date): string {
+  return `${name}-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+}
+
+/**
+ * The output file: the given path, or a new `data/default/<display name>-<timestamp>.<format>`
+ * below the working directory (never a `data360/` definition folder). The display name is
+ * used, as in the mcnext export, because a segment's API name stays the same when its display
+ * name changes (tested live); it is made file-safe with memberFileName.
  * @param {string | undefined} requested --output-file value.
- * @param {string} apiName Segment API name (already checked as an identifier).
+ * @param {string} name Segment display name (the API name when the segment has none).
  * @param {MemberFormat} format Output format.
  * @param {string} cwd Working directory.
  * @param {Date} [now] Time of the export.
@@ -117,14 +143,14 @@ function defaultStem(apiName: string, now: Date): string {
  */
 export async function memberOutputFile(
   requested: string | undefined,
-  apiName: string,
+  name: string,
   format: MemberFormat,
   cwd: string,
   now = new Date(),
 ): Promise<string> {
   if (requested !== undefined) return path.resolve(cwd, requested);
   const directory = path.join(cwd, 'data', 'default');
-  const stem = defaultStem(apiName, now);
+  const stem = defaultStem(memberFileName(name), now);
   for (let suffix = 1; ; suffix++) {
     const candidate = path.join(directory, `${stem}${suffix === 1 ? '' : `_${suffix}`}.${format}`);
     try {

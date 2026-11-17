@@ -10,6 +10,7 @@ import {
   formatMemberValue,
   memberColumnHeaders,
   memberDelimiter,
+  memberFileName,
 } from '../lib/artifacts/write-member-export.js';
 import { connectRetry } from '../lib/transport/connect-client.js';
 import { errorCodeInfo } from '../lib/errors/registry.js';
@@ -303,7 +304,7 @@ test('an answer without data and totalCount is unexpected', async (t) => {
   assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_MEMBERS_UNEXPECTED_RESPONSE');
 });
 
-test('default output is data/default/<Name>-<timestamp>.csv; an unpublished empty segment warns', async (t) => {
+test('default output is data/default/<display name>-<timestamp>.csv; an unpublished empty segment warns', async (t) => {
   const { command, cwd } = await harness(
     { metadata: 'segment:Members_Seg' },
     (request, url) =>
@@ -316,10 +317,54 @@ test('default output is data/default/<Name>-<timestamp>.csv; an unpublished empt
   assert.equal(result.status, 'success');
   assert.match(
     path.relative(cwd, result.result.outputFile),
-    /^data[/\\]default[/\\]Members_Seg-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.csv$/u,
+    /^data[/\\]default[/\\]Members-Seg-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.csv$/u,
   );
   assert.equal(await readFile(result.result.outputFile, 'utf8'), '');
   assert.match(result.diagnostics.warnings[0], /only after a publish finished/u);
+});
+
+test('the default file name is the file-safe display name, else the API name', async (t) => {
+  for (const [displayName, stem] of [
+    ['MCNEXT Pagination Fixture 20261016', 'MCNEXT-Pagination-Fixture-20261016'],
+    ['spider-man', 'spider-man'],
+    ['Annual: Promo / West?', 'Annual-Promo-West'],
+    [undefined, 'Members_Seg'],
+  ]) {
+    const { command, cwd } = await harness(
+      { metadata: 'segment:Members_Seg', 'result-format': 'json' },
+      (request, url) =>
+        url.pathname.endsWith('/members')
+          ? page([member(0)], 1)
+          : { segments: [segment({ displayName })] },
+      t,
+    );
+    const { result } = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    const file = path.relative(cwd, result.result.outputFile);
+    assert.equal(path.dirname(file), path.join('data', 'default'));
+    assert.match(path.basename(file), /^(.+)-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.json$/u);
+    assert.equal(path.basename(file).slice(0, -'-YYYY-MM-DD_HH-mm-ss.json'.length), stem);
+  }
+});
+
+test('memberFileName makes a display name file-safe like the mcnext export', () => {
+  // The three assertions of mcnext's sanitizeFilename test.
+  assert.equal(memberFileName('Annual: Promo / West?'), 'Annual-Promo-West');
+  assert.equal(memberFileName('CON'), 'segment-CON');
+  assert.equal(memberFileName('   ... '), 'segment-members');
+  // Display names of the live rename probe and the pagination fixture.
+  assert.equal(memberFileName('Peter Parker$'), 'Peter-Parker$');
+  assert.equal(memberFileName('spider-man'), 'spider-man');
+  assert.equal(
+    memberFileName('MCNEXT Pagination Fixture 20261016'),
+    'MCNEXT-Pagination-Fixture-20261016',
+  );
+  // Separators of both platforms, control characters, dots and device names.
+  assert.equal(memberFileName(String.raw`a/b\c|d*e"f<g>h`), 'a-b-c-d-e-f-g-h');
+  assert.equal(memberFileName('tab\there\u0001x'), 'tab-here-x');
+  assert.equal(memberFileName('..hidden.'), 'hidden');
+  assert.equal(memberFileName('lpt1.txt'), 'segment-lpt1.txt');
+  assert.equal(memberFileName('Console'), 'Console');
 });
 
 test('an absent segment is SEGMENT_MEMBERS_NOT_FOUND before any member read', async (t) => {
@@ -493,7 +538,7 @@ test('--include-details joins the membership DMO to the segment DMO through one 
 // eslint-disable-next-line unicorn/no-null -- query-sql rows report an empty field as null.
 const wireNull = null;
 
-test('formatMemberValue formats DATE and DATETIME like the mcnext export', () => {
+test('formatMemberValue formats DATE and DATE_TIME as the mcnext export intends', () => {
   // The four assertions of mcnext's normalizeFieldValue test.
   assert.equal(formatMemberValue('1982-12-16T00:00:00+00:00', 'DATE'), '1982-12-16');
   assert.equal(
@@ -504,12 +549,25 @@ test('formatMemberValue formats DATE and DATETIME like the mcnext export', () =>
   assert.equal(formatMemberValue('not-a-date', 'DATE'), 'not-a-date');
   assert.equal(formatMemberValue('2026-10-01T13:15:16Z', 'Text'), '2026-10-01T13:15:16Z');
   assert.equal(formatMemberValue(42, 'DATE'), 42);
+  // /ssot/metadata returns DATE and DATE_TIME (live); mcnext's check missed DATE_TIME.
+  for (const type of ['DATE_TIME', 'DATETIME', 'date_time', 'Date Time'])
+    assert.equal(
+      formatMemberValue('2026-10-16T19:19:51+00:00', type),
+      '2026-10-16 19:19:51+00:00',
+      type,
+    );
+  assert.equal(formatMemberValue('2026-08-01', 'DATE'), '2026-08-01');
+  assert.equal(
+    formatMemberValue('2026-10-16T19:19:51+00:00', 'STRING'),
+    '2026-10-16T19:19:51+00:00',
+  );
+  assert.equal(formatMemberValue('2026-10-16T19:19:51+00:00'), '2026-10-16T19:19:51+00:00');
 });
 
-test('--include-details formats DATE and DATETIME values in CSV and JSON', async (t) => {
+test('--include-details formats DATE and DATE_TIME values in CSV and JSON', async (t) => {
   const fields = [
     { name: 'Birth__c', displayName: 'Birth', type: 'DATE' },
-    { name: 'Seen__c', displayName: 'Seen', type: 'DATETIME' },
+    { name: 'Seen__c', displayName: 'Seen', type: 'DATE_TIME' },
   ];
   const rows = [
     ['1982-12-16T00:00:00+00:00', '2026-10-01T13:15:16.123+02:00', 'p0', 1],
@@ -530,7 +588,7 @@ test('--include-details formats DATE and DATETIME values in CSV and JSON', async
     assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
     assert.deepEqual(
       result.result.columns.map(({ dataType }) => dataType),
-      ['DATE', 'DATETIME'],
+      ['DATE', 'DATE_TIME'],
     );
     const written = await readFile(path.join(cwd, `dates.${format}`), 'utf8');
     if (format === 'csv')

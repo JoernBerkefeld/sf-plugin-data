@@ -1,3 +1,32 @@
+# Segment members: DATE_TIME values formatted; default file name from the display name — 2026-11-17
+
+Follow-up Q6c (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`; user
+decisions 2026-11-17). mcnext read only.
+
+- Dates: `formatMemberValue` compares the type without case, spaces, `_` and `-`, so the
+  `/ssot/metadata` type `DATE_TIME` is formatted as mcnext intends for `datetime` (`T` → space,
+  offset kept). Live `/ssot/metadata` (isolated-source, 321 entities) has only `STRING`, `NUMBER`,
+  `DATE_TIME` (474 fields), `BOOLEAN`, `DATE` (9 fields); query-sql metadata calls them
+  `TimestampTZ` and `Date` (not used for formatting). A DATE value comes back as `2026-08-01`.
+- Live `MCNEXT_Paging_Fixture_20261016 --include-details`: before (HEAD 444f7bc and mcnext)
+  `2026-10-16T19:19:51+00:00`, after `2026-10-16 19:19:51+00:00`. JSON against mcnext: 1,100 rows,
+  2,200 differing cells, all `T` → space in Created/Last Modified Date (Birth/Death Date null);
+  CSV same size (313,749 bytes), same header set, column order unchanged (entity order, user
+  decision).
+- File name: live probe (isolated-source `00Daj000010xkZNEAY`, DBT, no publish) created through
+  Connect POST without `developerName` with display name `Peter Parker$` → API name
+  `Peter_Parker` (`1sgaj000000eMQ1AAM`); `developerName` is not required. PATCH with the full body
+  (display name `spider-man`) → API name still `Peter_Parker`, `GET …/spider_man` is
+  ITEM_NOT_FOUND. Probe deleted (DELETE, then GET ITEM_NOT_FOUND, absent from the list). So, per
+  the user's rule, the default file name now uses the display name like mcnext:
+  `memberFileName` ports mcnext's `sanitizeFilename` (with its three test assertions); the API
+  name is used when a segment has no display name.
+- Tests: `test/segment-members-command.test.mjs`.
+- DB entry `.claude/skills/_verification-db/entries/data360/data360-q6c-member-dates-filename-api68.json`.
+- Guide (`sfmc.guide` segment-members.md, not edited here): default file name
+  `data/default/<display name>-<timestamp>.csv` with the sanitising rules and an example; DATE_TIME
+  values written with a space; the remaining differences from mcnext (column order; mcnext writes
+  DATE_TIME values unformatted).
 # Segment members: DATE/DATETIME values formatted like mcnext — 2026-11-17
 
 Follow-up to Q6 (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`):

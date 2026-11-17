@@ -2644,8 +2644,16 @@ answered HTTP 201 with `publishStatus` `PUBLISHING`, and `SUCCESS` followed afte
 `sf data360 segment members export -m segment:<value>` writes the members of one segment
 as data rows (CSV by default, `--result-format json` for an array of row objects). The
 rows are data, not a definition, so the file never goes to a `data360/` folder: it goes to
-`--output-file`, by default `data/default/<ApiName>-<YYYY-MM-DD_HH-mm-ss>.csv` below the
-working directory (an existing `--output-file` is replaced). The command is read-only.
+`--output-file`, by default `data/default/<display name>-<YYYY-MM-DD_HH-mm-ss>.csv` below
+the working directory (an existing `--output-file` is replaced). The command is read-only.
+
+- The default file name uses the segment's display name, because the API name stays the
+  same when the display name changes: "MCNEXT Pagination Fixture 20261016" is written as
+  `MCNEXT-Pagination-Fixture-20261016-2026-11-17_11-58-28.csv`. Characters a file name
+  cannot hold on Windows or Linux (control characters and `< > : " / \ | ? *`) become `-`,
+  whitespace runs one `-`, leading and trailing dots and spaces are dropped, and a Windows
+  device name such as `CON` gets the prefix `segment-`. A segment without a display name
+  uses its API name; a second export in the same second gets `_2`, `_3`, ….
 
 - `<value>` is the segment's API name, its MarketSegment record ID (`1sg…`, as in the
   browser address bar) or its display name, as the Data Cloud UI shows them; quote values
@@ -2671,7 +2679,8 @@ working directory (an existing `--output-file` is replaced). The command is read
   API name, a repeated header gets `_2`, `_3`, … in column order) or the field API names
   (`--column-headers api-name`). Basic mode always uses the names Salesforce returns.
   Detail values of `DATE` fields are written as `YYYY-MM-DD` (time dropped) and of
-  `DATETIME` fields with a space instead of the `T` (offset kept); basic mode writes
+  `DATE_TIME` fields with a space instead of the `T` (`2026-10-16 19:19:51+00:00`, offset
+  kept); basic mode writes
   values as Salesforce returns them.
 - `--column-delimiter` sets the CSV separator, as a name or the character itself:
   `COMMA`/`,` (default), `SEMICOLON`/`;`, `TAB`, `PIPE`/`|`, `CARET`/`^`,
