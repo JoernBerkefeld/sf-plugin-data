@@ -903,8 +903,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             if (error === undefined) continue;
             const code =
               error instanceof DataTransformError ? error.code : 'TRANSFORM_RETRIEVE_FAILED';
-            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
-              failed = true;
+            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH'].includes(code)) failed = true;
             const diagnostic = {
               code,
               message: operationDiagnostic(
@@ -1027,8 +1026,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             if (error === undefined) continue;
             const code =
               error instanceof DataStreamError ? error.code : 'DATA_STREAM_RETRIEVE_FAILED';
-            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
-              failed = true;
+            if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH'].includes(code)) failed = true;
             const diagnostic = {
               code,
               message: operationDiagnostic(
@@ -1445,8 +1443,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 error instanceof DloError
                   ? error.code
                   : 'NATIVE_RETRIEVE_FAILED';
-              if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'INVALID_PROJECT'].includes(code))
-                failed = true;
+              if (!['OVERWRITE_REQUIRED', 'UNSAFE_PATH'].includes(code)) failed = true;
               envelope.diagnostics.errors.push({
                 code,
                 message: operationDiagnostic(
@@ -1772,12 +1769,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               diagnose(error, apiName, 'dlo');
               if (
                 !(error instanceof SegmentError) ||
-                ![
-                  'OVERWRITE_REQUIRED',
-                  'UNSAFE_PATH',
-                  'TARGET_ORG_REQUIRED',
-                  'INVALID_PROJECT',
-                ].includes(error.code)
+                !['OVERWRITE_REQUIRED', 'UNSAFE_PATH', 'TARGET_ORG_REQUIRED'].includes(error.code)
               )
                 failed = true;
             }

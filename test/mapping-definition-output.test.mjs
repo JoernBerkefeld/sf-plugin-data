@@ -105,5 +105,8 @@ test('mapping writer rejects invalid names bounded bytes and escaped config', as
     path.join(root, 'sfdx-project.json'),
     JSON.stringify({ packageDirectories: [{ path: '../escape' }] }),
   );
-  await assert.rejects(writeMappingDefinition('ExactMap', xml, root, false));
+  // An unusable package directory is a selection problem (there is no project-level code).
+  await assert.rejects(writeMappingDefinition('ExactMap', xml, root, false), {
+    code: 'INVALID_SELECTION',
+  });
 });

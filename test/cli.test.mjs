@@ -740,6 +740,29 @@ test('delete parser refuses --source-dir, --transform-target-id and a -m --confi
   }
 });
 
+test('delete without a usable org reports TARGET_ORG_REQUIRED like publish', () => {
+  for (const arguments_ of [
+    ['-m', 'calculated-insight:Synthetic__cio'],
+    ['-m', 'data-transform:Synthetic', '--preview'],
+    ['-m', 'dmo:Synthetic__dlm', '--preview'],
+    ['-m', 'dmo:Synthetic__dlm', '--field', 'Name__c', '--preview'],
+  ]) {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', 'data360', 'delete', ...arguments_, '--json'],
+      { encoding: 'utf8', env: environment },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const envelope = JSON.parse(result.stdout).result;
+    assert.equal(envelope.status, 'blocked', arguments_.join(' '));
+    assert.deepEqual(
+      envelope.diagnostics.errors.map(({ code }) => code),
+      ['TARGET_ORG_REQUIRED'],
+      arguments_.join(' '),
+    );
+  }
+});
+
 test('CI delete parser rejects unqualified scope before authentication', () => {
   for (const [arguments_, code] of [
     [['--api-version', '65.0'], 'INVALID_SCOPE'],

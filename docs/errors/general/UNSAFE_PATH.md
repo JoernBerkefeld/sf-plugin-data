@@ -39,4 +39,3 @@ Downloaded dmo: 0
 
 - [`LOCAL_FILE_REMOVAL_FAILED`](../general/LOCAL_FILE_REMOVAL_FAILED.md) — the delete diagnostic that lists files refused with this code.
 - [`UNSAFE_SOURCE`](../general/UNSAFE_SOURCE.md) — the same rule for deploy input files.
-- [`INVALID_PROJECT`](../general/INVALID_PROJECT.md) — the project's package directory is not usable.

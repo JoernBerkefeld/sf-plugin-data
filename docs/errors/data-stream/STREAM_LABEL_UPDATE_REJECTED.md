@@ -2,15 +2,15 @@
 
 > Salesforce refused the Metadata API update of the stream label (DataStreamDefinition); the label was not changed. Read the message, correct the label in the file, then rerun.
 
-|              |                                                         |
-| ------------ | ------------------------------------------------------- |
-| **Family**   | Data stream (Salesforce CRM connector, Ingestion API)   |
-| **Commands** | `sf data360 deploy`                                     |
-| **Outcome**  | `failed` — `rejected` when it was the item's only write |
+|              |                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **Family**   | Data stream (Salesforce CRM connector, Ingestion API)                                      |
+| **Commands** | `sf data360 deploy`                                                                        |
+| **Outcome**  | `failed` — `rejected` when it was the item's only write; `blocked` when no record was read |
 
 ## What it means
 
-The file holds another stream label than the org. Salesforce ignores a label in a stream PATCH, so deploy changes the label with one Metadata API `updateMetadata` of the stream's `DataStreamDefinition` record: it reads the record, replaces `masterLabel` and sends the record back over the command's connection. Salesforce answered that update with an error (success `false`, or a client SOAP fault such as `soapenv:Client`, `sf:INVALID_…` or `sf:REQUEST_LIMIT_EXCEEDED`), or it returned no `DataStreamDefinition` record of the stream's name. A server fault (`soapenv:Server`, `sf:UNKNOWN_EXCEPTION`) is not a refusal: the update may have been applied, so it is reported as [`STREAM_REQUEST_UNCONFIRMED`](../data-stream/STREAM_REQUEST_UNCONFIRMED.md).
+The file holds another stream label than the org. Salesforce ignores a label in a stream PATCH, so deploy changes the label with one Metadata API `updateMetadata` of the stream's `DataStreamDefinition` record: it reads the record, replaces `masterLabel` and sends the record back over the command's connection. Salesforce answered that update with an error (success `false`, or a client SOAP fault such as `soapenv:Client`, `sf:INVALID_…` or `sf:REQUEST_LIMIT_EXCEEDED`), or the read before it returned no `DataStreamDefinition` record of the stream's name (then nothing was sent and the item is `blocked`). A read that fails is [`STREAM_LABEL_READ_FAILED`](../data-stream/STREAM_LABEL_READ_FAILED.md). A server fault (`soapenv:Server`, `sf:UNKNOWN_EXCEPTION`) is not a refusal: the update may have been applied, so it is reported as [`STREAM_REQUEST_UNCONFIRMED`](../data-stream/STREAM_REQUEST_UNCONFIRMED.md).
 
 The label update is sent before any other change of the same stream. When it is refused, the other changes are not sent.
 

@@ -226,6 +226,7 @@ test('a verbatim transform is deleted by name; system, packaged and renamed ones
     [{ creationType: 'SYSTEM' }, 'UNSUPPORTED_TRANSFORM_OWNER_OR_STATE'],
     [{ namespace: 'pkg' }, 'UNSUPPORTED_TRANSFORM_VARIANT'],
     [{ name: 'OtherTransform' }, 'TRANSFORM_DELETE_IDENTITY_MISMATCH'],
+    [{ status: 'PROCESSING' }, 'TRANSFORM_DELETE_PROCESSING'],
   ]) {
     const refused = [];
     await assert.rejects(

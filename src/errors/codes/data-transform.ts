@@ -22,6 +22,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The data transform list has no entry with the resolved ID and name together. Nothing was deleted; the transform changed during the run, so preview the delete again, then rerun.',
   TRANSFORM_DELETE_INPUT_DRIFT:
     'The delete inputs or the transform definition changed while the command was running. Nothing was deleted; wait until nobody is editing the transform, then rerun.',
+  TRANSFORM_DELETE_PROCESSING:
+    'The data transform is still PROCESSING, so the delete was not sent. Nothing was changed; wait until Data Cloud shows the transform ACTIVE, then rerun the delete.',
   TRANSFORM_DELETE_UNCONFIRMED:
     'The DELETE was sent but its result could not be confirmed. Do not rerun the delete; check in Data Cloud whether the transform still exists.',
   TRANSFORM_DEPLOY_FAILED:

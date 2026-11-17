@@ -34,8 +34,6 @@ export const hints: Readonly<Record<string, string>> = {
     '--field needs exactly one -m dmo:<Name__dlm> and no other selector, --changed-since or --delete-dlo; --output-dir works only with --field.',
   INVALID_GIT_SELECTION:
     'The --changed-since reference or the Git output could not be used. Pass a commit, branch or tag that exists locally and run the command inside the Git repository.',
-  INVALID_PROJECT:
-    'sfdx-project.json does not name one usable package directory. Give packageDirectories exactly one default entry with a relative path inside the project, then rerun.',
   INVALID_REQUEST:
     'The plugin refused to build the Salesforce request from these inputs. Check --target-org, --api-version and the selected names, and that the org uses an https instance URL.',
   INVALID_SCOPE:

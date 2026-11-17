@@ -1,3 +1,47 @@
+# Q8 small fixes: transform delete while PROCESSING, stream label read, INVALID_PROJECT, delete without org — 2026-11-17
+
+Queue Q8 items b, c, d, h (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`;
+user decisions 2026-11-17).
+
+- **b) Transform delete while PROCESSING.** `deleteDataTransform` reads the transform (modelled
+  and verbatim) and refuses a `status` of `PROCESSING` (any case) before the DELETE with the new
+  `TRANSFORM_DELETE_PROCESSING` (item `blocked`, mutation `not-attempted`; `--preview` reports
+  the same). Other states are still Salesforce's to decide. Live (isolated-source
+  `00Daj000010xkZNEAY`, org ID checked): DLO `CliQ8Src__dll` and DCSQL transform `CliQ8T`
+  deployed (created, `serverProcessing`); `delete -m data-transform:CliQ8T` right after: before
+  the fix the generic message, now `blocked`/`not-attempted` `TRANSFORM_DELETE_PROCESSING`
+  (also `--preview`, 4 reads over about 2.5 min); once ACTIVE the delete was `deleted`/
+  `confirmed-deleted`. Cleanup: `CliQ8Out__dll` and `CliQ8Src__dll` deleted (GET 404), the
+  transform list (9 transforms) has no `CliQ8*`. Evidence `F:/Temp/sfdata-q8-6fatsY/live-b`.
+- **c) Stream label read outside the write ledger.** `DataStreamClient.relabel(apiName, label,
+  send?)`: the `DataStreamDefinition` read happens first, only the `updateMetadata` runs inside
+  `send` (the CRM executor's and the Ingestion API wrapper's `WriteLedger`). A failed read is the
+  new `STREAM_LABEL_READ_FAILED` (`blocked`, `not-attempted`), no longer
+  `STREAM_REQUEST_UNCONFIRMED` with mutation `unknown`; a missing record stays
+  `STREAM_LABEL_UPDATE_REJECTED`, now `blocked` since nothing was sent. Offline only (a read
+  failure cannot be induced live).
+- **d) `INVALID_PROJECT` removed** (registry, docs page, index row, UNSAFE_PATH link, the code
+  lists in `retrieve.ts`, the verbatim item-failure pattern). Its last thrower,
+  `segmentSourceRoot` (used only by the unused `writeMappingDefinition`), now throws
+  `INVALID_SELECTION`, which `writeMappingDefinition` already reports.
+- **h) Delete without a usable org.** `Delete.resolveConnection` maps any failure to resolve or
+  authenticate the org to `TARGET_ORG_REQUIRED` (as `publish` does); `resolveTarget` uses it.
+  Before (HEAD 3c98b07, isolated CLI state): `-m calculated-insight:…`, `-m dmo:… --preview` and
+  `--field … --preview` all reported `DELETE_FAILED`; now `TARGET_ORG_REQUIRED`.
+- Tests: `data-transform` (PROCESSING refused, preview too; ACTIVE/ERROR delete),
+  `verbatim-delete` (verbatim PROCESSING), `crm-data-stream` (read failure blocked, nothing sent;
+  `send` wraps only the update), `ingest-data-stream-variants` (read failure blocked, failure inside
+  the update unknown), `cli` (delete without org, four selections), `mapping-definition-output`
+  (escaped package directory is `INVALID_SELECTION`). The old "PROCESSING transform reaches DELETE"
+  fixture now uses the default `ACTIVE`.
+- Docs: new pages `TRANSFORM_DELETE_PROCESSING`, `STREAM_LABEL_READ_FAILED`; README (transform
+  delete, stream label), delete/deploy help, `STREAM_LABEL_UPDATE_REJECTED`,
+  `STREAM_REQUEST_UNCONFIRMED`.
+- Guide (sfmc.guide, not edited): data-transforms.md Delete tab: a PROCESSING transform is refused
+  before the DELETE (`TRANSFORM_DELETE_PROCESSING`); data-stream-definition.md Update tab: a failed
+  read before the label update is `STREAM_LABEL_READ_FAILED`, nothing sent; any page listing
+  `INVALID_PROJECT` drops it.
+
 # Segment members: DATE_TIME values formatted; default file name from the display name — 2026-11-17
 
 Follow-up Q6c (plan `.claude/plans/sf_plugin_data_pre_dataspace_hardening_20261116.plan.md`; user

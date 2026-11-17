@@ -223,7 +223,9 @@ export async function executeCrmDataStream(
       // Salesforce ignores a label in a stream PATCH; the Metadata API update of the stream
       // definition changes it (live, API 68). It is sent first, while the stream is ACTIVE.
       const relabel = plan.parts.includes('label') ? clients.streams.relabel : undefined;
-      if (relabel) await ledger.run(async () => relabel(apiName, String(document.spec.label)));
+      // Only the update is a write: a failed read before it changed nothing.
+      if (relabel)
+        await relabel(apiName, String(document.spec.label), async (write) => ledger.run(write));
       const parts = relabel ? plan.parts.filter((part) => part !== 'label') : plan.parts;
       const body = { ...plan.body };
       if (relabel) delete body.label;

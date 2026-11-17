@@ -1259,6 +1259,30 @@ const deleteHarness = (raw = runtime()) => {
   return h;
 };
 
+test('Transform deletion of a PROCESSING transform is refused before the DELETE, preview too', async () => {
+  for (const status of ['PROCESSING', 'processing'])
+    for (const preview of [false, true]) {
+      const value = runtime();
+      value.status = status;
+      const h = deleteHarness(value);
+      await assert.rejects(deleteDataTransform(document(), h.client, { ...h.options, preview }), {
+        code: 'TRANSFORM_DELETE_PROCESSING',
+      });
+      assert.deepEqual(
+        h.calls.filter(([op]) => op === 'delete'),
+        [],
+      );
+    }
+  // Other states are Salesforce's to decide.
+  for (const status of ['ACTIVE', 'ERROR']) {
+    const value = runtime();
+    value.status = status;
+    const h = deleteHarness(value);
+    const result = await deleteDataTransform(document(), h.client, h.options);
+    assert.equal(result.outcome, 'deleted', status);
+  }
+});
+
 test('Transform deletion polls the list until the transform is gone, within a bound', async () => {
   // Listed for two reads after the DELETE (as Salesforce does for ~10-25 s), then absent.
   const lagging = deleteHarness();
@@ -1351,7 +1375,6 @@ for (const [kind, raw] of [
 ])
   test(`Transform deletion of a ${kind} transform reaches DELETE and settles on absence`, async () => {
     const value = raw();
-    value.status = 'PROCESSING';
     const h = deleteHarness(value);
     const desired = observeDataTransform(value, schedule()).document;
     const result = await deleteDataTransform(desired, h.client, h.options);

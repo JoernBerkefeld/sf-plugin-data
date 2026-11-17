@@ -32,9 +32,14 @@ export type DataStreamClient = {
   /**
    * Set the stream label with one Metadata API `updateMetadata` of its DataStreamDefinition (the
    * record read first, `masterLabel` replaced) on the bound Connection; never resent. Salesforce
-   * ignores a label in a stream PATCH. Absent without a bound Metadata API.
+   * ignores a label in a stream PATCH. Absent without a bound Metadata API. `send` wraps only the
+   * update (a caller's write ledger); the read before it is not a write.
    */
-  relabel?: (apiName: string, label: string) => Promise<void>;
+  relabel?: (
+    apiName: string,
+    label: string,
+    send?: (write: () => Promise<void>) => Promise<void>,
+  ) => Promise<void>;
 };
 
 /** Metadata API type of a data stream; its record name is the stream name. */
@@ -391,12 +396,12 @@ const clientFault =
  * The stream label update on the bound Connection: read the DataStreamDefinition, replace its
  * label, send one `updateMetadata`. Salesforce decides; its refusal is reported with its text.
  * @param {Function} open The bound sender's Metadata API.
- * @returns {Function} relabel(apiName, label).
+ * @returns {Function} relabel(apiName, label, send).
  */
 function relabelCall(
   open: NonNullable<BoundSsot['metadata']>,
 ): NonNullable<DataStreamClient['relabel']> {
-  return async (apiName, label) => {
+  return async (apiName, label, send = async (write) => write()) => {
     if (!name.test(apiName) || typeof label !== 'string' || label === '')
       throw new DataStreamError('INVALID_STREAM_NAME');
     const api = await open();
@@ -409,34 +414,42 @@ function relabelCall(
           (entry as Record<string, unknown>).fullName === apiName,
       );
     } catch {
-      throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
+      // Only a read failed: nothing was written.
+      const error = new DataStreamError('STREAM_LABEL_READ_FAILED');
+      replaceExplanation(
+        error,
+        `The Metadata API read of the ${streamMetadataType} ${apiName} before its label update failed, so the update was not sent.`,
+      );
+      throw error;
     }
     if (!current) throw labelRefusal(apiName, []);
     const record = {
       ...Object.fromEntries(Object.entries(current).filter(([, value]) => !metadataNil(value))),
       masterLabel: label,
     };
-    let answer: unknown;
-    try {
-      answer = await api.update(streamMetadataType, record);
-    } catch (error) {
-      // Only a client fault is Salesforce refusing the request; a server fault (soapenv:Server,
-      // sf:UNKNOWN_EXCEPTION) may follow an applied update, so it stays unconfirmed.
-      const fault = error as { name?: unknown; message?: unknown } | null;
-      if (typeof fault?.name === 'string' && clientFault.test(fault.name))
-        throw labelRefusal(apiName, [{ code: fault.name, message: fault.message }]);
+    await send(async () => {
+      let answer: unknown;
+      try {
+        answer = await api.update(streamMetadataType, record);
+      } catch (error) {
+        // Only a client fault is Salesforce refusing the request; a server fault (soapenv:Server,
+        // sf:UNKNOWN_EXCEPTION) may follow an applied update, so it stays unconfirmed.
+        const fault = error as { name?: unknown; message?: unknown } | null;
+        if (typeof fault?.name === 'string' && clientFault.test(fault.name))
+          throw labelRefusal(apiName, [{ code: fault.name, message: fault.message }]);
+        throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
+      }
+      const [result] = metadataRecords(answer) as Array<Record<string, unknown> | undefined>;
+      if (result?.success === true) return;
+      if (result?.success === false)
+        throw labelRefusal(
+          apiName,
+          metadataRecords(result.errors).map((entry) => {
+            const problem = (entry ?? {}) as Record<string, unknown>;
+            return { code: problem.statusCode, message: problem.message };
+          }),
+        );
       throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
-    }
-    const [result] = metadataRecords(answer) as Array<Record<string, unknown> | undefined>;
-    if (result?.success === true) return;
-    if (result?.success === false)
-      throw labelRefusal(
-        apiName,
-        metadataRecords(result.errors).map((entry) => {
-          const problem = (entry ?? {}) as Record<string, unknown>;
-          return { code: problem.statusCode, message: problem.message };
-        }),
-      );
-    throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
+    });
   };
 }

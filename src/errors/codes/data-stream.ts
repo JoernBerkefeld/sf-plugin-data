@@ -100,6 +100,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The output folder has a file whose name differs from the stream file only by case or trailing dots or spaces, or the existing file holds another stream. Rename or move it.',
   STREAM_HTTP_ERROR:
     'Salesforce answered a stream create, update or delete with an error status. The change may still have happened; read the HTTP status, then inspect the org before you retry.',
+  STREAM_LABEL_READ_FAILED:
+    'The Metadata API read of the stream definition before its label update failed, so the update was not sent. Nothing was changed; rerun the deploy.',
   STREAM_LABEL_UPDATE_REJECTED:
     'Salesforce refused the Metadata API update of the stream label (DataStreamDefinition); the label was not changed. Read the message, correct the label in the file, then rerun.',
   STREAM_MAPPING_CONFLICT:

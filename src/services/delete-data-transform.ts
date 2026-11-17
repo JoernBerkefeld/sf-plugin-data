@@ -109,6 +109,21 @@ export async function resolveDataTransformTargetId(
 }
 
 /**
+ * A transform Salesforce is still processing is not deleted: live (API 68, 2026-11-16) its DELETE
+ * was answered but the transform stayed. Refused before the DELETE, so nothing is sent.
+ * @param {unknown} status The `status` of the transform's GET.
+ */
+function refuseProcessing(status: unknown): void {
+  if (typeof status !== 'string' || status.toUpperCase() !== 'PROCESSING') return;
+  const error = new DataTransformError('TRANSFORM_DELETE_PROCESSING');
+  replaceExplanation(
+    error,
+    'Data Cloud is still processing the data transform (status PROCESSING), so the DELETE was not sent and nothing was changed.',
+  );
+  throw error;
+}
+
+/**
  * The raw GET of a transform named by a verbatim file, checked only for what a delete needs: the
  * same record ID and name, and a custom transform without a namespace (system and packaged
  * transforms are never deleted). Its definition is not projected.
@@ -131,6 +146,7 @@ async function readVerbatimTransform(
   if (raw.creationType !== 'CUSTOM')
     throw new DataTransformError('UNSUPPORTED_TRANSFORM_OWNER_OR_STATE');
   if (raw.namespace) throw new DataTransformError('UNSUPPORTED_TRANSFORM_VARIANT');
+  refuseProcessing(raw.status);
   return JSON.stringify(
     Object.fromEntries(Object.entries(raw).filter(([key]) => !key.startsWith('lastRun'))),
   );
@@ -200,6 +216,7 @@ export async function deleteDataTransform(
     }
     const observed = await retrieveDataTransform(targetId, client, 'retrieve');
     check();
+    refuseProcessing(observed.runtime.status);
     // Enum values the org stores in its own letter case are no drift.
     if (
       !sameDataTransformDocument(

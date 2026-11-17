@@ -69,7 +69,7 @@ export async function segmentSourceRoot(root: string): Promise<string> {
     };
     const packages = project.packageDirectories;
     if (!Array.isArray(packages) || packages.length === 0)
-      throw new SegmentError('INVALID_PROJECT');
+      throw new SegmentError('INVALID_SELECTION');
     const defaults = packages.filter((entry) => entry.default === true);
     const selected =
       defaults.length === 1 ? defaults[0] : packages.length === 1 ? packages[0] : undefined;
@@ -81,7 +81,7 @@ export async function segmentSourceRoot(root: string): Promise<string> {
       /[:*?]/u.test(selected.path) ||
       selected.path.split(/[\\/]/u).includes('..')
     )
-      throw new SegmentError('INVALID_PROJECT');
+      throw new SegmentError('INVALID_SELECTION');
     directory = selected.path;
   }
   const destination = path.resolve(root, directory, 'main', 'default');

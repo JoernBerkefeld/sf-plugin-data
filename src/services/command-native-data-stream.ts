@@ -233,8 +233,9 @@ export async function executeDataStream(
       patch: async (name, body) => ledger.run(async () => clients.streams.patch(name, body)),
       ...(clients.streams.relabel
         ? {
+            // Only the update is a write: a failed read before it changed nothing.
             relabel: async (name: string, label: string) =>
-              ledger.run(async () => clients.streams.relabel!(name, label)),
+              clients.streams.relabel!(name, label, async (write) => ledger.run(write)),
           }
         : {}),
     },

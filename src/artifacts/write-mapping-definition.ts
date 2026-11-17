@@ -113,7 +113,7 @@ export async function writeMappingDefinition(
     if (error instanceof MappingDefinitionError) throw error;
     if (error && typeof error === 'object' && 'code' in error) {
       if (error.code === 'UNSAFE_PATH') throw new MappingDefinitionError('UNSAFE_PATH');
-      if (error.code === 'INVALID_PROJECT') throw new MappingDefinitionError('INVALID_SELECTION');
+      if (error.code === 'INVALID_SELECTION') throw new MappingDefinitionError('INVALID_SELECTION');
     }
     throw new MappingDefinitionError('OUTPUT_FAILED');
   }

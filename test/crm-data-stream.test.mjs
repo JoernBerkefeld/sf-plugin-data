@@ -514,9 +514,10 @@ test('delete removes a CRM stream and, with --delete-dlo, its DLO by the stream 
  * A stream client whose bound sender also has the Metadata API: the DataStreamDefinition label
  * update changes the label the stream GET shows (live API68).
  * @param {object} [refusal] Metadata API update answer instead of success.
+ * @param {Error} [readFailure] Error thrown by the Metadata API read instead of the record.
  * @returns {object} Clients, REST requests and Metadata API calls.
  */
-function metadataOrg(refusal) {
+function metadataOrg(refusal, readFailure) {
   const requests = [];
   const metadata = [];
   let label = crmGet().label;
@@ -528,6 +529,7 @@ function metadataOrg(refusal) {
     metadata: async () => ({
       read: async (type, names) => {
         metadata.push(['read', type, names]);
+        if (readFailure) throw readFailure;
         return { fullName: names[0], masterLabel: label, dataConnectorType: 'SalesforceDotCom' };
       },
       update: async (type, record) => {
@@ -604,6 +606,20 @@ test('a server fault on the stream label update is unconfirmed, not rejected, an
   assert.deepEqual(faulted.requests, []);
 });
 
+test('a failed read before the stream label update is not a write: blocked, nothing sent', async () => {
+  const relabelled = structuredClone(crmDocument());
+  relabelled.spec.label = 'New label';
+  const failed = metadataOrg(undefined, new Error('socket hang up'));
+  const result = await executeDataStream(relabelled, failed.clients, options);
+  assert.deepEqual([result.outcome, result.mutation], ['blocked', 'not-attempted']);
+  assert.equal(result.diagnostics[0].code, 'STREAM_LABEL_READ_FAILED');
+  assert.deepEqual(
+    failed.metadata.map(([kind]) => kind),
+    ['read'],
+  );
+  assert.deepEqual(failed.requests, []);
+});
+
 test('the stream label transport refuses a missing record and leaves other failures unconfirmed', async () => {
   let answer;
   let record = {
@@ -648,6 +664,34 @@ test('the stream label transport refuses a missing record and leaves other failu
   }
   answer = new Error('socket hang up');
   await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_REQUEST_UNCONFIRMED' });
+  // Only the update goes through the caller's send; a failed read sends nothing.
+  const wrapped = [];
+  answer = { fullName: 'CliCrmPb2', success: true };
+  await relabel('CliCrmPb2', 'New', async (write) => {
+    wrapped.push('send');
+    await write();
+  });
+  assert.deepEqual(wrapped, ['send']);
+  const sentBefore = sent.length;
+  const { relabel: failingRead } = createDataStreamClient(
+    'synthetic',
+    { get: async () => ({}) },
+    '68.0',
+    {
+      request: async () => assert.fail('no REST call'),
+      metadata: async () => ({
+        read: async () => {
+          throw new Error('socket hang up');
+        },
+        update: async () => assert.fail('no update after a failed read'),
+      }),
+    },
+  );
+  await assert.rejects(
+    failingRead('CliCrmPb2', 'New', async () => assert.fail('no send after a failed read')),
+    { code: 'STREAM_LABEL_READ_FAILED' },
+  );
+  assert.equal(sent.length, sentBefore);
   record = {};
   await assert.rejects(relabel('CliCrmPb2', 'New'), { code: 'STREAM_LABEL_UPDATE_REJECTED' });
   await assert.rejects(relabel('bad/name', 'New'), { code: 'INVALID_STREAM_NAME' });

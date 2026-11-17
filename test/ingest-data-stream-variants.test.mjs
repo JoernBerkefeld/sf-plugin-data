@@ -2,7 +2,10 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
-import { buildDataStreamCreateBody } from '../lib/artifacts/data-stream-document.js';
+import {
+  DataStreamError,
+  buildDataStreamCreateBody,
+} from '../lib/artifacts/data-stream-document.js';
 import {
   executeDataStream,
   executeDeleteDataStream,
@@ -390,6 +393,28 @@ test('an Ingestion API stream label goes through the Metadata API; a formula sti
   assert.deepEqual(relabels.at(-1), [created.targetApiName, 'Third label']);
   assert.equal(writes.at(-1).method, 'PATCH');
   assert.equal(Object.hasOwn(writes.at(-1).body, 'label'), false);
+});
+
+test('an Ingestion API label read failure is not a write; a failure inside the update is unknown', async () => {
+  const { clients, writes } = org();
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+  const relabelled = structuredClone(retrieved);
+  relabelled.spec.label = 'Another label';
+  const sent = writes.length;
+  clients.streams.relabel = async () => {
+    throw new DataStreamError('STREAM_LABEL_READ_FAILED');
+  };
+  const read = await executeDataStream(relabelled, clients, options);
+  assert.deepEqual([read.outcome, read.mutation], ['blocked', 'not-attempted']);
+  assert.equal(read.diagnostics[0].code, 'STREAM_LABEL_READ_FAILED');
+  clients.streams.relabel = async (_apiName, _label, send) =>
+    send(async () => {
+      throw new DataStreamError('STREAM_REQUEST_UNCONFIRMED');
+    });
+  const update = await executeDataStream(relabelled, clients, options);
+  assert.deepEqual([update.outcome, update.mutation], ['failed', 'unknown']);
+  assert.equal(writes.length, sent);
 });
 
 test('a DLO setting the PATCH cannot change stays refused before any write', async () => {
