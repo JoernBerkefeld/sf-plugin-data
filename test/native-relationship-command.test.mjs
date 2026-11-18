@@ -170,6 +170,21 @@ test('deploy preview orders DMOs before relationships and stays read-only', asyn
   );
 });
 
+test('deploy preview of a present, equal relationship is unchanged', async () => {
+  const { command, client } = await deployFixture({
+    preview: true,
+    entries: [wire({ name: 'Org_1' })],
+  });
+  const result = await run(command);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  const item = result.result.items.at(-1);
+  assert.deepEqual(
+    [item.family, item.outcome, item.target, item.operation],
+    ['relationship', 'unchanged', 'existing', 'preview'],
+  );
+  assert.deepEqual(client.calls, ['list:A__dlm:0']);
+});
+
 test('deploy preview reports planned dependencies when the source DMO is created', async () => {
   const { command, client } = await deployFixture({
     preview: true,

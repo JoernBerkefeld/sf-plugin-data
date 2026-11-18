@@ -19,7 +19,7 @@ export async function preflightRelationship(
   const plan = await preflightNativeRelationship(value, client, requestScope);
   return {
     family: 'relationship' as const,
-    outcome: plan.operation,
+    outcome: plan.operation === 'noop' ? ('unchanged' as const) : plan.operation,
     target: plan.operation === 'create' ? ('absent' as const) : ('existing' as const),
     absenceProof: plan.operation === 'create' ? 'confirmed-binding-lookup' : 'none',
     ...(plan.existing ? { targetApiName: plan.existing } : {}),
