@@ -6,8 +6,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The Ingestion API connection could not be identified exactly once in the org. Check that spec.connectionName names one existing connection, then rerun.',
   AMBIGUOUS_STREAM_EVENT:
     'The stream could not be tied to exactly one event of its connection: the connection has no event, names one twice, or several events fit the stream. Retrieve wrote the stream as-is.',
-  CREATE_ADDITIONS_UNSUPPORTED:
-    'A new data stream cannot be created together with additive field mappings. Remove them from the file, deploy to create the stream, then add the mappings and deploy again.',
   DATA_STREAM_DELETE_UNCONFIRMED:
     'The stream delete stopped on an unexpected error. If the result says mutation unknown, inspect the stream and its DLO in the org before you run the delete again.',
   DATA_STREAM_DLO_COLLISION:
@@ -39,7 +37,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_STREAM_LABEL:
     'The landing DLO label in spec.newDlo.label is longer than 40 characters. Shorten it to 40 characters or fewer.',
   INVALID_STREAM_MAPPING:
-    'An entry in spec.additiveFieldMappings is not valid. Use Text targets without __c, not the primary key, each target only once.',
+    'An entry in spec.additiveFieldMappings or spec.formulaMappings is not valid. Write target names without __c, and use each target only once.',
   INVALID_STREAM_NAME:
     'A stream, connection, event, DLO or field name is not a valid developer name. Use a letter first, then only letters, digits and underscores; DLO names end in __dll.',
   INVALID_STREAM_OBSERVED:
@@ -104,8 +102,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The Metadata API read of the stream definition before its label update failed, so the update was not sent. Nothing was changed; rerun the deploy.',
   STREAM_LABEL_UPDATE_REJECTED:
     'Salesforce refused the Metadata API update of the stream label (DataStreamDefinition); the label was not changed. Read the message, correct the label in the file, then rerun.',
-  STREAM_MAPPING_CONFLICT:
-    'A target field in spec.additiveFieldMappings already exists on the stream with a different source, type or mapping. Use a new target name, or match the existing mapping exactly.',
   STREAM_NOT_READY:
     'The stream or its DLO is not ACTIVE, for example still processing. Wait until both show ACTIVE in the org, then rerun.',
   STREAM_PROPOSED_DLO_EXISTS:
@@ -124,24 +120,18 @@ export const hints: Readonly<Record<string, string>> = {
     'The stream update was sent, but the new mappings and ACTIVE status were not confirmed within 15 minutes. Check the stream in the org before you deploy again.',
   STREAM_UPDATE_TARGET_ABSENT:
     'The stream to update was no longer found on the connection. Check whether it was deleted, then rerun the deploy with --preview.',
-  UNSUPPORTED_STREAM_CATEGORY:
-    'The landing DLO of the stream reports no category, which the stream file cannot represent. Retrieve wrote the stream as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_CONNECTOR:
-    'The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3, Marketing Cloud Engagement or streaming-app stream. Retrieve wrote it as-is; manage it in Salesforce.',
+    'The stream GET names no connector type, or the Ingestion API connector with another stream type, which fits no stream file. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_DATASPACE:
     'Data streams are supported only in the default data space: deploy refuses another identity.dataSpace, and retrieve does not write a stream whose DLO is in another space.',
   UNSUPPORTED_STREAM_MAPPING_SOURCE:
-    'A sourceFieldLabel in spec.additiveFieldMappings matches no source field, several fields, or the primary key. Use the exact label of one non-key source field.',
-  UNSUPPORTED_STREAM_MAPPING_TARGET:
-    'A targetFieldName in spec.additiveFieldMappings is a source field name or a reserved system name such as DataSource or KQ_. Choose a new, ordinary field name.',
+    'A sourceFieldLabel in spec.additiveFieldMappings matches no field of the event, or several. Salesforce would store such a mapping unchecked and it would carry no data. Use the exact label of one source field.',
   UNSUPPORTED_STREAM_PROJECTION:
-    'The stream has a mapping the plugin cannot represent in the file, such as a formula onto the primary key, a source field or a field the DLO lacks. Manage those mappings in Salesforce.',
+    'The stream has a mapping the file cannot represent: from a field the event lacks or from a label several event fields share, onto a field the DLO lacks, or with both source and formula. Manage it in Salesforce.',
   UNSUPPORTED_STREAM_READ:
-    'The stream is outside the supported profile: Ingestion API, UPSERT, a DLO category, default data space. Manage this stream in Salesforce.',
-  UNSUPPORTED_STREAM_REFRESH:
-    'The stream refreshes in a mode other than UPSERT, for example full refresh, which the stream file cannot represent. Retrieve wrote it as-is; manage it in Salesforce.',
+    'The Ingestion API stream read is outside what the stream file can hold: another stream type, no refresh mode, another data space, or missing names or lists. Manage this stream in Salesforce.',
   UNSUPPORTED_STREAM_SETTINGS_CHANGE:
-    'The file changes what no known stream update can change: the DLO label, category, event time field or primary key, a plain field mapping, or the return type of an existing formula. Use the values from a freshly retrieved file.',
+    'The file changes what no stream update changes: the refresh mode, DLO label, category, event time field or primary key, or a plain CRM field mapping. Use the values from a freshly retrieved file.',
   UNSUPPORTED_STREAM_SPEC:
-    'The stream file uses a value outside the supported profile. Use schemaVersion 1, IngestApi, INGEST_API and UPSERT.',
+    'The Ingestion API stream file uses a value outside its shape. Use schemaVersion 1, IngestApi and INGEST_API; a stream of another connector keeps its connector in spec.connectorInfo.',
 };

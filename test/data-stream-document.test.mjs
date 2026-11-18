@@ -115,8 +115,18 @@ test('proven create body uses object DLO, PK only and empty arrays, never observ
   });
   assert.equal(Array.isArray(body.dataLakeObjectInfo), false);
   assert.equal(Object.isFrozen(body.dataLakeObjectInfo.dataLakeFieldInputRepresentations[0]), true);
-  input.spec.additiveFieldMappings.push(addition());
-  assert.throws(() => buildDataStreamCreateBody(input), /CREATE_ADDITIONS_UNSUPPORTED/);
+  // Additive mappings go into the create in their source-label shape (live API 68: 201).
+  input.spec.additiveFieldMappings.push({ ...addition(), targetFieldReturntype: 'Number' });
+  assert.deepEqual(buildDataStreamCreateBody(input).mappings, [
+    { ...addition(), targetFieldReturntype: 'Number' },
+  ]);
+  assert.deepEqual(buildDataStreamCreateBody(input).sourceFields, []);
+  // A DLO without category is created without one; Salesforce decides.
+  delete input.spec.newDlo.category;
+  assert.equal(
+    Object.hasOwn(buildDataStreamCreateBody(input).dataLakeObjectInfo, 'category'),
+    false,
+  );
 });
 
 test('an Engagement stream with a formula creates with the PK field only, its event time and typed source fields', () => {
@@ -198,7 +208,7 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
       d.spec.connectorType = 'Other';
     },
     (d) => {
-      d.spec.refreshMode = 'FULL_REFRESH';
+      d.spec.refreshMode = '';
     },
     // Any category and key type is Salesforce's to decide; only an empty or non-text one is refused.
     (d) => {
@@ -212,11 +222,6 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
     },
     (d) => {
       d.spec.formulaMappings = {};
-    },
-    (d) => {
-      d.spec.formulaMappings = [
-        { targetFieldName: 'ProbeId', formula: 'x', targetFieldReturntype: 'Text' },
-      ];
     },
     (d) => {
       d.spec.formulaMappings = [
@@ -254,13 +259,10 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
       ];
     },
     (d) => {
-      d.spec.additiveFieldMappings = [{ ...addition(), targetFieldName: 'ProbeId' }];
+      d.spec.additiveFieldMappings = [{ ...addition(), targetFieldReturntype: 7 }];
     },
     (d) => {
-      d.spec.additiveFieldMappings = [{ ...addition(), targetFieldReturntype: 'Number' }];
-    },
-    (d) => {
-      d.spec.additiveFieldMappings = [{ ...addition(), sourceFieldLabel: 'UPPER(ProbeValue)' }];
+      d.spec.additiveFieldMappings = [{ ...addition(), sourceFieldLabel: ' Probe' }];
     },
     (d) => {
       d.spec.additiveFieldMappings = [{ ...addition(), targetFieldName: 'QualificationValue__c' }];
@@ -289,6 +291,35 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
     assert.throws(() => validateDataStreamDocument(input));
 });
 
+test('targets, field types and refresh modes Salesforce decides on are not refused by the file', () => {
+  for (const change of [
+    (d) => {
+      d.spec.refreshMode = 'FULL_REFRESH';
+    },
+    (d) => {
+      delete d.spec.newDlo.category;
+    },
+    (d) => {
+      d.spec.additiveFieldMappings = [{ ...addition(), targetFieldName: 'ProbeId' }];
+    },
+    (d) => {
+      d.spec.additiveFieldMappings = [{ ...addition(), targetFieldReturntype: 'Number' }];
+    },
+    (d) => {
+      d.spec.additiveFieldMappings = [{ ...addition(), targetFieldName: 'KQ_ProbeId' }];
+    },
+    (d) => {
+      d.spec.formulaMappings = [
+        { targetFieldName: 'ProbeId', formula: 'x', targetFieldReturntype: 'Text' },
+      ];
+    },
+  ]) {
+    const input = document();
+    change(input);
+    assert.deepEqual(validateDataStreamDocument(input), input);
+  }
+});
+
 test('stream enum constants ignore letter case, are sent as written and name a wrong key', () => {
   const cased = document();
   cased.spec.refreshMode = 'Upsert';
@@ -299,11 +330,11 @@ test('stream enum constants ignore letter case, are sent as written and name a w
   assert.equal(body.datastreamType, 'ingest_api');
   assert.equal(body.connectorInfo.connectorType, 'ingestapi');
   const wrong = document();
-  wrong.spec.refreshMode = 'FULL_REFRESH';
+  wrong.spec.connectorType = 'S3';
   assert.throws(
     () => validateDataStreamDocument(wrong),
     (error) =>
       error.code === 'UNSUPPORTED_STREAM_SPEC' &&
-      /spec\.refreshMode/u.test(operationDiagnostic(error, '')),
+      /spec\.connectorType.*spec\.connectorInfo/u.test(operationDiagnostic(error, '')),
   );
 });

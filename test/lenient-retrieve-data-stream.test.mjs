@@ -13,6 +13,7 @@ import {
   retrieveNativeDataStream,
   sortedStreamMappings,
 } from '../lib/services/native-data-stream.js';
+import { retrieveDataStreamDocument } from '../lib/services/native-crm-data-stream.js';
 import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
 
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-lenient-stream-'));
@@ -55,7 +56,7 @@ const ingestStream = () => ({
     ],
   },
 });
-// A connector the stream file cannot hold (CRM streams have their own file: crm-data-stream tests).
+// A stream of another connector than the Ingestion API: written as the GET-shaped file.
 const s3Stream = () => ({
   name: 'Account_Home',
   recordId: '1ds000000000002AAA',
@@ -75,6 +76,9 @@ const s3Stream = () => ({
     fields: [],
   },
 });
+
+// A stream GET that names no connector type: no stream file can hold it.
+const untyped = () => ({ ...s3Stream(), connectorInfo: {} });
 
 /**
  * Offline read clients over one stream; every read is recorded.
@@ -166,7 +170,7 @@ async function retrieveCommand(stream, connectionDetail) {
     getConnection: () => ({ getUsername: () => 'synthetic' }),
   });
   command.createDataStreamClients = () => clients;
-  command.acquireDataStream = retrieveNativeDataStream;
+  command.acquireDataStream = retrieveDataStreamDocument;
   command.writeDataStream = writeDataStreamDocument;
   const before = process.exitCode;
   try {
@@ -184,16 +188,31 @@ const asIs = (stream) =>
   sortKeysDeep({ ...stream, mappings: sortedStreamMappings(stream.mappings) });
 const savedBytes = (run) => readFile(streamFile(run.cwd, 'Account_Home'), 'utf8');
 
-test('an S3-connector stream is written as its GET without connection or schema reads', async () => {
+test('an S3-connector stream is written as a deployable GET-shaped file without connection or schema reads', async () => {
   const stream = s3Stream();
+  const { result, cwd, calls } = await retrieveCommand(stream);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(calls, ['streams.get']);
+  assert.equal(result.result.items[0].verbatim, undefined);
+  const saved = JSON.parse(await readFile(streamFile(cwd, 'Account_Home'), 'utf8'));
+  assert.equal(saved.kind, 'data-stream');
+  assert.deepEqual(saved.identity, { dataSpace: 'default', apiName: 'Account_Home' });
+  assert.equal(saved.spec.connectorInfo.connectorType, 'S3');
+  assert.equal(saved.spec.refreshConfig.refreshMode, 'FULL_REFRESH');
+  assert.equal(saved.spec.recordId, undefined);
+  const inputs = await readDeployInputs({ cwd, metadata: ['data-stream:Account_Home'] });
+  assert.equal(inputs.length, 1);
+});
+
+test('a stream GET that names no connector type is written as-is', async () => {
+  const stream = s3Stream();
+  stream.connectorInfo = {};
   const { result, cwd, calls } = await retrieveCommand(stream);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(calls, ['streams.get']);
   assert.deepEqual(result.result.items[0].verbatim, { reason: 'UNSUPPORTED_STREAM_CONNECTOR' });
   assert.match(result.diagnostics.warnings.join('\n'), /UNSUPPORTED_STREAM_CONNECTOR/u);
   const saved = JSON.parse(await readFile(streamFile(cwd, 'Account_Home'), 'utf8'));
-  assert.equal(saved.kind, 'data-stream');
-  assert.deepEqual(saved.identity, { dataSpace: 'default', apiName: 'Account_Home' });
   assert.deepEqual(saved.verbatim.native, asIs(stream));
   await assert.rejects(readDeployInputs({ cwd, metadata: ['data-stream:Account_Home'] }), {
     code: 'VERBATIM_NOT_DEPLOYABLE',
@@ -206,8 +225,8 @@ test('an as-is stream file does not change when Salesforce reorders its mappings
     { sourceFieldName: 'AnnualRevenue', targetFieldName: 'AnnualRevenue' },
     { sourceFieldName: 'Id', targetFieldName: 'Id' },
   ];
-  const first = await retrieveCommand({ ...s3Stream(), mappings: pairs });
-  const second = await retrieveCommand({ ...s3Stream(), mappings: pairs.toReversed() });
+  const first = await retrieveCommand({ ...untyped(), mappings: pairs });
+  const second = await retrieveCommand({ ...untyped(), mappings: pairs.toReversed() });
   assert.equal(await savedBytes(first), await savedBytes(second));
   const saved = JSON.parse(await savedBytes(first));
   assert.deepEqual(
@@ -218,7 +237,7 @@ test('an as-is stream file does not change when Salesforce reorders its mappings
 
 test('each IngestApi variant the file cannot hold is named from the stream GET alone', async () => {
   const cases = [
-    [(s) => (s.refreshConfig.refreshMode = 'FULL_REFRESH'), 'UNSUPPORTED_STREAM_REFRESH'],
+    [(s) => (s.dataStreamType = 'EVENTS'), 'UNSUPPORTED_STREAM_CONNECTOR'],
     [(s) => (s.connectorInfo.connectorType = 'S3'), 'UNSUPPORTED_STREAM_CONNECTOR'],
   ];
   for (const [change, code] of cases) {
@@ -231,6 +250,59 @@ test('each IngestApi variant the file cannot hold is named from the stream GET a
     );
     assert.deepEqual(calls, ['streams.get'], code);
   }
+});
+
+test('an Ingestion API stream with another refresh mode, no DLO category and additive mappings of both read shapes retrieves to a deployable file', async () => {
+  const stream = ingestStream();
+  stream.refreshConfig.refreshMode = 'PARTIAL_UPDATE';
+  delete stream.dataLakeObjectInfo.category;
+  // A create-time addition reads back as a plain source mapping, a PATCH-added one as its label.
+  stream.mappings.push(
+    { sourceFieldName: 'ProbeValue', targetFieldName: 'ValueCopy' },
+    { formula: 'ProbeValue', targetFieldName: 'ValueNumber' },
+  );
+  stream.dataLakeObjectInfo.fields.push(
+    { name: 'ValueCopy', label: 'ValueCopy', dataType: 'Text', isPrimaryKey: false },
+    { name: 'ValueNumber', label: 'ValueNumber', dataType: 'Number', isPrimaryKey: false },
+  );
+  const { result, cwd } = await retrieveCommand(stream);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.items[0].verbatim, undefined);
+  const saved = JSON.parse(await readFile(streamFile(cwd, 'GeneratedStream'), 'utf8'));
+  assert.equal(saved.spec.refreshMode, 'PARTIAL_UPDATE');
+  assert.equal(Object.hasOwn(saved.spec.newDlo, 'category'), false);
+  assert.deepEqual(saved.spec.additiveFieldMappings, [
+    { sourceFieldLabel: 'ProbeValue', targetFieldName: 'ValueCopy', targetFieldReturntype: 'Text' },
+    {
+      sourceFieldLabel: 'ProbeValue',
+      targetFieldName: 'ValueNumber',
+      targetFieldReturntype: 'Number',
+    },
+  ]);
+  assert.equal(saved.spec.formulaMappings, undefined);
+  assert.deepEqual(validateDataStreamDocument(saved), saved);
+});
+
+test('an additive mapping from a label several event fields share is not projected into a file', async () => {
+  const stream = ingestStream();
+  stream.mappings.push({ sourceFieldName: 'ProbeValue', targetFieldName: 'ValueCopy' });
+  stream.dataLakeObjectInfo.fields.push({
+    name: 'ValueCopy',
+    label: 'ValueCopy',
+    dataType: 'Text',
+    isPrimaryKey: false,
+  });
+  const { clients } = reads(stream);
+  const schema = clients.connections.schema;
+  clients.connections.schema = async () => {
+    const answer = await schema();
+    for (const field of answer.schemas[0].fields) field.label = 'Shared';
+    return answer;
+  };
+  await assert.rejects(
+    retrieveNativeDataStream(stream.name, clients, 'default', false, 'retrieve'),
+    { code: 'UNSUPPORTED_STREAM_PROJECTION' },
+  );
 });
 
 test('a stream whose DLO is in another data space stays an item failure', async () => {

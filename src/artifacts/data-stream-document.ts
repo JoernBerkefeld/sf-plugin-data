@@ -2,10 +2,11 @@ import { explainInput, printableKey } from '../services/operation-diagnostic.js'
 import { foldEnums, sameEnum } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
 
+/** An additive mapping: a source field (by label) onto a DLO field Salesforce creates from it. */
 export type DataStreamMapping = {
   sourceFieldLabel: string;
   targetFieldName: string;
-  targetFieldReturntype: 'Text';
+  targetFieldReturntype: string;
 };
 
 /** A formula mapping onto a DLO field Salesforce creates from it; the formula is stored decoded. */
@@ -26,13 +27,14 @@ export type DataStreamDocument = {
     event: string;
     /** `INGEST_API` in any letter case. */
     datastreamType: string;
-    /** `UPSERT` in any letter case. */
+    /** Sent as written on create (Salesforce creates Ingestion API streams with UPSERT only). */
     refreshMode: string;
     label: string;
     newDlo: {
       name: string;
       label: string;
-      category: string;
+      /** Absent when the DLO has no category. */
+      category?: string;
       eventDateTimeFieldName?: string;
       primaryKey: { name: string; label: string; dataType: string };
     };
@@ -202,8 +204,8 @@ export function validateDataStreamDocument(
   const dlo = object(
     spec.newDlo,
     'spec.newDlo',
-    ['name', 'label', 'category', 'primaryKey'],
-    ['eventDateTimeFieldName'],
+    ['name', 'label', 'primaryKey'],
+    ['category', 'eventDateTimeFieldName'],
   );
   identifier(dlo.name, 'spec.newDlo.name', true);
   if (text(dlo.label, 'spec.newDlo.label', bounded).length > 40 && !lenient)
@@ -212,18 +214,24 @@ export function validateDataStreamDocument(
   identifier(pk.name, 'spec.newDlo.primaryKey.name');
   text(pk.label, 'spec.newDlo.primaryKey.label', bounded);
   // Category and field types are Salesforce's to accept or refuse; only their shape is checked.
-  text(dlo.category, 'spec.newDlo.category');
+  if (dlo.category !== undefined) text(dlo.category, 'spec.newDlo.category');
   text(pk.dataType, 'spec.newDlo.primaryKey.dataType');
   if (dlo.eventDateTimeFieldName !== undefined)
     identifier(dlo.eventDateTimeFieldName, 'spec.newDlo.eventDateTimeFieldName');
-  // The Ingestion API constants ignore letter case like other stream enums; they are sent as written.
+  // This file shape is the Ingestion API one (connection and event); a stream of any other
+  // connector uses the file shape with spec.connectorInfo. The constants ignore letter case like
+  // other stream enums and are sent as written. The refresh mode is Salesforce's to decide.
   for (const [key, expected] of [
     ['connectorType', 'IngestApi'],
     ['datastreamType', 'INGEST_API'],
-    ['refreshMode', 'UPSERT'],
   ] as const)
     if (typeof spec[key] !== 'string' || !sameEnum(spec[key], expected))
-      throw refuse('UNSUPPORTED_STREAM_SPEC', `spec.${key}`, `must be ${expected}`);
+      throw refuse(
+        'UNSUPPORTED_STREAM_SPEC',
+        `spec.${key}`,
+        `must be ${expected} in this file shape (a stream of another connector keeps its connector in spec.connectorInfo)`,
+      );
+  text(spec.refreshMode, 'spec.refreshMode');
   if (
     document.schemaVersion !== 1 ||
     document.kind !== 'data-stream' ||
@@ -239,14 +247,13 @@ export function validateDataStreamDocument(
       'targetFieldName',
       'targetFieldReturntype',
     ]);
-    identifier(mapping.sourceFieldLabel, `${at}.sourceFieldLabel`);
+    // A label is free text (the read returns it HTML-escaped in `formula`; it is stored decoded).
+    text(mapping.sourceFieldLabel, `${at}.sourceFieldLabel`);
     const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`);
-    if (
-      target.endsWith('__c') ||
-      target.toLowerCase() === String(pk.name).toLowerCase() ||
-      targets.has(target.toLowerCase()) ||
-      mapping.targetFieldReturntype !== 'Text'
-    )
+    // Field type, source and target are Salesforce's to accept or refuse; the file only needs
+    // one mapping per target, named without the DLO suffix.
+    text(mapping.targetFieldReturntype, `${at}.targetFieldReturntype`);
+    if (target.endsWith('__c') || targets.has(target.toLowerCase()))
       throw new DataStreamError('INVALID_STREAM_MAPPING');
     targets.add(target.toLowerCase());
   }
@@ -256,8 +263,7 @@ export function validateDataStreamDocument(
     const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`);
     text(mapping.formula, `${at}.formula`, false);
     text(mapping.targetFieldReturntype, `${at}.targetFieldReturntype`);
-    if (target.toLowerCase() === String(pk.name).toLowerCase() || targets.has(target.toLowerCase()))
-      throw new DataStreamError('INVALID_STREAM_MAPPING');
+    if (targets.has(target.toLowerCase())) throw new DataStreamError('INVALID_STREAM_MAPPING');
     targets.add(target.toLowerCase());
   }
   // Deploy never sends `observed` (read-only schema evidence), so in both modes a key the plugin
@@ -313,8 +319,10 @@ export function validateDataStreamDocument(
 
 /**
  * Build the proven PK-only object-shaped POST; no observed fields are replayed. Salesforce creates
- * every other DLO field from the event schema. Formula mappings are sent with the event's typed
- * source fields (the proven formula create); without formulas both lists stay empty.
+ * every other DLO field from the event schema. Additive mappings are sent in the create's source-
+ * label shape (live API 68: 201, read back as plain source mappings). Formula mappings are sent
+ * with the event's typed source fields (the proven formula create); without formulas the source
+ * fields stay empty.
  * @param {unknown} value Portable document.
  * @param {Array<{name: string; dataType: string}>} [sourceFields] Event schema fields (name, type).
  * @returns {object} Native create body, not dispatch authorization.
@@ -327,8 +335,6 @@ export function buildDataStreamCreateBody(
   if (document.identity.dataSpace !== 'default')
     throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
   const { spec } = document;
-  if (spec.additiveFieldMappings.length > 0)
-    throw new DataStreamError('CREATE_ADDITIONS_UNSUPPORTED');
   const formulas = spec.formulaMappings ?? [];
   return freeze({
     name: document.identity.apiName,
@@ -341,18 +347,21 @@ export function buildDataStreamCreateBody(
     dataLakeObjectInfo: {
       name: spec.newDlo.name,
       label: spec.newDlo.label,
-      category: spec.newDlo.category,
+      ...(spec.newDlo.category === undefined ? {} : { category: spec.newDlo.category }),
       ...(spec.newDlo.eventDateTimeFieldName === undefined
         ? {}
         : { eventDateTimeFieldName: spec.newDlo.eventDateTimeFieldName }),
       dataspaceInfo: [{ name: document.identity.dataSpace }],
       dataLakeFieldInputRepresentations: [{ ...spec.newDlo.primaryKey, isPrimaryKey: true }],
     },
-    mappings: formulas.map((mapping) => ({
-      targetFieldName: mapping.targetFieldName,
-      transformationFormula: mapping.formula,
-      targetFieldReturntype: mapping.targetFieldReturntype,
-    })),
+    mappings: [
+      ...structuredClone(spec.additiveFieldMappings),
+      ...formulas.map((mapping) => ({
+        targetFieldName: mapping.targetFieldName,
+        transformationFormula: mapping.formula,
+        targetFieldReturntype: mapping.targetFieldReturntype,
+      })),
+    ],
     sourceFields:
       formulas.length > 0
         ? sourceFields.map((field) => ({ name: field.name, dataType: field.dataType }))
@@ -390,9 +399,11 @@ export function dataStreamTargetFieldName(value: string): string {
 }
 
 /**
- * A data stream of the Salesforce CRM connector (`connectorInfo.connectorType` `SalesforceDotCom`):
- * `spec` is the stream GET without server-owned keys and without the fields and mappings
- * Salesforce adds itself. Formulas are stored decoded (the GET HTML-escapes them).
+ * A data stream of any connector other than the Ingestion API (`connectorInfo.connectorType`, for
+ * example `SalesforceDotCom` for Salesforce CRM): `spec` is the stream GET without server-owned
+ * keys and without the fields and mappings Salesforce adds itself. Formulas are stored decoded
+ * (the GET HTML-escapes them). Only Salesforce CRM streams are tested live; other connectors are
+ * sent the same way and Salesforce decides.
  */
 export type CrmDataStreamDocument = {
   schemaVersion: 1;
@@ -402,6 +413,7 @@ export type CrmDataStreamDocument = {
 };
 
 type Bag = Record<string, unknown>;
+const ingestConnector = 'IngestApi';
 const crmConnector = 'SalesforceDotCom';
 // Keys of a stream GET that Salesforce owns: identifiers, run state and values it derives.
 const ownedStreamKeys = ['recordId', 'status', 'lastRunStatus', 'isEnabled', 'dataSource'];
@@ -482,18 +494,20 @@ function byName(values: unknown[]): unknown[] {
 }
 
 /**
- * Whether a stream GET (or a CRM stream spec) uses the Salesforce CRM connector.
+ * Whether a stream GET (or a stream spec) names a connector other than the Ingestion API, such as
+ * Salesforce CRM; those streams use the GET-shaped file.
  * @param {unknown} value Stream GET or spec.
- * @returns {boolean} CRM connector.
+ * @returns {boolean} A connector type other than IngestApi.
  */
 export function isCrmDataStream(value: unknown): boolean {
-  return (
-    isBag(value) && isBag(value.connectorInfo) && value.connectorInfo.connectorType === crmConnector
-  );
+  if (!isBag(value) || !isBag(value.connectorInfo)) return false;
+  const type = value.connectorInfo.connectorType;
+  return typeof type === 'string' && type !== '' && !sameEnum(type, ingestConnector);
 }
 
 /**
- * Whether a stream document is a CRM stream document (its spec names the CRM connector).
+ * Whether a stream document is a GET-shaped document (its spec names a connector other than the
+ * Ingestion API).
  * @param {unknown} value Candidate document.
  * @returns {boolean} CRM stream document.
  */
@@ -523,7 +537,14 @@ export function crmDataStreamSpec(value: unknown): Bag {
         dlo.fields.filter((field) => !isCrmSystemField(isBag(field) && field.name)),
       );
   }
-  if (isBag(spec.refreshConfig)) for (const key of ownedRefreshKeys) delete spec.refreshConfig[key];
+  // Salesforce CRM streams echo file-import refresh keys the create refuses (live, API 68); for
+  // file connectors such as S3 they are the user's settings and stay in the file.
+  if (
+    isBag(spec.refreshConfig) &&
+    isBag(spec.connectorInfo) &&
+    sameEnum(spec.connectorInfo.connectorType, crmConnector)
+  )
+    for (const key of ownedRefreshKeys) delete spec.refreshConfig[key];
   if (Array.isArray(spec.sourceFields))
     spec.sourceFields = byName(
       spec.sourceFields
@@ -661,6 +682,7 @@ export function crmDataStreamWriteBody(spec: Bag): Bag {
  */
 export const streamEnumKeys: ReadonlySet<string> = new Set([
   'category',
+  'connectorType',
   'dataType',
   'datastreamType',
   'datatype',
@@ -705,8 +727,9 @@ function sameValue(left: unknown, right: unknown): boolean {
  * plus each changed part only. Formula mappings are compared one by one (a removed formula is
  * sent with an empty formula); refresh settings key by key; every other changed key is sent
  * whole. The DLO fields of formula targets are left to the mappings. No parts means unchanged.
- * Differences no proven write can send are returned as `unsupported`, never as parts: a plain
- * source-to-target mapping added, removed or changed, and the return type of an existing formula.
+ * Differences no write input can carry are returned as `unsupported`, never as parts: a plain
+ * source-to-target mapping added, removed or changed (`sourceFieldName` is no PATCH input). A
+ * changed formula return type is sent with the formula, and Salesforce decides.
  * @param {Bag} wanted Spec of the file.
  * @param {Bag} current Spec of the org's stream.
  * @returns {{body: Bag; parts: string[]; unsupported: string[]}} PATCH body, the changed key
@@ -746,13 +769,10 @@ export function crmDataStreamPatch(
   for (const [target, mapping] of wantFormulas) {
     const existing = haveFormulas.get(target);
     if (
-      existing !== undefined &&
-      !sameEnum(existing.targetFieldReturntype, mapping.targetFieldReturntype)
-    ) {
-      unsupported.push(`mappings[${target}].targetFieldReturntype`);
-      continue;
-    }
-    if (existing?.transformationFormula !== mapping.transformationFormula) mappings.push(mapping);
+      existing?.transformationFormula !== mapping.transformationFormula ||
+      !sameEnum(existing?.targetFieldReturntype, mapping.targetFieldReturntype)
+    )
+      mappings.push(mapping);
   }
   for (const target of haveFormulas.keys())
     if (!wantFormulas.has(target))

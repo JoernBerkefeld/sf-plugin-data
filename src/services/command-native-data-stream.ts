@@ -21,6 +21,7 @@ import type {
   DataStreamDeployOptions,
   DataStreamDeleteClients,
   DataStreamDeleteOptions,
+  DataStreamUpdatePlan,
 } from './native-data-stream.js';
 
 type PublicDeleteOptions = Omit<DataStreamDeleteOptions, 'survivorDloNames'>;
@@ -202,8 +203,26 @@ export async function preflightDataStream(value: unknown, clients: DataStreamDep
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'complete-binding-inventory-and-dlo-404' : 'none',
     requiredEffects: plan.operation === 'noop' ? [] : ['processing'],
+    ...(plan.operation === 'update' ? { changes: ingestUpdateChanges(plan) } : {}),
     diagnostics: [],
   };
+}
+
+/**
+ * The parts an Ingestion API update sends, for the preview: the label, each added or changed
+ * mapping, and each mapping removed from the file.
+ * @param {DataStreamUpdatePlan} plan Update plan.
+ * @returns {string[]} Changed parts, for example `mappings[Score2]` or `remove mappings[Old]`.
+ */
+function ingestUpdateChanges(plan: DataStreamUpdatePlan): string[] {
+  return [
+    ...(plan.labelChange ? ['label'] : []),
+    ...[...plan.additions, ...plan.formulaChanges].map((entry) =>
+      'transformationFormula' in entry && entry.transformationFormula === ''
+        ? `remove mappings[${entry.targetFieldName}]`
+        : `mappings[${entry.targetFieldName}]`,
+    ),
+  ];
 }
 
 /**

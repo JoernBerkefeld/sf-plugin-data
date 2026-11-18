@@ -10,7 +10,7 @@
 
 ## What it means
 
-A stream update only adds new field mappings. The plugin compares `spec.additiveFieldMappings` with the target and sends an update only for the mappings that are missing. When none are missing the deploy reports `unchanged` without a write.
+The plugin compares `spec.additiveFieldMappings` with the target and sends an update only for the additive mappings that are new or differ. When nothing differs the deploy reports `unchanged` without a write.
 
 This code means the update body was about to be built with no mapping in it. The plugin's own checks normally prevent that, so it points to an internal inconsistency rather than a problem in your file.
 
@@ -36,5 +36,5 @@ Deployed: 0 (0 created / 0 updated / 0 failed)
 
 ## Related codes
 
-- [`STREAM_MAPPING_CONFLICT`](../data-stream/STREAM_MAPPING_CONFLICT.md) — a requested mapping clashes with an existing one.
-- [`CREATE_ADDITIONS_UNSUPPORTED`](../data-stream/CREATE_ADDITIONS_UNSUPPORTED.md) — the create counterpart: a new stream cannot carry extra mappings.
+- [`INVALID_STREAM_MAPPING`](../data-stream/INVALID_STREAM_MAPPING.md) — a mapping entry of the file is invalid.
+- [`STREAM_HTTP_ERROR`](../data-stream/STREAM_HTTP_ERROR.md) — Salesforce refused a stream write.

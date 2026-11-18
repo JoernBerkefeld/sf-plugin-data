@@ -133,6 +133,33 @@ turns the schedule off. A schedule that is not an object is refused
 (`UNSUPPORTED_TRANSFORM_INPUT`). A schedule copied to another org makes the transform run
 there (`TRANSFORM_SCHEDULE_CHANGE`).
 
+## Public data stream document
+
+Retrieve writes each data stream as `data360/data-stream/<ApiName>.data-stream-meta.json`
+in one of two shapes, both with `schemaVersion: 1`, `kind: "data-stream"` and
+`identity: {apiName, dataSpace}`:
+
+- **Ingestion API stream:** `spec` holds `connectorType` (`IngestApi`), `connectionName`,
+  `event`, `datastreamType` (`INGEST_API`), `refreshMode`, `label`, `newDlo` (`name`,
+  `label`, `category` when the DLO has one, `eventDateTimeFieldName`, `primaryKey`),
+  `additiveFieldMappings` (`sourceFieldLabel`, `targetFieldName` without `__c`,
+  `targetFieldReturntype`) and `formulaMappings` (`targetFieldName`, `formula` decoded,
+  `targetFieldReturntype`), plus the read-only `observed` section.
+- **Any other connector** (Salesforce CRM `SalesforceDotCom` tested live; others such as
+  S3 untested): `spec` is the stream GET without server-owned keys, system fields and
+  system mappings, with `connectorInfo.connectorType` naming the connector.
+
+Create and update send the file as written and Salesforce decides; its 4xx answer to the
+first write is reported as rejected, and a failure after an earlier write as unknown. Of
+the Ingestion API file, the plugin itself refuses only an additive mapping whose
+`sourceFieldLabel` names no event field, or several (`UNSUPPORTED_STREAM_MAPPING_SOURCE`:
+Salesforce stores it unchecked as a mapping that never carries data), and a change of
+`refreshMode`, the DLO label, category, event time field or primary key of an existing
+stream (`UNSUPPORTED_STREAM_SETTINGS_CHANGE`: Salesforce answers 200 and keeps the old
+value). A mapping left out of the file is sent as a removal (an empty formula). Of the
+other-connector file, a plain mapping change is refused (`UNSUPPORTED_STREAM_SETTINGS_CHANGE`):
+the stream update takes no `sourceFieldName`.
+
 ## Public native DMO document
 
 Exact `dmo:ApiName__dlm` retrieval writes

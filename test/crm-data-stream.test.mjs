@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { writeDataStreamDocument } from '../lib/artifacts/write-data-stream.js';
+import { crmDataStreamWriteBody } from '../lib/artifacts/data-stream-document.js';
 import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import { streamLandingDlo } from '../lib/services/crud-plan.js';
 import {
@@ -415,7 +416,7 @@ test('a label Salesforce keeps is reported; a refused refresh mode is reported a
   assert.match(failure.diagnostics[0].message, /invalid refresh mode/u);
 });
 
-test('a plain mapping or formula return type change is refused before any write', async () => {
+test('a plain mapping change is refused before any write', async () => {
   const cases = [
     [
       (spec) => {
@@ -428,14 +429,6 @@ test('a plain mapping or formula return type change is refused before any write'
         spec.mappings = spec.mappings.filter((entry) => entry.targetFieldName !== 'IsActive');
       },
       /mappings\[IsActive\]/u,
-    ],
-    [
-      (spec) => {
-        spec.mappings.find(
-          (entry) => entry.targetFieldName === 'CliNameUpper',
-        ).targetFieldReturntype = 'Number';
-      },
-      /mappings\[CliNameUpper\]\.targetFieldReturntype/u,
     ],
   ];
   for (const [edit, named] of cases) {
@@ -453,6 +446,108 @@ test('a plain mapping or formula return type change is refused before any write'
     assert.equal(result.diagnostics[0].code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
     assert.equal(requests.length, 0);
   }
+});
+
+test('a formula return type change is sent with the formula and Salesforce decides', async () => {
+  const document = structuredClone(crmDocument());
+  document.spec.mappings.find(
+    (entry) => entry.targetFieldName === 'CliNameUpper',
+  ).targetFieldReturntype = 'Number';
+  const preview = await preflightDataStream(document, org(() => crmGet()).clients);
+  assert.equal(preview.outcome, 'update');
+  assert.deepEqual(preview.changes, ['mappings']);
+  const { clients, requests } = org(
+    () => crmGet(),
+    () => 400,
+  );
+  const result = await executeDataStream(document, clients, options);
+  assert.deepEqual(requests[0].body, {
+    datastreamType: 'SFDC',
+    mappings: [
+      {
+        targetFieldName: 'CliNameUpper',
+        transformationFormula: "UPPER(sourceField['Name'])",
+        targetFieldReturntype: 'Number',
+      },
+    ],
+  });
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'rejected');
+  assert.equal(result.diagnostics[0].code, 'STREAM_HTTP_ERROR');
+});
+
+test('a stream of another connector uses the same file and is created as written', async () => {
+  // Other connectors are untested live; the file is sent as written and Salesforce decides.
+  const s3 = {
+    ...crmGet(),
+    name: 'Orders_S3',
+    dataStreamType: 'S3',
+    connectorInfo: { connectorType: 'S3', connectorDetails: { name: 'AmazonS3_Home', type: 'S3' } },
+    refreshConfig: { ...crmGet().refreshConfig, refreshMode: 'FULL_REFRESH' },
+  };
+  const document = projectCrmDataStream(s3, 'Orders_S3', 'retrieve');
+  assert.deepEqual(document.spec.connectorInfo, {
+    connectorType: 'S3',
+    connectorDetails: { name: 'AmazonS3_Home' },
+  });
+  const { clients, requests } = org((done) => (done.length > 0 ? s3 : undefined));
+  const result = await executeDataStream(document, clients, options);
+  assert.equal(result.outcome, 'created', JSON.stringify(result.diagnostics));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'POST');
+  assert.equal(requests[0].body.datastreamType, 'S3');
+  assert.deepEqual(requests[0].body.connectorInfo, document.spec.connectorInfo);
+  assert.equal(requests[0].body.refreshConfig.refreshMode, 'FULL_REFRESH');
+  // An Ingestion API stream of the same name is another object and is never overwritten.
+  const ingest = { ...s3, connectorInfo: { connectorType: 'IngestApi' } };
+  const other = org(() => ingest);
+  const refused = await executeDataStream(document, other.clients, options);
+  assert.equal(refused.diagnostics[0].code, 'STREAM_TARGET_MISMATCH');
+  assert.equal(other.requests.length, 0);
+});
+
+test('a file of one connector never updates an org stream of another connector', async () => {
+  const s3 = {
+    ...crmGet(),
+    dataStreamType: 'S3',
+    connectorInfo: { connectorType: 'S3', connectorDetails: { name: 'AmazonS3_Home' } },
+  };
+  const document = projectCrmDataStream(s3, 'CliCrmPb2', 'retrieve');
+  const { clients, requests } = org(() => crmGet());
+  await assert.rejects(preflightDataStream(document, clients), { code: 'STREAM_TARGET_MISMATCH' });
+  const result = await executeDataStream(document, clients, options);
+  assert.equal(result.mutation, 'not-attempted');
+  assert.equal(result.diagnostics[0].code, 'STREAM_TARGET_MISMATCH');
+  assert.equal(requests.length, 0);
+  // The connector type ignores letter case like other stream enums.
+  const cased = structuredClone(crmDocument());
+  cased.spec.connectorInfo.connectorType = 'salesforcedotcom';
+  const casedPreview = await preflightDataStream(cased, org(() => crmGet()).clients);
+  assert.equal(casedPreview.outcome, 'unchanged');
+});
+
+test('file-import refresh keys are user settings of non-CRM connectors and are sent as written', () => {
+  const refresh = {
+    refreshMode: 'FULL_REFRESH',
+    hasHeaders: true,
+    shouldFetchImmediately: false,
+    shouldTreatMissingFilesAsFailures: true,
+  };
+  const s3 = {
+    ...crmGet(),
+    dataStreamType: 'S3',
+    connectorInfo: { connectorType: 'S3', connectorDetails: { name: 'AmazonS3_Home' } },
+    refreshConfig: refresh,
+  };
+  const document = projectCrmDataStream(s3, 'CliCrmPb2', 'retrieve');
+  assert.deepEqual(document.spec.refreshConfig, refresh);
+  assert.deepEqual(crmDataStreamWriteBody(document.spec).refreshConfig, refresh);
+  const crm = projectCrmDataStream(
+    { ...crmGet(), refreshConfig: refresh },
+    'CliCrmPb2',
+    'retrieve',
+  );
+  assert.deepEqual(crm.spec.refreshConfig, { refreshMode: 'FULL_REFRESH' });
 });
 
 test('create reports plain mappings Salesforce mapped otherwise than the file', async () => {

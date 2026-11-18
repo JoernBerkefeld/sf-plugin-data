@@ -220,8 +220,13 @@ test('README documents native relationships without the removed XML export', () 
   }
 });
 
-test('README and current docs do not mention removed mapping refusal codes', () => {
+test('README and current docs do not mention removed mapping and stream refusal codes', () => {
   const removed = [
+    'CREATE_ADDITIONS_UNSUPPORTED',
+    'STREAM_MAPPING_CONFLICT',
+    'UNSUPPORTED_STREAM_CATEGORY',
+    'UNSUPPORTED_STREAM_MAPPING_TARGET',
+    'UNSUPPORTED_STREAM_REFRESH',
     'MAPPING_FIELD_TYPE_MISMATCH',
     'MAPPING_CREATE_FIELD_POLICY_UNPROVEN',
     'MAPPING_PRIMARY_KEY_PAIR_REQUIRED',
@@ -270,6 +275,7 @@ test('README describes optional scope without promoting nondefault qualification
     'Data Model Objects',
     'DLO-to-DMO mappings',
     'Data Graphs',
+    'Data Streams',
   ])
     assert.doesNotMatch(
       table.split('\n').find((line) => line.includes(resource)),
@@ -277,6 +283,15 @@ test('README describes optional scope without promoting nondefault qualification
     );
   assert.match(readme, /^- Data Model Objects \(DMOs\)$/mu);
   assert.match(readme, /^- Data graphs$/mu);
+  assert.match(readme, /^- Data streams$/mu);
+  const stream = table.split('\n').find((line) => line.includes('Data Streams'));
+  for (const text of [
+    'streams of every other connector in a GET-shaped file',
+    'others, such as S3 or streaming apps, are untested and sent as written',
+    'an additive mapping whose source label names no event field',
+    'Salesforce answers 200 and keeps the old value',
+  ])
+    assert.ok(stream.includes(text), text);
   const graph = table.split('\n').find((line) => line.includes('Data Graphs'));
   for (const text of [
     'refuses removed fields and related objects, a root change and another related object',

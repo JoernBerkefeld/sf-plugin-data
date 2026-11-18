@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_CONNECTOR`
 
-> The stream uses neither the Ingestion API nor the Salesforce CRM connector, for example an S3, Marketing Cloud Engagement or streaming-app stream. Retrieve wrote it as-is; manage it in Salesforce.
+> The stream GET names no connector type, or the Ingestion API connector with another stream type, which fits no stream file. Retrieve wrote it as-is; manage it in Salesforce.
 
 |              |                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------- |
@@ -10,28 +10,28 @@
 
 ## What it means
 
-The stream file format describes two kinds of data stream: Ingestion API streams and Salesforce CRM streams (`connectorInfo.connectorType` `SalesforceDotCom`). This code means the stream GET reports another connector, for example an Amazon S3, Marketing Cloud Engagement or streaming app stream.
+The stream file has two shapes: the Ingestion API shape (connection and event) and the GET-shaped file for every other connector (`spec.connectorInfo.connectorType`, for example `SalesforceDotCom`). This code means the stream GET fits neither: it names no connector type, or it names the Ingestion API connector with another stream type than `INGESTAPI`.
 
 Retrieve decides this from the stream GET alone and does not read the connection list or the event schema.
 
 ## Why the plugin reports it
 
-The plugin cannot represent the connector in its normal file, so it does not guess. It writes the stream GET as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, so nothing in the org is hidden.
+The plugin cannot tell which file shape the stream needs, so it does not guess. It writes the stream GET as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, so nothing in the org is hidden.
 
 ## How to fix
 
-1. Manage the stream in Salesforce. Deploy skips the verbatim file in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
-2. Retrieve again after the plugin supports the connector; the normal file then replaces the verbatim one.
+1. Check the stream's connector in Data Cloud Setup.
+2. Manage the stream in Salesforce. Deploy skips the verbatim file in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
 
 ## Example output
 
 ```text
 Retrieve: success.
-Warning: data-stream:Orders_S3: retrieved as-is (verbatim, reason UNSUPPORTED_STREAM_CONNECTOR) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
-Downloaded data-stream:Orders_S3 (retrieved).
+Warning: data-stream:Orders_Unknown: retrieved as-is (verbatim, reason UNSUPPORTED_STREAM_CONNECTOR) because the plugin cannot represent it. Deploy skips the file in a folder or Git range and refuses it when it is named.
+Downloaded data-stream:Orders_Unknown (retrieved).
 ```
 
 ## Related codes
 
-- [`UNSUPPORTED_STREAM_REFRESH`](../data-stream/UNSUPPORTED_STREAM_REFRESH.md) — an Ingestion API stream with another refresh mode.
+- [`UNSUPPORTED_STREAM_READ`](../data-stream/UNSUPPORTED_STREAM_READ.md) — an Ingestion API stream outside what the file holds.
 - [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy of the verbatim file.

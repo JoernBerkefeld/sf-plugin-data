@@ -5,6 +5,7 @@ import { DataStreamHttpError } from '../lib/transport/data-stream-rest.js';
 import {
   DataStreamError,
   buildDataStreamCreateBody,
+  buildDataStreamPatchBody,
 } from '../lib/artifacts/data-stream-document.js';
 import {
   executeDataStream,
@@ -31,6 +32,11 @@ const typed = [
   ['IsOpen', 'Boolean'],
 ];
 const encode = (formula) => formula.replaceAll("'", '&#39;').replaceAll('"', '&quot;');
+// Event field labels differ from the names (the key keeps its name as label); Salesforce returns
+// an additive mapping's label HTML-escaped in `formula`.
+const labels = { Score: "Score's value", EventTime: 'Event time', IsOpen: 'Is open' };
+const labelOf = (name) => labels[name] ?? name;
+const nameOf = (label) => typed.find(([name]) => labelOf(name) === label)?.[0];
 
 const field = (name, dataType, isPrimaryKey = false) => ({
   name,
@@ -43,7 +49,9 @@ const notFound = () => new DataStreamHttpError('STREAM_HTTP_ERROR', 404);
 /**
  * An offline org holding one Ingestion API connection with two events. Create and PATCH behave
  * as the research observed: Salesforce names the stream, creates every schema field itself,
- * adds a formula by PATCH and refuses an empty formula with 400.
+ * stores a create-time addition as a plain source mapping, adds a formula or an addition (as its
+ * label) by PATCH, and refuses with 400 an empty formula, an addition onto an existing target
+ * and a new return type of an existing field.
  * @returns {object} Clients, sent writes and the stream map.
  */
 function org() {
@@ -109,10 +117,17 @@ function org() {
               formula: 'DAYPRECISION(formulaField[&#39;EventTime__c&#39;])',
               targetFieldName: 'cdp_sys_PartitionDate',
             },
-            ...body.mappings.map((mapping) => ({
-              formula: encode(mapping.transformationFormula),
-              targetFieldName: mapping.targetFieldName,
-            })),
+            ...body.mappings.map((mapping) =>
+              mapping.sourceFieldLabel === undefined
+                ? {
+                    formula: encode(mapping.transformationFormula),
+                    targetFieldName: mapping.targetFieldName,
+                  }
+                : {
+                    sourceFieldName: nameOf(mapping.sourceFieldLabel) ?? mapping.sourceFieldLabel,
+                    targetFieldName: mapping.targetFieldName,
+                  },
+            ),
           ],
           dataLakeObjectInfo: {
             name: `${name}__dll`,
@@ -139,19 +154,28 @@ function org() {
         streams.set(name, stream);
         return { name, recordId: stream.recordId };
       },
-      update: async () => assert.fail('formula and label changes use one PATCH body'),
+      // Additions alone go as their own PATCH body.
+      update: async (recordId, document) =>
+        clients.streams.patch(recordId, buildDataStreamPatchBody(document)),
       patch: async (recordId, body) => {
         writes.push({ method: 'PATCH', body: structuredClone(body) });
-        processing = 1;
         const stream = byId(recordId);
-        for (const mapping of body.mappings ?? []) {
-          if (mapping.transformationFormula === '')
+        const existing = (mapping) =>
+          stream.dataLakeObjectInfo.fields.find((entry) => entry.name === mapping.targetFieldName);
+        for (const mapping of body.mappings ?? [])
+          if (
+            mapping.transformationFormula === '' ||
+            (mapping.sourceFieldLabel !== undefined && existing(mapping)) ||
+            (existing(mapping) && existing(mapping).dataType !== mapping.targetFieldReturntype)
+          )
             throw new DataStreamHttpError('STREAM_HTTP_ERROR', 400);
+        processing = 1;
+        for (const mapping of body.mappings ?? []) {
           stream.mappings = stream.mappings.filter(
             (entry) => entry.targetFieldName !== mapping.targetFieldName,
           );
           stream.mappings.push({
-            formula: encode(mapping.transformationFormula),
+            formula: encode(mapping.sourceFieldLabel ?? mapping.transformationFormula),
             targetFieldName: mapping.targetFieldName,
           });
           if (
@@ -181,7 +205,7 @@ function org() {
             : 'Available',
           fields: typed.map(([fieldName, dataType]) => ({
             name: fieldName,
-            label: fieldName,
+            label: labelOf(fieldName),
             dataType,
           })),
         })),
@@ -429,22 +453,133 @@ test('a DLO setting the PATCH cannot change stays refused before any write', asy
   assert.equal(writes.length, 1);
 });
 
-test('a new return type for an existing formula is refused before any write', async () => {
+test('a new return type for an existing formula is sent and Salesforce refuses it', async () => {
   const { clients, writes } = org();
   const created = await executeDataStream(file('CliEvA'), clients, options);
   const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
   const changed = structuredClone(retrieved);
   changed.spec.formulaMappings[0].targetFieldReturntype = 'Text';
+  const preview = await preflightDataStream(changed, clients);
+  assert.equal(preview.outcome, 'update');
+  const result = await executeDataStream(changed, clients, options);
+  assert.deepEqual([result.outcome, result.mutation], ['failed', 'rejected']);
+  assert.equal(result.diagnostics[0].code, 'STREAM_HTTP_ERROR');
+  assert.deepEqual(writes.at(-1).body, {
+    datastreamType: 'INGEST_API',
+    mappings: [
+      {
+        targetFieldName: 'ScoreX2',
+        transformationFormula: "sourceField['Score'] * 2",
+        targetFieldReturntype: 'Text',
+      },
+    ],
+  });
+});
+
+test('a refresh mode change is refused before any write, because Salesforce ignores it', async () => {
+  const { clients, writes } = org();
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+  const changed = structuredClone(retrieved);
+  changed.spec.refreshMode = 'REPLACE';
   await assert.rejects(preflightDataStream(changed, clients), (error) => {
     assert.equal(error.code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
-    assert.match(error.message, /spec\.formulaMappings\[ScoreX2\]\.targetFieldReturntype/u);
+    assert.match(error.message, /spec\.refreshMode/u);
     return true;
   });
-  const result = await executeDataStream(changed, clients, options);
-  assert.equal(result.outcome, 'blocked');
-  assert.equal(result.mutation, 'not-attempted');
-  assert.equal(result.diagnostics[0].code, 'UNSUPPORTED_STREAM_SETTINGS_CHANGE');
   assert.equal(writes.length, 1);
+});
+
+test('a create carries additive mappings of any type and retrieves unchanged', async () => {
+  const { clients, writes } = org();
+  const document = file('CliEvA');
+  document.spec.additiveFieldMappings = [
+    {
+      sourceFieldLabel: "Score's value",
+      targetFieldName: 'ScoreCopy',
+      targetFieldReturntype: 'Number',
+    },
+    { sourceFieldLabel: 'EventId', targetFieldName: 'EventIdCopy', targetFieldReturntype: 'Text' },
+  ];
+  const created = await executeDataStream(document, clients, options);
+  assert.equal(created.outcome, 'created', JSON.stringify(created.diagnostics));
+  assert.deepEqual(created.diagnostics, []);
+  assert.deepEqual(writes[0].body.mappings.slice(0, 2), document.spec.additiveFieldMappings);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+  assert.deepEqual(retrieved.spec.additiveFieldMappings, [
+    { sourceFieldLabel: 'EventId', targetFieldName: 'EventIdCopy', targetFieldReturntype: 'Text' },
+    {
+      sourceFieldLabel: "Score's value",
+      targetFieldName: 'ScoreCopy',
+      targetFieldReturntype: 'Number',
+    },
+  ]);
+  const repeat = await executeDataStream(retrieved, clients, options);
+  assert.equal(repeat.outcome, 'unchanged', JSON.stringify(repeat.diagnostics));
+  assert.equal(writes.length, 1);
+});
+
+test('additive mapping updates are sent as written; only an unknown source label is refused', async () => {
+  const { clients, writes } = org();
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+
+  // An unknown label would be stored unchecked as a dead mapping: refused before any write.
+  // 'Score' is the field's name, not its label.
+  for (const label of ['Nope', 'Score']) {
+    const unknown = structuredClone(retrieved);
+    unknown.spec.additiveFieldMappings = [
+      { sourceFieldLabel: label, targetFieldName: 'NopeCopy', targetFieldReturntype: 'Text' },
+    ];
+    const blocked = await executeDataStream(unknown, clients, options);
+    assert.deepEqual([blocked.outcome, blocked.mutation], ['blocked', 'not-attempted']);
+    assert.equal(blocked.diagnostics[0].code, 'UNSUPPORTED_STREAM_MAPPING_SOURCE');
+  }
+  assert.equal(writes.length, 1);
+
+  // The primary key as source and a Number target are sent and applied.
+  const added = structuredClone(retrieved);
+  added.spec.additiveFieldMappings = [
+    { sourceFieldLabel: 'EventId', targetFieldName: 'EventIdCopy', targetFieldReturntype: 'Text' },
+    {
+      sourceFieldLabel: "Score's value",
+      targetFieldName: 'ScoreCopy',
+      targetFieldReturntype: 'Number',
+    },
+  ];
+  const update = await executeDataStream(added, clients, options);
+  assert.equal(update.outcome, 'updated', JSON.stringify(update.diagnostics));
+  assert.deepEqual(writes.at(-1).body, {
+    datastreamType: 'INGEST_API',
+    mappings: added.spec.additiveFieldMappings,
+  });
+  const repeat = await executeDataStream(added, clients, options);
+  assert.equal(repeat.outcome, 'unchanged');
+
+  // A new source for an existing target, a retarget onto a source field and a removal are sent;
+  // Salesforce refuses each with 400, reported as rejected.
+  const resourced = structuredClone(added);
+  resourced.spec.additiveFieldMappings[1].sourceFieldLabel = 'Event time';
+  const retarget = structuredClone(added);
+  retarget.spec.additiveFieldMappings.push({
+    sourceFieldLabel: "Score's value",
+    targetFieldName: 'EventTime',
+    targetFieldReturntype: 'DateTime',
+  });
+  const removal = structuredClone(added);
+  removal.spec.additiveFieldMappings.pop();
+  for (const [changed, mappings] of [
+    [resourced, [resourced.spec.additiveFieldMappings[1]]],
+    [retarget, [retarget.spec.additiveFieldMappings[2]]],
+    [removal, [{ targetFieldName: 'ScoreCopy', transformationFormula: '' }]],
+  ]) {
+    const sent = writes.length;
+    const refused = await executeDataStream(changed, clients, options);
+    assert.deepEqual([refused.outcome, refused.mutation], ['failed', 'rejected']);
+    assert.equal(refused.diagnostics[0].code, 'STREAM_HTTP_ERROR');
+    assert.equal(writes.length, sent + 1);
+    assert.deepEqual(writes.at(-1).body.mappings, mappings);
+  }
 });
 
 test('deleting the last stream of a connection waits while the list still names it after its 404', async () => {
@@ -574,4 +709,49 @@ test('list and detail of a stream that disagree before the DELETE still refuse i
   assert.equal(result.mutation, 'not-attempted');
   assert.equal(result.diagnostics[0].code, 'STREAM_BINDING_DRIFT');
   assert.equal(deletes.length, 0);
+});
+
+test('preview lists mapping removals; a removal Salesforce answers 200 but ignores is not confirmed', async () => {
+  const { clients, writes, streams } = org();
+  const document = file('CliEvA');
+  document.spec.additiveFieldMappings = [
+    {
+      sourceFieldLabel: "Score's value",
+      targetFieldName: 'ScoreCopy',
+      targetFieldReturntype: 'Number',
+    },
+  ];
+  const created = await executeDataStream(document, clients, options);
+  const retrieved = await retrieveNativeDataStream(created.targetApiName, clients);
+  const removal = structuredClone(retrieved);
+  removal.spec.additiveFieldMappings = [];
+  removal.spec.formulaMappings.push({
+    targetFieldName: 'ScoreX3',
+    formula: "sourceField['Score'] * 3",
+    targetFieldReturntype: 'Number',
+  });
+  const preview = await preflightDataStream(removal, clients);
+  assert.equal(preview.outcome, 'update');
+  assert.deepEqual(preview.changes, ['mappings[ScoreX3]', 'remove mappings[ScoreCopy]']);
+  // A fake that answers 200 to every PATCH and changes nothing.
+  clients.streams.patch = async (_recordId, body) => {
+    writes.push({ method: 'PATCH', body: structuredClone(body) });
+    return { name: created.targetApiName };
+  };
+  const only = structuredClone(retrieved);
+  only.spec.additiveFieldMappings = [];
+  const result = await executeDataStream(only, clients, options);
+  assert.deepEqual([result.outcome, result.mutation], ['failed', 'unknown']);
+  assert.equal(result.diagnostics[0].code, 'STREAM_UPDATE_SETTLEMENT_UNCONFIRMED');
+  assert.deepEqual(writes.at(-1).body.mappings, [
+    { targetFieldName: 'ScoreCopy', transformationFormula: '' },
+  ]);
+  // The plain-shaped create-time mapping is still there.
+  assert.ok(
+    streams
+      .get(created.targetApiName)
+      .mappings.some(
+        (entry) => entry.targetFieldName === 'ScoreCopy' && entry.sourceFieldName === 'Score',
+      ),
+  );
 });

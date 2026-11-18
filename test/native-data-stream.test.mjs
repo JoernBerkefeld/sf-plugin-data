@@ -1422,29 +1422,35 @@ async function updateLifecycle(controls = {}) {
   };
 }
 
-test('update preview selects only missing exact Text pairs and noop omits nothing destructive', async () => {
+test('update preview selects only new or changed pairs and sends an omitted pair as a removal', async () => {
   const scenario = await updateLifecycle();
   const plan = await preflightNativeDataStreamUpdate(scenario.desired, scenario.clients);
   assert.equal(plan.operation, 'update');
   assert.deepEqual(plan.patch.spec.additiveFieldMappings, [
     scenario.desired.spec.additiveFieldMappings.at(-1),
   ]);
+  assert.deepEqual(plan.formulaChanges, []);
   assert.equal(scenario.counts().writes, 0);
   const omitted = structuredClone(scenario.original);
-  omitted.spec.additiveFieldMappings = [];
-  const noop = await updateNativeDataStream(omitted, scenario.clients, {
+  const [kept] = omitted.spec.additiveFieldMappings.splice(0);
+  const removal = await preflightNativeDataStreamUpdate(omitted, scenario.clients);
+  assert.equal(removal.operation, 'update');
+  assert.deepEqual(removal.additions, []);
+  assert.deepEqual(removal.formulaChanges, [
+    { targetFieldName: kept.targetFieldName, transformationFormula: '' },
+  ]);
+  const noop = await updateNativeDataStream(scenario.original, scenario.clients, {
     ...scenario.options,
     allowProcessing: false,
   });
   assert.equal(noop.operation, 'noop');
-  assert.equal(noop.document.spec.additiveFieldMappings.length, 1);
   assert.equal(scenario.counts().writes, 0);
 });
 
 test('a file whose stream constants differ from the org only in letter case is unchanged', async () => {
   const scenario = await updateLifecycle();
   const cased = structuredClone(scenario.original);
-  cased.spec.additiveFieldMappings = [];
+  cased.spec.additiveFieldMappings[0].targetFieldReturntype = 'TEXT';
   // Live API 68: the org reads UPSERT, INGEST_API and IngestApi.
   cased.spec.refreshMode = 'Upsert';
   cased.spec.datastreamType = 'Ingest_Api';
@@ -1470,7 +1476,7 @@ test('additive PATCH preserves prior mapping/schema and resolves actual target; 
   assert.equal(scenario.counts().writes, 1);
 });
 
-test('update rejects unsupported label/key/retarget/system/source intents and nonready state without writes', async () => {
+test('update rejects ignored settings, unknown source labels and nonready state without writes', async () => {
   for (const mutate of [
     (s) => {
       s.desired.spec.refreshMode = 'FULL';
@@ -1486,27 +1492,6 @@ test('update rejects unsupported label/key/retarget/system/source intents and no
     },
     (s) => {
       s.desired.spec.newDlo.primaryKey.label = 'Edited';
-    },
-    (s) => {
-      s.desired.spec.additiveFieldMappings[0].sourceFieldLabel = 'ProbeId';
-    },
-    (s) => {
-      s.desired.spec.additiveFieldMappings.at(-1).targetFieldName = 'ProbeValue';
-    },
-    (s) => {
-      s.desired.spec.additiveFieldMappings[0].sourceFieldLabel = 'OtherSource';
-      s.schemas.schemas[0].fields.push({
-        name: 'OtherSource',
-        label: 'OtherSource',
-        dataType: 'Text',
-      });
-      s.target.sourceFields.push({ name: 'OtherSource', datatype: 'Text' });
-    },
-    (s) => {
-      s.desired.spec.additiveFieldMappings.at(-1).targetFieldName = 'KQ_New';
-    },
-    (s) => {
-      s.desired.spec.additiveFieldMappings.at(-1).targetFieldName = 'DataSource';
     },
     (s) => {
       s.desired.spec.additiveFieldMappings.at(-1).sourceFieldLabel = 'Missing';

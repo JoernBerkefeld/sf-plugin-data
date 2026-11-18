@@ -12,6 +12,7 @@ import type { DataStreamClient } from '../transport/data-stream-rest.js';
 import type { DataStreamDocument } from '../artifacts/data-stream-document.js';
 import { WriteLedger, rejectedNextAction } from './deploy-result.js';
 import { explainInput, operationDiagnostic } from './operation-diagnostic.js';
+import { sameEnum } from '../artifacts/enum-case.js';
 import {
   checkRetrievedStreamScope,
   isStreamNotFound,
@@ -84,11 +85,13 @@ export async function retrieveDataStreamDocument(
 /**
  * Read the stream of the file's name; an HTTP 404 means absent.
  * @param {string} apiName Stream name.
+ * @param {unknown} connectorType Connector type of the file.
  * @param {CrmDataStreamClients} clients Native reader.
  * @returns {Promise<Json | undefined>} Stream GET, or undefined when absent.
  */
 async function readCrmStream(
   apiName: string,
+  connectorType: unknown,
   clients: CrmDataStreamClients,
 ): Promise<Json | undefined> {
   let read: unknown;
@@ -101,10 +104,23 @@ async function readCrmStream(
   if (!read || typeof read !== 'object' || Array.isArray(read))
     throw new DataStreamError('INVALID_STREAM_READ');
   const stream = read as Json;
-  // A stream of that name that is not a CRM stream is another object; never overwrite it.
-  if (stream.name !== apiName || !isCrmDataStream(stream))
+  // A stream of that name of another connector is another object; never overwrite it.
+  if (
+    stream.name !== apiName ||
+    !isCrmDataStream(stream) ||
+    !sameEnum((stream.connectorInfo as Json).connectorType, connectorType)
+  )
     throw new DataStreamError('STREAM_TARGET_MISMATCH');
   return stream;
+}
+
+/**
+ * The connector type a GET-shaped stream file names.
+ * @param {CrmDataStreamDocument} document Validated stream file.
+ * @returns {unknown} `spec.connectorInfo.connectorType`.
+ */
+function connectorTypeOf(document: CrmDataStreamDocument): unknown {
+  return (document.spec.connectorInfo as Json).connectorType;
 }
 
 type CrmPlan =
@@ -124,7 +140,11 @@ async function planCrmDataStream(
 ): Promise<CrmPlan> {
   if (document.identity.dataSpace !== 'default')
     throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
-  const current = await readCrmStream(document.identity.apiName, clients);
+  const current = await readCrmStream(
+    document.identity.apiName,
+    connectorTypeOf(document),
+    clients,
+  );
   if (!current) return { operation: 'create' };
   const { body, parts, unsupported } = crmDataStreamPatch(
     document.spec,
@@ -238,7 +258,7 @@ export async function executeCrmDataStream(
     let remaining: string[] | undefined;
     let settledReads = 0;
     for (let attempt = 0; attempt < 20 && now() < deadline; attempt++) {
-      const current = await readCrmStream(apiName, clients);
+      const current = await readCrmStream(apiName, connectorTypeOf(document), clients);
       if (current && !['ACTIVE', 'PROCESSING'].includes(current.status as string))
         throw new DataStreamError(
           plan.operation === 'create'

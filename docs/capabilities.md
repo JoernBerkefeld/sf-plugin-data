@@ -213,6 +213,13 @@ and `/schema`) and dependencies (`/ssot/data-streams/{name}/dependencies`,
 says `transport: native`. The API 67 tool layer (`mcp-execute.ts`) is gone. The native
 bodies matched the tool results minus the `{result}` wrapper in live probes.
 
+Stream create and update send the file as written and Salesforce decides (live, API 68:
+it refuses changing or removing an existing Ingestion API mapping, a new field type and an
+Ingestion API create other than `UPSERT`; it accepts additive mappings at create, from the
+primary key and of any type). Streams of every connector other than the Ingestion API use
+the GET-shaped file; only Salesforce CRM is tested live. The file format is in
+[artifact-format.md](artifact-format.md#public-data-stream-document).
+
 ## Public native calculated insight lifecycle
 
 Calculated insights use API 68 for retrieve, deploy (including `--draft`), publish and
