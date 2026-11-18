@@ -22,28 +22,26 @@ with all prior configuration preserved; no XML companion or request file is need
 
 ## Public Graph document
 
-Exact `data-graph:ApiName` retrieval writes
-`data360/dataGraphs/ApiName.dataGraph.json` at the project root. The single JSON document uses
-`schemaVersion: 1`, `kind: data-graph`, exact default-space `identity.apiName` and
-complete qualified `spec`: label, description, logical unified Individual root,
-NONE type, seven-day full-refresh schedule, incremental disabled, and root source
-with empty path/relatedObjects and ordered Text Id key/FirstName/optional appended
-LastName. `sourceObject.devName` is the logical input root, not a generated GET name.
+Retrieve writes each data graph as `data360/dataGraphs/Name.native-dataGraph.json` at the
+project root: `schemaVersion: 1`, `kind: native-data-graph`, `apiVersion: 68.0` and the
+`definition` as the API 68 GET returns it (name, label, description, data space, root
+object, type, schedules, real-time settings, and the root node with its fields, joins
+(`path`) and related objects), without server facts such as IDs, status and dates. The file
+name must equal `definition.name`.
 
-`creationMode` is request-only and forbidden in portable content. Omitted GET mode
-is not synthesized or recovered from historical receipts. A returned mode is
-inspected explicitly: only DEFAULT is admitted; null, DRAFT and unknown values
-block. This does not establish universal historical-mode preservation. The qualified
-existing-owner update omits mode entirely and allows only the exact LastName append.
-Full computed GET/transform bodies and owner/node/field/output IDs stay private.
-Unknown meaningful root/node/field/config properties block instead of being dropped.
-
-Writer publication uses no-link paths, bounded single-link reads, owned OS-temp
-staging, no-clobber publication and guarded overwrite. Identical bytes are unchanged.
-File and Git admission bind strict unique-key JSON, canonical identity/path and
-frozen document content to a SHA256 digest, rechecked before target reliance and
-writes. No XML pair, request envelope, persistent receipt or generated identifiers
-are exported. Create, reverse projection, nesting and settings changes remain blocked.
+Deploy treats the file as the desired state of an existing graph. Fields and related objects
+are sent as the file lists them, so a field or related object the file leaves out is not
+sent; Salesforce decides and, at API 68, refuses removals, a root change and another related
+object in place of an existing one with 400, reported as rejected. Key-qualifier fields that
+Salesforce added (`KQ_` fields named by another field's `keyQualifierName`) are kept when
+the file leaves them out. Generated names (node and field `devName`, join `devName`,
+`fragmentDMOName` and the graph's generated DMO, mapping and transform names) are taken
+from the org for objects it already holds and left out for new ones. Omitted settings keep
+the org values. The plugin refuses, before any write, a join change of an existing related
+object (`DATA_GRAPH_JOIN_CHANGE`: Salesforce accepts it but keeps the old join) and a
+different type, reference or projected name of an existing node (assigned by Salesforce).
+The name and the data space identify the graph; a file with another name addresses another
+graph.
 
 ## Public calculated insight files
 

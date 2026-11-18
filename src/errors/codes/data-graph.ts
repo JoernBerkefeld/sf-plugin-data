@@ -1,11 +1,15 @@
 /** CLI hints for Data graph error codes. Long-form pages: docs/errors/data-graph/<CODE>.md */
 export const hints: Readonly<Record<string, string>> = {
+  DATA_GRAPH_CHANGE_NOT_APPLIED:
+    'The graph read back after an accepted update has another join than the file (a newly added related object or a concurrent edit). Retrieve the graph; to change a join, delete the graph and create it again.',
   DATA_GRAPH_CREATE_UNCONFIRMED:
     'The graph create request was sent, but the graph could not be confirmed in time. It may exist: retrieve it or rerun the same deploy before changing anything.',
   DATA_GRAPH_DRAFT:
     'The data graph is a draft that was never built, so it was retrieved as-is. A draft cannot be deployed or edited through the API; build or edit it in Salesforce. A delete removes it.',
   DATA_GRAPH_IDENTITY_MISMATCH:
     'The org answered the read of a data graph with a different graph name than the one selected. Check the exact name, including case, in --metadata data-graph:<Name> and in the file, then rerun.',
+  DATA_GRAPH_JOIN_CHANGE:
+    'The file changes the join of a related object the graph already has. Salesforce accepts such a change but keeps the old join, so the plugin does not send it. Keep the join of the org, or delete the graph and create it again.',
   DATA_GRAPH_OWNER:
     'The graph root is a unified DMO created by the named identity resolution ruleset, which is published. No action is needed.',
   DATA_GRAPH_OWNER_NOT_FOUND:

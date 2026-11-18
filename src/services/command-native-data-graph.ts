@@ -16,6 +16,7 @@ import {
   nativeGraphStillGenerating,
   NativeGraphProcessingRequired,
   NativeGraphWriteRefused,
+  NativeGraphWriteRejected,
   sendNativeGraphWrite,
   settleNativeDataGraph,
   updateNativeDataGraph,
@@ -23,6 +24,7 @@ import {
 import type { NativeGraphContext, NativeGraphCreateCheck } from './native-data-graph-crd.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
 import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { explanationOf } from './operation-diagnostic.js';
 import { proveNativeDataGraphAbsent } from './native-data-graph-crd.js';
 
 /**
@@ -404,6 +406,30 @@ export async function operateNativeDataGraph(
         });
       } catch (error) {
         if (error instanceof NativeGraphProcessingRequired) return processingRequired('update');
+        // Salesforce keeps the old join of a PUT that changes it: refused before any write.
+        if (error instanceof DataGraphError && error.code === 'DATA_GRAPH_JOIN_CHANGE')
+          return blocked(
+            'DATA_GRAPH_JOIN_CHANGE',
+            `${explanationOf(error) ?? 'The join of a related object differs from the graph in the org.'} Nothing was written.`,
+          );
+        // The PUT was sent and Salesforce refused it with an API 4xx: nothing was written.
+        if (error instanceof NativeGraphWriteRejected)
+          return retainConnectDiagnostic(
+            { outcome: 'failed', mutation: 'rejected' },
+            getConnectDiagnostic(error),
+          );
+        // The PUT was accepted, but the settled graph kept the old join.
+        if (error instanceof DataGraphError && error.code === 'DATA_GRAPH_CHANGE_NOT_APPLIED')
+          return {
+            outcome: 'failed',
+            mutation: 'unknown',
+            diagnostics: [
+              {
+                code: 'DATA_GRAPH_CHANGE_NOT_APPLIED',
+                message: `Salesforce accepted the update of the data graph ${graphName} but the graph read back has another join than the file (for example on a newly added related object, or after a concurrent edit), so the change is not reported as updated. Other changes of the same PUT may have been applied: retrieve the graph to see its current state.`,
+              },
+            ],
+          };
         // Every PUT was refused with HTTP429/503 until the budget ran out: nothing was processed.
         if (error instanceof NativeGraphWriteRefused)
           return retainConnectDiagnostic(

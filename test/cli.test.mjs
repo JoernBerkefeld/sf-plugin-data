@@ -263,14 +263,30 @@ test('README describes optional scope without promoting nondefault qualification
     table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
     15,
   );
-  // Data transforms, DMOs and mappings (pairs and label): the plugin sends every write and
-  // Salesforce decides.
-  for (const resource of ['Data Transforms', 'Data Model Objects', 'DLO-to-DMO mappings'])
+  // Data transforms, DMOs, mappings (pairs and label) and data graphs: the plugin sends every
+  // write and Salesforce decides (a graph join change is refused because Salesforce ignores it).
+  for (const resource of [
+    'Data Transforms',
+    'Data Model Objects',
+    'DLO-to-DMO mappings',
+    'Data Graphs',
+  ])
     assert.doesNotMatch(
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,
     );
   assert.match(readme, /^- Data Model Objects \(DMOs\)$/mu);
+  assert.match(readme, /^- Data graphs$/mu);
+  const graph = table.split('\n').find((line) => line.includes('Data Graphs'));
+  for (const text of [
+    'refuses removed fields and related objects, a root change and another related object',
+    'The plugin refuses join changes',
+    'A file with another name creates or addresses another graph; the old graph is not renamed',
+  ])
+    assert.ok(graph.includes(text), text);
+  for (const text of ['DATA_GRAPH_JOIN_CHANGE', 'DATA_GRAPH_CHANGE_NOT_APPLIED'])
+    assert.ok(readme.includes(text), text);
+  assert.ok(!readme.includes('Omitted fields and related objects are kept, not removed'));
   // The Data space column: yes only where --dataspace reaches the native requests.
   const rows = table
     .split('\n')

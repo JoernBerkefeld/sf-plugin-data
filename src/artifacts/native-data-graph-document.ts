@@ -632,28 +632,50 @@ export function nativeDataGraphCreateDefinition(value: unknown): Record<string, 
 }
 
 /**
- * Apply the authored definition to the fresh target while keeping every generated binding.
- * Authored configuration (label, description, graph type, schedules, node labels, criteria,
- * joins, field settings, new fields and related objects) is sent as written; the API decides.
- * Omitted existing fields/branches are retained, never interpreted as removals.
- * Refused: a different name, data space or root object (they identify the target graph), and a
- * different node object, path, type, reference or projected name for a retained node. The node
- * type is assigned by the API: a recorded API68 create sent `standard` for a unified root and
- * read `derived` back (2026-11-12), so a differing node type would be silently replaced.
+ * Refuse a join change of a retained related object before any write. Salesforce answers 200 to
+ * a PUT that changes the join, rebuilds the graph and keeps the old join (live, API 68,
+ * 2026-11-18), so sending it would report a change that never happened.
+ * @param {string} jsonPath Node whose join differs.
+ * @returns {DataGraphError} Named refusal.
+ */
+function joinChange(jsonPath: string): DataGraphError {
+  return explainInput(
+    new DataGraphError('DATA_GRAPH_JOIN_CHANGE'),
+    `The join of the related object ${jsonPath} differs from the graph in the org. Salesforce accepts a join change but keeps the old join, so the plugin does not send it. Keep the join of the org in the file, or delete the graph and create it again with the new join.`,
+  );
+}
+
+/**
+ * Build the PUT body from the authored definition: the file is the desired state. Fields and
+ * related objects are sent as the file lists them, so a field or related object the file leaves
+ * out is not sent and Salesforce answers (at API 68 it refuses removals with 400); a root change
+ * and another related object are sent too. Retained nodes and fields keep the generated names of
+ * the fresh target; a node whose object differs (a new root, another related object) and all
+ * nodes below it are sent without generated names. Key-qualifier fields Salesforce added (named
+ * by another field's keyQualifierName) are kept when the file leaves them out: a PUT without them
+ * keeps them (live, API 68). Omitted settings of the graph, a retained node or a retained field
+ * keep the target's values. Entries keep the target's order; new ones follow in authored order.
+ * Refused: a different name or data space (they identify the target graph), a join change of a
+ * retained related object (DATA_GRAPH_JOIN_CHANGE; Salesforce ignores it), and a different type,
+ * reference or projected name of a retained node (assigned by the API: a recorded API68 create
+ * sent `standard` for a unified root and read `derived` back, 2026-11-12).
  * @param {unknown} baseline Fresh independently bound native GET.
  * @param {NativeDataGraphDocument} desired Authored intent, not target authority.
  * @param {DocumentMode} mode Strictness of both documents (retrieve keeps unknown keys).
+ * @param {boolean} [superset] Readback only: keep every target field the authored node does not
+ *   name (Salesforce adds fields, such as key qualifiers or data source fields on bridge nodes).
  * @returns {Record<string, unknown>} Complete target-bound PUT payload.
  */
 export function buildNativeDataGraphUpdateRequest(
   baseline: unknown,
   desired: NativeDataGraphDocument,
   mode: DocumentMode = 'deploy',
+  superset = false,
 ): Record<string, unknown> {
   const target = nativeDataGraphDocumentFromResponse(baseline, mode).definition;
   const wanted = validateNativeDataGraphDocument(desired, mode).definition;
-  for (const key of ['name', 'dataspaceName', 'primaryObjectName'])
-    graphRequire(target[key] === wanted[key]);
+  for (const key of ['name', 'dataspaceName']) graphRequire(target[key] === wanted[key]);
+  target.primaryObjectName = wanted.primaryObjectName;
   // Generated DMO, mapping and transform names stay the target's; authored ones are ignored.
   for (const key of [
     'label',
@@ -665,54 +687,87 @@ export function buildNativeDataGraphUpdateRequest(
     if (Object.hasOwn(wanted, key)) target[key] = wanted[key];
   // An omitted description keeps the target's, like any other omitted property.
   if (Object.hasOwn(wanted, 'description')) target.description = wanted.description;
+  const settings = fieldKeys.filter((key) => key !== 'devName');
+  /**
+   * A node the target does not hold, sent without generated names, including authored hints
+   * from another graph.
+   * @param {Record<string, unknown>} next Authored node.
+   * @returns {Record<string, unknown>} Detached new node.
+   */
+  function added(next: Record<string, unknown>): Record<string, unknown> {
+    const node = structuredClone(next);
+    /**
+     * Drop node developer names throughout the new subtree.
+     * @param {Record<string, unknown>} n New node.
+     */
+    const anonymous = (n: Record<string, unknown>): void => {
+      delete n.devName;
+      for (const c of n.relatedObjects as Record<string, unknown>[]) anonymous(c);
+    };
+    anonymous(node);
+    unbind(node);
+    return node;
+  }
   /**
    * Apply one authored node to its retained target node, keeping generated bindings.
-   * @param {Record<string, unknown>} current Target node.
+   * @param {Record<string, unknown>} current Target node (same object and jsonPath).
    * @param {Record<string, unknown>} next Authored node.
+   * @returns {Record<string, unknown>} Node to send.
    */
-  function merge(current: Record<string, unknown>, next: Record<string, unknown>): void {
-    for (const key of ['name', 'jsonPath', 'type', 'referenceDeveloperName', 'projectedName'])
+  function merge(
+    current: Record<string, unknown>,
+    next: Record<string, unknown>,
+  ): Record<string, unknown> {
+    for (const key of ['type', 'referenceDeveloperName', 'projectedName'])
       if (Object.hasOwn(next, key)) graphRequire(isDeepStrictEqual(current[key], next[key]));
     for (const key of ['label', 'recencyCriteria', 'filterCriteria', 'topKFilterCriteria'])
       if (Object.hasOwn(next, key)) current[key] = next[key];
     const joins = (path: unknown): unknown[] =>
       (path as Record<string, unknown>[]).map((p) => pick(p, ['fieldName', 'parentFieldName']));
-    // A changed join is sent as authored, without the old generated join names.
-    if (!isDeepStrictEqual(joins(current.path), joins(next.path))) current.path = joins(next.path);
-    for (const f of next.fields as Record<string, unknown>[]) {
-      const settings = pick(
-        f,
-        fieldKeys.filter((k) => k !== 'devName'),
-      );
-      const existing = (current.fields as Record<string, unknown>[]).find(
-        (entry) => entry.sourceFieldName === f.sourceFieldName,
-      );
-      if (existing) Object.assign(existing, settings);
-      else (current.fields as unknown[]).push(settings);
+    if (!isDeepStrictEqual(joins(current.path), joins(next.path)))
+      throw joinChange(next.jsonPath as string);
+    const authored = next.fields as Record<string, unknown>[];
+    const existing = current.fields as Record<string, unknown>[];
+    const qualifiers = new Set(existing.map((f) => f.keyQualifierName).filter(Boolean));
+    const fields: Record<string, unknown>[] = [];
+    for (const f of existing) {
+      const match = authored.find((entry) => entry.sourceFieldName === f.sourceFieldName);
+      if (match) fields.push(Object.assign(f, pick(match, settings)));
+      else if (superset || qualifiers.has(f.sourceFieldName)) fields.push(f);
     }
-    for (const child of next.relatedObjects as Record<string, unknown>[]) {
-      const existing = (current.relatedObjects as Record<string, unknown>[]).find(
-        (entry) => entry.jsonPath === child.jsonPath,
-      );
-      if (existing) merge(existing, child);
-      else {
-        // A new node carries no generated names, including authored hints from another graph.
-        const added = structuredClone(child);
-        /**
-         * Drop node developer names throughout the new subtree.
-         * @param {Record<string, unknown>} n New node.
-         */
-        const anonymous = (n: Record<string, unknown>): void => {
-          delete n.devName;
-          for (const c of n.relatedObjects as Record<string, unknown>[]) anonymous(c);
-        };
-        anonymous(added);
-        unbind(added);
-        (current.relatedObjects as unknown[]).push(added);
-      }
-    }
+    for (const f of authored)
+      if (!existing.some((entry) => entry.sourceFieldName === f.sourceFieldName))
+        fields.push(pick(f, settings));
+    current.fields = fields;
+    current.relatedObjects = nodes(
+      current.relatedObjects as Record<string, unknown>[],
+      next.relatedObjects as Record<string, unknown>[],
+    );
+    return current;
   }
-  merge(graphRecord(target.sourceObject), graphRecord(wanted.sourceObject));
+  /**
+   * The authored related objects: retained ones (same jsonPath) in target order, then new ones.
+   * @param {Record<string, unknown>[]} existing Target nodes.
+   * @param {Record<string, unknown>[]} authored Authored nodes.
+   * @returns {Record<string, unknown>[]} Nodes to send.
+   */
+  function nodes(
+    existing: Record<string, unknown>[],
+    authored: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    const result: Record<string, unknown>[] = [];
+    for (const current of existing) {
+      const match = authored.find((entry) => entry.jsonPath === current.jsonPath);
+      if (match) result.push(merge(current, match));
+    }
+    for (const next of authored)
+      if (!existing.some((entry) => entry.jsonPath === next.jsonPath)) result.push(added(next));
+    return result;
+  }
+  const root = graphRecord(target.sourceObject);
+  const wantedRoot = graphRecord(wanted.sourceObject);
+  // A root change sends the whole authored tree without the old root's generated names.
+  target.sourceObject = root.name === wantedRoot.name ? merge(root, wantedRoot) : added(wantedRoot);
   return validateNativeDataGraphDocument(
     {
       schemaVersion: 1,
@@ -762,8 +817,9 @@ export function observeNativeDataGraph(
       ].includes(raw.status as string),
   );
   // Every authored setting must already hold. Field order is the server's: it reordered the
-  // fields of a related object added by PUT (recorded live at API68, 2026-11-12).
-  const request = buildNativeDataGraphUpdateRequest(raw, document, mode);
+  // fields of a related object added by PUT (recorded live at API68, 2026-11-12). Fields the
+  // server added beyond the authored ones are accepted here (never dropped in a PUT body).
+  const request = buildNativeDataGraphUpdateRequest(raw, document, mode, true);
   graphRequire(isDeepStrictEqual(request, actual.definition));
   if (strict && raw.status === 'ready') {
     for (const key of [

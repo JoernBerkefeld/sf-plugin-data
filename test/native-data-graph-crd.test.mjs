@@ -1022,10 +1022,17 @@ test('recursive native document and PUT preserve full target bindings and normal
   assert.equal(child.topKFilterCriteria.orderCriteria[0].sortOrder, 'DESC');
   assert.equal(child.relatedObjects[0].fragmentDMOName, 'Fragment1__dlm');
   assert.equal(child.fields[0].keyQualifierName, 'KQ_Id__c');
+  // The file is the desired state: an omitted field or related object is not sent, and
+  // Salesforce answers (at API 68 it refuses removals with 400).
   const omitted = structuredClone(saved);
   omitted.definition.sourceObject.fields.pop();
   omitted.definition.sourceObject.relatedObjects = [];
-  assert.deepEqual(buildNativeDataGraphUpdateRequest(baseline, omitted), saved.definition);
+  const reduced = buildNativeDataGraphUpdateRequest(baseline, omitted);
+  assert.deepEqual(reduced.sourceObject.relatedObjects, []);
+  assert.deepEqual(
+    reduced.sourceObject.fields.map((field) => field.sourceFieldName),
+    omitted.definition.sourceObject.fields.map((field) => field.sourceFieldName),
+  );
   assert.equal(observeNativeDataGraph(baseline, saved).target.version, '3');
   assert.deepEqual(nativeDataGraphDocumentFromResponse(baseline), saved);
 });
@@ -1205,7 +1212,8 @@ for (const [label, change] of Object.entries({
   name: (d) => {
     d.definition.name = 'Different';
   },
-  root: (d) => {
+  // A primaryObjectName that is not the root node's object is not a valid file.
+  rootMismatch: (d) => {
     d.definition.primaryObjectName = 'Other__dlm';
   },
   // The API assigns node types (a recorded API68 create sent standard and read derived).
@@ -1253,7 +1261,6 @@ test('native PUT sends authored changes the API decides instead of refusing them
     keyQualifierName: 'KQ_Key__c',
   });
   const child = d.sourceObject.relatedObjects[0];
-  child.path[0].parentFieldName = 'Other__c';
   child.topKFilterCriteria.limit = 101;
   child.recencyCriteria = [{ fieldApiName: 'ssot__Id__c' }];
   const request = buildNativeDataGraphUpdateRequest(baseline, desired);
@@ -1278,8 +1285,8 @@ test('native PUT sends authored changes the API decides instead of refusing them
     keyQualifierName: 'KQ_Key__c',
   });
   const sent = request.sourceObject.relatedObjects[0];
-  // A changed join drops the old generated join name; an unchanged one keeps it.
-  assert.deepEqual(sent.path, [{ fieldName: 'ssot__Id__c', parentFieldName: 'Other__c' }]);
+  // An unchanged join keeps its generated join name.
+  assert.equal(sent.path[0].devName, 'GeneratedJoin0');
   assert.equal(sent.relatedObjects[0].path[0].devName, 'GeneratedJoin1');
   assert.equal(sent.topKFilterCriteria.limit, 101);
   assert.deepEqual(sent.recencyCriteria, [{ fieldApiName: 'ssot__Id__c' }]);
@@ -3662,4 +3669,209 @@ test('graph delete by name blocks on an item HTTP400 without the exact not-found
   assert.equal(result.status, 'blocked');
   assert.deepEqual(calls, []);
   assert.equal(result.result.items.length, 0);
+});
+
+test('native PUT keeps omitted key-qualifier fields and sends a new root or another related object unbound', () => {
+  const baseline = recursiveRuntime();
+  const saved = nativeDataGraphDocumentFromResponse(baseline);
+  // Salesforce adds KQ_ fields; a PUT without them keeps them (live, API 68), so the plugin
+  // carries them from the org rather than reporting a change on every deploy.
+  const withoutQualifier = structuredClone(saved);
+  withoutQualifier.definition.sourceObject.fields =
+    withoutQualifier.definition.sourceObject.fields.filter(
+      (field) => field.sourceFieldName !== 'KQ_Id__c',
+    );
+  assert.deepEqual(buildNativeDataGraphUpdateRequest(baseline, withoutQualifier), saved.definition);
+  // Another related object in place of the existing one: the old one is not sent.
+  const swapped = structuredClone(saved);
+  const other = swapped.definition.sourceObject.relatedObjects[0];
+  other.name = 'Other__dlm';
+  other.projectedName = 'Other__dlm';
+  other.jsonPath = '$.Other__dlm';
+  other.relatedObjects[0].jsonPath = '$.Other__dlm.Account__dlm';
+  const swap = buildNativeDataGraphUpdateRequest(baseline, swapped);
+  assert.deepEqual(
+    swap.sourceObject.relatedObjects.map((node) => node.jsonPath),
+    ['$.Other__dlm'],
+  );
+  assert.equal(swap.sourceObject.relatedObjects[0].devName, undefined);
+  assert.equal(swap.sourceObject.relatedObjects[0].fragmentDMOName, undefined);
+  assert.equal(swap.sourceObject.relatedObjects[0].path[0].devName, undefined);
+  assert.equal(swap.sourceObject.devName, baseline.sourceObject.devName);
+  // A root change is sent with the authored tree and none of the old generated names.
+  const rooted = structuredClone(saved);
+  rooted.definition.primaryObjectName = 'NewRoot__dlm';
+  rooted.definition.sourceObject.name = 'NewRoot__dlm';
+  const root = buildNativeDataGraphUpdateRequest(baseline, rooted);
+  assert.equal(root.primaryObjectName, 'NewRoot__dlm');
+  assert.equal(root.sourceObject.name, 'NewRoot__dlm');
+  assert.equal(root.sourceObject.devName, undefined);
+  assert.equal(root.sourceObject.fragmentDMOName, undefined);
+  assert.equal(root.sourceObject.fields[0].devName, undefined);
+  assert.equal(root.sourceObject.relatedObjects[0].devName, undefined);
+});
+
+test('native PUT refuses a join change of a retained related object with its own code', () => {
+  const baseline = recursiveRuntime();
+  const desired = nativeDataGraphDocumentFromResponse(baseline);
+  desired.definition.sourceObject.relatedObjects[0].path[0].parentFieldName = 'Other__c';
+  assert.throws(
+    () => buildNativeDataGraphUpdateRequest(baseline, desired),
+    (error) => error.code === 'DATA_GRAPH_JOIN_CHANGE',
+  );
+});
+
+for (const [label, change] of Object.entries({
+  'a field removal': (d) => {
+    d.definition.sourceObject.fields = d.definition.sourceObject.fields.filter(
+      (field) => field.sourceFieldName !== 'ssot__FirstName__c',
+    );
+  },
+  'a related-object removal': (d) => {
+    d.definition.sourceObject.relatedObjects = [];
+  },
+  'another related object': (d) => {
+    const node = d.definition.sourceObject.relatedObjects[0];
+    node.name = 'Other__dlm';
+    node.projectedName = 'Other__dlm';
+    node.jsonPath = '$.Other__dlm';
+    node.relatedObjects[0].jsonPath = '$.Other__dlm.Account__dlm';
+  },
+}))
+  test(`native deploy sends ${label} and reports Salesforce's 400 as rejected`, async () => {
+    const f = updateFixture();
+    const evidence = apiDiagnostic(400, [
+      {
+        errorCode: 'INTERNAL_ERROR',
+        message: 'Data Graph edits can only add objects, not remove existing ones.',
+      },
+    ]);
+    f.client.update = async (_apiName, payload) => {
+      f.calls.push('PUT');
+      f.payloads.push(structuredClone(payload));
+      throw retainConnectDiagnostic(new Error('private-secret'), evidence);
+    };
+    const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+    change(desired);
+    const preview = await operateNativeDataGraph(desired, f.context, f.client, {
+      ...f.intent,
+      preview: true,
+    });
+    assert.equal(preview.outcome, 'update');
+    const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+    assert.deepEqual(result, { outcome: 'failed', mutation: 'rejected' });
+    assert.deepEqual(getConnectDiagnostic(result), evidence);
+    assert.deepEqual(f.calls, ['PUT']);
+  });
+
+test('native deploy refuses a join change before any write, also in preview', async () => {
+  const f = updateFixture();
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  desired.definition.sourceObject.relatedObjects[0].path[0].fieldName = 'Other__c';
+  for (const preview of [true, false]) {
+    const result = await operateNativeDataGraph(desired, f.context, f.client, {
+      ...f.intent,
+      preview,
+    });
+    assert.equal(result.outcome, 'blocked');
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(result.diagnostics[0].code, 'DATA_GRAPH_JOIN_CHANGE');
+    assert.match(result.diagnostics[0].message, /\$\.Address__dlm.*Nothing was written\./u);
+  }
+  assert.deepEqual(f.calls, []);
+});
+
+test('a graph read back with another join than the PUT sent is never reported updated', async () => {
+  const f = updateFixture();
+  const update = f.client.update;
+  f.client.update = async (apiName, payload) => {
+    const answer = await update(apiName, payload);
+    // The server settles with a join other than the one sent.
+    const read = await f.context.get(name);
+    const current = read.body;
+    current.sourceObject.relatedObjects[0].path[0].parentFieldName = 'Elsewhere__c';
+    f.setGraph(current);
+    return answer;
+  };
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  desired.definition.description = 'Changed description';
+  const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(result.diagnostics[0].code, 'DATA_GRAPH_CHANGE_NOT_APPLIED');
+  assert.deepEqual(f.calls, ['PUT']);
+});
+
+test('native create confirms a graph where Salesforce added a field the file does not name', async () => {
+  const f = fixture();
+  const authored = document();
+  authored.definition.fullRefreshConfig = {
+    schedule: { frequency: 7, timeGranularity: 'Day' },
+  };
+  authored.definition.incrementalRefreshConfig = { enabled: false };
+  authored.definition.sourceObject.relatedObjects.push({
+    name: 'ssot__ContactPointEmail__dlm',
+    label: 'Contact Point Email',
+    jsonPath: '$.ssot__ContactPointEmail__dlm',
+    path: [{ fieldName: 'ssot__PartyId__c', parentFieldName: 'ssot__Id__c' }],
+    type: 'standard',
+    fields: ['ssot__Id__c', 'ssot__PartyId__c'].map((sourceFieldName, index) => ({
+      sourceFieldName,
+      dataType: 'Text',
+      isKeyColumn: index === 0,
+      isProjected: true,
+      usageTag: 'NONE',
+    })),
+    relatedObjects: [],
+  });
+  f.client.create = async (definition) => {
+    f.calls.push('POST');
+    const body = buildDataGraphCreateRequest(definition);
+    const ready = serverGraph(body, 'ready');
+    // Salesforce adds data source fields to bridge nodes (data360-graph-manual-gui-aura-updates).
+    ready.sourceObject.relatedObjects[0].fields.push({
+      id: 'field-added',
+      devName: 'ServerAddedSource',
+      name: 'ServerAddedSource',
+      sourceFieldName: 'ssot__DataSourceObjectId__c',
+      dataType: 'Text',
+      isKeyColumn: false,
+      isProjected: true,
+      usageTag: 'none',
+      dependency: [],
+      isDGRootKeyField: false,
+      fieldRoles: [],
+    });
+    f.setGraph(ready);
+    return serverGraph(body, 'creating');
+  };
+  const result = await operateNativeDataGraph(authored, f.context, f.client, options());
+  assert.deepEqual(result, { outcome: 'created', mutation: 'confirmed-created' });
+  assert.deepEqual(f.calls, ['POST']);
+});
+
+test('a related object added by PUT settles although Salesforce gave it a key-qualifier field', async () => {
+  const f = updateFixture(runtime());
+  f.client.update = async (_apiName, payload) => {
+    f.calls.push('PUT');
+    f.payloads.push(structuredClone(payload));
+    const read = await f.context.get(name);
+    const current = read.body;
+    // The server stores the new related objects with generated names and a KQ_ field.
+    const settled = recursiveRuntime();
+    settled.version = String(Number(current.version) + 1);
+    f.setGraph(settled);
+    return { accepted: true };
+  };
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  const strip = (node) => {
+    node.fields = node.fields.filter((field) => field.sourceFieldName !== 'KQ_Id__c');
+    for (const child of node.relatedObjects) strip(child);
+  };
+  for (const child of desired.definition.sourceObject.relatedObjects) strip(child);
+  const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(result, { outcome: 'updated', mutation: 'confirmed-updated' });
+  assert.deepEqual(f.calls, ['PUT']);
+  const added = f.payloads[0].sourceObject.relatedObjects[0];
+  assert.ok(!added.fields.some((field) => field.sourceFieldName === 'KQ_Id__c'));
 });

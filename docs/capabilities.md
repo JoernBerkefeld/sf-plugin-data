@@ -136,11 +136,19 @@ Create sends the authored root, related objects, fields and schedule and needs
 `--allow-processing`; Salesforce adds key-qualifier fields to related objects and can
 report a different node `type`. A graph with a related object took about 17 minutes to
 build (metadata `Inprogress` most of it). Builds pass a brief `processing` status
-between `creating` and `ready`, which settlement accepts. Update sends the authored
-change in one PUT (label, description, schedule, incremental refresh, added fields and
-related objects, joins, field settings); only name, data space, root object and node
-object/path/type changes are refused. Omitted fields and branches are kept. Identical
-deploy is zero-write `unchanged`. Preview is read-only. Cascade is unsupported.
+between `creating` and `ready`, which settlement accepts. Update sends the file as the
+desired state in one PUT (label, description, schedule, incremental refresh, the fields
+and related objects as listed, field settings, the root object); Salesforce decides and an
+API 4xx answer is `failed`/`rejected`. Live at API 68 (2026-11-18) it refuses with 400 a
+removed field (also `isProjected: false`), a removed related object, another related
+object in place of an existing one and a root change; key-qualifier fields it added are
+kept when the file leaves them out. A join change of an existing related object answers
+200 but keeps the old join, so the plugin refuses it before any write
+(`DATA_GRAPH_JOIN_CHANGE`), and a graph read back with another join than sent is
+`DATA_GRAPH_CHANGE_NOT_APPLIED`. A changed node type, reference or projected name of an
+existing node is refused (Salesforce assigns them). Name and data space identify the
+graph: a renamed file creates or addresses another graph and the old graph is not renamed, because a PUT cannot rename one (400
+`INVALID_API_INPUT`). Identical deploy is zero-write `unchanged`. Preview is read-only. Cascade is unsupported.
 Preview (only) checks the root DMO and, for a derived
 root, its IR owner via `GET /ssot/identity-resolutions` (`DATA_GRAPH_ROOT_NOT_FOUND`,
 `DATA_GRAPH_OWNER_NOT_FOUND`, `DATA_GRAPH_OWNER_NOT_PUBLISHED`, info `DATA_GRAPH_OWNER`).

@@ -3,7 +3,12 @@ import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { graphRecord, graphRequire, graphText } from '../artifacts/data-graph-document.js';
+import {
+  DataGraphError,
+  graphRecord,
+  graphRequire,
+  graphText,
+} from '../artifacts/data-graph-document.js';
 import {
   nativeGraphFingerprint,
   nativeDataGraphDocumentFromResponse,
@@ -468,6 +473,12 @@ export async function settleNativeDataGraphCreation(
  */
 export class NativeGraphWriteRefused extends Error {}
 
+/**
+ * Salesforce answered the update PUT with an API 4xx: the PUT was refused and nothing was
+ * written (live, API 68: removals, root and related-object swaps are refused with 400).
+ */
+export class NativeGraphWriteRejected extends Error {}
+
 /** An update that changes the graph was requested without --allow-processing; nothing was sent. */
 export class NativeGraphProcessingRequired extends Error {}
 
@@ -650,6 +661,9 @@ export async function readNativeGraphReadiness(
  * @param {number} options.end Invocation deadline.
  * @returns {Promise<'update'|'updated'|'unchanged'>} Independent result, never response echo.
  * @throws {NativeGraphWriteRefused} When HTTP429/503 refused every PUT until the deadline.
+ * @throws {NativeGraphWriteRejected} When Salesforce answered the PUT with an API 4xx.
+ * @throws {DataGraphError} DATA_GRAPH_JOIN_CHANGE before any write; DATA_GRAPH_CHANGE_NOT_APPLIED
+ *   when the settled graph kept a join the PUT changed.
  */
 export async function updateNativeDataGraph(
   context: NativeGraphContext,
@@ -736,11 +750,26 @@ export async function updateNativeDataGraph(
       graphRequire(typeof update === 'function');
       // HTTP429/503 was not processed: resend the identical PUT within the deadline. Any other
       // rejected/uncertain PUT is never replayed or reported confirmed from a later echo.
-      await sendNativeGraphWrite(
-        async () => update(document.definition.name as string, payload),
-        'update',
-        options,
-      );
+      try {
+        await sendNativeGraphWrite(
+          async () => update(document.definition.name as string, payload),
+          'update',
+          options,
+        );
+      } catch (error) {
+        const evidence = getConnectDiagnostic(error);
+        if (
+          !(error instanceof NativeGraphWriteRefused) &&
+          evidence?.kind === 'api-error' &&
+          evidence.statusCode >= 400 &&
+          evidence.statusCode < 500
+        )
+          throw retainConnectDiagnostic(
+            new NativeGraphWriteRejected('Native Graph update rejected'),
+            evidence,
+          );
+        throw error;
+      }
       context.check();
       break;
     }
@@ -755,7 +784,14 @@ export async function updateNativeDataGraph(
     );
     if (settled.ready) {
       const expected = { ...document, definition: desired };
-      observeNativeDataGraph({ ...settled.observation.target, status: 'ready' }, expected);
+      try {
+        observeNativeDataGraph({ ...settled.observation.target, status: 'ready' }, expected);
+      } catch (error) {
+        // Salesforce answered 200 but kept the old join: never report that as updated.
+        if (error instanceof DataGraphError && error.code === 'DATA_GRAPH_JOIN_CHANGE')
+          throw new DataGraphError('DATA_GRAPH_CHANGE_NOT_APPLIED');
+        throw error;
+      }
       const actual = nativeDataGraphDocumentFromResponse(settled.observation.target).definition;
       for (const key of Object.keys(desired).filter((key) => key !== 'sourceObject'))
         graphRequire(isDeepStrictEqual(actual[key], desired[key]));
@@ -773,7 +809,8 @@ export async function updateNativeDataGraph(
         const foundPaths = found.path as Record<string, unknown>[];
         graphRequire(
           wantedPaths.length === foundPaths.length &&
-            (wanted.fields as unknown[]).length === (found.fields as unknown[]).length &&
+            // Salesforce may add fields (a key qualifier on a related object added by PUT).
+            (wanted.fields as unknown[]).length <= (found.fields as unknown[]).length &&
             (wanted.relatedObjects as unknown[]).length ===
               (found.relatedObjects as unknown[]).length,
         );
