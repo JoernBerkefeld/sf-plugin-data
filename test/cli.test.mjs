@@ -206,10 +206,10 @@ test('README documents native relationships without the removed XML export', () 
   ])
     assert.ok(section.includes(required), `missing relationship contract: ${required}`);
   const row = readme.split('\n').find((line) => line.startsWith('| DMO field relationships'));
-  // Read is Available (by source DMO or every relationship); update is Partial: Salesforce
-  // refuses a changed target or owner through the Metadata API.
-  assert.equal((row.match(/Partial/gu) ?? []).length, 1);
-  assert.equal((row.match(/Available </gu) ?? []).length, 3);
+  // All four operations are Available: a changed target or owner is refused by Salesforce
+  // through the Metadata API, not by the plugin, so update is not Partial.
+  assert.equal((row.match(/Partial/gu) ?? []).length, 0);
+  assert.equal((row.match(/Available </gu) ?? []).length, 4);
   assert.match(row, /title="Metadata API update of label, cardinality and source field"/u);
   assert.doesNotMatch(row, /\|\s*Unavailable\s*\|/u);
   for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
@@ -236,6 +236,15 @@ test('README and current docs do not mention removed mapping refusal codes', () 
   }
 });
 
+/**
+ * The Data space cell of a README support-table row.
+ * @param {string} line Table row.
+ * @returns {string} `yes` or `no`.
+ */
+function space(line) {
+  return line.split('|')[6].trim();
+}
+
 test('README describes optional scope without promoting nondefault qualification or changing CRUD ratings', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   for (const text of [
@@ -259,6 +268,24 @@ test('README describes optional scope without promoting nondefault qualification
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,
     );
+  // The Data space column: yes only where --dataspace reaches the native requests.
+  const rows = table
+    .split('\n')
+    .filter((line) => line.startsWith('| ') && !line.startsWith('| ---'));
+  assert.match(
+    readme,
+    /\| Resource +\| Retrieve +\| Create +\| Update +\| Delete +\| Data space \|/u,
+  );
+  assert.deepEqual(
+    rows.filter((line) => space(line) === 'yes').map((line) => line.split('|')[1].trim()),
+    [
+      'Data Model Objects (DMOs), `dmo`',
+      'Data Lake Objects (DLOs), `dlo`',
+      'DLO-to-DMO mappings, `mapping`',
+      'DMO field relationships, `relationship`',
+    ],
+  );
+  assert.ok(rows.every((line) => ['yes', 'no'].includes(space(line))));
 });
 
 test('README documents the transform file as native input that Salesforce decides on', () => {
