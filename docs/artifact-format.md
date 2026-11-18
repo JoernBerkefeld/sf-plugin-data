@@ -305,10 +305,11 @@ Refused before any write: changing an existing field's `dataType` or
 `isPrimaryKey`, omitting a custom field that exists in the target without
 `--allow-field-removal`, omitting the target's primary-key field
 (`UNSUPPORTED_DMO_FIELD_CHANGE`), adding a generated field or a second primary key
-(`UNSUPPORTED_DMO_FIELD_ADDITION`), creating a namespaced DMO, and deleting a
-standard DMO or a DMO read without `creationType` (`UNSUPPORTED_DMO_TARGET`). Every
-other DMO but an unprefixed custom one (platform-generated and namespaced DMOs
-included) is written like a standard DMO, and Salesforce decides the rest.
+(`UNSUPPORTED_DMO_FIELD_ADDITION`) and creating a namespaced DMO
+(`UNSUPPORTED_DMO_TARGET`). A whole-DMO delete is sent for every DMO, standard ones
+included, and Salesforce decides. Every DMO other than a standard one and an
+unprefixed custom one (platform-generated and namespaced DMOs included) is written
+like a standard DMO, and Salesforce decides the rest.
 
 Field removal is observed at API 68 on empty custom DMOs, unmapped and mapped by two
 mappings, and on one standard DMO. Removing a data-bearing field is not verified.

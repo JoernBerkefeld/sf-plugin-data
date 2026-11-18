@@ -748,7 +748,7 @@ export async function previewDeleteNativeDmo(
   requestScope?: string,
 ): Promise<{ identity: { apiName: string; dataSpace: string } }> {
   const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
-  // A standard DMO is open to field and label writes only; any other DMO is sent to Salesforce.
+  // Every named DMO is sent to Salesforce, standard ones included; Salesforce decides.
   if (!isDeletableNativeDmo(raw)) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
   return { identity };
 }
@@ -787,8 +787,8 @@ export async function deleteNativeDmo(
   requestScope?: string,
 ): Promise<{ apiName: string; targetApiName: string; dataSpace: string; processing?: true }> {
   const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
-  // A standard DMO is never deleted. Salesforce refuses a platform-generated DMO while its owner
-  // exists (412); that answer is reported as it comes.
+  // Every named DMO is sent, standard ones included. Salesforce decides: a refusal (for example
+  // 412 on a platform-generated DMO while its owner exists) is reported as it comes.
   if (!isDeletableNativeDmo(raw)) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
   const targetApiName = identity.apiName;
   await client.delete(targetApiName);

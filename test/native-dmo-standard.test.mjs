@@ -121,8 +121,6 @@ const recording = (start = native()) => {
   return { calls, client, state };
 };
 const twoCustom = () => native(['Keep__c', 'CliProbeB1__c']);
-const refusedTarget = (error) =>
-  error instanceof NativeDmoError && error.code === 'UNSUPPORTED_DMO_TARGET';
 const planOperation = async (...arguments_) => {
   const plan = await preflightNativeDmo(...arguments_);
   return plan.operation;
@@ -162,13 +160,13 @@ test('write scope classifies custom, standard and every other DMO read', () => {
   ])
     assert.equal(nativeDmoWriteScope(raw), 'standard', JSON.stringify(raw.creationType));
   assert.equal(nativeDmoWriteScope({ ...custom, name: undefined }), 'refused');
-  // A whole delete is sent for every DMO but a standard one and an untyped read.
+  // A whole delete is sent for every read that names the DMO; Salesforce decides.
   assert.equal(isDeletableNativeDmo(custom), true);
   assert.equal(isDeletableNativeDmo({ ...custom, name: 'ssot__Example__dlm' }), true);
   for (const creationType of ['Adg', 'Bridge', 'Derived', 'Segment_Membership'])
     assert.equal(isDeletableNativeDmo({ ...native(), creationType }), true, creationType);
-  assert.equal(isDeletableNativeDmo(native()), false);
-  assert.equal(isDeletableNativeDmo({ ...custom, creationType: undefined }), false);
+  assert.equal(isDeletableNativeDmo(native()), true);
+  assert.equal(isDeletableNativeDmo({ ...custom, creationType: undefined }), true);
   assert.equal(isDeletableNativeDmo({ ...custom, name: undefined }), false);
 });
 
@@ -579,18 +577,47 @@ test('standard DMO: a retrieved file deploys back unchanged, across the differen
   assert.deepEqual(writes(calls), [['update', apiName, { label: 'Changed' }]]);
 });
 
-test('standard DMO: deleting the object and its delete preview stay refused; reads stay possible', async () => {
+test('standard DMO: a whole delete is sent and Salesforce decides; a nameless read stays refused', async () => {
   for (const raw of [native(), activated()]) {
+    // The preview admits it read-only.
+    const { identity } = await previewDeleteNativeDmo(apiName, readOnly(raw));
+    assert.deepEqual(identity, { apiName, dataSpace: 'default' });
+    // The DELETE is sent; a 4xx answer comes back as Salesforce's own refusal.
+    const deletes = [];
     await assert.rejects(
-      deleteNativeDmo(apiName, readOnly(raw)),
-      (error) => error instanceof NativeDmoError && error.code === 'UNSUPPORTED_DMO_TARGET',
+      deleteNativeDmo(apiName, {
+        ...readOnly(raw),
+        delete: async (target) => {
+          deletes.push(target);
+          throw new NativeDmoError('DMO_HTTP_ERROR', 400);
+        },
+      }),
+      (error) =>
+        error instanceof NativeDmoError && error.code === 'DMO_HTTP_ERROR' && error.status === 400,
     );
-    await assert.rejects(previewDeleteNativeDmo(apiName, readOnly(raw)), /UNSUPPORTED_DMO_TARGET/);
+    assert.deepEqual(deletes, [apiName]);
+    // Accepted: the readback answers 404 and the delete is confirmed.
+    let gone = false;
+    const receipt = await deleteNativeDmo(apiName, {
+      get: async () => {
+        if (gone) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+        return raw;
+      },
+      delete: async () => {
+        gone = true;
+      },
+    });
+    assert.deepEqual(receipt, { apiName, targetApiName: apiName, dataSpace: 'default' });
     const retrieved = await retrieveNativeDmo(apiName, readOnly(raw));
     assert.equal(retrieved.identity.apiName, apiName);
     const admitted = await previewFieldDeleteNativeDmo(apiName, readOnly(raw));
     assert.equal(admitted.scope, 'standard');
   }
+  // A read without a name never gets a DELETE (nor its preview).
+  const nameless = { ...native(), name: undefined };
+  await assert.rejects(deleteNativeDmo(apiName, readOnly(nameless)), NativeDmoError);
+  await assert.rejects(previewDeleteNativeDmo(apiName, readOnly(nameless)), NativeDmoError);
+  await assert.rejects(previewFieldDeleteNativeDmo(apiName, readOnly(nameless)), NativeDmoError);
   // A custom creationType under a namespaced name gets the standard scope.
   const namespaced = { ...native(), creationType: 'Custom' };
   const { scope } = await previewFieldDeleteNativeDmo(apiName, readOnly(namespaced));
@@ -634,7 +661,7 @@ test('generated, namespaced and untyped DMOs: only custom fields, labels and des
           },
         ],
       ]);
-      // A whole delete is sent and Salesforce answers; an untyped read is never deleted.
+      // A whole delete is sent, an untyped read too, and Salesforce answers.
       const deletes = [];
       const owned = {
         ...readOnly(raw),
@@ -643,19 +670,13 @@ test('generated, namespaced and untyped DMOs: only custom fields, labels and des
           throw new NativeDmoError('DMO_HTTP_ERROR', 412);
         },
       };
-      if (creationType === undefined) {
-        await assert.rejects(deleteNativeDmo(name, owned), refusedTarget);
-        await assert.rejects(previewDeleteNativeDmo(name, owned), refusedTarget);
-        assert.deepEqual(deletes, []);
-      } else {
-        await assert.rejects(
-          deleteNativeDmo(name, owned),
-          (error) => error instanceof NativeDmoError && error.status === 412,
-        );
-        assert.deepEqual(deletes, [name]);
-        const { identity } = await previewDeleteNativeDmo(name, readOnly(raw));
-        assert.equal(identity.apiName, name);
-      }
+      await assert.rejects(
+        deleteNativeDmo(name, owned),
+        (error) => error instanceof NativeDmoError && error.status === 412,
+      );
+      assert.deepEqual(deletes, [name]);
+      const { identity } = await previewDeleteNativeDmo(name, readOnly(raw));
+      assert.equal(identity.apiName, name);
       const { scope } = await previewFieldDeleteNativeDmo(name, readOnly(raw));
       assert.equal(scope, 'standard');
       const retrieved = await retrieveNativeDmo(name, readOnly(raw));

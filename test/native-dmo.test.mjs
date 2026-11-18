@@ -616,26 +616,11 @@ test('native DMO create refuses a namespaced name before any write', async () =>
   );
 });
 
-test('native DMO deletes are refused for standard and untyped targets and sent for namespaced and generated ones', async () => {
+test('native DMO deletes are sent for standard, untyped, namespaced and generated targets; Salesforce decides', async () => {
   for (const raw of [
     { ...native(), creationType: 'Standard' },
+    { ...native(), name: 'ssot__Individual__dlm', creationType: 'Standard' },
     { ...native(), creationType: undefined },
-  ]) {
-    await assert.rejects(
-      deleteNativeDmo(raw.name, {
-        get: async () => raw,
-        delete: async () => assert.fail('guarded target must not DELETE'),
-      }),
-      /UNSUPPORTED_DMO_TARGET/,
-    );
-    await assert.rejects(
-      previewDeleteNativeDmo(raw.name, { get: async () => raw }),
-      /UNSUPPORTED_DMO_TARGET/,
-    );
-    const retrieved = await retrieveNativeDmo(raw.name, { get: async () => raw });
-    assert.equal(retrieved.identity.apiName, raw.name);
-  }
-  for (const raw of [
     { ...native(), creationType: 'Adg' },
     { ...native(), creationType: 'Bridge' },
     { ...native(), creationType: 'Derived' },
@@ -644,7 +629,9 @@ test('native DMO deletes are refused for standard and untyped targets and sent f
     const name = raw.name;
     const { identity } = await previewDeleteNativeDmo(name, { get: async () => raw });
     assert.equal(identity.apiName, name);
-    // Salesforce refuses a generated DMO while its owner exists; that answer is passed on.
+    const retrieved = await retrieveNativeDmo(name, { get: async () => raw });
+    assert.equal(retrieved.identity.apiName, name);
+    // A 4xx answer (for example a generated DMO whose owner exists) is passed on as it comes.
     const deletes = [];
     await assert.rejects(
       deleteNativeDmo(name, {

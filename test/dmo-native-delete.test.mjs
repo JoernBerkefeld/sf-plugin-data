@@ -206,6 +206,42 @@ test('DMO still readable after acknowledged DELETE is deletion-unconfirmed, neve
   }
 });
 
+test('a standard or untyped DMO delete is sent; a 4xx answer is reported rejected', async () => {
+  const standard = 'ssot__Individual__dlm';
+  for (const creationType of ['Standard', undefined]) {
+    const deletes = [];
+    const command = Object.create(Delete.prototype);
+    command.parse = async () => ({ flags: { metadata: [`dmo:${standard}`], preview: false } });
+    command.jsonEnabled = () => true;
+    command.log = () => {};
+    command.resolveTarget = async () => 'target';
+    command.retrieveDmo = retrieveNativeDmo;
+    command.deleteDmo = deleteNativeDmo;
+    command.createDmoNativeDeleteClient = () => ({
+      get: async () => ({ ...structuredClone(runtime), name: standard, creationType }),
+      delete: async (target) => {
+        deletes.push(target);
+        throw new NativeDmoError('DMO_HTTP_ERROR', 400);
+      },
+    });
+    const before = process.exitCode;
+    let result;
+    try {
+      result = await command.run();
+    } finally {
+      process.exitCode = before;
+    }
+    assert.deepEqual(deletes, [standard], String(creationType));
+    assert.equal(result.status, 'failed');
+    assert.equal(result.result.items[0].outcome, 'failed');
+    assert.equal(result.result.items[0].mutation, 'rejected');
+    assert.deepEqual(
+      result.diagnostics.errors.map((error) => error.code),
+      ['DMO_HTTP_ERROR'],
+    );
+  }
+});
+
 test('failed DMO read after DELETE is unconfirmed and keeps the API detail', async () => {
   const { result, deletes } = await deleteWithReadback(async () => {
     throw retainConnectDiagnostic(

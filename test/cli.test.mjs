@@ -263,16 +263,17 @@ test('README describes optional scope without promoting nondefault qualification
     table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
     15,
   );
-  for (const resource of ['Data Model Objects', 'DLO-to-DMO mappings'])
-    assert.match(
+  assert.match(
+    table.split('\n').find((line) => line.includes('DLO-to-DMO mappings')),
+    /Partial/u,
+  );
+  // Data transforms and DMOs: the plugin sends every write and Salesforce decides.
+  for (const resource of ['Data Transforms', 'Data Model Objects'])
+    assert.doesNotMatch(
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,
     );
-  // Data transforms: the plugin sends every write and Salesforce decides.
-  assert.doesNotMatch(
-    table.split('\n').find((line) => line.includes('Data Transforms')),
-    /Partial/u,
-  );
+  assert.match(readme, /^- Data Model Objects \(DMOs\)$/mu);
   // The Data space column: yes only where --dataspace reaches the native requests.
   const rows = table
     .split('\n')

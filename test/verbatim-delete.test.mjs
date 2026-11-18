@@ -401,7 +401,7 @@ const rawDmo = (change = {}) => ({
   ...change,
 });
 
-test('a DMO whose GET the plugin cannot model is deleted; standard ones and scope still refuse', async () => {
+test('a DMO whose GET the plugin cannot model is deleted; identity and scope still refuse', async () => {
   const ledger = [];
   let deleted = false;
   const client = (raw) => ({
@@ -422,8 +422,8 @@ test('a DMO whose GET the plugin cannot model is deleted; standard ones and scop
   deleted = false;
   ledger.length = 0;
   for (const [change, code] of [
-    [{ creationType: 'Standard' }, 'UNSUPPORTED_DMO_TARGET'],
     [{ name: 'Other__dlm' }, 'DMO_TARGET_IDENTITY_MISMATCH'],
+    [{ name: undefined }, 'DMO_TARGET_IDENTITY_MISMATCH'],
     [{ dataSpaceName: 'Other' }, 'UNSUPPORTED_DMO_DATASPACE'],
   ])
     await assert.rejects(deleteNativeDmo(dmoName, client(rawDmo(change)), 'default'), { code });

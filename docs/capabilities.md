@@ -517,9 +517,9 @@ Write scope, decided from the raw read of the existing target
   no pair to lose and is removed), the labels
   of the other fields, the object label (sent only when it differs) and the object
   description (absent is not managed, an empty string clears it). Field-level delete
-  removes any named field but the primary key. Whole-DMO delete is sent, except for a
-  standard DMO and a read without `creationType` (`UNSUPPORTED_DMO_TARGET`); a
-  standard DMO is never created.
+  removes any named field but the primary key. Whole-DMO delete is sent for every
+  DMO, a standard one and a read without `creationType` included, and Salesforce
+  decides (a 4xx answer is reported as rejected); a standard DMO is never created.
 
 Standard-scope rules:
 

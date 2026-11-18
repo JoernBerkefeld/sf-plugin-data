@@ -200,7 +200,7 @@ Each page explains what the code means, why the plugin stops, how to fix it, an 
 | [`UNSUPPORTED_DMO_FIELD_ADDITION`](dmo/UNSUPPORTED_DMO_FIELD_ADDITION.md) | This field cannot be added to the existing DMO. New fields must not be primary keys or generated, and on a standard DMO need a name without a namespace.                      |
 | [`UNSUPPORTED_DMO_FIELD_CHANGE`](dmo/UNSUPPORTED_DMO_FIELD_CHANGE.md)     | The file changes or removes a DMO field in a way the plugin cannot apply. Restore it as in the org; to remove a custom field, deploy with --allow-field-removal.              |
 | [`UNSUPPORTED_DMO_SELECTION`](dmo/UNSUPPORTED_DMO_SELECTION.md)           | The target org passed to a DMO request is not valid. Pass --target-org with the alias or username of an authenticated org.                                                    |
-| [`UNSUPPORTED_DMO_TARGET`](dmo/UNSUPPORTED_DMO_TARGET.md)                 | The plugin does not send this DMO write: a whole delete of a standard DMO or of a DMO read without a creationType, or a new DMO with a namespaced name.                       |
+| [`UNSUPPORTED_DMO_TARGET`](dmo/UNSUPPORTED_DMO_TARGET.md)                 | The plugin does not send this DMO write: a new DMO with a namespaced name, or a write to a DMO whose read has no name.                                                        |
 
 ## Mapping
 

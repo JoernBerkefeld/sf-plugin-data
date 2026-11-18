@@ -60,18 +60,14 @@ export function nativeDmoWriteScope(raw: Record<string, unknown>): NativeDmoWrit
 }
 
 /**
- * Whether a whole-DMO delete is sent. A Salesforce standard DMO (creationType `Standard`) and a
- * read without a creationType are never deleted; every other DMO is, and Salesforce answers for
- * itself (it refuses a generated DMO while the identity resolution or graph that owns it exists).
+ * Whether a whole-DMO delete is sent. It is sent for every read that names the DMO, whatever its
+ * creationType (standard, generated, custom or none); Salesforce decides and its answer is
+ * reported as it comes.
  * @param {Record<string, unknown>} raw Direct native read.
  * @returns {boolean} Whether the delete is sent.
  */
 export function isDeletableNativeDmo(raw: Record<string, unknown>): boolean {
-  return (
-    typeof raw.name === 'string' &&
-    typeof raw.creationType === 'string' &&
-    raw.creationType !== 'Standard'
-  );
+  return typeof raw.name === 'string';
 }
 
 const dmoSystemFields = new Set([
