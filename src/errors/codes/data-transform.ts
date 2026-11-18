@@ -35,9 +35,15 @@ export const hints: Readonly<Record<string, string>> = {
   TRANSFORM_PREVIEW_LIMITATIONS:
     'This preview only read from the org. Salesforce validation did not run; create or update was chosen by name from the current list of transforms.',
   TRANSFORM_READBACK_MISMATCH:
-    'The transform was written, but reading it back did not return a custom transform with the written ID and name. Check the transform in Data Cloud before deploying again.',
+    'The transform was written, but reading it back did not return a transform with the written ID and name, or a written schedule with the frequency of the file. Check the transform in Data Cloud before deploying again.',
   TRANSFORM_RETRIEVE_FAILED:
     'The data transform could not be retrieved because of an error the plugin does not classify, such as an HTTP error. Read the message, check the name and your org login, then rerun.',
+  TRANSFORM_SCHEDULE_CHANGE:
+    'The deploy sends the schedule of the file, so the transform runs on that schedule in the target org ({ "frequency": "None" } turns it off). Remove the schedule key from the file to leave the org schedule alone.',
+  TRANSFORM_SCHEDULE_NOT_SENT:
+    'The transform definition was written, but the transform was still processing at the end of the wait, so its schedule was not sent. Wait until it is ACTIVE, then rerun the deploy.',
+  TRANSFORM_SCHEDULE_REJECTED:
+    'The transform definition was written, but Salesforce rejected the schedule of the file. Read its message, correct the schedule in the file, then rerun the deploy.',
   TRANSFORM_SERVER_PROCESSING:
     'The transform definition was written and read back, but Data Cloud is still processing it. Check its status in Data Cloud before relying on its output.',
   TRANSFORM_TARGET_DRIFT:
@@ -51,9 +57,5 @@ export const hints: Readonly<Record<string, string>> = {
   TRANSFORM_WRITE_UNCONFIRMED:
     'The transform write was sent, but Salesforce did not return a readable confirmation. Check in Data Cloud whether the transform was created or updated before deploying again.',
   UNSUPPORTED_TRANSFORM_INPUT:
-    'The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, a key the create/update input does not take, or a data space other than default. Fix the file (the message names the key) and rerun.',
-  UNSUPPORTED_TRANSFORM_OWNER_OR_STATE:
-    'The data transform is not a custom transform (creationType CUSTOM) with a valid record ID. The plugin only manages custom transforms: retrieve writes it as-is, deploy and delete refuse it; manage it in Data Cloud.',
-  UNSUPPORTED_TRANSFORM_VARIANT:
-    'The data transform has a namespace from a package, which the plugin does not manage: retrieve writes it as-is, deploy and delete refuse it; manage it through its package.',
+    'The data transform file is not inert JSON, or its name, definition/definitions, a top-level key, schedule or data space is not one the plugin can send. Fix the file (the message names the key) and rerun.',
 };

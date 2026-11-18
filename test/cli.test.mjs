@@ -263,11 +263,16 @@ test('README describes optional scope without promoting nondefault qualification
     table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
     15,
   );
-  for (const resource of ['Data Model Objects', 'DLO-to-DMO mappings', 'Data Transforms'])
+  for (const resource of ['Data Model Objects', 'DLO-to-DMO mappings'])
     assert.match(
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,
     );
+  // Data transforms: the plugin sends every write and Salesforce decides.
+  assert.doesNotMatch(
+    table.split('\n').find((line) => line.includes('Data Transforms')),
+    /Partial/u,
+  );
   // The Data space column: yes only where --dataspace reaches the native requests.
   const rows = table
     .split('\n')
@@ -296,7 +301,7 @@ test('README documents the transform file as native input that Salesforce decide
     .replaceAll(/\s+/gu, ' ');
   assert.ok(dlo.includes('a DCSQL definition creates the output DLOs it declares'));
   const transform = readme
-    .split('### Data Transforms: definition retrieve, deploy and delete')[1]
+    .split('### Data Transforms: definition and schedule retrieve, deploy and delete')[1]
     .split('### DLO-to-DMO mapping:')[0];
   const section = transform.replaceAll(/\s+/gu, ' ');
   for (const text of [
@@ -305,9 +310,14 @@ test('README documents the transform file as native input that Salesforce decide
     '`UNSUPPORTED_TRANSFORM_INPUT`',
     'An update replaces the whole transform',
     '`fullRunFrequency` to `DAILY`, `writeMode` to `OVERWRITE`',
-    'The schedule is not in the file and is not changed by a deploy',
+    "The file's top-level `schedule` holds the transform schedule",
+    'Without the key, the schedule is left alone',
+    '`{ "frequency": "None" }` turns the schedule off',
+    '`TRANSFORM_SCHEDULE_CHANGE`',
+    'A definition PUT keeps the schedule',
     "Salesforce's stored definition is not compared with the file",
-    'Only a `CUSTOM` transform without a namespace is updated or deleted',
+    'A transform of any owner is sent and Salesforce decides',
+    'Writes to packaged (namespaced) transforms are untested',
   ])
     assert.ok(section.includes(text), text);
   assert.match(transform, /sf data360 deploy -m data-transform:Example --target-org/u);

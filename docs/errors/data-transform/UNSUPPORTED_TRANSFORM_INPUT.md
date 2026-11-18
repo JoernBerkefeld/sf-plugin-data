@@ -1,6 +1,6 @@
 # `UNSUPPORTED_TRANSFORM_INPUT`
 
-> The data transform file is not inert JSON, its name is invalid, it has both or neither of definition and definitions, a key the create/update input does not take, or a data space other than default. Fix the file (the message names the key) and rerun.
+> The data transform file is not inert JSON, or its name, definition/definitions, a top-level key, schedule or data space is not one the plugin can send. Fix the file (the message names the key) and rerun.
 
 |              |                                                                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -13,7 +13,7 @@
 The plugin checks only a few things in the transform input before it sends it, and one of them failed for a `.dataTransform.json` file or for the transform read from the org:
 
 - the content is plain JSON data (no special objects, no circular references, finite numbers);
-- the envelope is `schemaVersion: 1`, `kind: data-transform`, `apiVersion: 68.0` with one `definition` object;
+- the envelope is `schemaVersion: 1`, `kind: data-transform`, `apiVersion: 68.0` with one `definition` object and, optionally, a `schedule` object;
 - `name` is an API name (a letter, then letters, digits or underscores);
 - exactly one of `definition` (one definition, such as STL) or `definitions` (a list, such as DCSQL) is present;
 - every top-level key of the definition is one the create/update input takes (`name`, `label`, `description`, `type`, `dataSpaceName`, `fullRunFrequency`, `definition`, `definitions`, `parameters`, `tags`, `capabilities`, `currencyIsoCode`, `primarySource`);
@@ -43,5 +43,5 @@ Downloaded data-transform:Orders_Copy (retrieved).
 
 ## Related codes
 
-- [`UNSUPPORTED_TRANSFORM_VARIANT`](../data-transform/UNSUPPORTED_TRANSFORM_VARIANT.md) — the transform comes from a package.
-- [`UNSUPPORTED_TRANSFORM_OWNER_OR_STATE`](../data-transform/UNSUPPORTED_TRANSFORM_OWNER_OR_STATE.md) — the transform is not a custom transform.
+- [`TRANSFORM_DEPLOY_FAILED`](../data-transform/TRANSFORM_DEPLOY_FAILED.md) — Salesforce refused the transform that was sent.
+- [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy of the verbatim file.

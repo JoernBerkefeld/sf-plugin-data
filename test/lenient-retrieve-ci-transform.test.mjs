@@ -145,13 +145,26 @@ const transformFile = (cwd) =>
 const deployTransform = (cwd) =>
   readDeployInputs({ cwd, metadata: [`data-transform:${transformName}`] });
 
+for (const [label, change] of [
+  ['a system-generated', (raw) => (raw.creationType = 'SYSTEM')],
+  ['a packaged', (raw) => (raw.namespace = 'owned')],
+])
+  test(`retrieve writes ${label} transform as a deployable file`, async () => {
+    const raw = transformGet();
+    change(raw);
+    const { result, cwd } = await retrieveTransform(raw);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.equal(result.result.items[0].verbatim, undefined);
+    const saved = JSON.parse(await readFile(transformFile(cwd), 'utf8'));
+    assert.deepEqual(saved.definition.definition, definition());
+    assert.equal(Object.hasOwn(saved, 'schedule'), false);
+    for (const key of ['creationType', 'namespace'])
+      assert.equal(Object.hasOwn(saved.definition, key), false, key);
+    const [input] = await deployTransform(cwd);
+    assert.equal(input.document.definition.name, transformName);
+  });
+
 for (const [label, change, reason] of [
-  [
-    'a system-generated',
-    (raw) => (raw.creationType = 'SYSTEM'),
-    'UNSUPPORTED_TRANSFORM_OWNER_OR_STATE',
-  ],
-  ['a packaged', (raw) => (raw.namespace = 'owned'), 'UNSUPPORTED_TRANSFORM_VARIANT'],
   [
     'a definition and definitions',
     (raw) => (raw.definitions = [definition()]),

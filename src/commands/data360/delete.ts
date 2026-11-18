@@ -61,6 +61,7 @@ import {
   retainConnectDiagnostic,
 } from '../../transport/connect-diagnostic.js';
 import { operationDiagnostic, replaceExplanation } from '../../services/operation-diagnostic.js';
+import { rejectedNextAction } from '../../services/deploy-result.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 import {
   nativeDmoFieldName,
@@ -1845,7 +1846,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             },
           };
           warn(
-            'Transform definition deletion only. Settlement is the absence of the transform from the bounded visible inventory; exhaustive external-consumer exclusion is not established. No DLO, run, schedule or data cleanup; no retry, atomic concurrency guarantee or fallback.',
+            'Transform definition deletion only, for a transform of any owner (Salesforce decides; its 4xx refusal is reported as rejected). Settlement is the absence of the transform from the bounded visible inventory; exhaustive external-consumer exclusion is not established. No DLO, run or data cleanup; no retry, atomic concurrency guarantee or fallback.',
           );
           const result = await this.deleteDataTransform(desired, client, {
             // Resolved from the transform's name during admission.
@@ -1857,6 +1858,14 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           item.outcome = result.outcome === 'preview' ? 'delete' : result.outcome;
           item.mutation = result.mutation;
           await track(item, await sourceFiles('data-transform', name));
+          if (result.mutation === 'rejected') {
+            envelope.diagnostics.errors.push({
+              code: 'REQUEST_FAILED',
+              message: operationDiagnostic(result.error, rejectedNextAction),
+              retryable: false,
+            });
+            return 'failed';
+          }
           if (result.outcome === 'deletion-unconfirmed') {
             envelope.diagnostics.errors.push({
               code: 'TRANSFORM_DELETE_UNCONFIRMED',

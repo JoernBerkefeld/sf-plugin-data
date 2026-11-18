@@ -1,6 +1,6 @@
 # `TRANSFORM_READBACK_MISMATCH`
 
-> The transform was written, but reading it back did not return a custom transform with the written ID and name. Check the transform in Data Cloud before deploying again.
+> The transform was written, but reading it back did not return a transform with the written ID and name, or a written schedule with the frequency of the file. Check the transform in Data Cloud before deploying again.
 
 |              |                                                              |
 | ------------ | ------------------------------------------------------------ |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-After the create or update, the plugin read the transform again by the ID Salesforce returned. The record it got back has a different ID or name, is not a custom transform, or has a package namespace. The definition itself is not compared with your file: Salesforce stores a normalized form (for example upper-case enum values, defaults for omitted settings, extra keys in a DCSQL manifest).
+After the create or update, the plugin read the transform and its schedule again by the ID Salesforce returned. The record it got back has a different ID or name, or, when the deploy sent the schedule of the file, the schedule read back has another `frequency`. The definition itself is not compared with your file: Salesforce stores a normalized form (for example upper-case enum values, defaults for omitted settings, extra keys in a DCSQL manifest). Of the schedule only the frequency is compared, for the same reason.
 
 ## Why the plugin stops
 
@@ -18,7 +18,7 @@ A deploy only counts as successful when the written transform can be read back a
 
 ## How to fix
 
-1. Open the transform in Data Cloud and check its name and owner.
+1. Open the transform in Data Cloud and check its name and schedule.
 2. Retrieve it to see what the org holds: `sf data360 retrieve --metadata data-transform:<Name>` (into a separate folder or with care for `--overwrite`).
 3. Decide whether to deploy again, keeping in mind the write may already have taken effect.
 
@@ -30,7 +30,7 @@ Failed: data-transform:Orders_Copy; mutation: unknown.
 Mutation may have occurred. Inspect target before any further attempt.
 Deployed: 0 (0 created / 0 updated / 1 failed)
 TRANSFORM_READBACK_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
-Hint: The transform was written, but reading it back did not return a custom transform with the written ID and name. Check the transform in Data Cloud before deploying again.
+Hint: The transform was written, but reading it back did not return a transform with the written ID and name, or a written schedule with the frequency of the file. Check the transform in Data Cloud before deploying again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/TRANSFORM_READBACK_MISMATCH.md
 ```
 

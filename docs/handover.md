@@ -802,9 +802,8 @@ unknown top-level transform key is refused.
 - Retrieve mode: top-level GET keys that are neither input keys nor server-owned (`serverKeys`
   from a live GET, plus `lastRun*`) are kept; a `null` `definition`/`definitions` beside the
   other is left out; the schedule read is best effort (error or non-object = `{}` plus a
-  warning). Non-CUSTOM (`UNSUPPORTED_TRANSFORM_OWNER_OR_STATE`), namespaced
-  (`UNSUPPORTED_TRANSFORM_VARIANT`) and both definitions (`UNSUPPORTED_TRANSFORM_INPUT`) go
-  verbatim through the catch-all.
+  warning). Both definitions (`UNSUPPORTED_TRANSFORM_INPUT`) go verbatim through the
+  catch-all.
 - Deploy: `buildDataTransformInput` refuses keys outside the input keys and both definitions,
   naming the key path; `readDataTransformInput` keeps the explanation on `INVALID_SOURCE`.
 - Tests: `test/lenient-retrieve-ci-transform.test.mjs`. Changed: the draft test in

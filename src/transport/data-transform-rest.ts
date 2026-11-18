@@ -13,6 +13,8 @@ export type DataTransformClient = {
   validate: (input: unknown) => Promise<unknown>;
   create: (input: unknown) => Promise<unknown>;
   update: (targetId: string, input: unknown) => Promise<unknown>;
+  /** Replace the schedule of one transform, sent as written; Salesforce decides. */
+  setSchedule: (targetId: string, schedule: Record<string, unknown>) => Promise<unknown>;
   delete: (targetId: string) => Promise<unknown>;
 };
 
@@ -45,11 +47,11 @@ class DataTransformTransport extends ConnectClient {
 
 /**
  * Bind only the native API68/default-space definition lifecycle contract.
- * Callers authorize create-only POST or identity-bound full-input PUT; no runs or schedule writes.
+ * Callers authorize create-only POST, identity-bound full-input PUT or schedule PUT; no runs.
  * @param {ConstructorParameters<typeof ConnectClient>[0]} connection Existing authenticated receiver.
  * @param {string} apiVersion Exact native API version.
  * @param {string} dataSpace Exact qualified dataspace.
- * @returns {DataTransformClient} Single-attempt reads, validation and definition writes.
+ * @returns {DataTransformClient} Single-attempt reads, validation, definition and schedule writes.
  */
 export function createDataTransformClient(
   connection: ConstructorParameters<typeof ConnectClient>[0],
@@ -113,6 +115,13 @@ export function createDataTransformClient(
       if (typeof targetId !== 'string' || !dataTransformId.test(targetId))
         throw new DataTransformError('INVALID_TRANSFORM_TARGET_ID');
       return transport.request(item(targetId), 'PUT', buildDataTransformInput(input));
+    },
+    setSchedule: async (targetId, schedule) => {
+      if (typeof targetId !== 'string' || !dataTransformId.test(targetId))
+        throw new DataTransformError('INVALID_TRANSFORM_TARGET_ID');
+      if (!schedule || typeof schedule !== 'object' || Array.isArray(schedule))
+        throw new DataTransformError('UNSUPPORTED_TRANSFORM_INPUT');
+      return transport.request(`${item(targetId)}/schedule`, 'PUT', structuredClone(schedule));
     },
   };
 }

@@ -96,7 +96,10 @@ beside P3 files only stay in the ordered batch. A calculated insight, Segment or
 an identity resolution's unified or link DMO (name derived from the ruleset file) runs
 after that ruleset is `PUBLISHED`. Before the first write, P3 inputs pass their local
 file, version and dependency checks and the stream, transform and graph scope is checked.
-A deploy takes any number of transforms, each created or updated by name; a
+A deploy takes any number of transforms, each created or updated by name, of any owner
+(Salesforce refuses writes to system transforms, reported as `rejected`); a transform
+file's optional `schedule` is sent with its own schedule PUT when it differs, and a file
+without it leaves the schedule alone. A
 DLO file named like the landing DLO of a stream the deploy creates is refused after the
 stream's read-only comparison, before any write (`DATA_STREAM_DLO_COLLISION`); beside an
 existing stream it deploys. `--wait-timeout` applies to every selected graph and needs

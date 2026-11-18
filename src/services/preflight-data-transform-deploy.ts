@@ -1,6 +1,7 @@
 import {
   DataTransformError,
-  sameDataTransformDocument,
+  sameDataTransformDefinition,
+  sameDataTransformSchedule,
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
 import type {
@@ -17,12 +18,17 @@ export type DataTransformDeployPlan = {
   document: DataTransformDocument;
   targetId?: string;
   current?: DataTransformObservation;
+  /** Whether the definition is sent (create POST or update PUT). */
+  writeDefinition: boolean;
+  /** Whether the schedule of the file is sent with the schedule PUT. */
+  writeSchedule: boolean;
 };
 
 /**
- * Preflight a create, or an update of the target the deploy resolved by name. The file is
- * unchanged when it equals the org's projected input (enum values ignoring letter case);
- * otherwise it is sent as written and Salesforce decides.
+ * Preflight a create, or an update of the target the deploy resolved by name. The definition is
+ * unchanged when it equals the org's projected input (enum values ignoring letter case); the
+ * schedule is unchanged when the file has none (left alone) or it equals the org's projected
+ * schedule (a new transform has none). What differs is sent as written and Salesforce decides.
  * @param {unknown} value Portable artifact.
  * @param {DataTransformDeploySelection} selection Create, or update with the resolved target ID.
  * @param {DataTransformClient} client Native API68 transform transport.
@@ -43,8 +49,19 @@ export async function preflightDataTransformDeploy(
     if (current.document.definition.name !== document.definition.name)
       throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
   }
-  if (current && sameDataTransformDocument(current.document, document))
-    return { operation: 'unchanged', document, targetId: current.targetId, current };
+  const writeDefinition = !current || !sameDataTransformDefinition(current.document, document);
+  const writeSchedule =
+    document.schedule !== undefined &&
+    !sameDataTransformSchedule(current?.document.schedule, document.schedule);
+  if (current && !writeDefinition && !writeSchedule)
+    return {
+      operation: 'unchanged',
+      document,
+      targetId: current.targetId,
+      current,
+      writeDefinition,
+      writeSchedule,
+    };
   // The validation endpoint rejects an existing owner's own output (live-observed), so only create is validated.
   if (selection.operation === 'create' && !options.skipServerValidation) {
     const validation = await client.validate(document.definition);
@@ -62,5 +79,7 @@ export async function preflightDataTransformDeploy(
     document,
     targetId: current?.targetId,
     current,
+    writeDefinition,
+    writeSchedule,
   };
 }

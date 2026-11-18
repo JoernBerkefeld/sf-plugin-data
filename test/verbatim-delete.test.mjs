@@ -213,18 +213,18 @@ const rawTransform = (change = {}) => ({
   ...change,
 });
 
-test('a verbatim transform is deleted by name; system, packaged and renamed ones stay refused', async () => {
-  const ledger = [];
-  const result = await deleteDataTransform(
-    verbatim('data-transform', 'SyntheticTransform'),
-    transformClient(rawTransform(), ledger),
-    { targetId: transformId, confirmDelete: true, verifyInput: async () => {}, now: () => 0 },
-  );
-  assert.equal(result.outcome, 'deleted');
-  assert.deepEqual(ledger, [`delete:${transformId}`]);
+test('a verbatim transform of any owner is deleted by name; renamed and processing ones stay refused', async () => {
+  for (const change of [{}, { creationType: 'SYSTEM' }, { namespace: 'pkg' }]) {
+    const ledger = [];
+    const result = await deleteDataTransform(
+      verbatim('data-transform', 'SyntheticTransform'),
+      transformClient(rawTransform(change), ledger),
+      { targetId: transformId, confirmDelete: true, verifyInput: async () => {}, now: () => 0 },
+    );
+    assert.equal(result.outcome, 'deleted');
+    assert.deepEqual(ledger, [`delete:${transformId}`]);
+  }
   for (const [change, code] of [
-    [{ creationType: 'SYSTEM' }, 'UNSUPPORTED_TRANSFORM_OWNER_OR_STATE'],
-    [{ namespace: 'pkg' }, 'UNSUPPORTED_TRANSFORM_VARIANT'],
     [{ name: 'OtherTransform' }, 'TRANSFORM_DELETE_IDENTITY_MISMATCH'],
     [{ status: 'PROCESSING' }, 'TRANSFORM_DELETE_PROCESSING'],
   ]) {

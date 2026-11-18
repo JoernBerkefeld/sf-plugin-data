@@ -7,6 +7,11 @@ export type DataTransformDocument = {
   kind: 'data-transform';
   apiVersion: '68.0';
   definition: Record<string, unknown>;
+  /**
+   * Desired schedule, sent with its own PUT. Absent leaves the org schedule alone;
+   * `{ frequency: 'None' }` turns it off.
+   */
+  schedule?: Record<string, unknown>;
 };
 export type DataTransformObservation = {
   document: DataTransformDocument;
@@ -51,6 +56,7 @@ const serverKeys = new Set([
   'actionUrls',
   'createdBy',
   'createdDate',
+  'creationSource',
   'creationType',
   'id',
   'lastModifiedBy',
@@ -173,18 +179,50 @@ export function validateDataTransformDocument(
   mode: DocumentMode = 'deploy',
 ): DataTransformDocument {
   inert(value);
-  const document = record(value, ['schemaVersion', 'kind', 'apiVersion', 'definition']);
+  const scheduled = Boolean(value && typeof value === 'object' && Object.hasOwn(value, 'schedule'));
+  const document = record(
+    value,
+    scheduled
+      ? ['schemaVersion', 'kind', 'apiVersion', 'definition', 'schedule']
+      : ['schemaVersion', 'kind', 'apiVersion', 'definition'],
+  );
   requireTransform(
     document.schemaVersion === 1 &&
       document.kind === 'data-transform' &&
       document.apiVersion === '68.0',
   );
+  if (
+    scheduled &&
+    (!document.schedule ||
+      typeof document.schedule !== 'object' ||
+      Array.isArray(document.schedule))
+  )
+    throw refuseKey('schedule', 'is not an object');
   return {
     schemaVersion: 1,
     kind: 'data-transform',
     apiVersion: '68.0',
     definition: buildDataTransformInput(document.definition, mode),
+    ...(scheduled
+      ? { schedule: structuredClone(document.schedule as Record<string, unknown>) }
+      : {}),
   };
+}
+
+/**
+ * Sort object keys recursively, so equal JSON compares equal whatever the property order.
+ * @param {unknown} entry JSON value.
+ * @returns {unknown} Detached value with sorted keys.
+ */
+function canonical(entry: unknown): unknown {
+  if (Array.isArray(entry)) return entry.map((child) => canonical(child));
+  if (entry && typeof entry === 'object') {
+    const entries = Object.entries(entry);
+
+    entries.sort(([left], [right]) => left.localeCompare(right, 'en'));
+    return Object.fromEntries(entries.map(([key, child]) => [key, canonical(child)]));
+  }
+  return entry;
 }
 
 /**
@@ -198,16 +236,6 @@ export function serializeDataTransformDocument(
   mode: DocumentMode = 'deploy',
 ): string {
   const document = validateDataTransformDocument(value, mode);
-  const canonical = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map((child) => canonical(child));
-    if (entry && typeof entry === 'object') {
-      const entries = Object.entries(entry);
-
-      entries.sort(([left], [right]) => left.localeCompare(right, 'en'));
-      return Object.fromEntries(entries.map(([key, child]) => [key, canonical(child)]));
-    }
-    return entry;
-  };
   // eslint-disable-next-line unicorn/no-null -- JSON indentation requires a null replacer, not a field policy.
   return `${JSON.stringify(canonical(document), null, 2)}\n`;
 }
@@ -225,8 +253,77 @@ const transformEnumKeys: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether the org transform already holds the file: the same canonical document, with enum
- * values compared ignoring letter case. Names, labels, SQL and other text compare exactly.
+ * The schedule of a transform that does not run on a schedule. Retrieve leaves the key out for
+ * it; a file states it explicitly to turn a schedule off.
+ */
+export const unscheduled: Readonly<Record<string, unknown>> = Object.freeze({ frequency: 'None' });
+
+/** Schedule keys whose values Salesforce may store in its own letter case. */
+const scheduleEnumKeys: ReadonlySet<string> = new Set(['frequency']);
+
+/**
+ * Whether the org transform already holds the definition of the file: the same canonical input,
+ * with enum values compared ignoring letter case. Names, labels, SQL and other text compare
+ * exactly. The schedule is not compared.
+ * @param {DataTransformDocument} current Org document as projected.
+ * @param {DataTransformDocument} desired Document from the file.
+ * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
+ * @returns {boolean} True when the definition would not change.
+ */
+export function sameDataTransformDefinition(
+  current: DataTransformDocument,
+  desired: DataTransformDocument,
+  mode: DocumentMode = 'deploy',
+): boolean {
+  const comparable = (document: DataTransformDocument): string =>
+    serializeDataTransformDocument(
+      {
+        schemaVersion: 1,
+        kind: 'data-transform',
+        apiVersion: '68.0',
+        definition: foldEnums(document.definition, transformEnumKeys),
+      },
+      mode,
+    );
+  return comparable(current) === comparable(desired);
+}
+
+/**
+ * A schedule without the write-only `shouldForceSpecifiedMinutes` (a schedule PUT takes it; the
+ * GET never returns it, live API 68), at the top level and in each per-definition entry.
+ * @param {unknown} schedule Schedule or part of one.
+ * @returns {unknown} Detached copy without the key.
+ */
+function withoutWriteOnly(schedule: unknown): unknown {
+  if (Array.isArray(schedule)) return schedule.map((entry) => withoutWriteOnly(entry));
+  if (!schedule || typeof schedule !== 'object') return schedule;
+  return Object.fromEntries(
+    Object.entries(schedule)
+      .filter(([key]) => key !== 'shouldForceSpecifiedMinutes')
+      .map(([key, entry]) => [key, withoutWriteOnly(entry)]),
+  );
+}
+
+/**
+ * Whether the org schedule (as retrieve projects it) equals the schedule of the file; the
+ * frequency is compared ignoring letter case, the write-only `shouldForceSpecifiedMinutes` is not
+ * compared, everything else exactly.
+ * @param {Record<string, unknown> | undefined} current Projected org schedule; none is unscheduled.
+ * @param {Record<string, unknown>} desired Schedule from the file.
+ * @returns {boolean} True when the schedule would not change.
+ */
+export function sameDataTransformSchedule(
+  current: Record<string, unknown> | undefined,
+  desired: Record<string, unknown>,
+): boolean {
+  const comparable = (schedule: Record<string, unknown>): string =>
+    JSON.stringify(canonical(foldEnums(withoutWriteOnly(schedule), scheduleEnumKeys)));
+  return comparable(current ?? unscheduled) === comparable(desired);
+}
+
+/**
+ * Whether the org transform already holds the file: the same definition and, when the file has
+ * a schedule, the same schedule. A file without a schedule leaves the schedule alone.
  * @param {DataTransformDocument} current Org document as projected.
  * @param {DataTransformDocument} desired Document from the file.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
@@ -237,17 +334,72 @@ export function sameDataTransformDocument(
   desired: DataTransformDocument,
   mode: DocumentMode = 'deploy',
 ): boolean {
-  const comparable = (document: DataTransformDocument): string =>
-    serializeDataTransformDocument(
-      { ...document, definition: foldEnums(document.definition, transformEnumKeys) },
-      mode,
-    );
-  return comparable(current) === comparable(desired);
+  return (
+    sameDataTransformDefinition(current, desired, mode) &&
+    (desired.schedule === undefined ||
+      sameDataTransformSchedule(current.schedule, desired.schedule))
+  );
 }
 
 /**
- * Project one `definition` or `definitions[]` entry as read: without its schedule and without the
- * server-owned keys of each output object. Everything else is kept.
+ * Project a schedule GET onto the keys the schedule PUT takes (live API 68, 2026-11-18):
+ * `frequency`, `interval`, `daysOfWeek`, `shouldForceSpecifiedMinutes` and `time` with
+ * `hour`, `minute` and `timeZone` (the GET's `time.timezone.zoneId`); the server-set
+ * `nextScheduledDate` and `type` are left out. A transform without a schedule (`frequency`
+ * `None`, or an empty `schedule` object) gives no schedule, so retrieve leaves the key out and
+ * a deploy of that file leaves the schedule alone. The per-definition
+ * `schedule` map of a system transform keeps its map, each entry projected the same way and the
+ * outer `type` left out; Salesforce refuses a schedule PUT on a system transform (403). Any other
+ * shape is kept as read. An empty answer (a schedule read that failed on retrieve) gives no
+ * schedule.
+ * @param {Record<string, unknown>} raw Schedule GET.
+ * @returns {Record<string, unknown> | undefined} Projected schedule, or undefined for none read.
+ */
+export function projectDataTransformSchedule(
+  raw: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const object = (value: unknown): value is Record<string, unknown> =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  if (typeof raw.frequency === 'string') {
+    if (raw.frequency.toLowerCase() === 'none') return undefined;
+    const projected: Record<string, unknown> = { frequency: raw.frequency };
+    for (const key of ['interval', 'daysOfWeek', 'shouldForceSpecifiedMinutes'])
+      if (raw[key] !== undefined && raw[key] !== null) projected[key] = structuredClone(raw[key]);
+    if (object(raw.time)) {
+      const time: Record<string, unknown> = {};
+      for (const key of ['hour', 'minute'])
+        if (raw.time[key] !== undefined && raw.time[key] !== null) time[key] = raw.time[key];
+      const zone = object(raw.time.timezone) ? raw.time.timezone.zoneId : raw.time.timeZone;
+      if (zone !== undefined && zone !== null) time.timeZone = zone;
+      projected.time = time;
+    }
+    return projected;
+  }
+  if (Object.keys(raw).length === 0) return undefined;
+  if (
+    object(raw.schedule) &&
+    Object.keys(raw).every((key) => key === 'schedule' || key === 'type')
+  ) {
+    const entries = Object.entries(raw.schedule);
+    if (entries.length === 0) return undefined;
+    // A system transform: one schedule per definition, each projected the same way.
+    if (entries.every(([, entry]) => object(entry) && typeof entry.frequency === 'string'))
+      return {
+        schedule: Object.fromEntries(
+          entries.map(([key, entry]) => [
+            key,
+            projectDataTransformSchedule(entry as Record<string, unknown>),
+          ]),
+        ),
+      };
+  }
+  return structuredClone(raw);
+}
+
+/**
+ * Project one `definition` or `definitions[]` entry as read: without its schedule (a PUT ignores
+ * it; the schedule has its own route) and without the server-owned keys of each output object.
+ * Everything else is kept.
  * @param {unknown} definition Entry from a GET.
  * @returns {unknown} Detached projected entry.
  */
@@ -264,12 +416,13 @@ function projectDefinition(definition: unknown): unknown {
 }
 
 /**
- * Admit a custom, unpackaged transform GET and project its native input: the input keys present,
- * definitions without schedule and output objects without server-owned keys. Retrieve mode also
- * keeps keys that are neither input nor server-owned, and leaves out a `null` `definition` or
- * `definitions` beside the other one.
+ * Admit a transform GET of any owner (custom, system or packaged; Salesforce decides about
+ * writes) and project its native input: the input keys present, definitions without schedule and
+ * output objects without server-owned keys, plus the schedule as projected from its own GET.
+ * Retrieve mode also keeps keys that are neither input nor server-owned, and leaves out a `null`
+ * `definition` or `definitions` beside the other one.
  * @param {unknown} value Native item response.
- * @param {unknown} scheduleValue Independently read native schedule, kept as an observation.
+ * @param {unknown} scheduleValue Independently read native schedule; also kept as read.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
  * @returns {DataTransformObservation} Portable input plus detached read-only observations.
  */
@@ -283,12 +436,9 @@ export function observeDataTransform(
   const runtime = record(value);
   const schedule = record(scheduleValue);
   requireTransform(
-    runtime.creationType === 'CUSTOM' &&
-      typeof runtime.id === 'string' &&
-      dataTransformId.test(runtime.id),
-    'UNSUPPORTED_TRANSFORM_OWNER_OR_STATE',
+    typeof runtime.id === 'string' && dataTransformId.test(runtime.id),
+    'INVALID_TRANSFORM_RESPONSE',
   );
-  requireTransform(!runtime.namespace, 'UNSUPPORTED_TRANSFORM_VARIANT');
   const projected: Record<string, unknown> = {};
   // On retrieve, a null definition or definitions beside the other one is the unused one.
   const unused = (key: string): boolean =>
@@ -310,12 +460,14 @@ export function observeDataTransform(
     for (const key of Object.keys(runtime))
       if (!inputKeys.includes(key) && !serverKeys.has(key) && !key.startsWith('lastRun'))
         projected[key] = structuredClone(runtime[key]);
+  const projectedSchedule = projectDataTransformSchedule(schedule);
   return {
     document: {
       schemaVersion: 1,
       kind: 'data-transform',
       apiVersion: '68.0',
       definition: buildDataTransformInput(projected, mode),
+      ...(projectedSchedule === undefined ? {} : { schedule: projectedSchedule }),
     },
     targetId: runtime.id as string,
     runtime: structuredClone(runtime),

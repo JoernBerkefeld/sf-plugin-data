@@ -15,7 +15,11 @@ import {
 } from '../lib/services/retrieve-data-transform.js';
 
 import { preflightDataTransformDeploy } from '../lib/services/preflight-data-transform-deploy.js';
-import { executeDataTransformDeploy } from '../lib/services/execute-data-transform-deploy.js';
+import {
+  DataTransformScheduleError,
+  executeDataTransformDeploy,
+  rejectedTransformWrite,
+} from '../lib/services/execute-data-transform-deploy.js';
 import { resolveNativeDloTarget } from '../lib/services/native-dlo.js';
 import Deploy from '../lib/commands/data360/deploy.js';
 import Delete from '../lib/commands/data360/delete.js';
@@ -23,6 +27,7 @@ import { mkdtemp, appendFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { writeDataTransformDocument } from '../lib/artifacts/write-data-transform.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 import {
   readDeployInputs,
   verifyDataTransformInputDigest,
@@ -139,6 +144,12 @@ const document = () => ({
   definition: input(),
 });
 /**
+ * The document retrieve writes for {@link runtime} and {@link schedule}: a transform without a
+ * schedule has no schedule key.
+ * @returns {object} Retrieved document.
+ */
+const observedDocument = () => document();
+/**
  * The expected file definition and PUT body of a GET: input keys only, no schedule inside a
  * definition, no server-owned output object keys. Everything else as read.
  * @param {object} raw Native GET.
@@ -169,7 +180,7 @@ const projected = (raw) => {
 test('Transform projects the GET onto its native input, keeping what a full PUT would reset', () => {
   const value = runtime();
   const observed = observeDataTransform(value, schedule());
-  assert.deepEqual(observed.document, document());
+  assert.deepEqual(observed.document, observedDocument());
   assert.deepEqual(observed.runtime, value);
   assert.equal(observed.targetId, id);
   assert.deepEqual(observed.schedule, schedule());
@@ -331,25 +342,19 @@ test('Transform admission refuses only non-inert JSON, a bad name, both/neither 
   }
 });
 
-test('Transform refuses non-custom and packaged targets; status, schedule and frequency are not gates', () => {
+test('Transform admits every owner; owner, namespace, status, schedule and frequency are not gates', () => {
   for (const creationType of ['SYSTEM', 'GRAPH', 'IR', 'Custom', undefined]) {
     const value = runtime();
     if (creationType === undefined) delete value.creationType;
     else value.creationType = creationType;
-    assert.throws(
-      () => observeDataTransform(value, schedule()),
-      /UNSUPPORTED_TRANSFORM_OWNER_OR_STATE/u,
-    );
+    assert.deepEqual(observeDataTransform(value, schedule()).document, observedDocument());
   }
   const badId = runtime();
   badId.id = 'not-an-id';
-  assert.throws(
-    () => observeDataTransform(badId, schedule()),
-    /UNSUPPORTED_TRANSFORM_OWNER_OR_STATE/u,
-  );
+  assert.throws(() => observeDataTransform(badId, schedule()), /INVALID_TRANSFORM_RESPONSE/u);
   const packaged = runtime();
   packaged.namespace = 'owned';
-  assert.throws(() => observeDataTransform(packaged, schedule()), /UNSUPPORTED_TRANSFORM_VARIANT/u);
+  assert.deepEqual(observeDataTransform(packaged, schedule()).document, observedDocument());
   for (const change of [
     (v) => {
       v.status = 'PROCESSING';
@@ -385,7 +390,7 @@ test('Transform retrieval is exact identity plus independent ID schedule GET onl
         return schedule();
       },
     });
-    assert.deepEqual(result.document, document());
+    assert.deepEqual(result.document, observedDocument());
     assert.deepEqual(calls, [
       ['get', selection],
       ['schedule', id],
@@ -437,6 +442,7 @@ test('Transform transport pins native68 and exposes only admitted definition wri
     'create',
     'delete',
     'update',
+    'setSchedule',
   ]);
   await client.get('SyntheticTransform');
   await client.schedule(id);
@@ -488,7 +494,44 @@ test('Transform transport pins native68 and exposes only admitted definition wri
   await assert.rejects(client.create(input()));
   await assert.rejects(client.validate(input()));
   await assert.rejects(client.update(id, input()));
+  await assert.rejects(client.setSchedule(id, { frequency: 'None' }));
   assert.equal(calls.length, 8);
+});
+
+test('Transform schedule PUT sends the schedule as written to the schedule route of an ID', async () => {
+  const calls = [];
+  const connection = {
+    instanceUrl: 'https://synthetic.my.salesforce.com',
+    request: async (request) => {
+      calls.push(request);
+      return {};
+    },
+  };
+  const client = createDataTransformClient(connection, '68.0', 'default');
+  const body = {
+    frequency: 'Daily',
+    interval: 1,
+    time: { hour: 3, minute: 15, timeZone: 'GMT' },
+    shouldForceSpecifiedMinutes: true,
+  };
+  await client.setSchedule(id, body);
+  assert.deepEqual(
+    calls.map(({ method, url, body: sent }) => [method, url, JSON.parse(sent)]),
+    [
+      [
+        'PUT',
+        `https://synthetic.my.salesforce.com/services/data/v68.0/ssot/data-transforms/${id}/schedule`,
+        body,
+      ],
+    ],
+  );
+  await assert.rejects(
+    client.setSchedule('SyntheticTransform', body),
+    /INVALID_TRANSFORM_TARGET_ID/u,
+  );
+  for (const bad of [undefined, [], 'Daily'])
+    await assert.rejects(client.setSchedule(id, bad), /UNSUPPORTED_TRANSFORM_INPUT/u);
+  assert.equal(calls.length, 1);
 });
 
 const harness = () => {
@@ -542,11 +585,12 @@ const harness = () => {
  * @param {object} flags Flag overrides.
  * @param {object} h Native service harness.
  * @param {Function} [configure] Optional command seam changes.
+ * @param {object} [file] Transform document written as the deployed file.
  * @returns {Promise<object>} Result, calls and retained input path.
  */
-async function deployTransform(flags = {}, h = harness(), configure = () => {}) {
+async function deployTransform(flags = {}, h = harness(), configure = () => {}, file = document()) {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'transform-deploy-command-'));
-  const published = await writeDataTransformDocument(document(), cwd, false);
+  const published = await writeDataTransformDocument(file, cwd, false);
   const inputs = await readDeployInputs({ cwd, sourceDir: [published.path] });
   const command = Object.create(Deploy.prototype);
   command.parse = async () => ({
@@ -1012,7 +1056,7 @@ test('Transform full-input PUT preserves settings and canonical repeat is GET-on
   );
 });
 
-test('Transform preflight blocks unreadable, non-custom, packaged or renamed targets and failed validation', async () => {
+test('Transform preflight blocks unreadable or renamed targets and failed validation', async () => {
   for (const [mutate, code] of [
     [
       (h) => {
@@ -1021,22 +1065,6 @@ test('Transform preflight blocks unreadable, non-custom, packaged or renamed tar
         };
       },
       /access ambiguous/u,
-    ],
-    [
-      (h) => {
-        const value = runtime();
-        value.creationType = 'GRAPH';
-        h.set(value);
-      },
-      /UNSUPPORTED_TRANSFORM_OWNER_OR_STATE/u,
-    ],
-    [
-      (h) => {
-        const value = runtime();
-        value.namespace = 'owned';
-        h.set(value);
-      },
-      /UNSUPPORTED_TRANSFORM_VARIANT/u,
     ],
     [
       (h) => {
@@ -1093,10 +1121,7 @@ test('Transform execution detects validation-time target drift and readback iden
   );
   for (const change of [
     (value) => {
-      value.creationType = 'SYSTEM';
-    },
-    (value) => {
-      value.namespace = 'owned';
+      value.id = 'not-an-id';
     },
     (value) => {
       value.name = 'OtherTransform';
@@ -1386,7 +1411,7 @@ for (const [kind, raw] of [
     );
   });
 
-test('Transform deletion rejects ambiguous absence, unsupported targets and fresh drift before writes', async () => {
+test('Transform deletion rejects ambiguous absence, unresolved targets and fresh drift before writes', async () => {
   for (const mutate of [
     (h) => {
       h.client.get = async () => {
@@ -1398,16 +1423,6 @@ test('Transform deletion rejects ambiguous absence, unsupported targets and fres
     },
     (h) => {
       h.client.list = async () => ({ totalSize: 0, dataTransforms: [] });
-    },
-    (h) => {
-      const raw = runtime();
-      raw.creationType = 'SYSTEM';
-      h.set(raw);
-    },
-    (h) => {
-      const raw = runtime();
-      raw.namespace = 'owned';
-      h.set(raw);
     },
     (h) => {
       const raw = runtime();
@@ -1471,17 +1486,11 @@ test('-m data-transform:Name reads a GET with keys the plugin does not model as 
   const result = await deleteDataTransform(source.desired, h.client, h.options);
   assert.equal(result.outcome, 'deleted');
 });
-test('a lenient transform delete still refuses another definition, a non-custom or namespaced target', async () => {
+test('a lenient transform delete still refuses another definition', async () => {
   const desired = observeDataTransform(lenientRuntime(), schedule(), 'retrieve').document;
   for (const change of [
     (raw) => {
       raw.futureTransformSetting = 'changed in the org';
-    },
-    (raw) => {
-      raw.creationType = 'SYSTEM';
-    },
-    (raw) => {
-      raw.namespace = 'owned';
     },
   ]) {
     const raw = lenientRuntime();
@@ -1792,4 +1801,698 @@ test('Transform update never posts to the validation endpoint (live: it rejects 
     h.client,
   );
   assert.equal(result.operation, 'update');
+});
+
+// System and packaged transforms: the plugin sends the write and Salesforce decides (live API 68,
+// 2026-11-18: a system Dg_ transform answers 400 JSON_PARSER_ERROR to an update, 403 to a schedule
+// PUT and to a DELETE). Packaged (namespaced) transforms are untested live.
+/**
+ * A GET of a system transform made by a data graph, as read live: the definition hidden.
+ * @returns {object} Native GET.
+ */
+const systemRuntime = () => ({
+  actionUrls: {
+    action: 'BatchAction',
+    cancelAction: `/services/data/v68.0/ssot/data-transforms/SyntheticTransform/actions/cancel`,
+    refreshStatusAction: `/services/data/v68.0/ssot/data-transforms/SyntheticTransform/actions/refresh-status`,
+    retryAction: `/services/data/v68.0/ssot/data-transforms/SyntheticTransform/actions/retry`,
+    runAction: `/services/data/v68.0/ssot/data-transforms/SyntheticTransform/actions/run`,
+  },
+  createdBy: { id: '005000000000001AAA', name: 'Automated Process', profilePhotoUrl: '/photo' },
+  createdDate: '2026-11-18T15:23:19.000Z',
+  creationSource: 'Data Graph',
+  creationType: 'SYSTEM',
+  dataSpaceName: 'default',
+  definitions: [{ type: 'STL_HIDDEN', version: '68.0' }],
+  fullRunFrequency: 'DAILY',
+  id,
+  label: 'SyntheticTransform',
+  lastModifiedBy: {
+    id: '005000000000001AAA',
+    name: 'Automated Process',
+    profilePhotoUrl: '/photo',
+  },
+  lastModifiedDate: '2026-11-18T15:25:05.000Z',
+  lastRunDate: '2026-11-18T15:25:04.000Z',
+  lastRunStatus: 'IN_PROGRESS',
+  name: 'SyntheticTransform',
+  status: 'ACTIVE',
+  type: 'BATCH',
+  url: '/services/data/v68.0/ssot/data-transforms/SyntheticTransform',
+});
+const refusal = (status) => new ConnectError('REQUEST_FAILED', status);
+
+for (const [kind, raw] of [
+  ['system', systemRuntime],
+  [
+    'packaged',
+    () => {
+      const value = runtime();
+      value.namespace = 'owned';
+      return value;
+    },
+  ],
+])
+  test(`Transform update of a ${kind} transform sends the PUT and reports Salesforce's 4xx as rejected`, async () => {
+    const h = harness();
+    h.set(raw());
+    const desired = observeDataTransform(raw(), schedule()).document;
+    desired.definition.label = 'Changed';
+    const answer = refusal(400);
+    h.client.update = async (target, body) => {
+      h.calls.push(['update', target, structuredClone(body)]);
+      throw answer;
+    };
+    const error = await executeDataTransformDeploy(
+      desired,
+      { operation: 'update', targetId: id },
+      h.client,
+    ).catch((error_) => error_);
+    assert.equal(error, answer);
+    assert.equal(rejectedTransformWrite(error), true);
+    assert.deepEqual(
+      h.calls.filter(([op]) => op === 'update'),
+      [['update', id, desired.definition]],
+    );
+  });
+
+test('public Transform deploy of a system transform Salesforce refuses is failed, mutation rejected', async () => {
+  const h = harness();
+  h.set(systemRuntime());
+  h.client.update = async (target, body) => {
+    h.calls.push(['update', target, structuredClone(body)]);
+    throw refusal(400);
+  };
+  const file = observeDataTransform(systemRuntime(), schedule()).document;
+  file.definition.label = 'Changed';
+  const { result } = await deployTransform({}, h, () => {}, file);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].outcome, 'failed');
+  assert.equal(result.result.items[0].mutation, 'rejected');
+  assert.equal(h.calls.filter(([op]) => op === 'update').length, 1);
+  assert.match(result.diagnostics.errors.at(-1).message, /rejected the request \(HTTP 400\)/u);
+});
+
+for (const [kind, raw] of [
+  ['system', systemRuntime],
+  [
+    'packaged',
+    () => {
+      const value = runtime();
+      value.namespace = 'owned';
+      return value;
+    },
+  ],
+]) {
+  test(`Transform delete of a ${kind} transform sends the DELETE`, async () => {
+    const value = raw();
+    const h = deleteHarness(value);
+    const desired = observeDataTransform(value, schedule()).document;
+    const result = await deleteDataTransform(desired, h.client, h.options);
+    assert.equal(result.outcome, 'deleted');
+    assert.deepEqual(
+      h.calls.filter(([op]) => op === 'delete'),
+      [['delete', id]],
+    );
+  });
+  test(`Transform delete of a ${kind} transform reports Salesforce's 403 as rejected`, async () => {
+    const value = raw();
+    const h = deleteHarness(value);
+    const answer = refusal(403);
+    h.client.delete = async (targetId) => {
+      h.calls.push(['delete', targetId]);
+      throw answer;
+    };
+    const desired = observeDataTransform(value, schedule()).document;
+    const result = await deleteDataTransform(desired, h.client, h.options);
+    assert.equal(result.outcome, 'failed');
+    assert.equal(result.mutation, 'rejected');
+    assert.equal(result.error, answer);
+    assert.equal(h.calls.filter(([op]) => op === 'delete').length, 1);
+  });
+}
+
+test('Transform delete keeps a 404 or a non-HTTP DELETE error unconfirmed', async () => {
+  for (const answer of [refusal(404), refusal(500), new Error('socket closed')]) {
+    const h = deleteHarness();
+    h.client.delete = async () => {
+      throw answer;
+    };
+    const result = await deleteDataTransform(document(), h.client, h.options);
+    assert.equal(result.outcome, 'deletion-unconfirmed');
+    assert.equal(result.mutation, 'unknown');
+  }
+});
+
+// Schedule: retrieve writes it projected, deploy sends it with its own PUT when it differs.
+const dailyRead = () => ({
+  frequency: 'Daily',
+  interval: 1,
+  nextScheduledDate: '2026-11-19T03:15:00.000Z',
+  time: { hour: 3, minute: 15, timezone: { gmtOffset: 0, name: 'GMT', zoneId: 'GMT' } },
+  type: 'Daily',
+});
+const daily = () => ({
+  frequency: 'Daily',
+  interval: 1,
+  time: { hour: 3, minute: 15, timeZone: 'GMT' },
+});
+
+for (const [kind, read, expected] of [
+  ['never scheduled', schedule, undefined],
+  ['turned off', () => ({ schedule: {}, type: 'Transform' }), undefined],
+  ['daily', dailyRead, daily()],
+  [
+    'hourly',
+    () => ({
+      daysOfWeek: ['Monday', 'Friday'],
+      frequency: 'Hourly',
+      interval: 6,
+      nextScheduledDate: '2026-11-19T06:00:00.000Z',
+      time: {
+        hour: 0,
+        minute: 30,
+        timezone: { gmtOffset: 1, name: 'CET', zoneId: 'Europe/Berlin' },
+      },
+      type: 'Hourly',
+    }),
+    {
+      daysOfWeek: ['Monday', 'Friday'],
+      frequency: 'Hourly',
+      interval: 6,
+      time: { hour: 0, minute: 30, timeZone: 'Europe/Berlin' },
+    },
+  ],
+  [
+    'system (per definition)',
+    () => ({
+      schedule: {
+        Dg_Synthetic_Day0_1: {
+          daysOfWeek: ['Wednesday'],
+          frequency: 'Weekly',
+          nextScheduledDate: '2026-11-25T15:04:00.000Z',
+          time: { hour: 15, minute: 4, timezone: { gmtOffset: 0, name: 'GMT', zoneId: 'GMT' } },
+          type: 'Weekly',
+        },
+      },
+      type: 'Transform',
+    }),
+    {
+      schedule: {
+        Dg_Synthetic_Day0_1: {
+          daysOfWeek: ['Wednesday'],
+          frequency: 'Weekly',
+          time: { hour: 15, minute: 4, timeZone: 'GMT' },
+        },
+      },
+    },
+  ],
+])
+  test(`Transform retrieve writes the ${kind} schedule projected onto the schedule PUT keys`, async () => {
+    const observed = await retrieveDataTransform(
+      id,
+      { get: async () => runtime(), schedule: async () => read() },
+      'retrieve',
+    );
+    assert.deepEqual(observed.document.schedule, expected);
+    assert.equal(Object.hasOwn(observed.document, 'schedule'), expected !== undefined);
+    assert.deepEqual(observed.schedule, read());
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'transform-schedule-retrieve-'));
+    const written = await writeDataTransformDocument(observed.document, cwd, false);
+    const saved = JSON.parse(readFileSync(written.path, 'utf8'));
+    assert.deepEqual(saved.schedule, expected);
+    // The written file deploys unchanged: no definition or schedule write.
+    const h = harness();
+    h.client.schedule = async () => read();
+    const plan = await preflightDataTransformDeploy(
+      saved,
+      { operation: 'update', targetId: id },
+      h.client,
+    );
+    assert.equal(plan.operation, 'unchanged');
+  });
+
+test('Transform retrieve leaves the schedule out when its read fails, with a warning', async () => {
+  const warnings = [];
+  const observed = await retrieveDataTransform(
+    id,
+    {
+      get: async () => runtime(),
+      schedule: async () => {
+        throw refusal(500);
+      },
+    },
+    'retrieve',
+    warnings,
+  );
+  assert.equal(Object.hasOwn(observed.document, 'schedule'), false);
+  assert.match(warnings[0], /leaves the schedule alone/u);
+});
+
+/**
+ * A harness whose schedule is read and written like the org's.
+ * @param {object} [read] Schedule GET of the org.
+ * @returns {object} Harness with schedule calls recorded.
+ */
+const scheduleHarness = (read = schedule()) => {
+  const h = harness();
+  h.set(runtime());
+  let current = read;
+  h.client.schedule = async () => {
+    h.calls.push(['schedule']);
+    return structuredClone(current);
+  };
+  h.client.setSchedule = async (target, body) => {
+    h.calls.push(['setSchedule', target, structuredClone(body)]);
+    current =
+      body.frequency === 'None'
+        ? schedule()
+        : {
+            ...structuredClone(body),
+            nextScheduledDate: '2026-11-19T03:15:00.000Z',
+            time: {
+              hour: body.time.hour,
+              minute: body.time.minute,
+              timezone: { gmtOffset: 0, name: 'GMT', zoneId: body.time.timeZone },
+            },
+            type: body.frequency,
+          };
+    return {};
+  };
+  return h;
+};
+
+test('Transform deploy of a file without schedule never sends a schedule PUT', async () => {
+  const h = scheduleHarness(dailyRead());
+  const changed = document();
+  changed.definition.description = 'Changed';
+  const result = await executeDataTransformDeploy(
+    changed,
+    { operation: 'update', targetId: id },
+    h.client,
+  );
+  assert.equal(result.operation, 'update');
+  assert.equal(result.scheduleWritten, undefined);
+  assert.equal(h.calls.filter(([op]) => op === 'setSchedule').length, 0);
+  const unchanged = scheduleHarness(dailyRead());
+  const repeat = await executeDataTransformDeploy(
+    document(),
+    { operation: 'update', targetId: id },
+    unchanged.client,
+  );
+  assert.equal(repeat.operation, 'unchanged');
+  assert.equal(unchanged.calls.filter(([op]) => op === 'setSchedule').length, 0);
+});
+
+test('Transform deploy sends a changed schedule with its own PUT after the definition, then reads it back', async () => {
+  const h = scheduleHarness();
+  const desired = { ...document(), schedule: { ...daily(), shouldForceSpecifiedMinutes: true } };
+  desired.definition.description = 'Changed';
+  const result = await executeDataTransformDeploy(
+    desired,
+    { operation: 'update', targetId: id },
+    h.client,
+  );
+  assert.equal(result.operation, 'update');
+  assert.equal(result.scheduleWritten, true);
+  const writes = h.calls.filter(([op]) => ['update', 'setSchedule'].includes(op));
+  assert.deepEqual(
+    writes.map(([op]) => op),
+    ['update', 'setSchedule'],
+  );
+  assert.deepEqual(writes[1], ['setSchedule', id, desired.schedule]);
+  // Read back after the schedule PUT.
+  assert.deepEqual(
+    h.calls.slice(h.calls.indexOf(writes[1]) + 1).map(([op]) => op),
+    ['get', 'schedule'],
+  );
+  assert.equal(result.observation.document.schedule.frequency, 'Daily');
+  // Only the schedule differs: one schedule PUT, no definition PUT.
+  const only = scheduleHarness();
+  const scheduled = await executeDataTransformDeploy(
+    { ...document(), schedule: daily() },
+    { operation: 'update', targetId: id },
+    only.client,
+  );
+  assert.equal(scheduled.operation, 'update');
+  assert.deepEqual(
+    only.calls.filter(([op]) => ['update', 'setSchedule'].includes(op)).map(([op]) => op),
+    ['setSchedule'],
+  );
+});
+
+test('Transform deploy of { frequency: None } turns the schedule off; an equal schedule is unchanged', async () => {
+  const h = scheduleHarness(dailyRead());
+  const off = await executeDataTransformDeploy(
+    { ...document(), schedule: { frequency: 'None' } },
+    { operation: 'update', targetId: id },
+    h.client,
+  );
+  assert.equal(off.operation, 'update');
+  assert.deepEqual(
+    h.calls.filter(([op]) => op === 'setSchedule'),
+    [['setSchedule', id, { frequency: 'None' }]],
+  );
+  for (const [read, file] of [
+    [dailyRead(), daily()],
+    [dailyRead(), { ...daily(), frequency: 'DAILY' }],
+    [schedule(), { frequency: 'None' }],
+    [{ schedule: {}, type: 'Transform' }, { frequency: 'None' }],
+  ]) {
+    const same = scheduleHarness(read);
+    const result = await executeDataTransformDeploy(
+      { ...document(), schedule: file },
+      { operation: 'update', targetId: id },
+      same.client,
+    );
+    assert.equal(result.operation, 'unchanged');
+    assert.equal(same.calls.filter(([op]) => op === 'setSchedule').length, 0);
+  }
+});
+
+test('Transform create sends a schedule other than None after the POST; None needs no PUT', async () => {
+  const h = scheduleHarness();
+  const created = await executeDataTransformDeploy(
+    { ...document(), schedule: daily() },
+    { operation: 'create' },
+    h.client,
+  );
+  assert.equal(created.operation, 'create');
+  assert.deepEqual(
+    h.calls.filter(([op]) => ['create', 'setSchedule'].includes(op)).map(([op]) => op),
+    ['create', 'setSchedule'],
+  );
+  const none = scheduleHarness();
+  await executeDataTransformDeploy(
+    { ...document(), schedule: { frequency: 'None' } },
+    { operation: 'create' },
+    none.client,
+  );
+  assert.equal(none.calls.filter(([op]) => op === 'setSchedule').length, 0);
+});
+
+test('Transform schedule PUT refused as the first write is rejected; a readback with another frequency is a mismatch', async () => {
+  const h = scheduleHarness();
+  const answer = refusal(403);
+  h.client.setSchedule = async () => {
+    throw answer;
+  };
+  const error = await executeDataTransformDeploy(
+    { ...document(), schedule: daily() },
+    { operation: 'update', targetId: id },
+    h.client,
+  ).catch((error_) => error_);
+  assert.equal(error, answer);
+  assert.equal(rejectedTransformWrite(error), true);
+  // After a definition PUT the schedule refusal is its own outcome: definition written.
+  const second = scheduleHarness();
+  const late = refusal(400);
+  second.client.setSchedule = async () => {
+    throw late;
+  };
+  const changed = { ...document(), schedule: daily() };
+  changed.definition.description = 'Changed';
+  const lateError = await executeDataTransformDeploy(
+    changed,
+    { operation: 'update', targetId: id },
+    second.client,
+  ).catch((error_) => error_);
+  assert.ok(lateError instanceof DataTransformScheduleError);
+  assert.equal(lateError.code, 'TRANSFORM_SCHEDULE_REJECTED');
+  assert.equal(lateError.definition, 'update');
+  assert.equal(lateError.cause, late);
+  assert.equal(rejectedTransformWrite(lateError), false);
+  const ignored = scheduleHarness();
+  ignored.client.setSchedule = async () => ({});
+  await assert.rejects(
+    executeDataTransformDeploy(
+      { ...document(), schedule: daily() },
+      { operation: 'update', targetId: id },
+      ignored.client,
+    ),
+    /TRANSFORM_READBACK_MISMATCH/u,
+  );
+});
+
+test('Transform deploy re-read before the writes compares the schedule as projected', async () => {
+  const h = scheduleHarness(dailyRead());
+  let reads = 0;
+  // A moved next run time between the reads is no drift.
+  h.client.schedule = async () => {
+    h.calls.push(['schedule']);
+    reads++;
+    return { ...dailyRead(), nextScheduledDate: `2026-11-${19 + reads}T03:15:00.000Z` };
+  };
+  const changed = document();
+  changed.definition.description = 'Changed';
+  const result = await executeDataTransformDeploy(
+    changed,
+    { operation: 'update', targetId: id },
+    h.client,
+  );
+  assert.equal(result.operation, 'update');
+  // A schedule changed between the reads is drift: nothing is written.
+  const drift = scheduleHarness(dailyRead());
+  await assert.rejects(
+    executeDataTransformDeploy(
+      { ...document(), schedule: { frequency: 'None' } },
+      { operation: 'update', targetId: id },
+      drift.client,
+      {
+        verifyInput: async () => {
+          drift.client.schedule = async () => ({ ...dailyRead(), interval: 2 });
+        },
+      },
+    ),
+    /TRANSFORM_TARGET_DRIFT/u,
+  );
+  assert.equal(
+    drift.calls.some(([op]) => ['update', 'setSchedule'].includes(op)),
+    false,
+  );
+});
+
+test('public Transform preview shows a planned schedule change without writing', async () => {
+  const h = scheduleHarness();
+  const { result } = await deployTransform({ preview: true }, h, () => {}, {
+    ...document(),
+    schedule: daily(),
+  });
+  assert.equal(result.status, 'success');
+  const item = result.result.items[0];
+  assert.equal(item.outcome, 'update');
+  assert.deepEqual(
+    item.diagnostics.map(({ code }) => code),
+    ['TRANSFORM_PREVIEW_LIMITATIONS', 'TRANSFORM_SCHEDULE_CHANGE'],
+  );
+  assert.match(item.diagnostics[1].message, /runs on it there/u);
+  assert.ok(h.calls.every(([op]) => ['auth', 'list', 'get', 'schedule'].includes(op)));
+  const executed = await deployTransform({}, scheduleHarness(), () => {}, {
+    ...document(),
+    schedule: { frequency: 'None' },
+  });
+  assert.equal(executed.result.result.items[0].outcome, 'unchanged');
+  const turnedOff = scheduleHarness(dailyRead());
+  const off = await deployTransform({}, turnedOff, () => {}, {
+    ...document(),
+    schedule: { frequency: 'None' },
+  });
+  assert.equal(off.result.result.items[0].outcome, 'updated');
+  assert.match(
+    off.result.result.items[0].diagnostics[0].message,
+    /turns the transform schedule off/u,
+  );
+});
+
+test('a schedule that is not an object is refused, naming the key', () => {
+  // eslint-disable-next-line unicorn/no-null -- A JSON file can hold null.
+  for (const value of [[], 'Daily', null])
+    assert.throws(
+      () => validateDataTransformDocument({ ...document(), schedule: value }),
+      /UNSUPPORTED_TRANSFORM_INPUT/u,
+    );
+});
+
+/**
+ * The schedule GET of a system transform: the graph's weekly slot per definition.
+ * @returns {object} Native schedule GET.
+ */
+const systemSchedule = () => ({
+  schedule: {
+    Dg_Synthetic_Day0_1: {
+      daysOfWeek: ['Wednesday'],
+      frequency: 'Weekly',
+      nextScheduledDate: '2026-11-25T15:23:00.000Z',
+      time: { hour: 15, minute: 23, timezone: { gmtOffset: 0, name: 'GMT', zoneId: 'GMT' } },
+      type: 'Weekly',
+    },
+  },
+  type: 'Transform',
+});
+
+test('a retrieved system transform file deploys: the PUT is sent and Salesforce decides', async () => {
+  const observed = await retrieveDataTransform(
+    id,
+    { get: async () => systemRuntime(), schedule: async () => systemSchedule() },
+    'retrieve',
+  );
+  assert.equal(Object.hasOwn(observed.document.definition, 'creationSource'), false);
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'transform-system-retrieve-'));
+  const written = await writeDataTransformDocument(observed.document, cwd, false);
+  const [input] = await readDeployInputs({ cwd, sourceDir: [written.path] });
+  // The strict deploy read admits the file; the deploy sends a changed label.
+  const file = structuredClone(input.document);
+  file.definition.label = 'Changed';
+  const h = harness();
+  h.set(systemRuntime());
+  h.client.schedule = async () => systemSchedule();
+  h.client.update = async (target, body) => {
+    h.calls.push(['update', target, structuredClone(body)]);
+    throw refusal(400);
+  };
+  const error = await executeDataTransformDeploy(
+    file,
+    { operation: 'update', targetId: id },
+    h.client,
+  ).catch((error_) => error_);
+  assert.equal(rejectedTransformWrite(error), true);
+  assert.deepEqual(
+    h.calls.filter(([op]) => op === 'update').map((call) => call[2]),
+    [file.definition],
+  );
+});
+
+test('Transform deploy sends shouldForceSpecifiedMinutes, the GET never returns it: the repeat is unchanged', async () => {
+  const h = scheduleHarness();
+  const file = { ...document(), schedule: { ...daily(), shouldForceSpecifiedMinutes: true } };
+  const first = await executeDataTransformDeploy(
+    file,
+    { operation: 'update', targetId: id },
+    h.client,
+  );
+  assert.equal(first.operation, 'update');
+  // The harness answers the GET without the write-only key, like Salesforce.
+  const repeat = await executeDataTransformDeploy(
+    file,
+    { operation: 'update', targetId: id },
+    h.client,
+  );
+  assert.equal(repeat.operation, 'unchanged');
+  assert.equal(h.calls.filter(([op]) => op === 'setSchedule').length, 1);
+  // Delete of that file finds no drift.
+  const d = deleteHarness();
+  d.client.schedule = h.client.schedule;
+  const deleted = await deleteDataTransform(file, d.client, d.options);
+  assert.equal(deleted.outcome, 'deleted');
+});
+
+/**
+ * A harness whose transform reads PROCESSING for a number of reads after a definition write.
+ * @param {number} processingReads Reads that answer PROCESSING.
+ * @returns {object} Harness with a fake clock.
+ */
+const processingHarness = (processingReads) => {
+  const h = scheduleHarness();
+  const get = h.client.get;
+  let written = false;
+  let left = processingReads;
+  for (const op of ['create', 'update']) {
+    const send = h.client[op];
+    h.client[op] = async (...arguments_) => {
+      written = true;
+      return send(...arguments_);
+    };
+  }
+  h.client.get = async (selection) => {
+    const value = await get(selection);
+    if (written && left > 0) {
+      left--;
+      value.status = 'PROCESSING';
+    }
+    return value;
+  };
+  let clock = 0;
+  h.sleeps = [];
+  h.timing = {
+    now: () => clock,
+    delay: async (milliseconds) => {
+      h.sleeps.push(milliseconds);
+      clock += milliseconds;
+    },
+  };
+  return h;
+};
+
+test('Transform deploy waits until a written transform is no longer processing before the schedule PUT', async () => {
+  for (const selection of [{ operation: 'create' }, { operation: 'update', targetId: id }]) {
+    const h = processingHarness(3);
+    const file = { ...document(), schedule: daily() };
+    file.definition.description = 'Changed';
+    const result = await executeDataTransformDeploy(file, selection, h.client, h.timing);
+    assert.equal(result.scheduleWritten, true);
+    assert.deepEqual(h.sleeps, [5000, 5000, 5000]);
+    const ops = h.calls.map(([op]) => op);
+    const put = ops.indexOf('setSchedule');
+    assert.deepEqual(ops.slice(put - 4, put), ['get', 'get', 'get', 'get']);
+  }
+});
+
+test('Transform deploy does not send the schedule when the written transform never settles', async () => {
+  const h = processingHarness(Number.POSITIVE_INFINITY);
+  const file = { ...document(), schedule: daily() };
+  file.definition.description = 'Changed';
+  const error = await executeDataTransformDeploy(
+    file,
+    { operation: 'update', targetId: id },
+    h.client,
+    h.timing,
+  ).catch((error_) => error_);
+  assert.ok(error instanceof DataTransformScheduleError);
+  assert.equal(error.code, 'TRANSFORM_SCHEDULE_NOT_SENT');
+  assert.equal(error.definition, 'update');
+  assert.equal(h.calls.filter(([op]) => op === 'setSchedule').length, 0);
+  assert.equal(
+    h.sleeps.reduce((sum, milliseconds) => sum + milliseconds, 0),
+    300_000,
+  );
+});
+
+test('public Transform deploy: a schedule rejected after the definition write is its own outcome', async () => {
+  const h = scheduleHarness();
+  h.client.setSchedule = async () => {
+    throw refusal(400);
+  };
+  const file = { ...document(), schedule: daily() };
+  file.definition.description = 'Changed';
+  const { result } = await deployTransform({}, h, () => {}, file);
+  assert.equal(result.status, 'failed');
+  const item = result.result.items[0];
+  assert.equal(item.outcome, 'failed');
+  assert.equal(item.mutation, 'confirmed-updated');
+  assert.equal(item.diagnostics[0].code, 'TRANSFORM_SCHEDULE_REJECTED');
+  assert.match(
+    item.diagnostics[0].message,
+    /definition was updated; Salesforce rejected the schedule/u,
+  );
+  assert.equal(result.diagnostics.errors.at(-1).code, 'TRANSFORM_SCHEDULE_REJECTED');
+  assert.match(result.diagnostics.errors.at(-1).message, /HTTP 400/u);
+});
+
+test('an unscheduled transform retrieved and deployed into an org with a schedule leaves that schedule alone', async () => {
+  const observed = await retrieveDataTransform(
+    id,
+    { get: async () => runtime(), schedule: async () => schedule() },
+    'retrieve',
+  );
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'transform-unscheduled-roundtrip-'));
+  const written = await writeDataTransformDocument(observed.document, cwd, false);
+  const saved = JSON.parse(readFileSync(written.path, 'utf8'));
+  assert.equal(Object.hasOwn(saved, 'schedule'), false);
+  const target = scheduleHarness(dailyRead());
+  const changed = structuredClone(saved);
+  changed.definition.description = 'Changed';
+  for (const file of [saved, changed]) {
+    await executeDataTransformDeploy(file, { operation: 'update', targetId: id }, target.client);
+    assert.equal(target.calls.filter(([op]) => op === 'setSchedule').length, 0);
+  }
 });

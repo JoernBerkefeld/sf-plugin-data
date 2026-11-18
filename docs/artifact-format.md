@@ -83,6 +83,48 @@ per model. A missing JSON or SQL file, a `sql` kept in the JSON, any other
 name, links and hard links block (`INVALID_SOURCE`). A length-prefixed SHA256 digest binds
 the bytes of all files; revalidation checks bytes and the frozen document before dispatch.
 
+## Public data transform document
+
+Retrieve writes each data transform as `data360/dataTransforms/<Name>.dataTransform.json`
+under the project root, for custom, system and packaged transforms alike:
+
+```json
+{
+  "apiVersion": "68.0",
+  "definition": { "name": "Name", "label": "…", "type": "BATCH", "definition": { "…": "…" } },
+  "kind": "data-transform",
+  "schedule": {
+    "frequency": "Daily",
+    "interval": 1,
+    "time": { "hour": 3, "minute": 15, "timeZone": "GMT" }
+  },
+  "schemaVersion": 1
+}
+```
+
+`definition` is the native create/update input as the API 68 GET returns it, without
+server-owned keys, the schedule inside a definition, or the server-owned keys of each
+output object. `schedule` is the schedule GET projected onto the keys its PUT takes:
+`frequency`, `interval`, `daysOfWeek`, and `time` with `hour`, `minute` and `timeZone`
+(from `time.timezone.zoneId`); `nextScheduledDate` and `type` are left out. A file may add
+the write-only `shouldForceSpecifiedMinutes`: the PUT takes it, the GET never returns it,
+and it is not compared. A transform that is never scheduled or turned
+off gets no `schedule` key, so a deploy of the file leaves the target org's schedule alone. A system transform's per-definition map
+(`{ "schedule": { "<Day0Name>": { … } }, "type": "Transform" }`) keeps the map with each
+entry projected the same way and without the outer `type`. When the schedule read fails,
+the file has no `schedule`, with a warning.
+
+`schedule` is optional. Without it, deploy leaves the org schedule alone. With it, deploy
+compares it with the org's projected schedule (frequency ignoring letter case,
+`shouldForceSpecifiedMinutes` not compared) and, when it differs, sends it as written with
+`PUT …/data-transforms/{name}/schedule`, then reads it back (it must have the file's
+frequency). After a definition write it first waits, at most 5 minutes, until the transform
+is no longer `PROCESSING` (`TRANSFORM_SCHEDULE_NOT_SENT` otherwise);
+`TRANSFORM_SCHEDULE_REJECTED` reports Salesforce's refusal of that schedule PUT. `{ "frequency": "None" }`
+turns the schedule off. A schedule that is not an object is refused
+(`UNSUPPORTED_TRANSFORM_INPUT`). A schedule copied to another org makes the transform run
+there (`TRANSFORM_SCHEDULE_CHANGE`).
+
 ## Public native DMO document
 
 Exact `dmo:ApiName__dlm` retrieval writes

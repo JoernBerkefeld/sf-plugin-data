@@ -12,6 +12,8 @@
 
 The DELETE request was sent. Afterwards the plugin either got an error for the request itself, could not read the full transform list again, or saw that the transform is still listed after the polling bound. The item mutation is `unknown` when the request errored and `acknowledged` when Salesforce accepted it.
 
+A DELETE that Salesforce refuses with an HTTP 4xx status other than 404 (for example 403 `DATACLOUD_API_DISABLED_EXCEPTION` for a system transform made by a data graph, live API 68) is not this code: the item is `failed` with `mutation: rejected`, `REQUEST_FAILED` carries Salesforce's message, and nothing was deleted.
+
 ## Why the plugin stops
 
 An error does not prove the delete failed, and an accepted request does not prove it finished. The plugin does not retry, because sending a second DELETE without knowing the first result is unsafe.

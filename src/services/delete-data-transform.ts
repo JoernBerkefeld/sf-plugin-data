@@ -11,6 +11,8 @@ import {
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
 import { retrieveDataTransform } from './retrieve-data-transform.js';
 import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { ConnectError } from '../transport/connect-client.js';
+import { rejectedWrite } from './execute-calculated-insight-deploy.js';
 import { replaceExplanation } from './operation-diagnostic.js';
 
 export type DataTransformDeleteOptions = {
@@ -29,8 +31,10 @@ const SETTLE_INTERVAL_MS = 5000;
 export type DataTransformDeleteResult = {
   operation: 'delete';
   targetId: string;
-  outcome: 'preview' | 'blocked' | 'deleted' | 'deletion-unconfirmed';
-  mutation: 'not-attempted' | 'acknowledged' | 'confirmed-deleted' | 'unknown';
+  outcome: 'preview' | 'blocked' | 'deleted' | 'deletion-unconfirmed' | 'failed';
+  mutation: 'not-attempted' | 'acknowledged' | 'confirmed-deleted' | 'unknown' | 'rejected';
+  /** Salesforce's refusal of the DELETE (HTTP 4xx), when the mutation is `rejected`. */
+  error?: unknown;
 };
 
 /**
@@ -125,8 +129,8 @@ function refuseProcessing(status: unknown): void {
 
 /**
  * The raw GET of a transform named by a verbatim file, checked only for what a delete needs: the
- * same record ID and name, and a custom transform without a namespace (system and packaged
- * transforms are never deleted). Its definition is not projected.
+ * same record ID and name. Any owner is accepted (Salesforce decides; it refuses a system
+ * transform). Its definition is not projected.
  * @param {string} targetId Resolved record ID.
  * @param {string} name Name of the verbatim file.
  * @param {Pick<DataTransformClient, 'get'>} client Transform reader.
@@ -143,9 +147,6 @@ async function readVerbatimTransform(
   const raw = runtime as Record<string, unknown>;
   if (raw.id !== targetId || raw.name !== name)
     throw new DataTransformError('TRANSFORM_DELETE_IDENTITY_MISMATCH');
-  if (raw.creationType !== 'CUSTOM')
-    throw new DataTransformError('UNSUPPORTED_TRANSFORM_OWNER_OR_STATE');
-  if (raw.namespace) throw new DataTransformError('UNSUPPORTED_TRANSFORM_VARIANT');
   refuseProcessing(raw.status);
   return JSON.stringify(
     Object.fromEntries(Object.entries(raw).filter(([key]) => !key.startsWith('lastRun'))),
@@ -153,9 +154,10 @@ async function readVerbatimTransform(
 }
 
 /**
- * Delete one positively matched custom target; preview never writes and execution sends once.
+ * Delete one positively matched target of any owner; preview never writes and execution sends
+ * once, and Salesforce decides (a 4xx answer other than 404 is reported as rejected).
  * A verbatim file (a transform the plugin cannot model) is deleted by its name: the GET must
- * carry the same ID and name, be custom and unpackaged, and not change between the reads.
+ * carry the same ID and name and not change between the reads.
  * A resolved DELETE is only acknowledgement; settlement is the transform's absence from one
  * bounded complete inventory, polled within a bound. Any read failure or partial list leaves
  * the deletion unconfirmed. Never deletes DLOs, retries mutations or treats GET404 as absence.
@@ -243,8 +245,11 @@ export async function deleteDataTransform(
   if (confirmDelete !== true) return result('blocked', 'not-attempted');
   try {
     await client.delete(targetId);
-  } catch {
-    // Even an HTTP error can have an uncertain outcome. Never replay or claim acknowledgement.
+  } catch (error) {
+    // Salesforce's 4xx refusal changed nothing (live API 68: 403 on a system transform). A 404
+    // and any other error have an uncertain outcome. Never replay or claim acknowledgement.
+    if (rejectedWrite(error) && !(error instanceof ConnectError && error.statusCode === 404))
+      return { ...result('failed', 'rejected'), error };
     return result('deletion-unconfirmed', 'unknown');
   }
   try {
