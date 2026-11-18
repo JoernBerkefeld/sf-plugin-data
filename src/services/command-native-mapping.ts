@@ -55,7 +55,7 @@ export async function preflightMapping(
   const plan = await preflightNativeMapping(value, client, dependencies, requestScope);
   return {
     family: 'mapping' as const,
-    outcome: plan.operation,
+    outcome: plan.operation === 'noop' ? ('unchanged' as const) : plan.operation,
     target: plan.operation === 'create' ? 'absent' : 'existing',
     absenceProof: plan.operation === 'create' ? 'confirmed-pair-lookup' : 'none',
     diagnostics: [

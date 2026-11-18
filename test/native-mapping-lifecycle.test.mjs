@@ -179,7 +179,7 @@ test('mapping unique pair resolution produces no-op with zero writes despite sou
     ),
   );
   const preview = await preflightMapping(input, client, dependencies());
-  assert.equal(preview.outcome, 'noop');
+  assert.equal(preview.outcome, 'unchanged');
   assert.deepEqual(await executeMapping(input, client, dependencies()), {
     outcome: 'unchanged',
     mutation: 'not-attempted',
@@ -223,7 +223,7 @@ test('mapping explicit context threads through create, no-op, additive readback 
     await assert.rejects(preflightNativeMapping(input, f.client, deps), /DATASPACE/);
     assert.deepEqual(f.calls, []);
     const preview = await preflightMapping(input, f.client, deps, scope);
-    assert.equal(preview.outcome, operation);
+    assert.equal(preview.outcome, operation === 'noop' ? 'unchanged' : operation);
     const updates = [];
     const result = await deployNativeMapping(
       input,
@@ -1347,7 +1347,7 @@ test('hand-written mapping without generated pairs is a no-op against the existi
   assert.notEqual(plan.desired, input);
   assert.deepEqual(input, before);
   const preview = await preflightMapping(input, f.client, f.deps);
-  assert.equal(preview.outcome, 'noop');
+  assert.equal(preview.outcome, 'unchanged');
   const result = await deployNativeMapping(input, f.client, f.deps);
   assert.equal(result.operation, 'noop');
   assert.equal(result.document.spec.fieldMappings.length, 6);

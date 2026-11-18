@@ -601,7 +601,7 @@ for (const existing of ['update', 'noop'])
     const { command, calls } = await fixture({ preview: true, parentsExisting: true, existing });
     const result = await run(command);
     assert.equal(result.status, 'success', JSON.stringify(result));
-    assert.equal(result.result.items.at(-1).outcome, existing);
+    assert.equal(result.result.items.at(-1).outcome, existing === 'noop' ? 'unchanged' : existing);
     assert.ok(calls.includes('mapping:list'));
     assert.ok(
       !calls.some(

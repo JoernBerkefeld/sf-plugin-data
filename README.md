@@ -1315,7 +1315,7 @@ released-package acceptance have not been verified.
   two primary keys (HTTP 400 `MISSING_ARGUMENT`, reported as `MAPPING_HTTP_ERROR`).
   Observed through the plugin: a mapping with a Number pair, a renamed pair and one
   Number source onto a Number and a Text target was created; its preview reported
-  `noop` with `MAPPING_FIELD_TYPES_DIFFER`, and a repeat deploy and a deploy of the
+  `unchanged` with `MAPPING_FIELD_TYPES_DIFFER`, and a repeat deploy and a deploy of the
   retrieved file were both `unchanged`.
 - A mapping is deleted as a whole, whatever pairs it holds, including pairs onto
   standard fields and mappings onto standard DMOs; see
@@ -2211,7 +2211,7 @@ populated-object, cross-org, arbitrary-schema or all-version qualification.
 Observed through the plugin on empty synthetic fixtures in one org: a mapping created
 with a Number pair, a renamed pair (`Note__c` to `Other__c`) and one Number source
 onto a Number and a Text target, ACTIVE (66 seconds for two DLOs, the DMO and the
-mapping); its preview `noop` with `MAPPING_FIELD_TYPES_DIFFER`, a repeat deploy and a
+mapping); its preview `unchanged` with `MAPPING_FIELD_TYPES_DIFFER`, a repeat deploy and a
 deploy of the retrieved file `unchanged` (5 seconds each); a pair removed at API 64
 (16 seconds) and API 61 (17 seconds); a file dropping the key pair refused with
 `MAPPING_PROTECTED_PAIR_REQUIRED`, nothing written.

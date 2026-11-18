@@ -258,7 +258,7 @@ for (const systemType of ['Standard', 'System'])
         complete,
       );
       const again = await preflightMapping(retrieved, org.mapping, org.deps);
-      assert.equal(again.outcome, 'noop');
+      assert.equal(again.outcome, 'unchanged');
       assert.deepEqual(again.diagnostics, []);
       assert.deepEqual(await executeMapping(retrieved, org.mapping, org.deps), {
         outcome: 'unchanged',
@@ -373,7 +373,7 @@ for (const systemType of ['Standard', 'System'])
     );
     // The same file is unchanged afterwards.
     const again = await preflightMapping(input, org.mapping, org.deps);
-    assert.equal(again.outcome, 'noop');
+    assert.equal(again.outcome, 'unchanged');
   });
 
 test('standard target keeps the protected-pair refusal and sends authored create pairs as written', async () => {
@@ -442,7 +442,7 @@ for (const systemType of ['Standard', 'System'])
     ]);
     assert.deepEqual(input, before);
     const preview = await preflightMapping(input, org.mapping, org.deps);
-    assert.equal(preview.outcome, 'noop');
+    assert.equal(preview.outcome, 'unchanged');
     assert.deepEqual(preview.diagnostics, []);
     assert.deepEqual(await executeMapping(input, org.mapping, org.deps), {
       outcome: 'unchanged',

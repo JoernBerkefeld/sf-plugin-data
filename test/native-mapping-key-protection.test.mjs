@@ -217,7 +217,7 @@ test('a retrieved mapping with Number, renamed and shared-source pairs round-tri
   const handWritten = await deployNativeMapping(file(authored), f.client, f.deps);
   assert.equal(handWritten.operation, 'noop');
   const preview = await preflightMapping(retrieved, f.client, f.deps);
-  assert.equal(preview.outcome, 'noop');
+  assert.equal(preview.outcome, 'unchanged');
   assert.deepEqual(preview.diagnostics, [
     {
       code: 'MAPPING_FIELD_TYPES_DIFFER',
