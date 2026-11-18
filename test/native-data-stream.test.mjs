@@ -1441,6 +1441,19 @@ test('update preview selects only missing exact Text pairs and noop omits nothin
   assert.equal(scenario.counts().writes, 0);
 });
 
+test('a file whose stream constants differ from the org only in letter case is unchanged', async () => {
+  const scenario = await updateLifecycle();
+  const cased = structuredClone(scenario.original);
+  cased.spec.additiveFieldMappings = [];
+  // Live API 68: the org reads UPSERT, INGEST_API and IngestApi.
+  cased.spec.refreshMode = 'Upsert';
+  cased.spec.datastreamType = 'Ingest_Api';
+  cased.spec.connectorType = 'INGESTAPI';
+  const plan = await preflightNativeDataStreamUpdate(cased, scenario.clients);
+  assert.equal(plan.operation, 'noop');
+  assert.equal(scenario.counts().writes, 0);
+});
+
 test('additive PATCH preserves prior mapping/schema and resolves actual target; exact repeat is zero-write noop', async () => {
   const scenario = await updateLifecycle();
   const result = await updateNativeDataStream(scenario.desired, scenario.clients, scenario.options);

@@ -20,11 +20,14 @@ export type DataStreamDocument = {
   kind: 'data-stream';
   identity: { apiName: string; dataSpace: string };
   spec: {
-    connectorType: 'IngestApi';
+    /** `IngestApi` in any letter case. */
+    connectorType: string;
     connectionName: string;
     event: string;
-    datastreamType: 'INGEST_API';
-    refreshMode: 'UPSERT';
+    /** `INGEST_API` in any letter case. */
+    datastreamType: string;
+    /** `UPSERT` in any letter case. */
+    refreshMode: string;
     label: string;
     newDlo: {
       name: string;
@@ -213,12 +216,17 @@ export function validateDataStreamDocument(
   text(pk.dataType, 'spec.newDlo.primaryKey.dataType');
   if (dlo.eventDateTimeFieldName !== undefined)
     identifier(dlo.eventDateTimeFieldName, 'spec.newDlo.eventDateTimeFieldName');
+  // The Ingestion API constants ignore letter case like other stream enums; they are sent as written.
+  for (const [key, expected] of [
+    ['connectorType', 'IngestApi'],
+    ['datastreamType', 'INGEST_API'],
+    ['refreshMode', 'UPSERT'],
+  ] as const)
+    if (typeof spec[key] !== 'string' || !sameEnum(spec[key], expected))
+      throw refuse('UNSUPPORTED_STREAM_SPEC', `spec.${key}`, `must be ${expected}`);
   if (
     document.schemaVersion !== 1 ||
     document.kind !== 'data-stream' ||
-    spec.connectorType !== 'IngestApi' ||
-    spec.datastreamType !== 'INGEST_API' ||
-    spec.refreshMode !== 'UPSERT' ||
     !Array.isArray(spec.additiveFieldMappings) ||
     (spec.formulaMappings !== undefined && !Array.isArray(spec.formulaMappings))
   )

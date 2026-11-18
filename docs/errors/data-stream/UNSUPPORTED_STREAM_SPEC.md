@@ -13,7 +13,7 @@
 Several values in a stream document are fixed. This code means one of them differs:
 
 - `schemaVersion` must be `1` and `kind` must be `data-stream`,
-- `spec.connectorType` must be `IngestApi`, `spec.datastreamType` `INGEST_API` and `spec.refreshMode` `UPSERT`,
+- `spec.connectorType` must be `IngestApi`, `spec.datastreamType` `INGEST_API` and `spec.refreshMode` `UPSERT`, each in any letter case (the value is sent as written; the message names the key that differs),
 - `spec.newDlo.category` must be `Other` and `spec.newDlo.primaryKey.dataType` `Text`,
 - `spec.additiveFieldMappings` must be a list.
 

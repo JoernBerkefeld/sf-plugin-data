@@ -7,6 +7,7 @@ import {
   dataStreamTargetFieldName,
   validateDataStreamDocument,
 } from '../lib/artifacts/data-stream-document.js';
+import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 
 // Sanitized API68 C receipts: generated defaults remain evidence, not create input.
 const document = () => ({
@@ -286,4 +287,23 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
   }
   for (const input of [undefined, false, [], {}, { ...document(), schemaVersion: 2 }])
     assert.throws(() => validateDataStreamDocument(input));
+});
+
+test('stream enum constants ignore letter case, are sent as written and name a wrong key', () => {
+  const cased = document();
+  cased.spec.refreshMode = 'Upsert';
+  cased.spec.datastreamType = 'ingest_api';
+  cased.spec.connectorType = 'ingestapi';
+  const body = buildDataStreamCreateBody(cased);
+  assert.equal(body.refreshConfig.refreshMode, 'Upsert');
+  assert.equal(body.datastreamType, 'ingest_api');
+  assert.equal(body.connectorInfo.connectorType, 'ingestapi');
+  const wrong = document();
+  wrong.spec.refreshMode = 'FULL_REFRESH';
+  assert.throws(
+    () => validateDataStreamDocument(wrong),
+    (error) =>
+      error.code === 'UNSUPPORTED_STREAM_SPEC' &&
+      /spec\.refreshMode/u.test(operationDiagnostic(error, '')),
+  );
 });

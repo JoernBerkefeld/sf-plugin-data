@@ -548,7 +548,8 @@ model. One failing item never stops the other items or families.
   as written, and a value that differs only in letter case counts as unchanged, so a
   hand-written file deploys `unchanged` the second time. Retrieve keeps Salesforce's
   spelling. This covers DLO and DMO categories and field types, a stream's DLO category,
-  field types, refresh mode, frequency type and formula return type, a relationship's
+  field types, refresh mode, frequency type and formula return type (and an Ingestion API
+  stream's `connectorType`, `datastreamType` and `refreshMode`), a relationship's
   cardinality and owner, the calculated-insight enum keys, and the transform enums. Names,
   labels, SQL, formulas and other text are compared exactly.
 
