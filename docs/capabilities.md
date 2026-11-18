@@ -134,17 +134,21 @@ retrieve confirms the graph. Retrieve resolves a relative
 
 Create sends the authored root, related objects, fields and schedule and needs
 `--allow-processing`; Salesforce adds key-qualifier fields to related objects and can
-report a different node `type`. A graph with a related object took about 17 minutes to
+report a different node `type`. A node without `type` is sent without one and Salesforce
+assigns it (live at API 68, 2026-11-18, a create without node types answered 201). A
+related object added by an update without `type` is sent without one; not verified live. A graph with a related object took about 17 minutes to
 build (metadata `Inprogress` most of it). Builds pass a brief `processing` status
 between `creating` and `ready`, which settlement accepts. Update sends the file as the
 desired state in one PUT (label, description, schedule, incremental refresh, the fields
 and related objects as listed, field settings, the root object); Salesforce decides and an
-API 4xx answer is `failed`/`rejected`. Live at API 68 (2026-11-18) it refuses with 400 a
+API 4xx answer is `failed`/`rejected`, with Salesforce's answer as the item diagnostic
+(`REQUEST_FAILED`). Live at API 68 (2026-11-18) it refuses with 400 a
 removed field (also `isProjected: false`), a removed related object, another related
 object in place of an existing one and a root change; key-qualifier fields it added are
 kept when the file leaves them out. A join change of an existing related object answers
 200 but keeps the old join, so the plugin refuses it before any write
-(`DATA_GRAPH_JOIN_CHANGE`), and a graph read back with another join than sent is
+(`DATA_GRAPH_JOIN_CHANGE`; preview reports the graph `present` and the run
+`DEPLOY_PREVIEW_BLOCKED`), and a graph read back with another join than sent is
 `DATA_GRAPH_CHANGE_NOT_APPLIED`. A changed node type, reference or projected name of an
 existing node is refused (Salesforce assigns them). Name and data space identify the
 graph: a renamed file creates or addresses another graph and the old graph is not renamed, because a PUT cannot rename one (400
@@ -891,12 +895,23 @@ Not qualified:
       and that 400 is reported. Preview and deploy report `SEGMENT_SCHEDULE_CHANGE`.
 - [x] Parameters are not segment input at API 68 (create answers 400 for the key); a
       segment with parameters is retrieved as-is.
-- [ ] Updates of Waterfall, Dynamic and EinsteinGptSegmentsUI segments are sent as written
-      but not verified live.
+- [x] Waterfall child segments: retrieve writes them by name (`childSegments`, one segment
+      list read names the org-specific definition IDs); deploy binds each child in the
+      target (children outside the selection are read before the first write of the run;
+      `SEGMENT_CHILD_NOT_FOUND` before any write when missing), sends them as
+      `includeCriteria` on create and PATCH, deploys selected children first and reads the
+      children back by name. Live API 68 (2026-11-18): create with children 201; a PATCH
+      without them keeps the children (200).
+- [x] Updates of other types are sent as written: a Waterfall and a Dynamic PATCH answered
+      200 and kept the rest (live API 68); Salesforce refuses every EinsteinGptSegmentsUI
+      update with 400, reported as rejected.
+- [ ] A Waterfall PATCH that changes the children is sent as written, not verified live.
+      Waterfalls with DBT children on an empty probe DMO ended `ERROR`
+      (`PROCESSING_FAILED`, cause not investigated).
 - [ ] End dates and an hourly `publishInterval` are kept and sent as written, not verified
       live.
-- [ ] Waterfall child segments, criteria of dynamic and Einstein segments, real-time
-      segments on a data graph and lookalike segments with a real seed are not verified.
+- [ ] Criteria of dynamic and Einstein segments, real-time segments on a data graph and
+      lookalike segments with a real seed are not verified.
 
 ## calculated-insight: unimplemented
 

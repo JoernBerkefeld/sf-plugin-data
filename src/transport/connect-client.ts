@@ -200,16 +200,20 @@ export class ConnectClient {
    * Create one native API68 Segment, without redirect or replay. The definition goes as written
    * (`segmentWriteBody`); without a schedule in the file it does not refresh.
    * @param {unknown} value Complete admitted portable definition.
+   * @param {ReadonlyMap<string, string>} [children] Waterfall child API name to target definition ID.
    * @returns {Promise<unknown>} Untrusted acknowledgement, not settlement.
    */
-  public async createSegment(value: unknown): Promise<unknown> {
+  public async createSegment(
+    value: unknown,
+    children?: ReadonlyMap<string, string>,
+  ): Promise<unknown> {
     if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
     const document = validateSegmentDocument(value);
     return this.send(
       {
         method: 'POST',
         url: this.safeUrl(`${this.prefix}segments`),
-        body: JSON.stringify(segmentWriteBody(document, true)),
+        body: JSON.stringify(segmentWriteBody(document, true, false, children)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),
@@ -221,16 +225,21 @@ export class ConnectClient {
    * along only when `schedule` is set (the schedule of the file differs from the org's).
    * @param {unknown} value Complete independently admitted desired Segment document.
    * @param {boolean} [schedule] Whether to send the schedule of the file.
+   * @param {ReadonlyMap<string, string>} [children] Waterfall child API name to target definition ID.
    * @returns {Promise<unknown>} Untrusted single-attempt response, never settlement evidence.
    */
-  public async patchSegment(value: unknown, schedule = false): Promise<unknown> {
+  public async patchSegment(
+    value: unknown,
+    schedule = false,
+    children?: ReadonlyMap<string, string>,
+  ): Promise<unknown> {
     if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
     const document = validateSegmentDocument(value);
     return this.send(
       {
         method: 'PATCH',
         url: this.safeUrl(`${this.prefix}segments/${document.identity.apiName}`),
-        body: JSON.stringify(segmentWriteBody(document, false, schedule)),
+        body: JSON.stringify(segmentWriteBody(document, false, schedule, children)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

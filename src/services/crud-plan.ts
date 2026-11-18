@@ -98,7 +98,8 @@ function graphObjectNames(node: unknown, names: string[] = []): string[] {
 
 /**
  * Component references of one input as `[kind, apiName]` pairs: CI dependencies,
- * the Segment's `segmentOn`, IR reconciliation DMOs and graph root/related objects (as DMOs).
+ * the Segment's `segmentOn` and Waterfall child segments, IR reconciliation DMOs and graph
+ * root/related objects (as DMOs).
  * @param {PlanInput} input Admitted input.
  * @returns {Array<[string, string]>} Referenced components.
  */
@@ -116,7 +117,13 @@ function references(input: PlanInput): Array<[string, string]> {
           )
           .map((item) => [item.kind, item.apiName])
       : [];
-  if (document.kind === 'segment') return listed([spec.segmentOn]);
+  if (document.kind === 'segment')
+    return [
+      ...listed([spec.segmentOn]),
+      ...(Array.isArray(spec.childSegments) ? spec.childSegments : [])
+        .filter((name): name is string => typeof name === 'string')
+        .map((name): [string, string] => ['segment', name]),
+    ];
   if (document.kind === 'calculated-insight') return listed(spec.dependencies);
   if (document.kind === 'identity-resolution')
     return listed(
@@ -346,7 +353,8 @@ export function planDeleteStages<T extends PlanInput>(inputs: T[]): Array<CrudSt
  * the P3 dependency batch and P4 graphs. With `nativeRoute`, P1 inputs form one stage on the
  * native route; otherwise they stay in the P3 dependency batch. The batch is split further so
  * that an input needing a selected IR's unified DMO (directly or through another selected input)
- * runs in a later stage than that IR. Graphs come last, so a graph on a selected IR's unified DMO
+ * runs in a later stage than that IR, and a Waterfall segment in a later stage than the selected
+ * child segments it names (a child must exist before the Waterfall can name it). Graphs come last, so a graph on a selected IR's unified DMO
  * starts only after that IR settled.
  * @param {PlanInput[]} inputs Whole admitted selection.
  * @param {object} options Routing choice.
@@ -385,7 +393,10 @@ export function planDeployStages<T extends PlanInput>(
     for (const key of inputDependencies(input, edges)) {
       const parent = byKey.get(key);
       if (parent && parent !== input)
-        result = Math.max(result, level(parent) + (owners.has(key) ? 1 : 0));
+        result = Math.max(
+          result,
+          level(parent) + (owners.has(key) || parent.document.kind === 'segment' ? 1 : 0),
+        );
     }
     visiting.delete(input);
     levels.set(input, result);

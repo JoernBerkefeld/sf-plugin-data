@@ -3759,7 +3759,18 @@ for (const [label, change] of Object.entries({
     });
     assert.equal(preview.outcome, 'update');
     const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
-    assert.deepEqual(result, { outcome: 'failed', mutation: 'rejected' });
+    // The item carries Salesforce's answer, with one period after its sentence.
+    assert.deepEqual(result, {
+      outcome: 'failed',
+      mutation: 'rejected',
+      diagnostics: [
+        {
+          code: 'REQUEST_FAILED',
+          message:
+            'Salesforce API rejected the request (HTTP 400); no response payload is disclosed. Salesforce API detail: INTERNAL_ERROR: Data Graph edits can only add objects, not remove existing ones. Salesforce rejected the write and nothing was written for this item; correct the input before another attempt.',
+        },
+      ],
+    });
     assert.deepEqual(getConnectDiagnostic(result), evidence);
     assert.deepEqual(f.calls, ['PUT']);
   });
@@ -3777,6 +3788,8 @@ test('native deploy refuses a join change before any write, also in preview', as
     assert.equal(result.mutation, 'not-attempted');
     assert.equal(result.diagnostics[0].code, 'DATA_GRAPH_JOIN_CHANGE');
     assert.match(result.diagnostics[0].message, /\$\.Address__dlm.*Nothing was written\./u);
+    // The graph was read: the block names it present.
+    assert.equal(result.target, 'present');
   }
   assert.deepEqual(f.calls, []);
 });
@@ -3848,6 +3861,31 @@ test('native create confirms a graph where Salesforce added a field the file doe
   const result = await operateNativeDataGraph(authored, f.context, f.client, options());
   assert.deepEqual(result, { outcome: 'created', mutation: 'confirmed-created' });
   assert.deepEqual(f.calls, ['POST']);
+});
+
+test('a hand-written create file may leave the node types to Salesforce', async () => {
+  const f = fixture();
+  const authored = document();
+  authored.definition.fullRefreshConfig = { schedule: { frequency: 7, timeGranularity: 'Day' } };
+  delete authored.definition.sourceObject.type;
+  // Only a stated type must be text; a create without one sends none (live API 68: 201).
+  assert.doesNotThrow(() => validateNativeDataGraphDocument(authored));
+  assert.equal(nativeDataGraphCreateDefinition(authored).sourceObject.type, undefined);
+  const blank = document();
+  blank.definition.sourceObject.type = '';
+  assert.throws(() => validateNativeDataGraphDocument(blank), /sourceObject\.type must be text/u);
+  const sent = [];
+  f.client.create = async (definition) => {
+    f.calls.push('POST');
+    const body = buildDataGraphCreateRequest(definition);
+    sent.push(structuredClone(body));
+    // Salesforce assigns the node type.
+    f.setGraph(serverGraph(body, 'ready'));
+    return serverGraph(body, 'creating');
+  };
+  const result = await operateNativeDataGraph(authored, f.context, f.client, options());
+  assert.deepEqual(result, { outcome: 'created', mutation: 'confirmed-created' });
+  assert.equal(Object.hasOwn(sent[0].sourceObject, 'type'), false);
 });
 
 test('a related object added by PUT settles although Salesforce gave it a key-qualifier field', async () => {

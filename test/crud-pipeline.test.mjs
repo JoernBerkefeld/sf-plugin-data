@@ -16,6 +16,8 @@ import {
   transformDloNames,
 } from '../lib/services/crud-plan.js';
 import { nativeIrFixture } from './identity-resolution-fixtures.mjs';
+import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
+import { bindSegmentChildren } from '../lib/services/bind-segment-dependencies.js';
 
 // Mixed selection: stream Feed lands in Feed__dll; mapping Feed_map maps Feed__dll onto
 // Person__dlm; transform Copy reads Feed__dll into Copy__dll; IR Individual_A1b2 creates
@@ -492,4 +494,107 @@ test('several transforms, by member or directory, run one after another in P2', 
   const result = await run(command);
   assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');
   assert.deepEqual(calls, []);
+});
+
+test('a graph block reads as a block in preview; a rejected PUT names no unknown mutation', async () => {
+  // Join change: refused before any write, in preview the same way as in deploy.
+  const join = {
+    outcome: 'blocked',
+    mutation: 'not-attempted',
+    target: 'present',
+    diagnostics: [
+      { code: 'DATA_GRAPH_JOIN_CHANGE', message: 'Join differs. Nothing was written.' },
+    ],
+  };
+  const preview = harness([graph], { preview: true });
+  preview.command.operateNativeGraph = async () => join;
+  const previewed = await run(preview.command);
+  assert.equal(previewed.status, 'blocked');
+  assert.equal(previewed.diagnostics.errors[0].code, 'DEPLOY_PREVIEW_BLOCKED');
+  assert.match(
+    previewed.diagnostics.errors[0].message,
+    /^Preview found an item the deploy would refuse or could not check/u,
+  );
+  assert.equal(previewed.result.items[0].target, 'present');
+  assert.equal(previewed.result.items[0].diagnostics[0].code, 'DATA_GRAPH_JOIN_CHANGE');
+  const blocked = harness([graph]);
+  blocked.command.operateNativeGraph = async () => join;
+  const executed = await run(blocked.command);
+  assert.equal(executed.diagnostics.errors[0].code, 'DEPLOY_EXECUTION_BLOCKED');
+  // A rejected PUT: Salesforce's answer on the item, no unknown-mutation warning, one period.
+  const rejected = harness([graph]);
+  rejected.command.operateNativeGraph = async () =>
+    retainConnectDiagnostic(
+      {
+        outcome: 'failed',
+        mutation: 'rejected',
+        diagnostics: [{ code: 'REQUEST_FAILED', message: 'Removing fields is not allowed.' }],
+      },
+      apiDiagnostic(400, [
+        { errorCode: 'INTERNAL_ERROR', message: 'Removing fields is not allowed.' },
+      ]),
+    );
+  const result = await run(rejected.command);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].mutation, 'rejected');
+  assert.equal(result.result.items[0].diagnostics[0].code, 'REQUEST_FAILED');
+  const message = result.diagnostics.errors[0].message;
+  assert.equal(result.diagnostics.errors[0].code, 'DEPLOY_EXECUTION_FAILED');
+  assert.match(
+    message,
+    /INTERNAL_ERROR: Removing fields is not allowed\. Deployment did not complete: Salesforce rejected a write/u,
+  );
+  assert.doesNotMatch(message, /\.\.|unknown mutations/u);
+});
+
+/**
+ * A Waterfall segment deploy input.
+ * @param {string} apiName Segment API name.
+ * @param {object} [spec] Extra spec keys.
+ * @returns {object} Input.
+ */
+const waterfall = (apiName, spec = {}) => ({
+  path: `data360/segments/${apiName}.segment.json`,
+  document: {
+    schemaVersion: 1,
+    kind: 'segment',
+    identity: { dataSpace: 'default', apiName },
+    spec: {
+      displayName: apiName,
+      description: '',
+      segmentType: 'Waterfall',
+      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+      ...spec,
+    },
+  },
+});
+
+test('a Waterfall child neither selected nor in the target stops the run before any write', async () => {
+  for (const preview of [false, true]) {
+    // Gold is selected (its own earlier stage); Silver is neither selected nor in the target.
+    const { command, calls } = harness(
+      [mapping, waterfall('Tiers', { childSegments: ['Gold', 'Silver'] }), waterfall('Gold')],
+      { preview, metadata: ['segment:Tiers'] },
+    );
+    const read = [];
+    command.bindChildSegments = (document, connection, version) =>
+      bindSegmentChildren(document, connection, version, async (name) => {
+        read.push(name);
+        throw retainConnectDiagnostic(
+          new Error('not found'),
+          apiDiagnostic(404, [{ errorCode: 'ITEM_NOT_FOUND', message: 'not found' }]),
+        );
+      });
+    const result = await run(command);
+    assert.deepEqual(read, ['Silver']);
+    assert.deepEqual(calls, ['auth']);
+    assert.equal(result.status, 'blocked');
+    assert.equal(
+      result.diagnostics.errors[0].code,
+      preview ? 'DEPLOY_PREVIEW_BLOCKED' : 'DEPLOY_EXECUTION_BLOCKED',
+    );
+    const [item] = result.result.items;
+    assert.equal(item.diagnostics[0].code, 'SEGMENT_CHILD_NOT_FOUND');
+    assert.match(item.diagnostics[0].message, /child segment Silver/u);
+  }
 });

@@ -24,7 +24,7 @@ import { retrieveDataTransform } from '../../services/retrieve-data-transform.js
 import type { DataTransformDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteSegment } from '../../services/delete-segment.js';
 import { SegmentError, validateSegmentDocument } from '../../artifacts/segment-document.js';
-import { projectSegment } from '../../services/retrieve-segment.js';
+import { projectSegment, segmentChildNames } from '../../services/retrieve-segment.js';
 import type { SegmentDeployInput } from '../../artifacts/read-deploy-input.js';
 import { deleteIdentityResolution } from '../../services/delete-identity-resolution.js';
 import {
@@ -407,9 +407,10 @@ async function readOrgSource(
     }
     case 'segment': {
       const raw = await exact(`/services/data/v68.0/ssot/segments/${name}`);
-      return raw === undefined
-        ? { absent: true }
-        : project('segment', () => projectSegment(raw, name, 'retrieve').candidate);
+      if (raw === undefined) return { absent: true };
+      // A Waterfall names its children, so the plan deletes it before its selected children.
+      const children = await segmentChildNames(connection, raw);
+      return project('segment', () => projectSegment(raw, name, 'retrieve', children).candidate);
     }
     case 'identity-resolution': {
       const raw = await exact(`/services/data/v68.0/ssot/identity-resolutions/${name}`);

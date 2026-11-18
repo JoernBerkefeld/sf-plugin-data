@@ -42,10 +42,15 @@ export type UiSegmentSpec = SegmentSpecBase & {
   lookbackPeriod: string;
 };
 
-/** Any other segment type Salesforce reads (for example Waterfall or Dynamic), without criteria. */
+/**
+ * Any other segment type Salesforce reads (for example Waterfall or Dynamic), without criteria.
+ * A Waterfall may list its child segments by API name, in priority order.
+ */
 export type OtherSegmentSpec = SegmentSpecBase & {
   segmentType: string;
   lookbackPeriod?: string;
+  /** Waterfall only: child segment API names in priority order. Absent leaves the org children alone. */
+  childSegments?: string[];
 };
 
 export type SegmentDocument = {
@@ -101,6 +106,15 @@ const scheduleKeys = [
  * states it explicitly to turn a schedule off.
  */
 export const unscheduledSegment: Readonly<SegmentSchedule> = Object.freeze({ frequency: 'None' });
+
+/** The segment type whose child segments the file holds by name (`spec.childSegments`). */
+export const waterfallSegmentType = 'Waterfall';
+
+/**
+ * Stand-in for a child segment of a Waterfall read from an org that the plugin could not name
+ * (deploy-mode reads only): it never equals a name in a file, and deploy refuses it in a file.
+ */
+export const unnamedChildSegment = '(a child segment the plugin could not name)';
 
 /**
  * Stand-in for an org schedule the file cannot hold (deploy-mode reads only): it never equals a
@@ -216,9 +230,40 @@ function scheduleOf(value: unknown, mode: DocumentMode): SegmentSchedule {
 }
 
 /**
+ * Admit the child segments of a Waterfall: a non-empty list of segment API names in priority
+ * order, each named once (ignoring case). A deploy-mode read of the org may hold
+ * `unnamedChildSegment` for a child it could not name.
+ * @param {unknown} value Untrusted list.
+ * @param {DocumentMode} mode Check mode.
+ * @returns {string[]} Detached names.
+ */
+function childSegmentsOf(value: unknown, mode: DocumentMode): string[] {
+  if (!Array.isArray(value) || value.length === 0)
+    throw refuse(
+      'INVALID_SEGMENT_DOCUMENT',
+      'spec.childSegments',
+      'is not a list of child segment API names; leave the key out to keep the children of the org segment',
+    );
+  const seen = new Set<string>();
+  return value.map((entry: unknown, index) => {
+    const name = text(entry, `spec.childSegments[${index}]`, mode);
+    if (name === unnamedChildSegment) return name;
+    if (!segmentName.test(name) || seen.has(name.toLowerCase()))
+      throw refuse(
+        'INVALID_SEGMENT_DOCUMENT',
+        `spec.childSegments[${index}]`,
+        'is not a segment API name or names a child segment twice',
+      );
+    seen.add(name.toLowerCase());
+    return name;
+  });
+}
+
+/**
  * Validate and detach an authored Segment/default definition (structure only). A DBT segment
  * holds SQL models, a UI segment (`segmentType: UI`) its `includeCriteria` as a JSON object, and
- * any other type neither; the lookback (any text; optional for other types) and the optional
+ * any other type neither; a Waterfall may list its child segments by API name
+ * (`childSegments`). The lookback (any text; optional for other types) and the optional
  * schedule are sent as written and Salesforce decides about them. Retrieve mode keeps unknown
  * `spec`, schedule and model keys and lifts the text limits, but still refuses what the file
  * cannot represent: another source kind or data space, and a model name that cannot be a file
@@ -236,12 +281,15 @@ export function validateSegmentDocument(
   const identity = record(root.identity, ['dataSpace', 'apiName'], 'identity');
   const type = (root.spec as Record<string, unknown> | null)?.segmentType;
   const keys = type === 'UI' ? uiSpecKeys : type === 'DBT' ? specKeys : otherSpecKeys;
+  const waterfall = type === waterfallSegmentType;
   const spec = record(
     root.spec,
     keys,
     'spec',
     lenient,
-    keys === otherSpecKeys ? ['lookbackPeriod', 'schedule'] : ['schedule'],
+    keys === otherSpecKeys
+      ? ['lookbackPeriod', 'schedule', ...(waterfall ? ['childSegments'] : [])]
+      : ['schedule'],
   );
   const on = record(spec.segmentOn, ['kind', 'dataSpace', 'apiName'], 'spec.segmentOn');
   if (root.schemaVersion !== 1 || root.kind !== 'segment')
@@ -272,6 +320,10 @@ export function validateSegmentDocument(
     ? text(spec.lookbackPeriod, 'spec.lookbackPeriod', mode)
     : undefined;
   const schedule = Object.hasOwn(spec, 'schedule') ? scheduleOf(spec.schedule, mode) : undefined;
+  const childSegments =
+    waterfall && Object.hasOwn(spec, 'childSegments')
+      ? childSegmentsOf(spec.childSegments, mode)
+      : undefined;
   let content: Record<string, unknown> = {};
   if (segmentType === 'UI') {
     const criteria = spec.includeCriteria;
@@ -304,7 +356,12 @@ export function validateSegmentDocument(
   // Retrieve keeps the keys the plugin does not model after the known ones; deploy refused them.
   const extra = Object.fromEntries(
     Object.entries(spec)
-      .filter(([key]) => !keys.includes(key) && !['lookbackPeriod', 'schedule'].includes(key))
+      .filter(
+        ([key]) =>
+          !keys.includes(key) &&
+          !['lookbackPeriod', 'schedule'].includes(key) &&
+          !(waterfall && key === 'childSegments'),
+      )
       .map(([key, entry]) => [key, structuredClone(entry)]),
   );
   return {
@@ -319,6 +376,7 @@ export function validateSegmentDocument(
       ...content,
       ...(lookbackPeriod === undefined ? {} : { lookbackPeriod }),
       ...(schedule ? { schedule } : {}),
+      ...(childSegments ? { childSegments } : {}),
       ...extra,
     } as SegmentDocument['spec'],
   };
@@ -434,23 +492,91 @@ function scheduleBody(
 }
 
 /**
+ * The child segment definition IDs (`marketSegmentDefinitionId`, `3HX…`) in a Waterfall's
+ * criteria (live API 68, 2026-11-18): exactly
+ * `{"type":"Waterfall","segments":[{"type":"NestedSegment","segmentId":"<id>"}, ...]}` with at
+ * least one child. Anything else (other keys, element types, no children) is not a shape the
+ * file holds by name.
+ * @param {string} criteria Plain (decoded) criteria JSON text.
+ * @returns {string[] | undefined} Child definition IDs in priority order, or undefined.
+ */
+export function waterfallChildIds(criteria: string): string[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(criteria);
+  } catch {
+    return undefined;
+  }
+  const root = parsed as Record<string, unknown> | null;
+  if (
+    !root ||
+    typeof root !== 'object' ||
+    Array.isArray(root) ||
+    Object.keys(root).length !== 2 ||
+    root.type !== waterfallSegmentType ||
+    !Array.isArray(root.segments) ||
+    root.segments.length === 0
+  )
+    return undefined;
+  const ids: string[] = [];
+  for (const entry of root.segments as unknown[]) {
+    const child = entry as Record<string, unknown> | null;
+    if (
+      !child ||
+      typeof child !== 'object' ||
+      Array.isArray(child) ||
+      Object.keys(child).length !== 2 ||
+      child.type !== 'NestedSegment' ||
+      typeof child.segmentId !== 'string' ||
+      !/^[A-Za-z0-9]{15,18}$/u.test(child.segmentId)
+    )
+      return undefined;
+    ids.push(child.segmentId);
+  }
+  return ids;
+}
+
+/**
+ * The criteria string of a Waterfall write: its children as `NestedSegment` entries carrying the
+ * definition ID of each child in the target org, in the order of the file.
+ * @param {string[]} names Child segment API names of the file.
+ * @param {ReadonlyMap<string, string>} children Child API name to target definition ID.
+ * @returns {string} Criteria JSON text.
+ */
+function waterfallCriteria(names: string[], children: ReadonlyMap<string, string>): string {
+  return JSON.stringify({
+    type: waterfallSegmentType,
+    segments: names.map((name) => {
+      const segmentId = children.get(name);
+      if (segmentId === undefined) throw new SegmentError('SEGMENT_CHILD_NOT_FOUND');
+      return { type: 'NestedSegment', segmentId };
+    }),
+  });
+}
+
+/**
  * The request body of a segment write, sent as written. Create names the segment
  * (`developerName`); a PATCH takes the full definition. A DBT segment sends its models
  * (`segmentType: Dbt`), a UI segment its criteria as a JSON string with
  * `segmentCreationFlow: Headless` (what lets the API write a UI segment at all), any other type
- * its type as read; the lookback goes along when the file has one.
+ * its type as read; a Waterfall with `childSegments` sends them as its criteria (each child by
+ * its definition ID in the target, from `children`). The lookback goes along when the file has
+ * one.
  * @param {SegmentDocument} document Admitted segment.
  * @param {boolean} create Whether this is the create POST.
  * @param {boolean} [schedule] Whether an update sends the schedule (it changes).
+ * @param {ReadonlyMap<string, string>} [children] Waterfall child API name to target definition ID.
  * @returns {Record<string, unknown>} Request body.
  */
 export function segmentWriteBody(
   document: SegmentDocument,
   create: boolean,
   schedule = false,
+  children: ReadonlyMap<string, string> = new Map(),
 ): Record<string, unknown> {
   const spec = document.spec;
   const ui = spec.segmentType === 'UI';
+  const childSegments = (spec as OtherSegmentSpec).childSegments;
   return {
     ...(create ? { developerName: document.identity.apiName } : {}),
     displayName: spec.displayName,
@@ -461,6 +587,7 @@ export function segmentWriteBody(
       ? { includeDbt: { models: { models: (spec as DbtSegmentSpec).models } } }
       : {}),
     ...(ui ? { includeCriteria: JSON.stringify((spec as UiSegmentSpec).includeCriteria) } : {}),
+    ...(childSegments ? { includeCriteria: waterfallCriteria(childSegments, children) } : {}),
     ...(spec.lookbackPeriod === undefined ? {} : { lookbackPeriod: spec.lookbackPeriod }),
     ...scheduleBody(spec.schedule, create, schedule),
     ...(ui ? { segmentCreationFlow: 'Headless' } : {}),
@@ -608,7 +735,9 @@ function sameCriteria(wanted: unknown, found: unknown): boolean {
  * preflight, execute and delete use. A UI segment's criteria match when they are equal except
  * for the keys Salesforce adds to each comparison it stores (`selfReference`, `subjectField*`
  * beside `subject`). A file without a schedule leaves the schedule out of the comparison; one
- * with a schedule compares it as `sameSegmentSchedule` does. Everything else must be equal.
+ * with a schedule compares it as `sameSegmentSchedule` does; likewise a Waterfall file without
+ * `childSegments` leaves the children out of the comparison, and one with them compares the
+ * names in order. Everything else must be equal.
  * @param {unknown} observed Projected candidate from a read or write response.
  * @param {SegmentDocument} desired Admitted requested definition.
  * @returns {boolean} Whether the org holds the desired definition.
@@ -620,9 +749,15 @@ export function carriesDefinition(observed: unknown, desired: SegmentDocument): 
   if (schedule !== undefined && !sameSegmentSchedule(other.spec.schedule, schedule)) return false;
   const ui = desired.spec.segmentType === 'UI';
   if (ui && other.spec.segmentType !== 'UI') return false;
+  const children = Object.hasOwn(desired.spec, 'childSegments');
   const rest = (document: SegmentDocument): unknown => ({
     ...document,
-    spec: { ...document.spec, schedule: undefined, ...(ui ? { includeCriteria: undefined } : {}) },
+    spec: {
+      ...document.spec,
+      schedule: undefined,
+      ...(ui ? { includeCriteria: undefined } : {}),
+      ...(children ? {} : { childSegments: undefined }),
+    },
   });
   return (
     isDeepStrictEqual(rest(other), rest(desired)) &&

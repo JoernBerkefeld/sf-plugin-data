@@ -12,6 +12,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The plugin could not read the segment from the org. Check the segment name, the target org login and the Salesforce API detail in the message, then rerun the retrieve.',
   SEGMENT_ADMISSION_FAILED:
     'The checks right before the segment write failed, so nothing was sent. Make sure the .segment.json file did not change during the run, check the org, and run the deploy again.',
+  SEGMENT_CHILD_NOT_FOUND:
+    'A child segment named in spec.childSegments of a Waterfall file is not in the target org, so nothing was written. Deploy the child first (or select it in the same deploy) or fix the name.',
   SEGMENT_CREATE_CONFLICT:
     'Salesforce refused the create because a segment with this name already exists (HTTP 409). The plugin does not switch to an update; inspect the target, then preview again.',
   SEGMENT_CREATE_UNCONFIRMED:

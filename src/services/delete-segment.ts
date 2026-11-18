@@ -12,7 +12,7 @@ import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
-import { projectSegment } from './retrieve-segment.js';
+import { projectSegment, segmentChildNames } from './retrieve-segment.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 
 export const segmentDeleteBudget = Object.freeze({
@@ -191,9 +191,11 @@ export async function deleteSegment(
           `/services/data/v68.0/ssot/segments/${desired.identity.apiName}`,
         );
         check();
-        return verbatim
-          ? rawSegment(raw, desired.identity.apiName)
-          : projectSegment(raw, desired.identity.apiName, 'retrieve');
+        if (verbatim) return rawSegment(raw, desired.identity.apiName);
+        // Waterfall children are compared by name, as retrieve wrote them.
+        const children = await segmentChildNames(connection, raw);
+        check();
+        return projectSegment(raw, desired.identity.apiName, 'retrieve', children);
       } catch (error) {
         check();
         if (

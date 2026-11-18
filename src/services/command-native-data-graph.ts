@@ -24,7 +24,8 @@ import {
 import type { NativeGraphContext, NativeGraphCreateCheck } from './native-data-graph-crd.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
 import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
-import { explanationOf } from './operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
+import { rejectedNextAction } from './deploy-result.js';
 import { proveNativeDataGraphAbsent } from './native-data-graph-crd.js';
 
 /**
@@ -90,6 +91,8 @@ export type NativeGraphOperationResult = {
   failedCheck?: NativeGraphCreateCheck;
   /** Root/owner findings of a preview, or why a deploy was blocked before any write. */
   diagnostics?: Array<{ code: string; message: string }>;
+  /** A block found after the graph was read: whether it exists in the target. */
+  target?: 'present';
 };
 
 /**
@@ -408,14 +411,24 @@ export async function operateNativeDataGraph(
         if (error instanceof NativeGraphProcessingRequired) return processingRequired('update');
         // Salesforce keeps the old join of a PUT that changes it: refused before any write.
         if (error instanceof DataGraphError && error.code === 'DATA_GRAPH_JOIN_CHANGE')
-          return blocked(
-            'DATA_GRAPH_JOIN_CHANGE',
-            `${explanationOf(error) ?? 'The join of a related object differs from the graph in the org.'} Nothing was written.`,
-          );
-        // The PUT was sent and Salesforce refused it with an API 4xx: nothing was written.
+          return {
+            ...blocked(
+              'DATA_GRAPH_JOIN_CHANGE',
+              `${explanationOf(error) ?? 'The join of a related object differs from the graph in the org.'} Nothing was written.`,
+            ),
+            target: 'present',
+          };
+        // The PUT was sent and Salesforce refused it with an API 4xx: nothing was written. The
+        // item carries Salesforce's answer.
         if (error instanceof NativeGraphWriteRejected)
           return retainConnectDiagnostic(
-            { outcome: 'failed', mutation: 'rejected' },
+            {
+              outcome: 'failed',
+              mutation: 'rejected',
+              diagnostics: [
+                { code: 'REQUEST_FAILED', message: operationDiagnostic(error, rejectedNextAction) },
+              ],
+            },
             getConnectDiagnostic(error),
           );
         // The PUT was accepted, but the settled graph kept the old join.

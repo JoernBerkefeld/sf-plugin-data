@@ -1,6 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { operationDiagnostic } from './operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import {
   carriesDefinition,
@@ -9,7 +9,7 @@ import {
 } from '../artifacts/segment-document.js';
 import { retrieveSegment } from './retrieve-segment.js';
 import { SegmentError } from '../artifacts/segment-document.js';
-import { bindSegmentDependencies } from './bind-segment-dependencies.js';
+import { bindSegmentChildren, bindSegmentDependencies } from './bind-segment-dependencies.js';
 import type { DeployPreviewResult } from './deploy-result.js';
 
 export type SegmentDeployPreview = DeployPreviewResult & {
@@ -22,13 +22,16 @@ export type SegmentDeployPreview = DeployPreviewResult & {
  * Classify one authored Segment against the target by its exact name at API68: exact
  * ITEM_NOT_FOUND404 is create, a readable Segment is update or unchanged. The authored
  * definition is not judged; Salesforce decides about it on the write. A schedule the write would
- * send is reported as SEGMENT_SCHEDULE_CHANGE beside create or update.
+ * send is reported as SEGMENT_SCHEDULE_CHANGE beside create or update. The child segments a
+ * Waterfall file names must exist in the target (SEGMENT_CHILD_NOT_FOUND otherwise); the target
+ * read names the children of the org segment by them.
  * @param {unknown} value Desired bounded authored document.
  * @param {Connection} connection Command-owned authenticated target connection.
  * @param {string | ApiVersionSelection} apiVersion API68 selection.
  * @param {string} dataSpace Explicit default target space.
  * @param {Function} acquire Independent acquisition seam for deterministic synthetic tests.
  * @param {Function} bind Fresh independent target dependency binding; never cached across calls.
+ * @param {Function} children Fresh binding of the Waterfall child segments of the file.
  * @returns {Promise<SegmentDeployPreview>} Read-only semantic classification and possible effects.
  */
 export async function preflightSegmentDeploy(
@@ -38,6 +41,7 @@ export async function preflightSegmentDeploy(
   dataSpace: string,
   acquire: typeof retrieveSegment = retrieveSegment,
   bind: typeof bindSegmentDependencies = bindSegmentDependencies,
+  children: typeof bindSegmentChildren = bindSegmentChildren,
 ): Promise<SegmentDeployPreview> {
   const requested = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   const result = (
@@ -58,12 +62,13 @@ export async function preflightSegmentDeploy(
           ? [
               {
                 code,
-                message: getConnectDiagnostic(evidence)
-                  ? operationDiagnostic(
-                      evidence,
-                      'Segment preview is not execution authorization. Resolve the reported cause before deployment.',
-                    )
-                  : 'Segment preview is not execution authorization. Resolve the reported cause before deployment.',
+                message:
+                  getConnectDiagnostic(evidence) || explanationOf(evidence)
+                    ? operationDiagnostic(
+                        evidence,
+                        'Segment preview is not execution authorization. Resolve the reported cause before deployment.',
+                      )
+                    : 'Segment preview is not execution authorization. Resolve the reported cause before deployment.',
               },
             ]
           : [],
@@ -93,9 +98,13 @@ export async function preflightSegmentDeploy(
       (apiVersion.soapNumeric !== requested || apiVersion.restSelector !== `v${requested}`))
   )
     return result('blocked', 'unknown', 'INVALID_SCOPE');
+  // Definition ID of each Waterfall child in the target to its API name.
+  let names: Map<string, string>;
   try {
     // The DMO the Segment is built on must exist; its ID binds the readback.
     await bind(desired, connection, apiVersion, dataSpace);
+    const bound = await children(desired, connection, apiVersion);
+    names = new Map(bound.map((child) => [child.targetId, child.identity.apiName]));
   } catch (error: unknown) {
     return result(
       'blocked',
@@ -105,7 +114,14 @@ export async function preflightSegmentDeploy(
     );
   }
   try {
-    const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
+    const acquired = await acquire(
+      connection,
+      desired.identity.apiName,
+      apiVersion,
+      dataSpace,
+      'deploy',
+      names,
+    );
     // POST is create-only (observed duplicate409), never an upsert; only exact 404 is absence.
     const diagnostic = getConnectDiagnostic(acquired);
     if (

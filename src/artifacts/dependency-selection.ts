@@ -7,8 +7,8 @@ import type { IdentityResolutionDocument } from './identity-resolution-document.
 import type { NativeDmoDocument } from './native-dmo-document.js';
 import { validateNativeDmoDocument } from './native-dmo-document.js';
 import type { DocumentMode } from './verbatim-document.js';
-import type { SegmentDocument } from './segment-document.js';
-import { validateSegmentDocument } from './segment-document.js';
+import type { OtherSegmentSpec, SegmentDocument } from './segment-document.js';
+import { unnamedChildSegment, validateSegmentDocument } from './segment-document.js';
 
 export type DependencyIdentity = {
   kind: 'dmo' | 'segment' | 'identity-resolution' | 'calculated-insight' | 'dlo';
@@ -89,9 +89,13 @@ export function documentDependencyNode(
   if (value.kind === 'segment') {
     const document = validateSegmentDocument(value, mode);
     const { kind, dataSpace, apiName } = document.spec.segmentOn;
+    // A Waterfall runs after the child segments it names (a stand-in for an unnamed child is none).
+    const children = ((document.spec as OtherSegmentSpec).childSegments ?? [])
+      .filter((child) => child !== unnamedChildSegment)
+      .map((child) => ({ kind: 'segment' as const, dataSpace: 'default', apiName: child }));
     return {
       identity: { kind: 'segment', ...document.identity },
-      dependencies: [{ kind, dataSpace, apiName }],
+      dependencies: [{ kind, dataSpace, apiName }, ...children],
     };
   }
   if (value.kind !== 'dmo') throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');

@@ -5,7 +5,10 @@ import {
   decodeSegmentCriteria,
   opaqueSegmentSchedule,
   segmentName,
+  unnamedChildSegment,
   validateSegmentDocument,
+  waterfallChildIds,
+  waterfallSegmentType,
 } from '../artifacts/segment-document.js';
 import type { SegmentDocument, SegmentSchedule } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
@@ -195,20 +198,35 @@ const otherConfiguration = [
  * segment's `includeCriteria` is decoded from its HTML-entity-encoded JSON string into an object;
  * another type keeps its lookback when it has one. Retrieve keeps keys the plugin does not know in
  * `spec`; deploy refuses them (UNKNOWN_SEGMENT_CONFIGURATION). Criteria that are not a JSON
- * object, and parameters (no write takes them), are UNSUPPORTED_SEGMENT_VARIANT.
+ * object, and parameters (no write takes them), are UNSUPPORTED_SEGMENT_VARIANT. A Waterfall's
+ * criteria holding only its child segments become `childSegments`, each child named through
+ * `children` (definition ID to API name); a child it cannot name keeps the criteria as read on
+ * retrieve (deploy refuses that file) and is `unnamedChildSegment` on a deploy-mode read.
  * @param {Record<string, unknown>} raw The segment inside the GET response.
  * @param {string} apiName Requested exact identity.
  * @param {DocumentMode} mode `deploy` (strict observed fields) or `retrieve`.
+ * @param {ReadonlyMap<string, string>} children Child definition ID to segment API name.
  * @returns {{candidate: SegmentDocument; runtime: Record<string, unknown>}} Detached portable and private projections.
  */
 function projectTypedSegment(
   raw: Record<string, unknown>,
   apiName: string,
   mode: DocumentMode,
+  children: ReadonlyMap<string, string>,
 ): { candidate: SegmentDocument; runtime: Record<string, unknown> } {
   const ui = raw.segmentType === 'UI';
   const required = ui ? uiConfiguration : otherConfiguration;
+  const childIds =
+    raw.segmentType === waterfallSegmentType && typeof raw.includeCriteria === 'string'
+      ? waterfallChildIds(decodeSegmentCriteria(raw.includeCriteria))
+      : undefined;
+  const named = childIds?.map((id) => children.get(id));
+  const childSegments =
+    named && (mode !== 'retrieve' || named.every((name) => name !== undefined))
+      ? named.map((name) => name ?? unnamedChildSegment)
+      : undefined;
   const known = new Set([
+    ...(childSegments ? ['includeCriteria'] : []),
     ...required,
     ...observations,
     ...uiObservations,
@@ -256,6 +274,7 @@ function projectTypedSegment(
         ...(ui ? { includeCriteria: criteria } : {}),
         ...(Object.hasOwn(raw, 'lookbackPeriod') ? { lookbackPeriod: raw.lookbackPeriod } : {}),
         ...(schedule ? { schedule } : {}),
+        ...(childSegments ? { childSegments } : {}),
         ...Object.fromEntries(unknown.map((key) => [key, raw[key]])),
       },
     },
@@ -275,12 +294,14 @@ function projectTypedSegment(
  * @param {unknown} response Untrusted API68 exact GET response.
  * @param {string} apiName Requested exact identity.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
+ * @param {ReadonlyMap<string, string>} [children] Waterfall child definition ID to API name.
  * @returns {{candidate: SegmentDocument; runtime: Record<string, unknown>}} Detached portable and private projections.
  */
 export function projectSegment(
   response: unknown,
   apiName: string,
   mode: DocumentMode = 'deploy',
+  children: ReadonlyMap<string, string> = new Map(),
 ): { candidate: SegmentDocument; runtime: Record<string, unknown> } {
   const lenient = mode === 'retrieve';
   if (!response || typeof response !== 'object' || Array.isArray(response))
@@ -298,7 +319,7 @@ export function projectSegment(
   const raw = value as Record<string, unknown>;
   if (raw.apiName !== apiName || raw.dataSpace !== 'default')
     throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
-  if (raw.segmentType !== 'DBT') return projectTypedSegment(raw, apiName, mode);
+  if (raw.segmentType !== 'DBT') return projectTypedSegment(raw, apiName, mode, children);
   const known = new Set([
     ...configuration,
     ...observations,
@@ -355,12 +376,15 @@ export function projectSegment(
 
 /**
  * Acquire one API68/default Segment by its exact name.
- * A failed GET is never absence evidence; no list expansion or runtime writes are available.
+ * A failed GET is never absence evidence; no runtime writes are available. A retrieve of a
+ * Waterfall with child segments, without `children`, names them with one segment list read
+ * (their definition IDs are org-specific); when that read fails the criteria stay as read.
  * @param {Connection} connection Authenticated command-owned API68 connection.
  * @param {string} apiName Exact selected identity.
  * @param {string | ApiVersionSelection} apiVersion Requested fixed API version.
  * @param {string} dataSpace Requested default data space.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps what the plugin does not model).
+ * @param {ReadonlyMap<string, string>} [children] Waterfall child definition ID to API name.
  * @returns {Promise<SegmentAcquisition>} Detached portable candidate and private runtime baseline.
  */
 export async function retrieveSegment(
@@ -369,6 +393,7 @@ export async function retrieveSegment(
   apiVersion: string | ApiVersionSelection,
   dataSpace: string,
   mode: DocumentMode = 'deploy',
+  children?: ReadonlyMap<string, string>,
 ): Promise<SegmentAcquisition> {
   const version = typeof apiVersion === 'string' ? apiVersion : apiVersion.requested;
   if (
@@ -389,7 +414,12 @@ export async function retrieveSegment(
       `/services/data/v${version}/ssot/segments/${apiName}`,
     );
     read = { native: raw };
-    const projection = projectSegment(raw, apiName, mode);
+    const projection = projectSegment(
+      raw,
+      apiName,
+      mode,
+      children ?? (mode === 'retrieve' ? await segmentChildNames(connection, raw) : undefined),
+    );
     return carryNativeResponse(
       {
         identity,
@@ -411,6 +441,47 @@ export async function retrieveSegment(
   }
 }
 
+// One definition-ID-to-name map per command connection (one list read per run).
+const childNameCache = new WeakMap<object, Promise<ReadonlyMap<string, string> | undefined>>();
+
+/**
+ * Name the child segments of a Waterfall read in retrieve mode (retrieve and delete): one
+ * segment list read per connection maps each definition ID to its API name. Nothing is read for
+ * another segment type or a Waterfall without children; a failed list read names nothing.
+ * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
+ * @param {unknown} response Segment GET response.
+ * @returns {Promise<ReadonlyMap<string, string> | undefined>} Definition ID to API name.
+ */
+export async function segmentChildNames(
+  connection: Pick<Connection, 'instanceUrl' | 'request'>,
+  response: unknown,
+): Promise<ReadonlyMap<string, string> | undefined> {
+  const raw = (response as { segments?: unknown[] } | undefined)?.segments?.[0] as
+    Record<string, unknown> | undefined;
+  if (
+    raw?.segmentType !== waterfallSegmentType ||
+    typeof raw.includeCriteria !== 'string' ||
+    !waterfallChildIds(decodeSegmentCriteria(raw.includeCriteria))
+  )
+    return undefined;
+  let names = childNameCache.get(connection);
+  if (!names) {
+    names = (async (): Promise<ReadonlyMap<string, string> | undefined> => {
+      try {
+        const map = new Map<string, string>();
+        for (const entry of await listSegmentEntries(connection))
+          if (typeof entry.marketSegmentDefinitionId === 'string')
+            map.set(entry.marketSegmentDefinitionId, entry.apiName);
+        return map;
+      } catch {
+        return undefined;
+      }
+    })();
+    childNameCache.set(connection, names);
+  }
+  return names;
+}
+
 /** Largest page the segment list accepts (`batchSize` 1 to 200). */
 const segmentPageSize = 200;
 
@@ -429,9 +500,26 @@ export async function listSegmentNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
 ): Promise<string[]> {
+  const entries = await listSegmentEntries(connection, warnings);
+  const names = entries.map((entry) => entry.apiName);
+  names.sort();
+  return names;
+}
+
+/**
+ * The default-space entries of the segment list, as `listSegmentNames` pages and filters them,
+ * in list order.
+ * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
+ * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @returns {Promise<Array<Record<string, unknown> & {apiName: string}>>} Listed segments.
+ */
+async function listSegmentEntries(
+  connection: Pick<Connection, 'instanceUrl' | 'request'>,
+  warnings?: string[],
+): Promise<Array<Record<string, unknown> & { apiName: string }>> {
   const client = new ConnectClient(connection, '68.0');
   const seen = new Set<string>();
-  const names: string[] = [];
+  const names: Array<Record<string, unknown> & { apiName: string }> = [];
   for (let offset = 0; ;) {
     const page = await client.get<unknown>(
       `/services/data/v68.0/ssot/segments?batchSize=${segmentPageSize}&offset=${offset}`,
@@ -455,7 +543,7 @@ export async function listSegmentNames(
       if (seen.has(apiName)) continue;
       seen.add(apiName);
       added++;
-      if (item.dataSpace === 'default') names.push(apiName);
+      if (item.dataSpace === 'default') names.push({ ...item, apiName });
     }
     offset += entries.length;
     const total = (page as { totalSize?: unknown }).totalSize;
@@ -464,9 +552,6 @@ export async function listSegmentNames(
         ? offset < total
         : entries.length >= segmentPageSize;
     // A page of names listed already means the server ignores the offset.
-    if (entries.length === 0 || !more || (named > 0 && added === 0)) {
-      names.sort();
-      return names;
-    }
+    if (entries.length === 0 || !more || (named > 0 && added === 0)) return names;
   }
 }

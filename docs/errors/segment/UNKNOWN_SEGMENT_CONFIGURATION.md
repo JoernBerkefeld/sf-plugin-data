@@ -14,6 +14,8 @@ On deploy, the `.segment.json` file has a key the plugin does not send, or misse
 
 Retrieve keeps a setting the plugin does not know: an unknown key of the segment goes into `spec` after the known keys, extra keys of `includeDbt` into `spec.includeDbt`, extra model keys stay on the model. Observed fields (audit, status, membership tables) are not checked on retrieve. This holds for every segment type. A DBT segment without its DBT configuration is written as-is (`UNSUPPORTED_SEGMENT_VARIANT`).
 
+The criteria of a Dynamic or Einstein segment stay in `spec.includeCriteria` as read. So do the criteria of a Waterfall whose child segments retrieve could not name (the segment list read failed or does not list a child); a Waterfall whose children it names holds them in `spec.childSegments` instead, which deploy sends.
+
 A file key the segment file never holds is refused the same way, for example `spec.parameters` (Salesforce has no write for parameters) or `spec.publishInterval` (the `schedule` key holds the refresh schedule), and so is an unknown key inside `spec.schedule`.
 
 ## Why the plugin stops

@@ -218,7 +218,10 @@ export function operationDiagnostic(error: unknown, nextAction: string): string 
         ...(connect.requestId ? [`Request ID: ${connect.requestId}`] : []),
       ].join('; ')
     : '';
-  const remote = apiDetail ? ` Salesforce API detail: ${apiDetail}.` : '';
+  // Salesforce's own sentence may already end the detail; never add a second period.
+  const remote = apiDetail
+    ? ` Salesforce API detail: ${apiDetail}${/[.!?]$/u.test(apiDetail) ? '' : '.'}`
+    : '';
   if (connect && connect.kind !== 'api-error') {
     const explanation =
       connect.statusCode === 429

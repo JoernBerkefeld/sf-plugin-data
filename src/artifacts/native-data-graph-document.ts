@@ -312,8 +312,10 @@ function admitNode(
   const n = closed(value, nodeKeys, mode, keyPath);
   graphText(n.name);
   graphText(n.jsonPath);
-  if (strict)
-    for (const key of ['label', 'type']) need(isText(n[key]), `${keyPath}.${key}`, 'must be text');
+  if (strict) need(isText(n.label), `${keyPath}.label`, 'must be text');
+  // The node type is assigned by Salesforce: a create may leave it out (a live API 68 create
+  // without node types answered 201, 2026-11-18); a stated one must be text.
+  if (strict && Object.hasOwn(n, 'type')) need(isText(n.type), `${keyPath}.type`, 'must be text');
   graphRequire(!paths.has(n.jsonPath));
   paths.add(n.jsonPath);
   if (strict)

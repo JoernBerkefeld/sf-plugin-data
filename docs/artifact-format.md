@@ -40,8 +40,9 @@ from the org for objects it already holds and left out for new ones. Omitted set
 the org values. The plugin refuses, before any write, a join change of an existing related
 object (`DATA_GRAPH_JOIN_CHANGE`: Salesforce accepts it but keeps the old join) and a
 different type, reference or projected name of an existing node (assigned by Salesforce).
-The name and the data space identify the graph; a file with another name addresses another
-graph.
+A node's `type` may be left out: a create then sends none and Salesforce assigns it, and an
+update keeps the org value. The name and the data space identify the graph; a file with
+another name addresses another graph.
 
 ## Public calculated insight files
 
@@ -70,7 +71,11 @@ description, segment type, `segmentOn` DMO, lookback, an optional `schedule`, an
 of model names) and one `<Name>.segment.<model>.sql` per model beside it (that model's
 `sql`, plain text, bytes as returned). A UI segment holds its criteria as a JSON object in
 `includeCriteria` instead of models; other types (for example Waterfall or Dynamic) hold
-neither, and the lookback only when the segment has one. `schedule` is the refresh
+neither, and the lookback only when the segment has one. A Waterfall holds its child
+segments as `childSegments`, a list of segment API names in priority order (Salesforce
+stores definition IDs; retrieve names them, deploy sends the IDs of the target org). A
+file without `childSegments` leaves the children of the org segment alone; an empty list
+is refused (`INVALID_SEGMENT_DOCUMENT`). `schedule` is the refresh
 schedule in the shape the write takes (`frequency`, `interval`, `daysOfWeek` as a list,
 `startDateTime`, `endDate`, `endDateTime`, optional `time` with `hour`, `minute` and
 `timeZone`, or an hourly `publishInterval` when the read has no schedule details);

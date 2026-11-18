@@ -13,7 +13,8 @@ import {
 import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { bindSegmentDependencies } from './bind-segment-dependencies.js';
+import { bindSegmentChildren, bindSegmentDependencies } from './bind-segment-dependencies.js';
+import type { SegmentChildBinding, SegmentDependencyBinding } from './bind-segment-dependencies.js';
 import { preflightSegmentDeploy } from './preflight-segment-deploy.js';
 import { projectSegment, retrieveSegment } from './retrieve-segment.js';
 import { rejectedNextAction } from './deploy-result.js';
@@ -25,9 +26,14 @@ export type SegmentExecutionOptions = {
   verifyInput: () => Promise<void>;
   acquire?: typeof retrieveSegment;
   bind?: typeof bindSegmentDependencies;
+  children?: typeof bindSegmentChildren;
   read?: (name: string) => Promise<unknown>;
-  patch?: (document: unknown, schedule: boolean) => Promise<unknown>;
-  create?: (document: unknown) => Promise<unknown>;
+  patch?: (
+    document: unknown,
+    schedule: boolean,
+    children: ReadonlyMap<string, string>,
+  ) => Promise<unknown>;
+  create?: (document: unknown, children: ReadonlyMap<string, string>) => Promise<unknown>;
   now?: () => number;
   delay?: (milliseconds: number) => Promise<void>;
 };
@@ -75,7 +81,9 @@ function preservation(
       if (!file || off || Object.hasOwn(schedule, file)) delete result[key];
   }
   // Criteria content is checked by projectSegment; its presence must not silently disappear.
-  if (Object.hasOwn(result, 'includeCriteria')) result.includeCriteria = true;
+  // Waterfall children the file states are authored (compared by name via the projection).
+  if (Object.hasOwn(desired.spec, 'childSegments')) delete result.includeCriteria;
+  else if (Object.hasOwn(result, 'includeCriteria')) result.includeCriteria = true;
   for (const key of [
     'displayName',
     'description',
@@ -105,12 +113,14 @@ function preservation(
  * @param {unknown} value Exact PATCH response.
  * @param {ReturnType<typeof validateSegmentDocument>} desired Admitted requested definition.
  * @param {Record<string, unknown>} baseline Private prewrite preservation snapshot.
+ * @param {ReadonlyMap<string, string>} names Waterfall child definition ID to API name.
  * @returns {boolean} Whether supplied fields positively acknowledge this exact update.
  */
 function acknowledgedUpdate(
   value: unknown,
   desired: ReturnType<typeof validateSegmentDocument>,
   baseline: Record<string, unknown>,
+  names: ReadonlyMap<string, string>,
 ): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const raw = value as Record<string, unknown>;
@@ -125,6 +135,8 @@ function acknowledgedUpdate(
       ],
     },
     desired.identity.apiName,
+    'deploy',
+    names,
   );
   const expected = structuredClone(baseline);
   if (!Object.hasOwn(raw, 'segmentMembershipDmo')) delete expected.segmentMembershipDmo;
@@ -191,12 +203,23 @@ export async function executeSegmentDeploy(
       getConnectDiagnostic(evidence),
     );
   const acquire = options.acquire ?? retrieveSegment;
-  const bind = options.bind ?? bindSegmentDependencies;
+  const bindDmo = options.bind ?? bindSegmentDependencies;
+  const bindChildren = options.children ?? bindSegmentChildren;
+  // The DMO binding first, then each Waterfall child of the file; compared for drift as a whole.
+  const bindAll = async (
+    document: SegmentDocument,
+  ): Promise<Array<SegmentDependencyBinding | SegmentChildBinding>> => [
+    ...(await bindDmo(document, connection, apiVersion, dataSpace)),
+    ...(await bindChildren(document, connection, apiVersion)),
+  ];
   const now = options.now ?? Date.now;
   const delay = options.delay ?? setTimeout;
   let desired: ReturnType<typeof validateSegmentDocument>;
   let baseline: Record<string, unknown>;
-  let bindings: Awaited<ReturnType<typeof bindSegmentDependencies>>;
+  let bindings: Array<SegmentDependencyBinding | SegmentChildBinding>;
+  // Waterfall child API name to its definition ID in the target, and back.
+  let ids = new Map<string, string>();
+  let names = new Map<string, string>();
   // The org segment before an update; the schedule is sent only when it differs from the file.
   let current: SegmentDocument | undefined;
   try {
@@ -208,7 +231,8 @@ export async function executeSegmentDeploy(
       apiVersion,
       dataSpace,
       acquire,
-      bind,
+      bindDmo,
+      bindChildren,
     );
     creating = preview.outcome === 'create';
     if (!['create', 'update', 'unchanged'].includes(preview.outcome))
@@ -225,7 +249,10 @@ export async function executeSegmentDeploy(
         preflight: preview,
       };
     // Capture fresh bindings after prerequisite settlement; never trust batch-time binding IDs.
-    bindings = await bind(desired, connection, apiVersion, dataSpace);
+    const children = await bindChildren(desired, connection, apiVersion);
+    bindings = [...(await bindDmo(desired, connection, apiVersion, dataSpace)), ...children];
+    ids = new Map(children.map((child) => [child.identity.apiName, child.targetId]));
+    names = new Map(children.map((child) => [child.targetId, child.identity.apiName]));
     if (creating) {
       const fresh = await preflightSegmentDeploy(
         desired,
@@ -233,22 +260,32 @@ export async function executeSegmentDeploy(
         apiVersion,
         dataSpace,
         acquire,
-        bind,
+        bindDmo,
+        bindChildren,
       );
       if (fresh.outcome !== 'create')
         return result('blocked', 'not-attempted', 'SEGMENT_TARGET_DRIFT', fresh);
       await options.verifyInput();
-      if (!isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)))
+      if (!isDeepStrictEqual(bindings, await bindAll(desired)))
         return result('blocked', 'not-attempted', 'SEGMENT_DEPENDENCY_DRIFT');
       await options.verifyInput();
       baseline = {};
     } else {
-      const acquired = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
+      const acquired = await acquire(
+        connection,
+        desired.identity.apiName,
+        apiVersion,
+        dataSpace,
+        'deploy',
+        names,
+      );
       if (!acquired.candidate || !acquired.expectations || acquired.blockers.length > 0)
         return result('blocked', 'not-attempted', 'SEGMENT_TARGET_UNQUALIFIED', acquired);
       const projected = projectSegment(
         { segments: [acquired.expectations.runtime] },
         desired.identity.apiName,
+        'deploy',
+        names,
       );
       if (!isDeepStrictEqual(projected.candidate, validateSegmentDocument(acquired.candidate)))
         return result('blocked', 'not-attempted', 'SEGMENT_TARGET_DRIFT');
@@ -256,7 +293,7 @@ export async function executeSegmentDeploy(
       current = projected.candidate;
       // JSON bytes and target binding must still agree after fresh exact runtime acquisition.
       await options.verifyInput();
-      if (!isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)))
+      if (!isDeepStrictEqual(bindings, await bindAll(desired)))
         return result('blocked', 'not-attempted', 'SEGMENT_DEPENDENCY_DRIFT');
       await options.verifyInput();
       if (carriesDefinition(projected.candidate, desired))
@@ -273,7 +310,8 @@ export async function executeSegmentDeploy(
     ((name: string) => client.get(`/services/data/v${version}/ssot/segments/${name}`));
   const patch =
     options.patch ??
-    ((document: unknown, schedule: boolean) => client.patchSegment(document, schedule));
+    ((document: unknown, schedule: boolean, children: ReadonlyMap<string, string>) =>
+      client.patchSegment(document, schedule, children));
   const schedule = desired.spec.schedule;
   // A schedule the write sends makes the segment publish on it in this org.
   const notice = segmentScheduleNotice(desired, current);
@@ -293,12 +331,16 @@ export async function executeSegmentDeploy(
       const response = projectSegment(
         {
           segments: [
-            await (options.create ?? ((document: unknown) => client.createSegment(document)))(
-              desired,
-            ),
+            await (
+              options.create ??
+              ((document: unknown, children: ReadonlyMap<string, string>) =>
+                client.createSegment(document, children))
+            )(desired, ids),
           ],
         },
         desired.identity.apiName,
+        'deploy',
+        names,
       );
       baseline = preservation(response.runtime, desired);
       responseQualified =
@@ -309,9 +351,11 @@ export async function executeSegmentDeploy(
         await patch(
           desired,
           schedule !== undefined && !sameSegmentSchedule(current?.spec.schedule, schedule),
+          ids,
         ),
         desired,
         baseline,
+        names,
       );
   } catch (error) {
     writeFailure = error;
@@ -378,6 +422,8 @@ export async function executeSegmentDeploy(
       const observed = projectSegment(
         await read(desired.identity.apiName),
         desired.identity.apiName,
+        'deploy',
+        names,
       );
       const readElapsed = now() - started;
       if (
@@ -391,7 +437,7 @@ export async function executeSegmentDeploy(
         return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH', writeFailure);
       if (['PROCESSING', 'COUNTING'].includes(String(observed.runtime.segmentStatus))) {
         if (!responseQualified) continue;
-        if (!isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)))
+        if (!isDeepStrictEqual(bindings, await bindAll(desired)))
           return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH');
         if (now() - started >= segmentPollBudget.timeoutMs) return unknown;
         // Confirmed configuration acceptance, not finished audience computation.
@@ -404,7 +450,14 @@ export async function executeSegmentDeploy(
         return result('failed', 'unknown', 'SEGMENT_SETTLEMENT_UNQUALIFIED', writeFailure);
       if (creating) baseline = preservation(observed.runtime, desired);
       // A separately acquired exact runtime snapshot, not the write echo or poll response.
-      const settled = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
+      const settled = await acquire(
+        connection,
+        desired.identity.apiName,
+        apiVersion,
+        dataSpace,
+        'deploy',
+        names,
+      );
       if (
         !settled.candidate ||
         !settled.expectations ||
@@ -412,12 +465,16 @@ export async function executeSegmentDeploy(
         settled.expectations.runtime.segmentStatus !== 'ACTIVE' ||
         !carriesDefinition(validateSegmentDocument(settled.candidate), desired) ||
         !carriesDefinition(
-          projectSegment({ segments: [settled.expectations.runtime] }, desired.identity.apiName)
-            .candidate,
+          projectSegment(
+            { segments: [settled.expectations.runtime] },
+            desired.identity.apiName,
+            'deploy',
+            names,
+          ).candidate,
           desired,
         ) ||
         !isDeepStrictEqual(preservation(settled.expectations.runtime, desired), baseline) ||
-        !isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)) ||
+        !isDeepStrictEqual(bindings, await bindAll(desired)) ||
         now() - started >= segmentPollBudget.timeoutMs
       )
         return result(

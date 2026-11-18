@@ -10,7 +10,7 @@
 
 ## What it means
 
-`sf data360 deploy --preview` stopped on an error that has no more specific code: an unexpected error while reading inputs or the target, or a data graph preview that failed or was blocked.
+`sf data360 deploy --preview` stopped on an error that has no more specific code: an unexpected error while reading inputs or the target, or a data graph preview that failed or was blocked without naming its cause. A data graph preview blocked with a named cause (for example `DATA_GRAPH_JOIN_CHANGE`) ends [`DEPLOY_PREVIEW_BLOCKED`](../general/DEPLOY_PREVIEW_BLOCKED.md) instead.
 
 A preview only reads. The org is never changed by it.
 
@@ -37,3 +37,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 
 - [`DEPLOY_EXECUTION_FAILED`](../general/DEPLOY_EXECUTION_FAILED.md) — the same failure without `--preview`.
 - [`PREFLIGHT_FAILED`](../general/PREFLIGHT_FAILED.md) — one item's preview failed inside a batch.
+- [`DEPLOY_PREVIEW_BLOCKED`](../general/DEPLOY_PREVIEW_BLOCKED.md) — the preview found an item with a named block.

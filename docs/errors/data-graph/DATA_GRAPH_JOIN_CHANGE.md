@@ -16,7 +16,7 @@ At API 68, Salesforce answers such an update with HTTP 200 and rebuilds the grap
 
 ## Why the plugin stops
 
-Sending the change would report an update that did not happen. The deploy stops before any write, also in preview.
+Sending the change would report an update that did not happen. The deploy stops before any write, also in preview: the preview item is `blocked` with target `present`, and the run reports `DEPLOY_PREVIEW_BLOCKED` (the deploy `DEPLOY_EXECUTION_BLOCKED`).
 
 ## How to fix
 
