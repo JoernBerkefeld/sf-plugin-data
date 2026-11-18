@@ -66,8 +66,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce returned a mapping with a different name than the one requested, so the result was not trusted. Rerun the command; if it repeats, check the mapping name in the org.',
   MAPPING_TARGET_NOT_SETTLED:
     'The mapping in the org is not ACTIVE yet, for example because Salesforce is still processing an earlier change. Wait until it is ACTIVE, then rerun.',
-  MAPPING_TARGET_UNSUPPORTED:
-    'The target DMO is platform-generated, untyped or a namespaced custom DMO, which this plugin does not write mappings to. Map onto a custom or standard DMO instead.',
   MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED:
     "A field pair was removed, but reading the mappings back did not confirm the expected result. Inspect the DMO's mappings in the org before trying again; nothing was rolled back.",
   MAPPING_UNMAP_PLAN_CHANGED:

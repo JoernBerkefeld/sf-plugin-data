@@ -1,6 +1,6 @@
 # `UNSUPPORTED_DMO_TARGET`
 
-> The plugin does not write this DMO: it is platform-generated or namespaced, or a standard DMO selected for a whole delete. Choose a custom DMO instead.
+> The plugin does not send this DMO write: a whole delete of a standard DMO or of a DMO read without a creationType, or a new DMO with a namespaced name.
 
 |              |                                          |
 | ------------ | ---------------------------------------- |
@@ -10,36 +10,33 @@
 
 ## What it means
 
-The plugin sorts every existing DMO by what it may do with it:
+The plugin sorts every existing DMO by what it writes on it:
 
-- **custom** (`creationType` `Custom`, no namespace in the name): everything, including deleting it;
-- **standard** (`creationType` `Standard`): custom fields, the object label and description only; never deleted;
-- **anything else** (platform-generated DMOs, a read without `creationType`, a custom DMO under a namespaced name): nothing.
+- **custom** (`creationType` `Custom`, no namespace in the name): every field and property;
+- **everything else** (standard DMOs, the DMOs Salesforce generates for identity resolution, data graphs or segments, a custom DMO under a namespaced name, a read without `creationType`): custom fields, the object label and the object description only.
 
-This code means the DMO falls outside what the command needs: a deploy or field delete on a DMO of the third kind, a whole-DMO delete (or its preview) on anything but a custom DMO, or a deploy that would create a new DMO with a namespaced name.
+A whole-DMO delete is sent for every DMO except a standard one (`creationType` `Standard`) and a read without `creationType`. This code means the command asked for one of those deletes (or its preview), or a deploy would create a new DMO with a namespaced name.
 
 ## Why the plugin stops
 
-Platform-generated and packaged DMOs belong to Salesforce features or managed packages; changing them can break those features. Standard DMOs are part of the data model and cannot be deleted. The plugin refuses before any write.
+Standard DMOs are part of the Salesforce data model; the plugin never deletes them. Salesforce does not allow a new DMO name with a namespace. The plugin refuses before any write.
 
 ## How to fix
 
 1. Check `creationType` and the API name of the DMO in the org.
-2. To delete a standard DMO's custom fields, use `sf data360 delete -m dmo:<Name>__dlm --field <Field>__c` instead of deleting the DMO.
+2. To delete fields of a standard DMO, use `sf data360 delete -m dmo:<Name>__dlm --field <Field>__c` instead of deleting the DMO.
 3. To create a new DMO, use a name without a namespace prefix.
-4. Leave platform-generated and namespaced DMOs out of the selection.
 
 ## Example output
 
 ```text
 Delete: blocked.
-Blocked: dmo:Individual__dlm; mutation: not-attempted.
+Blocked: dmo:ssot__Individual__dlm; mutation: not-attempted.
 UNSUPPORTED_DMO_TARGET: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.
-Hint: The plugin does not write this DMO: it is platform-generated or namespaced, or a standard DMO selected for a whole delete. Choose a custom DMO instead.
+Hint: The plugin does not send this DMO write: a whole delete of a standard DMO or of a DMO read without a creationType, or a new DMO with a namespaced name.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dmo/UNSUPPORTED_DMO_TARGET.md
 ```
 
 ## Related codes
 
-- [`MAPPING_TARGET_UNSUPPORTED`](../mapping/MAPPING_TARGET_UNSUPPORTED.md) — the same kind of refusal for a mapping target.
-- [`UNSUPPORTED_DMO_FIELD_CHANGE`](../dmo/UNSUPPORTED_DMO_FIELD_CHANGE.md) — a field of a standard DMO that may not change.
+- [`UNSUPPORTED_DMO_FIELD_CHANGE`](../dmo/UNSUPPORTED_DMO_FIELD_CHANGE.md) — a field change a deploy does not send.

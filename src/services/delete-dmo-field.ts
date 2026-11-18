@@ -16,7 +16,6 @@ import {
 import type { NativeMappingDocument } from '../artifacts/native-mapping-document.js';
 import {
   defaultNativeDmoSettle,
-  isGeneratedDmoField,
   previewFieldDeleteNativeDmo,
   retrieveNativeDmo,
 } from './native-dmo.js';
@@ -130,9 +129,10 @@ function mappedRefusal(apiName: string, fields: string[], reason: string): Nativ
 }
 
 /**
- * Admit a field-level delete with reads only: a custom or standard DMO, every named field
- * present, custom, not the primary key and not generated, and every mapping pair that targets a
- * named field identified by its observed selector on an ACTIVE mapping.
+ * Admit a field-level delete with reads only: every named field present on the DMO, and every
+ * mapping pair that targets a named field identified by its observed selector on an ACTIVE
+ * mapping. Any field but the primary key may be named, standard, system and generated fields
+ * included: Salesforce decides, and its refusal is reported.
  * @param {string} apiName Exact DMO full name.
  * @param {string[]} fields Exact, distinct field names ending in __c.
  * @param {DmoFieldDeleteClients} clients Target clients; only read here.
@@ -145,9 +145,11 @@ export async function planDmoFieldDelete(
   clients: DmoFieldDeleteClients,
   requestScope?: string,
 ): Promise<DmoFieldDeletePlan> {
-  // Platform-generated DMOs and namespaced custom DMOs are refused here (UNSUPPORTED_DMO_TARGET).
-  const admitted = await previewFieldDeleteNativeDmo(apiName, clients.dmo, requestScope);
-  const target = admitted.document;
+  const { document: target } = await previewFieldDeleteNativeDmo(
+    apiName,
+    clients.dmo,
+    requestScope,
+  );
   const known = new Map(target.spec.fields.map((field) => [field.name, field]));
   const missing = fields.filter((name) => !known.has(name));
   if (missing.length > 0)
@@ -155,21 +157,12 @@ export async function planDmoFieldDelete(
       new NativeDmoError('DMO_FIELD_NOT_FOUND'),
       `Field delete refused for ${apiName}: ${missing.join(', ')} ${missing.length === 1 ? 'does' : 'do'} not exist on the target.`,
     );
-  for (const name of fields) {
-    const field = known.get(name)!;
-    if (
-      field.isPrimaryKey ||
-      isGeneratedDmoField(field) ||
-      // On a standard DMO only a field marked custom is removed; an unmarked one is not.
-      (admitted.scope === 'standard'
-        ? field.creationType !== 'Custom'
-        : field.creationType !== undefined && field.creationType !== 'Custom')
-    )
-      throw explained(
-        new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE'),
-        `Field delete refused for ${apiName}: ${name} is ${field.isPrimaryKey ? 'the primary-key field' : 'a standard, generated or system field'} and is never removed.`,
-      );
-  }
+  const key = fields.find((name) => known.get(name)!.isPrimaryKey);
+  if (key !== undefined)
+    throw explained(
+      new NativeDmoError('UNSUPPORTED_DMO_FIELD_CHANGE'),
+      `Field delete refused for ${apiName}: ${key} is the primary-key field and is never removed.`,
+    );
   if (!clients.remover.removeFields) throw new NativeDmoError('DMO_FIELD_REMOVAL_UNAVAILABLE');
   const mapped = fields.filter((name) => known.get(name)!.isMapped === true);
   let entries: Record<string, unknown>[] = [];
@@ -187,8 +180,7 @@ export async function planDmoFieldDelete(
   for (const entry of entries) {
     const document = normalizeNativeMapping(entry, requestScope);
     if (document.spec.targetEntityDeveloperName !== apiName) continue;
-    // A named field is custom, not a key and not generated, so its pairs are ordinary pairs:
-    // the generated, key-qualifier and primary-key pairs of the mapping are never selected.
+    // Only the pairs that target a named field are selected.
     const selected = document.spec.fieldMappings.filter((pair) =>
       fields.includes(pair.targetFieldDeveloperName),
     );
@@ -212,17 +204,9 @@ export async function planDmoFieldDelete(
       throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
     mappings.push({ document, pairs });
   }
-  const unlisted = mapped.filter(
-    (name) =>
-      !mappings.some(({ pairs }) => pairs.some((pair) => pair.targetFieldDeveloperName === name)),
-  );
-  if (unlisted.length > 0)
-    throw mappedRefusal(
-      apiName,
-      unlisted,
-      'no mapping targeting this DMO lists a pair for the field',
-    );
-
+  // A field that reads mapped while no mapping lists a pair for it (Salesforce marks every field
+  // of a generated DMO as mapped) has no pair to lose: it is removed, and the side-effect check
+  // then expects no pair to disappear.
   return { apiName, dataSpace: target.identity.dataSpace, fields, mappings };
 }
 
@@ -288,8 +272,9 @@ async function readDmoMappings(
 
 /**
  * Snapshot, read-only and right before the write, what a field removal may change: the fields
- * must exist, every mapping of the DMO must be ACTIVE and match its detail read, and every mapped
- * field must have an identified pair, because Salesforce drops those pairs with the field.
+ * must exist, and every mapping of the DMO must be ACTIVE and match its detail read. The pairs
+ * that target the fields are collected, because Salesforce drops them with the field; a mapped
+ * field that no mapping lists a pair for has none to drop.
  * @param {string} apiName Exact DMO full name.
  * @param {string[]} fields Fields to remove.
  * @param {FieldRemovalReaders} readers Target readers.
@@ -331,17 +316,6 @@ export async function snapshotFieldRemoval(
           developerName: pair.developerName ?? '',
         });
   }
-  const unlisted = fields.filter(
-    (name) =>
-      present.get(name)!.isMapped === true &&
-      !pairs.some((pair) => pair.targetFieldDeveloperName === name),
-  );
-  if (unlisted.length > 0)
-    throw mappedRefusal(
-      apiName,
-      unlisted,
-      'no mapping targeting this DMO lists a pair for the field',
-    );
   return { apiName, fields, dmo, mappings: read.map((entry) => entry.document), pairs };
 }
 

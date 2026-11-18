@@ -156,8 +156,8 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   `DMO_FIELD_KEY_NOT_SENT`; the outcome stays `created`, `updated` or `unchanged`.
 - Generated fields (`DataSource__c`, `DataSourceObject__c`,
   `InternalOrganization__c`, names starting with `KQ_`, or `creationType: System`)
-  are left out of a create. A definition may also omit them for an update; they
-  are never removed.
+  are left out of a create. A definition may also omit them for an update; a deploy
+  never removes them (`delete --field` does on request).
 - An absent `spec.description` is not managed: an update leaves the target value as
   is. An explicit empty string clears it.
 - Field `description` and `isDynamicLookup` are accepted by the API but never
@@ -263,17 +263,18 @@ Refused before any write: changing an existing field's `dataType` or
 `isPrimaryKey`, omitting a custom field that exists in the target without
 `--allow-field-removal`, omitting the target's primary-key field
 (`UNSUPPORTED_DMO_FIELD_CHANGE`), adding a generated field or a second primary key
-(`UNSUPPORTED_DMO_FIELD_ADDITION`), any deploy or delete of a platform-generated
-DMO or of a custom DMO under a namespaced name, creating a namespaced DMO, and
-deleting a standard DMO (`UNSUPPORTED_DMO_TARGET`).
+(`UNSUPPORTED_DMO_FIELD_ADDITION`), creating a namespaced DMO, and deleting a
+standard DMO or a DMO read without `creationType` (`UNSUPPORTED_DMO_TARGET`). Every
+other DMO but an unprefixed custom one (platform-generated and namespaced DMOs
+included) is written like a standard DMO, and Salesforce decides the rest.
 
 Field removal is observed at API 68 on empty custom DMOs, unmapped and mapped by two
 mappings, and on one standard DMO. Removing a data-bearing field is not verified.
 Standard DMO writes are observed at API 68 through the plugin on one standard DMO in
 two orgs, active in only one of them (add and relabel a custom field; remove it with
 `--allow-field-removal` and with `delete --field`; object description set and
-cleared); a category change, standard DMOs in active use and platform-generated DMOs
-are not tested.
+cleared); a category change and standard DMOs in active use are not tested. Writes to
+platform-generated DMOs are observed at API 68 through the raw API.
 
 The values Salesforce accepted in live verification at API 68 (categories, field
 data types, label length and key rules) are listed in the README's Public DMO

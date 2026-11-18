@@ -90,7 +90,7 @@ test('mapping create preserves arbitrary custom Id/system-looking fields rather 
   );
 });
 
-test('mapping targets other than custom and standard DMOs are refused', async () => {
+test('mapping targets of every kind are planned; only a standard DMO carries the activation notice', async () => {
   for (const change of [
     { creationType: 'Standard' },
     { creationType: 'Standard', name: 'ssot__Test__dlm' },
@@ -115,11 +115,9 @@ test('mapping targets other than custom and standard DMOs are refused', async ()
     deps.target.get = async () => ({ ...(await read()), ...change });
     const document = desired();
     if (change.name) document.spec.targetEntityDeveloperName = change.name;
-    await assert.rejects(
-      preflightNativeMapping(document, client(), deps),
-      (error) => error.code === 'MAPPING_TARGET_UNSUPPORTED',
-      JSON.stringify(change),
-    );
+    const plan = await preflightNativeMapping(document, client(), deps);
+    assert.equal(plan.operation, 'create', JSON.stringify(change));
+    assert.ok(!('activatesStandardDmo' in plan), JSON.stringify(change));
   }
   const plan = await preflightNativeMapping(desired(), client(), dependencies());
   assert.equal(plan.writes.length, 1);

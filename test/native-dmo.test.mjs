@@ -616,40 +616,47 @@ test('native DMO create refuses a namespaced name before any write', async () =>
   );
 });
 
-test('native DMO deletes are refused for standard, namespaced and generated targets, writes for namespaced and generated ones', async () => {
+test('native DMO deletes are refused for standard and untyped targets and sent for namespaced and generated ones', async () => {
   for (const raw of [
     { ...native(), creationType: 'Standard' },
-    { ...native(), creationType: 'Adg' },
-    { ...native(), creationType: 'Bridge' },
     { ...native(), creationType: undefined },
-    { ...native(), name: 'ssot__Individual__dlm' },
   ]) {
-    const name = raw.name;
-    const saved = normalizeNativeDmo(raw);
-    saved.spec.label = 'Changed';
-    // A standard DMO takes field, label and description writes: native-dmo-standard.test.mjs.
-    if (raw.creationType !== 'Standard')
-      await assert.rejects(
-        deployNativeDmo(saved, {
-          get: async () => raw,
-          update: async () => assert.fail('guarded target must not PATCH'),
-        }),
-        /UNSUPPORTED_DMO_TARGET/,
-      );
     await assert.rejects(
-      deleteNativeDmo(name, {
+      deleteNativeDmo(raw.name, {
         get: async () => raw,
         delete: async () => assert.fail('guarded target must not DELETE'),
       }),
       /UNSUPPORTED_DMO_TARGET/,
     );
     await assert.rejects(
-      previewDeleteNativeDmo(name, { get: async () => raw }),
+      previewDeleteNativeDmo(raw.name, { get: async () => raw }),
       /UNSUPPORTED_DMO_TARGET/,
     );
-    // Reading stays possible.
-    const retrieved = await retrieveNativeDmo(name, { get: async () => raw });
-    assert.equal(retrieved.identity.apiName, name);
+    const retrieved = await retrieveNativeDmo(raw.name, { get: async () => raw });
+    assert.equal(retrieved.identity.apiName, raw.name);
+  }
+  for (const raw of [
+    { ...native(), creationType: 'Adg' },
+    { ...native(), creationType: 'Bridge' },
+    { ...native(), creationType: 'Derived' },
+    { ...native(), name: 'ssot__Individual__dlm' },
+  ]) {
+    const name = raw.name;
+    const { identity } = await previewDeleteNativeDmo(name, { get: async () => raw });
+    assert.equal(identity.apiName, name);
+    // Salesforce refuses a generated DMO while its owner exists; that answer is passed on.
+    const deletes = [];
+    await assert.rejects(
+      deleteNativeDmo(name, {
+        get: async () => raw,
+        delete: async (target) => {
+          deletes.push(target);
+          throw new NativeDmoError('DMO_HTTP_ERROR', 412);
+        },
+      }),
+      (error) => error instanceof NativeDmoError && error.status === 412,
+    );
+    assert.deepEqual(deletes, [name]);
   }
 });
 

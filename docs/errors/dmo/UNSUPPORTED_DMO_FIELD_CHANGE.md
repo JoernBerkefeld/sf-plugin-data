@@ -15,13 +15,13 @@ On an existing DMO the plugin compares every field in the org with the file. One
 - a custom field is missing from the file and `--allow-field-removal` is not set;
 - the primary-key field is missing from the file (it is never removed);
 - a property that cannot change differs: `dataType`, `isPrimaryKey`, read-only keys such as `creationType` or `usageTag`, or anything on a generated field;
-- on a standard DMO, a listed standard or system field differs from the org.
+- on any DMO other than an unprefixed custom one (standard, platform-generated, namespaced), a listed standard, system or generated field differs from the org in a property other than its label (a changed label alone is sent, and Salesforce decides).
 
-On `delete --field` it means a named field is the primary key, or a standard, generated or system field.
+On `delete --field` it means a named field is the primary key.
 
 ## Why the plugin stops
 
-Salesforce accepts some of these edits and silently ignores them, and rejects others. Standard, system and key fields are never removed. The plugin refuses the change before any write so the result is never a half-applied definition.
+Salesforce accepts some of these edits and silently ignores them, and rejects others. It does not protect standard, system and generated fields, so a deploy never removes them; `sf data360 delete --field` removes them on request. The primary key is never removed. The plugin refuses the change before any write so the result is never a half-applied definition.
 
 ## How to fix
 

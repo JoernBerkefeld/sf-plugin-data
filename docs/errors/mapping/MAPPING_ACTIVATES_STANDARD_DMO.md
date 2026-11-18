@@ -37,4 +37,3 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/m
 ## Related codes
 
 - [`MAPPING_FIELD_TYPES_DIFFER`](../mapping/MAPPING_FIELD_TYPES_DIFFER.md) — notice for pairs whose field data types differ.
-- [`MAPPING_TARGET_UNSUPPORTED`](../mapping/MAPPING_TARGET_UNSUPPORTED.md) — the target DMO is of a kind the plugin does not write to.

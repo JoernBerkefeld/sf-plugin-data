@@ -442,7 +442,8 @@ Field removal with `--allow-field-removal` (deploy only, native DMO inputs only)
   mappings stay ACTIVE, and the DMO's properties and other fields are unchanged. The
   plugin therefore removes a mapped field with the one destructive change and does
   not delete pairs one by one.
-- The primary key and generated fields are never removed.
+- A deploy never removes the primary key or a generated field (a missing one is
+  kept); `delete --field` removes generated fields on request.
 - A mapped field is removed with one command,
   `sf data360 deploy -m mapping:<MappingApiName> -m dmo:<Dmo__dlm> --allow-field-removal`,
   when the DMO file omits the field and the mapping file omits its pair. Before the
@@ -504,23 +505,31 @@ Write scope, decided from the raw read of the existing target
 
 - `creationType` `Custom` and a name without a double underscore before `__dlm`:
   everything above, whole-DMO delete and field-level delete.
-- `creationType` `Standard` (for example `ssot__Brand__dlm`): deploy writes custom
-  fields (add, relabel, remove with `--allow-field-removal` under the same rules),
-  the object label (sent only when it differs) and the object description (absent is
-  not managed, an empty string clears it). Field-level delete removes custom fields.
-  The DMO is never created and never deleted.
-- Anything else, that is a platform-generated DMO (`Adg`, `Bridge`, `Derived`,
-  `Segment_Membership` or any other `creationType`), a read without `creationType`
-  or a custom `creationType` under a namespaced name: deploy, delete, delete preview
-  and field-level delete are refused with `UNSUPPORTED_DMO_TARGET`.
+- Everything else (standard scope): `creationType` `Standard` (for example
+  `ssot__Brand__dlm`), a platform-generated DMO (`Adg`, `Bridge`, `Derived`,
+  `Segment_Membership` or any other `creationType`), a custom `creationType` under a
+  namespaced name and a read without `creationType`. Deploy writes custom fields
+  (add, relabel, remove with `--allow-field-removal` under the same rules; a field
+  that reads mapped while no mapping lists a pair for it, as on generated DMOs, has
+  no pair to lose and is removed), the labels
+  of the other fields, the object label (sent only when it differs) and the object
+  description (absent is not managed, an empty string clears it). Field-level delete
+  removes any named field but the primary key. Whole-DMO delete is sent, except for a
+  standard DMO and a read without `creationType` (`UNSUPPORTED_DMO_TARGET`); a
+  standard DMO is never created.
 
-Standard DMO rules:
+Standard-scope rules:
 
-- Standard and system fields (field `creationType` other than `Custom`) are never
-  sent and never removed, and may be absent from the file. One that the file lists
-  and that differs from the target in a comparable property is refused with
-  `UNSUPPORTED_DMO_FIELD_CHANGE`, naming field and property. `isMapped` and
-  `keyQualifierName` are not compared on these fields.
+- Standard, system and generated fields (field `creationType` other than `Custom`)
+  are never removed by a deploy and may be absent from the file (retrieve leaves the
+  generated ones out, so a missing one is kept). One that the file lists with another
+  `label` gets that label alone sent (`{"fields":[{"name","label","dataType"}]}`);
+  Salesforce decides (API 68: system and graph fields relabelled, an `ssot__` field
+  refused with 400 `INVALID_INPUT`). Any other difference in a comparable property is
+  refused with `UNSUPPORTED_DMO_FIELD_CHANGE`, naming field and property. `isMapped`
+  and `keyQualifierName` are not compared on these fields. Salesforce does not protect
+  these fields itself (API 68 relabels and deletes them), so this rule is the
+  plugin's.
 - A new field must be a plain custom field: no double underscore before `__c` and no
   `creationType` other than `Custom`. Otherwise `UNSUPPORTED_DMO_FIELD_ADDITION`.
 - The category is neither sent nor compared nor required at readback. Mapping a
@@ -531,8 +540,8 @@ Standard DMO rules:
 - PATCH body for one added custom field: `{"fields":[{"name","label","dataType",
 "isPrimaryKey"}]}`; for a label change: `{"label"}`; `dataSpaceName` only with
   `--dataspace`.
-- Readback confirms the label, a managed description, the custom fields of the file
-  and the absence of removed fields.
+- Readback confirms the label, a managed description, the custom fields of the file,
+  the labels of the other listed fields and the absence of removed fields.
 - [x] Observed at API 68 through the plugin on one standard DMO in two orgs, active in
       only one of them: add and relabel a custom field; remove it with
       `--allow-field-removal` and with `delete --field` (local file refreshed);
@@ -542,15 +551,23 @@ Standard DMO rules:
 - [x] Observed at API 68 on one standard DMO: object label changed and reverted;
       Salesforce rejects an edit of a standard field ("Data model fields cannot start
       with ssot__").
+- [x] Observed at API 68 through the raw API on `Derived`/`Bridge` (identity
+      resolution) and `Adg` (data graph) DMOs: object label/description, added custom
+      fields, custom-field relabels and Metadata API field deletes accepted; system
+      and graph fields relabelled and deleted; `ssot__` field relabel refused (400);
+      mapping POST refused (400 "Unsupported DMO Creation Type used for mapping");
+      DMO DELETE refused while the owner exists (412 `MATCH_PRECONDITION_FAILED`).
 - [ ] Not tested: a category change on a standard DMO, standard DMOs in active use
-      (data-bearing, referenced), anything on platform-generated DMOs. Removal of a
-      mapped custom field of a standard DMO is covered by synthetic tests only.
+      (data-bearing, referenced), whole-DMO delete of a standard DMO, namespaced
+      custom DMOs. The plugin's writes to platform-generated DMOs and the removal of a
+      mapped custom field of a standard DMO are covered by synthetic tests only.
 
 Native mapping targets, decided from the same raw read:
 
-- A mapping deploys onto a custom DMO or a standard DMO. Any other target
-  (platform-generated, no `creationType`, custom under a namespaced name) is refused
-  with `MAPPING_TARGET_UNSUPPORTED`.
+- A mapping deploys onto any DMO and Salesforce decides; at API 68 it refuses
+  platform-generated targets (400 `INVALID_INPUT`), and that answer is reported.
+  `MAPPING_ACTIVATES_STANDARD_DMO` is shown only for a `creationType` `Standard`
+  target.
 - Create and update, custom and standard target alike: the plugin sends the pairs the
   file lists and Salesforce decides. No local rule on field data types, source and
   target names, `KQ_` names, one source field onto several targets or a target another
@@ -712,13 +729,13 @@ Field-level delete,
 - `--field` is repeatable and needs exactly one `dmo:` selector. Any other selector,
   `--changed-since`, `--delete-dlo`, or `--output-dir` without
   `--field` is refused with `INVALID_FIELD_DELETE_SELECTION` before any org call.
-- Admission is read-only: custom or standard DMO (`UNSUPPORTED_DMO_TARGET`
-  otherwise); each field exists (`DMO_FIELD_NOT_FOUND`), is custom, not the primary
-  key and not generated (`UNSUPPORTED_DMO_FIELD_CHANGE`; on a standard DMO the field
-  must be marked `creationType` `Custom`); the mappings targeting the DMO are listed and
-  every pair targeting a named field is collected. A mapped field without an
-  identified pair, including a failed list request, is refused with
-  `DMO_FIELD_REMOVAL_MAPPED`. Every collected pair must be identified on an ACTIVE
+- Admission is read-only: any DMO; each field exists (`DMO_FIELD_NOT_FOUND`) and is
+  not the primary key (`UNSUPPORTED_DMO_FIELD_CHANGE`); standard, system and
+  generated fields may be named and Salesforce decides (a Metadata API refusal is
+  reported with mutation `rejected`); the mappings targeting the DMO are listed and
+  every pair targeting a named field is collected. A mapped field is refused with
+  `DMO_FIELD_REMOVAL_MAPPED` only when the list request fails (other than 404); a
+  mapped field that no mapping lists a pair for has none to lose and is removed. Every collected pair must be identified on an ACTIVE
   mapping whose detail read equals its list entry.
 - Right before the write the plugin reads the DMO and all of its mappings again; the
   pairs must still be exactly the planned ones (`MAPPING_UNMAP_PLAN_CHANGED`

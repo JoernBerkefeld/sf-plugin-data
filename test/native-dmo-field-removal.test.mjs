@@ -210,20 +210,25 @@ test('a mapped field is never removed, and the mapped marker is not treated as a
   ]);
 });
 
-test('the target guard applies before any planned removal', async () => {
+test('outside the custom scope a removal plans custom fields only, never generated ones', async () => {
   for (const raw of [
     { ...native(), creationType: 'Adg' },
+    { ...native(), creationType: 'Derived' },
     { ...native(), creationType: undefined },
     { ...native(), name: 'ssot__Example__dlm' },
   ]) {
-    const saved = authored(['Note__c']);
-    saved.identity.apiName = raw.name;
-    const { calls, client } = recording({ get: async () => raw });
-    await assert.rejects(
-      deployNativeDmo(saved, client, undefined, fast, allow),
-      /UNSUPPORTED_DMO_TARGET/,
-    );
-    assert.deepEqual(calls, []);
+    // The file leaves out a custom field and both generated fields.
+    const saved = normalizeNativeDmo({
+      ...raw,
+      fields: raw.fields.filter(
+        (entry) => entry.creationType === 'Custom' && entry.name !== 'Note__c',
+      ),
+    });
+    const plan = await preflightNativeDmo(saved, { get: async () => raw }, undefined, allow);
+    assert.equal(plan.operation, 'update', JSON.stringify(raw.creationType));
+    assert.deepEqual(plan.removeFields, ['Note__c']);
+    assert.equal(plan.standard, true);
+    assert.equal(plan.body, undefined);
   }
 });
 
@@ -491,7 +496,11 @@ test('an unconfirmed removal fails with DMO_FIELD_REMOVAL_FAILED, safe problem t
     });
     await assert.rejects(
       transport.removeFields(apiName, ['Note__c']),
-      (error) => error instanceof NativeDmoError && error.code === 'DMO_FIELD_REMOVAL_FAILED',
+      (error) =>
+        error instanceof NativeDmoError &&
+        error.code === 'DMO_FIELD_REMOVAL_FAILED' &&
+        // Only a Failed deployment with component failures is Salesforce's refusal.
+        error.rejected === (receipt.stdout.includes('"status":"Failed"') ? true : undefined),
     );
     assert.equal(runs, 1);
     const { calls, client } = recording({ removeFields: transport.removeFields });

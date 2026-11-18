@@ -269,28 +269,23 @@ test('field delete needs no --confirm-delete; preview writes nothing', async () 
   assert.equal(writes(org).length, 1);
 });
 
-test('field delete admission refuses unsupported targets and fields with reads only', async () => {
+test('field delete admission refuses the primary key and unsafe mapping states with reads only', async () => {
   const cases = [
-    ...['Adg', 'Bridge', undefined].map((creationType) => ({
-      code: 'UNSUPPORTED_DMO_TARGET',
-      field: 'Note__c',
-      prepare: (org) => {
-        org.dmo.creationType = creationType;
-      },
-    })),
-    // On a standard DMO only a field marked custom is removed.
-    ...['ssot__Name__c', 'ssot__Id__c', 'Unmarked__c', 'DataSource__c'].map((field) => ({
+    // The primary key stays refused on every DMO.
+    {
       code: 'UNSUPPORTED_DMO_FIELD_CHANGE',
-      field,
-      message:
-        field === 'ssot__Id__c' ? /primary-key field/u : /standard, generated or system field/u,
+      field: 'ssot__Id__c',
+      message: /primary-key field/u,
       prepare: (org) => asStandard(org),
-    })),
+    },
     { code: 'UNSUPPORTED_DMO_FIELD_CHANGE', field: 'Id__c', message: /primary-key field/u },
     {
       code: 'UNSUPPORTED_DMO_FIELD_CHANGE',
-      field: 'DataSource__c',
-      message: /generated or system field/u,
+      field: 'Id__c',
+      message: /primary-key field/u,
+      prepare: (org) => {
+        org.dmo.creationType = 'Derived';
+      },
     },
     { code: 'DMO_FIELD_NOT_FOUND', field: 'Missing__c', message: /Missing__c does not exist/u },
     {
@@ -301,16 +296,6 @@ test('field delete admission refuses unsupported targets and fields with reads o
         org.mappingClient.list = async () => {
           org.calls.push('mapping.list');
           throw new NativeMappingError('MAPPING_HTTP_ERROR', 503);
-        };
-      },
-    },
-    {
-      code: 'DMO_FIELD_REMOVAL_MAPPED',
-      field: 'Note__c',
-      message: /no mapping targeting this DMO lists a pair/u,
-      prepare: (org) => {
-        org.mappingClient.list = async () => {
-          throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
         };
       },
     },
@@ -365,6 +350,42 @@ test('field delete admission refuses unsupported targets and fields with reads o
     assert.deepEqual(writes(org), [], code);
     assert.equal(exitCode, 1);
   }
+});
+
+test('standard, system and generated fields are sent for removal on any DMO, and Salesforce decides', async () => {
+  for (const [creationType, field] of [
+    ['Derived', 'DataSource__c'],
+    ['Bridge', 'DataSource__c'],
+    ['Adg', 'DataSource__c'],
+    ['Custom', 'DataSource__c'],
+    ['Standard', 'ssot__Name__c'],
+    ['Standard', 'Unmarked__c'],
+    [undefined, 'DataSource__c'],
+  ]) {
+    const org = createOrg(twoMappings());
+    if (creationType === 'Standard') asStandard(org);
+    else org.dmo.creationType = creationType;
+    const { result } = await run(org, { field: [field], 'output-dir': await temporaryRoot() });
+    assert.equal(result.status, 'success', `${creationType} ${JSON.stringify(result.diagnostics)}`);
+    assert.equal(result.result.items[0].outcome, 'deleted');
+    assert.deepEqual(writes(org), [`removeFields:${dmoName}:${field}`]);
+  }
+});
+
+test('a Metadata API refusal of the field removal is reported as rejected', async () => {
+  const org = asStandard(createOrg(twoMappings()));
+  org.remover.removeFields = async (name, fields) => {
+    org.calls.push(`removeFields:${name}:${fields.join(',')}`);
+    throw new NativeDmoError('DMO_FIELD_REMOVAL_FAILED', undefined, true);
+  };
+  const { result, exitCode } = await run(org, { field: ['ssot__Name__c'] });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.items[0].outcome, 'failed');
+  assert.equal(result.result.items[0].mutation, 'rejected');
+  assert.equal(result.diagnostics.errors[0].code, 'DMO_FIELD_REMOVAL_FAILED');
+  assert.match(result.diagnostics.errors[0].message, /Salesforce refused/u);
+  assert.deepEqual(writes(org), [`removeFields:${dmoName}:ssot__Name__c`]);
+  assert.equal(exitCode, 1);
 });
 
 test('a custom field of a standard DMO is removed with its pairs like one of a custom DMO', async () => {
@@ -785,7 +806,7 @@ test('anything else Salesforce changes with the removal is a side effect, never 
   }
 });
 
-test('a field still shown as mapped without a pair at the pre-write recheck is never removed', async () => {
+test('a pair that disappears before the pre-write recheck changes the plan, so nothing is written', async () => {
   const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
   beforeDmoRead(org, 2, () => {
     org.mappings[0].fieldMappings = org.mappings[0].fieldMappings.filter(
@@ -801,10 +822,43 @@ test('a field still shown as mapped without a pair at the pre-write recheck is n
   assert.deepEqual(item.removedFields, []);
   assert.deepEqual(item.unmappedPairs, []);
   const [diagnostic] = result.diagnostics.errors;
-  assert.equal(diagnostic.code, 'DMO_FIELD_REMOVAL_MAPPED');
-  assert.match(diagnostic.message, /no mapping targeting this DMO lists a pair/u);
+  assert.equal(diagnostic.code, 'MAPPING_UNMAP_PLAN_CHANGED');
   assert.match(diagnostic.message, /Nothing was written/u);
   assert.deepEqual(writes(org), []);
+});
+
+test('a generated DMO whose fields all read mapped, with no mapping listed, gets its field removed', async () => {
+  const org = createOrg();
+  org.dmo.creationType = 'Derived';
+  for (const entry of org.dmo.fields) entry.isMapped = true;
+  let lists = 0;
+  org.mappingClient.list = async (name) => {
+    org.calls.push(`mapping.list:${name}`);
+    lists++;
+    throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+  };
+  const { result } = await run(org, {
+    field: ['DataSource__c'],
+    'output-dir': await temporaryRoot(),
+  });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  const [item] = result.result.items;
+  assert.equal(item.outcome, 'deleted');
+  assert.deepEqual(item.unmappedPairs, []);
+  assert.deepEqual(writes(org), [`removeFields:${dmoName}:DataSource__c`]);
+  assert.ok(lists >= 2, 'the plan and the recheck both read the mappings');
+});
+
+test('a field with a real mapping pair keeps the pair planning: the pair is reported as dropped', async () => {
+  const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
+  const { result } = await run(org, { field: ['Note__c'], 'output-dir': await temporaryRoot() });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  const [item] = result.result.items;
+  assert.equal(item.outcome, 'deleted');
+  assert.deepEqual(
+    item.unmappedPairs.map((pair) => [pair.mapping, pair.targetFieldDeveloperName]),
+    [['MapA', 'Note__c']],
+  );
 });
 
 test('a failed destructive change is sent once and reported as unknown', async () => {

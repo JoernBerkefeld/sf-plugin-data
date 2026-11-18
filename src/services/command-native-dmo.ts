@@ -104,9 +104,21 @@ async function findMappings(
   fields: string[],
   guide: MappedFieldGuide,
 ): Promise<MappingInventory> {
-  const response = (await guide.mappings().list(apiName)) as {
-    objectSourceTargetMaps?: unknown;
-  } | null;
+  let response: { objectSourceTargetMaps?: unknown } | null;
+  try {
+    response = (await guide.mappings().list(apiName)) as {
+      objectSourceTargetMaps?: unknown;
+    } | null;
+  } catch (error) {
+    // A DMO without mappings answers the list with 404: an empty inventory.
+    if (
+      !(error instanceof NativeMappingError) ||
+      error.code !== 'MAPPING_HTTP_ERROR' ||
+      error.status !== 404
+    )
+      throw error;
+    response = { objectSourceTargetMaps: [] };
+  }
   const maps = response?.objectSourceTargetMaps;
   if (!Array.isArray(maps)) throw new TypeError('Mapping inventory was not returned.');
   const mapped = fields.map((field) => ({ field, mappings: [] as string[] }));
@@ -298,17 +310,16 @@ export async function admitDmoFieldRemoval(
     const covered =
       sources !== undefined &&
       refused.fields.every((field) => {
+        // A field no mapping holds a pair for has none to lose (Salesforce marks every field
+        // of a generated DMO as mapped), so it is covered.
         const holders = sources.get(field)!;
-        return (
-          holders.length > 0 &&
-          holders.every((source) =>
-            selected.some(
-              (mapping) =>
-                mapping.target === refused.apiName &&
-                mapping.source === source &&
-                !mapping.targetFields.includes(field),
-            ),
-          )
+        return holders.every((source) =>
+          selected.some(
+            (mapping) =>
+              mapping.target === refused.apiName &&
+              mapping.source === source &&
+              !mapping.targetFields.includes(field),
+          ),
         );
       });
     if (covered) return { coveredMappedFields: refused.fields };

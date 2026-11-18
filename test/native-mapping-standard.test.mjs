@@ -454,20 +454,25 @@ for (const systemType of ['Standard', 'System'])
     assert.deepEqual(input, before);
   });
 
-test('refused DMO kinds stay MAPPING_TARGET_UNSUPPORTED under a standard name', async () => {
-  for (const creationType of ['Adg', 'Bridge', undefined, 'Custom']) {
+test('a mapping onto a generated, namespaced or untyped DMO is sent and Salesforce answers', async () => {
+  for (const creationType of ['Derived', 'Bridge', 'Adg', undefined, 'Custom']) {
     const org = world();
     const read = org.dmo.get;
     org.dmo.get = async (name) => ({ ...(await read(name)), creationType });
-    await assert.rejects(
-      preflightNativeMapping(file(authoredPairs), org.mapping, org.deps),
-      (error) => error.code === 'MAPPING_TARGET_UNSUPPORTED',
-      String(creationType),
-    );
-    const blocked = await executeMapping(file(authoredPairs), org.mapping, org.deps);
-    assert.equal(blocked.outcome, 'blocked');
-    assert.equal(blocked.diagnostics[0].code, 'MAPPING_TARGET_UNSUPPORTED');
-    assert.deepEqual(org.writes, []);
+    // Only a standard DMO carries the activation notice.
+    const preview = await preflightMapping(file(authoredPairs), org.mapping, org.deps);
+    assert.equal(preview.outcome, 'create', String(creationType));
+    assert.deepEqual(preview.diagnostics, []);
+    org.mapping.create = async (body) => {
+      org.writes.push(['mapping:create', body]);
+      throw new NativeMappingError('MAPPING_HTTP_ERROR', 400);
+    };
+    const refused = await executeMapping(file(authoredPairs), org.mapping, org.deps);
+    assert.equal(refused.outcome, 'failed', String(creationType));
+    assert.equal(refused.mutation, 'rejected');
+    assert.equal(refused.diagnostics[0].code, 'MAPPING_HTTP_ERROR');
+    assert.equal(org.writes.length, 1);
+    assert.equal(org.writes[0][0], 'mapping:create');
   }
 });
 

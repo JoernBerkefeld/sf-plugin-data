@@ -309,12 +309,11 @@ async function readMappingParents(
   const rawTarget = unwrapNativeDmo(
     await dependencies.target.get(desired.spec.targetEntityDeveloperName),
   );
-  // Mappings to platform-generated, untyped or namespaced custom DMOs are not qualified.
-  const scope = nativeDmoWriteScope(rawTarget);
-  if (scope === 'refused') throw new NativeMappingError('MAPPING_TARGET_UNSUPPORTED');
-  const standard = scope === 'standard';
+  // Every target but an unprefixed custom DMO is mapped within the standard scope; Salesforce
+  // answers for the DMOs it does not map onto (it refuses platform-generated ones).
+  const standard = nativeDmoWriteScope(rawTarget) === 'standard';
   // The first mapping enables a standard DMO for good; the raw read says whether that is ahead.
-  const activates = standard && rawTarget.isEnabled !== true;
+  const activates = rawTarget.creationType === 'Standard' && rawTarget.isEnabled !== true;
   const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace, mode);
   if (
     source.identity.dataSpace !== desired.identity.dataSpace ||
@@ -344,8 +343,7 @@ async function readMappingParents(
 
 /**
  * Name the pairs of a mapping that Salesforce generated, from fresh reads of its source DLO and
- * target DMO, with the same predicate a deploy uses to keep them. A mapping onto a DMO this
- * plugin never writes has none: a deploy refuses it, so nothing it lists can be lost.
+ * target DMO, with the same predicate a deploy uses to keep them.
  * @param {NativeMappingDocument} document Mapping as read.
  * @param {MappingDependencies} dependencies Fresh source and target readers.
  * @param {DocumentMode} [mode] `retrieve` reads the parents leniently.
@@ -356,14 +354,7 @@ export async function generatedMappingPairs(
   dependencies: MappingDependencies,
   mode: DocumentMode = 'deploy',
 ): Promise<NativeMappingField[]> {
-  let context: MappingPairContext;
-  try {
-    ({ context } = await readMappingParents(document, dependencies, mode));
-  } catch (error) {
-    if (error instanceof NativeMappingError && error.code === 'MAPPING_TARGET_UNSUPPORTED')
-      return [];
-    throw error;
-  }
+  const { context } = await readMappingParents(document, dependencies, mode);
   return document.spec.fieldMappings.filter((pair) => isGeneratedMappingPair(pair, context));
 }
 

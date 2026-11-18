@@ -49,5 +49,5 @@ export const hints: Readonly<Record<string, string>> = {
   UNSUPPORTED_DMO_SELECTION:
     'The target org passed to a DMO request is not valid. Pass --target-org with the alias or username of an authenticated org.',
   UNSUPPORTED_DMO_TARGET:
-    'The plugin does not write this DMO: it is platform-generated or namespaced, or a standard DMO selected for a whole delete. Choose a custom DMO instead.',
+    'The plugin does not send this DMO write: a whole delete of a standard DMO or of a DMO read without a creationType, or a new DMO with a namespaced name.',
 };

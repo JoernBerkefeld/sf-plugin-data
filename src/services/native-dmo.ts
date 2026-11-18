@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { sameProperty } from '../artifacts/enum-case.js';
 import { explainMismatch } from './operation-diagnostic.js';
 import {
+  isDeletableNativeDmo,
   isGeneratedDmoField,
   NativeDmoError,
   nativeDmoName,
@@ -292,9 +293,10 @@ export async function retrieveNativeDmo(
 /**
  * Preflight a create or update without mutation. Category, data types, labels and optional keys
  * are passed through for the API to judge; only edits the API cannot perform are refused here.
- * On a standard DMO only custom fields, the object label and the object description are written:
- * standard and system fields are compared and never sent, and the category is ignored because
- * Salesforce changes it when the DMO is first mapped.
+ * On any DMO but an unprefixed custom one (standard, platform-generated, namespaced) only custom
+ * fields, the labels of the other fields, the object label and the object description are
+ * written: the other properties of standard, system and generated fields are compared and never
+ * sent, and the category is ignored because Salesforce changes it when the DMO is first mapped.
  * @param {unknown} value Portable document.
  * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space and explicit body scope.
@@ -323,8 +325,8 @@ export async function preflightNativeDmo(
     raw = read.raw;
     if (target.identity.dataSpace !== desired.identity.dataSpace)
       throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
-    // Platform-generated DMOs, reads without a creationType and custom DMOs under a namespaced
-    // name are never written; a standard DMO is written within the standard scope only.
+    // Every DMO but an unprefixed custom one is written within the standard scope only:
+    // standard, platform-generated and namespaced DMOs alike, and Salesforce answers the rest.
     const scope = nativeDmoWriteScope(read.raw);
     if (scope === 'refused') throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
     standard = scope === 'standard';
@@ -360,6 +362,8 @@ export async function preflightNativeDmo(
   const existing = new Map(target.spec.fields.map((field) => [field.name, field]));
   const incoming = new Map(desired.spec.fields.map((field) => [field.name, field]));
   const edited: NativeDmoField[] = [];
+  // Label-only edits of standard, system and generated fields, as native input.
+  const relabels: Record<string, unknown>[] = [];
   const removed: string[] = [];
   const mapped: string[] = [];
   // A mapped field is removed only when the selected mapping files drop all of its pairs.
@@ -367,8 +371,22 @@ export async function preflightNativeDmo(
   for (const [name, field] of existing) {
     const authored = incoming.get(name);
     if (standard && field.creationType !== 'Custom') {
-      // Standard and system fields of a standard DMO are never sent and never removed. They may
-      // be left out of the file; an authored one has to match the target.
+      // Standard, system and generated fields are never removed by a deploy and may be left out
+      // of the file. An authored one has to match the target except for its label: a changed
+      // label alone is sent, and Salesforce decides (it refuses names starting with ssot__).
+      if (
+        authored &&
+        typeof authored.label === 'string' &&
+        authored.label !== field.label &&
+        protectedFieldDifference(field, { ...authored, label: field.label }) === undefined
+      ) {
+        relabels.push({
+          name: name.slice(0, -3),
+          label: authored.label,
+          ...(field.dataType === undefined ? {} : { dataType: field.dataType }),
+        });
+        continue;
+      }
       const property = authored ? protectedFieldDifference(field, authored) : undefined;
       if (authored && property !== undefined)
         throw explainMismatch(
@@ -378,7 +396,7 @@ export async function preflightNativeDmo(
           field[property],
           authored[property],
           `fields.${name}.${property}`,
-          'Standard and system fields of a standard DMO cannot be changed; only custom fields, the object label and the object description are written.',
+          'Only the label of a standard, system or generated field is sent; its other properties cannot be changed.',
         );
       continue;
     }
@@ -449,7 +467,7 @@ export async function preflightNativeDmo(
       `fields.${foreign.name}`,
       'Only custom fields with a name without a namespace can be added to a standard DMO.',
     );
-  const fields = [...edited, ...added].map((field) => fieldInput(field));
+  const fields = [...[...edited, ...added].map((field) => fieldInput(field)), ...relabels];
   // An absent description is not managed; an explicit empty string clears it.
   const description =
     desired.spec.description !== undefined &&
@@ -508,7 +526,7 @@ export async function preflightNativeDmo(
  * @param {NativeDmoDocument} desired Requested portable state.
  * @param {NativeDmoDocument} actual Independent GET state.
  * @param {string[]} [removed] Fields whose removal was requested and must be absent.
- * @param {boolean} [standard] Standard DMO: the category and its standard and system fields are not compared.
+ * @param {boolean} [standard] Standard scope: the category is not compared, and of its standard, system and generated fields only the label.
  * @returns {boolean} Whether every requested, readable property survived and every removal took effect.
  */
 export function nativeDmoConfirmed(
@@ -528,8 +546,9 @@ export function nativeDmoConfirmed(
   const fields = new Map(actual.spec.fields.map((field) => [field.name, field]));
   return desired.spec.fields.every((field) => {
     const found = fields.get(field.name);
-    // Never written on a standard DMO, and checked against the target before the write.
-    if (standard && found && found.creationType !== 'Custom') return true;
+    // Only the label of such a field is written; its other properties were checked before.
+    if (standard && found && found.creationType !== 'Custom')
+      return field.label === undefined || found.label === field.label;
     return (
       found &&
       Object.entries(field).every(
@@ -717,7 +736,7 @@ async function readDeleteTarget(
 }
 
 /**
- * Read-only delete preview: resolve the exact target and apply the same custom-only guard as delete.
+ * Read-only delete preview: resolve the exact target and apply the same guard as delete.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
  * @param {string} [requestScope] Optional expected data space.
@@ -729,8 +748,8 @@ export async function previewDeleteNativeDmo(
   requestScope?: string,
 ): Promise<{ identity: { apiName: string; dataSpace: string } }> {
   const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
-  // Only a custom DMO is deleted; a standard one is open to field and label writes only.
-  if (nativeDmoWriteScope(raw) !== 'custom') throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
+  // A standard DMO is open to field and label writes only; any other DMO is sent to Salesforce.
+  if (!isDeletableNativeDmo(raw)) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
   return { identity };
 }
 
@@ -768,8 +787,9 @@ export async function deleteNativeDmo(
   requestScope?: string,
 ): Promise<{ apiName: string; targetApiName: string; dataSpace: string; processing?: true }> {
   const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
-  // Standard, namespaced and platform-generated DMOs are never deleted.
-  if (nativeDmoWriteScope(raw) !== 'custom') throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
+  // A standard DMO is never deleted. Salesforce refuses a platform-generated DMO while its owner
+  // exists (412); that answer is reported as it comes.
+  if (!isDeletableNativeDmo(raw)) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
   const targetApiName = identity.apiName;
   await client.delete(targetApiName);
   const deleted = { apiName, targetApiName, dataSpace: identity.dataSpace };

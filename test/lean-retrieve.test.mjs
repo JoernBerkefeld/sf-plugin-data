@@ -449,16 +449,22 @@ for (const failure of ['source', 'target', 'missing'])
     );
   });
 
-test('a mapping onto a DMO this plugin never writes is stored with all its pairs', async () => {
+/**
+ * Retrieve the sample mapping onto a custom DMO read under another creationType.
+ * @param {string} creationType Target creationType.
+ * @returns {Promise<object>} Lean mapping document.
+ */
+async function retrieveOnto(creationType) {
   const org = mappingOrg('custom');
-  org.dependencies.target.get = async () => ({ ...customDmo(), creationType: 'Generated' });
-  const document = await retrieveLeanNativeMapping(
-    org.raw.developerName,
-    org.client,
-    undefined,
-    org.dependencies,
-  );
-  assert.equal(document.spec.fieldMappings.length, org.raw.fieldMappings.length);
+  org.dependencies.target.get = async () => ({ ...customDmo(), creationType });
+  return retrieveLeanNativeMapping(org.raw.developerName, org.client, undefined, org.dependencies);
+}
+
+test('a mapping onto a generated DMO keeps the pairs the standard-scope rule keeps', async () => {
+  // A generated target is read like a standard one, so a deploy keeps what retrieve leaves out.
+  const generated = await retrieveOnto('Generated');
+  const standard = await retrieveOnto('Standard');
+  assert.deepEqual(generated.spec.fieldMappings, standard.spec.fieldMappings);
 });
 
 test('retrieve command passes lazy source and target readers to the mapping acquisition', async () => {

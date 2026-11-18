@@ -13,7 +13,7 @@
 Salesforce removes a mapped DMO field without objection and drops its mapping pairs with it. The plugin therefore only removes a mapped field when that is clearly intended:
 
 - **Deploy with `--allow-field-removal`**: the field is missing from the DMO file, but it is mapped, and the same deploy does not select every mapping that holds a pair for it with that pair dropped from the mapping file.
-- **`delete --field`**: the field is mapped, but no mapping that targets this DMO lists a pair for it, so the pair cannot be identified.
+- **`delete --field`**: the field is mapped, but the list of mappings that target this DMO could not be read, so its pairs cannot be identified. A mapped field that no listed mapping holds a pair for is removed, because it has no pair to lose.
 
 The message names the fields and, where known, the mappings that hold them.
 
@@ -28,7 +28,7 @@ For a deploy, choose one:
 1. Remove the pair from the mapping file and select that mapping in the same deploy (`-m mapping:<Name>`), for every mapping that holds the field; or
 2. Deploy the mapping without the pair first, then deploy the DMO.
 
-For `delete --field`, read the mappings of the DMO in the org; a field marked mapped without a visible pair needs the mapping fixed in Data Cloud setup first.
+For `delete --field`, the mapping list could not be read: rerun the command once the mappings of the DMO can be read in the org.
 
 ## Example output
 

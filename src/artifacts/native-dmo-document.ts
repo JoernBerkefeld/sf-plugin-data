@@ -35,35 +35,43 @@ export function sameDmoCategory(left: string, right: string): boolean {
 
 /**
  * What may be written on an existing DMO, decided from its raw read alone.
- * 'custom': everything this plugin writes, including deleting the DMO.
- * 'standard': custom fields, the object label and the object description only.
- * 'refused': nothing.
+ * 'custom': every field and property this plugin writes.
+ * 'standard': custom fields, the object label and the object description only; fields of any
+ * other creationType are never sent or removed.
+ * 'refused': nothing (a read without a name).
  */
 export type NativeDmoWriteScope = 'custom' | 'standard' | 'refused';
 
 /**
  * Classify an existing DMO for writes. A customer-created DMO with an unprefixed name is
- * 'custom', a Salesforce standard DMO is 'standard', and everything else is 'refused':
- * platform-generated DMOs (any other creationType), a read without a creationType and a
- * custom creationType under a namespaced name.
+ * 'custom'. Every other read with a name is 'standard': Salesforce standard DMOs, the DMOs
+ * Salesforce generates (for example `Derived` and `Bridge` from identity resolution, `Adg` from
+ * data graphs, `Segment_Membership`), a custom creationType under a namespaced name and a read
+ * without a creationType. Salesforce does not protect the generated fields of those DMOs, so the
+ * standard scope keeps them out of every write; what Salesforce refuses on them it answers itself.
  * @param {Record<string, unknown>} raw Direct native read.
  * @returns {NativeDmoWriteScope} Write scope of the target.
  */
 export function nativeDmoWriteScope(raw: Record<string, unknown>): NativeDmoWriteScope {
   if (typeof raw.name !== 'string') return 'refused';
-  if (raw.creationType === 'Standard') return 'standard';
   return raw.creationType === 'Custom' && !raw.name.slice(0, -'__dlm'.length).includes('__')
     ? 'custom'
-    : 'refused';
+    : 'standard';
 }
 
 /**
- * Only customer-created DMOs with an unprefixed name are deletable.
+ * Whether a whole-DMO delete is sent. A Salesforce standard DMO (creationType `Standard`) and a
+ * read without a creationType are never deleted; every other DMO is, and Salesforce answers for
+ * itself (it refuses a generated DMO while the identity resolution or graph that owns it exists).
  * @param {Record<string, unknown>} raw Direct native read.
- * @returns {boolean} Whether the target is a custom, non-namespaced DMO.
+ * @returns {boolean} Whether the delete is sent.
  */
-export function isCustomNativeDmo(raw: Record<string, unknown>): boolean {
-  return nativeDmoWriteScope(raw) === 'custom';
+export function isDeletableNativeDmo(raw: Record<string, unknown>): boolean {
+  return (
+    typeof raw.name === 'string' &&
+    typeof raw.creationType === 'string' &&
+    raw.creationType !== 'Standard'
+  );
 }
 
 const dmoSystemFields = new Set([
@@ -106,9 +114,15 @@ export function leanNativeDmoDocument(document: NativeDmoDocument): NativeDmoDoc
 
 /** Payload-free refusal for the isolated native DMO boundary. */
 export class NativeDmoError extends Error {
+  /**
+   * @param {string} code Stable plugin code.
+   * @param {number} [status] HTTP status of Salesforce's answer.
+   * @param {true} [rejected] Salesforce answered with a refusal, so nothing was changed.
+   */
   public constructor(
     public readonly code: string,
     public readonly status?: number,
+    public readonly rejected?: true,
   ) {
     super(`Native DMO operation refused: ${code}.`);
     this.name = 'NativeDmoError';
