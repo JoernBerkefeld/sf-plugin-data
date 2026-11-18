@@ -15,6 +15,8 @@ export type NativeMappingDocument = {
     sourceEntityDeveloperName: string;
     targetEntityDeveloperName: string;
     fieldMappings: NativeMappingField[];
+    /** Optional label (Metadata API masterLabel); absent leaves the org's label as it is. */
+    label?: string;
   };
 };
 
@@ -153,11 +155,22 @@ export function validateNativeMappingDocument(
   if (mode === 'retrieve') return structuredClone(value) as NativeMappingDocument;
   closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
   closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
-  closedKeys(spec, 'spec.', [
-    'fieldMappings',
-    'sourceEntityDeveloperName',
-    'targetEntityDeveloperName',
-  ]);
+  closedKeys(
+    spec,
+    'spec.',
+    ['fieldMappings', 'sourceEntityDeveloperName', 'targetEntityDeveloperName'],
+    ['label'],
+  );
+  if (
+    Object.hasOwn(spec, 'label') &&
+    (typeof spec.label !== 'string' ||
+      spec.label.trim() === '' ||
+      spec.label !== spec.label.trim() ||
+      [...spec.label].some(
+        (character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127,
+      ))
+  )
+    throw refuse('INVALID_MAPPING_DOCUMENT', 'spec.label', 'must be a non-empty text');
   if (fields.length === 0)
     throw refuse('INVALID_MAPPING_DOCUMENT', 'spec.fieldMappings', 'must list at least one pair');
   const pairs = new Set<string>();

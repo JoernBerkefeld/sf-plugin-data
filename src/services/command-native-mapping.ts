@@ -64,6 +64,7 @@ export async function preflightMapping(
         : []),
       ...(plan.typeDifferences?.length ? [typeNotice(plan.typeDifferences)] : []),
     ] as MappingDiagnostic[],
+    ...(plan.labelChange ? { labelChange: plan.labelChange } : {}),
     plan: [
       ...(plan.removals ?? []).map((pair) => ({
         operation: 'unmap' as const,
@@ -106,6 +107,12 @@ export async function executeMapping(
       ledger.run(async () => client.deleteField(name, selector)),
     create: async (body) => ledger.run(async () => client.create(body)),
     update: async (name, body) => ledger.run(async () => client.update(name, body)),
+    ...(client.updateDefinition
+      ? {
+          updateDefinition: async (definition: Record<string, unknown>) =>
+            ledger.run(async () => client.updateDefinition!(definition)),
+        }
+      : {}),
   };
   try {
     const result = await deployNativeMapping(value, guarded, dependencies, onUpdated, requestScope);

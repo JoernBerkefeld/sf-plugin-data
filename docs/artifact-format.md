@@ -254,6 +254,13 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   of a field shared by two mappings of a custom DMO, and hand-written mapping files
   with the authored pairs only deploying back unchanged onto a custom and a standard
   DMO, one of them adding a pair and dropping another.
+  The optional `spec.label` is the mapping's label (Metadata API `masterLabel` of
+  `ObjectSourceTargetMap`, which the native routes do not carry). Retrieve fills it,
+  except when it equals the mapping's own name (the default Salesforce gives a mapping
+  created without one) or when its Metadata API read fails (then with a warning). A
+  file without `spec.label` leaves the org's label alone; a different label is set by
+  one Metadata API `updateMetadata` after the pair writes, carrying every pair the
+  mapping currently has and no other (a pair left out is kept, a pair sent is added).
 - A data lake object file (`data360/dlo/<FullApiName>__dll.dlo-meta.json`) for an
   existing data lake object may omit the fields Salesforce generated:
   `cdp_sys_SourceVersion__c`, `DataSource__c`, `DataSourceObject__c`,

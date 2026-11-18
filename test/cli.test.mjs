@@ -263,12 +263,9 @@ test('README describes optional scope without promoting nondefault qualification
     table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
     15,
   );
-  assert.match(
-    table.split('\n').find((line) => line.includes('DLO-to-DMO mappings')),
-    /Partial/u,
-  );
-  // Data transforms and DMOs: the plugin sends every write and Salesforce decides.
-  for (const resource of ['Data Transforms', 'Data Model Objects'])
+  // Data transforms, DMOs and mappings (pairs and label): the plugin sends every write and
+  // Salesforce decides.
+  for (const resource of ['Data Transforms', 'Data Model Objects', 'DLO-to-DMO mappings'])
     assert.doesNotMatch(
       table.split('\n').find((line) => line.includes(resource)),
       /Partial/u,

@@ -1,6 +1,6 @@
 # `MAPPING_PERSISTENCE_UNCONFIRMED`
 
-> The mapping write was sent, but reading it back did not show the expected pairs. Inspect the mapping in the org before deploying again; nothing was retried or rolled back.
+> The mapping write was sent, but reading it back did not show the expected pairs or label. Inspect the mapping in the org before deploying again; nothing was retried or rolled back.
 
 |              |                               |
 | ------------ | ----------------------------- |
@@ -11,6 +11,8 @@
 ## What it means
 
 After creating or updating the mapping, the plugin reads it back up to six times. The reads never showed exactly the pairs of your file with the existing pairs preserved, or the pairs changed between reads.
+
+When the file states a `spec.label` that the deploy changed, the plugin then reads the mapping's Metadata API record once more; this code also means that read did not show the new label (or failed). The pairs were settled before the label update.
 
 ## Why the plugin stops
 
@@ -28,7 +30,7 @@ Only a matching read confirms the deploy. Sending the write again could add pair
 Deploy execution: failed. No automatic retry or rollback performed.
 Failed: mapping:Customer_Home_map; mutation: unknown.
 MAPPING_PERSISTENCE_UNCONFIRMED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Write outcome is unknown; inspect target before another attempt. No automatic retry.
-Hint: The mapping write was sent, but reading it back did not show the expected pairs. Inspect the mapping in the org before deploying again; nothing was retried or rolled back.
+Hint: The mapping write was sent, but reading it back did not show the expected pairs or label. Inspect the mapping in the org before deploying again; nothing was retried or rolled back.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/mapping/MAPPING_PERSISTENCE_UNCONFIRMED.md
 Mutation may have occurred. Inspect target before any further attempt.
 Deployed: 0 (0 created / 0 updated / 1 failed)

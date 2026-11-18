@@ -44,6 +44,10 @@ export const hints: Readonly<Record<string, string>> = {
     "The list of the DMO's mappings could not be confirmed against the individual mapping reads. Wait for pending mapping changes to finish, then rerun.",
   MAPPING_INVENTORY_UNQUALIFIED:
     'Retrieving all mappings is not supported together with the other selected families. Select mappings by name (mapping:<Name>) or retrieve mapping in its own run.',
+  MAPPING_LABEL_READ_FAILED:
+    'The Metadata API read of the mapping, needed to compare or change its label, failed, so no label update was sent. Check the org login and the connection, then rerun the deploy.',
+  MAPPING_LABEL_UPDATE_REJECTED:
+    "Salesforce refused the Metadata API update of the mapping's label, so the label was not changed. Read Salesforce's text in the message, correct spec.label, then rerun.",
   MAPPING_LAST_MAPPING_DELETE_BLOCKED:
     'Salesforce does not delete the last mapping of a custom DMO. Delete the DMO instead (sf data360 delete --metadata dmo:<Name>__dlm), which removes its mapping too.',
   MAPPING_PARENTS_REQUIRED:
@@ -51,7 +55,7 @@ export const hints: Readonly<Record<string, string>> = {
   MAPPING_PARENT_CHANGED:
     'The source DLO or target DMO changed while the mapping was being updated. Let other changes finish, inspect the mapping in the org, then rerun the deploy.',
   MAPPING_PERSISTENCE_UNCONFIRMED:
-    'The mapping write was sent, but reading it back did not show the expected pairs. Inspect the mapping in the org before deploying again; nothing was retried or rolled back.',
+    'The mapping write was sent, but reading it back did not show the expected pairs or label. Inspect the mapping in the org before deploying again; nothing was retried or rolled back.',
   MAPPING_PROTECTED_LAYOUT_UNPROVEN:
     'The plugin could not prove which pairs of this mapping must stay (key, key qualifier and system pairs), so it removes none. Keep those pairs, or change the mapping in the org.',
   MAPPING_PROTECTED_PAIR_REQUIRED:

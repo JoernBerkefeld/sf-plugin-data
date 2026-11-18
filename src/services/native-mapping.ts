@@ -20,6 +20,7 @@ import type {
   NativeMappingDocument,
   NativeMappingField,
 } from '../artifacts/native-mapping-document.js';
+import { mappingReadBatch, metadataRecords } from '../transport/mapping-rest.js';
 import type { MappingClient, MappingWriteBody } from '../transport/mapping-rest.js';
 import type { DloClient } from '../transport/dlo-rest.js';
 import type { DmoClient } from '../transport/dmo-rest.js';
@@ -47,6 +48,8 @@ export type NativeMappingDeployPlan = {
   }>;
   /** Set when this create is the first mapping of a standard DMO that is not yet enabled. */
   activatesStandardDmo?: true;
+  /** The label of the file when it differs from the org's (absent `from` on a create). */
+  labelChange?: { from?: string; to: string };
 };
 
 const systemSourceFields = new Set([
@@ -402,6 +405,244 @@ export async function retrieveLeanNativeMapping(
 }
 
 /**
+ * The labels (Metadata API masterLabel) of mappings, read in batches of up to 10 names over the
+ * bound Connection. Without a Metadata API reader, or for a name without a record, there is none.
+ * @param {string[]} names Mapping names.
+ * @param {Pick<MappingClient, 'readDefinitions'>} client Mapping reader.
+ * @returns {Promise<Map<string, string>>} Label by name.
+ */
+export async function readMappingLabels(
+  names: string[],
+  client: Pick<MappingClient, 'readDefinitions'>,
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (names.length === 0 || !client.readDefinitions) return labels;
+  for (const definition of await client.readDefinitions(names))
+    if (typeof definition.masterLabel === 'string' && typeof definition.fullName === 'string')
+      labels.set(definition.fullName, definition.masterLabel);
+  return labels;
+}
+
+/**
+ * Add the org's label to retrieved mapping documents as `spec.label`, reading up to 10 names per
+ * Metadata API call. A label equal to the mapping's own name is the default Salesforce gives a
+ * mapping created without one, so it is left out. A failed read leaves the label out of the
+ * documents of that batch and returns one warning for the batch; it never fails the retrieve.
+ * @param {unknown[]} documents Retrieved documents, changed in place; others are skipped.
+ * @param {Pick<MappingClient, 'readDefinitions'>} client Mapping reader.
+ * @returns {Promise<string[]>} Warnings for the mappings whose label could not be read.
+ */
+export async function labelRetrievedMappings(
+  documents: unknown[],
+  client: Pick<MappingClient, 'readDefinitions'>,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  if (!client.readDefinitions) return warnings;
+  const mappings = documents.filter((document): document is NativeMappingDocument => {
+    const candidate = document as Partial<NativeMappingDocument> | null | undefined;
+    return (
+      candidate?.kind === 'mapping' &&
+      typeof candidate.identity?.apiName === 'string' &&
+      !!candidate.spec &&
+      typeof candidate.spec === 'object'
+    );
+  });
+  for (let start = 0; start < mappings.length; start += mappingReadBatch) {
+    const batch = mappings.slice(start, start + mappingReadBatch);
+    let labels: Map<string, string>;
+    try {
+      labels = await readMappingLabels(
+        batch.map((document) => document.identity.apiName),
+        client,
+      );
+    } catch {
+      warnings.push(
+        `${batch.map((document) => `mapping:${document.identity.apiName}`).join(', ')}: the label could not be read (Metadata API ObjectSourceTargetMap), so the files leave it out; a deploy of such a file leaves the org's label as it is.`,
+      );
+      continue;
+    }
+    for (const document of batch) {
+      const label = labels.get(document.identity.apiName);
+      if (label !== undefined && label !== '' && label !== document.identity.apiName)
+        document.spec.label = label;
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Explain a failed Metadata API read of a mapping record around its label update.
+ * @param {string} name Mapping name.
+ * @param {string} when What the read was for.
+ * @returns {NativeMappingError} MAPPING_LABEL_READ_FAILED with an explanation.
+ */
+function labelReadFailed(name: string, when: string): NativeMappingError {
+  const error = new NativeMappingError('MAPPING_LABEL_READ_FAILED');
+  replaceExplanation(
+    error,
+    `The Metadata API read of the ObjectSourceTargetMap ${name} ${when} failed, so the label update was not sent.`,
+  );
+  return error;
+}
+
+/**
+ * Read one mapping record through the Metadata API.
+ * @param {string} name Mapping name.
+ * @param {Pick<MappingClient, 'readDefinitions'>} client Mapping reader.
+ * @returns {Promise<Record<string, unknown> | undefined>} The record, or undefined.
+ */
+async function readMappingDefinition(
+  name: string,
+  client: Pick<MappingClient, 'readDefinitions'>,
+): Promise<Record<string, unknown> | undefined> {
+  if (!client.readDefinitions) return undefined;
+  const definitions = await client.readDefinitions([name]);
+  return definitions.find((entry) => entry.fullName === name);
+}
+
+/**
+ * Whether a Metadata API value is an explicit nil (`xsi:nil`), which a write must not send back.
+ * @param {unknown} value Record value.
+ * @returns {boolean} Explicit nil.
+ */
+function metadataNil(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const attributes = (value as Record<string, unknown>).$;
+  return (
+    !!attributes &&
+    typeof attributes === 'object' &&
+    (attributes as Record<string, unknown>)['xsi:nil'] === 'true'
+  );
+}
+
+/**
+ * A Metadata API pair as `updateMetadata` takes it: explicit nils left out, and the texts "true"
+ * and "false" that readMetadata returns sent as booleans.
+ * @param {unknown} pair One fieldSourceTargetMaps entry.
+ * @returns {Record<string, unknown>} The pair to send.
+ */
+function definitionPair(pair: unknown): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries((pair ?? {}) as Record<string, unknown>)
+      .filter(([, value]) => !metadataNil(value))
+      .map(([key, value]) => [key, value === 'true' ? true : value === 'false' ? false : value]),
+  );
+}
+
+/**
+ * The `<object>.<field>` source and target of a Metadata API pair, as one key.
+ * @param {Record<string, unknown>} pair One fieldSourceTargetMaps entry.
+ * @returns {string} Pair key.
+ */
+function definitionPairKey(pair: Record<string, unknown>): string {
+  return `${String(pair.sourceField)}|${String(pair.targetField)}`;
+}
+
+/**
+ * The pair keys of a Metadata API mapping record.
+ * @param {Record<string, unknown> | undefined} record Record as read.
+ * @returns {Set<string>} Pair keys.
+ */
+function definitionPairKeys(record: Record<string, unknown> | undefined): Set<string> {
+  return new Set(
+    metadataRecords(record?.fieldSourceTargetMaps).map((pair) =>
+      definitionPairKey((pair ?? {}) as Record<string, unknown>),
+    ),
+  );
+}
+
+/**
+ * Set a mapping's label with one Metadata API `updateMetadata`, after its native pair work has
+ * settled, then read the label and pairs back. A pair the update leaves out is kept and a pair it
+ * sends is added, so it sends every pair the mapping currently has and no other: the pairs of the
+ * fresh readMetadata record that the settled native mapping still holds (readMetadata may still
+ * list a pair the deploy just removed). The rest of the record is sent as read, nils left out.
+ * @param {NativeMappingDocument} settled The mapping as its settled native read shows it.
+ * @param {string} label Desired label.
+ * @param {Pick<MappingClient, 'readDefinitions' | 'updateDefinition'>} client Mapping transport.
+ */
+async function relabelNativeMapping(
+  settled: NativeMappingDocument,
+  label: string,
+  client: Pick<MappingClient, 'readDefinitions' | 'updateDefinition'>,
+): Promise<void> {
+  const name = settled.identity.apiName;
+  let current: Record<string, unknown> | undefined;
+  try {
+    current = await readMappingDefinition(name, client);
+  } catch {
+    throw labelReadFailed(name, 'before its label update');
+  }
+  const { sourceEntityDeveloperName: from, targetEntityDeveloperName: to } = settled.spec;
+  const held = new Set(
+    settled.spec.fieldMappings.map(
+      (pair) => `${from}.${pair.sourceFieldDeveloperName}|${to}.${pair.targetFieldDeveloperName}`,
+    ),
+  );
+  const pairs = metadataRecords(current?.fieldSourceTargetMaps)
+    .map((pair) => definitionPair(pair))
+    .filter((pair) => held.has(definitionPairKey(pair)));
+  if (!current || !client.updateDefinition || pairs.length === 0)
+    throw labelReadFailed(name, 'before its label update');
+  const before = definitionPairKeys(current);
+  await client.updateDefinition({
+    ...Object.fromEntries(Object.entries(current).filter(([, value]) => !metadataNil(value))),
+    masterLabel: label,
+    fieldSourceTargetMaps: pairs,
+  });
+  let after: Record<string, unknown> | undefined;
+  try {
+    after = await readMappingDefinition(name, client);
+  } catch {
+    after = undefined;
+  }
+  // Unchanged pairs: none added, and every pair sent still there (a pair readMetadata listed
+  // although the deploy had removed it may drop out of the record meanwhile).
+  const kept = definitionPairKeys(after);
+  if (
+    after?.masterLabel !== label ||
+    [...kept].some((key) => !before.has(key)) ||
+    pairs.some((pair) => !kept.has(definitionPairKey(pair)))
+  ) {
+    const error = new NativeMappingError('MAPPING_PERSISTENCE_UNCONFIRMED');
+    replaceExplanation(
+      error,
+      `The label update of the mapping ${name} was sent, but reading the mapping back did not show the label ${JSON.stringify(label)} with the pairs unchanged.`,
+    );
+    throw error;
+  }
+}
+
+/**
+ * Compare the label of the file with the org's (Metadata API masterLabel).
+ * @param {NativeMappingDocument} desired Mapping file.
+ * @param {NativeMappingDocument | undefined} target Org mapping, or undefined for a create.
+ * @param {MappingClient} client Mapping reader.
+ * @returns {Promise<object>} The label change, or nothing.
+ */
+async function planLabel(
+  desired: NativeMappingDocument,
+  target: NativeMappingDocument | undefined,
+  client: MappingClient,
+): Promise<Pick<NativeMappingDeployPlan, 'labelChange'>> {
+  const label = desired.spec.label;
+  if (label === undefined) return {};
+  // A create ignores a label (live API 68): it is set by an update right after.
+  if (!target) return { labelChange: { to: label } };
+  let current: Record<string, unknown> | undefined;
+  try {
+    current = await readMappingDefinition(target.identity.apiName, client);
+  } catch {
+    throw labelReadFailed(target.identity.apiName, 'to compare its label');
+  }
+  if (typeof current?.masterLabel !== 'string')
+    throw labelReadFailed(target.identity.apiName, 'to compare its label');
+  return current.masterLabel === label
+    ? {}
+    : { labelChange: { from: current.masterLabel, to: label } };
+}
+
+/**
  * Validate source/target existence and every requested field against fresh definitions.
  * The four exact generated pairs are qualified by the retained three-to-seven create probe.
  * The target is a custom or a standard DMO; on a standard one the generated pairs are recognised
@@ -519,6 +760,7 @@ export async function preflightNativeMapping(
       if (!listed.has(pairKey(pair)) && isGeneratedMappingPair(pair, context))
         desired.spec.fieldMappings.push(structuredClone(pair));
   }
+  const labelPlan = await planLabel(desired, target, client);
   if (!target) {
     const fields = desired.spec.fieldMappings.filter((pair) => !generated.has(pairKey(pair)));
     return {
@@ -526,6 +768,7 @@ export async function preflightNativeMapping(
       desired,
       writes: [{ body: bodyFor(desired, fields) }],
       ...notices,
+      ...labelPlan,
       ...(activates ? { activatesStandardDmo: true as const } : {}),
     };
   }
@@ -535,7 +778,9 @@ export async function preflightNativeMapping(
   const existing = new Set(target.spec.fieldMappings.map((pair) => pairKey(pair)));
   const added = desired.spec.fieldMappings.filter((pair) => !existing.has(pairKey(pair)));
   if (added.length === 0 && removals.length === 0)
-    return { operation: 'noop', desired, target, writes: [], ...notices };
+    return labelPlan.labelChange
+      ? { operation: 'update', desired, target, retained, writes: [], ...notices, ...labelPlan }
+      : { operation: 'noop', desired, target, writes: [], ...notices };
   // Preserve the existing compatible single-add contract; reconciliation has stricter evidence.
   if (
     removals.length === 0 &&
@@ -553,6 +798,7 @@ export async function preflightNativeMapping(
       retained,
       writes: [{ body: bodyFor(desired, added) }],
       ...notices,
+      ...labelPlan,
     };
   const evidence = await preflightUnmapNativeMapping(
     target,
@@ -572,6 +818,7 @@ export async function preflightNativeMapping(
     evidence,
     writes: added.length > 0 ? [{ body: bodyFor(desired, added) }] : [],
     ...notices,
+    ...labelPlan,
   };
 }
 
@@ -588,7 +835,11 @@ export async function deployNativeMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
-  onUpdated?: (changes: { deleted: NativeMappingField[]; added: NativeMappingField[] }) => void,
+  onUpdated?: (changes: {
+    deleted: NativeMappingField[];
+    added: NativeMappingField[];
+    label?: string;
+  }) => void,
   requestScope?: string,
 ): Promise<{
   operation: 'create' | 'update' | 'noop';
@@ -601,9 +852,16 @@ export async function deployNativeMapping(
       onUpdated?.({
         deleted: structuredClone(plan.removals ?? []),
         added: structuredClone(plan.writes.flatMap(({ body }) => body.fieldMapping)),
+        ...(plan.labelChange ? { label: plan.labelChange.to } : {}),
       });
   };
   if (plan.operation === 'noop') return { operation: 'noop', document: plan.target! };
+  // Only the label differs: no pair write, one label update.
+  if (plan.operation === 'update' && !plan.evidence && plan.writes.length === 0) {
+    await relabelNativeMapping(plan.target!, plan.labelChange!.to, client);
+    reportUpdate();
+    return { operation: 'update', document: plan.target! };
+  }
   if (plan.operation === 'update' && plan.evidence) {
     const snapshot = await unmapNativeMappingFields(
       plan.evidence!,
@@ -661,6 +919,7 @@ export async function deployNativeMapping(
       settledPairs ??= structuredClone(document.spec.fieldMappings);
       entry.fieldMappings = settledPairs;
       if (await checkUnmapSnapshot(snapshot, client, dependencies)) {
+        if (plan.labelChange) await relabelNativeMapping(document, plan.labelChange.to, client);
         reportUpdate();
         return { operation: 'update', document };
       }
@@ -711,6 +970,7 @@ export async function deployNativeMapping(
       preserved &&
       (plan.operation === 'create' || actual.size === plan.desired.spec.fieldMappings.length)
     ) {
+      if (plan.labelChange) await relabelNativeMapping(document, plan.labelChange.to, client);
       reportUpdate();
       return {
         operation: plan.operation,

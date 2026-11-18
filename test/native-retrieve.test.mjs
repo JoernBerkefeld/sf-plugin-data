@@ -714,7 +714,8 @@ test('public mapping inventory uses owned connection; artifact acquisition gets 
   };
   const result = await run(command);
   assert.equal(result.status, 'success');
-  assert.equal(acquired, 1);
+  // The mapping's item client and the client that reads the labels of all mappings read.
+  assert.equal(acquired, 2);
   assert.deepEqual(requests, [
     'https://synthetic.example/services/data/v61.0/ssot/data-model-object-mappings?dataspace=default&dmoDeveloperName=Target__dlm',
   ]);
@@ -753,8 +754,8 @@ test('retrieve reads DLOs, DMOs, mappings and mapping parents through one shared
   assert.equal(result.status, 'success');
   assert.equal(opened.length, 1);
   assert.deepEqual(opened[0].slice(0, 2), ['synthetic', '68.0']);
-  // DLO, DMO, mapping, and the mapping's source DLO and target DMO reads.
-  assert.equal(senders.length, 5);
+  // DLO, DMO, mapping, the mapping's source DLO and target DMO reads, and its label read.
+  assert.equal(senders.length, 6);
   assert.ok(senders.every((sender) => sender === opened[0][2]));
 });
 

@@ -1,5 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import {
+  displayableApiText,
   getConnectDiagnostic,
   retainConnectDiagnostic,
   retainMetadataProblems,
@@ -21,6 +22,7 @@ import type { MetadataRunner } from './project-metadata.js';
 import { nativeApiVersion } from './api-version.js';
 import { openBoundSsot } from './bound-ssot.js';
 import type { BoundSsot } from './bound-ssot.js';
+import { replaceExplanation } from '../services/operation-diagnostic.js';
 
 export type MappingWriteBody = {
   sourceEntityDeveloperName: string;
@@ -36,7 +38,143 @@ export type MappingClient = {
   update: (mappingDeveloperName: string, body: MappingWriteBody) => Promise<unknown>;
   /** One Metadata API destructive deployment of the whole mapping; never retried. */
   remove: (mappingDeveloperName: string) => Promise<void>;
+  /**
+   * Metadata API records (`ObjectSourceTargetMap`) by exact name, up to 10 names per read, on
+   * the bound Connection; a name without a record is left out. Absent without a Metadata API.
+   */
+  readDefinitions?: (names: string[]) => Promise<Array<Record<string, unknown>>>;
+  /** One Metadata API `updateMetadata` of a whole record on the bound Connection; never retried. */
+  updateDefinition?: (definition: Record<string, unknown>) => Promise<void>;
 };
+
+/** Metadata API type of a mapping; the record name is the mapping name. */
+export const mappingMetadataType = 'ObjectSourceTargetMap';
+/** Names per Metadata API read call (the API's limit). */
+export const mappingReadBatch = 10;
+
+/**
+ * SOAP faults where Salesforce refused the request itself, so nothing was applied. The request
+ * limit is not one of them here: it says nothing about the label, so it is reported apart.
+ */
+const clientFault =
+  /^(?:soapenv:Client|sf:(?:INVALID_\w+|MALFORMED_\w+|INSUFFICIENT_ACCESS|API_DISABLED_FOR_ORG|UNSUPPORTED_API_VERSION))$/u;
+
+/**
+ * A Metadata API answer as a list of records.
+ * @param {unknown} value One record or several.
+ * @returns {unknown[]} Records.
+ */
+export function metadataRecords(value: unknown): unknown[] {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+/**
+ * Salesforce's refusal of a mapping label update: the label was not changed.
+ * @param {string} name Mapping name.
+ * @param {Array<{code?: unknown; message?: unknown}>} problems Salesforce's answers.
+ * @returns {NativeMappingError} MAPPING_LABEL_UPDATE_REJECTED with an explanation.
+ */
+function labelRefusal(
+  name: string,
+  problems: Array<{ code?: unknown; message?: unknown }>,
+): NativeMappingError {
+  const said = problems
+    .slice(0, 3)
+    .map(({ code, message }) =>
+      [
+        typeof code === 'string' && /^[\w:.-]{1,80}$/u.test(code) ? code : undefined,
+        displayableApiText(message),
+      ]
+        .filter(Boolean)
+        .join(': '),
+    )
+    .filter(Boolean);
+  const error = new NativeMappingError('MAPPING_LABEL_UPDATE_REJECTED');
+  replaceExplanation(
+    error,
+    `Salesforce refused the Metadata API update of the ${mappingMetadataType} ${name}${said.length > 0 ? `: ${said.join('; ').replace(/\.$/u, '')}` : ' without a text the plugin can show'}. The label was not changed.`,
+  );
+  return error;
+}
+
+/**
+ * Metadata API read and update of mappings on the bound Connection.
+ * @param {Function} open The bound sender's Metadata API.
+ * @returns {Pick<MappingClient, 'readDefinitions' | 'updateDefinition'>} Both calls.
+ */
+function metadataCalls(
+  open: NonNullable<BoundSsot['metadata']>,
+): Required<Pick<MappingClient, 'readDefinitions' | 'updateDefinition'>> {
+  return {
+    readDefinitions: async (names) => {
+      if (names.some((name) => !nativeMappingName.test(name)))
+        throw new NativeMappingError('INVALID_MAPPING_NAME');
+      const found: Array<Record<string, unknown>> = [];
+      for (let start = 0; start < names.length; start += mappingReadBatch) {
+        let answer: unknown;
+        try {
+          const api = await open();
+          answer = await api.read(
+            mappingMetadataType,
+            names.slice(start, start + mappingReadBatch),
+          );
+        } catch (error) {
+          const failure = new NativeMappingError('MAPPING_LABEL_READ_FAILED');
+          const text = displayableApiText((error as { message?: unknown } | null)?.message);
+          replaceExplanation(
+            failure,
+            `The Metadata API read of ${mappingMetadataType} failed${text ? `: ${text}` : ''}.`,
+          );
+          throw failure;
+        }
+        for (const entry of metadataRecords(answer))
+          if (
+            entry &&
+            typeof entry === 'object' &&
+            !Array.isArray(entry) &&
+            typeof (entry as Record<string, unknown>).fullName === 'string'
+          )
+            found.push(entry as Record<string, unknown>);
+      }
+      return found;
+    },
+    updateDefinition: async (definition) => {
+      const name = definition.fullName;
+      if (typeof name !== 'string' || !nativeMappingName.test(name))
+        throw new NativeMappingError('INVALID_MAPPING_NAME');
+      let answer: unknown;
+      try {
+        const api = await open();
+        answer = await api.update(mappingMetadataType, definition);
+      } catch (error) {
+        // Only a client fault is Salesforce refusing the request; a server fault (soapenv:Server,
+        // sf:UNKNOWN_EXCEPTION) may follow an applied update, so it stays unconfirmed.
+        const fault = error as { name?: unknown; message?: unknown } | null;
+        if (typeof fault?.name === 'string' && clientFault.test(fault.name))
+          throw labelRefusal(name, [{ code: fault.name, message: fault.message }]);
+        const unconfirmed = new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED');
+        if (fault?.name === 'sf:REQUEST_LIMIT_EXCEEDED')
+          replaceExplanation(
+            unconfirmed,
+            `Salesforce did not take the Metadata API update of the ${mappingMetadataType} ${name}: the org's API request limit is used up (sf:REQUEST_LIMIT_EXCEEDED), so the label was not changed. Rerun the deploy once the limit has reset; the file needs no change.`,
+          );
+        throw unconfirmed;
+      }
+      const [result] = metadataRecords(answer) as Array<Record<string, unknown> | undefined>;
+      if (result?.success === true) return;
+      if (result?.success === false)
+        throw labelRefusal(
+          name,
+          metadataRecords(result.errors).map((entry) => {
+            const problem = (entry ?? {}) as Record<string, unknown>;
+            return { code: problem.statusCode, message: problem.message };
+          }),
+        );
+      throw new NativeMappingError('MAPPING_REQUEST_UNCONFIRMED');
+    },
+  };
+}
 
 /**
  * Read filtered mapping inventories on the existing command-owned connection.
@@ -308,5 +446,6 @@ export function createMappingClient(
     create: async (body) => request('POST', scopeQuery, body),
     update: async (name, body) =>
       request('PATCH', `${nameSuffix(name)}/field-mappings${scopeQuery}`, body),
+    ...(bound.metadata ? metadataCalls(bound.metadata) : {}),
   };
 }
