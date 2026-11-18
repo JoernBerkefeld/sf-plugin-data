@@ -214,9 +214,10 @@ and measures) and `<Name>__cio.calculatedInsight-meta.sql` (the expression as pl
 SQL). Deploy, publish and delete read the same two files.
 
 Deploy: one GET by name; 404 creates (POST), a present insight holding every key of the
-file is `unchanged`, otherwise one PATCH. The file is sent as written with only the
-input key names (`dataSpaceName`, `createdFromPackage`, `sourceDeveloperName`) and
-PascalCase enums translated and null values left out
+file is `unchanged`, otherwise one PATCH. A 404 `ENTITY_IS_DELETED` (an insight
+Salesforce is still deleting) reads absent as well: one POST, Salesforce's answer
+reported as is. The file is sent as written with only the input key names
+(`dataSpaceName`, `createdFromPackage`, `sourceDeveloperName`) and PascalCase enums translated and null values left out
 (`calculatedInsightInputBody`); a PATCH leaves out an unchanged `definitionType`. Live
 API 68 (2026-11-15): `dataSpace`/`isFromPackage` are rejected as unrecognised,
 `publishScheduleInterval` must be PascalCase, `definitionType`/`queryDialect` pass in

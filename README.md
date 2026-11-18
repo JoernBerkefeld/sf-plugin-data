@@ -786,7 +786,9 @@ Deploy reads the insight by name with the API 68 GET. Absent (HTTP 404
 `ITEM_NOT_FOUND`) creates it with one POST; present is `unchanged` when the org
 insight holds every key of the JSON and the SQL (a retrieved file deploys back
 unchanged; keys the file leaves out are not compared), and is updated with one PATCH
-otherwise. The file is sent as written. Only what the create/update input names
+otherwise. An insight Salesforce is still deleting (the GET answers HTTP 404
+`ENTITY_IS_DELETED`) reads absent too: deploy sends one POST and reports Salesforce's
+answer as it is. The file is sent as written. Only what the create/update input names
 differently is translated:
 
 | In the file (GET form)                                                                                              | Sent as                                       |

@@ -12,6 +12,8 @@
 
 The native Data 360 read of the calculated insight failed with an error other than a plain not-found (HTTP 404 `ITEM_NOT_FOUND`, or `ENTITY_IS_DELETED` while it is being deleted). The message carries the Salesforce detail when there is one.
 
+Because `ENTITY_IS_DELETED` counts as absent, `sf data360 deploy` of an insight Salesforce is still deleting sends one create and reports Salesforce's answer to it as is.
+
 ## Why the plugin stops
 
 Only a clear not-found counts as absent. Any other error leaves the state of the calculated insight unknown.
