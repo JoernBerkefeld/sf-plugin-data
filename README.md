@@ -1275,7 +1275,9 @@ released-package acceptance have not been verified.
   enabled with category `OTHER` and the generated field `KQ_Id__c`.
 - Mapping files and existing mappings: a hand-written file with only the authored
   pairs creates a mapping and deploys onto the existing mapping as well. The pairs
-  Salesforce generated (the three system pairs and the key qualifier pair) are taken
+  Salesforce generated (the three system pairs and the key qualifier pairs, including
+  `KQ_RefId__c` to `KQ_Name__c` that a relationship from `ssot__Name__c` adds when
+  `RefId__c` maps onto it) are taken
   from the org's copy and treated as part of the file, so such a file deploys back
   unchanged, can add pairs, and removes exactly the authored pairs it drops. The
   authored primary-key pair must stay in the file

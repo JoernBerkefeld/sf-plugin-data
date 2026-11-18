@@ -133,6 +133,35 @@ function isCustomGeneratedPair(
 }
 
 /**
+ * Recognise the key qualifier pair Salesforce adds when a relationship uses a non-key target
+ * field as its source: `KQ_<S>__c -> <Q>__c`, where `<Q>__c` is a System KeyQualifier field that a target
+ * field names in `keyQualifierName` and the mapping maps `<S>__c` onto that naming field. The two
+ * names differ (`KQ_RefId__c -> KQ_Name__c` for `RefId__c -> ssot__Name__c`). Only this
+ * standard-DMO shape was seen live (API 68); the custom-DMO case is assumed by analogy.
+ * @param {NativeMappingField} pair Mapping pair.
+ * @param {MappingPairContext} context Fresh fields and the mapping's own pairs.
+ * @returns {boolean} Whether the pair is generated, not authored.
+ */
+function isMappedFieldQualifierPair(
+  pair: NativeMappingField,
+  context: MappingPairContext,
+): boolean {
+  const source = keyQualifierField.exec(pair.sourceFieldDeveloperName);
+  const to = context.targets.get(pair.targetFieldDeveloperName);
+  if (!source || to?.creationType !== 'System' || to.usageTag !== 'KeyQualifier') return false;
+  const qualifier = pair.targetFieldDeveloperName.slice(0, -'__c'.length);
+  return [...context.targets.values()].some(
+    (field) =>
+      field.keyQualifierName === qualifier &&
+      context.pairs.some(
+        (other) =>
+          other.sourceFieldDeveloperName === `${source[1]}__c` &&
+          other.targetFieldDeveloperName === field.name,
+      ),
+  );
+}
+
+/**
  * Recognise the authored primary-key pair that is never unmapped: the source primary key onto
  * the target primary key, read from the org's flags, whatever their names and types.
  * @param {DloField} from Source field.
@@ -225,11 +254,15 @@ export async function resolveNativeMappingTarget(
   return document;
 }
 
-/** Fresh fields of a mapping's source DLO and target DMO, and the target's write scope. */
+/**
+ * Fresh fields of a mapping's source DLO and target DMO, the target's write scope, and the
+ * mapping's own pairs (they tie a relationship's key qualifier pair to its field).
+ */
 export type MappingPairContext = {
   sources: Map<string, DloField>;
   targets: Map<string, NativeDmoField>;
   standard: boolean;
+  pairs: NativeMappingField[];
 };
 
 /**
@@ -249,6 +282,7 @@ export function isGeneratedMappingPair(
   const from = sources.get(pair.sourceFieldDeveloperName);
   const to = targets.get(pair.targetFieldDeveloperName);
   if (!from || !to) return false;
+  if (isMappedFieldQualifierPair(pair, context)) return true;
   return context.standard
     ? isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets)
     : isCustomGeneratedPair(from, to, sources, targets);
@@ -303,6 +337,7 @@ async function readMappingParents(
           .map((field) => [field.name, field]),
       ),
       standard,
+      pairs: structuredClone(desired.spec.fieldMappings),
     } satisfies MappingPairContext,
   };
 }

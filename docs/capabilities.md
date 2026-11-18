@@ -568,8 +568,12 @@ Native mapping targets, decided from the same raw read:
   as `System`, or as `Standard` for `DataSource`, `DataSourceObject` and
   `InternalOrganization`. The key qualifier pair is `KQ_<Key>__c` on both sides for
   the source primary key `<Key>__c`; on a DMO that is not yet enabled its target
-  field may still be absent. Generated pairs are never sent and, with the key pair,
-  never unmapped by a deploy.
+  field may still be absent. A relationship from a non-key target field adds a key
+  qualifier pair whose names differ: `KQ_<S>__c` onto the `System` key-qualifier field that the
+  target field names in `keyQualifierName`, where the mapping maps `<S>__c` onto
+  that target field (seen at API 68: `KQ_RefId__c` to `KQ_Name__c` for `RefId__c` to
+  `ssot__Name__c`; custom DMOs are treated the same way). Generated pairs are never
+  sent and, with the key pair, never unmapped by a deploy.
 - Mapping file and existing mapping, custom and standard target alike: the file may
   list only the authored pairs. The pairs Salesforce generated (the three system
   pairs and the key qualifier pair) are taken from the org's copy and treated as part

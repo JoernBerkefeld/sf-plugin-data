@@ -219,6 +219,58 @@ const scenarios = {
   },
 };
 
+// Live API 68 (standard DMO): a relationship from ssot__Name__c, which RefId__c maps onto, makes
+// Salesforce add DLO field KQ_RefId__c, System DMO field KQ_Name__c (ssot__Name__c names it in
+// keyQualifierName) and the pair KQ_RefId__c -> KQ_Name__c. The custom DMO case is by analogy.
+const relationshipDlo = () => ({
+  ...sourceDlo(),
+  fields: [
+    'Id__c',
+    'RefId__c',
+    'Note__c',
+    ...systemSources,
+    'KQ_Id__c',
+    'KQ_RefId__c',
+    'KQ_Other__c',
+  ].map((name) => dloField(name, { isPrimaryKey: name === 'Id__c' })),
+});
+const qualifierField = () =>
+  dmoField('KQ_Name__c', 'System', { usageTag: 'KeyQualifier', isMapped: true });
+scenarios.standardRelationship = {
+  dmo: () => {
+    const value = standardDmo();
+    value.fields = value.fields.map((field) =>
+      field.name === 'ssot__Name__c' ? { ...field, keyQualifierName: 'KQ_Name' } : field,
+    );
+    value.fields.push(qualifierField());
+    return value;
+  },
+  dlo: relationshipDlo,
+  authored: [
+    ['Id__c', 'ssot__Id__c'],
+    ['RefId__c', 'ssot__Name__c'],
+    ['Note__c', 'Note__c'],
+  ],
+  generated: [...scenarios.standard.generated, ['KQ_RefId__c', 'KQ_Name__c']],
+};
+scenarios.customRelationship = {
+  dmo: () => {
+    const value = customDmo();
+    value.fields.push(
+      dmoField('Name__c', 'Custom', { isMapped: true, keyQualifierName: 'KQ_Name' }),
+      qualifierField(),
+    );
+    return value;
+  },
+  dlo: relationshipDlo,
+  authored: [
+    ['Id__c', 'Id__c'],
+    ['RefId__c', 'Name__c'],
+    ['Note__c', 'Note__c'],
+  ],
+  generated: [...scenarios.custom.generated, ['KQ_RefId__c', 'KQ_Name__c']],
+};
+
 /**
  * A mapping org over one DLO and one DMO; every read returns a fresh copy.
  * @param {'custom' | 'standard'} kind Target DMO kind.
@@ -249,7 +301,7 @@ function mappingOrg(kind) {
       source: {
         get: async (name) => {
           reads.push(`dlo:${name}`);
-          return sourceDlo();
+          return (scenario.dlo ?? sourceDlo)();
         },
       },
       target: {
@@ -287,6 +339,41 @@ for (const kind of ['custom', 'standard'])
     assert.equal(plan.operation, 'noop');
   });
 
+for (const kind of ['standardRelationship', 'customRelationship'])
+  test(`${kind}: the key qualifier pair of a mapped non-key field is generated`, async () => {
+    const org = mappingOrg(kind);
+    const document = await retrieveLeanNativeMapping(
+      org.raw.developerName,
+      org.client,
+      undefined,
+      org.dependencies,
+    );
+    // Retrieve leaves KQ_RefId__c -> KQ_Name__c out with the other generated pairs.
+    const authored = org.scenario.authored.map(([source, target]) => `${source}->${target}`);
+    assert.deepEqual(pairs(document), authored);
+    // A hand-written file with the authored pairs only deploys unchanged.
+    const handWritten = structuredClone(document);
+    handWritten.spec.fieldMappings = org.scenario.authored.map(([source, target]) => ({
+      sourceFieldDeveloperName: source,
+      targetFieldDeveloperName: target,
+    }));
+    const plan = await preflightNativeMapping(handWritten, org.client, org.dependencies);
+    assert.equal(plan.operation, 'noop');
+    // A KQ pair whose base field is not mapped onto the naming field stays authored.
+    const unrelated = {
+      sourceFieldDeveloperName: 'KQ_Other__c',
+      targetFieldDeveloperName: 'KQ_Name__c',
+    };
+    const generated = await generatedMappingPairs(
+      {
+        ...document,
+        spec: { ...document.spec, fieldMappings: [...document.spec.fieldMappings, unrelated] },
+      },
+      org.dependencies,
+    );
+    assert.deepEqual(generated, []);
+  });
+
 test('retrieve and deploy share one generated-pair predicate', async () => {
   for (const kind of ['custom', 'standard']) {
     const org = mappingOrg(kind);
@@ -314,6 +401,7 @@ test('retrieve and deploy share one generated-pair predicate', async () => {
       sources: new Map(normalizeDlo(sourceDlo()).spec.fields.map((field) => [field.name, field])),
       targets: new Map(target.spec.fields.map((field) => [field.name, field])),
       standard: kind === 'standard',
+      pairs: org.raw.fieldMappings,
     };
     for (const value of org.raw.fieldMappings)
       assert.equal(
@@ -442,7 +530,7 @@ test('the key qualifier of a relationship source field is a generated pair on a 
       textField('KQ_Other__c', system),
     ].map((field) => [field.name, field]),
   );
-  const context = { sources, targets, standard: false };
+  const context = { sources, targets, standard: false, pairs: [] };
   assert.equal(isGeneratedMappingPair(samePair('KQ_Id__c'), context), true);
   assert.equal(isGeneratedMappingPair(samePair('KQ_RefId__c'), context), true);
   // A qualifier no target field names stays an authored pair.
