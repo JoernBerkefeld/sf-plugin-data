@@ -19,12 +19,16 @@ import type { ApiVersionSelection } from './api-version.js';
 
 export type TransportErrorCode = 'INVALID_REQUEST' | 'AUTHENTICATION_FAILED' | 'REQUEST_FAILED';
 
+/** Native 404 codes that name an item as absent or deleted, read from a single REST error. */
+const nativeAbsenceCodes = ['ITEM_NOT_FOUND', 'ENTITY_IS_DELETED'] as const;
+export type NativeAbsenceCode = (typeof nativeAbsenceCodes)[number];
+
 /** An intentionally payload-free diagnostic safe for JSON and console output. */
 export class ConnectError extends Error {
   public constructor(
     public readonly code: TransportErrorCode,
     public readonly statusCode?: number,
-    public readonly nativeCode?: 'ITEM_NOT_FOUND',
+    public readonly nativeCode?: NativeAbsenceCode,
   ) {
     super(
       code === 'AUTHENTICATION_FAILED'
@@ -461,22 +465,25 @@ export class ConnectClient {
       // HTTP status, message text, raw JSON strings or a mixed/malformed error envelope.
       const nativeError = error as { name?: unknown; errorCode?: unknown; data?: unknown };
       const data = nativeError?.data;
+      // A GET or DELETE may answer 404 ENTITY_IS_DELETED while an item is being deleted (live
+      // API 68, calculated insight); callers decide whether that code means absent.
+      const absence = nativeAbsenceCodes.find((value) => value === nativeError?.errorCode);
       const nativeCode =
         typeof request === 'object' &&
-        request.method === 'GET' &&
+        (request.method === 'GET' || request.method === 'DELETE') &&
         statusCode === 404 &&
         !expired &&
-        nativeError?.name === 'ITEM_NOT_FOUND' &&
-        nativeError.errorCode === 'ITEM_NOT_FOUND' &&
+        absence !== undefined &&
+        nativeError?.name === absence &&
         !!data &&
         typeof data === 'object' &&
         !Array.isArray(data) &&
         Object.keys(data).length === 2 &&
         'errorCode' in data &&
-        data.errorCode === 'ITEM_NOT_FOUND' &&
+        data.errorCode === absence &&
         'message' in data &&
         typeof data.message === 'string'
-          ? 'ITEM_NOT_FOUND'
+          ? absence
           : undefined;
       const code = statusCode === undefined && !expired ? networkCode(error) : undefined;
       const failure = retainConnectDiagnostic(

@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin sent one DELETE for the calculated insight, then read the org again (API 68 GET, at most 12 reads one second apart, within 120 seconds) to prove that it is gone. This code means that proof did not succeed: the reads timed out, failed, or showed an unexpected state.
+The plugin sent one DELETE for the calculated insight, then read the org again (API 68 GET, at most 12 reads one second apart, within 120 seconds) to prove that it is gone. A read answering HTTP 404 `ITEM_NOT_FOUND` or `ENTITY_IS_DELETED` proves it; a DELETE answered with one of these 404s is not a refusal, and the reads decide. This code means that proof did not succeed: the reads timed out, failed, or showed an unexpected state.
 
 The calculated insight may or may not have been deleted.
 

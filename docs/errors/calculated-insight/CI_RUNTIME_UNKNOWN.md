@@ -10,7 +10,7 @@
 
 ## What it means
 
-The native Data 360 read of the calculated insight failed with an error other than a plain not-found (HTTP 404 `ITEM_NOT_FOUND`). The message carries the Salesforce detail when there is one.
+The native Data 360 read of the calculated insight failed with an error other than a plain not-found (HTTP 404 `ITEM_NOT_FOUND`, or `ENTITY_IS_DELETED` while it is being deleted). The message carries the Salesforce detail when there is one.
 
 ## Why the plugin stops
 

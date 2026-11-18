@@ -47,7 +47,7 @@ export type CalculatedInsightAcquisition =
   { state: 'absent' } | { state: 'present'; status: string; document: NativeCalculatedInsight };
 
 /**
- * Read one insight by name: HTTP 404 ITEM_NOT_FOUND is absent, any other failure throws
+ * Read one insight by name: HTTP 404 ITEM_NOT_FOUND or ENTITY_IS_DELETED is absent, any other failure throws
  * (CI_RUNTIME_UNKNOWN with the Salesforce diagnostic). A present insight must answer with the
  * selected name and data space (CI_IDENTITY_CHANGED otherwise): every write and the DELETE go
  * by name, so they must address exactly the insight that was read.
@@ -70,7 +70,7 @@ export async function acquireCalculatedInsight(
 }
 
 /**
- * The raw GET of one insight by name: HTTP 404 ITEM_NOT_FOUND is absent, any other failure
+ * The raw GET of one insight by name: HTTP 404 ITEM_NOT_FOUND or ENTITY_IS_DELETED is absent, any other failure
  * throws CI_RUNTIME_UNKNOWN with the Salesforce diagnostic.
  * @param {Pick<CalculatedInsightReadContext, 'get'>} context Read context.
  * @param {string} apiName Exact name ending in __cio.
@@ -84,12 +84,10 @@ async function readCalculatedInsight(
   try {
     return { state: 'present', raw: await context.get(apiName) };
   } catch (error) {
-    if (
-      error instanceof ConnectError &&
-      error.statusCode === 404 &&
-      error.nativeCode === 'ITEM_NOT_FOUND'
-    )
+    // A deleting insight may answer 404 ENTITY_IS_DELETED instead (live API 68).
+    if (error instanceof ConnectError && error.statusCode === 404 && error.nativeCode !== undefined)
       return { state: 'absent' };
+
     throw retainConnectDiagnostic(
       new CalculatedInsightError('CI_RUNTIME_UNKNOWN'),
       getConnectDiagnostic(error),

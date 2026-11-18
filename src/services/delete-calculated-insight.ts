@@ -1,4 +1,5 @@
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { ConnectError } from '../transport/connect-client.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 import { rejectedNextAction } from './deploy-result.js';
 import {
@@ -123,8 +124,13 @@ export async function deleteCalculatedInsight(
     try {
       await client.delete(value.apiName);
     } catch (error) {
-      if (rejectedWrite(error)) return result('failed', 'rejected', 'REQUEST_FAILED', error);
-      throw error;
+      // A 404 naming the insight absent or deleted (live API 68: ENTITY_IS_DELETED) is not a
+      // refusal: the read below decides. Nothing is resent.
+      const gone =
+        error instanceof ConnectError && error.statusCode === 404 && error.nativeCode !== undefined;
+      if (!gone && rejectedWrite(error))
+        return result('failed', 'rejected', 'REQUEST_FAILED', error);
+      if (!gone) throw error;
     }
     await settleCalculatedInsight(context, { apiName: value.apiName }, 'absent', options);
     return result('deleted', 'confirmed-deleted');
