@@ -2,7 +2,11 @@ import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
-import { carriesDefinition, validateSegmentDocument } from '../artifacts/segment-document.js';
+import {
+  carriesDefinition,
+  segmentScheduleNotice,
+  validateSegmentDocument,
+} from '../artifacts/segment-document.js';
 import { retrieveSegment } from './retrieve-segment.js';
 import { SegmentError } from '../artifacts/segment-document.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -17,7 +21,8 @@ export type SegmentDeployPreview = DeployPreviewResult & {
 /**
  * Classify one authored Segment against the target by its exact name at API68: exact
  * ITEM_NOT_FOUND404 is create, a readable Segment is update or unchanged. The authored
- * definition is not judged; Salesforce decides about it on the write.
+ * definition is not judged; Salesforce decides about it on the write. A schedule the write would
+ * send is reported as SEGMENT_SCHEDULE_CHANGE beside create or update.
  * @param {unknown} value Desired bounded authored document.
  * @param {Connection} connection Command-owned authenticated target connection.
  * @param {string | ApiVersionSelection} apiVersion API68 selection.
@@ -65,7 +70,16 @@ export async function preflightSegmentDeploy(
       },
       getConnectDiagnostic(evidence),
     );
-  let desired;
+  let desired: ReturnType<typeof validateSegmentDocument>;
+  // A schedule the deploy would send makes the segment publish on it in the target org.
+  const withNotice = (
+    preview: SegmentDeployPreview,
+    current?: ReturnType<typeof validateSegmentDocument>,
+  ): SegmentDeployPreview => {
+    const notice = segmentScheduleNotice(desired, current);
+    if (notice) (preview.diagnostics as Array<{ code: string; message: string }>).push(notice);
+    return preview;
+  };
   try {
     desired = validateSegmentDocument(value);
   } catch {
@@ -103,7 +117,7 @@ export async function preflightSegmentDeploy(
       diagnostic.errors?.length === 1 &&
       diagnostic.errors[0].code === 'ITEM_NOT_FOUND'
     )
-      return result('create', 'absent');
+      return withNotice(result('create', 'absent'));
     if (!acquired.candidate || acquired.blockers.length > 0 || !acquired.expectations)
       return result(
         'blocked',
@@ -114,7 +128,9 @@ export async function preflightSegmentDeploy(
     const current = validateSegmentDocument(acquired.candidate);
     if (JSON.stringify(current.identity) !== JSON.stringify(desired.identity))
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
-    return result(carriesDefinition(current, desired) ? 'unchanged' : 'update', 'present');
+    return carriesDefinition(current, desired)
+      ? result('unchanged', 'present')
+      : withNotice(result('update', 'present'), current);
   } catch (error) {
     return result(
       'blocked',

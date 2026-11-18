@@ -14,7 +14,7 @@ import {
 } from './connect-diagnostic.js';
 import type { ConnectDiagnostic } from './connect-diagnostic.js';
 import type { Connection } from '@salesforce/core';
-import { uiSegmentWriteBody, validateSegmentDocument } from '../artifacts/segment-document.js';
+import { segmentWriteBody, validateSegmentDocument } from '../artifacts/segment-document.js';
 import type { ApiVersionSelection } from './api-version.js';
 
 export type TransportErrorCode = 'INVALID_REQUEST' | 'AUTHENTICATION_FAILED' | 'REQUEST_FAILED';
@@ -197,7 +197,8 @@ export class ConnectClient {
   }
 
   /**
-   * Create one native API68 Segment without refresh, redirect or replay.
+   * Create one native API68 Segment, without redirect or replay. The definition goes as written
+   * (`segmentWriteBody`); without a schedule in the file it does not refresh.
    * @param {unknown} value Complete admitted portable definition.
    * @returns {Promise<unknown>} Untrusted acknowledgement, not settlement.
    */
@@ -208,19 +209,7 @@ export class ConnectClient {
       {
         method: 'POST',
         url: this.safeUrl(`${this.prefix}segments`),
-        body: JSON.stringify(
-          document.spec.segmentType === 'UI'
-            ? uiSegmentWriteBody(document, true)
-            : {
-                developerName: document.identity.apiName,
-                displayName: document.spec.displayName,
-                description: document.spec.description,
-                segmentOnApiName: document.spec.segmentOn.apiName,
-                segmentType: 'Dbt',
-                includeDbt: { models: { models: document.spec.models } },
-                publishSchedule: 'NoRefresh',
-              },
-        ),
+        body: JSON.stringify(segmentWriteBody(document, true)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),
@@ -228,29 +217,20 @@ export class ConnectClient {
   }
 
   /**
-   * PATCH the authored definition on the native API68 Segment route. A DBT PATCH writes neither
-   * schedule nor lookback; a UI PATCH sends the full definition with its lookback.
+   * PATCH the full authored definition on the native API68 Segment route; the schedule keys go
+   * along only when `schedule` is set (the schedule of the file differs from the org's).
    * @param {unknown} value Complete independently admitted desired Segment document.
+   * @param {boolean} [schedule] Whether to send the schedule of the file.
    * @returns {Promise<unknown>} Untrusted single-attempt response, never settlement evidence.
    */
-  public async patchSegment(value: unknown): Promise<unknown> {
+  public async patchSegment(value: unknown, schedule = false): Promise<unknown> {
     if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
     const document = validateSegmentDocument(value);
     return this.send(
       {
         method: 'PATCH',
         url: this.safeUrl(`${this.prefix}segments/${document.identity.apiName}`),
-        body: JSON.stringify(
-          document.spec.segmentType === 'UI'
-            ? uiSegmentWriteBody(document, false)
-            : {
-                displayName: document.spec.displayName,
-                description: document.spec.description,
-                segmentOnApiName: document.spec.segmentOn.apiName,
-                segmentType: 'Dbt',
-                includeDbt: { models: { models: document.spec.models } },
-              },
-        ),
+        body: JSON.stringify(segmentWriteBody(document, false, schedule)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

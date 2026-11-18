@@ -870,12 +870,26 @@ Not qualified:
 - [x] Native API68 retrieve, create, PUT update and delete; see the top section.
 - [ ] Prove create/read-back/no-op without refresh, activation or delete/recreate.
 
-## segment: unimplemented
+## segment: native API 68 route
 
-- [ ] Record official endpoints, versions, pagination and supported variants.
-- [ ] Preserve visual/SQL criteria, parameters, exclusions, identity and lookback.
-- [ ] Classify schedule, publication and count side effects before mutation.
-- [ ] Prove safe configuration-only create/update/no-op for declared variants.
+- [x] Native API68 retrieve, create, PATCH update, delete and publish by exact name in the
+      default data space.
+- [x] DBT SQL models, UI criteria and other types (Waterfall, Dynamic,
+      EinsteinGptSegmentsUI) are sent as written with their lookback; Salesforce decides
+      (live API 68, 2026-11-18: lookbacks P7D to P1Y accepted, P0D, `30` and P400D refused).
+- [x] Refresh schedule: the optional `schedule` key in write shape is sent on create and,
+      when a key it states differs, on update; absent leaves the schedule alone. A left-out
+      start date is kept (verified); a left-out end date is checked by the readback. A UI schedule is cleared
+      with `{"frequency": "None"}`; Salesforce refuses every clearing body for a DBT segment
+      and that 400 is reported. Preview and deploy report `SEGMENT_SCHEDULE_CHANGE`.
+- [x] Parameters are not segment input at API 68 (create answers 400 for the key); a
+      segment with parameters is retrieved as-is.
+- [ ] Updates of Waterfall, Dynamic and EinsteinGptSegmentsUI segments are sent as written
+      but not verified live.
+- [ ] End dates and an hourly `publishInterval` are kept and sent as written, not verified
+      live.
+- [ ] Waterfall child segments, criteria of dynamic and Einstein segments, real-time
+      segments on a data graph and lookalike segments with a real seed are not verified.
 
 ## calculated-insight: unimplemented
 

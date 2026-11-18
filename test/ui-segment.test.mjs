@@ -47,7 +47,6 @@ const document = (criteria = normalized(), lookbackPeriod = 'P90D') => ({
     segmentType: 'UI',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     includeCriteria: criteria,
-    publishInterval: 'NO_REFRESH',
     lookbackPeriod,
   },
 });
@@ -114,10 +113,18 @@ test('a UI segment GET with server-owned segmentMembershipTable is a normal docu
 });
 
 test('what the UI segment write cannot carry stays as-is', () => {
+  // An unknown key is kept on retrieve and refused on deploy, as for DBT.
+  const unknown = { ...runtime(), excludeCriteria: '{}' };
+  assert.equal(
+    projectSegment({ segments: [unknown] }, 'Audience', 'retrieve').candidate.spec.excludeCriteria,
+    '{}',
+  );
+  assert.throws(() => projectSegment({ segments: [unknown] }, 'Audience'), {
+    code: 'UNKNOWN_SEGMENT_CONFIGURATION',
+  });
   for (const change of [
-    { excludeCriteria: '{}' },
     { parameters: [{ name: 'p' }] },
-    { publishInterval: 'TWELVE' },
+    { publishScheduleInfo: { frequency: 'Weekly', futureKey: 1 } },
     { includeCriteria: '{not json' },
     { includeCriteria: '[1]' },
     { includeCriteria: undefined },

@@ -58,6 +58,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The publish was sent, but its answer or the status after it could not be read, so the publish may be running. Read the segment before publishing again; nothing was resent.',
   SEGMENT_READBACK_MISMATCH:
     'After the write, the segment read back differently from the file, or other settings or its DMO changed. Inspect the segment in the org before any further deploy.',
+  SEGMENT_SCHEDULE_CHANGE:
+    'The deploy sends the schedule of the file, so the segment publishes on that schedule in the target org ({ "frequency": "None" } turns it off). Remove the schedule key from the file to leave the org schedule alone.',
   SEGMENT_SELECTION_AMBIGUOUS:
     'More than one segment in the default data space matches this display name or record ID and none was chosen. Rerun with an API name listed in the message.',
   SEGMENT_SETTLEMENT_UNQUALIFIED:
@@ -73,7 +75,7 @@ export const hints: Readonly<Record<string, string>> = {
   UNKNOWN_SEGMENT_CONFIGURATION:
     'The segment has a setting the plugin does not know, or misses one. Retrieve keeps unknown settings in the file; deploy refuses them and names the key. Remove the key, or manage the segment in Data Cloud.',
   UNSUPPORTED_SEGMENT_VARIANT:
-    'Only DBT segments with a 90-day lookback and UI segments, on a DMO without refresh schedule, parameters or unknown UI settings, fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.',
+    'The segment has parameters (no write takes them), schedule details the plugin does not know, UI criteria that are not a JSON object or no DMO source in the default space. Retrieve writes it as-is; deploy refuses it.',
   UNSUPPORTED_SEGMENT_XML:
     "Segment XML files cannot be deployed. Select the segment's .segment.json file instead; retrieve one with sf data360 retrieve -m segment:Name if you do not have it.",
 };

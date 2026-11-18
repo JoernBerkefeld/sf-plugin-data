@@ -533,7 +533,6 @@ test('a confirmed segment delete removes its JSON and every SQL file in any lett
           segmentType: 'DBT',
           segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
           models: [{ name: 'First', sql: 'SELECT 1' }],
-          publishInterval: 'NO_REFRESH',
           lookbackPeriod: 'P90D',
         },
       },

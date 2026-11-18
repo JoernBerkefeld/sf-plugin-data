@@ -12,7 +12,9 @@
 
 On deploy, the `.segment.json` file has a key the plugin does not send, or misses one it needs. The message names the key path, for example `spec.futureSetting` or `spec.models[0].futureModelKey`.
 
-Retrieve keeps a setting the plugin does not know: an unknown key of the segment goes into `spec` after the known keys, extra keys of `includeDbt` into `spec.includeDbt`, extra model keys stay on the model. Observed fields (audit, status, membership tables) are not checked on retrieve. A DBT segment without its DBT configuration, and a UI segment (built in the segment canvas) with any key the plugin does not know, is written as-is (`UNSUPPORTED_SEGMENT_VARIANT`): a UI write could not carry that key.
+Retrieve keeps a setting the plugin does not know: an unknown key of the segment goes into `spec` after the known keys, extra keys of `includeDbt` into `spec.includeDbt`, extra model keys stay on the model. Observed fields (audit, status, membership tables) are not checked on retrieve. This holds for every segment type. A DBT segment without its DBT configuration is written as-is (`UNSUPPORTED_SEGMENT_VARIANT`).
+
+A file key the segment file never holds is refused the same way, for example `spec.parameters` (Salesforce has no write for parameters) or `spec.publishInterval` (the `schedule` key holds the refresh schedule), and so is an unknown key inside `spec.schedule`.
 
 ## Why the plugin stops
 

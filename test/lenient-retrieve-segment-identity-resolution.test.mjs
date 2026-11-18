@@ -110,13 +110,8 @@ const refusal = (family, keyPath, problem) => (error) =>
 
 for (const [label, change, reason] of [
   [
-    'a refresh schedule',
-    (segment) => (segment.publishInterval = 'TWELVE_HOURS'),
-    'UNSUPPORTED_SEGMENT_VARIANT',
-  ],
-  [
-    'a 30-day lookback',
-    (segment) => (segment.lookbackPeriod = 'P30D'),
+    'schedule details the plugin does not know',
+    (segment) => (segment.publishScheduleInfo = { frequency: 'Weekly', futureKey: 1 }),
     'UNSUPPORTED_SEGMENT_VARIANT',
   ],
   [

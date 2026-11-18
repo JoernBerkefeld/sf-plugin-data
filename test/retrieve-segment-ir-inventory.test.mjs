@@ -262,7 +262,7 @@ test('retrieve help keeps the other inventory statements', () => {
     'bare -m calculated-insight every insight the API lists',
     'bare -m segment every default-space segment the API lists',
     'a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json',
-    'exclusion criteria or the Waterfall, Real-Time or Lookalike type',
+    'A segment with parameters (no write takes them), schedule details the plugin does not know',
   ])
     assert.ok(Retrieve.description.includes(text), text);
   assert.doesNotMatch(

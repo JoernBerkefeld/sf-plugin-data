@@ -66,9 +66,19 @@ decides.
 
 Retrieve writes each segment as
 `data360/segments/<Name>.segment.json` at the project root (identity, label,
-description, `segmentOn` DMO, schedule and lookback, and the list of model names) and one
-`<Name>.segment.<model>.sql` per model beside it (that model's `sql`, plain text, bytes as
-returned). A model name must start with a letter or digit and hold only
+description, segment type, `segmentOn` DMO, lookback, an optional `schedule`, and the list
+of model names) and one `<Name>.segment.<model>.sql` per model beside it (that model's
+`sql`, plain text, bytes as returned). A UI segment holds its criteria as a JSON object in
+`includeCriteria` instead of models; other types (for example Waterfall or Dynamic) hold
+neither, and the lookback only when the segment has one. `schedule` is the refresh
+schedule in the shape the write takes (`frequency`, `interval`, `daysOfWeek` as a list,
+`startDateTime`, `endDate`, `endDateTime`, optional `time` with `hour`, `minute` and
+`timeZone`, or an hourly `publishInterval` when the read has no schedule details);
+retrieve leaves it out for a segment that does not refresh, and `nextScheduledDate` is not
+kept. On deploy, a file without `schedule` leaves the org schedule alone; one with it is
+sent when a key it states differs from the org schedule (keys it leaves out keep their org
+value), and `{"frequency": "None"}` turns it off.
+The file holds no `parameters` (the API has no write for them). A model name must start with a letter or digit and hold only
 letters, digits and underscores, and two model names may not differ only in case; another
 name is refused with `INVALID_SEGMENT_DOCUMENT`. A repeat retrieve of an unchanged segment
 writes nothing (`unchanged`); with `--overwrite`, the SQL file of a model the segment no

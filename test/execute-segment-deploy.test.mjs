@@ -21,7 +21,6 @@ const document = () => ({
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
 });
@@ -222,6 +221,7 @@ test('native API68 CREATE payload is minimal and create-only with no refresh/rep
     segmentOnApiName: 'Person__dlm',
     segmentType: 'Dbt',
     includeDbt: { models: { models: document().spec.models } },
+    lookbackPeriod: 'P90D',
     publishSchedule: 'NoRefresh',
   });
   await assert.rejects(new ConnectClient(c, '65.0').createSegment(document()));
@@ -684,7 +684,7 @@ test('COUNTING followed by unknown, missing, error or failed reads stays unknown
   }
 });
 for (const version of ['68.0']) {
-  test(`API${version} PATCH payload is complete doubly nested DBT without schedules or lookback`, async () => {
+  test(`API${version} PATCH payload is complete doubly nested DBT with its lookback, without schedule`, async () => {
     const calls = [];
     const c = {
       ...connection,
@@ -710,6 +710,7 @@ for (const version of ['68.0']) {
       segmentType: 'Dbt',
       segmentOnApiName: 'Person__dlm',
       includeDbt: { models: { models: changed().spec.models } },
+      lookbackPeriod: 'P90D',
     });
     for (const version of [
       '64.0',

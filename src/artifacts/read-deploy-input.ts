@@ -21,7 +21,7 @@ import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { joinSegmentFiles, segmentName } from './segment-document.js';
-import type { SegmentDocument } from './segment-document.js';
+import type { DbtSegmentSpec, SegmentDocument } from './segment-document.js';
 import {
   identityResolutionName,
   validateIdentityResolutionDocument,
@@ -840,7 +840,8 @@ async function readSegmentDeployInput(file: string): Promise<SegmentDeployInput>
   freeze(document);
   // The files as found on disk, in model order.
   const byModel = new Map(codeFiles.map((code) => [code.name.toLowerCase(), code.path]));
-  const models = document.spec.segmentType === 'DBT' ? document.spec.models : [];
+  const models =
+    document.spec.segmentType === 'DBT' ? (document.spec as DbtSegmentSpec).models : [];
   const codePaths = models.map((model) => byModel.get(model.name.toLowerCase())!);
   return Object.freeze({
     path: jsonPath,

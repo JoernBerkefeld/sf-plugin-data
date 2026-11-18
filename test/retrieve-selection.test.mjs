@@ -24,7 +24,6 @@ const document = (name) => ({
     segmentType: 'DBT',
     segmentOn: identity('dmo', 'Person__dlm'),
     models: [{ name, sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
-    publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
 });

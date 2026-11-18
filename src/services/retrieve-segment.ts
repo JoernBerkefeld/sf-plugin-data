@@ -3,10 +3,11 @@ import type { Connection } from '@salesforce/core';
 import {
   SegmentError,
   decodeSegmentCriteria,
+  opaqueSegmentSchedule,
   segmentName,
   validateSegmentDocument,
 } from '../artifacts/segment-document.js';
-import type { SegmentDocument } from '../artifacts/segment-document.js';
+import type { SegmentDocument, SegmentSchedule } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
@@ -85,6 +86,87 @@ function validateObservations(raw: Record<string, unknown>): void {
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
 }
 
+// The schedule keys of a segment GET: none for a segment that does not refresh.
+const scheduleRead = [
+  'publishScheduleInfo',
+  'publishScheduleStartDateTime',
+  'publishScheduleEndDate',
+  'publishScheduleEndDateTime',
+];
+const scheduleInfoKeys = new Set([
+  'daysOfWeek',
+  'frequency',
+  'interval',
+  'nextScheduledDate',
+  'timeInfo',
+]);
+
+/**
+ * Whether a read value is set (neither absent nor null).
+ * @param {unknown} value Read value.
+ * @returns {boolean} Set.
+ */
+const present = (value: unknown): boolean => value !== undefined && value !== null;
+
+/**
+ * Project the schedule of a segment GET onto the write shape of the file (live API 68,
+ * 2026-11-18): `publishScheduleInfo` gives `frequency`, `interval`, `daysOfWeek` (read as a plain
+ * list; an empty one is left out) and `time` (from `timeInfo`, which Salesforce reads back as
+ * null); `publishScheduleStartDateTime`, `publishScheduleEndDate` and
+ * `publishScheduleEndDateTime` give `startDateTime`, `endDate` and `endDateTime`;
+ * `nextScheduledDate` is left out, and so is `publishInterval` beside `publishScheduleInfo`.
+ * Without `publishScheduleInfo`, a refresh other than NO_REFRESH (an hourly interval) keeps its
+ * `publishInterval`. A segment with NO_REFRESH and no dates has no schedule, so retrieve leaves
+ * the key out. Schedule details the plugin does not know (another `publishScheduleInfo` key, a
+ * `frequency` that is not text, `daysOfWeek` that is not a list) are UNSUPPORTED_SEGMENT_VARIANT
+ * on retrieve; a deploy-mode read gives `opaqueSegmentSchedule`, so a file without `schedule`
+ * still deploys and keeps the org schedule.
+ * @param {Record<string, unknown>} raw The segment inside the GET response.
+ * @param {DocumentMode} [mode] `deploy` (target reads) or `retrieve`.
+ * @returns {SegmentSchedule | undefined} Projected schedule, or undefined for none.
+ */
+export function projectSegmentSchedule(
+  raw: Record<string, unknown>,
+  mode: DocumentMode = 'deploy',
+): SegmentSchedule | undefined {
+  const info = raw.publishScheduleInfo;
+  const dates = {
+    ...(present(raw.publishScheduleStartDateTime)
+      ? { startDateTime: raw.publishScheduleStartDateTime }
+      : {}),
+    ...(present(raw.publishScheduleEndDate) ? { endDate: raw.publishScheduleEndDate } : {}),
+    ...(present(raw.publishScheduleEndDateTime)
+      ? { endDateTime: raw.publishScheduleEndDateTime }
+      : {}),
+  };
+  const unknown = (): SegmentSchedule => {
+    if (mode === 'retrieve') throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+    return { ...opaqueSegmentSchedule };
+  };
+  if (!present(info)) {
+    if (raw.publishInterval === 'NO_REFRESH' && Object.keys(dates).length === 0) return undefined;
+    if (typeof raw.publishInterval !== 'string') return unknown();
+    return { publishInterval: raw.publishInterval, ...dates };
+  }
+  const read = info as Record<string, unknown>;
+  if (
+    typeof info !== 'object' ||
+    Array.isArray(info) ||
+    Object.keys(read).some((key) => !scheduleInfoKeys.has(key)) ||
+    typeof read.frequency !== 'string' ||
+    (present(read.daysOfWeek) && !Array.isArray(read.daysOfWeek))
+  )
+    return unknown();
+  const days = read.daysOfWeek as unknown[] | null | undefined;
+  return {
+    frequency: read.frequency,
+    ...(present(read.interval) ? { interval: read.interval } : {}),
+    ...(days && days.length > 0 ? { daysOfWeek: structuredClone(days) } : {}),
+    ...dates,
+    ...(present(read.timeInfo) ? { time: structuredClone(read.timeInfo) } : {}),
+  };
+}
+
 const uiConfiguration = [
   'apiName',
   'displayName',
@@ -97,44 +179,69 @@ const uiConfiguration = [
 ];
 // Server-owned keys of a UI segment GET beyond the DBT observations.
 const uiObservations = ['lastPublishedEndDateTime', 'publishStatus', 'segmentMembershipTable'];
+// What a GET of another type (Waterfall, Dynamic, ...) must hold.
+const otherConfiguration = [
+  'apiName',
+  'displayName',
+  'dataSpace',
+  'segmentType',
+  'segmentOnApiName',
+  'publishInterval',
+];
 
 /**
- * Project a UI segment (built in the segment canvas): the GET minus server-owned keys, with
- * `includeCriteria` decoded from its HTML-entity-encoded JSON string into an object. What the
- * write cannot carry stays as-is (UNSUPPORTED_SEGMENT_VARIANT): a key the plugin does not know,
- * parameters, criteria that are not a JSON object, a schedule other than NO_REFRESH.
+ * Project a segment of a type other than DBT (UI and the other types) onto the file: the GET
+ * minus server-owned keys, with the schedule projected by `projectSegmentSchedule`. A UI
+ * segment's `includeCriteria` is decoded from its HTML-entity-encoded JSON string into an object;
+ * another type keeps its lookback when it has one. Retrieve keeps keys the plugin does not know in
+ * `spec`; deploy refuses them (UNKNOWN_SEGMENT_CONFIGURATION). Criteria that are not a JSON
+ * object, and parameters (no write takes them), are UNSUPPORTED_SEGMENT_VARIANT.
  * @param {Record<string, unknown>} raw The segment inside the GET response.
  * @param {string} apiName Requested exact identity.
  * @param {DocumentMode} mode `deploy` (strict observed fields) or `retrieve`.
  * @returns {{candidate: SegmentDocument; runtime: Record<string, unknown>}} Detached portable and private projections.
  */
-function projectUiSegment(
+function projectTypedSegment(
   raw: Record<string, unknown>,
   apiName: string,
   mode: DocumentMode,
 ): { candidate: SegmentDocument; runtime: Record<string, unknown> } {
+  const ui = raw.segmentType === 'UI';
+  const required = ui ? uiConfiguration : otherConfiguration;
   const known = new Set([
-    ...uiConfiguration,
+    ...required,
     ...observations,
     ...uiObservations,
+    ...scheduleRead,
+    'lookbackPeriod',
     'description',
     'parameters',
   ]);
-  if (
-    uiConfiguration.some((key) => !Object.hasOwn(raw, key)) ||
-    Object.keys(raw).some((key) => !known.has(key)) ||
-    (Object.hasOwn(raw, 'parameters') && !isDeepStrictEqual(raw.parameters, [])) ||
-    typeof raw.includeCriteria !== 'string'
-  )
+  const unknown = Object.keys(raw).filter((key) => !known.has(key));
+  if (required.some((key) => !Object.hasOwn(raw, key)))
+    throw new SegmentError(
+      mode === 'retrieve' ? 'UNSUPPORTED_SEGMENT_VARIANT' : 'UNKNOWN_SEGMENT_CONFIGURATION',
+    );
+  if (mode !== 'retrieve' && unknown.length > 0)
+    throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
+  // An unknown key named like a spec key could not be told apart from it.
+  if (unknown.some((key) => ['segmentOn', 'models', 'includeDbt', 'schedule'].includes(key)))
+    throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
+  if (Object.hasOwn(raw, 'parameters') && !isDeepStrictEqual(raw.parameters, []))
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
   let criteria: unknown;
-  try {
-    criteria = JSON.parse(decodeSegmentCriteria(raw.includeCriteria));
-  } catch {
-    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  if (ui) {
+    if (typeof raw.includeCriteria !== 'string')
+      throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+    try {
+      criteria = JSON.parse(decodeSegmentCriteria(raw.includeCriteria));
+    } catch {
+      throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+    }
+    if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria))
+      throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
   }
-  if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria))
-    throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  const schedule = projectSegmentSchedule(raw, mode);
   const candidate = validateSegmentDocument(
     {
       schemaVersion: 1,
@@ -144,11 +251,12 @@ function projectUiSegment(
         displayName: raw.displayName,
         // Salesforce leaves description out of the GET when it is empty.
         description: Object.hasOwn(raw, 'description') ? raw.description : '',
-        segmentType: 'UI',
+        segmentType: raw.segmentType,
         segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
-        includeCriteria: criteria,
-        publishInterval: raw.publishInterval,
-        lookbackPeriod: raw.lookbackPeriod,
+        ...(ui ? { includeCriteria: criteria } : {}),
+        ...(Object.hasOwn(raw, 'lookbackPeriod') ? { lookbackPeriod: raw.lookbackPeriod } : {}),
+        ...(schedule ? { schedule } : {}),
+        ...Object.fromEntries(unknown.map((key) => [key, raw[key]])),
       },
     },
     mode,
@@ -161,8 +269,9 @@ function projectUiSegment(
  * Admit an exact response without discarding unknown potentially meaningful fields. Retrieve mode
  * reads `segments[0]` of any wrapper, keeps keys the plugin does not know in `spec` (and extra
  * `includeDbt` keys in `spec.includeDbt`), does not check the observed fields, and refuses only
- * what the file cannot represent (no DBT configuration, parameters, another type, refresh,
- * lookback or source kind, a model name unfit for a file), so the segment is written verbatim.
+ * what the file cannot represent (no DBT configuration, parameters, a schedule the file cannot
+ * hold, another source kind, a model name unfit for a file), so the segment is written verbatim.
+ * Segments of other types than DBT are projected by `projectTypedSegment`.
  * @param {unknown} response Untrusted API68 exact GET response.
  * @param {string} apiName Requested exact identity.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
@@ -189,10 +298,11 @@ export function projectSegment(
   const raw = value as Record<string, unknown>;
   if (raw.apiName !== apiName || raw.dataSpace !== 'default')
     throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
-  if (raw.segmentType === 'UI') return projectUiSegment(raw, apiName, mode);
+  if (raw.segmentType !== 'DBT') return projectTypedSegment(raw, apiName, mode);
   const known = new Set([
     ...configuration,
     ...observations,
+    ...scheduleRead,
     'description',
     'includeCriteria',
     'parameters',
@@ -205,7 +315,7 @@ export function projectSegment(
     );
   if (!lenient && unknown.length > 0) throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
   // An unknown key named like a spec key could not be told apart from it.
-  if (unknown.some((key) => ['segmentOn', 'models', 'includeDbt'].includes(key)))
+  if (unknown.some((key) => ['segmentOn', 'models', 'includeDbt', 'schedule'].includes(key)))
     throw new SegmentError('UNKNOWN_SEGMENT_CONFIGURATION');
   const dbt = raw.includeDbt as Record<string, unknown>;
   if (
@@ -218,6 +328,7 @@ export function projectSegment(
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
   if (lenient && Object.hasOwn(raw, 'parameters') && !isDeepStrictEqual(raw.parameters, []))
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
+  const schedule = projectSegmentSchedule(raw, mode);
   const { models, ...dbtExtra } = dbt;
   const candidate = {
     schemaVersion: 1,
@@ -230,8 +341,8 @@ export function projectSegment(
       segmentType: raw.segmentType,
       segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
       models,
-      publishInterval: raw.publishInterval,
       lookbackPeriod: raw.lookbackPeriod,
+      ...(schedule ? { schedule } : {}),
       ...(Object.keys(dbtExtra).length > 0 ? { includeDbt: dbtExtra } : {}),
       ...Object.fromEntries(unknown.map((key) => [key, raw[key]])),
     },
@@ -243,7 +354,7 @@ export function projectSegment(
 }
 
 /**
- * Acquire one API68/default DBT Segment by its exact name.
+ * Acquire one API68/default Segment by its exact name.
  * A failed GET is never absence evidence; no list expansion or runtime writes are available.
  * @param {Connection} connection Authenticated command-owned API68 connection.
  * @param {string} apiName Exact selected identity.

@@ -33,7 +33,6 @@ const candidate = () => ({
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql }],
-    publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
 });
@@ -169,8 +168,8 @@ test('several models split into one SQL file each and join back exactly', () => 
 for (const [label, change] of Object.entries({
   unknown: (d) => (d.spec.extra = true),
   missing: (d) => delete d.spec.description,
-  schedule: (d) => (d.spec.publishInterval = 'DAILY'),
-  lookback: (d) => (d.spec.lookbackPeriod = 'P2Y'),
+  'publishInterval (the schedule key replaced it)': (d) => (d.spec.publishInterval = 'NO_REFRESH'),
+  'lookback that is not text': (d) => (d.spec.lookbackPeriod = 90),
   space: (d) => (d.identity.dataSpace = 'other'),
   'old dependencies key': (d) => (d.spec.dependencies = []),
   'model keys': (d) => (d.spec.models[0].extra = true),

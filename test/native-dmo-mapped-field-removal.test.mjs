@@ -513,7 +513,6 @@ const segment = {
     segmentType: 'DBT',
     segmentOn: { kind: 'dmo', dataSpace: 'default', apiName },
     models: [{ name: 'Audience', sql: `SELECT ${apiName}.Id__c FROM ${apiName} WHERE 1 = 0` }],
-    publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
 };

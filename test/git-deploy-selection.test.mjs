@@ -25,7 +25,6 @@ const segment = async (
       segmentType: 'DBT',
       segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
       models,
-      publishInterval: 'NO_REFRESH',
       lookbackPeriod: 'P90D',
     },
   };

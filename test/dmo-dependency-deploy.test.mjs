@@ -37,7 +37,6 @@ const segment = (object = 'Person__dlm') => ({
     segmentType: 'DBT',
     segmentOn: identity('dmo', object),
     models: [{ name: 'Audience', sql: `SELECT ${object}.Id__c FROM ${object} WHERE 1 = 0` }],
-    publishInterval: 'NO_REFRESH',
     lookbackPeriod: 'P90D',
   },
 });

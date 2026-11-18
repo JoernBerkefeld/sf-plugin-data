@@ -1,6 +1,6 @@
 # `UNSUPPORTED_SEGMENT_VARIANT`
 
-> Only DBT segments with a 90-day lookback and UI segments, on a DMO without refresh schedule, parameters or unknown UI settings, fit the segment file. Retrieve writes other segments as-is, and deploy refuses that file.
+> The segment has parameters (no write takes them), schedule details the plugin does not know, UI criteria that are not a JSON object or no DMO source in the default space. Retrieve writes it as-is; deploy refuses it.
 
 |              |                                                                                                              |
 | ------------ | ------------------------------------------------------------------------------------------------------------ |
@@ -10,21 +10,26 @@
 
 ## What it means
 
-The plugin's segment file holds two kinds of segments, both built on a DMO in the default data space, with publish interval `NO_REFRESH` and without parameters:
+The segment file holds segments of every type built on a DMO in the default data space: SQL (DBT) segments with their models, segments built in the segment canvas (`UI`) with their criteria as a JSON object, and other types (for example Waterfall or Dynamic). Lookback and refresh schedule are part of the file and sent as written.
 
-- SQL (DBT) segments: type `DBT` with a list of SQL models and lookback `P90D`.
-- Segments built in the segment canvas: type `UI` with criteria that are a JSON object, any lookback, and no settings the plugin does not know (for example exclusion criteria).
+This segment has something the file cannot hold:
 
-The segment uses another type (for example a waterfall or real-time segment), schedule, lookback or source kind, it has parameters, or a UI segment has an unknown setting or criteria that are not a JSON object. The SQL and the criteria themselves are not checked; Salesforce decides about them.
+- parameters (a non-empty `parameters` list): Salesforce has no write for them, it refuses the key on create;
+- schedule details the plugin does not know: another key in `publishScheduleInfo`, a `frequency` that is not text or a `daysOfWeek` that is not a list (a deploy does not need this: a file without `schedule` updates such a segment and keeps its schedule);
+- UI criteria that are not a JSON object;
+- a DBT segment without its DBT configuration;
+- a source that is not a DMO (`__dlm`) in the default data space, or another data space.
+
+The SQL and the criteria themselves are not checked; Salesforce decides about them.
 
 ## Why the plugin reports it
 
-Create and update send no refresh schedule and no parameters; a DBT write sends no lookback either, and a UI write sends only the settings the plugin knows. Another value would be silently ignored on deploy. So retrieve writes such a segment as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, and no SQL files; SQL files left from an earlier retrieve are removed. Deploy refuses a file with another value and names the key, for example `spec.publishInterval`.
+A deploy could not write what the file leaves out, so the segment in the target org would differ from the source without notice. Retrieve therefore writes such a segment as Salesforce returned it (`verbatim.native`, keys sorted) with this code as `verbatim.reason`, and no SQL files; SQL files left from an earlier retrieve are removed. Deploy refuses a file whose identity or source is outside the default data space and names the key, for example `spec.segmentOn`.
 
 ## How to fix
 
 1. Manage this segment in Data Cloud; a verbatim file records it but cannot be deployed.
-2. To deploy it with the plugin, change it in the org to the supported kind and retrieve it again; the normal file and its SQL files replace the verbatim one.
+2. To deploy it with the plugin, remove what the file cannot hold in the org and retrieve it again; the normal file and its SQL files replace the verbatim one.
 
 Deploy skips the verbatim file in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
 
@@ -40,4 +45,5 @@ Downloaded segment:Example_Segment (retrieved).
 
 - [`UNKNOWN_SEGMENT_CONFIGURATION`](../segment/UNKNOWN_SEGMENT_CONFIGURATION.md) — The segment has settings the plugin does not know.
 - [`INVALID_SEGMENT_DOCUMENT`](../segment/INVALID_SEGMENT_DOCUMENT.md) — A value is not text the plugin can keep.
+- [`SEGMENT_SCHEDULE_CHANGE`](../segment/SEGMENT_SCHEDULE_CHANGE.md) — a schedule the deploy sends.
 - [`VERBATIM_NOT_DEPLOYABLE`](../general/VERBATIM_NOT_DEPLOYABLE.md) — deploy of the verbatim file.

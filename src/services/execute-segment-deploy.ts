@@ -6,8 +6,11 @@ import { operationDiagnostic } from './operation-diagnostic.js';
 import {
   SegmentError,
   carriesDefinition,
+  sameSegmentSchedule,
+  segmentScheduleNotice,
   validateSegmentDocument,
 } from '../artifacts/segment-document.js';
+import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
@@ -23,7 +26,7 @@ export type SegmentExecutionOptions = {
   acquire?: typeof retrieveSegment;
   bind?: typeof bindSegmentDependencies;
   read?: (name: string) => Promise<unknown>;
-  patch?: (document: unknown) => Promise<unknown>;
+  patch?: (document: unknown, schedule: boolean) => Promise<unknown>;
   create?: (document: unknown) => Promise<unknown>;
   now?: () => number;
   delay?: (milliseconds: number) => Promise<void>;
@@ -40,12 +43,37 @@ type TargetConnection = Pick<
 
 /**
  * Compare the fields the file does not set; the authored ones are compared via the projection.
- * The source DMO reference is authored (segmentOnApiName) or bound separately (segmentOnId).
+ * The source DMO reference is authored (segmentOnApiName) or bound separately (segmentOnId). A
+ * file with a schedule authors the schedule keys; without one they must stay as they were
+ * (except the server-owned `nextScheduledDate`). With a schedule, a date the file does not state
+ * stays in the baseline, so a write that resets it is a readback mismatch.
  * @param {Record<string, unknown>} runtime Exact admitted runtime snapshot.
+ * @param {SegmentDocument} desired Admitted requested definition.
  * @returns {Record<string, unknown>} Detached full preservation baseline.
  */
-function preservation(runtime: Record<string, unknown>): Record<string, unknown> {
+function preservation(
+  runtime: Record<string, unknown>,
+  desired: SegmentDocument,
+): Record<string, unknown> {
   const result = structuredClone(runtime);
+  if (desired.spec.schedule === undefined) {
+    const info = result.publishScheduleInfo;
+    if (info && typeof info === 'object')
+      delete (info as Record<string, unknown>).nextScheduledDate;
+  } else {
+    // The file authors the schedule details and the dates it states; a date it leaves out must
+    // keep its org value (turning the schedule off clears every date).
+    const schedule = desired.spec.schedule;
+    const off = String(schedule.frequency).toLowerCase() === 'none';
+    for (const [file, key] of [
+      ['', 'publishInterval'],
+      ['', 'publishScheduleInfo'],
+      ['startDateTime', 'publishScheduleStartDateTime'],
+      ['endDate', 'publishScheduleEndDate'],
+      ['endDateTime', 'publishScheduleEndDateTime'],
+    ])
+      if (!file || off || Object.hasOwn(schedule, file)) delete result[key];
+  }
   // Criteria content is checked by projectSegment; its presence must not silently disappear.
   if (Object.hasOwn(result, 'includeCriteria')) result.includeCriteria = true;
   for (const key of [
@@ -60,7 +88,6 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
     'segmentOnId',
     // Authored (compared via the projection) or server-owned UI keys.
     'segmentType',
-    'publishInterval',
     'lookbackPeriod',
     'publishStatus',
     'lastPublishedEndDateTime',
@@ -103,7 +130,7 @@ function acknowledgedUpdate(
   if (!Object.hasOwn(raw, 'segmentMembershipDmo')) delete expected.segmentMembershipDmo;
   return (
     ['PROCESSING', 'ACTIVE'].includes(String(response.runtime.segmentStatus)) &&
-    isDeepStrictEqual(preservation(response.runtime), expected) &&
+    isDeepStrictEqual(preservation(response.runtime, desired), expected) &&
     carriesDefinition(response.candidate, desired)
   );
 }
@@ -170,6 +197,8 @@ export async function executeSegmentDeploy(
   let desired: ReturnType<typeof validateSegmentDocument>;
   let baseline: Record<string, unknown>;
   let bindings: Awaited<ReturnType<typeof bindSegmentDependencies>>;
+  // The org segment before an update; the schedule is sent only when it differs from the file.
+  let current: SegmentDocument | undefined;
   try {
     desired = validateSegmentDocument(value);
     await options.verifyInput();
@@ -223,7 +252,8 @@ export async function executeSegmentDeploy(
       );
       if (!isDeepStrictEqual(projected.candidate, validateSegmentDocument(acquired.candidate)))
         return result('blocked', 'not-attempted', 'SEGMENT_TARGET_DRIFT');
-      baseline = preservation(projected.runtime);
+      baseline = preservation(projected.runtime, desired);
+      current = projected.candidate;
       // JSON bytes and target binding must still agree after fresh exact runtime acquisition.
       await options.verifyInput();
       if (!isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)))
@@ -241,7 +271,20 @@ export async function executeSegmentDeploy(
   const read =
     options.read ??
     ((name: string) => client.get(`/services/data/v${version}/ssot/segments/${name}`));
-  const patch = options.patch ?? ((document: unknown) => client.patchSegment(document));
+  const patch =
+    options.patch ??
+    ((document: unknown, schedule: boolean) => client.patchSegment(document, schedule));
+  const schedule = desired.spec.schedule;
+  // A schedule the write sends makes the segment publish on it in this org.
+  const notice = segmentScheduleNotice(desired, current);
+  const confirmed = (): SegmentDeployExecution => {
+    const done = result(
+      creating ? 'created' : 'updated',
+      creating ? 'confirmed-created' : 'confirmed-updated',
+    );
+    if (notice) done.diagnostics.push(notice);
+    return done;
+  };
   let responseQualified = false;
   let writeFailure: unknown;
   try {
@@ -257,11 +300,19 @@ export async function executeSegmentDeploy(
         },
         desired.identity.apiName,
       );
-      baseline = preservation(response.runtime);
+      baseline = preservation(response.runtime, desired);
       responseQualified =
         ['PROCESSING', 'ACTIVE'].includes(String(response.runtime.segmentStatus)) &&
         carriesDefinition(response.candidate, desired);
-    } else responseQualified = acknowledgedUpdate(await patch(desired), desired, baseline);
+    } else
+      responseQualified = acknowledgedUpdate(
+        await patch(
+          desired,
+          schedule !== undefined && !sameSegmentSchedule(current?.spec.schedule, schedule),
+        ),
+        desired,
+        baseline,
+      );
   } catch (error) {
     writeFailure = error;
     // Bounded independent reads may reveal the target, but cannot authorize a replay.
@@ -284,7 +335,7 @@ export async function executeSegmentDeploy(
     writeFailure,
   );
   const matches = (runtime: Record<string, unknown>): boolean => {
-    const observed = preservation(runtime);
+    const observed = preservation(runtime, desired);
     if (!creating)
       return (
         isDeepStrictEqual(observed, baseline) &&
@@ -345,16 +396,13 @@ export async function executeSegmentDeploy(
         if (now() - started >= segmentPollBudget.timeoutMs) return unknown;
         // Confirmed configuration acceptance, not finished audience computation.
         return {
-          ...result(
-            creating ? 'created' : 'updated',
-            creating ? 'confirmed-created' : 'confirmed-updated',
-          ),
+          ...confirmed(),
           serverProcessing: true,
         };
       }
       if (observed.runtime.segmentStatus !== 'ACTIVE')
         return result('failed', 'unknown', 'SEGMENT_SETTLEMENT_UNQUALIFIED', writeFailure);
-      if (creating) baseline = preservation(observed.runtime);
+      if (creating) baseline = preservation(observed.runtime, desired);
       // A separately acquired exact runtime snapshot, not the write echo or poll response.
       const settled = await acquire(connection, desired.identity.apiName, apiVersion, dataSpace);
       if (
@@ -368,7 +416,7 @@ export async function executeSegmentDeploy(
             .candidate,
           desired,
         ) ||
-        !isDeepStrictEqual(preservation(settled.expectations.runtime), baseline) ||
+        !isDeepStrictEqual(preservation(settled.expectations.runtime, desired), baseline) ||
         !isDeepStrictEqual(bindings, await bind(desired, connection, apiVersion, dataSpace)) ||
         now() - started >= segmentPollBudget.timeoutMs
       )
@@ -378,12 +426,7 @@ export async function executeSegmentDeploy(
           'SEGMENT_READBACK_MISMATCH',
           getConnectDiagnostic(writeFailure) ? writeFailure : settled,
         );
-      return responseQualified
-        ? result(
-            creating ? 'created' : 'updated',
-            creating ? 'confirmed-created' : 'confirmed-updated',
-          )
-        : unknown;
+      return responseQualified ? confirmed() : unknown;
     } catch (error) {
       // A projection refusal is final; a failed read is tried again within the bound.
       if (!(error instanceof SegmentError)) {
