@@ -590,6 +590,8 @@ export type DeleteEnvelope = {
   provenance: {
     command: 'sf data360 delete';
     generatedAt: string;
+    /** The resolved target org's ID; null when the run stopped before an org was resolved. */
+    targetOrgId: string | null;
     /** --changed-since: the resolved commits of the Git range. */
     git?: GitDeploySelection['provenance'];
   };
@@ -840,6 +842,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected deleteSegment = deleteSegment;
   protected calculatedInsightContext = calculatedInsightReadContext;
   protected deleteCalculatedInsight = deleteCalculatedInsight;
+  /** The org ID of the connection this run resolved (provenance only); unset before that. */
+  private resolvedOrgId?: string;
   // No configured or resolvable org is TARGET_ORG_REQUIRED, as in publish.
   protected resolveConnection = async (alias?: string): Promise<Connection> => {
     try {
@@ -856,6 +860,18 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       throw new DloError('TARGET_ORG_REQUIRED');
     }
   };
+  /**
+   * Resolve the target org's connection and remember its org ID for the envelope's provenance.
+   * @param {string} [alias] Target org alias or username.
+   * @returns {Promise<Connection>} The resolved connection.
+   */
+  private async connectTarget(alias?: string): Promise<Connection> {
+    const connection = await this.resolveConnection(alias);
+    // A test seam may return a connection without auth info fields: no org ID then.
+    const seam = connection as Partial<Pick<Connection, 'getAuthInfoFields'>>;
+    this.resolvedOrgId = seam.getAuthInfoFields?.().orgId;
+    return connection;
+  }
   // Read-only: the landing DLO a selected stream owns, when its DLO is selected too.
   protected readStreamLinkedDlo = readStreamLinkedDlo;
   protected preflightDeleteDataStream = preflightDeleteDataStream;
@@ -951,7 +967,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected retrieveDlo = previewDeleteNativeDlo;
   protected deleteDlo = deleteNativeDlo;
   protected resolveTarget = async (alias?: string): Promise<string> => {
-    const connection = await this.resolveConnection(alias);
+    const connection = await this.connectTarget(alias);
     const username = connection.getUsername();
     if (!username) throw new DloError('TARGET_ORG_REQUIRED');
     return username;
@@ -1081,6 +1097,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     let plan: DmoFieldDeletePlan;
     try {
       const target = await this.resolveTarget(flags['target-org']);
+      if (this.resolvedOrgId) envelope.provenance.targetOrgId = this.resolvedOrgId;
       // The run's data space must exist in the org: one read, before any other read.
       await dataSpaceCheckOf(this, async () =>
         (this.createDataSpaceSender ?? openBoundSsot)(target, '68.0'),
@@ -1336,7 +1353,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         apiVersion: flags['api-version'] ?? 'auto',
         plugin,
       },
-      provenance: { command: 'sf data360 delete', generatedAt: new Date().toISOString() },
+      provenance: {
+        command: 'sf data360 delete',
+        generatedAt: new Date().toISOString(),
+        // eslint-disable-next-line unicorn/no-null -- Stable JSON represents unresolved target identity explicitly.
+        targetOrgId: null,
+      },
       diagnostics: { warnings: [], errors: [] },
       result: { scope: { dataSpace: effectiveScope }, items: [] },
     };
@@ -1719,12 +1741,14 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       };
       let connection: Connection | undefined;
       const connect = async (): Promise<Connection> => {
-        connection ??= await this.resolveConnection(flags['target-org']);
+        connection ??= await this.connectTarget(flags['target-org']);
+        if (this.resolvedOrgId) envelope.provenance.targetOrgId = this.resolvedOrgId;
         return connection;
       };
       let username: string | undefined;
       const resolveUsername = async (): Promise<string> => {
         username ??= await this.resolveTarget(flags['target-org']);
+        if (this.resolvedOrgId) envelope.provenance.targetOrgId = this.resolvedOrgId;
         return username;
       };
       // The run's data space and every space a selected file names must exist in the org: one

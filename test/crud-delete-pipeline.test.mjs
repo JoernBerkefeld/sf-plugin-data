@@ -1,6 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Config } from '@oclif/core';
 import Delete from '../lib/commands/data360/delete.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
@@ -114,9 +115,10 @@ const run = async (command) => {
  * Delete command with every family executor mocked; calls are recorded in order.
  * @param {object[]} inputs Definitions the org holds for the source-family selectors.
  * @param {object} [flags] Flag overrides.
+ * @param {object} [command] The command instance to mock; a bare prototype instance by default.
  * @returns {object} Command, call ledger and knobs.
  */
-const harness = (inputs, flags = {}) => {
+const harness = (inputs, flags = {}, command = Object.create(Delete.prototype)) => {
   const h = { calls: [], reads: [], outcome: {}, linked: {}, lastMapping: false };
   const done = (preview, key, fallback = 'deleted') =>
     preview
@@ -125,7 +127,6 @@ const harness = (inputs, flags = {}) => {
           outcome: fallback,
           mutation: fallback === 'deleted' ? 'confirmed-deleted' : 'not-attempted',
         });
-  const command = Object.create(Delete.prototype);
   h.command = command;
   command.parse = async () => ({
     flags: {
@@ -604,4 +605,44 @@ test('one delete takes several transforms and deletes each in P2', async () => {
       ['Copy2', 'deleted'],
     ],
   );
+});
+
+const ORG_ID = '00D000000000001AAA';
+/**
+ * A real Delete instance (its own resolveTarget) whose connection names ORG_ID.
+ * @param {object} flags Flag overrides.
+ * @returns {Promise<object>} The harness.
+ */
+const orgHarness = async (flags) => {
+  const real = new Delete([], await Config.load({ root: process.cwd() }));
+  const { resolveTarget } = real;
+  const h = harness(all(), flags, real);
+  h.command.resolveTarget = resolveTarget;
+  h.command.createDataSpaceSender = () => ({});
+  h.command.resolveConnection = async () => {
+    h.calls.push('auth');
+    return { getUsername: () => 'target', getAuthInfoFields: () => ({ orgId: ORG_ID }) };
+  };
+  return h;
+};
+
+for (const preview of [true, false])
+  test(`a ${preview ? 'preview' : 'real'} delete reports the resolved org ID in provenance`, async () => {
+    const h = await orgHarness({ preview });
+    const result = await run(h.command);
+    assert.equal(result.status, 'success');
+    assert.equal(result.metadata.preview, preview);
+    assert.equal(result.provenance.targetOrgId, ORG_ID);
+  });
+
+test('a refusal before the org is resolved reports a null org ID', async () => {
+  const h = await orgHarness({
+    metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2'],
+    'delete-dlo': true,
+  });
+  const result = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(h.calls, []);
+  // eslint-disable-next-line unicorn/no-null -- The JSON envelope names an unresolved org with null.
+  assert.equal(result.provenance.targetOrgId, null);
 });

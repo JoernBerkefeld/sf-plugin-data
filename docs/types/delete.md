@@ -102,6 +102,9 @@ sf data360 delete -o target -m data-graph:ExampleGraph -m identity-resolution:In
   [`DEPENDENCIES_PLANNED`](../errors/dependency/DEPENDENCIES_PLANNED.md) naming them, without
   being checked further. The real run checks again once the earlier phases have deleted them.
 - The local files an execution would remove are listed as `localFiles`, each with `exists`.
+- With `--json`, `provenance.targetOrgId` names the ID of the org the run resolved, on a preview
+  as on a real delete, so a confirmation can show it before deleting. It is `null` when the run
+  stopped before an org was resolved.
 
 ## Delete what a Git range deleted
 
