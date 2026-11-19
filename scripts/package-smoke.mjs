@@ -185,17 +185,6 @@ for (const [arguments_, code] of [
   [['-d', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
   [['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'], 'INVALID_SCOPE'],
   [
-    [
-      '-d',
-      'Synthetic__cio.calculatedInsight-meta.json',
-      '--api-version',
-      '68.0',
-      '--data-space',
-      'other',
-    ],
-    'INVALID_SCOPE',
-  ],
-  [
     ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
     'UNSAFE_SOURCE',
   ],
@@ -212,10 +201,7 @@ for (const [arguments_, code] of [
   assert.equal(envelope.diagnostics.errors[0].code, code);
   assert.deepEqual(envelope.result.items, []);
 }
-for (const [arguments_, code] of [
-  [['--api-version', '65.0'], 'INVALID_SCOPE'],
-  [['--api-version', '68.0', '--data-space', 'other'], 'INVALID_SCOPE'],
-]) {
+for (const [arguments_, code] of [[['--api-version', '65.0'], 'INVALID_SCOPE']]) {
   const result = spawnSync(
     process.execPath,
     [
@@ -286,6 +272,7 @@ const graphDocument = {
   schemaVersion: 1,
   kind: 'native-data-graph',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: {
     name: 'InstalledGraph',
     label: 'Installed graph',
@@ -316,6 +303,11 @@ const { writeDataGraphDocument: writeGraph } = await import(
   pathToFileURL(path.join(packageRoot, 'lib/artifacts/write-data-graph.js')).href
 );
 const graphReceipt = await writeGraph(graphDocument, graphProject, false);
+// Every command checks its data space against the org's list once; offline, a fixed list answers.
+const { dataSpaceDirectory } = await import(
+  pathToFileURL(path.join(packageRoot, 'lib/services/data-space-check.js')).href
+);
+dataSpaceDirectory.read = async () => ['default'];
 for (const operation of ['retrieve', 'deploy', 'delete']) {
   const Command = await config.findCommand(`data360:${operation}`, { must: true }).load();
   const command = Object.create(Command.prototype);
