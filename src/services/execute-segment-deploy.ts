@@ -20,7 +20,12 @@ import { projectSegment, retrieveSegment } from './retrieve-segment.js';
 import { rejectedNextAction } from './deploy-result.js';
 import type { DeployExecutionResult } from './deploy-result.js';
 
-export const segmentPollBudget = Object.freeze({ reads: 12, intervalMs: 1000, timeoutMs: 120_000 });
+// One read a second until the 120 s budget runs out: the time budget, not a read count, decides.
+export const segmentPollBudget = Object.freeze({
+  reads: 120,
+  intervalMs: 1000,
+  timeoutMs: 120_000,
+});
 export type SegmentExecutionOptions = {
   allowProcessing: boolean;
   verifyInput: () => Promise<void>;
@@ -117,7 +122,7 @@ const missingTable = (table: unknown): boolean =>
 
 /**
  * Salesforce generates the membership DMOs of the first segment on a DMO a few seconds after
- * the create (live API 68: latest table ~2.5 s, history table ~6 s after the POST), so a read
+ * the create (live API 68: ~2.5 s to ~16 s for the latest table, the history table later), so a read
  * may show `segmentMembershipDmo` null or with a table still empty. Drop such a not yet
  * generated value so the read projects; any other shape stays for the projection to refuse.
  * @param {unknown} response Exact segment GET or POST response.

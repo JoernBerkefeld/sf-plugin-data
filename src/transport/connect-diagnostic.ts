@@ -32,6 +32,14 @@ function safeMessage(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 400) return;
   // Reject controls before whitespace normalization, including terminal and bidi controls.
   if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(value)) return;
+  // Salesforce's fixed text for an internal error carries only a digits-only ErrorId; the
+  // general filters would drop it ("contact", phone-like digits), hiding the ErrorId support needs.
+  if (
+    /^An unexpected error occurred\. Please include this ErrorId if you contact support: \d+-\d+ \(-?\d+\)\.?$/u.test(
+      value,
+    )
+  )
+    return value;
   if (
     /[<>{}[\]\\]|https?:|www\.|\b(?:bearer|authorization|cookie|password|secret|token|accessToken|refreshToken|session|credential|payload|private|email|phone|address|ssn)\b|\bselect\b.+\bfrom\b|\bat\s+\S+\s*\(/iu.test(
       value,

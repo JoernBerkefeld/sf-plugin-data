@@ -391,11 +391,13 @@ export function createMappingClient(
       )
     )
       return;
-    throw retainMetadataProblems(new NativeMappingError('MAPPING_DELETE_FAILED'), [
-      ...list(details.componentFailures).map((failure) => failure.problem),
-      result?.errorMessage,
-      envelope.message,
-    ]);
+    const failures = list(details.componentFailures);
+    // A deployment Salesforce reports Failed with component failures applied nothing.
+    const rejected = result?.status === 'Failed' && result.success === false && failures.length > 0;
+    throw retainMetadataProblems(
+      new NativeMappingError('MAPPING_DELETE_FAILED', undefined, rejected ? true : undefined),
+      [...failures.map((failure) => failure.problem), result?.errorMessage, envelope.message],
+    );
   }
 
   return {

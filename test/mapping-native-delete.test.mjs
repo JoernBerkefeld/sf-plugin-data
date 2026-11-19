@@ -230,6 +230,25 @@ const failure = (componentFailures, extra = {}) => ({
   }),
 });
 
+test('a destructive deployment Salesforce reports Failed with component failures is marked rejected', async () => {
+  const problem =
+    'An unexpected error occurred. Please include this ErrorId if you contact support: 1-2 (3)';
+  for (const [receipt, rejected] of [
+    [failure([{ fullName: name, componentType: memberType, problem }]), true],
+    // No component failure, or no Failed status, proves nothing about what was applied.
+    [failure([]), undefined],
+    [failure([{ problem }], { status: 'InProgress' }), undefined],
+    [{ exitCode: 1, stdout: JSON.stringify({ status: 1, message: problem }) }, undefined],
+  ]) {
+    const transport = createMappingClient('target', '68.0', async () => receipt, 'dataspace2');
+    await assert.rejects(transport.remove(name), (error) => {
+      assert.equal(error.code, 'MAPPING_DELETE_FAILED');
+      assert.equal(error.rejected, rejected, receipt.stdout);
+      return true;
+    });
+  }
+});
+
 test('mapping removal transport sends one argument-array Metadata destructive deployment', async () => {
   const runs = [];
   // A bound sender is present in the command; the removal still goes through the CLI runner only.
@@ -390,7 +409,7 @@ test('an unconfirmed mapping removal fails with MAPPING_DELETE_FAILED, safe prob
   }
 });
 
-test('mapping delete command reports a failed removal once, as unknown, with the Metadata problem', async () => {
+test('mapping delete command reports a Failed removal once, as rejected, with the Metadata problem', async () => {
   const problem = 'This mapping is referenced elsewhere in Salesforce. Remove the usage first.';
   const pairs = ['Id__c', 'Name__c'].map((field) => ({
     sourceFieldDeveloperName: field,
@@ -452,7 +471,8 @@ test('mapping delete command reports a failed removal once, as unknown, with the
   }
   assert.equal(result.status, 'failed', JSON.stringify(result));
   assert.equal(result.result.items[0].outcome, 'failed');
-  assert.equal(result.result.items[0].mutation, 'unknown');
+  // A Failed destructive deployment with a component failure applied nothing.
+  assert.equal(result.result.items[0].mutation, 'rejected');
   assert.equal(result.diagnostics.errors.length, 1);
   assert.equal(result.diagnostics.errors[0].code, 'MAPPING_DELETE_FAILED');
   assert.ok(result.diagnostics.errors[0].message.includes(problem), JSON.stringify(result));

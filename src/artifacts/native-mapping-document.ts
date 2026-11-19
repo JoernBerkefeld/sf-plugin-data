@@ -28,6 +28,8 @@ export class NativeMappingError extends Error {
   public constructor(
     public readonly code: string,
     public readonly status?: number,
+    /** Salesforce answered with a refusal, so nothing was changed. */
+    public readonly rejected?: true,
   ) {
     super(`Native mapping operation refused: ${code}.`);
     this.name = 'NativeMappingError';

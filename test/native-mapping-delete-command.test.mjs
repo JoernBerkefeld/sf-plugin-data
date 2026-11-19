@@ -311,6 +311,7 @@ for (const version of [
 
 const expectedCodes = {
   rejected: 'MAPPING_DELETE_FAILED',
+  refused: 'MAPPING_DELETE_FAILED',
   lost: 'DELETE_FAILED',
   ignored: 'MAPPING_DELETION_UNCONFIRMED',
   'side-effect': 'MAPPING_DELETE_SIDE_EFFECT',
@@ -323,8 +324,11 @@ for (const [mode, code] of Object.entries(expectedCodes)) {
     const f = mappingFixture(command);
     const remove = f.client.remove;
     f.client.remove = async (name) => {
-      if (mode === 'rejected' || mode === 'ignored') f.calls.push(['remove', name]);
+      if (['rejected', 'refused', 'ignored'].includes(mode)) f.calls.push(['remove', name]);
       if (mode === 'rejected') throw new NativeMappingError('MAPPING_DELETE_FAILED');
+      // A Failed destructive deployment with component failures applied nothing.
+      if (mode === 'refused')
+        throw new NativeMappingError('MAPPING_DELETE_FAILED', undefined, true);
       if (mode === 'ignored') return;
       await remove(name);
       if (mode === 'lost') throw new Error('response lost');
@@ -352,7 +356,10 @@ for (const [mode, code] of Object.entries(expectedCodes)) {
     const blocked = ['last', 'stale'].includes(mode);
     assert.equal(result.status, blocked ? 'blocked' : 'failed', JSON.stringify(result));
     assert.equal(result.result.items.length, 1);
-    assert.equal(result.result.items[0].mutation, blocked ? 'not-attempted' : 'unknown');
+    assert.equal(
+      result.result.items[0].mutation,
+      blocked ? 'not-attempted' : mode === 'refused' ? 'rejected' : 'unknown',
+    );
     // Exactly one removal once dispatched, none when blocked.
     assert.deepEqual(f.calls, blocked ? [] : [['remove', 'Generated_123']]);
     assert.equal(result.diagnostics.errors.length, 1);

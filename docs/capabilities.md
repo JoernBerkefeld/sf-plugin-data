@@ -376,7 +376,8 @@ all its data spaces. Deploy adds the DLO to a listed data space with one
 `PUT /ssot/data-spaces/<space>/members` naming only this DLO; the PUT adds and keeps every
 other member (live API 68, DB entry `data360:dataspace-members-put-semantics-api68`), so no
 member list is read or resent (a data space whose list cannot be read completely, such as
-`default`, is no longer refused; proven on a custom data space). It removes the DLO from an unlisted data space
+`default`, is no longer refused; run live on `default`, DB entry
+`data360:plugin-dlo-add-default-dataspace-api68`). It removes the DLO from an unlisted data space
 with `DELETE …/members?memberNames=<Name>__dll` only with `--allow-dataspace-removal`, then
 reads the DLO until it lists the planned data spaces. A member write that Salesforce answers
 without success is `DLO_MEMBERSHIP_UPDATE_REJECTED`. Create sends the run's data space only;
@@ -746,7 +747,7 @@ Native mapping targets, decided from the same raw read:
     way out, `sf data360 delete --metadata dmo:<Dmo__dlm>`, which removes the mapping
     with the DMO. Selected together with that DMO, the mapping is reported
     `removedWith` the DMO instead. The last mapping of a standard DMO is deleted; the DMO stays
-    enabled with its generated `KQ_Id__c` field and no mapped fields.
+    enabled with its generated `KQ_Id__c` field and no mapped fields. In a data space other than `default`, Salesforce refuses to delete the last mapping onto a standard DMO copy (`ds2_X__dlm`): the destructive deployment fails with "An unexpected error occurred" and the item is reported rejected (live API 68).
   - `--preview` is read-only and reports the single planned step `delete`.
   - The deployment is sent once and never retried. Not confirmed by Salesforce:
     `MAPPING_DELETE_FAILED` with Salesforce's problem text.

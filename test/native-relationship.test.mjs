@@ -856,7 +856,11 @@ test('a second unexpected error is rejected; other refusals and a changed org ar
   const rejected = await executeRelationship(document, twice.client, 'default');
   assert.deepEqual([rejected.outcome, rejected.mutation], ['failed', 'rejected']);
   assert.equal(rejected.diagnostics[0].code, 'RELATIONSHIP_UPDATE_REJECTED');
-  assert.match(rejected.diagnostics[0].message, /UNKNOWN_EXCEPTION\. Nothing was changed/u);
+  // Salesforce's internal-error text keeps its ErrorId for a support case.
+  assert.match(
+    rejected.diagnostics[0].message,
+    /UNKNOWN_EXCEPTION: An unexpected error occurred\. Please include this ErrorId if you contact support: 1-2 \(3\)\. Nothing was changed/u,
+  );
   assert.equal(twice.sent(), 2);
   const other = metadataAnswers(['refused', 'ok']);
   await assert.rejects(

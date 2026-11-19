@@ -100,6 +100,11 @@ const absent = () =>
     apiDiagnostic(404, [{ errorCode: 'ITEM_NOT_FOUND' }]),
   );
 
+test('the segment readback runs until the time budget, not a shorter read count', () => {
+  // Live API 68: the first membership DMO of a new segment appeared only ~16 s after the POST.
+  assert.ok(segmentPollBudget.reads * segmentPollBudget.intervalMs >= segmentPollBudget.timeoutMs);
+});
+
 test('API68 CREATE requires fresh absence, one POST and independent identity/configuration', async () => {
   for (const mode of [
     'active',

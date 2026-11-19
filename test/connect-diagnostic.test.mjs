@@ -84,6 +84,26 @@ test('value-shaped prose falls back while unfamiliar actionable explanations sur
     );
 });
 
+test("Salesforce's internal-error text keeps its ErrorId; look-alikes without it still fall back", () => {
+  // Live API 68: a destructive deployment of a standard DMO copy's last mapping in dataspace2.
+  const internal =
+    'An unexpected error occurred. Please include this ErrorId if you contact support: 1543969217-30119 (591183398)';
+  assert.equal(
+    apiDiagnostic(500, { errorCode: 'X', message: internal }).errors[0].message,
+    internal,
+  );
+  for (const message of [
+    'Please contact support: 1543969217-30119 (591183398)',
+    `${internal} Call +49 170 1234567.`,
+    'An unexpected error occurred. Please include this ErrorId if you contact support: Alice',
+  ])
+    assert.equal(
+      apiDiagnostic(500, { errorCode: 'X', message }).errors[0].message,
+      undefined,
+      message,
+    );
+});
+
 test('API display evidence is bounded, detached and never alters errors or JSON envelopes', () => {
   const body = [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }];
   const diagnostic = apiDiagnostic(
