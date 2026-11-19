@@ -178,7 +178,8 @@ Current plugin limits:
   (see [Data spaces](#data-spaces)). The copy naming and the retry are proven live through
   the raw API. The plugin's own run in a non-default data space is proven for DMO, mapping
   and relationship files and a mapping onto an existing copy (DB entry
-  `data360:plugin-dataspace-native-acceptance-api68`); its activation retry is not yet.
+  `data360:plugin-dataspace-native-acceptance-api68`), and its activation retry (DB entry
+  `data360:plugin-dataspace-publish-firstmapping-acceptance-api68`).
   Data-bearing DMOs, standard DMOs in active use, other API versions and SQL/flex DMOs are
   not verified.
 - Native DLO/DMO creation and updates, mapping creation and qualified API68/default
@@ -2003,8 +2004,9 @@ string in `c__dataSpace`:
   copy name. Nothing else is ever guessed: another answer or text, a name without the
   prefix, or no standard `ssot__X__dlm` leaves Salesforce's answer as the result. A standard
   DMO without `ssot__` (its copy `ds2_StaticCurrencyRates_Home__dlm`) gets no retry. Observed
-  live at API 68 (DB entry `data360:dataspace-identity-resolution-api68`); the plugin's own
-  run of it is not yet.
+  live at API 68 (DB entry `data360:dataspace-identity-resolution-api68`) and run through the
+  plugin for ContactPointPhone in `dataspace2` (DB entry
+  `data360:plugin-dataspace-publish-firstmapping-acceptance-api68`).
 - **Fields a copy does not have yet.** A copy holds only its mapped fields, and Salesforce
   adds a field when a mapping names it. A mapping file onto an existing copy may name such a
   field: the plugin finds it on `ssot__X__dlm` (`ssot__F__c` as `F__c`, other fields
@@ -2052,7 +2054,8 @@ names another data space is a failed item that names both data spaces
 non-default data space are run live through the plugin at API 68: stream create, retrieve,
 unchanged redeploy, mapping update and delete with `--delete-dlo`, and a draft insight's
 create, retrieve and update (DB entry `data360:plugin-dataspace-stream-ci-acceptance-api68`).
-Publishing an insight there is not yet proven live.
+Publishing an insight there is run live too (DB entry
+`data360:plugin-dataspace-publish-firstmapping-acceptance-api68`).
 
 A segment belongs to one data space, named as a string in `c__dataSpace` (the old
 `identity.dataSpace` and `spec.segmentOn.dataSpace` keys are refused with
@@ -2155,8 +2158,9 @@ identity resolution in a non-default data space are run live too: a graph's crea
 unchanged redeploy, field addition and delete; a graph file named like a graph of another space
 refused unwritten; a ruleset `ds2_Individual_<id>` created, published, retrieved, redeployed
 unchanged and deleted; a ruleset file without the prefix refused unwritten (DB entry
-`data360:plugin-dataspace-graph-ir-acceptance-api68`). Publishing a segment there is not yet
-run live.
+`data360:plugin-dataspace-graph-ir-acceptance-api68`). Publishing a segment there and
+exporting its members is run live (DB entry
+`data360:plugin-dataspace-publish-firstmapping-acceptance-api68`).
 
 The old `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`), and a filtered
 membership `{ "name": …, "filter": … }` is recognised but not deployed yet
