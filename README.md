@@ -39,6 +39,12 @@ Your user needs the Data Cloud permissions for the components you work with. Lin
 does not grant any org access. `datacloud`, `d360` and `dc` work as aliases of `data360`, for
 example `sf dc retrieve`.
 
+## Use it in VS Code
+
+- **Data 360 DevTools** (pre-release, not yet published) runs these commands from right-click menus
+  and the Command Palette in VS Code, and groups your files by data space in a side panel.
+- It brings its own copy of this plugin, so no `sf plugins install` or link is needed there.
+
 ## Quick start
 
 ```sh
