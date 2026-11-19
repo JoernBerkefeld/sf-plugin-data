@@ -638,3 +638,20 @@ test('human summary states preview only, never actual deployment', async () => {
   assert.match(logs.join('\n'), /No deployment executed/u);
   assert.match(logs.join('\n'), /Planned create: dmo:/u);
 });
+
+test('an executor that throws after dispatch keeps the unknown-mutation warning', async () => {
+  const { command } = batchInvocation();
+  // The write may have been sent before the executor failed: nothing proves it was not.
+  command.executeNativeDmo = async () => {
+    throw new Error('private-after-dispatch');
+  };
+  const { result, exitCode } = await run(command);
+  assert.equal(result.status, 'failed');
+  assert.equal(exitCode, 1);
+  const [diagnostic] = result.diagnostics.errors;
+  assert.equal(diagnostic.code, 'DEPLOY_EXECUTION_FAILED');
+  // No item reports a write, which alone must not turn this into "nothing was sent".
+  assert.ok(result.result.items.every((item) => item.mutation !== 'confirmed-updated'));
+  assert.match(diagnostic.message, /Mutation may have occurred/u);
+  assert.doesNotMatch(diagnostic.message, /nothing was sent/u);
+});

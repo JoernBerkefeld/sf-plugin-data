@@ -12,6 +12,8 @@
 
 The plugin selects a calculated insight by its exact API name in the run's data space (`--dataspace`, or `default` when you leave it out). This code means the org returned a calculated insight whose API name or data space differs from what was asked for, or the local JSON file names a different calculated insight than the one found in the org.
 
+The message names the insight's data space and the run's. In a retrieve it is a failed item: nothing is written for that insight, and the other selected insights still run.
+
 ## Why the plugin stops
 
 The plugin must never write files for, or change, a calculated insight other than the one you selected.
@@ -25,8 +27,9 @@ The plugin must never write files for, or change, a calculated insight other tha
 ## Example output
 
 ```text
-Retrieve: blocked.
-calculated-insight:ExampleInsight__cio: CI_IDENTITY_CHANGED: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
+Retrieve: failed.
+Data space: dataspace2.
+calculated-insight:ExampleInsight__cio: CI_IDENTITY_CHANGED: ExampleInsight__cio is in the data space default, not in the run's data space dataspace2. Run the command with --dataspace default. This component was not retrieved; no files were written for it.
 Hint: The calculated insight in the org has a different API name or data space than selected. Nothing was written or sent; check the selector and the JSON file, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/CI_IDENTITY_CHANGED.md
 Downloaded calculated-insight: 0

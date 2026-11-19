@@ -1,6 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import { sameProperty } from '../artifacts/enum-case.js';
-import { explainInput, explainMismatch } from './operation-diagnostic.js';
+import {
+  explainInput,
+  explainMismatch,
+  explainSpaceMismatch,
+  printableKey,
+  withHint,
+} from './operation-diagnostic.js';
 import {
   isDeletableNativeDmo,
   isGeneratedDmoField,
@@ -131,6 +137,10 @@ export function mappedFieldRemoval(
 }
 
 export { isGeneratedDmoField } from '../artifacts/native-dmo-document.js';
+
+/** Hint of UNSUPPORTED_DMO_TARGET for a DMO file of a standard DMO copy that does not exist yet. */
+const standardCopyHint =
+  "A standard DMO's copy in another data space is created by its first mapping, not by a DMO file. Deploy a mapping onto the copy instead of the DMO file.";
 
 /**
  * Project an authored field to native input: bare name, read-only keys dropped, the rest as written.
@@ -342,7 +352,13 @@ export async function preflightNativeDmo(
 ): Promise<NativeDmoDeployPlan> {
   const desired = validateNativeDmoDocument(value);
   const apiName = desired.identity.apiName;
-  if (requestScope !== desired.c__dataSpace) throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
+  if (requestScope !== desired.c__dataSpace)
+    throw explainSpaceMismatch(
+      new NativeDmoError('DMO_DATASPACE_MISMATCH'),
+      apiName,
+      desired.c__dataSpace,
+      requestScope,
+    );
   const extras = Object.fromEntries(
     Object.entries(desired.spec).filter(([key]) => !handledSpecKeys.has(key)),
   );
@@ -354,7 +370,10 @@ export async function preflightNativeDmo(
     target = read.document;
     raw = read.raw;
     if (target.c__dataSpace !== desired.c__dataSpace)
-      throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
+      throw explainInput(
+        new NativeDmoError('DMO_DATASPACE_MISMATCH'),
+        `Salesforce reads ${apiName} in the data space ${printableKey(target.c__dataSpace)}, but the file and the run name ${printableKey(desired.c__dataSpace)}. Retrieve the DMO again with --dataspace ${printableKey(target.c__dataSpace)}.`,
+      );
     // Every DMO but an unprefixed custom one is written within the standard scope only:
     // standard, platform-generated and namespaced DMOs alike, and Salesforce answers the rest.
     const scope = nativeDmoWriteScope(read.raw);
@@ -374,7 +393,7 @@ export async function preflightNativeDmo(
     const origin = standardCopyOrigin(apiName, requestScope, options.dataSpacePrefix);
     if (origin !== undefined && (await isStandardOrigin(origin, client)))
       throw explainInput(
-        new NativeDmoError('UNSUPPORTED_DMO_TARGET'),
+        withHint(new NativeDmoError('UNSUPPORTED_DMO_TARGET'), standardCopyHint),
         `${apiName} is the copy of the standard DMO ${origin} in the data space ${requestScope}, and it does not exist there yet. A standard DMO's copy is created by its first mapping: deploy a mapping onto ${apiName} instead of the DMO file.`,
       );
     return {

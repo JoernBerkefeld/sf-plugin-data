@@ -1,6 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import { paceReadback, readbackPace } from './readback-pace.js';
-import { explainMismatch, replaceExplanation } from './operation-diagnostic.js';
+import {
+  explainMismatch,
+  explainSpaceMismatch,
+  replaceExplanation,
+} from './operation-diagnostic.js';
 import {
   NativeMappingError,
   nativeMappingName,
@@ -11,6 +15,7 @@ import {
 import { normalizeDlo } from '../artifacts/dlo-document.js';
 import {
   NativeDmoError,
+  isGeneratedDmoField,
   nativeDmoWriteScope,
   standardCopyFieldName,
   standardCopyOrigin,
@@ -953,7 +958,12 @@ export async function preflightNativeMapping(
   // Cloned: generated pairs of the org are merged into it below, never into the caller's input.
   const desired = structuredClone(validateNativeMappingDocument(value));
   if (desired.c__dataSpace !== requestScope)
-    throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
+    throw explainSpaceMismatch(
+      new NativeMappingError('MAPPING_DATASPACE_MISMATCH'),
+      desired.identity.apiName,
+      desired.c__dataSpace,
+      requestScope,
+    );
   const { generated, context, activates, activation, typeDifferences } = await validateDependencies(
     desired,
     dependencies,
@@ -1247,7 +1257,12 @@ export async function preflightUnmapNativeMapping(
   requestScope: string,
 ): Promise<NativeMappingUnmapPlan> {
   if (selected.c__dataSpace !== requestScope)
-    throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
+    throw explainSpaceMismatch(
+      new NativeMappingError('MAPPING_DATASPACE_MISMATCH'),
+      selected.identity.apiName,
+      selected.c__dataSpace,
+      requestScope,
+    );
   const response = await client.list(selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
@@ -1456,12 +1471,26 @@ export async function unmapNativeMappingFields(
   return plan;
 }
 
+/** The system source fields of a standard DMO as its copy names them (`ssot__` left out). */
+const copySystemFields = new Set([
+  'DataSourceId__c',
+  'DataSourceObjectId__c',
+  'InternalOrganizationId__c',
+]);
+
 export type NativeMappingDeletePlan = {
   selected: NativeMappingDocument;
   /** Every other mapping of the same DMO, ordered by name. */
   others: NativeMappingDocument[];
   /** Field names of the target DMO, ordered. */
   targetFields: string[];
+  /**
+   * Only for a standard DMO copy: the copy fields that only the selected mapping targets, ordered.
+   * A copy holds only mapped fields, so Salesforce drops such a field with the mapping (live API
+   * 68, DB entry data360:plugin-dataspace-native-acceptance-api68); the deletion check accepts
+   * their removal and nothing else.
+   */
+  releasableFields?: string[];
 };
 export type NativeMappingDeleteSettle = {
   attempts: number;
@@ -1523,14 +1552,15 @@ async function readMappingSurroundings(
  * a custom DMO, so that case is refused here with its way out; a standard DMO has no such limit.
  * @param {string} apiName Exact target-native mapping name.
  * @param {MappingClient} client Target mapping reader.
- * @param {Pick<MappingDependencies, 'target'>} dependencies Fresh DMO reader.
+ * @param {Pick<MappingDependencies, 'target' | 'dataSpacePrefix'>} dependencies Fresh DMO reader
+ * and the run's data space prefix (which tells a standard DMO copy).
  * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeMappingDeletePlan>} What must be unchanged after the deletion.
  */
 export async function preflightDeleteNativeMapping(
   apiName: string,
   client: MappingClient,
-  dependencies: Pick<MappingDependencies, 'target'>,
+  dependencies: Pick<MappingDependencies, 'target' | 'dataSpacePrefix'>,
   requestScope: string,
 ): Promise<NativeMappingDeletePlan> {
   const selected = await retrieveNativeMapping(apiName, client, requestScope);
@@ -1553,15 +1583,48 @@ export async function preflightDeleteNativeMapping(
     );
     throw error;
   }
-  return { selected, others, targetFields };
+  // A standard DMO copy (non-default data space, the space's prefix, creationType Standard).
+  // Only a copy that keeps another mapping was observed dropping a field (live API 68); the last
+  // mapping of a copy keeps the strict check.
+  const copy =
+    others.length > 0 &&
+    rawTarget.creationType === 'Standard' &&
+    standardCopyOrigin(target, requestScope, dependencies.dataSpacePrefix) !== undefined;
+  if (!copy) return { selected, others, targetFields };
+  const kept = new Set(
+    others.flatMap((entry) =>
+      entry.spec.fieldMappings.map((pair) => pair.targetFieldDeveloperName),
+    ),
+  );
+  // Never released: a primary key, a generated field (KQ_, system, read as System) or the copy
+  // spelling of a system source field of the default object.
+  const rawFields = Array.isArray(rawTarget.fields)
+    ? (rawTarget.fields as Array<Record<string, unknown>>)
+    : [];
+  const protectedFields = new Set(
+    rawFields
+      .filter(
+        (field) =>
+          field.isPrimaryKey === true ||
+          isGeneratedDmoField(field as unknown as NativeDmoField) ||
+          copySystemFields.has(String(field.name)),
+      )
+      .map((field) => String(field.name)),
+  );
+  const releasableFields = [
+    ...new Set(selected.spec.fieldMappings.map((pair) => pair.targetFieldDeveloperName)),
+  ].filter((name) => !kept.has(name) && targetFields.includes(name) && !protectedFields.has(name));
+  releasableFields.sort();
+  return { selected, others, targetFields, releasableFields };
 }
 
 /**
  * Delete a mapping with one Metadata API destructive deployment, then confirm its absence and
- * that the DMO's other mappings and its fields are what they were.
+ * that the DMO's other mappings and its fields are what they were. On a standard DMO copy the
+ * fields only the deleted mapping targeted may be gone (see {@link NativeMappingDeletePlan}).
  * @param {string} apiName Exact native name, never a source artifact alias.
  * @param {MappingClient} client Mapping transport.
- * @param {MappingDependencies} dependencies Fresh parent readers.
+ * @param {MappingDependencies} dependencies Fresh parent readers and the data space prefix.
  * @param {string} requestScope The run's data space.
  * @param {NativeMappingDeleteSettle} [settle] Bounded readback budget.
  * @returns {Promise<{apiName: string}>} Independently verified absence.
@@ -1569,7 +1632,7 @@ export async function preflightDeleteNativeMapping(
 export async function deleteNativeMapping(
   apiName: string,
   client: MappingClient,
-  dependencies: Pick<MappingDependencies, 'target'>,
+  dependencies: Pick<MappingDependencies, 'target' | 'dataSpacePrefix'>,
   requestScope: string,
   settle: NativeMappingDeleteSettle = defaultMappingDeleteSettle,
 ): Promise<{ apiName: string }> {
@@ -1594,7 +1657,14 @@ export async function deleteNativeMapping(
       dependencies,
       requestScope,
     );
-    const expected = { mappings: before.others, targetFields: before.targetFields };
+    // A copy may drop the fields only the deleted mapping targeted; every other field stays.
+    const released = new Set(
+      (before.releasableFields ?? []).filter((name) => !after.targetFields.includes(name)),
+    );
+    const expected = {
+      mappings: before.others,
+      targetFields: before.targetFields.filter((name) => !released.has(name)),
+    };
     const observed = { mappings: after.mappings, targetFields: after.targetFields };
     if (!isDeepStrictEqual(observed, expected))
       throw explainMismatch(

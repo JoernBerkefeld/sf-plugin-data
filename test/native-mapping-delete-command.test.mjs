@@ -9,6 +9,7 @@ import { errorCodeInfo } from '../lib/errors/registry.js';
 import Delete from '../lib/commands/data360/delete.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { deleteNativeMapping } from '../lib/services/native-mapping.js';
+import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
 
 const invocation = (flags = {}) => {
   const command = Object.create(Delete.prototype);
@@ -77,6 +78,54 @@ for (const scope of ['default', 'Team'])
       assert.equal(calls, 1);
       assert.equal(result.result.items[0].identity.dataSpace, scope ?? 'default');
     });
+
+test('mapping delete passes the run data space prefix from the data space list', async (t) => {
+  const offline = dataSpaceDirectory.read;
+  t.after(() => {
+    dataSpaceDirectory.read = offline;
+  });
+  // The org's list names dataspace2 with its prefix ds2.
+  dataSpaceDirectory.read = async () => [
+    { name: 'default' },
+    { name: 'dataspace2', prefix: 'ds2' },
+  ];
+  for (const [scope, prefix] of [
+    ['dataspace2', 'ds2'],
+    ['default', undefined],
+  ])
+    for (const preview of [false, true]) {
+      const command = invocation({ dataspace: scope, preview });
+      command.createDataSpaceSender = () => ({
+        request: async () => assert.fail('the stubbed list is read instead'),
+      });
+      command.createMappingClient = () => ({ remove: async () => {} });
+      const received = [];
+      command.preflightDeleteMapping = command.deleteMapping = async (
+        _name,
+        _client,
+        dependencies,
+      ) => {
+        received.push(dependencies.dataSpacePrefix);
+        assert.equal('dataSpacePrefix' in dependencies, prefix !== undefined);
+        return { selected: {}, others: [], targetFields: [] };
+      };
+      const result = await run(command);
+      assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+      assert.deepEqual(received, [prefix], `${scope}/${preview}`);
+    }
+  // A data space list that cannot be read stops the run before any mapping read or delete.
+  dataSpaceDirectory.read = async () => {
+    throw new Error('private-list-failure');
+  };
+  const command = invocation({ dataspace: 'dataspace2' });
+  command.createDataSpaceSender = () => ({ request: async () => assert.fail('not reached') });
+  command.createMappingClient = () => ({ remove: async () => assert.fail('no delete') });
+  command.preflightDeleteMapping = command.deleteMapping = async () =>
+    assert.fail('no mapping delete without the data space list');
+  const result = await run(command);
+  assert.notEqual(result.status, 'success');
+  assert.ok(result.result.items.every((item) => item.mutation === 'not-attempted'));
+});
 
 const mappingFixture = (command) => {
   const names = [

@@ -1014,7 +1014,7 @@ export function requireRunSpace(
   if (!document.c__dataSpace.includes(dataSpace))
     throw explainInput(
       new DataStreamError('STREAM_DATASPACE_MISMATCH'),
-      `The ${dataSpaceKey} list of ${printableKey(document.identity.apiName)} does not name the run's data space ${printableKey(dataSpace)}. Deploy it with --dataspace set to one of its data spaces.`,
+      `The ${dataSpaceKey} list of ${printableKey(document.identity.apiName)} (${document.c__dataSpace.map((space) => printableKey(space)).join(', ')}) does not name the run's data space ${printableKey(dataSpace)}. Deploy it with --dataspace set to one of its data spaces.`,
     );
 }
 

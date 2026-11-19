@@ -84,9 +84,10 @@ const untyped = () => ({ ...s3Stream(), connectorInfo: {} });
  * Offline read clients over one stream; every read is recorded.
  * @param {object} stream Stream GET response.
  * @param {object} [connectionDetail] Connection read by ID.
+ * @param {string[]} [dloSpaces] Data spaces the DLO read names, in place of the GET's.
  * @returns {{clients: object, calls: string[]}} Clients and observed reads.
  */
-function reads(stream, connectionDetail = connection) {
+function reads(stream, connectionDetail = connection, dloSpaces) {
   const calls = [];
   const schemas = {
     schemas: [
@@ -132,6 +133,7 @@ function reads(stream, connectionDetail = connection) {
           dataLakeObjects: [
             {
               ...structuredClone(stream.dataLakeObjectInfo),
+              ...(dloSpaces ? { dataSpaceInfo: dloSpaces.map((name) => ({ name })) } : {}),
               id: '1dl000000000001AAA',
               fields: stream.dataLakeObjectInfo.fields.map((field) => ({
                 ...field,
@@ -150,11 +152,12 @@ function reads(stream, connectionDetail = connection) {
  * Retrieve one stream through the command with offline clients and the real writer.
  * @param {object} stream Stream GET response.
  * @param {object} [connectionDetail] Connection read by ID.
+ * @param {string[]} [dloSpaces] Data spaces the DLO read names, in place of the GET's.
  * @returns {Promise<object>} Envelope, output root and observed reads.
  */
-async function retrieveCommand(stream, connectionDetail) {
+async function retrieveCommand(stream, connectionDetail, dloSpaces) {
   const cwd = await scratch();
-  const { clients, calls } = reads(stream, connectionDetail);
+  const { clients, calls } = reads(stream, connectionDetail, dloSpaces);
   const command = Object.create(Retrieve.prototype);
   command.parse = async () => ({
     flags: {
@@ -320,6 +323,24 @@ test('a stream whose DLO is in another data space stays an item failure', async 
   assert.equal(result.diagnostics.errors[0].code, 'UNSUPPORTED_STREAM_DATASPACE');
   assert.equal(result.result.items.length, 0);
   await assert.rejects(stat(streamFile(cwd, 'Account_Home')), { code: 'ENOENT' });
+});
+
+test('an as-is stream whose GET names no data space is written only when its DLO is in the run space', async () => {
+  // The GET names no space: the DLO's own read decides, as for a modelled stream.
+  const stream = untyped();
+  delete stream.dataLakeObjectInfo.dataSpaceInfo;
+  const outside = await retrieveCommand(stream, undefined, ['Europe']);
+  assert.equal(outside.result.status, 'failed');
+  assert.deepEqual(outside.calls, ['streams.get', 'dlo.get']);
+  assert.equal(outside.result.diagnostics.errors[0].code, 'UNSUPPORTED_STREAM_DATASPACE');
+  assert.equal(outside.result.result.items.length, 0);
+  await assert.rejects(stat(streamFile(outside.cwd, 'Account_Home')), { code: 'ENOENT' });
+  const inside = await retrieveCommand(stream, undefined, ['default']);
+  assert.equal(inside.result.status, 'success', JSON.stringify(inside.result.diagnostics));
+  assert.deepEqual(inside.calls, ['streams.get', 'dlo.get']);
+  assert.deepEqual(inside.result.result.items[0].verbatim, {
+    reason: 'UNSUPPORTED_STREAM_CONNECTOR',
+  });
 });
 
 test('an IngestApi stream with a real formula is written as a stream file that deploys', async () => {

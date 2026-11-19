@@ -284,6 +284,8 @@ test('no activation notice when the standard DMO is already enabled', async () =
   assert.deepEqual(result, {
     outcome: 'created',
     mutation: 'confirmed-created',
+    // The name Salesforce generated for the new mapping.
+    targetApiName: NAME,
     diagnostics: [],
   });
   assert.deepEqual(org.writes, [['mapping:create', liveBody]]);

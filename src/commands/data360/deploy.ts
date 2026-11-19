@@ -17,7 +17,7 @@ import { nativeDataGraphReadContext } from '../../services/native-data-graph-con
 import { createDataGraphClient } from '../../transport/data-graph-rest.js';
 import { verifyNativeDataGraphInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { NativeDataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
-import { explanationOf, operationDiagnostic } from '../../services/operation-diagnostic.js';
+import { explanationOf, hintOf, operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { SegmentError } from '../../artifacts/segment-document.js';
 import type { OtherSegmentSpec, SegmentDocument } from '../../artifacts/segment-document.js';
 import { bindSegmentChildren } from '../../services/bind-segment-dependencies.js';
@@ -767,9 +767,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 : // A rejected write without any unknown one wrote nothing: no unknown mutation to inspect.
                   mutations.includes('rejected') && !mutations.includes('unknown')
                   ? rejected
-                  : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
+                  : // A blocked run whose items wrote nothing was refused before any write; a
+                    // failed run may have written before its error, so it keeps the warning.
+                    status === 'blocked' &&
+                      mutations.every(
+                        (mutation) => mutation === undefined || mutation === 'not-attempted',
+                      )
+                    ? 'Deployment was refused before any write; nothing was sent to the org. Fix the reported cause, then rerun.'
+                    : 'Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.',
             ),
           retryable: false,
+          ...hintOf(error),
           ...(mappedFields ? { mappedFields } : {}),
         });
       }

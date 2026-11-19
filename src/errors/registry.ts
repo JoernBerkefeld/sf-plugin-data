@@ -46,6 +46,29 @@ for (const [family, entries] of Object.entries(errorFamilies) as Array<
       }),
     );
 
+/** Cause-specific hints registered by the plugin's own code (see {@link registerCauseHint}). */
+const causeHints = new Set<string>();
+
+/**
+ * Register a cause-specific hint, which then replaces the hint of its code where a diagnostic
+ * carries it. A hint any other object carries (a raw or verbatim payload) is never kept.
+ * @param {string} hint Static plugin-built sentence.
+ */
+export function registerCauseHint(hint: string): void {
+  causeHints.add(hint);
+}
+
+/**
+ * The hint to show for a diagnostic: its own when the plugin registered it, otherwise the
+ * registered hint of its code.
+ * @param {unknown} own The diagnostic's hint property.
+ * @param {string} registered Hint of the code.
+ * @returns {string} Hint.
+ */
+function hintFor(own: unknown, registered: string): string {
+  return typeof own === 'string' && causeHints.has(own) ? own : registered;
+}
+
 /**
  * Look up the CLI hint and reference page of a plugin error code.
  * @param {string} code Plugin diagnostic code.
@@ -65,7 +88,8 @@ export function registeredErrorCodes(): string[] {
 
 /**
  * Add `hint` and `docs` to every `{ code, message }` diagnostic with a registered code,
- * wherever it sits in a command result (top-level errors, items, preflight results).
+ * wherever it sits in a command result (top-level errors, items, preflight results). A
+ * registered cause-specific hint the diagnostic already carries is kept; any other is replaced.
  * @template T
  * @param {T} value Command result envelope.
  * @returns {T} The same envelope, annotated in place.
@@ -83,7 +107,7 @@ export function annotateDiagnostics<T>(value: T): T {
     if (typeof record.code === 'string' && typeof record.message === 'string') {
       const info = registry.get(record.code);
       if (info && Object.isExtensible(record)) {
-        record.hint = info.hint;
+        record.hint = hintFor(record.hint, info.hint);
         record.docs = info.docs;
       }
     }
@@ -95,19 +119,21 @@ export function annotateDiagnostics<T>(value: T): T {
 
 /**
  * Human output for one diagnostic: `CODE: message`, then the hint and the docs link.
- * The hint line is left out when the message already says it.
- * @param {{ code: string; message: string }} diagnostic Diagnostic to print.
+ * The hint line is left out when the message already says it; a registered cause-specific hint
+ * the diagnostic carries replaces the hint of its code.
+ * @param {{ code: string; message: string; hint?: string }} diagnostic Diagnostic to print.
  * @param {string} [prefix] Text before the code, such as `dmo:Name__dlm: `.
  * @returns {string} One or more lines.
  */
 export function formatDiagnostic(
-  diagnostic: Readonly<{ code: string; message: string }>,
+  diagnostic: Readonly<{ code: string; message: string; hint?: unknown }>,
   prefix = '',
 ): string {
   const lines = [`${prefix}${diagnostic.code}: ${diagnostic.message}`];
   const info = registry.get(diagnostic.code);
   if (info) {
-    if (!diagnostic.message.includes(info.hint)) lines.push(`Hint: ${info.hint}`);
+    const hint = hintFor(diagnostic.hint, info.hint);
+    if (!diagnostic.message.includes(hint)) lines.push(`Hint: ${hint}`);
     lines.push(`Docs: ${info.docs}`);
   }
   return lines.join('\n');

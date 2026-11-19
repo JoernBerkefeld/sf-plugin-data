@@ -635,6 +635,33 @@ test('an insight the GET names in another data space than the run is not written
   await assert.rejects(readdir(path.join(cwd, 'data360', 'calculatedInsights')));
 });
 
+test('an insight of another data space is an item failure naming both; the others still run', async () => {
+  const cwd = await root();
+  const { command: instance } = command(
+    ['calculated-insight:Synthetic__cio', 'calculated-insight:Second__cio'],
+    cwd,
+    'dataspace2',
+  );
+  // Synthetic__cio is in default; Second__cio is in the run's data space.
+  instance.createCalculatedInsightClient = () => ({
+    get: async (name) =>
+      name === 'Second__cio' ? { ...getBody(name), dataSpace: 'dataspace2' } : getBody(name),
+  });
+  const result = await run(instance);
+  assert.equal(result.status, 'failed');
+  const [diagnostic] = result.diagnostics.errors;
+  assert.equal(diagnostic.code, 'CI_IDENTITY_CHANGED');
+  assert.deepEqual(diagnostic.identity, { dataSpace: 'dataspace2', apiName: 'Synthetic__cio' });
+  assert.match(
+    diagnostic.message,
+    /^Synthetic__cio is in the data space default, not in the run's data space dataspace2\. Run the command with --dataspace default\./u,
+  );
+  assert.deepEqual(
+    result.result.items.map((item) => item.identity.apiName),
+    ['Second__cio'],
+  );
+});
+
 test('a file names its data space in c__dataSpace; Salesforce dataSpace is refused', () => {
   const document = observeNativeCalculatedInsight({ ...getBody(), dataSpace: 'dataspace2' });
   const { json, files } = serializeNativeCalculatedInsight(document);

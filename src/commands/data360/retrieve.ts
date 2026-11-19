@@ -21,6 +21,7 @@ import {
 import {
   retrieveNativeDataStream,
   sortedStreamMappings,
+  streamSpaces,
 } from '../../services/native-data-stream.js';
 import { listNativeNames, listNativeMappingNames } from '../../services/select-native-retrieve.js';
 import {
@@ -226,8 +227,6 @@ const nothingRead: NativeOf = (name) => noReads.get(name);
 const calculatedInsightRetrieveMessages: Record<string, string> = {
   CI_NOT_FOUND: 'The calculated insight was not found in the target org; no files were written.',
   CI_RUNTIME_UNKNOWN: 'The calculated insight could not be read; no files were written.',
-  CI_IDENTITY_CHANGED:
-    'The calculated insight the org returned has a different API name or data space; no files were written.',
 };
 
 const retrieveFamilies = [
@@ -1041,8 +1040,9 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         ];
         for (const apiName of names) {
           let nativeOf = nothingRead;
+          let clients: ReturnType<typeof this.createDataStreamClients> | undefined;
           try {
-            const clients = this.createDataStreamClients(connection, target, version);
+            clients = this.createDataStreamClients(connection, target, version);
             // The stream's own GET is the raw response a verbatim file keeps. Salesforce lists
             // the mappings in varying order, so sort them as a modelled file does.
             const reads = recordNativeReads(clients.streams, verbatimStreamNative);
@@ -1065,15 +1065,28 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               ...receipt,
             });
           } catch (error_) {
-            const error = await this.verbatimFallback(error_, nativeOf(apiName), {
-              kind: 'data-stream',
-              identity: { dataSpace: effectiveScope, apiName },
-              routes,
-              root: outputDirectory,
-              overwrite: flags.overwrite,
-              warnings: envelope.diagnostics.warnings,
-              push: (item) => envelope.result.items.push(item),
-            });
+            const read = nativeOf(apiName);
+            // A stream written as-is must belong to the run's data space too: the spaces its GET
+            // lists, or its DLO's when the GET names none (the check a modelled stream passes).
+            // When they cannot be confirmed, the item fails instead of being written.
+            let unconfirmed: unknown;
+            if (read !== undefined && clients !== undefined && verbatimReason(error_) !== undefined)
+              try {
+                await streamSpaces(read.native, apiName, effectiveScope, clients);
+              } catch (spaceError) {
+                unconfirmed = spaceError;
+              }
+            const error =
+              unconfirmed ??
+              (await this.verbatimFallback(error_, read, {
+                kind: 'data-stream',
+                identity: { dataSpace: effectiveScope, apiName },
+                routes,
+                root: outputDirectory,
+                overwrite: flags.overwrite,
+                warnings: envelope.diagnostics.warnings,
+                push: (item) => envelope.result.items.push(item),
+              }));
             if (error === undefined) continue;
             const code =
               error instanceof DataStreamError ? error.code : 'DATA_STREAM_RETRIEVE_FAILED';
@@ -1785,21 +1798,24 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             code === 'ACQUISITION_FAILED'
           )
             failed = true;
+          // An insight of another name or data space is a failed item, never a blocked run.
+          if (code === 'CI_IDENTITY_CHANGED') failed = true;
           if (error instanceof RetrieveSelectionError) {
             apiName = error.identity.apiName;
             family = error.identity.kind;
           }
           envelope.diagnostics.errors.push({
             code,
-            message: getConnectDiagnostic(error)
-              ? operationDiagnostic(
-                  error,
-                  'This component was not retrieved; no files were written for it.',
-                )
-              : apiName
-                ? (calculatedInsightRetrieveMessages[code] ??
-                  'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.')
-                : 'The selection could not be retrieved completely; no files were written.',
+            message:
+              getConnectDiagnostic(error) || code === 'CI_IDENTITY_CHANGED'
+                ? operationDiagnostic(
+                    error,
+                    'This component was not retrieved; no files were written for it.',
+                  )
+                : apiName
+                  ? (calculatedInsightRetrieveMessages[code] ??
+                    'This component was not retrieved. Resolve its capability, acquisition or output diagnostic.')
+                  : 'The selection could not be retrieved completely; no files were written.',
             retryable: false,
             ...(apiName ? { identity: { dataSpace: effectiveScope, apiName } } : {}),
           });

@@ -443,7 +443,12 @@ test('deploy refuses a data space other than the request scope and an ambiguous 
   const { client } = fakeClient([]);
   await assert.rejects(
     preflightNativeRelationship({ ...document, c__dataSpace: 'other' }, client, 'default'),
-    code('UNSUPPORTED_RELATIONSHIP_DATASPACE'),
+    (error) =>
+      error.code === 'UNSUPPORTED_RELATIONSHIP_DATASPACE' &&
+      // The explanation names the file's data space and the run's.
+      / names the data space other in c__dataSpace, but the run's data space is default /u.test(
+        error.message,
+      ),
   );
   const twice = fakeClient([wire({ name: 'One' }), wire({ name: 'Two' })]);
   await assert.rejects(

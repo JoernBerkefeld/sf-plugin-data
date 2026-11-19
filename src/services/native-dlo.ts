@@ -436,7 +436,10 @@ export async function deployNativeDlo(
       throw new DloError('DLO_TARGET_IDENTITY_MISMATCH');
     // A create lands in the run's space only; an update keeps the spaces the DLO had.
     if (!document.c__dataSpace.includes(dataSpace) && plan.membership.add.length === 0)
-      throw new DloError('DLO_DATASPACE_MISMATCH');
+      throw explainInput(
+        new DloError('DLO_DATASPACE_MISMATCH'),
+        `Salesforce answered ${plan.apiName} in the data spaces ${spaceList(sortedDataSpaces(document.c__dataSpace))}, not in the run's data space ${printableKey(dataSpace)}. Retrieve the DLO to see its data spaces before another attempt.`,
+      );
     serverProcessing = unwrapDlo(response).status === 'PROCESSING';
   }
   const changed = plan.membership.add.length > 0 || plan.membership.remove.length > 0;

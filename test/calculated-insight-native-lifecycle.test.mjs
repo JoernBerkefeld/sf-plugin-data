@@ -774,6 +774,9 @@ test('deploy refuses an insight file of another data space than the run before a
   const [diagnostic] = result.diagnostics.errors;
   assert.equal(diagnostic.code, 'CI_DATASPACE_MISMATCH');
   assert.match(diagnostic.message, /names the data space default in c__dataSpace/u);
+  // Refused before any write: blocked wording, not the unknown-mutation warning.
+  assert.match(diagnostic.message, /refused before any write; nothing was sent to the org/u);
+  assert.doesNotMatch(diagnostic.message, /Mutation may have occurred|unknown mutations/u);
   assert.deepEqual(target.calls, []);
 });
 

@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { sameEnum } from '../artifacts/enum-case.js';
 import { paceReadback, readbackPace } from './readback-pace.js';
-import { explanationOf, replaceExplanation } from './operation-diagnostic.js';
+import { explainSpaceMismatch, explanationOf, replaceExplanation } from './operation-diagnostic.js';
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import {
   NativeRelationshipError,
@@ -236,7 +236,12 @@ function admit(
 ): NativeRelationshipDocument {
   const document = validateNativeRelationshipDocument(value, mode);
   if (document.c__dataSpace !== requestScope)
-    throw new NativeRelationshipError('UNSUPPORTED_RELATIONSHIP_DATASPACE');
+    throw explainSpaceMismatch(
+      new NativeRelationshipError('UNSUPPORTED_RELATIONSHIP_DATASPACE'),
+      document.identity.apiName,
+      document.c__dataSpace,
+      requestScope,
+    );
   return document;
 }
 

@@ -9,6 +9,7 @@ import { createCalculatedInsightClient } from '../transport/calculated-insight-r
 import type { CalculatedInsightClient } from '../transport/calculated-insight-rest.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { explainInput, printableKey } from './operation-diagnostic.js';
 
 export type CalculatedInsightConnection = Pick<
   Connection,
@@ -47,6 +48,36 @@ export type CalculatedInsightAcquisition =
   { state: 'absent' } | { state: 'present'; status: string; document: NativeCalculatedInsight };
 
 /**
+ * Refuse an insight whose GET names another name or data space than selected, naming both.
+ * @param {Record<string, unknown>} answered The GET.
+ * @param {string} apiName Selected name.
+ * @param {string} dataSpace The run's data space.
+ * @returns {CalculatedInsightError | undefined} CI_IDENTITY_CHANGED, or none when both match.
+ */
+function identityChanged(
+  answered: Record<string, unknown>,
+  apiName: string,
+  dataSpace: string,
+): CalculatedInsightError | undefined {
+  if (answered.apiName !== apiName)
+    return explainInput(
+      new CalculatedInsightError('CI_IDENTITY_CHANGED'),
+      `The read of ${apiName} answered another insight (${typeof answered.apiName === 'string' ? printableKey(answered.apiName) : 'no name'}).`,
+    );
+  if (answered.dataSpace !== dataSpace) {
+    const space =
+      typeof answered.dataSpace === 'string' ? printableKey(answered.dataSpace) : undefined;
+    return explainInput(
+      new CalculatedInsightError('CI_IDENTITY_CHANGED'),
+      space === undefined
+        ? `${apiName} names no data space, not the run's data space ${printableKey(dataSpace)}.`
+        : `${apiName} is in the data space ${space}, not in the run's data space ${printableKey(dataSpace)}. Run the command with --dataspace ${space}.`,
+    );
+  }
+  return undefined;
+}
+
+/**
  * Read one insight by name: HTTP 404 ITEM_NOT_FOUND or ENTITY_IS_DELETED is absent, any other failure throws
  * (CI_RUNTIME_UNKNOWN with the Salesforce diagnostic). A present insight must answer with the
  * selected name and data space (CI_IDENTITY_CHANGED otherwise): every write and the DELETE go
@@ -65,8 +96,8 @@ export async function acquireCalculatedInsight(
   // Name and data space first, from the GET itself: an insight of another name or data space is
   // an item failure, never a projection (or a verbatim file stamped with the run's data space).
   const answered = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  if (answered.apiName !== apiName || answered.dataSpace !== context.dataSpace)
-    throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+  const changed = identityChanged(answered, apiName, context.dataSpace);
+  if (changed) throw changed;
   const document = observeNativeCalculatedInsight(raw);
   const status = (raw as { calculatedInsightStatus?: unknown }).calculatedInsightStatus;
   return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN', document };
@@ -113,8 +144,8 @@ export async function calculatedInsightPresence(
   const read = await readCalculatedInsight(context, apiName);
   if (read.state === 'absent') return read;
   const raw = (read.raw && typeof read.raw === 'object' ? read.raw : {}) as Record<string, unknown>;
-  if (raw.apiName !== apiName || raw.dataSpace !== context.dataSpace)
-    throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+  const changed = identityChanged(raw, apiName, context.dataSpace);
+  if (changed) throw changed;
   const status = raw.calculatedInsightStatus;
   return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN' };
 }

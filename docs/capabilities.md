@@ -713,7 +713,9 @@ Native mapping targets, decided from the same raw read:
   - Readback: up to 6 reads, 5 seconds apart, until the mapping reads 404
     (`MAPPING_DELETION_UNCONFIRMED` otherwise); then the DMO's other mappings (pairs
     and selectors) and the DMO's field names must be exactly what they were
-    (`MAPPING_DELETE_SIDE_EFFECT` otherwise).
+    (`MAPPING_DELETE_SIDE_EFFECT` otherwise). On a standard DMO copy in another data
+    space the fields only the deleted mapping targeted may be gone (Salesforce drops a
+    copy field with its last mapping); every other field must stay.
 - Shared target field: a pair is removed even when another mapping of the same DMO
   targets the same field. The field must then keep `isMapped: true`; it loses the
   marker with the last such pair. A pair onto a field another mapping targets is sent

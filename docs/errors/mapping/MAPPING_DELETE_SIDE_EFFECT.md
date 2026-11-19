@@ -12,6 +12,8 @@
 
 After the deletion, the plugin reads the mapping (now absent), the other mappings of the same DMO and the DMO's field names, and compares them with what it read before. Something other than the deleted mapping was different.
 
+A copy of a standard DMO in another data space (`<prefix>_<Name>__dlm`, creationType `Standard`) holds only the fields some mapping targets, and Salesforce drops a field when its last mapping goes. For such a copy the fields that only the deleted mapping targeted may be gone; that is expected and not reported. Any other missing, added or changed field is.
+
 ## Why the plugin stops
 
 A deletion must change only the selected mapping. A difference elsewhere may be a side effect of the deletion or a change someone else made at the same time; either way the result is not what was planned.

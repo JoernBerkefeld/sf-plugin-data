@@ -182,8 +182,11 @@ Current plugin limits:
   DMO file for a copy that does not exist yet is refused (`UNSUPPORTED_DMO_TARGET`), and
   the mapping is sent in the default spelling once when Salesforce answers "DMO not found"
   (see [Data spaces](#data-spaces)). The copy naming and the retry are proven live through
-  the raw API; the plugin's own run in a non-default data space is not yet. Data-bearing
-  DMOs, standard DMOs in active use, other API versions and SQL/flex DMOs are not verified.
+  the raw API. The plugin's own run in a non-default data space is proven for DMO, mapping
+  and relationship files and a mapping onto an existing copy (DB entry
+  `data360:plugin-dataspace-native-acceptance-api68`); its activation retry is not yet.
+  Data-bearing DMOs, standard DMOs in active use, other API versions and SQL/flex DMOs are
+  not verified.
 - Native DLO/DMO creation and updates, mapping creation and qualified API68/default
   desired-state pair reconciliation, native API68 Segment create and update by name
   (the DBT definition is sent as written; Salesforce decides), calculated insight create and update (the file is sent as written; Salesforce decides),
@@ -388,7 +391,10 @@ run's data space, which the stream's DLO must belong to (see [Data spaces](#data
 Streams deploy alone or as the first phase of a mixed deploy (explicit or
 `--changed-since`). Retrieve by name takes any stream: one whose GET fits neither file
 (no connector type, a mapping the file cannot hold, drifted fields) is written as-is
-with the failed check as reason, and deploy does not send it.
+with the failed check as reason, and deploy does not send it. Its data spaces are
+checked first as for any stream (those its GET names, or its DLO's when the GET names
+none); a stream outside the run's data space, or whose data spaces cannot be read, is an
+item failure and no file is written.
 
 Installed API68 qualification passed source create/retrieve, then target
 create/retrieve after changing only `spec.connectionName` to an existing compatible
@@ -777,8 +783,9 @@ not native REST or plugin qualification.
 
 Calculated insights use the API 68 routes for retrieve, deploy (including
 `--draft`), publish and delete. Default/`auto` and explicit `--api-version 68.0`
-select them; any other version is refused with `INVALID_SCOPE`. Only the default
-data space is accepted. No command needs `--allow-processing`.
+select them; any other version is refused with `INVALID_SCOPE`. They work in the
+run's data space (`--dataspace`, default `default`), which the file's `c__dataSpace` must
+name (see [Data spaces](#data-spaces)). No command needs `--allow-processing`.
 
 The artifact is a JSON file plus its SQL file; either file selects the insight. For
 example, run from the project root after a retrieve:
@@ -2008,6 +2015,15 @@ string in `c__dataSpace`:
   adds a field when a mapping names it. A mapping file onto an existing copy may name such a
   field: the plugin finds it on `ssot__X__dlm` (`ssot__F__c` as `F__c`, other fields
   unchanged) and sends the pair; a field neither object has is `MAPPING_FIELD_NOT_FOUND`.
+- **Deleting a mapping of a copy.** Salesforce drops a copy field when its last mapping
+  goes. The delete check therefore accepts that the fields only the deleted mapping
+  targeted are gone; every other field of the copy, and every other mapping, must be
+  unchanged (`MAPPING_DELETE_SIDE_EFFECT` otherwise).
+- **Refusal messages name both data spaces.** A DMO, mapping or relationship file whose
+  `c__dataSpace` is not the run's data space is refused before any read of the object
+  (`DMO_DATASPACE_MISMATCH`, `MAPPING_DATASPACE_MISMATCH`,
+  `UNSUPPORTED_RELATIONSHIP_DATASPACE`); the message names the file's data space and the
+  run's.
 
 A data stream belongs to the data spaces of its landing DLO. Its file lists them in
 `c__dataSpace` like the DLO file, and the list only mirrors the DLO: spaces change through
@@ -2036,8 +2052,13 @@ update; publish (`--dataspace`) and delete work in the run's data space. Names a
 Salesforce stores (insight names are unique in the org), and the SQL is sent as written.
 In a batch an insight is ordered after the DMOs and insights its SQL names. SQL names carry no
 data space, so those dependencies are always taken from the insight's own data space. The item
-routes (GET, PATCH, DELETE by name) take no data space. Streams and insights outside the
-default data space are not yet run live through the plugin.
+routes (GET, PATCH, DELETE by name) take no data space. A retrieve of an insight whose GET
+names another data space is a failed item that names both data spaces
+(`CI_IDENTITY_CHANGED`); the other selected insights still run. Streams and insights in a
+non-default data space are run live through the plugin at API 68: stream create, retrieve,
+unchanged redeploy, mapping update and delete with `--delete-dlo`, and a draft insight's
+create, retrieve and update (DB entry `data360:plugin-dataspace-stream-ci-acceptance-api68`).
+Publishing an insight there is not yet proven live.
 
 The old `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`), and a filtered
 membership `{ "name": …, "filter": … }` is recognised but not deployed yet
@@ -2334,7 +2355,8 @@ whose pair is not dropped by a selected mapping file refuses the whole batch wit
 `DMO_FIELD_REMOVAL_MAPPED`. See [Create and update](#create-and-update).
 
 Creation resolves the exact DLO/DMO pair in the target and uses the target-generated
-mapping name, not the source artifact name. An existing logically identical mapping
+mapping name, not the source artifact name; the created item reports that
+name as `targetApiName`. An existing logically identical mapping
 is a zero-write repeat. At every admitted API version, the existing
 `spec.fieldMappings` array is the desired pair set: omitted authored pairs are
 unmapped individually using fresh target selectors, then new pairs are added in one
@@ -2549,7 +2571,11 @@ at every native API version from `61.0`; default/`auto` is `68.0`.
   mapping read returns a typed selected-mapping `404`. It then reads the DMO's
   mappings and the DMO again and requires that the other mappings (pairs and
   selectors) and the DMO's field names are exactly what they were;
-  any difference is reported as `MAPPING_DELETE_SIDE_EFFECT`. A mapping that is still
+  any difference is reported as `MAPPING_DELETE_SIDE_EFFECT`. One exception: a copy of
+  a standard DMO in another data space (`<prefix>_<Name>__dlm`, creationType
+  `Standard`) holds only mapped fields, and Salesforce drops a field when its last
+  mapping goes, so there the fields that only the deleted mapping targeted may be
+  gone; every other field must still be there. A mapping that is still
   readable after the last poll gives `MAPPING_DELETION_UNCONFIRMED`.
 
 Nothing is rolled back and no parent object is deleted. After a confirmed deletion

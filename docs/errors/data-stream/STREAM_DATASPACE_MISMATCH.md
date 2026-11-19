@@ -31,7 +31,7 @@ Data space membership belongs to the DLO. Changing it through a stream file woul
 ```text
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: data-stream:WebOrders_Order_1a2b3c4d; mutation: not-attempted.
-STREAM_DATASPACE_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. No write attempted; correct the reported check before another attempt.
+STREAM_DATASPACE_MISMATCH: The c__dataSpace list of WebOrders_Order_1a2b3c4d (default) does not name the run's data space dataspace2. Deploy it with --dataspace set to one of its data spaces. No write attempted; correct the reported check before another attempt.
 Hint: The stream file's c__dataSpace list does not name the run's data space, differs from its DLO's data spaces, or lists several for a new stream. Change spaces with the DLO file.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-stream/STREAM_DATASPACE_MISMATCH.md
 Deployed: 0 (0 created / 0 updated / 0 failed)

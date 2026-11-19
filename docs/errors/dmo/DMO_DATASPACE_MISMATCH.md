@@ -16,6 +16,8 @@ Every command runs in one data space: `--dataspace`, or `default` when you leave
 
 The plugin never filters a selected file out silently. A file of another data space is refused, so a deploy never changes a DMO in a data space you did not ask for.
 
+The message names the file's data space and the run's. When the DMO in the org is in another data space than the file, the message names the org's data space instead.
+
 ## How to fix
 
 1. Check `c__dataSpace` in the file.
@@ -28,7 +30,7 @@ The plugin never filters a selected file out silently. A file of another data sp
 ```text
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: dmo:Customer__dlm; mutation: not-attempted.
-DMO_DATASPACE_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. No write attempted; correct the reported check before another attempt.
+DMO_DATASPACE_MISMATCH: Customer__dlm names the data space default in c__dataSpace, but the run's data space is dataspace2 (--dataspace, default "default"). Run the command with --dataspace default, or correct the file. No write attempted; correct the reported check before another attempt.
 Hint: The DMO file's c__dataSpace is not the data space of the run, or the DMO in the org is in another one. Run with the --dataspace the file names, or correct c__dataSpace, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dmo/DMO_DATASPACE_MISMATCH.md
 Deployed: 0 (0 created / 0 updated / 0 failed)

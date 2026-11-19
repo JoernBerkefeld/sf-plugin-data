@@ -29,7 +29,7 @@ The plugin never filters a selected file out silently. A file that names other d
 ```text
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: dlo:Orders__dll; mutation: not-attempted.
-DLO_DATASPACE_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. The file lists the data spaces dataspace2 in c__dataSpace, not the run's data space default (--dataspace, default "default").
+DLO_DATASPACE_MISMATCH: The file lists the data spaces dataspace2 in c__dataSpace, not the run's data space default (--dataspace, default "default"). No write attempted; correct the reported check before another attempt.
 Hint: The c__dataSpace list of the DLO file does not hold the data space of the run. Add it to the list, or run with the --dataspace the file lists.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dlo/DLO_DATASPACE_MISMATCH.md
 Deployed: 0 (0 created / 0 updated / 0 failed)

@@ -26,8 +26,8 @@ The plugin never filters a selected file out silently. A file of another data sp
 
 ```text
 Deploy execution: blocked. No automatic retry or rollback performed.
-Blocked: calculated-insight:ExampleInsight__cio; mutation: not-attempted.
-CI_DATASPACE_MISMATCH: The calculated insight could not be read or its file or data space is invalid; nothing was sent.
+Data space: dataspace2.
+CI_DATASPACE_MISMATCH: ExampleInsight__cio names the data space default in c__dataSpace, but the run's data space is dataspace2. Run the command with --dataspace default, or correct the file. Deployment was refused before any write; nothing was sent to the org. Fix the reported cause, then rerun.
 Hint: The calculated insight file's c__dataSpace is not the data space of the run. Run with the --dataspace the file names, or correct c__dataSpace, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/CI_DATASPACE_MISMATCH.md
 Deployed: 0 (0 created / 0 updated / 0 failed)

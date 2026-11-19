@@ -17,6 +17,8 @@ The plugin sorts every existing DMO by what it writes on it:
 
 A whole-DMO delete is sent for every DMO, standard ones included, and Salesforce decides. This code means a deploy would create a new DMO with a namespaced name, or the org answered a DMO read without a name, so the plugin cannot tell what it would write to.
 
+It also means a DMO file names the copy of a standard DMO in another data space (`<prefix>_<Name>__dlm` of `ssot__<Name>__dlm`) that does not exist there yet. Such a copy is created by its first mapping, never by a DMO file; a create from the file would make a custom DMO of that name. For this cause the message names the copy and its standard DMO, and the hint says to deploy a mapping onto the copy instead.
+
 ## Why the plugin stops
 
 Salesforce does not allow a new DMO name with a namespace. A read without a name gives the plugin no target to bind the write to. The plugin refuses before any write.
@@ -26,6 +28,7 @@ Salesforce does not allow a new DMO name with a namespace. A read without a name
 1. Check the API name of the DMO in the org and in the file.
 2. To create a new DMO, use a name without a namespace prefix.
 3. If the org answers a DMO read without a name, read the DMO again later; report it if it persists.
+4. For a standard DMO copy that does not exist yet, deploy a mapping onto the copy instead of the DMO file.
 
 ## Example output
 
@@ -36,6 +39,14 @@ UNSUPPORTED_DMO_TARGET: Plugin verification or request completion failed; no Sal
 Hint: The plugin does not send this DMO write: a new DMO with a namespaced name, or a write to a DMO whose read has no name.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dmo/UNSUPPORTED_DMO_TARGET.md
 Deployed: 0 (0 created / 0 updated / 0 failed)
+```
+
+For a standard DMO copy:
+
+```text
+Blocked: dmo:ds2_ContactPointPhone__dlm; mutation: not-attempted.
+UNSUPPORTED_DMO_TARGET: ds2_ContactPointPhone__dlm is the copy of the standard DMO ssot__ContactPointPhone__dlm in the data space dataspace2, and it does not exist there yet. A standard DMO's copy is created by its first mapping: deploy a mapping onto ds2_ContactPointPhone__dlm instead of the DMO file. No write attempted; correct the reported check before another attempt.
+Hint: A standard DMO's copy in another data space is created by its first mapping, not by a DMO file. Deploy a mapping onto the copy instead of the DMO file.
 ```
 
 ## Related codes

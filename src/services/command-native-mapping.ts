@@ -130,6 +130,8 @@ export async function executeMapping(
           : result.operation === 'create'
             ? ('confirmed-created' as const)
             : ('confirmed-updated' as const),
+      // The name Salesforce generated for a new mapping.
+      ...(result.operation === 'create' ? { targetApiName: result.document.identity.apiName } : {}),
       diagnostics: (result.activatesStandardDmo
         ? [activationNotice(result.document.spec.targetEntityDeveloperName)]
         : []) as MappingDiagnostic[],

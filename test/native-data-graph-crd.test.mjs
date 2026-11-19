@@ -3915,3 +3915,56 @@ test('a related object added by PUT settles although Salesforce gave it a key-qu
   const added = f.payloads[0].sourceObject.relatedObjects[0];
   assert.ok(!added.fields.some((field) => field.sourceFieldName === 'KQ_Id__c'));
 });
+
+/**
+ * The by-name delete source of a graph with the given name.
+ * @param {string} graphName Graph name.
+ * @returns {{desired: object}} Admitted source.
+ */
+const graphOf = (graphName) => {
+  const value = document();
+  value.definition.name = graphName;
+  return { desired: value };
+};
+
+test('a blocked graph delete after a deleted one words its refusal per item', async () => {
+  const f = fixture();
+  const previous = process.cwd();
+  process.chdir(await project());
+  let result;
+  try {
+    result = await runGraphCommand(
+      Delete,
+      { metadata: ['data-graph:FirstGraph', 'data-graph:SecondGraph'], preview: false },
+      {
+        resolveConnection: async () => ({ getUsername: () => 'target' }),
+        resolveTarget: async () => 'target',
+        nativeGraphContext: async () => f.context,
+        nativeGraphClient: () => f.client,
+        readDeleteSource: async (family, graphName) => graphOf(graphName),
+        // The first graph is deleted; the second is refused before its delete is sent.
+        operateNativeGraph: async (desired) =>
+          desired.definition.name === 'FirstGraph'
+            ? { outcome: 'deleted', mutation: 'confirmed-deleted', diagnostics: [] }
+            : {
+                outcome: 'blocked',
+                mutation: 'not-attempted',
+                diagnostics: [{ code: 'DATA_GRAPH_DELETE_BLOCKED', message: 'Refused.' }],
+              },
+      },
+    );
+  } finally {
+    process.chdir(previous);
+    process.exitCode = 0;
+  }
+  assert.deepEqual(
+    result.result.items.map((item) => [item.identity.apiName, item.mutation]),
+    [
+      ['FirstGraph', 'confirmed-deleted'],
+      ['SecondGraph', 'not-attempted'],
+    ],
+  );
+  const [diagnostic] = result.diagnostics.errors;
+  assert.match(diagnostic.message, /This data graph was not deleted; no delete was sent for it\./u);
+  assert.doesNotMatch(diagnostic.message, /nothing was deleted/u);
+});

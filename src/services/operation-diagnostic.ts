@@ -4,8 +4,10 @@ import {
   getConnectDiagnostic,
   getMetadataProblems,
 } from '../transport/connect-diagnostic.js';
+import { registerCauseHint } from '../errors/registry.js';
 
 const details = new WeakMap<Error, string>();
+const hints = new WeakMap<Error, string>();
 const visibleKeys = new Set([
   'name',
   'apiName',
@@ -199,6 +201,51 @@ export function explainInput<T extends Error>(error: T, detail: string): T {
   details.set(error, detail);
   error.message = `${error.message} ${detail}`;
   return error;
+}
+
+/**
+ * Give a refusal a cause-specific hint in place of the registered hint of its code, for a code
+ * with several causes.
+ * @template {Error} T
+ * @param {T} error Typed refusal.
+ * @param {string} hint Static sentence naming the way forward for this cause.
+ * @returns {T} The same error.
+ */
+export function withHint<T extends Error>(error: T, hint: string): T {
+  registerCauseHint(hint);
+  hints.set(error, hint);
+  return error;
+}
+
+/**
+ * The cause-specific hint of a refusal, as a diagnostic property, or none.
+ * @param {unknown} error Caught error.
+ * @returns {{hint?: string}} `{ hint }` or an empty object.
+ */
+export function hintOf(error: unknown): { hint?: string } {
+  const hint = error instanceof Error ? hints.get(error) : undefined;
+  return hint === undefined ? {} : { hint };
+}
+
+/**
+ * Explain a refusal of a file whose data space is not the run's, naming both.
+ * @template {Error} T
+ * @param {T} error Typed refusal (a *_DATASPACE_MISMATCH or UNSUPPORTED_RELATIONSHIP_DATASPACE).
+ * @param {string} apiName The file's validated component name.
+ * @param {string} fileSpace The data space the file names in c__dataSpace.
+ * @param {string} runSpace The run's data space.
+ * @returns {T} The same error with the explanation.
+ */
+export function explainSpaceMismatch<T extends Error>(
+  error: T,
+  apiName: string,
+  fileSpace: string,
+  runSpace: string,
+): T {
+  return explainInput(
+    error,
+    `${apiName} names the data space ${printableKey(fileSpace)} in c__dataSpace, but the run's data space is ${printableKey(runSpace)} (--dataspace, default "default"). Run the command with --dataspace ${printableKey(fileSpace)}, or correct the file.`,
+  );
 }
 
 /**

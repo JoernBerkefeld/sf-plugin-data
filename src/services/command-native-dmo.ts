@@ -1,4 +1,4 @@
-import { operationDiagnostic, replaceExplanation } from './operation-diagnostic.js';
+import { hintOf, operationDiagnostic, replaceExplanation } from './operation-diagnostic.js';
 import { NativeDmoError } from '../artifacts/native-dmo-document.js';
 import { NativeMappingError, nativeMappingName } from '../artifacts/native-mapping-document.js';
 import { preflightNativeDmo, deployNativeDmo, mappedFieldRemoval } from './native-dmo.js';
@@ -268,6 +268,7 @@ export function refusedDmo(error: unknown) {
             ? error.code
             : 'DMO_REQUEST_UNCONFIRMED',
         message: operationDiagnostic(error, unwritten),
+        ...hintOf(error),
         ...(mappedFields ? { mappedFields } : {}),
       },
     ],
@@ -438,6 +439,7 @@ export async function executeDmo(
                 ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
                 : unwritten,
           ),
+          ...hintOf(error),
           ...(mappedFields ? { mappedFields } : {}),
         },
       ],

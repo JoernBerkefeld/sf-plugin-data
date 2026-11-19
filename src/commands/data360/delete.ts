@@ -60,7 +60,11 @@ import {
   getConnectDiagnostic,
   retainConnectDiagnostic,
 } from '../../transport/connect-diagnostic.js';
-import { operationDiagnostic, replaceExplanation } from '../../services/operation-diagnostic.js';
+import {
+  explainSpaceMismatch,
+  operationDiagnostic,
+  replaceExplanation,
+} from '../../services/operation-diagnostic.js';
 import { rejectedNextAction } from '../../services/deploy-result.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
 import {
@@ -1890,7 +1894,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             code: 'DELETE_FAILED',
             message: operationDiagnostic(
               result,
-              'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+              // No delete was sent for this graph: nothing to inspect for it. The run-wide
+              // wording only when no item of the run sent a delete either.
+              item.mutation === 'not-attempted'
+                ? envelope.result.items.every((entry) => entry.mutation === 'not-attempted')
+                  ? 'Deletion stopped before any delete was sent; nothing was deleted. Correct the reported check before another attempt.'
+                  : 'This data graph was not deleted; no delete was sent for it. Correct the reported check before another attempt; check the outcomes of the other items.'
+                : 'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
             ),
             retryable: false,
           });
@@ -2324,7 +2334,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 );
             if (binding === undefined) continue;
             if (binding.c__dataSpace !== effectiveScope)
-              throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
+              throw explainSpaceMismatch(
+                new NativeMappingError('MAPPING_DATASPACE_MISMATCH'),
+                binding.identity.apiName,
+                binding.c__dataSpace,
+                effectiveScope,
+              );
             const found = await resolveNativeMappingTarget(binding, mappingReader());
             if (found) orgMappingNames.set(selector, found.identity.apiName);
             else absentMappings.add(selector);
@@ -2545,8 +2560,19 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                     await mappingBase.remove(name);
                   },
                 } as ReturnType<typeof createMappingClient>;
-                // The DMO read uses the bound single-attempt GET client.
-                const dependencies = { target: this.createDmoNativeDeleteClient(target, version) };
+                // The DMO read uses the bound single-attempt GET client. The prefix (from the run's
+                // one data space read) tells a standard DMO copy, which drops a field with its
+                // last mapping.
+                const dataSpacePrefix =
+                  effectiveScope === 'default'
+                    ? undefined
+                    : await dataSpaceCheckOf(this, async () =>
+                        (this.createDataSpaceSender ?? openBoundSsot)(target, '68.0'),
+                      ).prefixOf(effectiveScope);
+                const dependencies = {
+                  target: this.createDmoNativeDeleteClient(target, version),
+                  ...(dataSpacePrefix === undefined ? {} : { dataSpacePrefix }),
+                };
                 // The file named after the mapping, otherwise the one whose binding matches it.
                 const mappingFiles = async (): Promise<LocalFileCandidate[]> => {
                   const canonical = inProject('mapping', `${apiName}.mapping-meta.json`);

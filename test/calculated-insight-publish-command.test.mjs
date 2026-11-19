@@ -264,6 +264,11 @@ test('publish refuses a file of another data space than the run without a write'
   assert.equal(result.status, 'blocked');
   assert.equal(h.calls.writes, 0);
   assert.equal(result.diagnostics.errors[0].code, 'CI_DATASPACE_MISMATCH');
+  // Refused before any write: no unknown outcome to inspect.
+  assert.doesNotMatch(
+    result.diagnostics.errors[0].message,
+    /Inspect unknown outcomes|Mutation may have occurred/u,
+  );
 });
 for (const overrides of [
   { 'source-dir': undefined },
