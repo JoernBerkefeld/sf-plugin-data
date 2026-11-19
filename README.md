@@ -2152,9 +2152,13 @@ data space, and the file names them as Salesforce stores them there. The old
 Segments, segment members and transforms in a non-default data space are run live through the
 plugin at API 68: a DBT segment's create, retrieve, unchanged redeploy, update and delete, a
 basic members export, and a DCSQL transform's create, retrieve, unchanged redeploy and delete
-(DB entry `data360:plugin-dataspace-segment-transform-acceptance-api68`). Publishing a segment
-there is not yet run live, nor are data graphs and identity resolution in a non-default data
-space.
+(DB entry `data360:plugin-dataspace-segment-transform-acceptance-api68`). Data graphs and
+identity resolution in a non-default data space are run live too: a graph's create, retrieve,
+unchanged redeploy, field addition and delete; a graph file named like a graph of another space
+refused unwritten; a ruleset `ds2_Individual_<id>` created, published, retrieved, redeployed
+unchanged and deleted; a ruleset file without the prefix refused unwritten (DB entry
+`data360:plugin-dataspace-graph-ir-acceptance-api68`). Publishing a segment there is not yet
+run live.
 
 The old `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`), and a filtered
 membership `{ "name": …, "filter": … }` is recognised but not deployed yet
