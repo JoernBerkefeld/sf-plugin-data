@@ -22,7 +22,9 @@ import { ConnectError } from '../lib/transport/connect-client.js';
 const verbatim = (kind, apiName) => ({
   schemaVersion: 1,
   kind,
-  identity: { dataSpace: 'default', apiName },
+  ...(['dmo', 'mapping', 'relationship'].includes(kind)
+    ? { c__dataSpace: 'default', identity: { apiName } }
+    : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason: 'UNMODELLED_RESPONSE', native: {} },
 });
 const jsonNull = JSON.parse('null');
@@ -446,7 +448,8 @@ test('a relationship whose values the plugin cannot model is deleted; another bi
   const file = {
     schemaVersion: 1,
     kind: 'relationship',
-    identity: { apiName: 'A_BRef_map_B_Id', dataSpace: 'default' },
+    c__dataSpace: 'default',
+    identity: { apiName: 'A_BRef_map_B_Id' },
     spec: {
       sourceObjectName: 'A__dlm',
       sourceFieldName: 'BRef__c',
@@ -605,6 +608,20 @@ test('an unmodelled stream is not deleted with a landing DLO that belongs to oth
     wait: async () => {},
   });
   assert.deepEqual(kept.ledger, ['delete:1ds000000000002AAA:false']);
+  // A DLO read that holds no DLO, or several, says nothing about its data spaces: refused.
+  for (const dataLakeObjects of [[], [{ name: 'A__dll' }, { name: 'B__dll' }]]) {
+    const odd = streamClients(crmStream(), [ownEntry]);
+    odd.clients.dlo.get = async () => ({ dataLakeObjects });
+    await assert.rejects(
+      deleteNativeDataStream('Account_Home', odd.clients, {
+        deleteDlo: true,
+        survivorDloNames: [],
+        verifyInput: async () => {},
+      }),
+      { code: 'INVALID_STREAM_DLO' },
+    );
+    assert.deepEqual(odd.ledger, []);
+  }
 });
 
 test('-m delete of a GET the plugin cannot model goes by name; a graph of another name refuses', async () => {

@@ -32,7 +32,7 @@ const raw = (fields = names) => ({
   fieldMappings: fields.map((name) => pair(name)),
 });
 const desired = (label, fields = names) => {
-  const document = normalizeNativeMapping(raw(fields));
+  const document = normalizeNativeMapping(raw(fields), 'default');
   document.identity.apiName = 'SourceGenerated_456';
   for (const field of document.spec.fieldMappings) delete field.developerName;
   if (label !== undefined) document.spec.label = label;
@@ -176,7 +176,7 @@ test('the mapping file takes an optional non-empty spec.label', () => {
 test('retrieve adds the org label in reads of up to 10 names and leaves out the default label', async () => {
   const reads = [];
   const documents = Array.from({ length: 12 }, (_, index) => {
-    const document = normalizeNativeMapping({ ...raw(), developerName: `M${index}` });
+    const document = normalizeNativeMapping({ ...raw(), developerName: `M${index}` }, 'default');
     return document;
   });
   const warnings = await labelRetrievedMappings(documents, {
@@ -200,7 +200,7 @@ test('retrieve adds the org label in reads of up to 10 names and leaves out the 
 });
 
 test('a failed label read leaves the label out with a warning, never failing the retrieve', async () => {
-  const document = normalizeNativeMapping(raw());
+  const document = normalizeNativeMapping(raw(), 'default');
   const warnings = await labelRetrievedMappings([document], {
     readDefinitions: async () => {
       throw new Error('offline');
@@ -210,7 +210,7 @@ test('a failed label read leaves the label out with a warning, never failing the
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /^mapping:TargetGenerated_123: the label could not be read/u);
   // One warning per failed batch, naming its mappings.
-  const other = normalizeNativeMapping({ ...raw(), developerName: 'Other' });
+  const other = normalizeNativeMapping({ ...raw(), developerName: 'Other' }, 'default');
   const batch = await labelRetrievedMappings([document, other], {
     readDefinitions: async () => {
       throw new Error('offline');
@@ -243,7 +243,7 @@ test('a bare mapping retrieve writes the label, and warns without failing when i
     });
     command.createDloClient = () => ({ get: async (name) => ({ name }) });
     command.createDmoClient = () => ({ get: async (name) => ({ name }) });
-    command.acquireNativeMapping = async () => normalizeNativeMapping(raw());
+    command.acquireNativeMapping = async () => normalizeNativeMapping(raw(), 'default');
     const written = [];
     command.writeNativeMapping = async (document) => {
       written.push(document);
@@ -270,12 +270,24 @@ test('a bare mapping retrieve writes the label, and warns without failing when i
 
 test('an unchanged label sends no Metadata API update', async () => {
   const { client, calls } = fixture({ label: 'Customer map' });
-  const result = await deployNativeMapping(desired('Customer map'), client, dependencies());
+  const result = await deployNativeMapping(
+    desired('Customer map'),
+    client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(result.operation, 'noop');
   assert.deepEqual(writes(calls), []);
   // A file without a label never reads or changes the org's label.
   const plain = fixture({ label: 'Customer map' });
-  const unlabelled = await deployNativeMapping(desired(), plain.client, dependencies());
+  const unlabelled = await deployNativeMapping(
+    desired(),
+    plain.client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(unlabelled.operation, 'noop');
   assert.equal(plain.calls.filter(([kind]) => kind === 'readMetadata').length, 0);
 });
@@ -288,6 +300,7 @@ test('a changed label is one updateMetadata with every pair the mapping has, the
     client,
     dependencies(),
     (change) => changes.push(change),
+    'default',
   );
   assert.equal(result.operation, 'update');
   const sent = writes(calls);
@@ -318,20 +331,29 @@ test('a changed label is one updateMetadata with every pair the mapping has, the
   assert.deepEqual(changes, [{ deleted: [], added: [], label: 'Customer map' }]);
   // The command reports a confirmed update.
   const again = fixture();
-  assert.deepEqual(await executeMapping(desired('New'), again.client, dependencies()), {
-    outcome: 'updated',
-    mutation: 'confirmed-updated',
-    diagnostics: [],
-  });
+  assert.deepEqual(
+    await executeMapping(desired('New'), again.client, dependencies(), undefined, 'default'),
+    {
+      outcome: 'updated',
+      mutation: 'confirmed-updated',
+      diagnostics: [],
+    },
+  );
 });
 
 test('a label that does not read back is unconfirmed; a refused label-only update is rejected', async () => {
   const lost = fixture();
   lost.client.updateDefinition = async () => {};
-  const unconfirmed = await executeMapping(desired('Customer map'), lost.client, dependencies());
+  const unconfirmed = await executeMapping(
+    desired('Customer map'),
+    lost.client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(unconfirmed.mutation, 'unknown');
   assert.equal(unconfirmed.diagnostics[0].code, 'MAPPING_PERSISTENCE_UNCONFIRMED');
-  const refused = createMappingClient('synthetic', '68.0', undefined, undefined, {
+  const refused = createMappingClient('synthetic', '68.0', undefined, 'default', {
     request: async () => {
       throw new Error('no REST expected');
     },
@@ -345,7 +367,13 @@ test('a label that does not read back is unconfirmed; a refused label-only updat
   });
   const { client } = fixture();
   client.updateDefinition = refused.updateDefinition;
-  const result = await executeMapping(desired('Customer map'), client, dependencies());
+  const result = await executeMapping(
+    desired('Customer map'),
+    client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(result.outcome, 'failed');
   assert.equal(result.mutation, 'rejected');
   assert.equal(result.diagnostics[0].code, 'MAPPING_LABEL_UPDATE_REJECTED');
@@ -361,6 +389,8 @@ test('a pair removed in the same deploy is not sent back with the label, althoug
     ),
     client,
     deps,
+    undefined,
+    'default',
   );
   assert.equal(result.operation, 'update');
   assert.deepEqual(
@@ -385,13 +415,19 @@ test('a label update that changes the pairs read back is unconfirmed', async () 
     record.masterLabel = definition.masterLabel;
     record.fieldSourceTargetMaps.push(metadataPair('Extra__c'));
   };
-  const result = await executeMapping(desired('Customer map'), client, dependencies());
+  const result = await executeMapping(
+    desired('Customer map'),
+    client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(result.mutation, 'unknown');
   assert.equal(result.diagnostics[0].code, 'MAPPING_PERSISTENCE_UNCONFIRMED');
 });
 
 test('a used-up request limit is not a label refusal and asks for no file change', async () => {
-  const limited = createMappingClient('synthetic', '68.0', undefined, undefined, {
+  const limited = createMappingClient('synthetic', '68.0', undefined, 'default', {
     request: async () => ({}),
     metadata: async () => ({
       read: async () => ({}),
@@ -402,7 +438,13 @@ test('a used-up request limit is not a label refusal and asks for no file change
   });
   const { client } = fixture();
   client.updateDefinition = limited.updateDefinition;
-  const result = await executeMapping(desired('Customer map'), client, dependencies());
+  const result = await executeMapping(
+    desired('Customer map'),
+    client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(result.diagnostics[0].code, 'MAPPING_REQUEST_UNCONFIRMED');
   assert.match(result.diagnostics[0].message, /REQUEST_LIMIT_EXCEEDED/u);
   assert.doesNotMatch(result.diagnostics[0].message, /spec\.label/u);
@@ -414,7 +456,13 @@ test('a label refused after a pair write is reported with its code and an unknow
     const { NativeMappingError } = await import('../lib/artifacts/native-mapping-document.js');
     throw new NativeMappingError('MAPPING_LABEL_UPDATE_REJECTED');
   };
-  const result = await executeMapping(desired('Customer map'), client, dependencies());
+  const result = await executeMapping(
+    desired('Customer map'),
+    client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(calls.filter(([kind]) => kind === 'update').length, 1);
   assert.equal(result.mutation, 'unknown');
   assert.equal(result.diagnostics[0].code, 'MAPPING_LABEL_UPDATE_REJECTED');
@@ -422,7 +470,13 @@ test('a label refused after a pair write is reported with its code and an unknow
 
 test('a create with a label sets it on the created mapping after the pairs settle', async () => {
   const { client, calls, record } = fixture({ exists: false });
-  const result = await deployNativeMapping(desired('Customer map'), client, dependencies());
+  const result = await deployNativeMapping(
+    desired('Customer map'),
+    client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(result.operation, 'create');
   const sent = writes(calls);
   assert.deepEqual(
@@ -437,26 +491,41 @@ test('a create with a label sets it on the created mapping after the pairs settl
 
 test('preview shows the planned label change and writes nothing', async () => {
   const existing = fixture({ label: 'Old label' });
-  const preview = await preflightMapping(desired('Customer map'), existing.client, dependencies());
+  const preview = await preflightMapping(
+    desired('Customer map'),
+    existing.client,
+    dependencies(),
+    'default',
+  );
   assert.equal(preview.outcome, 'update');
   assert.deepEqual(preview.labelChange, { from: 'Old label', to: 'Customer map' });
   assert.deepEqual(preview.plan, []);
   assert.deepEqual(writes(existing.calls), []);
   const absent = fixture({ exists: false });
-  const created = await preflightMapping(desired('Customer map'), absent.client, dependencies());
+  const created = await preflightMapping(
+    desired('Customer map'),
+    absent.client,
+    dependencies(),
+    'default',
+  );
   assert.equal(created.outcome, 'create');
   assert.deepEqual(created.labelChange, { to: 'Customer map' });
   assert.deepEqual(writes(absent.calls), []);
   assert.equal(absent.calls.filter(([kind]) => kind === 'readMetadata').length, 0);
   const same = fixture({ label: 'Customer map' });
-  const unchanged = await preflightMapping(desired('Customer map'), same.client, dependencies());
+  const unchanged = await preflightMapping(
+    desired('Customer map'),
+    same.client,
+    dependencies(),
+    'default',
+  );
   assert.equal(unchanged.outcome, 'unchanged');
   assert.equal('labelChange' in unchanged, false);
 });
 
 test('the mapping client reads ObjectSourceTargetMap 10 names at a time on the bound Connection', async () => {
   const reads = [];
-  const client = createMappingClient('synthetic', '68.0', undefined, undefined, {
+  const client = createMappingClient('synthetic', '68.0', undefined, 'default', {
     request: async () => ({}),
     metadata: async () => ({
       read: async (type, requested) => {

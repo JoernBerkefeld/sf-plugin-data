@@ -59,7 +59,7 @@ function invocation(metadata, overrides = {}) {
   command.createDmoClient = () => ({});
   command.acquireNativeDmo = async (apiName) => {
     calls.push(`dmo:${apiName}`);
-    return { kind: 'dmo', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'dmo', c__dataSpace: 'default', identity: { apiName } };
   };
   command.writeNativeDmo = async (document) => ({
     path: `${document.identity.apiName}.json`,
@@ -381,6 +381,26 @@ for (const [metadata, overrides, code, family] of [
     assert.match(diagnostic.message, new RegExp(`the ${family} selection was refused`, 'u'));
     assert.equal(lines[0], `Retrieve: blocked (${code}).`);
   });
+
+test('outside default, DLOs, DMOs and mappings beside a family not converted yet refuse the group', async () => {
+  // DLOs, DMOs and mappings follow the run's data space; the families not converted to
+  // c__dataSpace yet (segment, calculated insight, identity resolution) refuse it before org access.
+  for (const metadata of [
+    ['dlo:Source__dll', 'calculated-insight:Insight__cio'],
+    ['dmo:Sample__dlm', 'segment:Audience'],
+    ['mapping:Some_map', 'identity-resolution:Individual'],
+  ]) {
+    const { command, calls } = invocation(metadata, { dataspace: 'other' });
+    const { result } = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.deepEqual(calls, []);
+    assert.deepEqual(result.result.items, []);
+    assert.deepEqual(
+      result.diagnostics.errors.map(({ code }) => code),
+      ['INVALID_SCOPE'],
+    );
+  }
+});
 
 test('a malformed data graph alone is an invalid selection', async () => {
   for (const metadata of [['data-graph:1bad'], ['data-graph:Alpha', 'data-graph:']]) {

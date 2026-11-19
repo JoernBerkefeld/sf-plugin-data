@@ -307,7 +307,7 @@ test('a hand-written mapping file is found by the binding of the deleted mapping
       { sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'Id__c', developerName: 's1' },
     ],
   };
-  const local = normalizeNativeMapping(raw);
+  const local = normalizeNativeMapping(raw, 'default');
   local.identity.apiName = 'MyMapping';
   const receipt = await writeNativeMappingDocument(local, root, false);
   const unrelated = await projectFile(root, 'mapping', 'Other.mapping-meta.json');
@@ -349,7 +349,8 @@ test('a confirmed relationship deletion removes its canonical local file', async
     {
       schemaVersion: 1,
       kind: 'relationship',
-      identity: { apiName: name, dataSpace: 'default' },
+      c__dataSpace: 'default',
+      identity: { apiName: name },
       spec,
     },
     root,

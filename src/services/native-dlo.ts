@@ -132,20 +132,28 @@ export async function retrieveNativeDlo(
  * a DLO name. Anything else refuses with DLO_DATASPACE_MEMBERS_UNREADABLE, so a full-list PUT
  * never drops what the plugin could not read. This fails closed: an org whose member list states
  * one member more than it lists (seen live for `default`, totalSize 99 with 98 listed) cannot get
- * a DLO added to that data space by the plugin.
+ * a DLO added to that data space by the plugin. The read after a member change (`sent`) refuses
+ * with DLO_DATASPACE_MEMBERS_UNCONFIRMED instead: the change was already sent.
  * @param {string} dataSpace Data space name.
  * @param {Pick<DloClient, 'members'>} client Target client.
+ * @param {boolean} [sent] The member change of this data space was already sent.
  * @returns {Promise<string[]>} Member names in list order.
  */
 export async function readDataSpaceMembers(
   dataSpace: string,
   client: Pick<DloClient, 'members'>,
+  sent = false,
 ): Promise<string[]> {
   const unreadable = (detail: string): DloError =>
-    explainInput(
-      new DloError('DLO_DATASPACE_MEMBERS_UNREADABLE'),
-      `The member list of data space ${printableKey(dataSpace)} ${detail}, so it was not changed.`,
-    );
+    sent
+      ? explainInput(
+          new DloError('DLO_DATASPACE_MEMBERS_UNCONFIRMED'),
+          `The member change of data space ${printableKey(dataSpace)} was sent, but its member list then ${detail}, so the plugin cannot confirm that every member is still there. Check its members in the org before any further deploy.`,
+        )
+      : explainInput(
+          new DloError('DLO_DATASPACE_MEMBERS_UNREADABLE'),
+          `The member list of data space ${printableKey(dataSpace)} ${detail}, so it was not changed.`,
+        );
   const names: string[] = [];
   let total: number | undefined;
   let token: string | undefined;
@@ -376,7 +384,7 @@ async function changeDataSpaces(
     if (observed.join('\n') === plan.dataSpaces.join('\n')) {
       // Whether a PUT adds or replaces is not proven: every member read before it must remain.
       for (const [space, members] of before) {
-        const after = await readDataSpaceMembers(space, client);
+        const after = await readDataSpaceMembers(space, client, true);
         const missing = [...members, plan.apiName].filter((name) => !after.includes(name));
         if (missing.length > 0)
           throw explainInput(
@@ -410,6 +418,8 @@ export async function deployNativeDlo(
   operation: 'create' | 'update' | 'unchanged';
   document: DloDocument;
   serverProcessing?: true;
+  /** The data spaces the DLO was added to or removed from; absent when none changed. */
+  dataSpaceChanges?: DloMembershipChange;
 }> {
   const desired = validateDloDocument(value);
   const plan = await preflightNativeDlo(desired, client, dataSpace, options);
@@ -429,12 +439,13 @@ export async function deployNativeDlo(
       throw new DloError('DLO_DATASPACE_MISMATCH');
     serverProcessing = unwrapDlo(response).status === 'PROCESSING';
   }
-  if (plan.membership.add.length > 0 || plan.membership.remove.length > 0)
-    document = await changeDataSpaces(plan, client, dataSpace);
+  const changed = plan.membership.add.length > 0 || plan.membership.remove.length > 0;
+  if (changed) document = await changeDataSpaces(plan, client, dataSpace);
   return {
     operation: plan.operation,
     document: document!,
     ...(serverProcessing ? { serverProcessing: true as const } : {}),
+    ...(changed ? { dataSpaceChanges: structuredClone(plan.membership) } : {}),
   };
 }
 
@@ -462,7 +473,7 @@ export async function resolveDloDeleteTarget(
   if (others.length > 0)
     throw explainInput(
       new DloError('DLO_DELETE_OTHER_DATASPACES'),
-      `${apiName} also belongs to the data spaces ${spaceList(others)}, and a delete would remove it from all of them. To take it out of one data space only, deploy its file with a shorter c__dataSpace list and --allow-dataspace-removal.`,
+      `${apiName} also belongs to the data ${others.length === 1 ? 'space' : 'spaces'} ${spaceList(others)}, and a delete would remove it from all of them. To take it out of one data space only, deploy its file with a shorter c__dataSpace list and --allow-dataspace-removal.`,
     );
   if (typeof raw.id !== 'string' || !/^[A-Za-z0-9]{18}$/u.test(raw.id))
     throw new DloError('INVALID_DLO_TARGET_ID');

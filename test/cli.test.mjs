@@ -257,10 +257,10 @@ test('README describes optional scope without promoting nondefault qualification
     '`--data-space` is a compatibility alias',
     'Neither spelling has a CLI default',
     "DLOs follow the run's data space",
-    'without injecting `dataspace=default`',
+    "Every mapping and relationship REST request names the run's data space",
     'not live nondefault-space',
-    'Legacy families and dependency',
-    'ambiguous same-name inventory remains blocked',
+    'A DMO list\nentry without `dataSpaceName` stops the listing',
+    'First mapping onto a standard DMO copy',
   ])
     assert.ok(readme.includes(text), text);
   const table = readme.split('| Resource ')[1].split('The scope notes summarize')[0];

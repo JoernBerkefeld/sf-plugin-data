@@ -77,7 +77,7 @@ const activated = (custom = ['CliProbeB1__c']) => {
   raw.fields.push(field('KQ_Id__c', 'System', { usageTag: 'KeyQualifier' }));
   return raw;
 };
-const document = (custom) => normalizeNativeDmo(native(custom));
+const document = (custom) => normalizeNativeDmo(native(custom), 'default');
 const authored = (name, label = name.slice(0, -3)) => ({
   name,
   label,
@@ -100,7 +100,16 @@ const recording = (start = native()) => {
     create: async () => assert.fail('a standard DMO is never created'),
     delete: async () => assert.fail('a standard DMO is never deleted'),
     update: async (name, body) => {
-      calls.push(['update', name, body]);
+      calls.push([
+        'update',
+        name,
+        (() => {
+          // Every PATCH names the run's data space; the expectations below compare the rest.
+          const { dataSpaceName, ...rest } = body;
+          assert.equal(dataSpaceName, 'default');
+          return rest;
+        })(),
+      ]);
       if (body.label !== undefined) state.label = body.label;
       if (body.description !== undefined) state.description = body.description;
       for (const input of body.fields ?? []) {
@@ -122,7 +131,12 @@ const recording = (start = native()) => {
 };
 const twoCustom = () => native(['Keep__c', 'CliProbeB1__c']);
 const planOperation = async (...arguments_) => {
-  const plan = await preflightNativeDmo(...arguments_);
+  const plan = await preflightNativeDmo(
+    arguments_[0],
+    arguments_[1],
+    'default',
+    ...arguments_.slice(2),
+  );
   return plan.operation;
 };
 const writes = (calls) => calls.filter(([method]) => method !== 'get');
@@ -140,7 +154,7 @@ const readOnly = (raw) => ({
  */
 const roundTrip = async (raw) => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'dmo-standard-round-trip-'));
-  await writeNativeDmoDocument(normalizeNativeDmo(raw), cwd, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(raw, 'default'), cwd, false);
   const [input] = await readDeployInputs({ cwd, metadata: [`dmo:${apiName}`] });
   return input.document;
 };
@@ -176,18 +190,16 @@ test('standard DMO: adding a custom field sends only that field and confirms it 
   const body = {
     fields: [{ name: 'CliProbeB1', label: 'CliProbeB1', dataType: 'Text', isPrimaryKey: false }],
   };
-  assert.deepEqual(await preflightNativeDmo(saved, readOnly(native([]))), {
+  // The run's data space is the only other key of the body.
+  assert.deepEqual(await preflightNativeDmo(saved, readOnly(native([])), 'default'), {
     operation: 'update',
     apiName,
     targetApiName: apiName,
-    body,
+    body: { dataSpaceName: 'default', ...body },
     standard: true,
   });
-  // An explicit data space is the only other key of the body.
-  const scoped = await preflightNativeDmo(saved, readOnly(native([])), 'default');
-  assert.deepEqual(scoped.body, { dataSpaceName: 'default', ...body });
   const { calls, client } = recording(native([]));
-  const result = await deployNativeDmo(saved, client, undefined, fast);
+  const result = await deployNativeDmo(saved, client, 'default', fast);
   assert.equal(result.operation, 'update');
   assert.deepEqual(calls, [
     ['get', apiName],
@@ -201,8 +213,8 @@ test('standard DMO: adding a custom field sends only that field and confirms it 
   // A file that lists only the new custom field is enough.
   const minimal = document([]);
   minimal.spec.fields = [authored('CliProbeB1__c')];
-  const minimalPlan = await preflightNativeDmo(minimal, readOnly(native([])));
-  assert.deepEqual(minimalPlan.body, body);
+  const minimalPlan = await preflightNativeDmo(minimal, readOnly(native([])), 'default');
+  assert.deepEqual(minimalPlan.body, { dataSpaceName: 'default', ...body });
   // The single PATCH is never repeated when the field does not appear.
   let patches = 0;
   await assert.rejects(
@@ -215,7 +227,7 @@ test('standard DMO: adding a custom field sends only that field and confirms it 
           return native([]);
         },
       },
-      undefined,
+      'default',
       fast,
     ),
     /DMO_PERSISTENCE_UNCONFIRMED/,
@@ -227,7 +239,7 @@ test('standard DMO: relabelling a custom field sends that field; immutable edits
   const saved = document();
   saved.spec.fields.find((entry) => entry.name === 'CliProbeB1__c').label = 'Renamed';
   const { calls, client } = recording();
-  const result = await deployNativeDmo(saved, client, undefined, fast);
+  const result = await deployNativeDmo(saved, client, 'default', fast);
   assert.equal(result.operation, 'update');
   assert.deepEqual(writes(calls), [
     [
@@ -247,14 +259,14 @@ test('standard DMO: relabelling a custom field sends that field; immutable edits
     const changed = document();
     mutate(changed.spec.fields.find((entry) => entry.name === 'CliProbeB1__c'));
     await assert.rejects(
-      deployNativeDmo(changed, readOnly(native()), undefined, fast),
+      deployNativeDmo(changed, readOnly(native()), 'default', fast),
       /UNSUPPORTED_DMO_FIELD_CHANGE/,
     );
   }
   // creationType is read-only: never sent, so a differing value is reported, not refused.
   const recreated = document();
   recreated.spec.fields.find((entry) => entry.name === 'CliProbeB1__c').creationType = 'Standard';
-  const kept = await deployNativeDmo(recreated, readOnly(native()), undefined, fast);
+  const kept = await deployNativeDmo(recreated, readOnly(native()), 'default', fast);
   assert.equal(kept.operation, 'unchanged');
   assert.deepEqual(kept.notSent, [{ field: 'CliProbeB1__c', key: 'creationType' }]);
 });
@@ -262,13 +274,13 @@ test('standard DMO: relabelling a custom field sends that field; immutable edits
 test('standard DMO: a custom field missing from the file is removed only with the flag, after the PATCH', async () => {
   const saved = document(['Keep__c']);
   await assert.rejects(
-    preflightNativeDmo(saved, readOnly(twoCustom())),
+    preflightNativeDmo(saved, readOnly(twoCustom()), 'default'),
     (error) =>
       error.code === 'UNSUPPORTED_DMO_FIELD_CHANGE' &&
       error.message.includes('--allow-field-removal') &&
       error.message.includes('fields.CliProbeB1__c'),
   );
-  assert.deepEqual(await preflightNativeDmo(saved, readOnly(twoCustom()), undefined, allow), {
+  assert.deepEqual(await preflightNativeDmo(saved, readOnly(twoCustom()), 'default', allow), {
     operation: 'update',
     apiName,
     targetApiName: apiName,
@@ -277,7 +289,7 @@ test('standard DMO: a custom field missing from the file is removed only with th
   });
   // Removal only: no PATCH, one destructive change, absence read back.
   const only = recording(twoCustom());
-  const removed = await deployNativeDmo(saved, only.client, undefined, fast, allow);
+  const removed = await deployNativeDmo(saved, only.client, 'default', fast, allow);
   assert.deepEqual(removed.removedFields, ['CliProbeB1__c']);
   assert.deepEqual(only.calls, [
     ['get', apiName],
@@ -288,7 +300,7 @@ test('standard DMO: a custom field missing from the file is removed only with th
   const relabelled = document(['Keep__c']);
   relabelled.spec.label = 'Changed';
   const both = recording(twoCustom());
-  const result = await deployNativeDmo(relabelled, both.client, undefined, fast, allow);
+  const result = await deployNativeDmo(relabelled, both.client, 'default', fast, allow);
   assert.deepEqual(writes(both.calls), [
     ['update', apiName, { label: 'Changed' }],
     ['remove', apiName, ['CliProbeB1__c']],
@@ -298,7 +310,7 @@ test('standard DMO: a custom field missing from the file is removed only with th
   // The standard key, standard fields and system fields are never planned for removal.
   const customOnly = document(['Keep__c']);
   customOnly.spec.fields = customOnly.spec.fields.filter((entry) => entry.name === 'Keep__c');
-  const plan = await preflightNativeDmo(customOnly, readOnly(twoCustom()), undefined, allow);
+  const plan = await preflightNativeDmo(customOnly, readOnly(twoCustom()), 'default', allow);
   assert.deepEqual(plan.removeFields, ['CliProbeB1__c']);
   // A lingering field is reported and the removal is not sent twice.
   let removals = 0;
@@ -311,7 +323,7 @@ test('standard DMO: a custom field missing from the file is removed only with th
           removals++;
         },
       },
-      undefined,
+      'default',
       fast,
       allow,
     ),
@@ -322,7 +334,7 @@ test('standard DMO: a custom field missing from the file is removed only with th
   const noRoute = recording(twoCustom()).client;
   delete noRoute.removeFields;
   await assert.rejects(
-    deployNativeDmo(relabelled, noRoute, undefined, fast, allow),
+    deployNativeDmo(relabelled, noRoute, 'default', fast, allow),
     /DMO_FIELD_REMOVAL_UNAVAILABLE/,
   );
 });
@@ -336,11 +348,11 @@ test('standard DMO: a mapped custom field follows the mapped-field and combined-
   const saved = document([]);
   // Not covered by a selected mapping file: refused before any write.
   await assert.rejects(
-    deployNativeDmo(saved, readOnly(mapped()), undefined, fast, allow),
+    deployNativeDmo(saved, readOnly(mapped()), 'default', fast, allow),
     /DMO_FIELD_REMOVAL_MAPPED/,
   );
   await assert.rejects(
-    deployNativeDmo(saved, readOnly(mapped()), undefined, fast, {
+    deployNativeDmo(saved, readOnly(mapped()), 'default', fast, {
       ...allow,
       coveredMappedFields: ['Other__c'],
     }),
@@ -356,7 +368,7 @@ test('standard DMO: a mapped custom field follows the mapped-field and combined-
   relabelled.spec.label = 'Changed';
   const { calls, client } = recording(mapped());
   const checked = [];
-  const result = await deployNativeDmo(relabelled, client, undefined, fast, {
+  const result = await deployNativeDmo(relabelled, client, 'default', fast, {
     ...allow,
     coveredMappedFields: ['CliProbeB1__c'],
     removeChecked: async (target, fields, remove) => {
@@ -377,15 +389,15 @@ test('standard DMO: a mapped custom field follows the mapped-field and combined-
 test('standard DMO: a label change sends the label alone', async () => {
   const saved = document();
   saved.spec.label = 'Changed';
-  assert.deepEqual(await preflightNativeDmo(saved, readOnly(native())), {
+  assert.deepEqual(await preflightNativeDmo(saved, readOnly(native()), 'default'), {
     operation: 'update',
     apiName,
     targetApiName: apiName,
-    body: { label: 'Changed' },
+    body: { label: 'Changed', dataSpaceName: 'default' },
     standard: true,
   });
   const { calls, client } = recording();
-  const result = await deployNativeDmo(saved, client, undefined, fast);
+  const result = await deployNativeDmo(saved, client, 'default', fast);
   assert.equal(result.document.spec.label, 'Changed');
   assert.deepEqual(writes(calls), [['update', apiName, { label: 'Changed' }]]);
 });
@@ -399,20 +411,20 @@ test('standard DMO: description is unmanaged when absent, set or cleared when au
   const set = document();
   set.spec.description = 'New text';
   const setRun = recording();
-  const setResult = await deployNativeDmo(set, setRun.client, undefined, fast);
+  const setResult = await deployNativeDmo(set, setRun.client, 'default', fast);
   assert.equal(setResult.operation, 'update');
   assert.deepEqual(writes(setRun.calls), [['update', apiName, { description: 'New text' }]]);
   const cleared = document();
   cleared.spec.description = '';
-  const plan = await preflightNativeDmo(cleared, readOnly(described()));
-  assert.deepEqual(plan.body, { description: '' });
+  const plan = await preflightNativeDmo(cleared, readOnly(described()), 'default');
+  assert.deepEqual(plan.body, { description: '', dataSpaceName: 'default' });
   assert.equal(await planOperation(cleared, readOnly(native())), 'unchanged');
   // A cleared description confirms against a read that no longer returns one.
   let reads = 0;
   const result = await deployNativeDmo(
     cleared,
     { get: async () => (++reads === 1 ? described() : native()), update: async () => described() },
-    undefined,
+    'default',
     fast,
   );
   assert.equal(result.operation, 'update');
@@ -432,7 +444,7 @@ test('standard DMO: a changed standard or system field is refused before any wri
     saved.spec.label = 'Changed';
     saved.spec.fields.find((entry) => entry.name === name)[property] = value;
     await assert.rejects(
-      deployNativeDmo(saved, readOnly(native()), undefined, fast, allow),
+      deployNativeDmo(saved, readOnly(native()), 'default', fast, allow),
       (error) => {
         assert.ok(error instanceof NativeDmoError);
         assert.equal(error.code, 'UNSUPPORTED_DMO_FIELD_CHANGE');
@@ -458,10 +470,10 @@ test('standard scope: a changed label of a system or generated field is sent alo
   ]) {
     const raw = { ...native([]), creationType };
     if (!raw.fields.some((entry) => entry.name === name)) raw.fields.push(field(name, fieldType));
-    const saved = normalizeNativeDmo(raw);
+    const saved = normalizeNativeDmo(raw, 'default');
     saved.spec.fields.find((entry) => entry.name === name).label = 'Renamed';
     const { calls, client, state } = recording(raw);
-    const result = await deployNativeDmo(saved, client, undefined, fast, allow);
+    const result = await deployNativeDmo(saved, client, 'default', fast, allow);
     assert.equal(result.operation, 'update', creationType);
     assert.deepEqual(writes(calls), [
       [
@@ -472,7 +484,7 @@ test('standard scope: a changed label of a system or generated field is sent alo
     ]);
     assert.equal(state.fields.find((entry) => entry.name === name).label, 'Renamed');
     // A label the org did not take is not confirmed.
-    assert.equal(nativeDmoConfirmed(saved, normalizeNativeDmo(raw), [], true), false);
+    assert.equal(nativeDmoConfirmed(saved, normalizeNativeDmo(raw, 'default'), [], true), false);
   }
 });
 
@@ -490,7 +502,14 @@ test('standard DMO: Salesforce refusing a standard field relabel is reported as 
   assert.equal(item.mutation, 'rejected');
   assert.equal(item.diagnostics[0].code, 'DMO_HTTP_ERROR');
   assert.deepEqual(writes(calls), [
-    ['update', apiName, { fields: [{ name: 'ssot__Name', label: 'Renamed', dataType: 'Text' }] }],
+    [
+      'update',
+      apiName,
+      {
+        dataSpaceName: 'default',
+        fields: [{ name: 'ssot__Name', label: 'Renamed', dataType: 'Text' }],
+      },
+    ],
   ]);
 });
 
@@ -498,9 +517,9 @@ test('standard DMO: standard and system fields may be absent from the file', asy
   for (const options of [undefined, allow]) {
     const saved = document();
     saved.spec.fields = saved.spec.fields.filter((entry) => entry.name === 'CliProbeB1__c');
-    const plan = await preflightNativeDmo(saved, readOnly(native()), undefined, options);
+    const plan = await preflightNativeDmo(saved, readOnly(native()), 'default', options);
     assert.equal(plan.operation, 'unchanged');
-    const result = await deployNativeDmo(saved, readOnly(native()), undefined, fast, options);
+    const result = await deployNativeDmo(saved, readOnly(native()), 'default', fast, options);
     assert.equal(result.operation, 'unchanged');
   }
 });
@@ -517,14 +536,17 @@ test('standard DMO: a new field that is not a plain custom field is refused befo
     const saved = document();
     saved.spec.fields.push(added);
     await assert.rejects(
-      deployNativeDmo(saved, readOnly(native()), undefined, fast, allow),
+      deployNativeDmo(saved, readOnly(native()), 'default', fast, allow),
       (error) => error instanceof NativeDmoError && error.code === 'UNSUPPORTED_DMO_FIELD_ADDITION',
       added.name,
     );
   }
   const named = document();
   named.spec.fields.push(authored('ssot__New__c'));
-  await assert.rejects(preflightNativeDmo(named, readOnly(native())), /fields\.ssot__New__c/u);
+  await assert.rejects(
+    preflightNativeDmo(named, readOnly(native()), 'default'),
+    /fields\.ssot__New__c/u,
+  );
 });
 
 test('standard DMO: a category difference is neither sent nor refused nor required at readback', async () => {
@@ -533,12 +555,12 @@ test('standard DMO: a category difference is neither sent nor refused nor requir
   assert.equal(await planOperation(saved, readOnly(native())), 'unchanged');
   saved.spec.label = 'Changed';
   const { calls, client } = recording();
-  const result = await deployNativeDmo(saved, client, undefined, fast);
+  const result = await deployNativeDmo(saved, client, 'default', fast);
   assert.equal(result.operation, 'update');
   assert.deepEqual(writes(calls), [['update', apiName, { label: 'Changed' }]]);
   assert.equal(result.document.spec.category, 'Unassigned');
   // The custom-DMO comparison still requires the category.
-  const actual = normalizeNativeDmo({ ...native(), label: 'Changed' });
+  const actual = normalizeNativeDmo({ ...native(), label: 'Changed' }, 'default');
   assert.equal(nativeDmoConfirmed(saved, actual, [], true), true);
   assert.equal(nativeDmoConfirmed(saved, actual), false);
 });
@@ -572,7 +594,7 @@ test('standard DMO: a retrieved file deploys back unchanged, across the differen
   const saved = structuredClone(await roundTrip(activated()));
   saved.spec.label = 'Changed';
   const { calls, client } = recording(native());
-  const result = await deployNativeDmo(saved, client, undefined, fast);
+  const result = await deployNativeDmo(saved, client, 'default', fast);
   assert.equal(result.operation, 'update');
   assert.deepEqual(writes(calls), [['update', apiName, { label: 'Changed' }]]);
 });
@@ -580,58 +602,76 @@ test('standard DMO: a retrieved file deploys back unchanged, across the differen
 test('standard DMO: a whole delete is sent and Salesforce decides; a nameless read stays refused', async () => {
   for (const raw of [native(), activated()]) {
     // The preview admits it read-only.
-    const { identity } = await previewDeleteNativeDmo(apiName, readOnly(raw));
+    const { identity } = await previewDeleteNativeDmo(apiName, readOnly(raw), 'default');
     assert.deepEqual(identity, { apiName, dataSpace: 'default' });
     // The DELETE is sent; a 4xx answer comes back as Salesforce's own refusal.
     const deletes = [];
     await assert.rejects(
-      deleteNativeDmo(apiName, {
-        ...readOnly(raw),
-        delete: async (target) => {
-          deletes.push(target);
-          throw new NativeDmoError('DMO_HTTP_ERROR', 400);
+      deleteNativeDmo(
+        apiName,
+        {
+          ...readOnly(raw),
+          delete: async (target) => {
+            deletes.push(target);
+            throw new NativeDmoError('DMO_HTTP_ERROR', 400);
+          },
         },
-      }),
+        'default',
+      ),
       (error) =>
         error instanceof NativeDmoError && error.code === 'DMO_HTTP_ERROR' && error.status === 400,
     );
     assert.deepEqual(deletes, [apiName]);
     // Accepted: the readback answers 404 and the delete is confirmed.
     let gone = false;
-    const receipt = await deleteNativeDmo(apiName, {
-      get: async () => {
-        if (gone) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
-        return raw;
+    const receipt = await deleteNativeDmo(
+      apiName,
+      {
+        get: async () => {
+          if (gone) throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+          return raw;
+        },
+        delete: async () => {
+          gone = true;
+        },
       },
-      delete: async () => {
-        gone = true;
-      },
-    });
+      'default',
+    );
     assert.deepEqual(receipt, { apiName, targetApiName: apiName, dataSpace: 'default' });
-    const retrieved = await retrieveNativeDmo(apiName, readOnly(raw));
+    const retrieved = await retrieveNativeDmo(apiName, readOnly(raw), 'default');
     assert.equal(retrieved.identity.apiName, apiName);
-    const admitted = await previewFieldDeleteNativeDmo(apiName, readOnly(raw));
+    const admitted = await previewFieldDeleteNativeDmo(apiName, readOnly(raw), 'default');
     assert.equal(admitted.scope, 'standard');
   }
   // A read without a name never gets a DELETE (nor its preview).
   const nameless = { ...native(), name: undefined };
-  await assert.rejects(deleteNativeDmo(apiName, readOnly(nameless)), NativeDmoError);
-  await assert.rejects(previewDeleteNativeDmo(apiName, readOnly(nameless)), NativeDmoError);
-  await assert.rejects(previewFieldDeleteNativeDmo(apiName, readOnly(nameless)), NativeDmoError);
+  await assert.rejects(deleteNativeDmo(apiName, readOnly(nameless), 'default'), NativeDmoError);
+  await assert.rejects(
+    previewDeleteNativeDmo(apiName, readOnly(nameless), 'default'),
+    NativeDmoError,
+  );
+  await assert.rejects(
+    previewFieldDeleteNativeDmo(apiName, readOnly(nameless), 'default'),
+    NativeDmoError,
+  );
   // A custom creationType under a namespaced name gets the standard scope.
   const namespaced = { ...native(), creationType: 'Custom' };
-  const { scope } = await previewFieldDeleteNativeDmo(apiName, readOnly(namespaced));
+  const { scope } = await previewFieldDeleteNativeDmo(apiName, readOnly(namespaced), 'default');
   assert.equal(scope, 'standard');
-  const { operation } = await deployNativeDmo(document(), readOnly(namespaced), undefined, fast);
+  const { operation } = await deployNativeDmo(document(), readOnly(namespaced), 'default', fast);
   assert.equal(operation, 'unchanged');
   // A namespaced name is never created.
   await assert.rejects(
-    deployNativeDmo(document(), {
-      get: async () => {
-        throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+    deployNativeDmo(
+      document(),
+      {
+        get: async () => {
+          throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+        },
+        create: async () => assert.fail('no POST'),
       },
-      create: async () => assert.fail('no POST'),
-    }),
+      'default',
+    ),
     /UNSUPPORTED_DMO_TARGET/,
   );
 });
@@ -642,12 +682,12 @@ test('generated, namespaced and untyped DMOs: only custom fields, labels and des
       const raw = { ...native([]), name, creationType };
       raw.fields.push(field('json_blob__c', 'Adg'), field('MatchKeys__c', 'System'));
       // The file leaves every generated field out, as retrieve does, and adds one custom field.
-      const saved = normalizeNativeDmo(raw);
+      const saved = normalizeNativeDmo(raw, 'default');
       saved.spec.fields = [authored('New__c')];
       saved.spec.label = 'Changed';
       saved.spec.description = 'Described';
       const { calls, client } = recording(raw);
-      const result = await deployNativeDmo(saved, client, undefined, fast, allow);
+      const result = await deployNativeDmo(saved, client, 'default', fast, allow);
       assert.equal(result.operation, 'update', String(creationType));
       // No generated field is sent or removed, with --allow-field-removal as well.
       assert.deepEqual(writes(calls), [
@@ -671,15 +711,15 @@ test('generated, namespaced and untyped DMOs: only custom fields, labels and des
         },
       };
       await assert.rejects(
-        deleteNativeDmo(name, owned),
+        deleteNativeDmo(name, owned, 'default'),
         (error) => error instanceof NativeDmoError && error.status === 412,
       );
       assert.deepEqual(deletes, [name]);
-      const { identity } = await previewDeleteNativeDmo(name, readOnly(raw));
+      const { identity } = await previewDeleteNativeDmo(name, readOnly(raw), 'default');
       assert.equal(identity.apiName, name);
-      const { scope } = await previewFieldDeleteNativeDmo(name, readOnly(raw));
+      const { scope } = await previewFieldDeleteNativeDmo(name, readOnly(raw), 'default');
       assert.equal(scope, 'standard');
-      const retrieved = await retrieveNativeDmo(name, readOnly(raw));
+      const retrieved = await retrieveNativeDmo(name, readOnly(raw), 'default');
       assert.equal(retrieved.identity.apiName, name);
     }
   }

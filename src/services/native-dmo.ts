@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { sameProperty } from '../artifacts/enum-case.js';
-import { explainMismatch } from './operation-diagnostic.js';
+import { explainInput, explainMismatch } from './operation-diagnostic.js';
 import {
   isDeletableNativeDmo,
   isGeneratedDmoField,
@@ -9,6 +9,7 @@ import {
   nativeDmoWriteScope,
   normalizeNativeDmo,
   sameDmoCategory,
+  standardCopyOrigin,
   unwrapNativeDmo,
   validateNativeDmoDocument,
 } from '../artifacts/native-dmo-document.js';
@@ -50,6 +51,12 @@ export type NotSentFieldKey = { field: string; key: string };
 export type NativeDmoDeployOptions = {
   /** Remove custom target fields missing from the file through the Metadata API. */
   allowFieldRemoval?: boolean;
+  /**
+   * Prefix of the run's data space as the org's data space list names it (`ds2`), outside the
+   * default data space only: a DMO file for a standard DMO copy that does not exist yet is
+   * refused instead of being created as a custom DMO.
+   */
+  dataSpacePrefix?: string;
   /**
    * Mapped fields whose pairs the selected mapping files of the same deployment drop. They are
    * removed instead of refused; Salesforce drops their pairs together with the fields.
@@ -234,17 +241,41 @@ function protectedFieldDifference(
 }
 
 /**
+ * Whether a name reads as a standard DMO of the default data space. Only a 404 means no; any
+ * other failure is rethrown, so a failed read never lets a copy name through as a custom create.
+ * @param {string} apiName Default spelling of a standard DMO.
+ * @param {Pick<DmoClient, 'get'>} client Target client.
+ * @returns {Promise<boolean>} The standard DMO exists in the default data space.
+ */
+async function isStandardOrigin(apiName: string, client: Pick<DmoClient, 'get'>): Promise<boolean> {
+  let read: unknown;
+  try {
+    read = await client.get(apiName);
+  } catch (error) {
+    if (error instanceof NativeDmoError && error.code === 'DMO_HTTP_ERROR' && error.status === 404)
+      return false;
+    throw error;
+  }
+  const raw = unwrapNativeDmo(read);
+  return (
+    raw.name === apiName &&
+    raw.creationType === 'Standard' &&
+    (raw.dataSpaceName === undefined || raw.dataSpaceName === 'default')
+  );
+}
+
+/**
  * Read the exact full name and verify identity and observed data space, never inspecting its ID.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
- * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {string} requestScope The run's data space: expected on reads, sent on writes.
  * @param {DocumentMode} [mode] `retrieve` keeps what the plugin cannot deploy.
  * @returns {Promise<{raw: Record<string, unknown>, document: NativeDmoDocument}>} Raw read and its portable definition.
  */
 async function readTarget(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): Promise<{ raw: Record<string, unknown>; document: NativeDmoDocument }> {
   if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
@@ -259,14 +290,14 @@ async function readTarget(
  * Resolve the portable definition of an exact full name.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
- * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {string} requestScope The run's data space: expected on reads, sent on writes.
  * @param {DocumentMode} [mode] `retrieve` keeps what the plugin cannot deploy.
  * @returns {Promise<NativeDmoDocument>} Verified target definition.
  */
 async function resolveTarget(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): Promise<NativeDmoDocument> {
   const { document } = await readTarget(apiName, client, requestScope, mode);
@@ -277,14 +308,14 @@ async function resolveTarget(
  * Retrieve an exact portable definition including all generated fields.
  * @param {string} apiName Full name ending in __dlm.
  * @param {Pick<DmoClient, 'get'>} client Authenticated client.
- * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {string} requestScope The run's data space: expected on reads, sent on writes.
  * @param {DocumentMode} [mode] `retrieve` for the retrieve command; other callers stay strict.
  * @returns {Promise<NativeDmoDocument>} Portable definition, without runtime observations.
  */
 export async function retrieveNativeDmo(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): Promise<NativeDmoDocument> {
   return resolveTarget(apiName, client, requestScope, mode);
@@ -299,20 +330,19 @@ export async function retrieveNativeDmo(
  * sent, and the category is ignored because Salesforce changes it when the DMO is first mapped.
  * @param {unknown} value Portable document.
  * @param {Pick<DmoClient, 'get'>} client Target client.
- * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {string} requestScope The run's data space: expected on reads, sent on writes.
  * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
  * @returns {Promise<NativeDmoDeployPlan>} Fresh name-bound write plan.
  */
 export async function preflightNativeDmo(
   value: unknown,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
   options: NativeDmoDeployOptions = {},
 ): Promise<NativeDmoDeployPlan> {
   const desired = validateNativeDmoDocument(value);
   const apiName = desired.identity.apiName;
-  if (requestScope !== undefined && requestScope !== desired.identity.dataSpace)
-    throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
+  if (requestScope !== desired.c__dataSpace) throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
   const extras = Object.fromEntries(
     Object.entries(desired.spec).filter(([key]) => !handledSpecKeys.has(key)),
   );
@@ -323,7 +353,7 @@ export async function preflightNativeDmo(
     const read = await readTarget(apiName, client, requestScope);
     target = read.document;
     raw = read.raw;
-    if (target.identity.dataSpace !== desired.identity.dataSpace)
+    if (target.c__dataSpace !== desired.c__dataSpace)
       throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
     // Every DMO but an unprefixed custom one is written within the standard scope only:
     // standard, platform-generated and namespaced DMOs alike, and Salesforce answers the rest.
@@ -337,10 +367,16 @@ export async function preflightNativeDmo(
       error.status !== 404
     )
       throw error;
-    if (requestScope === undefined && desired.identity.dataSpace !== 'default')
-      throw new NativeDmoError('DMO_DATASPACE_MISMATCH');
     // Standard and namespaced DMOs are never created.
     if (apiName.slice(0, -5).includes('__')) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
+    // Nor is the copy of a standard DMO in another data space (`ds2_X__dlm` of `ssot__X__dlm`):
+    // its first mapping creates it, so a create here would make a custom DMO of that name.
+    const origin = standardCopyOrigin(apiName, requestScope, options.dataSpacePrefix);
+    if (origin !== undefined && (await isStandardOrigin(origin, client)))
+      throw explainInput(
+        new NativeDmoError('UNSUPPORTED_DMO_TARGET'),
+        `${apiName} is the copy of the standard DMO ${origin} in the data space ${requestScope}, and it does not exist there yet. A standard DMO's copy is created by its first mapping: deploy a mapping onto ${apiName} instead of the DMO file.`,
+      );
     return {
       operation: 'create',
       apiName,
@@ -352,7 +388,7 @@ export async function preflightNativeDmo(
         ...(desired.spec.description === undefined
           ? {}
           : { description: desired.spec.description }),
-        ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
+        dataSpaceName: requestScope,
         fields: desired.spec.fields
           .filter((field) => !isGeneratedDmoField(field))
           .map((field) => fieldInput(field)),
@@ -509,7 +545,7 @@ export async function preflightNativeDmo(
             ...(standard && !relabelled ? {} : { label: desired.spec.label }),
             ...description,
             ...category,
-            ...(requestScope === undefined ? {} : { dataSpaceName: requestScope }),
+            dataSpaceName: requestScope,
             ...(fields.length > 0 ? { fields } : {}),
           },
         }
@@ -581,7 +617,7 @@ async function confirmEditBeforeRemoval(
   let last: NativeDmoDocument | undefined;
   for (let attempt = 0; attempt < settle.attempts; attempt++) {
     if (attempt > 0) await settle.sleep(settle.delayMs);
-    last = await resolveTarget(apiName, client, desired.identity.dataSpace);
+    last = await resolveTarget(apiName, client, desired.c__dataSpace);
     if (nativeDmoConfirmed(desired, last, [], standard)) return;
   }
   throw explainMismatch(
@@ -599,7 +635,7 @@ async function confirmEditBeforeRemoval(
  * Stale PATCH bodies never establish persistence; failed readback never triggers another write.
  * @param {unknown} value Portable requested definition.
  * @param {DmoClient} client Target client.
- * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {string} requestScope The run's data space: expected on reads, sent on writes.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @param {NativeDmoDeployOptions} [options] Opt-in field removal.
  * @returns {Promise<{operation: 'create' | 'update' | 'unchanged', document: NativeDmoDocument, removedFields?: string[], droppedPairs?: DroppedPair[], notSent?: NotSentFieldKey[]}>} Observed or confirmed definition, not activation proof.
@@ -607,7 +643,7 @@ async function confirmEditBeforeRemoval(
 export async function deployNativeDmo(
   value: unknown,
   client: DmoClient,
-  requestScope?: string,
+  requestScope: string,
   settle: NativeDmoSettle = defaultNativeDmoSettle,
   options: NativeDmoDeployOptions = {},
 ): Promise<{
@@ -636,7 +672,7 @@ export async function deployNativeDmo(
   if (plan.operation === 'update' && !plan.body && removed.length === 0)
     return {
       operation: 'unchanged',
-      document: await resolveTarget(plan.apiName, client, desired.identity.dataSpace),
+      document: await resolveTarget(plan.apiName, client, desired.c__dataSpace),
       ...(plan.notSent ? { notSent: plan.notSent } : {}),
     };
   if (plan.operation === 'update' && removed.length > 0 && options.precheckRemoval)
@@ -651,7 +687,7 @@ export async function deployNativeDmo(
         ? await client.update(plan.targetApiName, plan.body)
         : undefined;
   if (plan.operation === 'create' || plan.body) {
-    const accepted = normalizeNativeDmo(response, desired.identity.dataSpace);
+    const accepted = normalizeNativeDmo(response, desired.c__dataSpace);
     if (accepted.identity.apiName !== plan.apiName)
       throw new NativeDmoError('DMO_TARGET_IDENTITY_MISMATCH');
   }
@@ -670,7 +706,7 @@ export async function deployNativeDmo(
   let last: NativeDmoDocument | undefined;
   for (let attempt = 0; attempt < settle.attempts; attempt++) {
     if (attempt > 0) await settle.sleep(settle.delayMs);
-    const document = await resolveTarget(plan.apiName, client, desired.identity.dataSpace);
+    const document = await resolveTarget(plan.apiName, client, desired.c__dataSpace);
     last = document;
     if (nativeDmoConfirmed(desired, document, removed, standard)) {
       const notSent = notSentFieldKeys(desired, document, standard);
@@ -708,13 +744,13 @@ export async function deployNativeDmo(
  * custom-only guard. Fields and keys the plugin does not model never block a delete.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
- * @param {string} [requestScope] Optional expected data space.
+ * @param {string} requestScope The run's data space, expected on the read.
  * @returns {Promise<{raw: Record<string, unknown>; identity: {apiName: string; dataSpace: string}}>} Target.
  */
 async function readDeleteTarget(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ raw: Record<string, unknown>; identity: { apiName: string; dataSpace: string } }> {
   if (!nativeDmoName.test(apiName)) throw new NativeDmoError('INVALID_DMO_NAME');
   const response: unknown = await client.get(apiName);
@@ -726,11 +762,7 @@ async function readDeleteTarget(
     raw.dataSpaceName === undefined || raw.dataSpaceName === null
       ? requestScope
       : raw.dataSpaceName;
-  if (
-    typeof observed !== 'string' ||
-    !observed.trim() ||
-    (requestScope !== undefined && observed !== requestScope)
-  )
+  if (typeof observed !== 'string' || !observed.trim() || observed !== requestScope)
     throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
   return { raw, identity: { apiName, dataSpace: observed } };
 }
@@ -739,13 +771,13 @@ async function readDeleteTarget(
  * Read-only delete preview: resolve the exact target and apply the same guard as delete.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
- * @param {string} [requestScope] Optional expected data space.
+ * @param {string} requestScope The run's data space, expected on the read.
  * @returns {Promise<{identity: {apiName: string; dataSpace: string}}>} Identity a delete would remove.
  */
 export async function previewDeleteNativeDmo(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ identity: { apiName: string; dataSpace: string } }> {
   const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
   // Every named DMO is sent to Salesforce, standard ones included; Salesforce decides.
@@ -758,13 +790,13 @@ export async function previewDeleteNativeDmo(
  * standard DMO. Which of its fields may be removed is decided by the caller from the scope.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get'>} client Target client.
- * @param {string} [requestScope] Optional expected data space.
+ * @param {string} requestScope The run's data space, expected on the read.
  * @returns {Promise<{document: NativeDmoDocument, scope: 'custom' | 'standard'}>} Definition and its write scope.
  */
 export async function previewFieldDeleteNativeDmo(
   apiName: string,
   client: Pick<DmoClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ document: NativeDmoDocument; scope: 'custom' | 'standard' }> {
   const { raw, document } = await readTarget(apiName, client, requestScope);
   const scope = nativeDmoWriteScope(raw);
@@ -778,13 +810,13 @@ export async function previewFieldDeleteNativeDmo(
  * still processing, and anything else (including a failed read) is never reported as deleted.
  * @param {string} apiName Requested full name.
  * @param {Pick<DmoClient, 'get' | 'delete'>} client Target client.
- * @param {string} [requestScope] Optional expected data space and explicit body scope.
+ * @param {string} requestScope The run's data space: expected on reads, sent on writes.
  * @returns {Promise<{apiName: string, targetApiName: string, dataSpace: string, processing?: true}>} Exact deleted target identity.
  */
 export async function deleteNativeDmo(
   apiName: string,
   client: Pick<DmoClient, 'get' | 'delete'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ apiName: string; targetApiName: string; dataSpace: string; processing?: true }> {
   const { raw, identity } = await readDeleteTarget(apiName, client, requestScope);
   // Every named DMO is sent, standard ones included. Salesforce decides: a refusal (for example

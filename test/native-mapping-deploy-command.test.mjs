@@ -31,13 +31,15 @@ const dlo = {
 const dmo = {
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName: 'Example__dlm' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Example__dlm' },
   spec: dlo.spec,
 };
 const mapping = {
   schemaVersion: 1,
   kind: 'mapping',
-  identity: { dataSpace: 'default', apiName: 'SourceGenerated' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'SourceGenerated' },
   spec: {
     sourceEntityDeveloperName: 'Example__dll',
     targetEntityDeveloperName: 'Example__dlm',
@@ -193,7 +195,7 @@ async function fixture(options = {}) {
   });
   return { command, calls, cwd, inputs, receipt };
 }
-for (const scope of [undefined, 'Team'])
+for (const scope of ['default', 'Team'])
   for (const preview of [false, true])
     test(`public mapping deploy passes final scope preserving callbacks ${scope}/${preview}`, async () => {
       const { command, inputs } = await fixture({ preview });

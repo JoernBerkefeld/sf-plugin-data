@@ -176,7 +176,8 @@ DMO artifact format.
 {
   "schemaVersion": 1,
   "kind": "dmo",
-  "identity": { "apiName": "Customer__dlm", "dataSpace": "default" },
+  "c__dataSpace": "default",
+  "identity": { "apiName": "Customer__dlm" },
   "spec": {
     "label": "Customer",
     "category": "Profile",
@@ -193,9 +194,16 @@ DMO artifact format.
 
 The plugin validates the shape only:
 
-- The document has exactly `schemaVersion: 1`, `kind: "dmo"`, `identity` and `spec`.
+- The document has exactly `schemaVersion: 1`, `kind: "dmo"`, `c__dataSpace`, `identity`
+  and `spec`.
+- `c__dataSpace` is the DMO's data space: a nonblank, trimmed name. It must be the run's
+  data space (`--dataspace`, `default` when omitted; `DMO_DATASPACE_MISMATCH` otherwise).
+  The old `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`); any other invalid
+  value is `INVALID_DATASPACE_FIELD`.
 - `identity` has exactly `apiName` (a letter, then letters, digits or underscores,
-  ending `__dlm`) and a nonblank, trimmed `dataSpace`.
+  ending `__dlm`). In a non-default data space it is the name Salesforce stores there: a
+  standard DMO copy is `<prefix>_<Name>__dlm` (`ds2_Individual__dlm`) with fields without
+  `ssot__`, and a custom DMO keeps its own name.
 - `spec` needs a nonblank `label`, a nonblank `category`, an optional string
   `description` and a nonempty `fields` array. Other `spec` keys are allowed.
 - Each field needs a `name` ending `__c` that is unique regardless of case, a
@@ -223,8 +231,8 @@ keys or extra keys. Those values are sent as authored and Salesforce decides.
 - Record IDs and other runtime observations of the object are not saved.
 
 The file is indented with two spaces and ends with LF. Identical bytes are
-unchanged; a differing file requires `--overwrite`. A file saved for a different
-data space is not replaced even with overwrite (`DMO_DATASPACE_COLLISION`). The
+unchanged; a differing file requires `--overwrite` (DMO names are unique in the org,
+so the file at the path is the same DMO whatever data space it names). The
 writer rejects linked paths and files above 1 MiB, stages the complete file under
 the OS temp directory and publishes it by rename or exclusive hard link. Writer
 codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
@@ -259,8 +267,17 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   `UNSUPPORTED_DMO_FIELD_CHANGE`. A new field must be a plain custom field: no double
   underscore before `__c` and no `creationType` other than `Custom`
   (`UNSUPPORTED_DMO_FIELD_ADDITION`).
-- A mapping file (`data360/mapping/<MappingApiName>.mapping-meta.json`) may name a
-  custom or a standard DMO in `spec.targetEntityDeveloperName`. On a standard DMO the
+- A mapping file (`data360/mapping/<MappingApiName>.mapping-meta.json`) holds
+  `schemaVersion` 1, `kind` `mapping`, the top-level `c__dataSpace` (the mapping's data
+  space, which must be the run's: `MAPPING_DATASPACE_MISMATCH` otherwise;
+  `LEGACY_DATASPACE_KEY` for the old `identity.dataSpace`), `identity` with `apiName`
+  only, and `spec`. Mapping names are unique in the org, so the file at the path is the
+  same mapping whatever data space it names (`--overwrite` replaces it). It may name a
+  custom or a standard DMO in `spec.targetEntityDeveloperName`, under the name Salesforce
+  stores in the mapping's data space (`ds2_ContactPointEmail__dlm` with `EmailAddress__c`
+  for a standard DMO copy in `dataspace2`). The first mapping onto a standard DMO copy that
+  does not exist yet is sent once more in the default spelling when Salesforce answers the
+  copy spelling with 404 (see the README's Data spaces section). On a standard DMO the
   authored pairs use the standard field names (for example `Id__c` to `ssot__Id__c`)
   and the generated pairs read `DataSource__c` to `ssot__DataSourceId__c`,
   `DataSourceObject__c` to `ssot__DataSourceObjectId__c`, `InternalOrganization__c`
@@ -393,9 +410,9 @@ whose source is that DMO, at
 {
   "schemaVersion": 1,
   "kind": "relationship",
+  "c__dataSpace": "default",
   "identity": {
-    "apiName": "Order_CustomerId_map_Customer_Id_1794467679481",
-    "dataSpace": "default"
+    "apiName": "Order_CustomerId_map_Customer_Id_1794467679481"
   },
   "spec": {
     "sourceObjectName": "Order__dlm",
@@ -411,9 +428,11 @@ whose source is that DMO, at
 
 Shape checks:
 
-- The document has exactly `schemaVersion: 1`, `kind: "relationship"`, `identity`
-  and `spec`; `identity` has exactly `apiName` (a letter, then letters, digits or
-  underscores) and a nonblank, trimmed `dataSpace`.
+- The document has exactly `schemaVersion: 1`, `kind: "relationship"`, `c__dataSpace`,
+  `identity` and `spec`; `c__dataSpace` is the relationship's data space (the run's,
+  `UNSUPPORTED_RELATIONSHIP_DATASPACE` otherwise; `LEGACY_DATASPACE_KEY` for the old
+  `identity.dataSpace`), and `identity` has exactly `apiName` (a letter, then letters,
+  digits or underscores).
 - `spec` has the six keys shown and may have `label` (a nonblank, trimmed text). The source object ends `__dlm` and the
   source field `__c`; the target object and field are any API names: a DMO and its
   custom field, or a CRM object and field with `relationshipOwner` `SObject` (for
@@ -437,8 +456,8 @@ org's relationship name; if the binding exists only under another name, delete
 refuses with `RELATIONSHIP_NAME_MISMATCH` and names it.
 
 The file is indented with two spaces and ends with LF. Identical bytes are
-unchanged; a differing file requires `--overwrite`, and a file saved for a different
-data space is not replaced (`RELATIONSHIP_DATASPACE_COLLISION`). Writer codes:
+unchanged; a differing file requires `--overwrite` (relationship names are unique in the
+org). Writer codes:
 `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 `PARTIAL_RELATIONSHIP_OUTPUT`.
 

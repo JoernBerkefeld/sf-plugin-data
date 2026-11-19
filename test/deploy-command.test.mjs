@@ -12,7 +12,7 @@ import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 // all-native selections use the per-item native route covered by the native DMO command tests.
 const input = (name = 'Preview__dlm') => ({
   path: `data360/dmo/${name}.dmo-meta.json`,
-  document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: name } },
+  document: { kind: 'dmo', c__dataSpace: 'default', identity: { apiName: name } },
 });
 /**
  * Wrap the resolver read at this moment so its result also becomes the Git capture.
@@ -593,7 +593,8 @@ test('org and resolver unexpected failures are redacted with nonzero exit', asyn
 const authored = () => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName: 'Preview__dlm' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Preview__dlm' },
   spec: {
     label: 'Preview',
     category: 'Other',

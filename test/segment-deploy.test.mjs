@@ -582,7 +582,7 @@ test('mixed DMO plus Segment update without acknowledgement blocks whole selecti
     [
       {
         path: 'First__dlm.dmo-meta.json',
-        document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
+        document: { kind: 'dmo', c__dataSpace: 'default', identity: { apiName: 'First__dlm' } },
       },
       ...inputs,
     ],
@@ -786,7 +786,7 @@ test('fresh dependency or late pair admission blocks before DMO dispatch and ret
     const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     const dmo = {
       path: 'synthetic.dmo-meta.json',
-      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
+      document: { kind: 'dmo', c__dataSpace: 'default', identity: { apiName: 'First__dlm' } },
     };
     const command = commandSetup([dmo, segment], false);
     command.captureInput = async () => 'same';
@@ -830,7 +830,7 @@ test('late pair or prerequisite drift preserves earlier completed DMO and unatte
     const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
     const dmo = {
       path: 'synthetic.dmo-meta.json',
-      document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'First__dlm' } },
+      document: { kind: 'dmo', c__dataSpace: 'default', identity: { apiName: 'First__dlm' } },
     };
     const tail = {
       ...segment,

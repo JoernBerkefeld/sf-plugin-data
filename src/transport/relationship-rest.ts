@@ -111,14 +111,15 @@ function records(value: unknown): unknown[] {
  * are never resent once they may have reached Salesforce.
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiVersion Validated numeric version, or default/auto 68.0.
- * @param {string} dataSpace Optional explicit request scope.
+ * @param {string} dataSpace The run's data space, sent as `?dataspace=` on every REST request
+ * (the Metadata API calls take record names, which are unique in the org).
  * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
  * @returns {RelationshipClient} Raw operations.
  */
 export function createRelationshipClient(
   targetOrg: string,
   apiVersion = '68.0',
-  dataSpace?: string,
+  dataSpace: string,
   sender?: BoundSsot,
 ): RelationshipClient {
   const version = nativeApiVersion(apiVersion);
@@ -129,8 +130,7 @@ export function createRelationshipClient(
   )
     throw new NativeRelationshipError('UNSUPPORTED_RELATIONSHIP_SELECTION');
   const endpoint = `/services/data/v${version}/ssot/data-model-objects`;
-  const scopeQuery =
-    dataSpace === undefined ? '' : `?${new URLSearchParams({ dataspace: dataSpace })}`;
+  const scopeQuery = `?${new URLSearchParams({ dataspace: dataSpace })}`;
   const noContent = Symbol('relationship-no-content');
   const bound = sender ?? openBoundSsot(targetOrg, version);
 
@@ -174,8 +174,7 @@ export function createRelationshipClient(
     list: async (dmoName, offset) => {
       if (!relationshipDmoName.test(dmoName) || !Number.isSafeInteger(offset) || offset < 0)
         throw new NativeRelationshipError('INVALID_RELATIONSHIP_BINDING');
-      const query = new URLSearchParams();
-      if (dataSpace !== undefined) query.set('dataspace', dataSpace);
+      const query = new URLSearchParams({ dataspace: dataSpace });
       query.set('limit', String(relationshipPageSize));
       query.set('offset', String(offset));
       const response = await request('GET', `${endpoint}/${dmoName}/relationships?${query}`);
@@ -185,7 +184,8 @@ export function createRelationshipClient(
       const spec = validateNativeRelationshipDocument({
         schemaVersion: 1,
         kind: 'relationship',
-        identity: { apiName: 'Input', dataSpace: 'default' },
+        c__dataSpace: 'default',
+        identity: { apiName: 'Input' },
         spec: relationship,
       }).spec;
       const response = await request(

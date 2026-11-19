@@ -131,7 +131,7 @@ const ir = (name = 'Individual_A1b2') => {
 };
 const dmo = {
   path: 'Example__dlm.dmo-meta.json',
-  document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Example__dlm' } },
+  document: { kind: 'dmo', c__dataSpace: 'default', identity: { apiName: 'Example__dlm' } },
 };
 const preview = (family, outcome = 'update') => ({
   ...(family === 'identity-resolution'

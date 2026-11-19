@@ -43,7 +43,7 @@ const native = (without = []) => ({
  * @param {string[]} [without] Field names left out of the file.
  * @returns {object} Portable document.
  */
-const authored = (without = []) => normalizeNativeDmo(native(without));
+const authored = (without = []) => normalizeNativeDmo(native(without), 'default');
 
 /**
  * Recording client whose reads follow the writes it has seen.
@@ -61,7 +61,16 @@ const recording = (overrides = {}) => {
     },
     create: async () => assert.fail('no POST'),
     update: async (name, body) => {
-      calls.push(['update', name, body]);
+      calls.push([
+        'update',
+        name,
+        (() => {
+          // Every PATCH names the run's data space; the expectations below compare the rest.
+          const { dataSpaceName, ...rest } = body;
+          assert.equal(dataSpaceName, 'default');
+          return rest;
+        })(),
+      ]);
       state.label = body.label;
       return read();
     },
@@ -100,7 +109,7 @@ const writes = (calls) => calls.filter(([method]) => method !== 'get').map(([met
 
 test('a custom field missing from the file is refused without the flag and planned with it', async () => {
   await assert.rejects(
-    preflightNativeDmo(authored(['Note__c']), { get }),
+    preflightNativeDmo(authored(['Note__c']), { get }, 'default'),
     (error) =>
       error instanceof NativeDmoError &&
       error.code === 'UNSUPPORTED_DMO_FIELD_CHANGE' &&
@@ -108,12 +117,12 @@ test('a custom field missing from the file is refused without the flag and plann
       error.message.includes('fields.Note__c'),
   );
   await assert.rejects(
-    preflightNativeDmo(authored(['Note__c']), { get }, undefined, { allowFieldRemoval: false }),
+    preflightNativeDmo(authored(['Note__c']), { get }, 'default', { allowFieldRemoval: false }),
     /UNSUPPORTED_DMO_FIELD_CHANGE/,
   );
   // Removal only: no PATCH body is planned.
   assert.deepEqual(
-    await preflightNativeDmo(authored(['Note__c', 'Link__c']), { get }, undefined, allow),
+    await preflightNativeDmo(authored(['Note__c', 'Link__c']), { get }, 'default', allow),
     {
       operation: 'update',
       apiName,
@@ -123,42 +132,42 @@ test('a custom field missing from the file is refused without the flag and plann
   );
   const relabelled = authored(['Link__c']);
   relabelled.spec.label = 'Changed';
-  assert.deepEqual(await preflightNativeDmo(relabelled, { get }, undefined, allow), {
+  assert.deepEqual(await preflightNativeDmo(relabelled, { get }, 'default', allow), {
     operation: 'update',
     apiName,
     targetApiName: apiName,
-    body: { label: 'Changed' },
+    body: { label: 'Changed', dataSpaceName: 'default' },
     removeFields: ['Link__c'],
   });
   // The flag changes nothing when no custom field is missing.
-  const same = await preflightNativeDmo(authored(), { get }, undefined, allow);
+  const same = await preflightNativeDmo(authored(), { get }, 'default', allow);
   assert.equal(same.operation, 'unchanged');
 });
 
 test('the primary key and generated fields are never planned for removal', async () => {
   for (const options of [undefined, allow])
     await assert.rejects(
-      preflightNativeDmo(authored(['Id__c']), { get }, undefined, options),
+      preflightNativeDmo(authored(['Id__c']), { get }, 'default', options),
       (error) =>
         error.code === 'UNSUPPORTED_DMO_FIELD_CHANGE' &&
         error.message.includes('primary-key field is never removed'),
     );
   // A missing key blocks even when other removable fields are missing too.
   await assert.rejects(
-    preflightNativeDmo(authored(['Id__c', 'Note__c']), { get }, undefined, allow),
+    preflightNativeDmo(authored(['Id__c', 'Note__c']), { get }, 'default', allow),
     /UNSUPPORTED_DMO_FIELD_CHANGE/,
   );
   const withoutGenerated = await preflightNativeDmo(
     authored(['DataSource__c', 'KQ_Id__c']),
     { get },
-    undefined,
+    'default',
     allow,
   );
   assert.equal(withoutGenerated.operation, 'unchanged');
   const mixed = await preflightNativeDmo(
     authored(['DataSource__c', 'Note__c']),
     { get },
-    undefined,
+    'default',
     allow,
   );
   assert.deepEqual(mixed.removeFields, ['Note__c']);
@@ -179,7 +188,7 @@ test('a mapped field is never removed, and the mapped marker is not treated as a
           writesSeen++;
         },
       },
-      undefined,
+      'default',
       fast,
       { allowFieldRemoval: true },
     ),
@@ -191,20 +200,32 @@ test('a mapped field is never removed, and the mapped marker is not treated as a
   );
   assert.equal(writesSeen, 0);
   // A file retrieved from an unmapped copy deploys unchanged onto a mapped target and back.
-  const unmappedFile = await preflightNativeDmo(authored(), { get: async () => mapped() });
+  const unmappedFile = await preflightNativeDmo(
+    authored(),
+    { get: async () => mapped() },
+    'default',
+  );
   assert.equal(unmappedFile.operation, 'unchanged');
-  const mappedFile = await preflightNativeDmo(normalizeNativeDmo(mapped()), { get });
+  const mappedFile = await preflightNativeDmo(
+    normalizeNativeDmo(mapped(), 'default'),
+    { get },
+    'default',
+  );
   assert.equal(mappedFile.operation, 'unchanged');
   // The marker is never sent, on create or in a field edit.
-  const created = await preflightNativeDmo(normalizeNativeDmo(mapped()), {
-    get: async () => {
-      throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+  const created = await preflightNativeDmo(
+    normalizeNativeDmo(mapped(), 'default'),
+    {
+      get: async () => {
+        throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+      },
     },
-  });
+    'default',
+  );
   assert.ok(created.body.fields.every((entry) => !('isMapped' in entry)));
-  const relabelled = normalizeNativeDmo(mapped());
+  const relabelled = normalizeNativeDmo(mapped(), 'default');
   relabelled.spec.fields.find((entry) => entry.name === 'Note__c').label = 'Renamed';
-  const edit = await preflightNativeDmo(relabelled, { get });
+  const edit = await preflightNativeDmo(relabelled, { get }, 'default');
   assert.deepEqual(edit.body.fields, [
     { name: 'Note', label: 'Renamed', dataType: 'Text', isPrimaryKey: false },
   ]);
@@ -218,13 +239,16 @@ test('outside the custom scope a removal plans custom fields only, never generat
     { ...native(), name: 'ssot__Example__dlm' },
   ]) {
     // The file leaves out a custom field and both generated fields.
-    const saved = normalizeNativeDmo({
-      ...raw,
-      fields: raw.fields.filter(
-        (entry) => entry.creationType === 'Custom' && entry.name !== 'Note__c',
-      ),
-    });
-    const plan = await preflightNativeDmo(saved, { get: async () => raw }, undefined, allow);
+    const saved = normalizeNativeDmo(
+      {
+        ...raw,
+        fields: raw.fields.filter(
+          (entry) => entry.creationType === 'Custom' && entry.name !== 'Note__c',
+        ),
+      },
+      'default',
+    );
+    const plan = await preflightNativeDmo(saved, { get: async () => raw }, 'default', allow);
     assert.equal(plan.operation, 'update', JSON.stringify(raw.creationType));
     assert.deepEqual(plan.removeFields, ['Note__c']);
     assert.equal(plan.standard, true);
@@ -241,7 +265,7 @@ test('a removal-only deploy sends no PATCH, removes once and confirms absence by
     const current = await base(name);
     return ++reads === 2 ? native() : current;
   };
-  const result = await deployNativeDmo(authored(['Note__c']), client, undefined, fast, allow);
+  const result = await deployNativeDmo(authored(['Note__c']), client, 'default', fast, allow);
   assert.equal(result.operation, 'update');
   assert.deepEqual(result.removedFields, ['Note__c']);
   assert.ok(!result.document.spec.fields.some((entry) => entry.name === 'Note__c'));
@@ -252,7 +276,7 @@ test('a removal-only deploy sends no PATCH, removes once and confirms absence by
   assert.deepEqual(calls[1], ['remove', apiName, ['Note__c']]);
   // The same file against the changed target is unchanged and writes nothing.
   const before = calls.length;
-  const repeat = await deployNativeDmo(authored(['Note__c']), client, undefined, fast, allow);
+  const repeat = await deployNativeDmo(authored(['Note__c']), client, 'default', fast, allow);
   assert.equal(repeat.operation, 'unchanged');
   assert.equal(repeat.removedFields, undefined);
   assert.deepEqual(writes(calls.slice(before)), []);
@@ -262,7 +286,7 @@ test('edits travel in one PATCH before the single removal, and readback checks b
   const saved = authored(['Note__c', 'Link__c']);
   saved.spec.label = 'Changed';
   const { calls, client } = recording();
-  const result = await deployNativeDmo(saved, client, undefined, fast, allow);
+  const result = await deployNativeDmo(saved, client, 'default', fast, allow);
   assert.deepEqual(
     calls.map(([method]) => method),
     // The PATCH is read back before the removal, so the removal starts from the edited definition.
@@ -275,12 +299,21 @@ test('edits travel in one PATCH before the single removal, and readback checks b
   // A PATCH that never becomes readable stops the deploy before the removal is sent.
   const stale = recording({
     update: async (name, body) => {
-      stale.calls.push(['update', name, body]);
+      stale.calls.push([
+        'update',
+        name,
+        (() => {
+          // Every PATCH names the run's data space; the expectations below compare the rest.
+          const { dataSpaceName, ...rest } = body;
+          assert.equal(dataSpaceName, 'default');
+          return rest;
+        })(),
+      ]);
       return native();
     },
   });
   await assert.rejects(
-    deployNativeDmo(saved, stale.client, undefined, fast, allow),
+    deployNativeDmo(saved, stale.client, 'default', fast, allow),
     /DMO_PERSISTENCE_UNCONFIRMED/,
   );
   assert.deepEqual(writes(stale.calls), ['update']);
@@ -293,7 +326,7 @@ test('a removed field that is still present fails readback without another write
     },
   });
   await assert.rejects(
-    deployNativeDmo(authored(['Note__c']), client, undefined, fast, allow),
+    deployNativeDmo(authored(['Note__c']), client, 'default', fast, allow),
     (error) =>
       error.code === 'DMO_PERSISTENCE_UNCONFIRMED' &&
       error.message.includes('post-removal field absence readback') &&
@@ -310,11 +343,11 @@ test('a client without a removal route blocks before any write', async () => {
   saved.spec.label = 'Changed';
   const { calls, client } = recording({ removeFields: undefined });
   await assert.rejects(
-    deployNativeDmo(saved, client, undefined, fast, allow),
+    deployNativeDmo(saved, client, 'default', fast, allow),
     /DMO_FIELD_REMOVAL_UNAVAILABLE/,
   );
   assert.deepEqual(writes(calls), []);
-  const outcome = await executeDmo(saved, client, undefined, allow);
+  const outcome = await executeDmo(saved, client, 'default', allow);
   assert.equal(outcome.outcome, 'blocked');
   assert.equal(outcome.mutation, 'not-attempted');
   assert.equal(outcome.diagnostics[0].code, 'DMO_FIELD_REMOVAL_UNAVAILABLE');
@@ -323,7 +356,7 @@ test('a client without a removal route blocks before any write', async () => {
 
 test('DMO wrappers expose planned and executed removals', async () => {
   const { calls, client } = recording();
-  assert.deepEqual(await preflightDmo(authored(['Note__c']), client, undefined, allow), {
+  assert.deepEqual(await preflightDmo(authored(['Note__c']), client, 'default', allow), {
     family: 'dmo',
     outcome: 'update',
     target: 'existing',
@@ -339,22 +372,25 @@ test('DMO wrappers expose planned and executed removals', async () => {
   });
   assert.deepEqual(writes(calls), []);
   // Without the flag the wrapper refuses and the executor reports a blocked, unwritten item.
-  await assert.rejects(preflightDmo(authored(['Note__c']), client), /UNSUPPORTED_DMO_FIELD_CHANGE/);
-  const blocked = await executeDmo(authored(['Note__c']), client);
+  await assert.rejects(
+    preflightDmo(authored(['Note__c']), client, 'default'),
+    /UNSUPPORTED_DMO_FIELD_CHANGE/,
+  );
+  const blocked = await executeDmo(authored(['Note__c']), client, 'default');
   assert.equal(blocked.outcome, 'blocked');
   assert.equal(blocked.mutation, 'not-attempted');
   assert.equal(blocked.diagnostics[0].code, 'UNSUPPORTED_DMO_FIELD_CHANGE');
   assert.match(blocked.diagnostics[0].message, /--allow-field-removal/u);
   assert.deepEqual(writes(calls), []);
   // The executor awaits readback; the injected client confirms on the first read.
-  assert.deepEqual(await executeDmo(authored(['Note__c']), client, undefined, allow), {
+  assert.deepEqual(await executeDmo(authored(['Note__c']), client, 'default', allow), {
     outcome: 'updated',
     mutation: 'confirmed-updated',
     removedFields: ['Note__c'],
     diagnostics: [],
   });
   assert.deepEqual(writes(calls), ['remove']);
-  assert.deepEqual(await executeDmo(authored(['Note__c']), client, undefined, allow), {
+  assert.deepEqual(await executeDmo(authored(['Note__c']), client, 'default', allow), {
     outcome: 'unchanged',
     mutation: 'not-attempted',
     diagnostics: [],
@@ -506,7 +542,7 @@ test('an unconfirmed removal fails with DMO_FIELD_REMOVAL_FAILED, safe problem t
     const { calls, client } = recording({ removeFields: transport.removeFields });
     const saved = authored(['Note__c']);
     saved.spec.label = 'Changed';
-    const outcome = await executeDmo(saved, client, undefined, allow);
+    const outcome = await executeDmo(saved, client, 'default', allow);
     assert.equal(outcome.outcome, 'failed');
     assert.equal(outcome.mutation, 'unknown');
     assert.equal(outcome.diagnostics.length, 1);
@@ -541,7 +577,7 @@ test('problem texts are bounded to three safe entries', async () => {
     }),
   }));
   const { client } = recording({ removeFields: transport.removeFields });
-  const outcome = await executeDmo(authored(['Note__c']), client, undefined, allow);
+  const outcome = await executeDmo(authored(['Note__c']), client, 'default', allow);
   const { message } = outcome.diagnostics[0];
   assert.ok(message.includes('Field Three is still in use by a mapping.'));
   assert.ok(!message.includes('Field Four'));
@@ -553,7 +589,7 @@ test('a planned removal is checked before the PATCH, so a refused removal writes
   const { calls, client } = recording();
   const order = [];
   await assert.rejects(
-    deployNativeDmo(saved, client, undefined, fast, {
+    deployNativeDmo(saved, client, 'default', fast, {
       ...allow,
       precheckRemoval: async (target, fields, coverage) => {
         order.push(['precheck', target, fields, coverage]);

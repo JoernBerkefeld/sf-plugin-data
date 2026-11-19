@@ -207,13 +207,16 @@ function world({
  * @returns {object} Portable document under a source-side name.
  */
 const file = (pairs, source = DLO) =>
-  normalizeNativeMapping({
-    developerName: 'AuthoredElsewhere_1',
-    sourceEntityDeveloperName: source,
-    targetEntityDeveloperName: DMO,
-    status: 'ACTIVE',
-    fieldMappings: pairs.map((value) => pair(value)),
-  });
+  normalizeNativeMapping(
+    {
+      developerName: 'AuthoredElsewhere_1',
+      sourceEntityDeveloperName: source,
+      targetEntityDeveloperName: DMO,
+      status: 'ACTIVE',
+      fieldMappings: pairs.map((value) => pair(value)),
+    },
+    'default',
+  );
 const complete = [...authoredPairs, ...generatedPairs];
 const liveBody = {
   sourceEntityDeveloperName: DLO,
@@ -234,7 +237,7 @@ for (const systemType of ['Standard', 'System'])
       const org = world({ systemType });
       const input = file(authored === 'two authored pairs' ? authoredPairs : complete);
       const before = structuredClone(input);
-      const preview = await preflightMapping(input, org.mapping, org.deps);
+      const preview = await preflightMapping(input, org.mapping, org.deps, 'default');
       assert.equal(preview.outcome, 'create');
       assert.deepEqual(
         preview.plan,
@@ -242,14 +245,14 @@ for (const systemType of ['Standard', 'System'])
       );
       notice(preview.diagnostics);
       assert.deepEqual(org.writes, []);
-      const result = await executeMapping(input, org.mapping, org.deps);
+      const result = await executeMapping(input, org.mapping, org.deps, undefined, 'default');
       assert.equal(result.outcome, 'created');
       assert.equal(result.mutation, 'confirmed-created');
       notice(result.diagnostics);
       assert.deepEqual(org.writes, [['mapping:create', liveBody]]);
       assert.deepEqual(input, before);
       // The generated pairs come back and the same file, retrieved, deploys as unchanged.
-      const retrieved = normalizeNativeMapping(await org.mapping.get(NAME));
+      const retrieved = normalizeNativeMapping(await org.mapping.get(NAME), 'default');
       assert.deepEqual(
         retrieved.spec.fieldMappings.map((item) => [
           item.sourceFieldDeveloperName,
@@ -257,24 +260,27 @@ for (const systemType of ['Standard', 'System'])
         ]),
         complete,
       );
-      const again = await preflightMapping(retrieved, org.mapping, org.deps);
+      const again = await preflightMapping(retrieved, org.mapping, org.deps, 'default');
       assert.equal(again.outcome, 'unchanged');
       assert.deepEqual(again.diagnostics, []);
-      assert.deepEqual(await executeMapping(retrieved, org.mapping, org.deps), {
-        outcome: 'unchanged',
-        mutation: 'not-attempted',
-        diagnostics: [],
-      });
+      assert.deepEqual(
+        await executeMapping(retrieved, org.mapping, org.deps, undefined, 'default'),
+        {
+          outcome: 'unchanged',
+          mutation: 'not-attempted',
+          diagnostics: [],
+        },
+      );
       assert.equal(org.writes.length, 1);
     });
 
 test('no activation notice when the standard DMO is already enabled', async () => {
   // Activated by an earlier mapping that no longer exists: enabled, key qualifier present.
   const org = world({ active: true });
-  const preview = await preflightMapping(file(complete), org.mapping, org.deps);
+  const preview = await preflightMapping(file(complete), org.mapping, org.deps, 'default');
   assert.equal(preview.outcome, 'create');
   assert.deepEqual(preview.diagnostics, []);
-  const result = await executeMapping(file(complete), org.mapping, org.deps);
+  const result = await executeMapping(file(complete), org.mapping, org.deps, undefined, 'default');
   assert.deepEqual(result, {
     outcome: 'created',
     mutation: 'confirmed-created',
@@ -289,18 +295,23 @@ test('no activation notice when the standard DMO is already enabled', async () =
     assert.equal(isEnabled, false);
     return rest;
   };
-  const plan = await preflightNativeMapping(file(authoredPairs), unread.mapping, unread.deps);
+  const plan = await preflightNativeMapping(
+    file(authoredPairs),
+    unread.mapping,
+    unread.deps,
+    'default',
+  );
   assert.equal(plan.activatesStandardDmo, true);
 });
 
 test('standard target update adds a pair for a custom field with one names-only PATCH', async () => {
   const org = world({ mappings: [{ name: NAME, source: DLO, pairs: complete }] });
   const input = file([...complete, notePair]);
-  const preview = await preflightMapping(input, org.mapping, org.deps);
+  const preview = await preflightMapping(input, org.mapping, org.deps, 'default');
   assert.equal(preview.outcome, 'update');
   assert.deepEqual(preview.diagnostics, []);
   assert.deepEqual(preview.plan, [{ operation: 'add', apiName: NAME, ...names(notePair) }]);
-  const result = await executeMapping(input, org.mapping, org.deps);
+  const result = await executeMapping(input, org.mapping, org.deps, undefined, 'default');
   assert.deepEqual(result, {
     outcome: 'updated',
     mutation: 'confirmed-updated',
@@ -326,14 +337,20 @@ for (const systemType of ['Standard', 'System'])
       systemType,
       mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }],
     });
-    const plan = await preflightNativeMapping(file(complete), org.mapping, org.deps);
+    const plan = await preflightNativeMapping(file(complete), org.mapping, org.deps, 'default');
     assert.equal(plan.operation, 'update');
     assert.deepEqual(plan.removals, [pair(notePair)]);
     assert.deepEqual(
       plan.evidence.protectedPairs.map((item) => item.sourceFieldDeveloperName),
       ['Id__c', ...systemSources, 'KQ_Id__c'],
     );
-    const result = await deployNativeMapping(file(complete), org.mapping, org.deps);
+    const result = await deployNativeMapping(
+      file(complete),
+      org.mapping,
+      org.deps,
+      undefined,
+      'default',
+    );
     assert.equal(result.operation, 'update');
     assert.equal(result.document.spec.fieldMappings.length, 6);
     assert.deepEqual(org.writes, [['mapping:unmap', NAME, 'Note__c']]);
@@ -349,21 +366,21 @@ for (const systemType of ['Standard', 'System'])
       mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }],
     });
     const input = file([...complete.filter((value) => value !== namePair), notePair]);
-    const plan = await preflightNativeMapping(input, org.mapping, org.deps);
+    const plan = await preflightNativeMapping(input, org.mapping, org.deps, 'default');
     assert.equal(plan.operation, 'update');
     assert.deepEqual(plan.removals, [pair(namePair)]);
     assert.equal(plan.evidence.protectedPairs.length, 5);
     assert.deepEqual(org.writes, []);
-    const preview = await preflightMapping(input, org.mapping, org.deps);
+    const preview = await preflightMapping(input, org.mapping, org.deps, 'default');
     assert.deepEqual(preview.plan, [{ operation: 'unmap', apiName: NAME, ...pair(namePair) }]);
-    const result = await executeMapping(input, org.mapping, org.deps);
+    const result = await executeMapping(input, org.mapping, org.deps, undefined, 'default');
     assert.deepEqual(result, {
       outcome: 'updated',
       mutation: 'confirmed-updated',
       diagnostics: [],
     });
     assert.deepEqual(org.writes, [['mapping:unmap', NAME, 'ssot__Name__c']]);
-    const after = normalizeNativeMapping(await org.mapping.get(NAME));
+    const after = normalizeNativeMapping(await org.mapping.get(NAME), 'default');
     assert.deepEqual(
       after.spec.fieldMappings.map((item) => item.sourceFieldDeveloperName).toSorted(),
       ['Id__c', 'Note__c', ...systemSources, 'KQ_Id__c'].toSorted(),
@@ -372,7 +389,7 @@ for (const systemType of ['Standard', 'System'])
       !('isMapped' in org.readDmo().fields.find((entry) => entry.name === 'ssot__Name__c')),
     );
     // The same file is unchanged afterwards.
-    const again = await preflightMapping(input, org.mapping, org.deps);
+    const again = await preflightMapping(input, org.mapping, org.deps, 'default');
     assert.equal(again.outcome, 'unchanged');
   });
 
@@ -384,12 +401,12 @@ test('standard target keeps the protected-pair refusal and sends authored create
     const input = file(complete.filter(([source]) => source !== omitted));
     if (omitted === 'Id__c')
       await assert.rejects(
-        preflightNativeMapping(input, org.mapping, org.deps),
+        preflightNativeMapping(input, org.mapping, org.deps, 'default'),
         (error) => error.code === 'MAPPING_PROTECTED_PAIR_REQUIRED',
         omitted,
       );
     else {
-      const plan = await preflightNativeMapping(input, org.mapping, org.deps);
+      const plan = await preflightNativeMapping(input, org.mapping, org.deps, 'default');
       assert.equal(plan.operation, 'update', omitted);
       assert.deepEqual(plan.removals, [pair(notePair)], omitted);
       assert.equal(plan.evidence.protectedPairs.length, 5, omitted);
@@ -402,6 +419,7 @@ test('standard target keeps the protected-pair refusal and sends authored create
     file([...authoredPairs, ['Extra__c', 'ssot__DataSourceId__c']]),
     unknown.mapping,
     unknown.deps,
+    'default',
   );
   assert.equal(created.operation, 'create');
   assert.deepEqual(created.writes[0].body.fieldMapping.at(-1), {
@@ -417,7 +435,7 @@ test('standard target keeps the protected-pair refusal and sends authored create
     return { ...raw, fields: raw.fields.filter((entry) => entry.name !== 'KQ_Id__c') };
   };
   await assert.rejects(
-    preflightNativeMapping(file(complete), active.mapping, active.deps),
+    preflightNativeMapping(file(complete), active.mapping, active.deps, 'default'),
     (error) => error.code === 'MAPPING_FIELD_NOT_FOUND',
   );
 });
@@ -433,7 +451,7 @@ for (const systemType of ['Standard', 'System'])
       authoredPairs.map((value) => names(value)),
     );
     const before = structuredClone(input);
-    const plan = await preflightNativeMapping(input, org.mapping, org.deps);
+    const plan = await preflightNativeMapping(input, org.mapping, org.deps, 'default');
     assert.equal(plan.operation, 'noop');
     assert.deepEqual(plan.writes, []);
     assert.deepEqual(plan.desired.spec.fieldMappings, [
@@ -441,10 +459,10 @@ for (const systemType of ['Standard', 'System'])
       ...generatedPairs.map((value) => pair(value)),
     ]);
     assert.deepEqual(input, before);
-    const preview = await preflightMapping(input, org.mapping, org.deps);
+    const preview = await preflightMapping(input, org.mapping, org.deps, 'default');
     assert.equal(preview.outcome, 'unchanged');
     assert.deepEqual(preview.diagnostics, []);
-    assert.deepEqual(await executeMapping(input, org.mapping, org.deps), {
+    assert.deepEqual(await executeMapping(input, org.mapping, org.deps, undefined, 'default'), {
       outcome: 'unchanged',
       mutation: 'not-attempted',
       diagnostics: [],
@@ -460,14 +478,20 @@ test('a mapping onto a generated, namespaced or untyped DMO is sent and Salesfor
     const read = org.dmo.get;
     org.dmo.get = async (name) => ({ ...(await read(name)), creationType });
     // Only a standard DMO carries the activation notice.
-    const preview = await preflightMapping(file(authoredPairs), org.mapping, org.deps);
+    const preview = await preflightMapping(file(authoredPairs), org.mapping, org.deps, 'default');
     assert.equal(preview.outcome, 'create', String(creationType));
     assert.deepEqual(preview.diagnostics, []);
     org.mapping.create = async (body) => {
       org.writes.push(['mapping:create', body]);
       throw new NativeMappingError('MAPPING_HTTP_ERROR', 400);
     };
-    const refused = await executeMapping(file(authoredPairs), org.mapping, org.deps);
+    const refused = await executeMapping(
+      file(authoredPairs),
+      org.mapping,
+      org.deps,
+      undefined,
+      'default',
+    );
     assert.equal(refused.outcome, 'failed', String(creationType));
     assert.equal(refused.mutation, 'rejected');
     assert.equal(refused.diagnostics[0].code, 'MAPPING_HTTP_ERROR');
@@ -488,14 +512,14 @@ test('the last mapping of a standard DMO is deleted with one removal', async () 
       return list(...arguments_);
     };
     const fieldNames = last.readDmo().fields.map((entry) => entry.name);
-    const plan = await preflightDeleteNativeMapping(NAME, last.mapping, last.deps);
+    const plan = await preflightDeleteNativeMapping(NAME, last.mapping, last.deps, 'default');
     assert.deepEqual(plan, {
-      selected: normalizeNativeMapping(await last.mapping.get(NAME)),
+      selected: normalizeNativeMapping(await last.mapping.get(NAME), 'default'),
       others: [],
       targetFields: fieldNames.toSorted(),
     });
     assert.deepEqual(last.writes, []);
-    assert.deepEqual(await deleteNativeMapping(NAME, last.mapping, last.deps, undefined, settle), {
+    assert.deepEqual(await deleteNativeMapping(NAME, last.mapping, last.deps, 'default', settle), {
       apiName: NAME,
     });
     assert.deepEqual(last.writes, [['mapping:remove', NAME]]);
@@ -517,12 +541,12 @@ test('standard target mapping delete keeps the other mapping and needs no pair q
       { name: other, source: 'Other__dll', pairs: complete },
     ],
   });
-  const plan = await preflightDeleteNativeMapping(NAME, org.mapping, org.deps);
-  assert.deepEqual(plan.others, [normalizeNativeMapping(await org.mapping.get(other))]);
+  const plan = await preflightDeleteNativeMapping(NAME, org.mapping, org.deps, 'default');
+  assert.deepEqual(plan.others, [normalizeNativeMapping(await org.mapping.get(other), 'default')]);
   assert.ok(!('removals' in plan));
   assert.deepEqual(org.writes, []);
   assert.deepEqual(
-    await deleteNativeMapping(NAME, org.mapping, org.deps, undefined, {
+    await deleteNativeMapping(NAME, org.mapping, org.deps, 'default', {
       attempts: 1,
       delayMs: 0,
       sleep: async () => {},
@@ -547,7 +571,7 @@ test('standard target mapping delete keeps the other mapping and needs no pair q
     drift.state.mappings[0].fieldMappings.pop();
   };
   await assert.rejects(
-    deleteNativeMapping(NAME, drift.mapping, drift.deps, undefined, {
+    deleteNativeMapping(NAME, drift.mapping, drift.deps, 'default', {
       attempts: 1,
       delayMs: 0,
       sleep: async () => {},
@@ -559,14 +583,14 @@ test('standard target mapping delete keeps the other mapping and needs no pair q
 
 test('one command removes a custom field of a standard DMO and Salesforce drops its pair', async () => {
   const org = world({ mappings: [{ name: NAME, source: DLO, pairs: [...complete, notePair] }] });
-  const dmoFile = normalizeNativeDmo(org.readDmo());
+  const dmoFile = normalizeNativeDmo(org.readDmo(), 'default');
   dmoFile.spec.fields = dmoFile.spec.fields
     .filter((entry) => entry.name !== 'Note__c')
     .map(({ isMapped, ...entry }) => {
       assert.ok(isMapped === undefined || isMapped === true);
       return entry;
     });
-  const mappingFile = normalizeNativeMapping(await org.mapping.get(NAME));
+  const mappingFile = normalizeNativeMapping(await org.mapping.get(NAME), 'default');
   mappingFile.spec.fieldMappings = mappingFile.spec.fieldMappings.filter(
     (item) => item.targetFieldDeveloperName !== 'Note__c',
   );

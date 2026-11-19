@@ -91,7 +91,8 @@ test('an explicitly selected DMO precedes its Segments in either selector order 
     assert.deepEqual(selected[1].document, {
       schemaVersion: 1,
       kind: 'dmo',
-      identity: { apiName: 'Person__dlm', dataSpace: 'default' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'Person__dlm' },
       spec: {
         label: 'Person__dlm',
         category: 'Other',

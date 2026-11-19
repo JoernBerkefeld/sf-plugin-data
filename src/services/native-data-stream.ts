@@ -1947,6 +1947,9 @@ async function preflightUnmodelledDataStreamDelete(
   // the run's data space (default for streams) alone, read from the DLO itself.
   if (options.deleteDlo) {
     const wrapper = object(await clients.dlo.get(dloName));
+    // A wrapped read must hold exactly the one DLO; another count says nothing about its spaces.
+    if (Array.isArray(wrapper.dataLakeObjects) && wrapper.dataLakeObjects.length !== 1)
+      throw new DataStreamError('INVALID_STREAM_DLO');
     const dlo = Array.isArray(wrapper.dataLakeObjects)
       ? object(wrapper.dataLakeObjects[0])
       : wrapper;

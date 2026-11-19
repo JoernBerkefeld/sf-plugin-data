@@ -25,6 +25,13 @@ const pageSize = 50;
 const pageLimit = 40;
 
 /**
+ * One data space of the org: its name and, for every space but `default`, the prefix Salesforce
+ * gives the copies of standard DMOs in it (`ds2` for `ds2_Individual__dlm`). Only this route
+ * names the prefix (live API 68, DB entry data360:dataspace-name-spelling-api68).
+ */
+export type OrgDataSpace = { name: string; prefix?: string };
+
+/**
  * Read the names of every data space of the org with `GET /ssot/data-spaces`, page by page
  * (`batchSize` and `offset`) until `totalSize` names are read. Anything else is not a complete
  * list: DATASPACE_READ_FAILED. A failure to open the sender (no target org) is thrown as it is.
@@ -32,8 +39,19 @@ const pageLimit = 40;
  * @returns {Promise<string[]>} Data space names.
  */
 export async function readOrgDataSpaces(open: DataSpaceSender): Promise<string[]> {
+  const entries = await readOrgDataSpaceEntries(open);
+  return entries.map((entry) => entry.name);
+}
+
+/**
+ * Read every data space of the org as readOrgDataSpaces does, keeping each one's prefix when it
+ * names a usable one (letters and digits).
+ * @param {DataSpaceSender} open Opens the command's shared bound sender.
+ * @returns {Promise<OrgDataSpace[]>} Data spaces.
+ */
+export async function readOrgDataSpaceEntries(open: DataSpaceSender): Promise<OrgDataSpace[]> {
   const sender = await open();
-  const names: string[] = [];
+  const names: OrgDataSpace[] = [];
   for (let page = 0; page < pageLimit; page++) {
     let response: unknown;
     try {
@@ -61,9 +79,13 @@ export async function readOrgDataSpaces(open: DataSpaceSender): Promise<string[]
     )
       throw new DataSpaceError('DATASPACE_READ_FAILED');
     for (const entry of entries) {
-      const name = (entry as { name?: unknown } | null)?.name;
+      const { name, prefix } = (entry ?? {}) as { name?: unknown; prefix?: unknown };
       if (!isDataSpaceName(name)) throw new DataSpaceError('DATASPACE_READ_FAILED');
-      names.push(name);
+      names.push(
+        typeof prefix === 'string' && /^[A-Za-z][A-Za-z0-9]{0,39}$/u.test(prefix)
+          ? { name, prefix }
+          : { name },
+      );
     }
     if (names.length === total) return names;
     if (entries.length === 0) break;
@@ -71,8 +93,13 @@ export async function readOrgDataSpaces(open: DataSpaceSender): Promise<string[]
   throw new DataSpaceError('DATASPACE_READ_FAILED');
 }
 
-/** Reads the org's data spaces; tests replace `read` with an offline fake. */
-export const dataSpaceDirectory = { read: readOrgDataSpaces };
+/**
+ * Reads the org's data spaces; tests replace `read` with an offline fake, which may answer plain
+ * names (no prefixes).
+ */
+export const dataSpaceDirectory: {
+  read: (open: DataSpaceSender) => Promise<Array<string | OrgDataSpace>>;
+} = { read: readOrgDataSpaceEntries };
 
 /**
  * The code a command reports when its data space check stops it: the check's own code, otherwise
@@ -110,7 +137,7 @@ export function dataSpaceCheckOf(run: object, sender: DataSpaceSender): DataSpac
  * reused for every item and type the command carries.
  */
 export class DataSpaceCheck {
-  private known?: Promise<string[]>;
+  private known?: Promise<OrgDataSpace[]>;
 
   /**
    * @param {DataSpaceSender} sender Opens the command's shared bound sender on first use.
@@ -123,8 +150,8 @@ export class DataSpaceCheck {
    * @returns {Promise<void>} Resolves when every one exists.
    */
   public async require(spaces: Iterable<string>): Promise<void> {
-    this.known ??= dataSpaceDirectory.read(this.sender);
-    const known = await this.known;
+    const entries = await this.spaces();
+    const known = entries.map((entry) => entry.name);
     const unknown = sortedDataSpaces([...spaces].filter((space) => !known.includes(space)));
     if (unknown.length > 0)
       throw explainInput(
@@ -135,5 +162,28 @@ export class DataSpaceCheck {
           .map((space) => printableKey(space))
           .join(', ')}.`,
       );
+  }
+
+  /**
+   * The prefix of a data space as the org's list names it (the same single read).
+   * @param {string} space Data space name.
+   * @returns {Promise<string | undefined>} Its prefix, or undefined when the list names none.
+   */
+  public async prefixOf(space: string): Promise<string | undefined> {
+    const entries = await this.spaces();
+    return entries.find((entry) => entry.name === space)?.prefix;
+  }
+
+  /**
+   * The org's data spaces, read once.
+   * @returns {Promise<OrgDataSpace[]>} Data spaces.
+   */
+  private async spaces(): Promise<OrgDataSpace[]> {
+    this.known ??= dataSpaceDirectory
+      .read(this.sender)
+      .then((entries) =>
+        entries.map((entry) => (typeof entry === 'string' ? { name: entry } : entry)),
+      );
+    return this.known;
   }
 }

@@ -73,7 +73,7 @@ async function wire(method, response, operation, body) {
   const refresh = { refresh: () => assert.fail('refresh must never run') };
   connection._refreshDelegate = refresh;
   const sender = openBoundSsot('target', '68.0', async () => connection);
-  const client = createMappingClient('target', '68.0', runner, undefined, sender);
+  const client = createMappingClient('target', '68.0', runner, 'default', sender);
   try {
     const outcome = await operation(client).then(
       (value) => ({ value }),
@@ -112,11 +112,12 @@ test('bound mapping GET returns the parsed object on the exact routes', async ()
   const item = { developerName: name, fieldMappings: [] };
   const got = await wire('GET', 200, operations.get.run, JSON.stringify(item));
   assert.deepEqual(got.outcome, { value: item });
-  assert.deepEqual(got.paths, [`${endpoint}/${name}`]);
+  // Every mapping request names the run's data space, default too.
+  assert.deepEqual(got.paths, [`${endpoint}/${name}?dataspace=default`]);
   const listed = await wire('GET', 200, operations.list.run, JSON.stringify({ items: [] }));
   assert.deepEqual(listed.outcome, { value: { items: [] } });
   assert.deepEqual(listed.paths, [
-    `${endpoint}?dmoDeveloperName=Target__dlm&dloDeveloperName=Source__dll`,
+    `${endpoint}?dataspace=default&dmoDeveloperName=Target__dlm&dloDeveloperName=Source__dll`,
   ]);
 });
 
@@ -131,7 +132,9 @@ test('bound mapping GET rejects array bodies and HTTP 204', async () => {
 test('bound mapping field DELETE accepts documented 200 and observed 204 on the exact route', async () => {
   const field = await wire('DELETE', 204, operations.deleteField.run);
   assert.deepEqual(field.outcome, { value: undefined });
-  assert.deepEqual(field.paths, [`${endpoint}/${name}/field-mappings/observed_selector_123`]);
+  assert.deepEqual(field.paths, [
+    `${endpoint}/${name}/field-mappings/observed_selector_123?dataspace=default`,
+  ]);
   const documented = await wire('DELETE', 200, operations.deleteField.run, '{}');
   assert.equal(documented.attempts, 1);
   assert.deepEqual(documented.outcome, { value: undefined });
@@ -238,7 +241,7 @@ test('mapping removal transport sends one argument-array Metadata destructive de
       runs.push({ arguments_, cwd });
       return deployed([member()]);
     },
-    undefined,
+    'default',
     sender,
   );
   assert.equal(await client.remove(name), undefined);
@@ -288,10 +291,15 @@ test('mapping removal transport sends one argument-array Metadata destructive de
   // The manifest version follows the client's native API version; a lone success entry may
   // arrive as an object instead of an array.
   const pinned = [];
-  await createMappingClient('target', '65.0', async (_arguments, root) => {
-    pinned.push(root);
-    return deployed(member());
-  }).remove(name);
+  await createMappingClient(
+    'target',
+    '65.0',
+    async (_arguments, root) => {
+      pinned.push(root);
+      return deployed(member());
+    },
+    'default',
+  ).remove(name);
   for (const manifest of ['package.xml', 'destructiveChanges.xml'])
     assert.match(
       await readFile(path.join(pinned[0], manifest), 'utf8'),
@@ -301,10 +309,15 @@ test('mapping removal transport sends one argument-array Metadata destructive de
 
 test('mapping removal transport rejects invalid names before any file or CLI call', async () => {
   let runs = 0;
-  const client = createMappingClient('target', '68.0', async () => {
-    runs++;
-    return deployed([member()]);
-  });
+  const client = createMappingClient(
+    'target',
+    '68.0',
+    async () => {
+      runs++;
+      return deployed([member()]);
+    },
+    'default',
+  );
   const before = await scratchCount();
   for (const invalid of [
     '',
@@ -354,10 +367,15 @@ test('an unconfirmed mapping removal fails with MAPPING_DELETE_FAILED, safe prob
     [{ exitCode: 0, stdout: '[]' }, []],
   ]) {
     let runs = 0;
-    const transport = createMappingClient('target', '68.0', async () => {
-      runs++;
-      return receipt;
-    });
+    const transport = createMappingClient(
+      'target',
+      '68.0',
+      async () => {
+        runs++;
+        return receipt;
+      },
+      'default',
+    );
     await assert.rejects(
       transport.remove(name),
       (error) => {
@@ -405,10 +423,15 @@ test('mapping delete command reports a failed removal once, as unknown, with the
     },
     delete: async () => assert.fail('no REST DELETE'),
     deleteField: async () => assert.fail('no unmap'),
-    remove: createMappingClient(target, version, async () => {
-      runs++;
-      return failure([{ fullName: name, componentType: memberType, problem }]);
-    }).remove,
+    remove: createMappingClient(
+      target,
+      version,
+      async () => {
+        runs++;
+        return failure([{ fullName: name, componentType: memberType, problem }]);
+      },
+      'default',
+    ).remove,
   });
   command.createDloNativeDeleteClient = () => ({ get: async () => assert.fail('no DLO read') });
   command.createDmoNativeDeleteClient = () => ({

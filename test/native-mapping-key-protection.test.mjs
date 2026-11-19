@@ -41,7 +41,7 @@ const raw = (pairs = [...authored, ...generated]) => ({
  * @returns {object} Mapping document.
  */
 const file = (pairs) => {
-  const document = normalizeNativeMapping(raw(pairs));
+  const document = normalizeNativeMapping(raw(pairs), 'default');
   document.identity.apiName = 'SourceGenerated_456';
   for (const field of document.spec.fieldMappings) delete field.developerName;
   return document;
@@ -157,15 +157,21 @@ test('a Number key pair with other names is never unmapped when the file drops a
   // The file omits the key pair: refused before any write.
   const omitted = world();
   await assert.rejects(
-    preflightNativeMapping(file([renamedPair]), omitted.client, omitted.deps),
+    preflightNativeMapping(file([renamedPair]), omitted.client, omitted.deps, 'default'),
     (error) => error.code === 'MAPPING_PROTECTED_PAIR_REQUIRED',
   );
-  const blocked = await executeMapping(file([renamedPair]), omitted.client, omitted.deps);
+  const blocked = await executeMapping(
+    file([renamedPair]),
+    omitted.client,
+    omitted.deps,
+    undefined,
+    'default',
+  );
   assert.equal(blocked.mutation, 'not-attempted');
   assert.deepEqual(omitted.writes, []);
   // Keeping only the key pair removes every other authored pair and nothing protected.
   const kept = world();
-  const plan = await preflightNativeMapping(file([keyPair]), kept.client, kept.deps);
+  const plan = await preflightNativeMapping(file([keyPair]), kept.client, kept.deps, 'default');
   assert.deepEqual(
     plan.removals,
     [numberPair, renamedPair, textPair].map((value) => pair(value)),
@@ -174,7 +180,13 @@ test('a Number key pair with other names is never unmapped when the file drops a
     plan.evidence.protectedPairs,
     [keyPair, ...generated].map((value) => pair(value)),
   );
-  const result = await deployNativeMapping(file([keyPair]), kept.client, kept.deps);
+  const result = await deployNativeMapping(
+    file([keyPair]),
+    kept.client,
+    kept.deps,
+    undefined,
+    'default',
+  );
   assert.equal(result.operation, 'update');
   assert.deepEqual(
     kept.writes,
@@ -197,10 +209,16 @@ for (const [label, options] of [
   test(`removals refuse with an unproven layout before any write when ${label}`, async () => {
     const f = world(options);
     await assert.rejects(
-      preflightNativeMapping(file([keyPair, numberPair]), f.client, f.deps),
+      preflightNativeMapping(file([keyPair, numberPair]), f.client, f.deps, 'default'),
       (error) => error.code === 'MAPPING_PROTECTED_LAYOUT_UNPROVEN',
     );
-    const result = await executeMapping(file([keyPair, numberPair]), f.client, f.deps);
+    const result = await executeMapping(
+      file([keyPair, numberPair]),
+      f.client,
+      f.deps,
+      undefined,
+      'default',
+    );
     assert.equal(result.outcome, 'blocked');
     assert.equal(result.mutation, 'not-attempted');
     assert.deepEqual(f.writes, []);
@@ -208,15 +226,21 @@ for (const [label, options] of [
 
 test('a retrieved mapping with Number, renamed and shared-source pairs round-trips as noop', async () => {
   const f = world();
-  const retrieved = await retrieveNativeMapping(MAPPING, f.client);
-  const plan = await preflightNativeMapping(retrieved, f.client, f.deps);
+  const retrieved = await retrieveNativeMapping(MAPPING, f.client, 'default');
+  const plan = await preflightNativeMapping(retrieved, f.client, f.deps, 'default');
   assert.equal(plan.operation, 'noop');
-  const result = await deployNativeMapping(retrieved, f.client, f.deps);
+  const result = await deployNativeMapping(retrieved, f.client, f.deps, undefined, 'default');
   assert.equal(result.operation, 'noop');
   // The hand-written form of the same file is a noop as well.
-  const handWritten = await deployNativeMapping(file(authored), f.client, f.deps);
+  const handWritten = await deployNativeMapping(
+    file(authored),
+    f.client,
+    f.deps,
+    undefined,
+    'default',
+  );
   assert.equal(handWritten.operation, 'noop');
-  const preview = await preflightMapping(retrieved, f.client, f.deps);
+  const preview = await preflightMapping(retrieved, f.client, f.deps, 'default');
   assert.equal(preview.outcome, 'unchanged');
   assert.deepEqual(preview.diagnostics, [
     {
@@ -231,7 +255,7 @@ test('a retrieved mapping with Number, renamed and shared-source pairs round-tri
 test('create with a Number pair and a renamed pair sends one POST without the generated pairs', async () => {
   const f = world({ absent: true });
   const input = file([...authored, ...generated]);
-  const result = await deployNativeMapping(input, f.client, f.deps);
+  const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(result.operation, 'create');
   assert.deepEqual(f.writes, [
     [
@@ -251,7 +275,7 @@ for (const apiVersion of ['61.0', '64.0'])
     const f = world();
     f.client.apiVersion = apiVersion;
     const input = file(authored.filter((value) => value !== renamedPair));
-    const result = await deployNativeMapping(input, f.client, f.deps);
+    const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
     assert.equal(result.operation, 'update');
     assert.deepEqual(f.writes, [['unmap', MAPPING, pair(renamedPair).developerName]]);
     assert.ok(
@@ -278,7 +302,12 @@ test('an unrecognised system or key-qualifier pair is never unmapped by a deploy
       return schema;
     };
     await assert.rejects(
-      preflightNativeMapping(file([keyPair, numberPair, renamedPair, textPair]), f.client, f.deps),
+      preflightNativeMapping(
+        file([keyPair, numberPair, renamedPair, textPair]),
+        f.client,
+        f.deps,
+        'default',
+      ),
       (error) => error.code === 'MAPPING_PROTECTED_LAYOUT_UNPROVEN',
     );
     assert.deepEqual(f.writes, []);

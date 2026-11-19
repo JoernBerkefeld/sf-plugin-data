@@ -155,15 +155,23 @@ const standardDmo = () => ({
 });
 
 test('custom DMO retrieve leaves out generated fields and the lean file deploys unchanged', async () => {
-  const document = await retrieveNativeDmo('Target__dlm', { get: async () => customDmo() });
+  const document = await retrieveNativeDmo(
+    'Target__dlm',
+    { get: async () => customDmo() },
+    'default',
+  );
   const saved = await roundTrip(writeNativeDmoDocument, document, 'dmo:Target__dlm');
   assert.deepEqual(names(saved.spec.fields), ['Id__c', 'Note__c']);
-  const plan = await preflightNativeDmo(saved, { get: async () => customDmo() });
+  const plan = await preflightNativeDmo(saved, { get: async () => customDmo() }, 'default');
   assert.equal(plan.operation, 'unchanged');
 });
 
 test('standard DMO retrieve keeps standard fields, leaves out System ones, deploys unchanged', async () => {
-  const document = await retrieveNativeDmo('ssot__Brand__dlm', { get: async () => standardDmo() });
+  const document = await retrieveNativeDmo(
+    'ssot__Brand__dlm',
+    { get: async () => standardDmo() },
+    'default',
+  );
   const saved = await roundTrip(writeNativeDmoDocument, document, 'dmo:ssot__Brand__dlm');
   // Standard fields are compared by deploy when listed and keep the definition non-empty.
   // Fields are saved sorted by name.
@@ -175,7 +183,7 @@ test('standard DMO retrieve keeps standard fields, leaves out System ones, deplo
     'ssot__InternalOrganizationId__c',
     'ssot__Name__c',
   ]);
-  const plan = await preflightNativeDmo(saved, { get: async () => standardDmo() });
+  const plan = await preflightNativeDmo(saved, { get: async () => standardDmo() }, 'default');
   assert.equal(plan.operation, 'unchanged');
 });
 
@@ -320,7 +328,7 @@ for (const kind of ['custom', 'standard'])
     const document = await retrieveLeanNativeMapping(
       org.raw.developerName,
       org.client,
-      undefined,
+      'default',
       org.dependencies,
     );
     // Fresh parent reads decide the generated pairs.
@@ -335,7 +343,7 @@ for (const kind of ['custom', 'standard'])
       pairs(saved),
       org.scenario.authored.map(([source, target]) => `${source}->${target}`),
     );
-    const plan = await preflightNativeMapping(saved, org.client, org.dependencies);
+    const plan = await preflightNativeMapping(saved, org.client, org.dependencies, 'default');
     assert.equal(plan.operation, 'noop');
   });
 
@@ -345,7 +353,7 @@ for (const kind of ['standardRelationship', 'customRelationship'])
     const document = await retrieveLeanNativeMapping(
       org.raw.developerName,
       org.client,
-      undefined,
+      'default',
       org.dependencies,
     );
     // Retrieve leaves KQ_RefId__c -> KQ_Name__c out with the other generated pairs.
@@ -357,7 +365,7 @@ for (const kind of ['standardRelationship', 'customRelationship'])
       sourceFieldDeveloperName: source,
       targetFieldDeveloperName: target,
     }));
-    const plan = await preflightNativeMapping(handWritten, org.client, org.dependencies);
+    const plan = await preflightNativeMapping(handWritten, org.client, org.dependencies, 'default');
     assert.equal(plan.operation, 'noop');
     // A KQ pair whose base field is not mapped onto the naming field stays authored.
     const unrelated = {
@@ -380,7 +388,7 @@ test('retrieve and deploy share one generated-pair predicate', async () => {
     const retrieved = await retrieveLeanNativeMapping(
       org.raw.developerName,
       org.client,
-      undefined,
+      'default',
       org.dependencies,
     );
     const generated = await generatedMappingPairs(
@@ -396,6 +404,7 @@ test('retrieve and deploy share one generated-pair predicate', async () => {
     const target = await retrieveNativeDmo(
       org.raw.targetEntityDeveloperName,
       org.dependencies.target,
+      'default',
     );
     const context = {
       sources: new Map(
@@ -418,7 +427,7 @@ test('retrieve and deploy share one generated-pair predicate', async () => {
     lean.spec.fieldMappings = lean.spec.fieldMappings.filter(
       (value) => value.sourceFieldDeveloperName !== 'Note__c',
     );
-    const plan = await preflightNativeMapping(lean, org.client, org.dependencies);
+    const plan = await preflightNativeMapping(lean, org.client, org.dependencies, 'default');
     assert.deepEqual(
       plan.removals.map((value) => value.sourceFieldDeveloperName),
       ['Note__c'],
@@ -443,7 +452,7 @@ for (const failure of ['source', 'target', 'missing'])
             },
           };
     await assert.rejects(
-      retrieveLeanNativeMapping(org.raw.developerName, org.client, undefined, dependencies),
+      retrieveLeanNativeMapping(org.raw.developerName, org.client, 'default', dependencies),
       (error) =>
         error instanceof NativeMappingError &&
         error.code === 'MAPPING_GENERATED_PAIRS_UNPROVEN' &&
@@ -459,7 +468,7 @@ for (const failure of ['source', 'target', 'missing'])
 async function retrieveOnto(creationType) {
   const org = mappingOrg('custom');
   org.dependencies.target.get = async () => ({ ...customDmo(), creationType });
-  return retrieveLeanNativeMapping(org.raw.developerName, org.client, undefined, org.dependencies);
+  return retrieveLeanNativeMapping(org.raw.developerName, org.client, 'default', org.dependencies);
 }
 
 test('a mapping onto a generated DMO keeps the pairs the standard-scope rule keeps', async () => {

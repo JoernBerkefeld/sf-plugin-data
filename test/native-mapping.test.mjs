@@ -37,7 +37,7 @@ const native = () => ({
   status: 'ACTIVE',
   id: 'source-runtime-id',
 });
-const document = () => normalizeNativeMapping(native());
+const document = () => normalizeNativeMapping(native(), 'default');
 const body = () => ({
   sourceEntityDeveloperName: 'Example__dll',
   targetEntityDeveloperName: 'Example__dlm',
@@ -66,15 +66,20 @@ test('mapping save retains generated KQ/system pairs and observed selectors, not
   saved.spec.fieldMappings[0].sourceFieldDeveloperName = 'Different__c';
   assert.deepEqual(raw, before);
   assert.deepEqual(unwrapNativeMapping(raw), raw);
-  assert.deepEqual(unwrapNativeMappingCollection({ objectSourceTargetMaps: [raw] }), [raw]);
-  assert.deepEqual(unwrapNativeMappingCollection({ objectSourceTargetMaps: [] }), []);
+  assert.deepEqual(unwrapNativeMappingCollection({ objectSourceTargetMaps: [raw] }, 'default'), [
+    raw,
+  ]);
+  assert.deepEqual(unwrapNativeMappingCollection({ objectSourceTargetMaps: [] }, 'default'), []);
   assert.throws(() => unwrapNativeMapping({ objectSourceTargetMaps: [raw] }), /RESPONSE/);
-  assert.throws(() => unwrapNativeMappingCollection([raw]), /DOCUMENT/);
-  assert.throws(() => unwrapNativeMappingCollection({ fieldMappings: [] }), /RESPONSE/);
-  assert.throws(() => unwrapNativeMappingCollection({ objectSourceTargetMaps: [{}] }), /RESPONSE/);
-  assert.equal(normalizeNativeMapping(raw, 'other').identity.dataSpace, 'other');
+  assert.throws(() => unwrapNativeMappingCollection([raw], 'default'), /DOCUMENT/);
+  assert.throws(() => unwrapNativeMappingCollection({ fieldMappings: [] }, 'default'), /RESPONSE/);
+  assert.throws(
+    () => unwrapNativeMappingCollection({ objectSourceTargetMaps: [{}] }, 'default'),
+    /RESPONSE/,
+  );
+  assert.equal(normalizeNativeMapping(raw, 'other').c__dataSpace, 'other');
   assert.equal(
-    normalizeNativeMapping({ ...raw, dataSpaceName: 'other' }, 'other').identity.dataSpace,
+    normalizeNativeMapping({ ...raw, dataSpaceName: 'other' }, 'other').c__dataSpace,
     'other',
   );
   assert.throws(
@@ -88,7 +93,10 @@ test('mapping save retains generated KQ/system pairs and observed selectors, not
     ),
     [{ ...raw, dataSpaceName: 'other' }],
   );
-  assert.throws(() => normalizeNativeMapping({ ...raw, dataSpaceName: 'other' }), /DATASPACE/);
+  assert.throws(
+    () => normalizeNativeMapping({ ...raw, dataSpaceName: 'other' }, 'default'),
+    /DATASPACE/,
+  );
 });
 
 test('mapping validation rejects malformed identities, duplicate pairs/selectors and unsupported shapes', () => {
@@ -96,7 +104,7 @@ test('mapping validation rejects malformed identities, duplicate pairs/selectors
     (d) => (d.identity.apiName = '../escape'),
     (d) => (d.identity.apiName = 'source-id/route'),
     ...['', ' ', ' other', 'other ', 'bad\u0000scope', undefined, 42].map(
-      (scope) => (d) => (d.identity.dataSpace = scope),
+      (scope) => (d) => (d.c__dataSpace = scope),
     ),
     (d) => (d.spec.sourceEntityDeveloperName = 'Example__dlm'),
     (d) => (d.spec.targetEntityDeveloperName = 'Example__dll'),
@@ -142,15 +150,14 @@ test('mapping publication round trips all seven pairs, refuses overwrite, emits 
   const overwritten = await writeNativeMappingDocument(changed, root, true);
   assert.equal(overwritten.outcome, 'retrieved');
   assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), changed);
+  // Mapping names are unique in the org: a file of another data space is the same mapping, so
+  // it is replaced only with overwrite, like any other difference.
   const otherSpace = structuredClone(changed);
-  otherSpace.identity.dataSpace = 'Team / +&?=ü';
-  for (const overwrite of [false, true]) {
-    await assert.rejects(
-      writeNativeMappingDocument(otherSpace, root, overwrite),
-      /DATASPACE_COLLISION/,
-    );
-    assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), changed);
-  }
+  otherSpace.c__dataSpace = 'Team / +&?=ü';
+  await assert.rejects(writeNativeMappingDocument(otherSpace, root, false), /OVERWRITE_REQUIRED/);
+  assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), changed);
+  await writeNativeMappingDocument(otherSpace, root, true);
+  assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), otherSpace);
   const otherRoot = await mkdtemp(path.join(os.tmpdir(), 'mapping-scoped-save-'));
   const scoped = await writeNativeMappingDocument(otherSpace, otherRoot, false);
   assert.deepEqual(JSON.parse(await readFile(scoped.path, 'utf8')), otherSpace);
@@ -196,7 +203,7 @@ const recording = (answer = () => native()) => {
     },
   };
 };
-const client = (version, sender, dataSpace) =>
+const client = (version, sender, dataSpace = 'default') =>
   createMappingClient('target', version, noRunner, dataSpace, sender);
 
 test('mapping transport uses filtered collection, detail, singular input and selector-free PATCH', async () => {
@@ -211,12 +218,18 @@ test('mapping transport uses filtered collection, detail, singular input and sel
   assert.equal(created.status, 'CREATING');
   await mapping.update(mappingName, body());
   const prefix = '/services/data/v65.0/ssot/data-model-object-mappings';
+  // The run's data space is named on every request, default too.
+  const query = '?dataspace=default';
   assert.deepEqual(calls, [
-    ['GET', `${prefix}?dmoDeveloperName=Example__dlm`, undefined],
-    ['GET', `${prefix}?dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`, undefined],
-    ['GET', `${prefix}/${mappingName}`, undefined],
-    ['POST', prefix, body()],
-    ['PATCH', `${prefix}/${mappingName}/field-mappings`, body()],
+    ['GET', `${prefix}${query}&dmoDeveloperName=Example__dlm`, undefined],
+    [
+      'GET',
+      `${prefix}${query}&dmoDeveloperName=Example__dlm&dloDeveloperName=Example__dll`,
+      undefined,
+    ],
+    ['GET', `${prefix}/${mappingName}${query}`, undefined],
+    ['POST', `${prefix}${query}`, body()],
+    ['PATCH', `${prefix}/${mappingName}/field-mappings${query}`, body()],
   ]);
   for (const sent of calls.slice(3).map((call) => call[2])) {
     assert.equal(sent.fieldMappings, undefined);
@@ -259,7 +272,7 @@ test('mapping field DELETE uses exact observed selector once and rejects unsafe 
   assert.deepEqual(calls, [
     [
       'DELETE',
-      `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
+      `/services/data/v68.0/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123?dataspace=default`,
       undefined,
     ],
   ]);
@@ -298,7 +311,7 @@ test('mapping field DELETE preserves every admitted compatibility pin and normal
     assert.deepEqual(calls, [
       [
         'DELETE',
-        `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123`,
+        `/services/data/v${version === 'auto' || version === undefined ? '68.0' : version}/ssot/data-model-object-mappings/${mappingName}/field-mappings/observed_selector_123?dataspace=default`,
         undefined,
       ],
     ]);
@@ -310,7 +323,7 @@ test('mapping version guard admits explicit >=61 and default/auto68 before calls
   for (const version of ['60.0', '59.0', '0.0', 'latest', 'v65.0', '65', '../68.0', '68.1'])
     assert.throws(() => client(version, sender), /INVALID_SCOPE/);
   assert.throws(
-    () => createMappingClient('-target', '68.0', noRunner, undefined, sender),
+    () => createMappingClient('-target', '68.0', noRunner, 'default', sender),
     /UNSUPPORTED/,
   );
   assert.equal(calls.length, 0);

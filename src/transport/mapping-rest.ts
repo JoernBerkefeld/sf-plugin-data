@@ -181,13 +181,13 @@ function metadataCalls(
  * Only an explicit transport 404 is the typed no-map condition; other failures propagate.
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated command connection.
  * @param {string} apiVersion Admitted numeric native version.
- * @param {string} dataSpace Optional explicit request scope.
+ * @param {string} dataSpace The run's data space, sent as `?dataspace=` on every list.
  * @returns {Pick<MappingClient, 'list'>} List-only reader without CLI startup or scratch files.
  */
 export function createMappingInventoryReader(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   apiVersion: string,
-  dataSpace?: string,
+  dataSpace: string,
 ): Pick<MappingClient, 'list'> {
   const version = nativeApiVersion(apiVersion);
   const client = new ConnectClient(connection, version);
@@ -198,8 +198,7 @@ export function createMappingInventoryReader(
         (dloDeveloperName !== undefined && !mappingDloName.test(dloDeveloperName))
       )
         throw new NativeMappingError('INVALID_MAPPING_BINDING');
-      const query = new URLSearchParams();
-      if (dataSpace !== undefined) query.set('dataspace', dataSpace);
+      const query = new URLSearchParams({ dataspace: dataSpace });
       query.set('dmoDeveloperName', dmoDeveloperName);
       if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
       try {
@@ -229,7 +228,8 @@ function validateBody(body: MappingWriteBody): void {
   validateNativeMappingDocument({
     schemaVersion: 1,
     kind: 'mapping',
-    identity: { apiName: 'Input', dataSpace: 'default' },
+    c__dataSpace: 'default',
+    identity: { apiName: 'Input' },
     spec: {
       sourceEntityDeveloperName: body.sourceEntityDeveloperName,
       targetEntityDeveloperName: body.targetEntityDeveloperName,
@@ -247,7 +247,8 @@ function validateBody(body: MappingWriteBody): void {
  * @param {string} targetOrg Explicit authenticated alias or username.
  * @param {string} apiVersion Validated numeric version, or default/auto 68.0.
  * @param {MetadataRunner} runner Installed CLI runner, used only for the destructive `remove`.
- * @param {string} dataSpace Optional explicit request scope.
+ * @param {string} dataSpace The run's data space, sent as `?dataspace=` on every mapping request
+ * except the Metadata API calls (their record names are unique in the org).
  * @param {BoundSsot} [sender] The command's shared sender; defaults to one opened for targetOrg.
  * @param {ReadonlyMap<string, unknown>} [listed] Entries of this run's mapping lists at the same
  * version and data space, by name. A listed name's GET answers with a copy of its entry, which
@@ -258,7 +259,7 @@ export function createMappingClient(
   targetOrg: string,
   apiVersion = '68.0',
   runner: MetadataRunner = runProjectMetadata,
-  dataSpace?: string,
+  dataSpace: string,
   sender?: BoundSsot,
   listed?: ReadonlyMap<string, unknown>,
 ): MappingClient {
@@ -271,8 +272,7 @@ export function createMappingClient(
     throw new NativeMappingError('UNSUPPORTED_MAPPING_SELECTION');
   const bound = sender ?? openBoundSsot(targetOrg, version);
   const endpoint = `/services/data/v${version}/ssot/data-model-object-mappings`;
-  const scopeQuery =
-    dataSpace === undefined ? '' : `?${new URLSearchParams({ dataspace: dataSpace })}`;
+  const scopeQuery = `?${new URLSearchParams({ dataspace: dataSpace })}`;
 
   /**
    * Validate exact mapping names, never source IDs or guessed suffixes.
@@ -406,7 +406,8 @@ export function createMappingClient(
       validateNativeMappingDocument({
         schemaVersion: 1,
         kind: 'mapping',
-        identity: { apiName: name, dataSpace: 'default' },
+        c__dataSpace: 'default',
+        identity: { apiName: name },
         spec: {
           sourceEntityDeveloperName: 'Input__dll',
           targetEntityDeveloperName: 'Input__dlm',
@@ -431,8 +432,7 @@ export function createMappingClient(
         (dloDeveloperName !== undefined && !mappingDloName.test(dloDeveloperName))
       )
         throw new NativeMappingError('INVALID_MAPPING_BINDING');
-      const query = new URLSearchParams();
-      if (dataSpace !== undefined) query.set('dataspace', dataSpace);
+      const query = new URLSearchParams({ dataspace: dataSpace });
       query.set('dmoDeveloperName', dmoDeveloperName);
       if (dloDeveloperName !== undefined) query.set('dloDeveloperName', dloDeveloperName);
       return request('GET', `?${query}`);

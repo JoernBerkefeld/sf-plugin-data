@@ -65,7 +65,7 @@ test('the listing keeps each selected-space entry that carries the item GET fiel
     })),
     '68.0',
     'dlo',
-    undefined,
+    'default',
     [],
     listed,
   );
@@ -79,7 +79,7 @@ test('the listing keeps each selected-space entry that carries the item GET fiel
     })),
     '68.0',
     'dmo',
-    undefined,
+    'default',
     [],
     dmos,
   );
@@ -150,7 +150,7 @@ test('a bare retrieve reads listed DLOs and DMOs from the listing, never item by
   command.acquireDlo = retrieveNativeDlo;
   command.acquireNativeDmo = async (apiName, client) => {
     bodies.push(await client.get(apiName));
-    return { kind: 'dmo', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'dmo', c__dataSpace: 'default', identity: { apiName } };
   };
   const documents = [];
   command.writeDlo = command.writeNativeDmo = async (document) => {
@@ -211,7 +211,7 @@ test('listing pages are read up to four at a time and used in offset order', asy
   const listing = slowDmoListing(420);
   const warnings = [];
   const listed = new Map();
-  const names = await listNativeNames(listing.owner, '68.0', 'dmo', undefined, warnings, listed);
+  const names = await listNativeNames(listing.owner, '68.0', 'dmo', 'default', warnings, listed);
   assert.deepEqual(
     names,
     Array.from({ length: 420 }, (_, index) => `Model${String(index).padStart(4, '0')}__dlm`),
@@ -228,14 +228,14 @@ test('a page read past the end may fail without failing the listing', async () =
   const listing = slowDmoListing(120, (offset) =>
     offset >= 150 ? Object.assign(new Error('x'), { statusCode: 400 }) : undefined,
   );
-  const names = await listNativeNames(listing.owner, '68.0', 'dmo');
+  const names = await listNativeNames(listing.owner, '68.0', 'dmo', 'default');
   assert.equal(names.length, 120);
 });
 
 test('a failing page that is needed still fails the listing', async () => {
   const failure = Object.assign(new Error('synthetic'), { statusCode: 400 });
   const listing = slowDmoListing(300, (offset) => (offset === 100 ? failure : undefined));
-  await assert.rejects(listNativeNames(listing.owner, '68.0', 'dmo'), (error) => {
+  await assert.rejects(listNativeNames(listing.owner, '68.0', 'dmo', 'default'), (error) => {
     assert.notEqual(error, undefined);
     return true;
   });
@@ -252,7 +252,7 @@ test('a 429 on a parallel page is retried as before', async (t) => {
       ? Object.assign(new Error('x'), { statusCode: 429 })
       : undefined,
   );
-  const names = await listNativeNames(listing.owner, '68.0', 'dmo');
+  const names = await listNativeNames(listing.owner, '68.0', 'dmo', 'default');
   assert.equal(names.length, 260);
   assert.deepEqual(waits, [1000, 1000]);
   assert.equal(listing.offsets.filter((offset) => offset === 100).length, 2);
@@ -274,6 +274,7 @@ test('with totalSize no page at or past the total is requested', async () => {
     }),
     '68.0',
     'dlo',
+    'default',
   );
   assert.equal(names.length, 98);
   assert.deepEqual(
@@ -321,7 +322,8 @@ test('bare relationship reads DMOs in parallel; files and diagnostics keep the D
     if (dmo === 'D07__dlm') throw new NativeRelationshipError('RELATIONSHIP_HTTP_ERROR');
     return [`${dmo}_A`, `${dmo}_B`].map((apiName) => ({
       kind: 'relationship',
-      identity: { dataSpace: 'default', apiName },
+      c__dataSpace: 'default',
+      identity: { apiName },
     }));
   };
   const written = [];
@@ -571,7 +573,7 @@ test('bare relationship reads the labels of all DMOs together, 10 names per Meta
                 },
           readDefinitions,
         },
-        undefined,
+        'default',
         'retrieve',
       )),
     );
@@ -648,7 +650,7 @@ test('mapping lists are read up to 6 DMOs at once; names, entries, warnings and 
         };
       },
     },
-    undefined,
+    'default',
     { warnings, failure: (dmo) => failures.push(dmo), listed },
   );
   assert.equal(mappingListReads, 6);
@@ -670,14 +672,18 @@ test('mapping lists are read up to 6 DMOs at once; names, entries, warnings and 
 test('a mapping list failure without a failure receiver stops the listing', async () => {
   const started = [];
   await assert.rejects(
-    listNativeMappingNames(dmoNames(30), {
-      list: async (dmo) => {
-        started.push(dmo);
-        await tick(5);
-        if (dmo === 'D00__dlm') throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-        return { objectSourceTargetMaps: [] };
+    listNativeMappingNames(
+      dmoNames(30),
+      {
+        list: async (dmo) => {
+          started.push(dmo);
+          await tick(5);
+          if (dmo === 'D00__dlm') throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
+          return { objectSourceTargetMaps: [] };
+        },
       },
-    }),
+      'default',
+    ),
     { code: 'MAPPING_INVENTORY_UNCONFIRMED' },
   );
   await tick(60);
@@ -701,8 +707,9 @@ test('a 429 on one parallel mapping list is retried for that request only', asyn
       return { objectSourceTargetMaps: [mappingEntry(`M_${dmo}`, dmo)] };
     }),
     '68.0',
+    'default',
   );
-  const names = await listNativeMappingNames(dmoNames(12), reader);
+  const names = await listNativeMappingNames(dmoNames(12), reader, 'default');
   assert.equal(names.length, 12);
   assert.deepEqual(waits, [1000]);
   assert.equal(requested.length, 13);
@@ -715,7 +722,7 @@ test('a listed mapping GET answers with a copy of its entry, without a request',
     'synthetic',
     '68.0',
     undefined,
-    undefined,
+    'default',
     {
       request: async (method, route) => {
         requests.push(`${method} ${route}`);
@@ -730,7 +737,9 @@ test('a listed mapping GET answers with a copy of its entry, without a request',
   assert.equal(entry.fieldMappings.length, 1);
   assert.deepEqual(requests, []);
   await client.get('Other');
-  assert.deepEqual(requests, ['GET /services/data/v68.0/ssot/data-model-object-mappings/Other']);
+  assert.deepEqual(requests, [
+    'GET /services/data/v68.0/ssot/data-model-object-mappings/Other?dataspace=default',
+  ]);
   await assert.rejects(client.get('bad/name'), { code: 'INVALID_MAPPING_NAME' });
 });
 
@@ -780,7 +789,7 @@ test('mappings are read up to 6 at once, parents once per run, files and errors 
       inFlight--;
     }
     if (index === 7) throw new NativeMappingError('MAPPING_HTTP_ERROR', 403);
-    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName } };
   };
   const written = [];
   command.writeNativeMapping = async (document) => {

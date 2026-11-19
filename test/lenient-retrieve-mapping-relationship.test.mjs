@@ -89,11 +89,11 @@ test('retrieve keeps an unknown pair key and an odd field name; deploy refuses n
     pair('Note', 'Note__c', { developerName: jsonNull }),
   ]);
   // Deploy-mode normalization refuses the same read.
-  assert.throws(() => normalizeNativeMapping(raw), /INVALID_MAPPING_FIELD/u);
+  assert.throws(() => normalizeNativeMapping(raw, 'default'), /INVALID_MAPPING_FIELD/u);
   const document = await retrieveLeanNativeMapping(
     'Loose_map',
     mappingClient(raw),
-    undefined,
+    'default',
     parents,
     'retrieve',
   );
@@ -121,7 +121,7 @@ test('a mapping with only generated pairs is written with an empty pair list', a
   const document = await retrieveLeanNativeMapping(
     'Loose_map',
     mappingClient(raw),
-    undefined,
+    'default',
     parents,
     'retrieve',
   );
@@ -179,7 +179,8 @@ test('retrieve writes a mapping whose source is not a DLO as returned; deploy re
 const validMapping = () => ({
   schemaVersion: 1,
   kind: 'mapping',
-  identity: { apiName: 'Loose_map', dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Loose_map' },
   spec: {
     sourceEntityDeveloperName: 'Source__dll',
     targetEntityDeveloperName: 'Target__dlm',
@@ -251,10 +252,10 @@ test('one relationship with null values does not fail the other relationships of
   ];
   const client = { list: async () => ({ relationships, totalSize: 3 }) };
   // Deploy mode refuses the whole inventory.
-  await assert.rejects(retrieveNativeRelationships('A__dlm', client), {
+  await assert.rejects(retrieveNativeRelationships('A__dlm', client, 'default'), {
     code: 'INVALID_RELATIONSHIP_RESPONSE',
   });
-  const documents = await retrieveNativeRelationships('A__dlm', client, undefined, 'retrieve');
+  const documents = await retrieveNativeRelationships('A__dlm', client, 'default', 'retrieve');
   assert.deepEqual(
     documents.map((document) => [document.identity.apiName, document.verbatim === undefined]),
     [
@@ -282,7 +283,7 @@ test('one relationship with null values does not fail the other relationships of
   );
 });
 
-const validRelationship = () => normalizeNativeRelationship(entry('Good'));
+const validRelationship = () => normalizeNativeRelationship(entry('Good'), 'default');
 
 test('deploy validation names each relationship key path it refuses', () => {
   const valid = validRelationship;

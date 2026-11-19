@@ -1,6 +1,7 @@
 import type { Connection } from '@salesforce/core';
 import { ConnectClient } from '../transport/connect-client.js';
 import { readInOrder } from './bounded-reads.js';
+import { explainInput } from './operation-diagnostic.js';
 import type { SettledRead } from './bounded-reads.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
 import {
@@ -79,11 +80,16 @@ function entryLabel(name: string | undefined, position: number): string {
  * more pages: `totalSize` when the answer has it, otherwise a non-empty `nextPageUrl` or a full
  * page. Extra envelope keys and the format of the page URLs are ignored. A page whose entries are
  * all listed already ends the listing (a server ignoring the offset). An entry without a usable
- * API name or data space is skipped with a warning; a repeated entry is listed once.
+ * API name is skipped with a warning; a repeated entry is listed once. Both lists hold every data
+ * space whatever `?dataspace=` says, so each entry is kept by its own data space. A DLO entry
+ * without a usable data space is skipped with a warning. A DMO entry without one stops the
+ * listing (NATIVE_INVENTORY_UNCONFIRMED): every DMO entry read live names its `dataSpaceName`
+ * (default ones too), so one without it is not a shape the plugin knows, and skipping it could
+ * leave out a DMO of the run's space.
  * @param {Connection} connection Authenticated command-owned connection.
  * @param {string} version Admitted numeric native version.
  * @param {'dlo' | 'dmo'} family Inventory family.
- * @param {string} [requestScope] Local response-space filter; omission lists the default space.
+ * @param {string} requestScope The run's data space; entries of other spaces are left out.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
  * @param {Map<string, unknown>} [listed] Receives each listed name's entry, when the entry is
  * proven to equal its item GET (see listedEntryReplacesGet).
@@ -93,7 +99,7 @@ export async function listNativeNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   version: string,
   family: 'dlo' | 'dmo',
-  requestScope?: string,
+  requestScope: string,
   warnings?: string[],
   listed?: Map<string, unknown>,
 ): Promise<string[]> {
@@ -142,6 +148,11 @@ export async function listNativeNames(
       const name = typeof item.name === 'string' ? item.name : undefined;
       const named = name !== undefined && pattern.test(name);
       const spaces = entrySpaces(item, family);
+      if (named && spaces.length === 0 && family === 'dmo')
+        throw explainInput(
+          new NativeMappingError('NATIVE_INVENTORY_UNCONFIRMED'),
+          `The DMO list entry "${name}" names no data space (dataSpaceName), so the plugin cannot tell whether it belongs to the data space ${requestScope}; nothing was retrieved from the DMO list.`,
+        );
       if (!named || spaces.length === 0) {
         warnings?.push(
           `${family} inventory: skipped ${entryLabel(name, offset + index)} because it has no usable ${named ? 'data space' : 'API name'}.`,
@@ -152,7 +163,7 @@ export async function listNativeNames(
       if (seen.has(identity)) continue;
       seen.add(identity);
       added++;
-      if (!spaces.includes(requestScope ?? 'default')) continue;
+      if (!spaces.includes(requestScope)) continue;
       names.push(name);
       if (listed && listedEntryReplacesGet(family, item)) listed.set(name, value);
     }
@@ -200,18 +211,18 @@ export const mappingListReads = 6;
  * a name listed under several DMOs is kept once.
  * @param {string[]} dmos Selected-space DMO inventory.
  * @param {Pick<MappingClient, 'list'>} client Filtered mapping reader.
- * @param {string} [requestScope] Explicit request context; omission uses the default space.
+ * @param {string} requestScope The run's data space.
  * @param {MappingListingReport} [report] Warnings and per-DMO failures.
  * @returns {Promise<string[]>} Unique sorted mapping names.
  */
 export async function listNativeMappingNames(
   dmos: string[],
   client: Pick<MappingClient, 'list'>,
-  requestScope?: string,
+  requestScope: string,
   report: MappingListingReport = {},
 ): Promise<string[]> {
   const mappings = new Map<string, string>();
-  const space = requestScope ?? 'default';
+  const space = requestScope;
   let stopped = false;
   const fail = (dmo: string, error: unknown): void => {
     if (!report.failure) {

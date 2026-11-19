@@ -16,7 +16,8 @@ const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
 const dmo = (apiName = 'Person__dlm') => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     label: apiName,
     category: 'Other',

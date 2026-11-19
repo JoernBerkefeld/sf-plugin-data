@@ -1,5 +1,6 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, readSingleDataSpace, refuseLegacyDataSpace } from './data-space-field.js';
 
 export type NativeRelationshipSpec = {
   sourceObjectName: string;
@@ -15,7 +16,9 @@ export type NativeRelationshipSpec = {
 export type NativeRelationshipDocument = {
   schemaVersion: 1;
   kind: 'relationship';
-  identity: { apiName: string; dataSpace: string };
+  /** The data space the relationship belongs to (file key `c__dataSpace`). */
+  c__dataSpace: string;
+  identity: { apiName: string };
   spec: NativeRelationshipSpec;
 };
 
@@ -83,8 +86,19 @@ function plain(value: unknown): value is string {
  * @returns {NativeRelationshipError} Refusal with an explanation.
  */
 function refuse(keyPath: string, problem: string): NativeRelationshipError {
+  return refuseWith('INVALID_RELATIONSHIP_DOCUMENT', keyPath, problem);
+}
+
+/**
+ * Refuse an authored relationship file with a given code, naming the key path.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Printable key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {NativeRelationshipError} Refusal with an explanation.
+ */
+function refuseWith(code: string, keyPath: string, problem: string): NativeRelationshipError {
   return explainInput(
-    new NativeRelationshipError('INVALID_RELATIONSHIP_DOCUMENT'),
+    new NativeRelationshipError(code),
     `The relationship file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the relationship again once the plugin supports it.`,
   );
 }
@@ -142,10 +156,11 @@ export function validateNativeRelationshipDocument(
   if (document.kind !== 'relationship') throw refuse('kind', 'must be "relationship"');
   if (typeof identity.apiName !== 'string' || !nativeRelationshipName.test(identity.apiName))
     throw refuse('identity.apiName', 'must be a relationship API name');
-  if (!plain(identity.dataSpace)) throw refuse('identity.dataSpace', 'must be a data space name');
+  refuseLegacyDataSpace(identity, refuseWith);
+  readSingleDataSpace(document, refuseWith);
   if (mode === 'retrieve') return structuredClone(value) as NativeRelationshipDocument;
-  closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
-  closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
+  closedKeys(document, '', [dataSpaceKey, 'identity', 'kind', 'schemaVersion', 'spec']);
+  closedKeys(identity, 'identity.', ['apiName']);
   closedKeys(spec, 'spec.', specKeys, ['label']);
   const checks: Array<[string, (value: unknown) => boolean, string]> = [
     [
@@ -220,13 +235,13 @@ export function observeNativeRelationship(
 /**
  * Save the authored binding without the generated id, labels, status or creation type.
  * @param {unknown} value Native list entry.
- * @param {string} [dataSpace] Local effective scope.
+ * @param {string} dataSpace The data space the relationship was listed in (the run's).
  * @param {DocumentMode} [mode] `retrieve` keeps null or missing values as listed.
  * @returns {NativeRelationshipDocument} Portable definition.
  */
 export function normalizeNativeRelationship(
   value: unknown,
-  dataSpace = 'default',
+  dataSpace: string,
   mode: DocumentMode = 'deploy',
 ): NativeRelationshipDocument {
   const observed = observeNativeRelationship(value, mode);
@@ -234,7 +249,8 @@ export function normalizeNativeRelationship(
     {
       schemaVersion: 1,
       kind: 'relationship',
-      identity: { apiName: observed.name, dataSpace },
+      [dataSpaceKey]: dataSpace,
+      identity: { apiName: observed.name },
       spec: relationshipSpec(observed),
     },
     mode,

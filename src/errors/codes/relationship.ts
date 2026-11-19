@@ -12,8 +12,6 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce answered the relationship list in a shape the plugin does not expect. Rerun the command; if it repeats, inspect the raw list response for the DMO.',
   PARTIAL_RELATIONSHIP_OUTPUT:
     'The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again with --overwrite.',
-  RELATIONSHIP_DATASPACE_COLLISION:
-    'A local file with this relationship name was saved from a different data space. Retrieve into a separate project folder, or remove the old file first.',
   RELATIONSHIP_DELETION_UNCONFIRMED:
     "The relationship delete was sent, but the relationship still appears in the source DMO's list. Check it in the org before deleting again; nothing is retried.",
   RELATIONSHIP_DEPENDENCIES_PLANNED:
@@ -35,7 +33,7 @@ export const hints: Readonly<Record<string, string>> = {
   RELATIONSHIP_TARGET_BINDING_MISMATCH:
     'The relationship with this name links other objects or fields than expected: another source DMO than the selector names, or with --changed-since another binding than the deleted file. Check it before deleting.',
   UNSUPPORTED_RELATIONSHIP_DATASPACE:
-    "The file's data space does not match the command's data space. Set --dataspace to the identity.dataSpace of the file, or leave it out for the default data space.",
+    "The relationship file's c__dataSpace is not the data space of the run. Run with the --dataspace the file names, or leave it out for the default data space.",
   UNSUPPORTED_RELATIONSHIP_SELECTION:
     'The target org value cannot be passed on to Salesforce CLI. Use a plain org alias or username with --target-org.',
 };

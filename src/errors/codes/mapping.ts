@@ -18,10 +18,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce answered a mapping request with a body the plugin could not read as a mapping. Rerun the command; if it repeats, inspect the mapping in the org.',
   MAPPING_ACTIVATES_STANDARD_DMO:
     'This is the first mapping onto a standard DMO, and creating it enables that DMO permanently. Deleting the mapping later does not undo that; continue only if intended.',
-  MAPPING_DATASPACE_COLLISION:
-    'A local mapping file with this name already belongs to another data space, so it was not overwritten. Retrieve into another --output-dir or move the existing file.',
   MAPPING_DATASPACE_MISMATCH:
-    "The mapping file's identity.dataSpace does not match the data space of this command. Make them match, or pass the right --dataspace.",
+    "The mapping file's c__dataSpace is not the data space of the run. Run with the --dataspace the file names, or correct c__dataSpace.",
   MAPPING_DELETE_FAILED:
     'The Metadata API did not confirm the destructive deployment that deletes the mapping. Read the problems shown, check whether the mapping still exists, then fix the cause.',
   MAPPING_DELETE_SIDE_EFFECT:

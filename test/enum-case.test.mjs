@@ -37,7 +37,8 @@ const dmoField = (name, creationType, extra = {}) => ({
 const dmoFile = (type) => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { apiName: 'CliEnum__dlm', dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'CliEnum__dlm' },
   spec: {
     label: 'Cli Enum',
     category: 'other',
@@ -266,10 +267,14 @@ test('DLO: lower-case category and field type deploy unchanged against the store
 });
 
 test('DMO: a field type differing only in case is no change; another type stays blocked', async () => {
-  const plan = await preflightNativeDmo(dmoFile('TEXT'), { get: async () => dmoNative() });
+  const plan = await preflightNativeDmo(
+    dmoFile('TEXT'),
+    { get: async () => dmoNative() },
+    'default',
+  );
   assert.equal(plan.operation, 'unchanged');
   await assert.rejects(
-    preflightNativeDmo(dmoFile('Number'), { get: async () => dmoNative() }),
+    preflightNativeDmo(dmoFile('Number'), { get: async () => dmoNative() }, 'default'),
     /UNSUPPORTED_DMO_FIELD_CHANGE/u,
   );
   const actual = structuredClone(dmoFile('Text'));

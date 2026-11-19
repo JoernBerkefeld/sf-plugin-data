@@ -36,7 +36,8 @@ const relative = (name) => `data360/dmo/${name}__dlm.dmo-meta.json`;
 const document = (name, dataSpace = 'default') => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace, apiName: `${name}__dlm` },
+  c__dataSpace: dataSpace,
+  identity: { apiName: `${name}__dlm` },
   spec: {
     label: name,
     category: 'Other',
@@ -361,7 +362,7 @@ test('Git selection admits a namespaced native DMO and never falls back to a leg
   const standard = 'data360/dmo/ssot__Individual__dlm.dmo-meta.json';
   await put(cwd, standard, {
     ...document('Individual'),
-    identity: { dataSpace: 'default', apiName: 'ssot__Individual__dlm' },
+    identity: { apiName: 'ssot__Individual__dlm' },
   });
   const selected = await selectGitDeployInputs({ cwd, ref: 'HEAD' });
   assert.deepEqual(selected.paths, [path.join(cwd, ...standard.split('/'))]);
@@ -513,7 +514,9 @@ test('Git selector rejects invalid refs without payload leakage', async () => {
 const verbatimFile = (kind, apiName, reason, native) => ({
   schemaVersion: 1,
   kind,
-  identity: { dataSpace: 'default', apiName },
+  ...(['dmo', 'mapping', 'relationship'].includes(kind)
+    ? { c__dataSpace: 'default', identity: { apiName } }
+    : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason, native },
 });
 const ciJson = 'data360/calculatedInsights/Draft__cio.calculatedInsight-meta.json';

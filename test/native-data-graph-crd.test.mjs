@@ -3655,7 +3655,9 @@ for (const preview of [false, true])
     assert.match(result.diagnostics.errors[0].message, /still being created or removed/u);
     assert.match(
       result.diagnostics.errors[0].message,
-      preview ? /Preview stopped; nothing was deleted\./u : /Deletion stopped\./u,
+      preview
+        ? /Preview stopped; nothing was deleted\./u
+        : /Deletion stopped before any delete was sent; nothing was deleted\./u,
     );
   });
 

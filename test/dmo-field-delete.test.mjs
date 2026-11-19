@@ -462,7 +462,7 @@ test('a failed mapping lookup does not block a field that is not mapped', async 
 test('field delete preview reports the plan and writes nothing to the org or to disk', async () => {
   const root = await temporaryRoot();
   const org = createOrg(twoMappings());
-  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo, 'default'), root, false);
   const before = await readFile(dmoFile(root), 'utf8');
   const { result, lines, exitCode } = await run(
     org,
@@ -571,8 +571,8 @@ test('an unmapped field is removed with one destructive change and no mapping wr
 test('a field mapped by two mappings is removed once, its pairs drop from both, and existing files are refreshed', async () => {
   const root = await temporaryRoot();
   const org = createOrg(twoMappings());
-  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
-  await writeNativeMappingDocument(normalizeNativeMapping(org.mappings[0]), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo, 'default'), root, false);
+  await writeNativeMappingDocument(normalizeNativeMapping(org.mappings[0], 'default'), root, false);
   const { result, lines, exitCode } = await run(
     org,
     { field: ['Note__c'], 'output-dir': root },
@@ -671,7 +671,7 @@ function beforeDmoRead(org, read, change) {
 test('a mapping pair changed between the plan and the write stops before any write', async () => {
   const root = await temporaryRoot();
   const org = createOrg(twoMappings());
-  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo, 'default'), root, false);
   const before = await readFile(dmoFile(root), 'utf8');
   // The plan saw both pairs; the pre-write snapshot finds only the pair of MapA.
   beforeDmoRead(org, 2, () => {
@@ -864,7 +864,7 @@ test('a field with a real mapping pair keeps the pair planning: the pair is repo
 test('a failed destructive change is sent once and reported as unknown', async () => {
   const root = await temporaryRoot();
   const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
-  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo, 'default'), root, false);
   const before = await readFile(dmoFile(root), 'utf8');
   org.remover.removeFields = async (name, fields) => {
     org.calls.push(`removeFields:${name}:${fields.join(',')}`);
@@ -892,7 +892,7 @@ test('a failed destructive change is sent once and reported as unknown', async (
 test('a field still readable after the destructive change is unconfirmed, never replayed', async () => {
   const root = await temporaryRoot();
   const org = createOrg();
-  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo, 'default'), root, false);
   const before = await readFile(dmoFile(root), 'utf8');
   org.remover.removeFields = async (name, fields) => {
     org.calls.push(`removeFields:${name}:${fields.join(',')}`);
@@ -926,8 +926,8 @@ test('a field still readable after the destructive change is unconfirmed, never 
 test('a failed local refresh never hides the confirmed org change', async () => {
   const root = await temporaryRoot();
   const org = createOrg([mapping('MapA', 'SourceA__dll', ['Id__c', 'Note__c'])]);
-  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo), root, false);
-  await writeNativeMappingDocument(normalizeNativeMapping(org.mappings[0]), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(org.dmo, 'default'), root, false);
+  await writeNativeMappingDocument(normalizeNativeMapping(org.mappings[0], 'default'), root, false);
   const before = await readFile(dmoFile(root), 'utf8');
   const { result, lines, exitCode } = await run(
     org,
@@ -969,7 +969,7 @@ test('an existing file that already matches the target is reported unchanged', a
   const org = createOrg();
   const after = structuredClone(org.dmo);
   after.fields = after.fields.filter((field) => field.name !== 'Note__c');
-  await writeNativeDmoDocument(normalizeNativeDmo(after), root, false);
+  await writeNativeDmoDocument(normalizeNativeDmo(after, 'default'), root, false);
   const { result } = await run(org, {
     field: ['Note__c'],
     'output-dir': root,
@@ -1004,7 +1004,7 @@ test('a hand-written mapping file is found by its binding and refreshed under it
   const root = await temporaryRoot();
   const org = createOrg(twoMappings());
   // The file is named after the source-side mapping, not after the org mapping MapB.
-  const local = normalizeNativeMapping(org.mappings[1]);
+  const local = normalizeNativeMapping(org.mappings[1], 'default');
   local.identity.apiName = 'MyMapping';
   await writeNativeMappingDocument(local, root, false);
   const preview = await run(org, { field: ['Note__c'], preview: true, 'output-dir': root });

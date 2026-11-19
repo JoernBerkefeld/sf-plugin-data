@@ -136,14 +136,14 @@ function mappedRefusal(apiName: string, fields: string[], reason: string): Nativ
  * @param {string} apiName Exact DMO full name.
  * @param {string[]} fields Exact, distinct field names ending in __c.
  * @param {DmoFieldDeleteClients} clients Target clients; only read here.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<DmoFieldDeletePlan>} Pairs Salesforce drops with the fields, per mapping, and the fields.
  */
 export async function planDmoFieldDelete(
   apiName: string,
   fields: string[],
   clients: DmoFieldDeleteClients,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<DmoFieldDeletePlan> {
   const { document: target } = await previewFieldDeleteNativeDmo(
     apiName,
@@ -207,7 +207,7 @@ export async function planDmoFieldDelete(
   // A field that reads mapped while no mapping lists a pair for it (Salesforce marks every field
   // of a generated DMO as mapped) has no pair to lose: it is removed, and the side-effect check
   // then expects no pair to disappear.
-  return { apiName, dataSpace: target.identity.dataSpace, fields, mappings };
+  return { apiName, dataSpace: target.c__dataSpace, fields, mappings };
 }
 
 const byName = (a: { identity: { apiName: string } }, b: { identity: { apiName: string } }) =>
@@ -239,13 +239,13 @@ function stable(value: Record<string, unknown>): Record<string, unknown> {
  * Read every mapping of a DMO with its status; a DMO without mappings answers with a typed 404.
  * @param {string} apiName Exact DMO full name.
  * @param {Pick<MappingClient, 'list'>} client Mapping reader.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<Array<{document: NativeMappingDocument, status: unknown}>>} Ordered by name.
  */
 async function readDmoMappings(
   apiName: string,
   client: Pick<MappingClient, 'list'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<Array<{ document: NativeMappingDocument; status: unknown }>> {
   let entries: Record<string, unknown>[] = [];
   try {
@@ -278,14 +278,14 @@ async function readDmoMappings(
  * @param {string} apiName Exact DMO full name.
  * @param {string[]} fields Fields to remove.
  * @param {FieldRemovalReaders} readers Target readers.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<FieldRemovalSnapshot>} Expected state around the write.
  */
 export async function snapshotFieldRemoval(
   apiName: string,
   fields: string[],
   readers: FieldRemovalReaders,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<FieldRemovalSnapshot> {
   const dmo = unwrapNativeDmo(await readers.dmo.get(apiName));
   const present = new Map(
@@ -329,7 +329,7 @@ export async function snapshotFieldRemoval(
  * @param {FieldRemovalReaders} readers Target readers.
  * @param {Function} remove The single write: one Metadata API destructive change.
  * @param {Function} [onSent] Called once the write is about to be sent, and once it returned.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @returns {Promise<{pairs: DmoFieldPair[], dmo: Record<string, unknown>}>} The pairs Salesforce dropped and the DMO read that confirmed it.
  */
@@ -338,7 +338,7 @@ export async function removeFieldsWithPairs(
   readers: FieldRemovalReaders,
   remove: () => Promise<void>,
   onSent: (step: 'remove' | 'readback') => void = () => {},
-  requestScope?: string,
+  requestScope: string,
   settle: NativeDmoSettle = defaultNativeDmoSettle,
 ): Promise<{ pairs: DmoFieldPair[]; dmo: Record<string, unknown> }> {
   const { apiName, fields } = snapshot;
@@ -429,7 +429,7 @@ export type FieldRemovalCoverage = {
  * @param {FieldRemovalReaders} readers Target readers.
  * @param {Function} remove The single Metadata API destructive change.
  * @param {FieldRemovalCoverage} coverage What the admission allowed to be dropped.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @returns {Promise<DmoFieldPair[]>} The pairs Salesforce dropped.
  */
@@ -440,7 +440,7 @@ export type FieldRemovalCoverage = {
  * @param {string[]} fields Fields to remove.
  * @param {FieldRemovalReaders} readers Target readers.
  * @param {FieldRemovalCoverage} coverage What the admission allowed to be dropped.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<FieldRemovalSnapshot>} The snapshot.
  */
 export async function checkFieldRemoval(
@@ -448,7 +448,7 @@ export async function checkFieldRemoval(
   fields: string[],
   readers: FieldRemovalReaders,
   coverage: FieldRemovalCoverage,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<FieldRemovalSnapshot> {
   const snapshot = await snapshotFieldRemoval(apiName, fields, readers, requestScope);
   const sourceOf = new Map(
@@ -478,7 +478,7 @@ export async function checkFieldRemoval(
  * @param {FieldRemovalReaders} readers Target readers.
  * @param {Function} remove The single Metadata API destructive change.
  * @param {FieldRemovalCoverage} coverage What the admission allowed to be dropped.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @returns {Promise<DmoFieldPair[]>} The pairs Salesforce dropped.
  */
@@ -488,7 +488,7 @@ export async function removeFieldsChecked(
   readers: FieldRemovalReaders,
   remove: () => Promise<void>,
   coverage: FieldRemovalCoverage,
-  requestScope?: string,
+  requestScope: string,
   settle: NativeDmoSettle = defaultNativeDmoSettle,
 ): Promise<DmoFieldPair[]> {
   const snapshot = await checkFieldRemoval(apiName, fields, readers, coverage, requestScope);
@@ -511,7 +511,7 @@ export async function removeFieldsChecked(
  * @param {DmoFieldDeletePlan} plan Admitted plan.
  * @param {DmoFieldDeleteClients} clients Target clients.
  * @param {DmoFieldDeleteProgress} progress Mutated before and after the write.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {NativeDmoSettle} [settle] Readback attempts and spacing.
  * @returns {Promise<NativeDmoDocument>} Definition read back without the fields.
  */
@@ -519,7 +519,7 @@ export async function executeDmoFieldDelete(
   plan: DmoFieldDeletePlan,
   clients: DmoFieldDeleteClients,
   progress: DmoFieldDeleteProgress,
-  requestScope?: string,
+  requestScope: string,
   settle: NativeDmoSettle = defaultNativeDmoSettle,
 ): Promise<NativeDmoDocument> {
   progress.step = 'recheck';
@@ -584,13 +584,14 @@ export async function mappingLocalFile(
       const stat = await lstat(file);
       if (!stat.isFile()) continue;
       const local = JSON.parse(await readFile(file, 'utf8')) as {
-        identity?: { apiName?: unknown; dataSpace?: unknown };
+        c__dataSpace?: unknown;
+        identity?: { apiName?: unknown };
         spec?: { sourceEntityDeveloperName?: unknown; targetEntityDeveloperName?: unknown };
       };
       if (
         local.spec?.sourceEntityDeveloperName === document.spec.sourceEntityDeveloperName &&
         local.spec?.targetEntityDeveloperName === document.spec.targetEntityDeveloperName &&
-        local.identity?.dataSpace === document.identity.dataSpace &&
+        local.c__dataSpace === document.c__dataSpace &&
         typeof local.identity?.apiName === 'string' &&
         name === `${local.identity.apiName}.mapping-meta.json`
       )
@@ -645,13 +646,13 @@ export async function localFileExists(file: string): Promise<boolean> {
  * Read a mapping for its local file, keeping the name a hand-written file uses.
  * @param {DmoFieldLocalFile} file Mapping file.
  * @param {DmoFieldDeleteClients} clients Mapping, source DLO and target DMO readers.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeMappingDocument>} Current authored definition under the file's name.
  */
 async function localMapping(
   file: DmoFieldLocalFile,
   clients: DmoFieldDeleteClients,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeMappingDocument> {
   // Written lean, like a retrieve: without the pairs Salesforce generated.
   const document = await retrieveLeanNativeMapping(
@@ -671,7 +672,7 @@ async function localMapping(
  * @param {string} projectRoot Absolute project root.
  * @param {DmoFieldDeleteClients} clients Target clients; only read here.
  * @param {DmoFieldWriters} writers Existing artifact writers.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<DmoFieldRefresh[]>} One outcome per canonical file.
  */
 export async function refreshDmoFieldFiles(
@@ -679,7 +680,7 @@ export async function refreshDmoFieldFiles(
   projectRoot: string,
   clients: DmoFieldDeleteClients,
   writers: DmoFieldWriters,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<DmoFieldRefresh[]> {
   const root = path.resolve(projectRoot);
   const results: DmoFieldRefresh[] = [];

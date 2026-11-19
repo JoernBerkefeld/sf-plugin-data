@@ -307,14 +307,14 @@ test('family writes go over the bound sender once, never through a child CLI pro
     () => createDmoClient('target', '68.0', unusedRunner, sender).update('Synthetic__dlm', {}),
     () => createDmoClient('target', '68.0', unusedRunner, sender).delete('Synthetic__dlm'),
     () =>
-      createMappingClient('target', '68.0', unusedRunner, undefined, sender).create(mappingBody),
+      createMappingClient('target', '68.0', unusedRunner, 'default', sender).create(mappingBody),
     () =>
-      createMappingClient('target', '68.0', unusedRunner, undefined, sender).update(
+      createMappingClient('target', '68.0', unusedRunner, 'default', sender).update(
         'Synthetic',
         mappingBody,
       ),
     () =>
-      createRelationshipClient('target', '68.0', undefined, sender).create({
+      createRelationshipClient('target', '68.0', 'default', sender).create({
         sourceObjectName: 'Source__dlm',
         sourceFieldName: 'RefId__c',
         targetObjectName: 'Target__dlm',

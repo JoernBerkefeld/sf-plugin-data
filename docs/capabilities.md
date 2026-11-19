@@ -386,6 +386,24 @@ space. Routes proven live at API 68 (verification DB entries
 `data360:dataspace-followups-20261118.api68`); the plugin's own run of them is not yet
 verified live.
 
+Data spaces of DMOs, mappings and relationships (2026-11-19, D1b): each file names its one
+data space in a top-level `c__dataSpace` string (the old `identity.dataSpace` is
+`LEGACY_DATASPACE_KEY`), and deploy and delete refuse a file of another data space than the
+run's (`DMO_DATASPACE_MISMATCH`, `MAPPING_DATASPACE_MISMATCH`,
+`UNSUPPORTED_RELATIONSHIP_DATASPACE`). Every mapping and relationship REST request sends
+`?dataspace=` with the run's data space and every DMO create and update `dataSpaceName`, also
+for `default`. The DMO list holds every data space and is kept by each entry's
+`dataSpaceName`; an entry without one stops the listing (`NATIVE_INVENTORY_UNCONFIRMED`).
+Files carry the names Salesforce stores (`ds2_Individual__dlm` and `FirstName__c` for a
+standard DMO copy in `dataspace2`). The first mapping onto a copy that does not exist yet is
+sent once more with the default spelling (`ssot__X__dlm`, `ssot__` target fields, the prefix
+from `GET /ssot/data-spaces`) when Salesforce answers the copy spelling with 404, and read back
+under the copy name; proven live through the raw API (DB entry
+`data360:dataspace-identity-resolution-api68`), not yet through the plugin. The
+`*_DATASPACE_COLLISION` codes of DMOs, mappings and relationships are gone: their names are
+unique in the org. A member list that cannot be read after a DLO member PUT is
+`DLO_DATASPACE_MEMBERS_UNCONFIRMED` (the change was sent).
+
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or
 redirects. Stream/connector bindings, lineage and generated replay remain unqualified.
@@ -580,8 +598,8 @@ Standard-scope rules:
   standard primary key; none of this causes a write or a refusal, so a retrieved file
   deploys back `unchanged`, also to an org where the DMO is not mapped yet.
 - PATCH body for one added custom field: `{"fields":[{"name","label","dataType",
-"isPrimaryKey"}]}`; for a label change: `{"label"}`; `dataSpaceName` only with
-  `--dataspace`.
+"isPrimaryKey"}]}`; for a label change: `{"label"}`; every create and update also
+  names the run's data space in `dataSpaceName` (`default` when `--dataspace` is left out).
 - Readback confirms the label, a managed description, the custom fields of the file,
   the labels of the other listed fields and the absence of removed fields.
 - [x] Observed at API 68 through the plugin on one standard DMO in two orgs, active in
@@ -829,7 +847,7 @@ Not qualified:
 ## relationship: native definition retrieve, create, update and delete
 
 - [x] File `data360/relationship/<Name>.relationship-meta.json`: `schemaVersion: 1`,
-      `kind: relationship`, `identity` (`apiName`, `dataSpace`) and `spec` with
+      `kind: relationship`, `c__dataSpace`, `identity` (`apiName`) and `spec` with
       `sourceObjectName`, `sourceFieldName`, `targetObjectName`, `targetFieldName`,
       `cardinality` and `relationshipOwner`, plus an optional `label`. Cardinality,
       owner and label are sent as written.

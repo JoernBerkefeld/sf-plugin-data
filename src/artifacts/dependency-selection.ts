@@ -113,7 +113,10 @@ export function documentDependencyNode(
     throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');
   }
   // A native DMO definition names no other component; it is always a leaf.
-  return { identity: { kind: 'dmo', ...document.identity }, dependencies: [] };
+  return {
+    identity: { kind: 'dmo', dataSpace: document.c__dataSpace, apiName: document.identity.apiName },
+    dependencies: [],
+  };
 }
 
 /**

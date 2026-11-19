@@ -1,5 +1,6 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, readSingleDataSpace, refuseLegacyDataSpace } from './data-space-field.js';
 
 export type NativeMappingField = {
   sourceFieldDeveloperName: string;
@@ -10,7 +11,9 @@ export type NativeMappingField = {
 export type NativeMappingDocument = {
   schemaVersion: 1;
   kind: 'mapping';
-  identity: { apiName: string; dataSpace: string };
+  /** The data space the mapping belongs to (file key `c__dataSpace`). */
+  c__dataSpace: string;
+  identity: { apiName: string };
   spec: {
     sourceEntityDeveloperName: string;
     targetEntityDeveloperName: string;
@@ -119,15 +122,8 @@ export function validateNativeMappingDocument(
     throw refuse('INVALID_MAPPING_DOCUMENT', 'kind', 'must be "mapping"');
   if (typeof identity.apiName !== 'string' || !nativeMappingName.test(identity.apiName))
     throw refuse('INVALID_MAPPING_DOCUMENT', 'identity.apiName', 'must be a mapping API name');
-  if (
-    typeof identity.dataSpace !== 'string' ||
-    !identity.dataSpace.trim() ||
-    identity.dataSpace !== identity.dataSpace.trim() ||
-    [...identity.dataSpace].some(
-      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0) === 127,
-    )
-  )
-    throw refuse('INVALID_MAPPING_DOCUMENT', 'identity.dataSpace', 'must be a data space name');
+  refuseLegacyDataSpace(identity, refuse);
+  readSingleDataSpace(document, refuse);
   // The document represents a DLO-to-DMO mapping only; retrieve writes any other as returned.
   if (
     typeof spec.sourceEntityDeveloperName !== 'string' ||
@@ -153,8 +149,8 @@ export function validateNativeMappingDocument(
     objectAt(field, `spec.fieldMappings[${index}]`),
   );
   if (mode === 'retrieve') return structuredClone(value) as NativeMappingDocument;
-  closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
-  closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
+  closedKeys(document, '', [dataSpaceKey, 'identity', 'kind', 'schemaVersion', 'spec']);
+  closedKeys(identity, 'identity.', ['apiName']);
   closedKeys(
     spec,
     'spec.',
@@ -224,13 +220,13 @@ export function unwrapNativeMapping(value: unknown): Record<string, unknown> {
 /**
  * Save logical bindings and every returned pair, without runtime mapping status or IDs.
  * @param {unknown} value Direct native response.
- * @param {string} [dataSpace] Local effective context; omitted native scope means default, not HTTP injection.
+ * @param {string} dataSpace The run's data space; a read naming another is refused.
  * @param {DocumentMode} [mode] `retrieve` keeps pairs the plugin cannot deploy as returned.
  * @returns {NativeMappingDocument} Portable definition, not a write payload.
  */
 export function normalizeNativeMapping(
   value: unknown,
-  dataSpace = 'default',
+  dataSpace: string,
   mode: DocumentMode = 'deploy',
 ): NativeMappingDocument {
   const object = unwrapNativeMapping(value);
@@ -240,7 +236,8 @@ export function normalizeNativeMapping(
     {
       schemaVersion: 1,
       kind: 'mapping',
-      identity: { apiName: object.developerName, dataSpace },
+      [dataSpaceKey]: dataSpace,
+      identity: { apiName: object.developerName },
       spec: {
         sourceEntityDeveloperName: object.sourceEntityDeveloperName,
         targetEntityDeveloperName: object.targetEntityDeveloperName,
@@ -254,12 +251,12 @@ export function normalizeNativeMapping(
 /**
  * Unwrap only the documented collection wrapper; do not infer pagination completeness.
  * @param {unknown} value Native collection response.
- * @param {string} [dataSpace] Local effective scope for every entry.
+ * @param {string} dataSpace The run's data space, checked for every entry.
  * @returns {Record<string, unknown>[]} Checked detail representations.
  */
 export function unwrapNativeMappingCollection(
   value: unknown,
-  dataSpace = 'default',
+  dataSpace: string,
 ): Record<string, unknown>[] {
   const object = record(value);
   if (!Array.isArray(object.objectSourceTargetMaps))

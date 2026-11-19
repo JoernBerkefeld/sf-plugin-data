@@ -40,7 +40,7 @@ const raw = (fields = names) => ({
   fieldMappings: fields.map((name) => pair(name)),
 });
 const desired = (fields = names) => {
-  const document = normalizeNativeMapping(raw(fields));
+  const document = normalizeNativeMapping(raw(fields), 'default');
   document.identity.apiName = 'SourceGenerated_456';
   for (const field of document.spec.fieldMappings)
     field.developerName = `source_${field.sourceFieldDeveloperName}`;
@@ -150,7 +150,7 @@ test('mapping create projects the evidenced three authored pairs, retains seven 
   client.list = async () => ({ objectSourceTargetMaps: [] });
   const input = desired();
   const before = structuredClone(input);
-  const result = await deployNativeMapping(input, client, dependencies());
+  const result = await deployNativeMapping(input, client, dependencies(), undefined, 'default');
   assert.equal(result.operation, 'create');
   assert.equal(result.document.identity.apiName, 'TargetGenerated_123');
   assert.equal(result.document.spec.fieldMappings.length, 7);
@@ -170,7 +170,7 @@ test('mapping unique pair resolution produces no-op with zero writes despite sou
   const { client, calls } = fixture();
   const input = desired();
   input.spec.fieldMappings.reverse();
-  const result = await deployNativeMapping(input, client, dependencies());
+  const result = await deployNativeMapping(input, client, dependencies(), undefined, 'default');
   assert.equal(result.operation, 'noop');
   assert.deepEqual(calls[0], ['list', 'Example__dlm', 'Example__dll']);
   assert.ok(
@@ -178,9 +178,9 @@ test('mapping unique pair resolution produces no-op with zero writes despite sou
       ([kind, name]) => ['get', 'list'].includes(kind) && name !== input.identity.apiName,
     ),
   );
-  const preview = await preflightMapping(input, client, dependencies());
+  const preview = await preflightMapping(input, client, dependencies(), 'default');
   assert.equal(preview.outcome, 'unchanged');
-  assert.deepEqual(await executeMapping(input, client, dependencies()), {
+  assert.deepEqual(await executeMapping(input, client, dependencies(), undefined, 'default'), {
     outcome: 'unchanged',
     mutation: 'not-attempted',
     diagnostics: [],
@@ -189,7 +189,7 @@ test('mapping unique pair resolution produces no-op with zero writes despite sou
 
 test('mapping adds a never-observed pair without selectors and preserves all existing pairs independently', async () => {
   const { client, calls, deps } = fixture(raw(names.filter((name) => name !== 'Name__c')));
-  const result = await deployNativeMapping(desired(), client, deps);
+  const result = await deployNativeMapping(desired(), client, deps, undefined, 'default');
   assert.equal(result.operation, 'update');
   const writes = calls.filter(([kind]) => kind === 'update');
   assert.equal(writes.length, 1);
@@ -204,7 +204,7 @@ test('mapping adds a never-observed pair without selectors and preserves all exi
   ]);
   assert.equal(result.document.spec.fieldMappings.length, 7);
   assert.equal(result.document.spec.fieldMappings.at(-1).developerName, 'fresh_server_selector');
-  const replay = await deployNativeMapping(desired(), client, dependencies());
+  const replay = await deployNativeMapping(desired(), client, dependencies(), undefined, 'default');
   assert.equal(replay.operation, 'noop');
   assert.equal(calls.filter(([kind]) => kind === 'update').length, 1);
 });
@@ -216,11 +216,11 @@ test('mapping explicit context threads through create, no-op, additive readback 
       operation === 'update' ? raw(names.filter((name) => name !== 'Name__c')) : raw(),
     );
     const input = desired();
-    input.identity.dataSpace = scope;
+    input.c__dataSpace = scope;
     const deps = scopedDependencies(f.deps, scope);
     if (operation === 'create') f.client.list = async () => ({ objectSourceTargetMaps: [] });
     const before = structuredClone(input);
-    await assert.rejects(preflightNativeMapping(input, f.client, deps), /DATASPACE/);
+    await assert.rejects(preflightNativeMapping(input, f.client, deps, 'default'), /DATASPACE/);
     assert.deepEqual(f.calls, []);
     const preview = await preflightMapping(input, f.client, deps, scope);
     assert.equal(preview.outcome, operation === 'noop' ? 'unchanged' : operation);
@@ -233,13 +233,13 @@ test('mapping explicit context threads through create, no-op, additive readback 
       scope,
     );
     assert.equal(result.operation, operation);
-    assert.equal(result.document.identity.dataSpace, scope);
+    assert.equal(result.document.c__dataSpace, scope);
     assert.equal(updates.length, operation === 'update' ? 1 : 0);
     assert.deepEqual(input, before);
     const receipt = await executeMapping(input, f.client, deps, undefined, scope);
     assert.equal(receipt.outcome, operation === 'create' ? 'created' : 'unchanged');
     const retrieved = await retrieveNativeMapping('TargetGenerated_123', f.client, scope);
-    assert.equal(retrieved.identity.dataSpace, scope);
+    assert.equal(retrieved.c__dataSpace, scope);
   }
 });
 
@@ -263,7 +263,7 @@ test('mapping scope mismatch rejects explicit mapping responses and fresh parent
   for (const mode of ['source', 'target', 'inventory', 'detail', 'desired']) {
     const f = fixture();
     const input = desired();
-    input.identity.dataSpace = mode === 'desired' ? 'Wrong' : scope;
+    input.c__dataSpace = mode === 'desired' ? 'Wrong' : scope;
     const deps = scopedDependencies(f.deps, scope);
     if (mode === 'source') deps.source = f.deps.source;
     if (mode === 'target') deps.target = f.deps.target;
@@ -282,7 +282,7 @@ test('mapping creation accepts confirmed filtered 404 but not authentication or 
   client.list = async () => {
     throw missing();
   };
-  const plan = await preflightNativeMapping(desired(), client, dependencies());
+  const plan = await preflightNativeMapping(desired(), client, dependencies(), 'default');
   assert.equal(plan.operation, 'create');
   for (const error of [
     new NativeMappingError('MAPPING_HTTP_ERROR', 401),
@@ -294,7 +294,7 @@ test('mapping creation accepts confirmed filtered 404 but not authentication or 
       throw error;
     };
     await assert.rejects(
-      preflightNativeMapping(desired(), client, dependencies()),
+      preflightNativeMapping(desired(), client, dependencies(), 'default'),
       (actual) => actual === error,
     );
   }
@@ -312,18 +312,27 @@ test('mapping malformed, paginated, ambiguous or wrong-binding inventory never p
   ]) {
     const { client, calls } = fixture();
     client.list = async () => inventory;
-    await assert.rejects(preflightNativeMapping(desired(), client, dependencies()));
+    await assert.rejects(preflightNativeMapping(desired(), client, dependencies(), 'default'));
     assert.ok(!calls.some(([kind]) => kind === 'create' || kind === 'update'));
   }
   const { client } = fixture();
   client.get = async () => ({ ...raw(), developerName: 'Other' });
-  await assert.rejects(preflightNativeMapping(desired(), client, dependencies()), /IDENTITY/);
+  await assert.rejects(
+    preflightNativeMapping(desired(), client, dependencies(), 'default'),
+    /IDENTITY/,
+  );
   client.get = async () => ({ ...raw(), status: 'CREATING' });
-  await assert.rejects(preflightNativeMapping(desired(), client, dependencies()), /NOT_SETTLED/);
+  await assert.rejects(
+    preflightNativeMapping(desired(), client, dependencies(), 'default'),
+    /NOT_SETTLED/,
+  );
   client.get = async () => {
     throw missing();
   };
-  await assert.rejects(preflightNativeMapping(desired(), client, dependencies()), /HTTP_ERROR/);
+  await assert.rejects(
+    preflightNativeMapping(desired(), client, dependencies(), 'default'),
+    /HTTP_ERROR/,
+  );
 });
 
 test('mapping source/target field, identity and dataspace validation fail before dispatch', async () => {
@@ -346,7 +355,7 @@ test('mapping source/target field, identity and dataspace validation fail before
     const deps = dependencies();
     change(deps);
     const { client, calls } = fixture();
-    await assert.rejects(preflightNativeMapping(desired(), client, deps));
+    await assert.rejects(preflightNativeMapping(desired(), client, deps, 'default'));
     assert.equal(calls.length, 0);
   }
   // A data type difference is not refused: Salesforce accepts it and the preview names it.
@@ -356,7 +365,7 @@ test('mapping source/target field, identity and dataspace validation fail before
     fields: target().fields.map((f) => (f.name === 'Note__c' ? { ...f, type: 'Date' } : f)),
   });
   const { client, calls } = fixture();
-  const plan = await preflightNativeMapping(desired(), client, deps);
+  const plan = await preflightNativeMapping(desired(), client, deps, 'default');
   assert.equal(plan.operation, 'noop');
   assert.deepEqual(plan.typeDifferences, [
     { source: 'Note__c', target: 'Note__c', sourceType: 'Text', targetType: 'Date' },
@@ -373,19 +382,24 @@ test('mapping create leaves unknown system fields and a missing primary key to S
     fields: target().fields.map((f) => (f.name === 'KQ_Id__c' ? { ...f, usageTag: 'Unknown' } : f)),
   });
   // An unrecognised qualifier is no generated pair, so it is sent as authored.
-  const unknown = await preflightNativeMapping(desired(), client, deps);
+  const unknown = await preflightNativeMapping(desired(), client, deps, 'default');
   assert.deepEqual(pairNames(unknown.writes[0].body.fieldMapping), [
     'Id__c',
     'Name__c',
     'Note__c',
     'KQ_Id__c',
   ]);
-  const keyless = await preflightNativeMapping(desired(['Name__c']), client, dependencies());
+  const keyless = await preflightNativeMapping(
+    desired(['Name__c']),
+    client,
+    dependencies(),
+    'default',
+  );
   assert.deepEqual(keyless.writes[0].body.fieldMapping, [
     { sourceFieldDeveloperName: 'Name__c', targetFieldDeveloperName: 'Name__c' },
   ]);
   const input = desired(['Id__c', 'Name__c', 'Note__c']);
-  const plan = await preflightNativeMapping(input, client, dependencies());
+  const plan = await preflightNativeMapping(input, client, dependencies(), 'default');
   assert.equal(plan.writes[0].body.fieldMapping.length, 3);
 });
 
@@ -396,6 +410,7 @@ test('mapping removal and replacement fail closed without qualified metadata', a
       desired(names.filter((name) => name !== 'Name__c')),
       full,
       dependencies(),
+      'default',
     ),
     /UNPROVEN/,
   );
@@ -405,7 +420,7 @@ test('mapping removal and replacement fail closed without qualified metadata', a
   );
   collision.fieldMappings.push({ ...pair('Name__c'), targetFieldDeveloperName: 'Note__c' });
   await assert.rejects(
-    preflightNativeMapping(desired(), fixture(collision).client, dependencies()),
+    preflightNativeMapping(desired(), fixture(collision).client, dependencies(), 'default'),
     /UNPROVEN/,
   );
 });
@@ -427,7 +442,10 @@ test('mapping bounded settlement rejects echoes, loss of omitted pairs, selector
     const original = client.get;
     client.get = async (name) =>
       calls.some(([kind]) => kind === 'update') ? returned : original(name);
-    await assert.rejects(deployNativeMapping(desired(), client, deps), /PERSISTENCE/);
+    await assert.rejects(
+      deployNativeMapping(desired(), client, deps, undefined, 'default'),
+      /PERSISTENCE/,
+    );
     assert.equal(calls.filter(([kind]) => kind === 'update').length, 1);
   }
   const { client, calls } = fixture();
@@ -435,7 +453,10 @@ test('mapping bounded settlement rejects echoes, loss of omitted pairs, selector
   client.get = async () => {
     throw new NativeMappingError('MAPPING_HTTP_ERROR', 403);
   };
-  await assert.rejects(deployNativeMapping(desired(), client, dependencies()), /HTTP_ERROR/);
+  await assert.rejects(
+    deployNativeMapping(desired(), client, dependencies(), undefined, 'default'),
+    /HTTP_ERROR/,
+  );
   assert.equal(calls.filter(([kind]) => kind === 'create').length, 1);
 });
 
@@ -448,11 +469,14 @@ test('mapping create settles transient GET404 only, verifies bindings and never 
     if (++count === 1) throw missing();
     return original(name);
   };
-  const result = await deployNativeMapping(desired(), client, dependencies());
+  const result = await deployNativeMapping(desired(), client, dependencies(), undefined, 'default');
   assert.equal(result.operation, 'create');
   assert.equal(count, 2);
   client.get = async () => ({ ...raw(), targetEntityDeveloperName: 'Other__dlm' });
-  await assert.rejects(deployNativeMapping(desired(), client, dependencies()), /BINDING/);
+  await assert.rejects(
+    deployNativeMapping(desired(), client, dependencies(), undefined, 'default'),
+    /BINDING/,
+  );
   assert.equal(calls.filter(([kind]) => kind === 'create').length, 2);
 });
 
@@ -461,7 +485,7 @@ test('mapping create preserves every server-returned generated pair even for an 
   client.list = async () => ({ objectSourceTargetMaps: [] });
   client.get = async () => raw(names.slice(0, 3));
   await assert.rejects(
-    deployNativeMapping(desired(names.slice(0, 3)), client, dependencies()),
+    deployNativeMapping(desired(names.slice(0, 3)), client, dependencies(), undefined, 'default'),
     /PERSISTENCE/,
   );
   assert.equal(calls.filter(([kind]) => kind === 'create').length, 1);
@@ -544,7 +568,7 @@ test('mapping deletion sends one Metadata removal, then confirms absence and unt
   const schema = structuredClone(f.schema);
   const survivor = structuredClone(f.survivor);
   const { sleeps, settle } = fast();
-  assert.deepEqual(await deleteNativeMapping(mappingName, f.client, f.deps, undefined, settle), {
+  assert.deepEqual(await deleteNativeMapping(mappingName, f.client, f.deps, 'default', settle), {
     apiName: mappingName,
   });
   const at = f.calls.findIndex(([kind]) => kind === 'remove');
@@ -563,14 +587,14 @@ test('mapping deletion sends one Metadata removal, then confirms absence and unt
 
 // API62..67 cases are synthetic compatibility checks, not live qualification.
 for (const version of ['61.0', '62.0', '63.0', '64.0', '65.0', '66.0', '67.0', '68.0'])
-  for (const scope of [undefined, 'Team / +&?=ü'])
+  for (const scope of ['default', 'Team / +&?=ü'])
     test(`deletion on admitted version ${version} removes once in context ${scope}`, async () => {
       const f = deleteFixture();
       f.client.apiVersion = version;
       const deps = scope === undefined ? f.deps : scopedDependencies(f.deps, scope);
       const plan = await preflightDeleteNativeMapping(mappingName, f.client, deps, scope);
-      assert.equal(plan.selected.identity.dataSpace, scope ?? 'default');
-      assert.equal(plan.others[0].identity.dataSpace, scope ?? 'default');
+      assert.equal(plan.selected.c__dataSpace, scope ?? 'default');
+      assert.equal(plan.others[0].c__dataSpace, scope ?? 'default');
       assert.deepEqual(writes(f.calls), []);
       assert.deepEqual(
         await deleteNativeMapping(mappingName, f.client, deps, scope, fast().settle),
@@ -584,10 +608,10 @@ test('mapping scoped desired-state removal threads context through unmap settlem
   const scope = 'Team';
   const deps = scopedDependencies(f.deps, scope);
   const input = desired(names.filter((name) => name !== 'Note__c'));
-  input.identity.dataSpace = scope;
+  input.c__dataSpace = scope;
   const result = await deployNativeMapping(input, f.client, deps, undefined, scope);
   assert.equal(result.operation, 'update');
-  assert.equal(result.document.identity.dataSpace, scope);
+  assert.equal(result.document.c__dataSpace, scope);
   assert.equal(result.document.spec.fieldMappings.length, 6);
   assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
 });
@@ -596,13 +620,14 @@ test('deletion and shared unmap carry no own version gate; the command admits na
   for (const version of ['61.0', '64.0', '69.0']) {
     const f = deleteFixture();
     f.client.apiVersion = version;
-    await preflightDeleteNativeMapping(mappingName, f.client, f.deps);
+    await preflightDeleteNativeMapping(mappingName, f.client, f.deps, 'default');
     assert.deepEqual(writes(f.calls), [], version);
     const plan = await preflightUnmapNativeMapping(
-      normalizeNativeMapping(f.selected),
+      normalizeNativeMapping(f.selected, 'default'),
       f.client,
       f.deps,
-      normalizeNativeMapping(f.selected).spec.fieldMappings,
+      normalizeNativeMapping(f.selected, 'default').spec.fieldMappings,
+      'default',
     );
     assert.deepEqual(pairNames(plan.protectedPairs), ['Id__c', ...generatedNames], version);
     assert.deepEqual(pairNames(plan.removals), ['Name__c', 'Note__c'], version);
@@ -621,7 +646,7 @@ test('desired-state removal and retarget work at lower native versions without a
           sourceFieldDeveloperName: 'Name__c',
           targetFieldDeveloperName: 'Note__c',
         });
-      const result = await deployNativeMapping(input, f.client, f.deps);
+      const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
       assert.equal(result.operation, 'update', version);
       assert.deepEqual(
         writes(f.calls).map(([kind]) => kind),
@@ -637,10 +662,13 @@ test('mapping delete preview returns what must stay unchanged, ordered, without 
   const f = deleteFixture();
   const first = { ...f.survivor, developerName: 'Another_1', sourceEntityDeveloperName: 'A__dll' };
   f.state.others = [f.survivor, first];
-  const plan = await preflightDeleteNativeMapping(mappingName, f.client, f.deps);
+  const plan = await preflightDeleteNativeMapping(mappingName, f.client, f.deps, 'default');
   assert.deepEqual(plan, {
-    selected: normalizeNativeMapping(f.selected),
-    others: [normalizeNativeMapping(first), normalizeNativeMapping(f.survivor)],
+    selected: normalizeNativeMapping(f.selected, 'default'),
+    others: [
+      normalizeNativeMapping(first, 'default'),
+      normalizeNativeMapping(f.survivor, 'default'),
+    ],
     targetFields: names.toSorted(),
   });
   assert.ok(!('removals' in plan));
@@ -667,10 +695,10 @@ test('deletion leaves field usage, qualifiers and the other mappings to Salesfor
   ]) {
     const f = deleteFixture();
     change(f);
-    await preflightDeleteNativeMapping(mappingName, f.client, f.deps);
+    await preflightDeleteNativeMapping(mappingName, f.client, f.deps, 'default');
     assert.deepEqual(writes(f.calls), []);
     assert.deepEqual(
-      await deleteNativeMapping(mappingName, f.client, f.deps, undefined, fast().settle),
+      await deleteNativeMapping(mappingName, f.client, f.deps, 'default', fast().settle),
       { apiName: mappingName },
     );
     assert.deepEqual(writes(f.calls), [['remove', mappingName]]);
@@ -681,7 +709,7 @@ test('the last mapping of a custom DMO is refused in preview and execution witho
   for (const operation of [preflightDeleteNativeMapping, deleteNativeMapping]) {
     const f = deleteFixture({ alone: true });
     await assert.rejects(
-      operation(mappingName, f.client, f.deps),
+      operation(mappingName, f.client, f.deps, 'default'),
       (error) =>
         error instanceof NativeMappingError && error.code === 'MAPPING_LAST_MAPPING_DELETE_BLOCKED',
     );
@@ -695,7 +723,7 @@ test('the last mapping of a namespaced custom DMO gets the same refusal', async 
   const f = deleteFixture({ alone: true });
   f.schema.name = 'ns__Example__dlm';
   await assert.rejects(
-    preflightDeleteNativeMapping(mappingName, f.client, f.deps),
+    preflightDeleteNativeMapping(mappingName, f.client, f.deps, 'default'),
     (error) =>
       error instanceof NativeMappingError &&
       error.code === 'MAPPING_LAST_MAPPING_DELETE_BLOCKED' &&
@@ -743,7 +771,7 @@ test('mapping malformed, incomplete or stale inventory blocks preview and execut
     for (const operation of [preflightDeleteNativeMapping, deleteNativeMapping]) {
       const f = deleteFixture();
       f.client.list = async () => inventory(f);
-      await assert.rejects(operation(mappingName, f.client, f.deps), expected);
+      await assert.rejects(operation(mappingName, f.client, f.deps, 'default'), expected);
       assert.deepEqual(writes(f.calls), []);
     }
   }
@@ -754,7 +782,7 @@ test('mapping deletion waits for delayed absence through the injected sleep, bou
   delayed.state.staleReads = 2;
   const first = fast();
   assert.deepEqual(
-    await deleteNativeMapping(mappingName, delayed.client, delayed.deps, undefined, first.settle),
+    await deleteNativeMapping(mappingName, delayed.client, delayed.deps, 'default', first.settle),
     { apiName: mappingName },
   );
   assert.deepEqual(first.sleeps, [7, 7]);
@@ -764,7 +792,7 @@ test('mapping deletion waits for delayed absence through the injected sleep, bou
   stuck.state.staleReads = Infinity;
   const second = fast();
   await assert.rejects(
-    deleteNativeMapping(mappingName, stuck.client, stuck.deps, undefined, second.settle),
+    deleteNativeMapping(mappingName, stuck.client, stuck.deps, 'default', second.settle),
     (error) => error instanceof NativeMappingError && error.code === 'MAPPING_DELETION_UNCONFIRMED',
   );
   assert.deepEqual(second.sleeps, [7, 7]);
@@ -807,7 +835,7 @@ test('mapping deletion reports a changed other mapping or DMO field list as a si
       change(f);
     };
     const { sleeps, settle } = fast();
-    const run = deleteNativeMapping(mappingName, f.client, f.deps, undefined, settle);
+    const run = deleteNativeMapping(mappingName, f.client, f.deps, 'default', settle);
     if (sideEffect)
       await assert.rejects(
         run,
@@ -833,7 +861,7 @@ test('mapping deletion reports a changed other mapping or DMO field list as a si
     await remove(name);
     f.state.others = f.state.others.toReversed();
   };
-  await deleteNativeMapping(mappingName, f.client, f.deps, undefined, fast().settle);
+  await deleteNativeMapping(mappingName, f.client, f.deps, 'default', fast().settle);
 });
 
 test('mapping delete stops on a failed removal or failed absence read without another write', async () => {
@@ -864,7 +892,7 @@ test('mapping delete stops on a failed removal or failed absence read without an
     };
     const { sleeps, settle } = fast();
     await assert.rejects(
-      deleteNativeMapping(mappingName, f.client, f.deps, undefined, settle),
+      deleteNativeMapping(mappingName, f.client, f.deps, 'default', settle),
       expected instanceof Error ? (error) => error === expected : expected,
       mode,
     );
@@ -874,7 +902,7 @@ test('mapping delete stops on a failed removal or failed absence read without an
     if (['rejected', 'lost'].includes(mode)) assert.equal(f.calls.at(-1)[0], 'remove', mode);
   }
   await assert.rejects(
-    retrieveNativeMapping('../escape', fixture().client),
+    retrieveNativeMapping('../escape', fixture().client, 'default'),
     /INVALID_MAPPING_NAME/,
   );
   await assert.rejects(
@@ -882,6 +910,7 @@ test('mapping delete stops on a failed removal or failed absence read without an
       'SourceGenerated_456',
       { ...fixture().client, apiVersion: '68.0' },
       dependencies(),
+      'default',
     ),
     /IDENTITY/,
   );
@@ -913,10 +942,11 @@ const unmapFixture = () => {
 test('guarded unmap uses fresh observed selectors, preserves five protected pairs and exact schema', async () => {
   const f = unmapFixture();
   const plan = await preflightUnmapNativeMapping(
-    normalizeNativeMapping(f.state),
+    normalizeNativeMapping(f.state, 'default'),
     f.client,
     f.deps,
-    normalizeNativeMapping(f.state).spec.fieldMappings,
+    normalizeNativeMapping(f.state, 'default').spec.fieldMappings,
+    'default',
   );
   assert.equal(plan.protectedPairs.length, 5);
   assert.deepEqual(
@@ -924,7 +954,13 @@ test('guarded unmap uses fresh observed selectors, preserves five protected pair
     ['Name__c', 'Note__c'],
   );
   let dispatched = 0;
-  const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => dispatched++);
+  const result = await unmapNativeMappingFields(
+    plan,
+    f.client,
+    f.deps,
+    () => dispatched++,
+    'default',
+  );
   assert.equal(dispatched, 2);
   assert.deepEqual(f.calls, [
     ['TargetGenerated_123', 'target_Name__c'],
@@ -960,12 +996,13 @@ test('guarded unmap accepts Number identity fields and checks CREATING snapshots
     remaining = 1;
   };
   const plan = await preflightUnmapNativeMapping(
-    normalizeNativeMapping(f.state),
+    normalizeNativeMapping(f.state, 'default'),
     f.client,
     f.deps,
-    normalizeNativeMapping(f.state).spec.fieldMappings,
+    normalizeNativeMapping(f.state, 'default').spec.fieldMappings,
+    'default',
   );
-  await unmapNativeMappingFields(plan, f.client, f.deps, () => {});
+  await unmapNativeMappingFields(plan, f.client, f.deps, () => {}, 'default');
   assert.equal(f.calls.length, 2);
 });
 
@@ -1019,13 +1056,14 @@ const sharedFixture = () => {
 test('guarded unmap removes a pair whose field another mapping also targets; the field stays mapped', async () => {
   const f = sharedFixture();
   const plan = await preflightUnmapNativeMapping(
-    normalizeNativeMapping(f.states.get('TargetGenerated_123')),
+    normalizeNativeMapping(f.states.get('TargetGenerated_123'), 'default'),
     f.client,
     f.deps,
     [pair('Note__c')],
+    'default',
   );
   assert.deepEqual(plan.removals, [pair('Note__c')]);
-  const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => {});
+  const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => {}, 'default');
   assert.deepEqual(f.calls, [['TargetGenerated_123', 'target_Note__c']]);
   assert.equal(result.target.fields.find((field) => field.name === 'Note__c').isMapped, true);
   assert.equal(f.states.get('Other').fieldMappings.length, 7);
@@ -1035,13 +1073,13 @@ test('guarded unmap removes a pair whose field another mapping also targets; the
 test('desired-state removal on a shared field reconciles each mapping; the field is unmapped after the last', async () => {
   const f = sharedFixture();
   const without = names.filter((name) => name !== 'Note__c');
-  const first = await deployNativeMapping(desired(without), f.client, f.deps);
+  const first = await deployNativeMapping(desired(without), f.client, f.deps, undefined, 'default');
   assert.equal(first.operation, 'update');
   assert.equal(first.document.spec.fieldMappings.length, 6);
   assert.equal(f.read().fields.find((field) => field.name === 'Note__c').isMapped, true);
   const second = desired(without);
   second.spec.sourceEntityDeveloperName = 'Other__dll';
-  const last = await deployNativeMapping(second, f.client, f.deps);
+  const last = await deployNativeMapping(second, f.client, f.deps, undefined, 'default');
   assert.equal(last.operation, 'update');
   assert.equal(last.document.identity.apiName, 'Other');
   assert.ok(!('isMapped' in f.read().fields.find((field) => field.name === 'Note__c')));
@@ -1050,7 +1088,13 @@ test('desired-state removal on a shared field reconciles each mapping; the field
     ['Other', 'target_Note__c'],
   ]);
   // Both mappings kept every other pair and nothing is left to do.
-  const replay = await deployNativeMapping(desired(without), f.client, f.deps);
+  const replay = await deployNativeMapping(
+    desired(without),
+    f.client,
+    f.deps,
+    undefined,
+    'default',
+  );
   assert.equal(replay.operation, 'noop');
   assert.equal(f.calls.length, 2);
 });
@@ -1062,9 +1106,12 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
     const f = sharedFixture();
     const input = desired(names.filter((name) => name !== omitted));
     if (omitted === 'Id__c')
-      await assert.rejects(deployNativeMapping(input, f.client, f.deps), /PROTECTED_PAIR_REQUIRED/);
+      await assert.rejects(
+        deployNativeMapping(input, f.client, f.deps, undefined, 'default'),
+        /PROTECTED_PAIR_REQUIRED/,
+      );
     else {
-      const result = await deployNativeMapping(input, f.client, f.deps);
+      const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
       assert.equal(result.operation, 'noop', omitted);
       assert.equal(result.document.spec.fieldMappings.length, 7);
     }
@@ -1079,6 +1126,8 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
       desired(names.filter((name) => name !== 'Note__c')),
       unselected.client,
       unselected.deps,
+      undefined,
+      'default',
     ),
     /SELECTOR_REQUIRED/,
   );
@@ -1097,7 +1146,7 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
         targetFieldDeveloperName: 'Note__c',
       });
     }
-    const plan = await preflightNativeMapping(input, f.client, f.deps);
+    const plan = await preflightNativeMapping(input, f.client, f.deps, 'default');
     assert.equal(plan.operation, 'update', mode);
     assert.deepEqual(
       pairNames(plan.removals),
@@ -1122,7 +1171,13 @@ test('shared-field removal keeps the other unmap protections and verifies the ma
     return schema;
   };
   await assert.rejects(
-    deployNativeMapping(desired(names.filter((name) => name !== 'Note__c')), f.client, f.deps),
+    deployNativeMapping(
+      desired(names.filter((name) => name !== 'Note__c')),
+      f.client,
+      f.deps,
+      undefined,
+      'default',
+    ),
     /PARENT_CHANGED/,
   );
   assert.equal(f.calls.length, 1);
@@ -1152,10 +1207,11 @@ test('guarded unmap refuses an unidentified key pair, unknown metadata and missi
     if (mode === 'selector') delete f.state.fieldMappings[1].developerName;
     await assert.rejects(
       preflightUnmapNativeMapping(
-        normalizeNativeMapping(f.state),
+        normalizeNativeMapping(f.state, 'default'),
         f.client,
         f.deps,
-        normalizeNativeMapping(f.state).spec.fieldMappings,
+        normalizeNativeMapping(f.state, 'default').spec.fieldMappings,
+        'default',
       ),
       expected,
       mode,
@@ -1192,15 +1248,16 @@ test('guarded unmap removes any pair that is not protected; the earlier field po
     if (mode === 'qualifier') f.schema.fields[1].keyQualifierName = 'Unexpected';
     if (mode === 'unmarked') delete f.schema.fields[1].isMapped;
     const plan = await preflightUnmapNativeMapping(
-      normalizeNativeMapping(f.state),
+      normalizeNativeMapping(f.state, 'default'),
       f.client,
       f.deps,
       [removed],
+      'default',
     );
     assert.deepEqual(plan.removals, [removed], mode);
     assert.equal(plan.protectedPairs.length, 5, mode);
     assert.deepEqual(f.calls, [], mode);
-    const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => {});
+    const result = await unmapNativeMappingFields(plan, f.client, f.deps, () => {}, 'default');
     assert.deepEqual(f.calls, [['TargetGenerated_123', removed.developerName]], mode);
     assert.ok(
       !result.selected.spec.fieldMappings.some(
@@ -1216,10 +1273,11 @@ test('guarded unmap stops after lost response, ignored removal, schema drift or 
   for (const mode of ['lost', 'ignored', 'schema', 'creating', 'selector']) {
     const f = unmapFixture();
     const plan = await preflightUnmapNativeMapping(
-      normalizeNativeMapping(f.state),
+      normalizeNativeMapping(f.state, 'default'),
       f.client,
       f.deps,
-      normalizeNativeMapping(f.state).spec.fieldMappings,
+      normalizeNativeMapping(f.state, 'default').spec.fieldMappings,
+      'default',
     );
     const remove = f.client.deleteField;
     f.client.deleteField = async (...arguments_) => {
@@ -1237,7 +1295,9 @@ test('guarded unmap stops after lost response, ignored removal, schema drift or 
       if (mode === 'selector') f.state.fieldMappings[0].developerName = 'drift';
     };
     let dispatched = 0;
-    await assert.rejects(unmapNativeMappingFields(plan, f.client, f.deps, () => dispatched++));
+    await assert.rejects(
+      unmapNativeMappingFields(plan, f.client, f.deps, () => dispatched++, 'default'),
+    );
     assert.equal(dispatched, 1);
     assert.equal(f.calls.length, 1);
   }
@@ -1246,22 +1306,24 @@ test('guarded unmap stops after lost response, ignored removal, schema drift or 
 test('guarded unmap revalidates stale evidence and accepts only flag absence, never false', async () => {
   const stale = unmapFixture();
   const plan = await preflightUnmapNativeMapping(
-    normalizeNativeMapping(stale.state),
+    normalizeNativeMapping(stale.state, 'default'),
     stale.client,
     stale.deps,
-    normalizeNativeMapping(stale.state).spec.fieldMappings,
+    normalizeNativeMapping(stale.state, 'default').spec.fieldMappings,
+    'default',
   );
   stale.schema.label = 'changed';
   await assert.rejects(
-    unmapNativeMappingFields(plan, stale.client, stale.deps, () => assert.fail()),
+    unmapNativeMappingFields(plan, stale.client, stale.deps, () => assert.fail(), 'default'),
     /PLAN_CHANGED/,
   );
   const f = unmapFixture();
   const fresh = await preflightUnmapNativeMapping(
-    normalizeNativeMapping(f.state),
+    normalizeNativeMapping(f.state, 'default'),
     f.client,
     f.deps,
-    normalizeNativeMapping(f.state).spec.fieldMappings,
+    normalizeNativeMapping(f.state, 'default').spec.fieldMappings,
+    'default',
   );
   const remove = f.client.deleteField;
   f.client.deleteField = async (...arguments_) => {
@@ -1269,7 +1331,7 @@ test('guarded unmap revalidates stale evidence and accepts only flag absence, ne
     f.schema.fields[1].isMapped = false;
   };
   await assert.rejects(
-    unmapNativeMappingFields(fresh, f.client, f.deps, () => {}),
+    unmapNativeMappingFields(fresh, f.client, f.deps, () => {}, 'default'),
     /PARENT_CHANGED/,
   );
   assert.equal(f.calls.length, 1);
@@ -1284,7 +1346,7 @@ test('mapping HTTP200 ignored addition is failed/unknown, with bounded reads and
   };
   const beforeSource = await deps.source.get();
   const beforeTarget = await deps.target.get();
-  const result = await executeMapping(desired(), client, deps);
+  const result = await executeMapping(desired(), client, deps, undefined, 'default');
   assert.equal(result.outcome, 'failed');
   assert.equal(result.mutation, 'unknown');
   assert.equal(result.diagnostics[0].code, 'MAPPING_PERSISTENCE_UNCONFIRMED');
@@ -1297,14 +1359,18 @@ test('desired-state removal preserves retained selectors and previews observed t
   const f = fixture();
   const input = desired(names.filter((name) => name !== 'Name__c'));
   const before = structuredClone(input);
-  const preview = await preflightMapping(input, f.client, f.deps);
+  const preview = await preflightMapping(input, f.client, f.deps, 'default');
   assert.deepEqual(preview.plan, [
     { operation: 'unmap', apiName: 'TargetGenerated_123', ...pair('Name__c') },
   ]);
   assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
   const changes = [];
-  const result = await deployNativeMapping(input, f.client, f.deps, (change) =>
-    changes.push(change),
+  const result = await deployNativeMapping(
+    input,
+    f.client,
+    f.deps,
+    (change) => changes.push(change),
+    'default',
   );
   assert.deepEqual(changes, [{ deleted: [pair('Name__c')], added: [] }]);
   assert.equal(result.operation, 'update');
@@ -1336,7 +1402,7 @@ test('hand-written mapping without generated pairs is a no-op against the existi
     { sourceFieldDeveloperName: 'Name__c', targetFieldDeveloperName: 'Name__c' },
   ]);
   const before = structuredClone(input);
-  const plan = await preflightNativeMapping(input, f.client, f.deps);
+  const plan = await preflightNativeMapping(input, f.client, f.deps, 'default');
   assert.equal(plan.operation, 'noop');
   assert.deepEqual(plan.writes, []);
   // The plan carries the merged document: the authored pairs, then the org's generated pairs.
@@ -1346,12 +1412,12 @@ test('hand-written mapping without generated pairs is a no-op against the existi
   ]);
   assert.notEqual(plan.desired, input);
   assert.deepEqual(input, before);
-  const preview = await preflightMapping(input, f.client, f.deps);
+  const preview = await preflightMapping(input, f.client, f.deps, 'default');
   assert.equal(preview.outcome, 'unchanged');
-  const result = await deployNativeMapping(input, f.client, f.deps);
+  const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(result.operation, 'noop');
   assert.equal(result.document.spec.fieldMappings.length, 6);
-  assert.deepEqual(await executeMapping(input, f.client, f.deps), {
+  assert.deepEqual(await executeMapping(input, f.client, f.deps, undefined, 'default'), {
     outcome: 'unchanged',
     mutation: 'not-attempted',
     diagnostics: [],
@@ -1364,12 +1430,12 @@ test('hand-written mapping adds one authored pair with a single names-only PATCH
   const f = fixture(raw(['Id__c', 'Name__c', ...generatedNames]));
   const input = handWritten(['Id__c', 'Name__c', 'Note__c']);
   const before = structuredClone(input);
-  const plan = await preflightNativeMapping(input, f.client, f.deps);
+  const plan = await preflightNativeMapping(input, f.client, f.deps, 'default');
   assert.equal(plan.operation, 'update');
   assert.equal(plan.removals, undefined);
   assert.equal(plan.evidence, undefined);
   assert.deepEqual(pairNames(plan.retained), ['Id__c', 'Name__c', ...generatedNames]);
-  const preview = await preflightMapping(input, f.client, f.deps);
+  const preview = await preflightMapping(input, f.client, f.deps, 'default');
   assert.deepEqual(preview.plan, [
     {
       operation: 'add',
@@ -1379,7 +1445,7 @@ test('hand-written mapping adds one authored pair with a single names-only PATCH
     },
   ]);
   assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
-  const result = await deployNativeMapping(input, f.client, f.deps);
+  const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(result.operation, 'update');
   assert.deepEqual(
     f.calls.filter(([kind]) => !['get', 'list'].includes(kind)),
@@ -1400,7 +1466,7 @@ test('hand-written mapping adds one authored pair with a single names-only PATCH
   assert.deepEqual(pairNames(result.document.spec.fieldMappings).toSorted(), names.toSorted());
   assert.deepEqual(input, before);
   // The same file is unchanged afterwards.
-  const replay = await deployNativeMapping(input, f.client, f.deps);
+  const replay = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(replay.operation, 'noop');
   assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 1);
 });
@@ -1409,20 +1475,24 @@ test('hand-written mapping removes only its omitted authored pair and keeps the 
   const f = fixture();
   const input = handWritten(['Id__c', 'Name__c']);
   const before = structuredClone(input);
-  const plan = await preflightNativeMapping(input, f.client, f.deps);
+  const plan = await preflightNativeMapping(input, f.client, f.deps, 'default');
   assert.equal(plan.operation, 'update');
   assert.deepEqual(plan.removals, [pair('Note__c')]);
   assert.deepEqual(plan.writes, []);
   assert.deepEqual(pairNames(plan.retained), ['Id__c', 'Name__c', ...generatedNames]);
   assert.deepEqual(pairNames(plan.evidence.protectedPairs), ['Id__c', ...generatedNames]);
-  const preview = await preflightMapping(input, f.client, f.deps);
+  const preview = await preflightMapping(input, f.client, f.deps, 'default');
   assert.deepEqual(preview.plan, [
     { operation: 'unmap', apiName: 'TargetGenerated_123', ...pair('Note__c') },
   ]);
   assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
   const changes = [];
-  const result = await deployNativeMapping(input, f.client, f.deps, (change) =>
-    changes.push(change),
+  const result = await deployNativeMapping(
+    input,
+    f.client,
+    f.deps,
+    (change) => changes.push(change),
+    'default',
   );
   assert.deepEqual(changes, [{ deleted: [pair('Note__c')], added: [] }]);
   assert.equal(result.operation, 'update');
@@ -1435,7 +1505,7 @@ test('hand-written mapping removes only its omitted authored pair and keeps the 
     [['unmap', 'TargetGenerated_123', 'target_Note__c']],
   );
   assert.deepEqual(input, before);
-  const replay = await deployNativeMapping(input, f.client, f.deps);
+  const replay = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(replay.operation, 'noop');
 });
 
@@ -1444,10 +1514,10 @@ test('hand-written mapping without the key pair is refused; generated pairs are 
   const input = handWritten(['Name__c', 'Note__c']);
   const before = structuredClone(input);
   await assert.rejects(
-    preflightNativeMapping(input, f.client, f.deps),
+    preflightNativeMapping(input, f.client, f.deps, 'default'),
     (error) => error.code === 'MAPPING_PROTECTED_PAIR_REQUIRED',
   );
-  const blocked = await executeMapping(input, f.client, f.deps);
+  const blocked = await executeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(blocked.outcome, 'blocked');
   assert.equal(blocked.mutation, 'not-attempted');
   assert.equal(blocked.diagnostics[0].code, 'MAPPING_PROTECTED_PAIR_REQUIRED');
@@ -1461,6 +1531,7 @@ test('hand-written mapping without the key pair is refused; generated pairs are 
     handWritten(['Id__c', 'Name__c', 'Note__c']),
     authored.client,
     authored.deps,
+    'default',
   );
   assert.deepEqual(plan.removals, [pair('DataSource__c')]);
   assert.deepEqual(pairNames(plan.evidence.protectedPairs), [
@@ -1494,8 +1565,12 @@ test('desired-state batch additions and both qualified retarget directions use o
       });
     }
     const changes = [];
-    const result = await deployNativeMapping(input, f.client, f.deps, (change) =>
-      changes.push(change),
+    const result = await deployNativeMapping(
+      input,
+      f.client,
+      f.deps,
+      (change) => changes.push(change),
+      'default',
     );
     assert.equal(changes.length, 1);
     assert.deepEqual(changes[0].deleted, mode === 'batch' ? [] : [pair('Name__c')]);
@@ -1542,6 +1617,8 @@ test('desired-state protected omission blocks before any unmap; other additions 
       desired(names.filter((name) => name !== 'Id__c')),
       blocked.client,
       blocked.deps,
+      undefined,
+      'default',
     ),
     /PROTECTED_PAIR_REQUIRED/,
   );
@@ -1560,7 +1637,7 @@ test('desired-state protected omission blocks before any unmap; other additions 
         sourceFieldDeveloperName: 'Name__c',
         targetFieldDeveloperName: 'Note__c',
       });
-    const plan = await preflightNativeMapping(input, f.client, f.deps);
+    const plan = await preflightNativeMapping(input, f.client, f.deps, 'default');
     assert.equal(plan.operation, 'update', mode);
     assert.deepEqual(plan.removals, [pair('Name__c')], mode);
     assert.equal(plan.writes.length, mode === 'version' ? 0 : 1, mode);
@@ -1610,7 +1687,7 @@ for (const mode of [
         }
         return definition;
       };
-      const result = await executeMapping(input, f.client, f.deps);
+      const result = await executeMapping(input, f.client, f.deps, undefined, 'default');
       const dispatched = f.calls.filter(([kind]) =>
         ['unmap', 'update', 'create', 'delete'].includes(kind),
       );
@@ -1661,7 +1738,7 @@ test('desired-state lost unmap, patch failure and exact final-set drift are fail
       }
       return value;
     };
-    const result = await executeMapping(input, f.client, f.deps);
+    const result = await executeMapping(input, f.client, f.deps, undefined, 'default');
     assert.equal(result.outcome, 'failed');
     assert.equal(result.mutation, 'unknown');
     assert.equal(f.calls.filter(([kind]) => kind === 'unmap').length, 1);
@@ -1670,7 +1747,7 @@ test('desired-state lost unmap, patch failure and exact final-set drift are fail
 });
 
 test('mapping command outcomes distinguish blocked, unknown write result and independently confirmed success', async () => {
-  const blocked = await executeMapping({}, fixture().client, dependencies());
+  const blocked = await executeMapping({}, fixture().client, dependencies(), undefined, 'default');
   assert.equal(blocked.outcome, 'blocked');
   assert.equal(blocked.mutation, 'not-attempted');
   const { client } = fixture();
@@ -1679,13 +1756,21 @@ test('mapping command outcomes distinguish blocked, unknown write result and ind
     throw new Error('request dispatched but response lost');
   };
   const reported = [];
-  const failed = await executeMapping(desired(), client, dependencies(), (change) =>
-    reported.push(change),
+  const failed = await executeMapping(
+    desired(),
+    client,
+    dependencies(),
+    (change) => reported.push(change),
+    'default',
   );
   assert.deepEqual(reported, []);
   const unchanged = fixture();
-  await executeMapping(desired(), unchanged.client, unchanged.deps, (change) =>
-    reported.push(change),
+  await executeMapping(
+    desired(),
+    unchanged.client,
+    unchanged.deps,
+    (change) => reported.push(change),
+    'default',
   );
   assert.deepEqual(reported, []);
   assert.equal(failed.outcome, 'failed');
@@ -1693,10 +1778,22 @@ test('mapping command outcomes distinguish blocked, unknown write result and ind
   assert.equal(failed.diagnostics[0].code, 'MAPPING_REQUEST_UNCONFIRMED');
   const created = fixture();
   created.client.list = async () => ({ objectSourceTargetMaps: [] });
-  const createResult = await executeMapping(desired(), created.client, dependencies());
+  const createResult = await executeMapping(
+    desired(),
+    created.client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(createResult.mutation, 'confirmed-created');
   const update = fixture(raw(names.filter((n) => n !== 'Name__c')));
-  const updateResult = await executeMapping(desired(), update.client, update.deps);
+  const updateResult = await executeMapping(
+    desired(),
+    update.client,
+    update.deps,
+    undefined,
+    'default',
+  );
   assert.equal(updateResult.mutation, 'confirmed-updated');
 });
 
@@ -1705,23 +1802,29 @@ test('API61 omitted context preserves create, retrieve, single addition and no-o
   const created = fixture();
   created.client.apiVersion = '61.0';
   created.client.list = async () => ({ objectSourceTargetMaps: [] });
-  const create = await deployNativeMapping(desired(), created.client, dependencies());
+  const create = await deployNativeMapping(
+    desired(),
+    created.client,
+    dependencies(),
+    undefined,
+    'default',
+  );
   assert.equal(create.operation, 'create');
   assert.equal(created.calls.filter(([kind]) => kind === 'create').length, 1);
   const f = fixture(raw(names.filter((name) => name !== 'Name__c')));
   f.client.apiVersion = '61.0';
   const input = desired();
   const before = structuredClone(input);
-  const preview = await preflightMapping(input, f.client, f.deps);
+  const preview = await preflightMapping(input, f.client, f.deps, 'default');
   assert.equal(preview.outcome, 'update');
   assert.ok(f.calls.every(([kind]) => ['get', 'list'].includes(kind)));
-  const result = await deployNativeMapping(input, f.client, f.deps);
+  const result = await deployNativeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(result.operation, 'update');
   assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 1);
-  const retrieved = await retrieveNativeMapping('TargetGenerated_123', f.client);
-  assert.equal(retrieved.identity.dataSpace, 'default');
+  const retrieved = await retrieveNativeMapping('TargetGenerated_123', f.client, 'default');
+  assert.equal(retrieved.c__dataSpace, 'default');
   assert.equal(retrieved.spec.fieldMappings.length, 7);
-  const repeat = await executeMapping(input, f.client, f.deps);
+  const repeat = await executeMapping(input, f.client, f.deps, undefined, 'default');
   assert.equal(repeat.outcome, 'unchanged');
   assert.equal(repeat.mutation, 'not-attempted');
   assert.equal(f.calls.filter(([kind]) => kind === 'update').length, 1);

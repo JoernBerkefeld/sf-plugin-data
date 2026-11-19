@@ -279,7 +279,7 @@ function boundClients(connection) {
   return {
     dlo: () => createDloClient('synthetic', '68.0', sender()),
     dmo: () => createDmoClient('synthetic', '68.0', undefined, sender()),
-    mapping: () => createMappingClient('synthetic', '68.0', undefined, undefined, sender()),
+    mapping: () => createMappingClient('synthetic', '68.0', undefined, 'default', sender()),
     stream: () => createDataStreamClient('synthetic', {}, '68.0', sender()),
   };
 }

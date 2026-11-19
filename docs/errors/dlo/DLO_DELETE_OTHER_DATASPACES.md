@@ -26,7 +26,7 @@ Deleting it from the run's data space would also delete it everywhere else, with
 ```text
 Delete preview: blocked.
 Blocked: dlo:Orders__dll; mutation: not-attempted.
-DLO_DELETE_OTHER_DATASPACES: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Orders__dll also belongs to the data spaces dataspace2, and a delete would remove it from all of them. To take it out of one data space only, deploy its file with a shorter c__dataSpace list and --allow-dataspace-removal.
+DLO_DELETE_OTHER_DATASPACES: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Orders__dll also belongs to the data space dataspace2, and a delete would remove it from all of them. To take it out of one data space only, deploy its file with a shorter c__dataSpace list and --allow-dataspace-removal.
 Hint: The DLO also belongs to other data spaces, and a delete removes it from all of them. Deploy a shorter c__dataSpace list with --allow-dataspace-removal instead.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dlo/DLO_DELETE_OTHER_DATASPACES.md
 ```

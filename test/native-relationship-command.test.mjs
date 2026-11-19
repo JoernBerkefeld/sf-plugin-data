@@ -26,13 +26,15 @@ const selector = `relationship:A__dlm:${name}`;
 const relationship = {
   schemaVersion: 1,
   kind: 'relationship',
-  identity: { apiName: name, dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName: name },
   spec,
 };
 const dmo = {
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName: 'A__dlm' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'A__dlm' },
   spec: {
     label: 'A',
     category: 'Other',
@@ -150,7 +152,8 @@ async function deployFixture(options = {}) {
     };
   };
   command.createRelationshipClient = (target, version, scope) => {
-    assert.deepEqual([target, version, scope], ['target', '68.0', undefined]);
+    // The run's data space is always named, default when --dataspace is left out.
+    assert.deepEqual([target, version, scope], ['target', '68.0', 'default']);
     order.push('relationship');
     return client;
   };

@@ -19,7 +19,8 @@ const raw = (fields = names) => ({
 const desired = () => ({
   schemaVersion: 1,
   kind: 'mapping',
-  identity: { apiName: 'SourceMapping', dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'SourceMapping' },
   spec: {
     sourceEntityDeveloperName: 'Test__dll',
     targetEntityDeveloperName: 'Test__dlm',
@@ -83,7 +84,7 @@ test('mapping create preserves arbitrary custom Id/system-looking fields rather 
   const fields = [...names, ...extras];
   const document = desired();
   document.spec.fieldMappings = fields.map((name) => pair(name));
-  const plan = await preflightNativeMapping(document, client(), dependencies(fields));
+  const plan = await preflightNativeMapping(document, client(), dependencies(fields), 'default');
   assert.deepEqual(
     plan.writes[0].body.fieldMapping.map((field) => field.sourceFieldDeveloperName),
     fields,
@@ -100,7 +101,7 @@ test('mapping targets of every kind are planned; only a standard DMO carries the
     deps.target.get = async () => ({ ...(await read()), ...change });
     const document = desired();
     if (change.name) document.spec.targetEntityDeveloperName = change.name;
-    const plan = await preflightNativeMapping(document, client(), deps);
+    const plan = await preflightNativeMapping(document, client(), deps, 'default');
     assert.equal(plan.operation, 'create', JSON.stringify(change));
     assert.equal(plan.activatesStandardDmo, true);
   }
@@ -115,11 +116,11 @@ test('mapping targets of every kind are planned; only a standard DMO carries the
     deps.target.get = async () => ({ ...(await read()), ...change });
     const document = desired();
     if (change.name) document.spec.targetEntityDeveloperName = change.name;
-    const plan = await preflightNativeMapping(document, client(), deps);
+    const plan = await preflightNativeMapping(document, client(), deps, 'default');
     assert.equal(plan.operation, 'create', JSON.stringify(change));
     assert.ok(!('activatesStandardDmo' in plan), JSON.stringify(change));
   }
-  const plan = await preflightNativeMapping(desired(), client(), dependencies());
+  const plan = await preflightNativeMapping(desired(), client(), dependencies(), 'default');
   assert.equal(plan.writes.length, 1);
   assert.ok(!('activatesStandardDmo' in plan));
 });
@@ -127,7 +128,7 @@ test('mapping targets of every kind are planned; only a standard DMO carries the
 test('mapping multi-pair delta needs the mapped key pair as evidence, not an API version', async () => {
   // Without the org's mapped marker on the key pair nothing proves the layout: no write.
   await assert.rejects(
-    preflightNativeMapping(desired(), client(['Id__c']), dependencies()),
+    preflightNativeMapping(desired(), client(['Id__c']), dependencies(), 'default'),
     /PROTECTED_LAYOUT_UNPROVEN/,
   );
   const deps = mappedDependencies(['Id__c']);
@@ -136,6 +137,7 @@ test('mapping multi-pair delta needs the mapped key pair as evidence, not an API
       desired(),
       { ...client(['Id__c']), apiVersion },
       deps,
+      'default',
     );
     assert.equal(plan.operation, 'update', apiVersion);
     assert.deepEqual(
@@ -158,7 +160,12 @@ test('mapping single compatible addition has no arbitrary Text or primary-key re
       return definition;
     };
   }
-  const plan = await preflightNativeMapping(desired(), client(['Optional__c', 'Another__c']), deps);
+  const plan = await preflightNativeMapping(
+    desired(),
+    client(['Optional__c', 'Another__c']),
+    deps,
+    'default',
+  );
   assert.deepEqual(plan.writes[0].body.fieldMapping, [
     {
       sourceFieldDeveloperName: 'Id__c',
@@ -185,6 +192,7 @@ test('mapping same-target replacement and source retarget additions are left to 
       input,
       client(['Id__c', 'Another__c']),
       mappedDependencies(['Id__c', 'Another__c']),
+      'default',
     );
     assert.equal(plan.operation, 'update');
     assert.deepEqual(plan.removals, []);

@@ -282,7 +282,7 @@ export function refusedDmo(error: unknown) {
  * failed lookup, is the DMO_FIELD_REMOVAL_MAPPED refusal.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client; only read.
- * @param {string | undefined} requestScope Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {MappedFieldGuide | undefined} guide Mapping inventory source and command context.
  * @param {SelectedMapping[]} selected Mapping files of the same selection.
  * @returns {Promise<DmoRemovalAdmission>} Covered mapped fields; any other refusal is left to the item's own preflight.
@@ -290,7 +290,7 @@ export function refusedDmo(error: unknown) {
 export async function admitDmoFieldRemoval(
   value: unknown,
   client: DmoClient,
-  requestScope: string | undefined,
+  requestScope: string,
   guide: MappedFieldGuide | undefined,
   selected: SelectedMapping[],
 ): Promise<DmoRemovalAdmission> {
@@ -332,14 +332,14 @@ export async function admitDmoFieldRemoval(
  * Compare an exact native DMO without mutation.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {DmoCommandOptions} [options] Opt-in field removal and its refusal guide.
  * @returns {Promise<DmoPreview>} Payload-free comparison naming any planned field removals.
  */
 export async function preflightDmo(
   value: unknown,
   client: DmoClient,
-  requestScope?: string,
+  requestScope: string,
   options: DmoCommandOptions = {},
 ): Promise<DmoPreview> {
   const { mappedFieldGuide, ...deployOptions } = options;
@@ -376,14 +376,14 @@ export async function preflightDmo(
  * independent readback, reporting the mapping pairs Salesforce dropped with the fields.
  * @param {unknown} value Portable definition.
  * @param {DmoClient} client Target client.
- * @param {string} [requestScope] Optional explicit data space.
+ * @param {string} requestScope The run's data space.
  * @param {DmoCommandOptions} [options] Opt-in field removal and its refusal guide.
  * @returns {Promise<object>} Payload-free outcome.
  */
 export async function executeDmo(
   value: unknown,
   client: DmoClient,
-  requestScope?: string,
+  requestScope: string,
   options: DmoCommandOptions = {},
 ) {
   const { mappedFieldGuide, ...deployOptions } = options;

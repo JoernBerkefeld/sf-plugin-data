@@ -105,3 +105,28 @@ export function sortedDataSpaces(names: Iterable<string>): string[] {
   // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh copy within the ES2022 library target.
   return [...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
+
+/**
+ * The identity a result item reports for a document: its API name and its data space, from
+ * `c__dataSpace` when the file names one, otherwise from `identity.dataSpace` (the kinds not
+ * converted yet), otherwise (a DLO: no single data space in its file) the run's data space.
+ * @param {object} document Document or verbatim document.
+ * @param {object} document.identity Its identity.
+ * @param {string} document.identity.apiName API name.
+ * @param {string} [document.identity.dataSpace] Data space, when the file keeps it there.
+ * @param {unknown} [document.c__dataSpace] The file's c__dataSpace (a text for a single space).
+ * @param {string} dataSpace The run's data space.
+ * @returns {{dataSpace: string; apiName: string}} Reported identity.
+ */
+export function reportedIdentity(
+  document: { identity: { apiName: string; dataSpace?: string }; c__dataSpace?: unknown },
+  dataSpace: string,
+): { dataSpace: string; apiName: string } {
+  return {
+    dataSpace:
+      typeof document.c__dataSpace === 'string'
+        ? document.c__dataSpace
+        : (document.identity.dataSpace ?? dataSpace),
+    apiName: document.identity.apiName,
+  };
+}

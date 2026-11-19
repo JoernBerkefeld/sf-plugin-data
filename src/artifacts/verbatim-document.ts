@@ -1,4 +1,5 @@
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { dataSpaceKey } from './data-space-field.js';
 
 /**
  * The normal document kind of each family. A verbatim document carries the kind of the document
@@ -16,16 +17,60 @@ export type VerbatimKind =
   | 'identity-resolution'
   | 'segment';
 
+/** Kinds whose files carry their data space in the top-level `c__dataSpace` key. */
+export type SpaceFieldVerbatimKind = 'dmo' | 'mapping' | 'relationship';
+const spaceFieldKinds = new Set<string>(['dmo', 'mapping', 'relationship']);
+
+/**
+ * Whether a kind's file carries its data space in `c__dataSpace` (instead of
+ * `identity.dataSpace`, which the other kinds keep until they are converted).
+ * @param {string} kind Document kind.
+ * @returns {boolean} The kind uses `c__dataSpace`.
+ */
+export function usesDataSpaceField(kind: string): kind is SpaceFieldVerbatimKind {
+  return spaceFieldKinds.has(kind);
+}
+
 /**
  * An org object written as Salesforce returned it, because the plugin cannot represent it.
  * `native` is the raw GET response with its keys sorted recursively. Deploy never sends it.
+ * A DMO, mapping or relationship carries its data space in `c__dataSpace` like its normal file.
  */
-export type VerbatimDocument = {
-  schemaVersion: 1;
-  kind: VerbatimKind;
-  identity: { dataSpace: string; apiName: string };
-  verbatim: { reason: string; native: unknown };
-};
+export type VerbatimDocument =
+  | {
+      schemaVersion: 1;
+      kind: Exclude<VerbatimKind, SpaceFieldVerbatimKind>;
+      identity: { dataSpace: string; apiName: string };
+      verbatim: { reason: string; native: unknown };
+    }
+  | {
+      schemaVersion: 1;
+      kind: SpaceFieldVerbatimKind;
+      c__dataSpace: string;
+      identity: { apiName: string };
+      verbatim: { reason: string; native: unknown };
+    };
+
+/**
+ * The data space of a verbatim document, wherever its kind keeps it.
+ * @param {VerbatimDocument} document Verbatim document.
+ * @returns {string} Its data space.
+ */
+export function verbatimDataSpace(document: VerbatimDocument): string {
+  return 'c__dataSpace' in document ? document.c__dataSpace : document.identity.dataSpace;
+}
+
+/**
+ * The identity of a verbatim document as results report it: its data space and name.
+ * @param {VerbatimDocument} document Verbatim document.
+ * @returns {{dataSpace: string; apiName: string}} Reported identity.
+ */
+export function verbatimIdentity(document: VerbatimDocument): {
+  dataSpace: string;
+  apiName: string;
+} {
+  return { dataSpace: verbatimDataSpace(document), apiName: document.identity.apiName };
+}
 
 const kinds = new Set<string>([
   'dlo',
@@ -107,19 +152,31 @@ export function sortKeysDeep(value: unknown): unknown {
  * @param {VerbatimKind} [kind] Required kind.
  * @returns {boolean} Exact verbatim shape.
  */
-export function isVerbatimDocument(value: unknown, kind?: VerbatimKind): value is VerbatimDocument {
-  if (!isBag(value) || !exactKeys(value, ['schemaVersion', 'kind', 'identity', 'verbatim']))
+export function isVerbatimDocument<K extends VerbatimKind = VerbatimKind>(
+  value: unknown,
+  kind?: K,
+): value is VerbatimDocument & { kind: K } {
+  if (!isBag(value) || typeof value.kind !== 'string') return false;
+  const field = usesDataSpaceField(value.kind);
+  if (
+    !exactKeys(
+      value,
+      field
+        ? ['schemaVersion', 'kind', dataSpaceKey, 'identity', 'verbatim']
+        : ['schemaVersion', 'kind', 'identity', 'verbatim'],
+    )
+  )
     return false;
   const { identity, verbatim } = value;
+  const dataSpace = field ? value[dataSpaceKey] : isBag(identity) ? identity.dataSpace : undefined;
   return (
     value.schemaVersion === 1 &&
-    typeof value.kind === 'string' &&
     kinds.has(value.kind) &&
     (kind === undefined || value.kind === kind) &&
     isBag(identity) &&
-    exactKeys(identity, ['dataSpace', 'apiName']) &&
-    typeof identity.dataSpace === 'string' &&
-    safeName.test(identity.dataSpace) &&
+    exactKeys(identity, field ? ['apiName'] : ['dataSpace', 'apiName']) &&
+    typeof dataSpace === 'string' &&
+    safeName.test(dataSpace) &&
     typeof identity.apiName === 'string' &&
     safeName.test(identity.apiName) &&
     isBag(verbatim) &&
@@ -146,13 +203,22 @@ export function createVerbatimDocument(
   reason: string,
   native?: unknown,
 ): VerbatimDocument | undefined {
-  const document = {
-    schemaVersion: 1 as const,
-    kind,
-    identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
-    // eslint-disable-next-line unicorn/no-null -- An empty response is written as JSON null.
-    verbatim: { reason, native: sortKeysDeep(native ?? null) },
-  };
+  // eslint-disable-next-line unicorn/no-null -- An empty response is written as JSON null.
+  const verbatim = { reason, native: sortKeysDeep(native ?? null) };
+  const document = usesDataSpaceField(kind)
+    ? {
+        schemaVersion: 1 as const,
+        kind,
+        [dataSpaceKey]: identity.dataSpace,
+        identity: { apiName: identity.apiName },
+        verbatim,
+      }
+    : {
+        schemaVersion: 1 as const,
+        kind,
+        identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
+        verbatim,
+      };
   return isVerbatimDocument(document) ? document : undefined;
 }
 
@@ -166,7 +232,17 @@ export function serializeVerbatimDocument(document: VerbatimDocument): string {
     {
       schemaVersion: 1,
       kind: document.kind,
-      identity: { dataSpace: document.identity.dataSpace, apiName: document.identity.apiName },
+      ...('c__dataSpace' in document
+        ? {
+            [dataSpaceKey]: document.c__dataSpace,
+            identity: { apiName: document.identity.apiName },
+          }
+        : {
+            identity: {
+              dataSpace: document.identity.dataSpace,
+              apiName: document.identity.apiName,
+            },
+          }),
       verbatim: {
         reason: document.verbatim.reason,
         native: sortKeysDeep(document.verbatim.native),

@@ -15,7 +15,8 @@ import { writeDataTransformDocument } from '../lib/artifacts/write-data-transfor
 const fixture = (apiName = 'Preview_Item__dlm') => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     label: 'Preview item',
     category: 'Other',
@@ -289,7 +290,7 @@ test('strict authored JSON rejects raw projections, unknown keys, duplicate keys
     `\uFEFF${json}`,
     JSON.stringify({
       ...fixture(),
-      identity: { dataSpace: 'default', apiName: 'Different__dlm' },
+      identity: { apiName: 'Different__dlm' },
     }),
   ]) {
     await put(cwd, native(), value);

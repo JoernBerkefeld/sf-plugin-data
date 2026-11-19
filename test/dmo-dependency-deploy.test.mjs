@@ -20,7 +20,8 @@ const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
 const dmo = (apiName) => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     label: apiName,
     category: 'Other',
@@ -84,7 +85,8 @@ const deploy = async (cwd, flags, services = {}) => {
   };
   command.preflightNativeDmo = async (document, client, scope) => {
     assert.equal(client.marker, 'dmo-client');
-    assert.equal(scope, undefined);
+    // The run's data space is always passed, default when --dataspace is left out.
+    assert.equal(scope, 'default');
     calls.push(`preflight:${document.identity.apiName}`);
     return {
       family: 'dmo',

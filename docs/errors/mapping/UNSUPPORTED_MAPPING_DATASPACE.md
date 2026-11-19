@@ -34,4 +34,3 @@ Downloaded mapping: 0
 ## Related codes
 
 - [`MAPPING_DATASPACE_MISMATCH`](../mapping/MAPPING_DATASPACE_MISMATCH.md) — the mapping file names another data space than the command.
-- [`MAPPING_DATASPACE_COLLISION`](../mapping/MAPPING_DATASPACE_COLLISION.md) — a local mapping file belongs to another data space.

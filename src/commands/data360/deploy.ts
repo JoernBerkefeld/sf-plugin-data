@@ -70,6 +70,7 @@ import { preflightDloDeploy, executeDloDeploy } from '../../services/command-dlo
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { normalizeDlo, unwrapDlo, validateDloDocument } from '../../artifacts/dlo-document.js';
 import type { DloDocument } from '../../artifacts/dlo-document.js';
+import { reportedIdentity } from '../../artifacts/data-space-field.js';
 import {
   DataSpaceError,
   dataSpaceCheckCode,
@@ -366,23 +367,18 @@ export type DeployEnvelope = {
 };
 
 /**
- * The identity a result item reports: the file's own, or for a DLO (no single data space in its
- * file) its API name in the run's data space.
- * @param {object} document Selected document.
- * @param {object} document.identity Its identity.
- * @param {string} document.identity.apiName API name.
- * @param {string} [document.identity.dataSpace] Data space, when the file has one.
- * @param {string} dataSpace The run's data space.
- * @returns {{dataSpace: string; apiName: string}} Reported identity.
+ * Add the run's data space prefix to the DMO options, if there is one.
+ * @param {[] | [DmoCommandOptions]} options DMO options (field removal).
+ * @param {object} prefix The prefix option, or none.
+ * @param {string} [prefix.dataSpacePrefix] The run's data space prefix.
+ * @returns {[] | [DmoCommandOptions]} Options with the prefix.
  */
-function reportedIdentity(
-  document: { identity: { apiName: string; dataSpace?: string } },
-  dataSpace: string,
-): { dataSpace: string; apiName: string } {
-  return {
-    dataSpace: document.identity.dataSpace ?? dataSpace,
-    apiName: document.identity.apiName,
-  };
+function withDataSpacePrefix(
+  options: [] | [DmoCommandOptions],
+  prefix: { dataSpacePrefix?: string },
+): [] | [DmoCommandOptions] {
+  if (options.length > 0) return [{ ...options[0], ...prefix }];
+  return prefix.dataSpacePrefix === undefined ? [] : [prefix];
 }
 
 /** Preview or sequential guarded deployment of explicitly selected authored configuration. */
@@ -407,7 +403,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     dataspace: Flags.string({
       aliases: ['data-space'],
       summary:
-        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DLO file must list it in c__dataSpace; native DMO, mapping and relationship files must name it; the other families require default.',
+        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DLO file must list it in c__dataSpace; a DMO, mapping or relationship file must name it in c__dataSpace; the other families require default.',
     }),
     'source-dir': Flags.string({
       char: 'd',
@@ -627,8 +623,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
    */
   public async run(): Promise<DeployEnvelope> {
     const { flags } = await this.parse(Deploy);
-    const requestScope = flags.dataspace;
-    const effectiveScope = requestScope ?? 'default';
+    // The run's data space: every request of a converted family names it explicitly.
+    const effectiveScope = flags.dataspace ?? 'default';
     const dloOptions = { allowDataspaceRemoval: flags['allow-dataspace-removal'] };
     // Passed to the native DMO services only when the removal was explicitly allowed.
     // A refused removal of a mapped field names its mappings through this read-only inventory and
@@ -645,7 +641,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               mappedFieldGuide: {
                 mappings,
                 ...(typeof passedOrg === 'string' ? { targetOrg: passedOrg } : {}),
-                ...(requestScope === undefined ? {} : { dataspace: requestScope }),
+                ...(flags.dataspace === undefined ? {} : { dataspace: flags.dataspace }),
               },
               // Reads before and after the one removal: fields gone, exactly their pairs dropped
               // by Salesforce, every other mapping, pair and field unchanged.
@@ -655,7 +651,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   fields,
                   { dmo: dmoReader(), mappings: mappings() },
                   coverage,
-                  requestScope,
+                  effectiveScope,
                 );
               },
               removeChecked: async (apiName, fields, remove, coverage) => {
@@ -665,7 +661,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   { dmo: dmoReader(), mappings: mappings() },
                   remove,
                   coverage,
-                  requestScope,
+                  effectiveScope,
                 );
                 return dropped.map(
                   ({ mapping, sourceFieldDeveloperName, targetFieldDeveloperName }) => ({
@@ -678,6 +674,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             },
           ]
         : [];
+    /**
+     * The run's data space prefix as an option, read from the run's one data space check (already
+     * done before any stage); none in the default data space or when the list names none.
+     * @returns {Promise<{dataSpacePrefix?: string}>} The option.
+     */
+    const dataSpacePrefixOption = async (): Promise<{ dataSpacePrefix?: string }> => {
+      if (effectiveScope === 'default') return {};
+      const prefix = await dataSpaceCheckOf(this, async () => {
+        throw new DataSpaceError('TARGET_ORG_REQUIRED');
+      }).prefixOf(effectiveScope);
+      return prefix === undefined ? {} : { dataSpacePrefix: prefix };
+    };
     const cwd = process.cwd();
     const plugin = {
       name: packageMetadata.name,
@@ -826,13 +834,17 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             this.log(
               `Planned label change: ${item.labelChange.from === undefined ? '' : `${JSON.stringify(item.labelChange.from)} -> `}${JSON.stringify(item.labelChange.to)}.`,
             );
-          if (item.operation === 'preview' && 'dataSpaceChanges' in item && item.dataSpaceChanges)
-            for (const [label, spaces] of [
-              ['add the DLO to', item.dataSpaceChanges.add],
-              ['remove the DLO from', item.dataSpaceChanges.remove],
+          if ('dataSpaceChanges' in item && item.dataSpaceChanges)
+            for (const [label, done, spaces] of [
+              ['add the DLO to', 'added the DLO to', item.dataSpaceChanges.add],
+              ['remove the DLO from', 'removed the DLO from', item.dataSpaceChanges.remove],
             ] as const)
               if (spaces.length > 0)
-                this.log(`Planned data space change: ${label} ${spaces.join(', ')}.`);
+                this.log(
+                  item.operation === 'preview'
+                    ? `Planned data space change: ${label} ${spaces.join(', ')}.`
+                    : `Data space change: ${done} ${spaces.join(', ')}.`,
+                );
           if (item.operation === 'preview' && 'plan' in item)
             for (const step of item.plan)
               this.log(
@@ -1085,16 +1097,19 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             target,
             version,
             undefined,
-            requestScope,
+            effectiveScope,
             this.ssotSender(target, version),
           );
         const relationship = (): ReturnType<typeof createRelationshipClient> =>
           (this.createRelationshipClient ?? createRelationshipClient)(
             target,
             version,
-            requestScope,
+            effectiveScope,
             this.ssotSender(target, version),
           );
+        // The run's data space prefix: a mapping onto a standard DMO copy that is not activated yet
+        // is sent in the default spelling once, and a DMO file for such a copy is refused.
+        const dataSpacePrefix = await dataSpacePrefixOption();
         // Parents settle before dependents: mappings and relationships need their DMOs.
         const hasMappings = nativeInputs.some(
           (input) => input.document.kind === 'mapping' || input.document.kind === 'relationship',
@@ -1125,12 +1140,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             });
           for (const input of nativeInputs) {
             if (input.document.kind !== 'dmo') continue;
-            const identity = input.document.identity;
+            const identity = reportedIdentity(input.document, effectiveScope);
             try {
               const admission = await (this.admitNativeDmoRemoval ?? admitDmoFieldRemoval)(
                 input.document,
                 dmo,
-                requestScope,
+                effectiveScope,
                 removal.mappedFieldGuide,
                 selectedMappings,
               );
@@ -1160,15 +1175,18 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           await verify();
           const kind = input.document.kind;
           const identity = reportedIdentity(input.document, effectiveScope);
-          const dmoOptions = removal
-            ? [
-                {
-                  ...removal,
-                  coveredMappedFields: covered.get(input.path)?.fields ?? [],
-                  coveredMappingSources: covered.get(input.path)?.sources ?? [],
-                },
-              ]
-            : [];
+          const dmoOptions = withDataSpacePrefix(
+            removal
+              ? [
+                  {
+                    ...removal,
+                    coveredMappedFields: covered.get(input.path)?.fields ?? [],
+                    coveredMappingSources: covered.get(input.path)?.sources ?? [],
+                  },
+                ]
+              : [],
+            dataSpacePrefix,
+          );
           if (flags.preview) {
             const spec =
               kind === 'mapping'
@@ -1201,7 +1219,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   : await (this.preflightRelationship ?? preflightRelationship)(
                       input.document,
                       relationship(),
-                      requestScope,
+                      effectiveScope,
                     );
               await verify();
               envelope.result.items.push({
@@ -1230,11 +1248,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 ? await (this.preflightMapping ?? preflightMapping)(
                     input.document,
                     mapping(),
-                    {
-                      source,
-                      target: dmo,
-                    },
-                    requestScope,
+                    { source, target: dmo, ...dataSpacePrefix },
+                    effectiveScope,
                   )
                 : kind === 'dlo'
                   ? await (this.preflightDlo ?? preflightDloDeploy)(
@@ -1246,7 +1261,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   : await (this.preflightNativeDmo ?? preflightDmo)(
                       input.document,
                       dmo,
-                      requestScope,
+                      effectiveScope,
                       ...dmoOptions,
                     );
             await verify();
@@ -1272,18 +1287,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               ? await (this.executeRelationship ?? executeRelationship)(
                   input.document,
                   relationship(),
-                  requestScope,
+                  effectiveScope,
                 )
               : kind === 'mapping'
                 ? await (this.executeMapping ?? executeMapping)(
                     input.document,
                     mapping(),
-                    {
-                      source,
-                      target: dmo,
-                    },
+                    { source, target: dmo, ...dataSpacePrefix },
                     (changes) => mappingChanges.set(input.path, changes),
-                    requestScope,
+                    effectiveScope,
                     (apiName) => mappingNames.set(input.path, apiName),
                   )
                 : kind === 'dlo'
@@ -1296,7 +1308,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   : await (this.executeNativeDmo ?? executeDmo)(
                       input.document,
                       dmo,
-                      requestScope,
+                      effectiveScope,
                       ...dmoOptions,
                     );
           const { serverProcessing, ...execution } = result as typeof result & {
@@ -1325,10 +1337,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 const actual =
                   kind === 'dlo'
                     ? normalizeDlo(raw, effectiveScope)
-                    : normalizeNativeDmo(raw, requestScope);
+                    : normalizeNativeDmo(raw, effectiveScope);
                 if (
                   actual.identity.apiName !== identity.apiName ||
-                  (actual.kind === 'dmo' && actual.identity.dataSpace !== identity.dataSpace)
+                  (actual.kind === 'dmo' && actual.c__dataSpace !== identity.dataSpace)
                 )
                   break;
                 const desired = input.document
@@ -1410,7 +1422,16 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         const stageGitSegments = own(gitSegments);
         const stageGitIdentityResolutions = own(gitIdentityResolutions);
         // The flag parser admits only auto or a numeric version; refuse anything else unparsed.
-        if (effectiveScope !== 'default' || !/^(?:auto|\d{2,3}\.0)$/u.test(flags['api-version']))
+        if (!/^(?:auto|\d{2,3}\.0)$/u.test(flags['api-version']))
+          return stageResult('blocked', 'INVALID_SCOPE');
+        // Outside the default data space this stage takes DLOs and DMOs only; a segment,
+        // calculated insight or identity resolution (not converted to c__dataSpace yet) refuses it.
+        if (
+          effectiveScope !== 'default' &&
+          stageInputs.some((input) =>
+            ['segment', 'calculated-insight', 'identity-resolution'].includes(input.document.kind),
+          )
+        )
           return stageResult('blocked', 'INVALID_SCOPE');
         const admitted = stageInputs.filter(
           (
@@ -1445,7 +1466,6 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           } catch {
             return stageResult('blocked', 'INVALID_SCOPE');
           }
-          if (effectiveScope !== 'default') return stageResult('blocked', 'INVALID_SCOPE');
           for (const input of admitted)
             if (input.document.kind === 'dlo') validateDloDocument(input.document);
         }
@@ -1584,7 +1604,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           return stageResult('blocked', 'INVALID_SCOPE');
         }
         const hasSegments = inputs.some((input) => input.document.kind === 'segment');
-        if (hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos) {
+        // Outside the default data space this stage holds DLOs and DMOs only (the families not
+        // converted yet are refused above): leaves without edges, so there is nothing to order.
+        if (
+          effectiveScope === 'default' &&
+          (hasSegments || hasIdentityResolutions || hasCalculatedInsights || hasDlos)
+        ) {
           const nodes = inputs.map((input) =>
             input.document.kind === 'segment' ||
             input.document.kind === 'identity-resolution' ||
@@ -1592,7 +1617,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             input.document.kind === 'dlo'
               ? documentDependencyNode(input.document)
               : {
-                  identity: { kind: 'dmo' as const, ...input.document.identity },
+                  identity: {
+                    kind: 'dmo' as const,
+                    ...reportedIdentity(input.document, 'default'),
+                  },
                   dependencies: [],
                 },
           );
@@ -1787,7 +1815,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             username,
             nativeDmoVersion,
             undefined,
-            requestScope,
+            effectiveScope,
             this.ssotSender(username, nativeDmoVersion),
           );
         };
@@ -1795,8 +1823,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           (this.preflightNativeDmo ?? preflightDmo)(
             input.document,
             dmoClient(),
-            requestScope,
-            ...fieldRemoval(dmoMappings, dmoClient),
+            effectiveScope,
+            ...withDataSpacePrefix(
+              fieldRemoval(dmoMappings, dmoClient),
+              await dataSpacePrefixOption(),
+            ),
           );
         const irAdmissions = new Map<string, IdentityResolutionDeployPreview>();
         const irBindings = new Map<string, string>();
@@ -2119,8 +2150,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                           : await (this.executeNativeDmo ?? executeDmo)(
                               (input as NativeDmoDeployInput).document,
                               dmoClient(),
-                              requestScope,
-                              ...fieldRemoval(dmoMappings, dmoClient),
+                              effectiveScope,
+                              ...withDataSpacePrefix(
+                                fieldRemoval(dmoMappings, dmoClient),
+                                await dataSpacePrefixOption(),
+                              ),
                             );
                 const { serverProcessing, ...execution } = result as typeof result & {
                   serverProcessing?: true;
@@ -2656,7 +2690,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       // access) file and dependency shape check.
       if (stages[0]?.phase !== 'P3' && stages.some((stage) => stage.phase === 'P3')) {
         try {
-          if (effectiveScope !== 'default') throw new Error('INVALID_SCOPE');
+          // P3 holds the families not converted to c__dataSpace yet: default data space only.
+          if (
+            effectiveScope !== 'default' &&
+            legacyInputs.some((input) => crudPhase(input) === 'P3')
+          )
+            throw new Error('INVALID_SCOPE');
           for (const input of legacyInputs)
             if (crudPhase(input) === 'P3')
               operationApiVersion(
@@ -2707,9 +2746,14 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           return this.ssotSender(checkTarget, '68.0');
         }).require([
           effectiveScope,
-          ...resolvedInputs.flatMap((input) =>
-            input.document.kind === 'dlo' ? (input.document as DloDocument).c__dataSpace : [],
-          ),
+          ...resolvedInputs.flatMap((input) => {
+            const named = (input.document as { c__dataSpace?: unknown }).c__dataSpace;
+            return input.document.kind === 'dlo'
+              ? (input.document as DloDocument).c__dataSpace
+              : typeof named === 'string'
+                ? [named]
+                : [];
+          }),
         ]);
       } catch (error) {
         // The check's own code, or the failure's (an expired session keeps its own code).

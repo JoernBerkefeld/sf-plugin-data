@@ -58,7 +58,7 @@ const native = (mapped = ['Note__c', 'Link__c']) => ({
 const authored = (without) => {
   const raw = native([]);
   raw.fields = raw.fields.filter((entry) => !without.includes(entry.name));
-  return normalizeNativeDmo(raw);
+  return normalizeNativeDmo(raw, 'default');
 };
 const pair = (name) => ({
   developerName: `${name}_fieldmap_${name}`,
@@ -130,7 +130,7 @@ test('preflight collects every mapped field the file omits into one refusal', as
   const { client } = target();
   let caught;
   await assert.rejects(
-    preflightNativeDmo(authored(['Note__c', 'Link__c', 'Free__c']), client, undefined, allow),
+    preflightNativeDmo(authored(['Note__c', 'Link__c', 'Free__c']), client, 'default', allow),
     (error) => {
       caught = error;
       return error instanceof NativeDmoError && error.code === 'DMO_FIELD_REMOVAL_MAPPED';
@@ -140,7 +140,7 @@ test('preflight collects every mapped field the file omits into one refusal', as
   assert.match(caught.message, /These fields are mapped: Note__c, Link__c\./u);
   // One mapped field keeps the single-field wording; unmapped omissions are not named.
   await assert.rejects(
-    preflightNativeDmo(authored(['Link__c', 'Free__c']), client, undefined, allow),
+    preflightNativeDmo(authored(['Link__c', 'Free__c']), client, 'default', allow),
     (error) => {
       assert.deepEqual(mappedFieldRemoval(error), { apiName, fields: ['Link__c'] });
       assert.match(error.message, /fields\.Link__c\.isMapped/u);
@@ -149,12 +149,12 @@ test('preflight collects every mapped field the file omits into one refusal', as
     },
   );
   // Other refusals and successful plans carry no mapped-field record.
-  await assert.rejects(preflightNativeDmo(authored(['Free__c']), client), (error) => {
+  await assert.rejects(preflightNativeDmo(authored(['Free__c']), client, 'default'), (error) => {
     assert.equal(error.code, 'UNSUPPORTED_DMO_FIELD_CHANGE');
     assert.equal(mappedFieldRemoval(error), undefined);
     return true;
   });
-  const plan = await preflightNativeDmo(authored(['Free__c']), client, undefined, allow);
+  const plan = await preflightNativeDmo(authored(['Free__c']), client, 'default', allow);
   assert.deepEqual(plan.removeFields, ['Free__c']);
   assert.equal(mappedFieldRemoval(new Error('other')), undefined);
   assert.equal(mappedFieldRemoval('text'), undefined);
@@ -175,7 +175,7 @@ test('the executor names the mapping and the exact commands, and writes nothing'
   const outcome = await executeDmo(
     authored(['Note__c']),
     client,
-    undefined,
+    'default',
     guide(reader, { targetOrg: 'my-org' }),
   );
   assert.deepEqual(outcome, {
@@ -205,7 +205,7 @@ test('several fields and mappings, no org and a data space are all reflected', a
   const withoutOrg = await executeDmo(
     authored(['Note__c', 'Link__c']),
     client,
-    undefined,
+    'default',
     guide(reader),
   );
   const [diagnostic] = withoutOrg.diagnostics;
@@ -233,7 +233,7 @@ test('several fields and mappings, no org and a data space are all reflected', a
     preflightDmo(
       authored(['Link__c']),
       client,
-      undefined,
+      'default',
       guide(reader, { targetOrg: 'user@example.com', dataspace: 'Team Space' }),
     ),
     (error) => {
@@ -245,7 +245,7 @@ test('several fields and mappings, no org and a data space are all reflected', a
   const scoped = await executeDmo(
     authored(['Link__c']),
     client,
-    undefined,
+    'default',
     guide(reader, { targetOrg: 'user@example.com', dataspace: 'Team Space' }),
   );
   assert.ok(
@@ -258,7 +258,7 @@ test('several fields and mappings, no org and a data space are all reflected', a
   const unsafe = await executeDmo(
     authored(['Link__c']),
     client,
-    undefined,
+    'default',
     guide(reader, { targetOrg: '$(whoami)' }),
   );
   assert.ok(unsafe.diagnostics[0].message.includes('sf data360 retrieve -o <value> -m mapping:'));
@@ -272,7 +272,7 @@ test('a field without an identified mapping is named beside the identified ones'
   const outcome = await executeDmo(
     authored(['Note__c', 'Link__c']),
     client,
-    undefined,
+    'default',
     guide(reader),
   );
   const [diagnostic] = outcome.diagnostics;
@@ -316,7 +316,7 @@ test('a failed or empty lookup keeps the refusal and falls back to the generic i
     ],
   ]) {
     const { writes, client } = target();
-    const outcome = await executeDmo(authored(['Note__c']), client, undefined, options);
+    const outcome = await executeDmo(authored(['Note__c']), client, 'default', options);
     assert.deepEqual(outcome, {
       outcome: 'blocked',
       mutation: 'not-attempted',
@@ -329,7 +329,7 @@ test('a failed or empty lookup keeps the refusal and falls back to the generic i
       ],
     });
     await assert.rejects(
-      preflightDmo(authored(['Note__c']), client, undefined, options),
+      preflightDmo(authored(['Note__c']), client, 'default', options),
       (error) =>
         error instanceof NativeDmoError &&
         error.code === 'DMO_FIELD_REMOVAL_MAPPED' &&
@@ -338,11 +338,11 @@ test('a failed or empty lookup keeps the refusal and falls back to the generic i
     assert.deepEqual(writes, []);
   }
   const { client } = target();
-  const several = await executeDmo(authored(['Note__c', 'Link__c']), client, undefined, allow);
+  const several = await executeDmo(authored(['Note__c', 'Link__c']), client, 'default', allow);
   assert.equal(several.diagnostics[0].message, generic(failed, 'Note__c, Link__c', 'are'));
   // Other refusals are untouched and trigger no lookup.
   const { lists, reader } = inventory([map(first, ['Note__c'])]);
-  const other = await executeDmo(authored(['Free__c']), client, undefined, {
+  const other = await executeDmo(authored(['Free__c']), client, 'default', {
     mappedFieldGuide: { mappings: () => reader },
   });
   assert.equal(other.diagnostics[0].code, 'UNSUPPORTED_DMO_FIELD_CHANGE');
@@ -459,7 +459,10 @@ for (const preview of [true, false])
         assert.equal(result.result.items[0].outcome, 'blocked');
         assert.equal(result.result.items[0].mutation, 'not-attempted');
       }
-      assert.deepEqual(created, [['user@example.com', '68.0', undefined, dataspace, sender]]);
+      // The mapping reader names the run's data space (default when --dataspace is left out).
+      assert.deepEqual(created, [
+        ['user@example.com', '68.0', undefined, dataspace ?? 'default', sender],
+      ]);
       assert.deepEqual(lists, [[apiName]]);
       assert.deepEqual(writes, []);
       const serialized = JSON.stringify(result);
@@ -470,7 +473,7 @@ for (const preview of [true, false])
 test('all-native route repeats the data space and prints commands on their own lines', async () => {
   const cwd = await scratch();
   const saved = authored(['Note__c']);
-  saved.identity.dataSpace = 'Team';
+  saved.c__dataSpace = 'Team';
   await writeNativeDmoDocument(saved, cwd, false);
   const { writes, client } = target();
   const { reader } = inventory([map(first, ['Note__c'])]);
@@ -582,7 +585,7 @@ for (const preview of [true, false])
         assert.ok(diagnostic.message.endsWith(` ${nextAction}`));
         assert.ok(!diagnostic.message.includes('\n'));
       }
-      assert.deepEqual(created, [['user@example.com', '68.0', undefined, undefined, sender]]);
+      assert.deepEqual(created, [['user@example.com', '68.0', undefined, 'default', sender]]);
       assert.deepEqual(lists, [[apiName]]);
       assert.deepEqual(writes, []);
       assert.ok(!calls.includes('segment-execute'));

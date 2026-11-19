@@ -70,7 +70,7 @@ test('human retrieval reports empty type and excludes failed names from download
     command.writeMapping = async (name) => ({ path: `${name}.json`, outcome: 'retrieved' });
     command.acquireNativeMapping = async (name) => {
       if (name === 'Failed') throw new Error('failure');
-      return { kind: 'mapping', identity: { dataSpace: 'default', apiName: name } };
+      return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName: name } };
     };
     const { result } = await run(command);
     assert.equal(result.status, empty ? 'success' : 'failed');
@@ -200,7 +200,7 @@ for (const version of ['65.0', 'auto']) {
     const reads = [];
     command.acquireNativeMapping = async (name) => {
       reads.push(name);
-      return { kind: 'mapping', identity: { dataSpace: 'default', apiName: name } };
+      return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName: name } };
     };
     command.writeMapping = async (name, xml) => {
       assert.equal(xml, '<opaque/>');
@@ -245,7 +245,7 @@ for (const mode of ['read', 'output', 'overwrite'])
     command.log = (line) => lines.push(line);
     command.acquireNativeMapping = async (name) => {
       if (mode === 'read' && name === 'Middle') throw new Error('private-token');
-      return { kind: 'mapping', identity: { dataSpace: 'default', apiName: name } };
+      return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName: name } };
     };
     command.writeMapping = async (name) => {
       if (mode !== 'read' && name === 'Middle')
@@ -313,7 +313,8 @@ test('a native Graph in a mixed retrieve selection is read after the other famil
 const candidate = {
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName: 'Sample__dlm' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Sample__dlm' },
   spec: { arbitrary: 'service-owned' },
 };
 const connection = {};
@@ -326,7 +327,8 @@ const connection = {};
 const relationshipDocument = (dmo, suffix) => ({
   schemaVersion: 1,
   kind: 'relationship',
-  identity: { dataSpace: 'default', apiName: `${dmo.slice(0, -5)}_${suffix}` },
+  c__dataSpace: 'default',
+  identity: { apiName: `${dmo.slice(0, -5)}_${suffix}` },
   spec: {
     sourceObjectName: dmo,
     sourceFieldName: 'BRef__c',
@@ -362,7 +364,8 @@ const invocation = (overrides = {}) => {
   command.createMappingInventoryReader = command.createMappingClient = () => ({});
   command.acquireNativeMapping = async (name) => ({
     kind: 'mapping',
-    identity: { dataSpace: 'default', apiName: name },
+    c__dataSpace: 'default',
+    identity: { apiName: name },
   });
   command.writeNativeMapping = async (document, ...arguments_) =>
     command.writeMapping(document.identity.apiName, '<opaque/>', ...arguments_);

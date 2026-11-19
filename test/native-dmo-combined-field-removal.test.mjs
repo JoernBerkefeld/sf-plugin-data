@@ -204,14 +204,17 @@ function world(dmos, mappings) {
  * @returns {object} Portable document.
  */
 const dmoFile = (apiName, names, label = 'Example') =>
-  normalizeNativeDmo({
-    name: apiName,
-    label,
-    category: 'OTHER',
-    creationType: 'Custom',
-    dataSpaceName: 'default',
-    fields: names.map((name) => field(name)),
-  });
+  normalizeNativeDmo(
+    {
+      name: apiName,
+      label,
+      category: 'OTHER',
+      creationType: 'Custom',
+      dataSpaceName: 'default',
+      fields: names.map((name) => field(name)),
+    },
+    'default',
+  );
 /**
  * Authored mapping file with identity pairs for the named fields.
  * @param {string} name Mapping name, also its selector.
@@ -221,13 +224,16 @@ const dmoFile = (apiName, names, label = 'Example') =>
  * @returns {object} Portable document.
  */
 const mappingFile = (name, source, target, names) =>
-  normalizeNativeMapping({
-    developerName: name,
-    sourceEntityDeveloperName: source,
-    targetEntityDeveloperName: target,
-    status: 'ACTIVE',
-    fieldMappings: names.map((entry) => pair(entry)),
-  });
+  normalizeNativeMapping(
+    {
+      developerName: name,
+      sourceEntityDeveloperName: source,
+      targetEntityDeveloperName: target,
+      status: 'ACTIVE',
+      fieldMappings: names.map((entry) => pair(entry)),
+    },
+    'default',
+  );
 const org = { getOrgId: () => 'org', getUsername: () => 'user@example.com' };
 /**
  * Write the documents into a fresh project and run the deploy command on synthetic clients.
@@ -761,7 +767,7 @@ test('admission covers a field only when every holding mapping is selected witho
   const guide = { mappings: () => clients.mapping, targetOrg: 'my-org' };
   const selected = (source, targetFields, target = D) => ({ source, target, targetFields });
   const admit = (mappings, value = dmoFile(D, keep)) =>
-    admitDmoFieldRemoval(value, clients.dmo, undefined, guide, mappings);
+    admitDmoFieldRemoval(value, clients.dmo, 'default', guide, mappings);
   assert.deepEqual(await admit([selected('SrcA__dll', keep), selected('SrcB__dll', [])]), {
     coveredMappedFields: ['Note__c'],
   });
@@ -785,18 +791,18 @@ test('admission covers a field only when every holding mapping is selected witho
   ]);
   const unnamedGuide = { mappings: () => unnamed.clients.mapping };
   await assert.rejects(
-    admitDmoFieldRemoval(dmoFile(D, keep), unnamed.clients.dmo, undefined, unnamedGuide, []),
+    admitDmoFieldRemoval(dmoFile(D, keep), unnamed.clients.dmo, 'default', unnamedGuide, []),
     (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
   );
   assert.deepEqual(
-    await admitDmoFieldRemoval(dmoFile(D, keep), unnamed.clients.dmo, undefined, unnamedGuide, [
+    await admitDmoFieldRemoval(dmoFile(D, keep), unnamed.clients.dmo, 'default', unnamedGuide, [
       selected('SrcA__dll', keep),
     ]),
     { coveredMappedFields: ['Note__c'] },
   );
   // No guide is refused; a mapped marker without any holder has no pair to lose and is covered.
   await assert.rejects(
-    admitDmoFieldRemoval(dmoFile(D, keep), clients.dmo, undefined, undefined, [
+    admitDmoFieldRemoval(dmoFile(D, keep), clients.dmo, 'default', undefined, [
       selected('SrcA__dll', keep),
       selected('SrcB__dll', []),
     ]),
@@ -813,7 +819,7 @@ test('admission covers a field only when every holding mapping is selected witho
           return raw;
         },
       },
-      undefined,
+      'default',
       { mappings: () => orphan.clients.mapping },
       [selected('SrcA__dll', keep)],
     ),
@@ -823,11 +829,11 @@ test('admission covers a field only when every holding mapping is selected witho
   // to the item's own preflight.
   const free = world({ [D]: all }, []);
   assert.deepEqual(
-    await admitDmoFieldRemoval(dmoFile(D, keep), free.clients.dmo, undefined, undefined, []),
+    await admitDmoFieldRemoval(dmoFile(D, keep), free.clients.dmo, 'default', undefined, []),
     { coveredMappedFields: [] },
   );
   assert.deepEqual(
-    await admitDmoFieldRemoval(dmoFile(D, keep), free.clients.dmo, undefined, undefined, [
+    await admitDmoFieldRemoval(dmoFile(D, keep), free.clients.dmo, 'default', undefined, [
       selected('SrcA__dll', keep),
     ]),
     { coveredMappedFields: [] },
@@ -839,7 +845,7 @@ test('admission covers a field only when every holding mapping is selected witho
         all.filter((name) => name !== 'Id__c'),
       ),
       free.clients.dmo,
-      undefined,
+      'default',
       undefined,
       [selected('SrcA__dll', keep)],
     ),
@@ -854,23 +860,23 @@ test('the service removes a covered field once through the checked removal and k
   const file = dmoFile(D, keep, 'Changed');
   const allow = { allowFieldRemoval: true };
   // A covered field is planned; one that is not covered is still refused.
-  const plan = await preflightNativeDmo(file, dmo, undefined, {
+  const plan = await preflightNativeDmo(file, dmo, 'default', {
     ...allow,
     coveredMappedFields: ['Note__c'],
   });
   assert.deepEqual(plan.removeFields, ['Note__c']);
   await assert.rejects(
-    preflightNativeDmo(file, dmo, undefined, { ...allow, coveredMappedFields: ['Name__c'] }),
+    preflightNativeDmo(file, dmo, 'default', { ...allow, coveredMappedFields: ['Name__c'] }),
     (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
   );
   await assert.rejects(
-    deployNativeDmo(file, dmo, undefined, fast, allow),
+    deployNativeDmo(file, dmo, 'default', fast, allow),
     (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',
   );
   assert.deepEqual(org1.writes(), []);
   // The PATCH lands first, then the one removal runs inside the checked wrapper.
   const calls = [];
-  const removed = await deployNativeDmo(file, dmo, undefined, fast, {
+  const removed = await deployNativeDmo(file, dmo, 'default', fast, {
     ...allow,
     coveredMappedFields: ['Note__c'],
     removeChecked: async (target, fields, remove) => {
@@ -884,7 +890,7 @@ test('the service removes a covered field once through the checked removal and k
   assert.deepEqual(removed.droppedPairs, [dropped(M)]);
   assert.deepEqual(calls, [[D, ['Note__c'], [`dmo:patch:${D}`]]]);
   assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
-  const again = await deployNativeDmo(file, dmo, undefined, fast, {
+  const again = await deployNativeDmo(file, dmo, 'default', fast, {
     ...allow,
     removeChecked: async () => assert.fail('nothing left to remove'),
   });
@@ -892,13 +898,13 @@ test('the service removes a covered field once through the checked removal and k
   assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
   // Without the wrapper the removal is sent unwrapped and reports no pairs.
   const free = world({ [D]: all }, []);
-  const plain = await deployNativeDmo(dmoFile(D, keep), free.clients.dmo, undefined, fast, allow);
+  const plain = await deployNativeDmo(dmoFile(D, keep), free.clients.dmo, 'default', fast, allow);
   assert.deepEqual(plain.removedFields, ['Note__c']);
   assert.equal(plain.droppedPairs, undefined);
   assert.deepEqual(free.writes(), [`dmo:remove:${D}:Note__c`]);
   // A mapping failure inside the checked removal keeps its own code on the deploy item.
   const third = single();
-  const failed = await executeDmo(dmoFile(D, keep), third.clients.dmo, undefined, {
+  const failed = await executeDmo(dmoFile(D, keep), third.clients.dmo, 'default', {
     ...allow,
     coveredMappedFields: ['Note__c'],
     removeChecked: async (_target, _fields, remove) => {
@@ -924,7 +930,7 @@ test('the checked removal confirms dropped pairs and stops on whatever it cannot
       readers(org1),
       async () => org1.clients.dmo.removeFields(D, ['Note__c']),
       cover,
-      undefined,
+      'default',
       fast,
     ),
     [{ ...dropped(M), developerName: 'sel_Note__c' }],
@@ -942,7 +948,7 @@ test('the checked removal confirms dropped pairs and stops on whatever it cannot
         found.fields = found.fields.filter((entry) => entry.name !== 'Note__c');
       },
       cover,
-      undefined,
+      'default',
       fast,
     ),
     (error) => error.code === 'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED',
@@ -950,7 +956,7 @@ test('the checked removal confirms dropped pairs and stops on whatever it cannot
   // A field that never goes away is unconfirmed too.
   const org3 = single();
   await assert.rejects(
-    removeFieldsChecked(D, ['Note__c'], readers(org3), async () => {}, cover, undefined, fast),
+    removeFieldsChecked(D, ['Note__c'], readers(org3), async () => {}, cover, 'default', fast),
     (error) => error.code === 'DMO_PERSISTENCE_UNCONFIRMED',
   );
   // A DMO whose mapping list answers 404 has no mappings, so no pair is dropped.
@@ -968,7 +974,7 @@ test('the checked removal confirms dropped pairs and stops on whatever it cannot
       { dmo: org4.clients.dmo, mappings: notFound },
       async () => org4.clients.dmo.removeFields(D, ['Note__c']),
       cover,
-      undefined,
+      'default',
       fast,
     ),
     [],
@@ -991,7 +997,7 @@ test('the checked removal confirms dropped pairs and stops on whatever it cannot
         throw new Error('removal sent');
       },
       cover,
-      undefined,
+      'default',
       fast,
     ),
     /removal sent/u,
@@ -1013,7 +1019,7 @@ test('the checked removal refuses before the write when the snapshot disagrees w
         readers(org),
         async () => assert.fail('nothing may be removed'),
         coverage,
-        undefined,
+        'default',
         fast,
       ),
       (error) => error.code === 'DMO_FIELD_REMOVAL_MAPPED',

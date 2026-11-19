@@ -165,7 +165,8 @@ const mixedProject = async () => {
     {
       schemaVersion: 1,
       kind: 'dmo',
-      identity: { dataSpace: 'default', apiName: 'Person__dlm' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'Person__dlm' },
       spec: { label: 'Person', category: 'Other', fields },
     },
     cwd,
@@ -175,7 +176,8 @@ const mixedProject = async () => {
     {
       schemaVersion: 1,
       kind: 'mapping',
-      identity: { dataSpace: 'default', apiName: 'Person_map' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'Person_map' },
       spec: {
         sourceEntityDeveloperName: 'Person__dll',
         targetEntityDeveloperName: 'Person__dlm',

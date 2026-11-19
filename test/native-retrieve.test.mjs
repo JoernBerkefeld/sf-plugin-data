@@ -82,6 +82,7 @@ test('DMO inventory paginates documented offsets, includes standard names and fi
     }),
     '61.0',
     'dmo',
+    'default',
   );
   // Without totalSize the next pages are read ahead in parallel; those past the end are unused.
   assert.deepEqual(offsets.slice(0, 2), [0, 50]);
@@ -112,6 +113,7 @@ for (const totalSize of [0, 20, 21, 78])
       }),
       '68.0',
       'dlo',
+      'default',
     );
     assert.deepEqual(
       offsets,
@@ -142,6 +144,7 @@ for (const shortOffsets of [[20, 40], [20], [60]])
       }),
       '68.0',
       'dlo',
+      'default',
     );
     assert.deepEqual(offsets, [0, 20, 40, 60]);
     assert.deepEqual(
@@ -167,6 +170,7 @@ test('DLO inventory lists the 98 entries of a 100-total answer with a short page
     }),
     '68.0',
     'dlo',
+    'default',
   );
   assert.equal(names.length, 98);
 });
@@ -186,6 +190,7 @@ for (const total of [0, 1, 20, 21, 78])
         }),
         '68.0',
         'dlo',
+        'default',
       );
       assert.equal(names.length, Math.ceil(total / 2));
     });
@@ -208,6 +213,7 @@ test('DLO listing ignores extra envelope keys and the page URL format', async ()
     }),
     '68.0',
     'dlo',
+    'default',
   );
   assert.deepEqual(offsets, [0, 20]);
   assert.equal(names.length, 21);
@@ -227,6 +233,7 @@ test('DLO listing follows an absolute nextPageUrl when the answer has no totalSi
     }),
     '68.0',
     'dlo',
+    'default',
   );
   assert.deepEqual(offsets.slice(0, 2), [0, 20]);
   assert.ok(Math.max(...offsets) <= 80);
@@ -250,6 +257,7 @@ test('DMO listing pages past 2000 entries until the API is exhausted', async () 
     }),
     '68.0',
     'dmo',
+    'default',
   );
   assert.equal(names.length, 2507);
   assert.ok(offsets.includes(2500));
@@ -270,6 +278,7 @@ test('a listing that repeats its page (offset ignored) ends instead of looping',
     }),
     '68.0',
     'dmo',
+    'default',
   );
   // The repeated page ends the listing; at most three pages were read ahead of it.
   assert.ok(calls >= 2 && calls <= 5);
@@ -282,7 +291,6 @@ test('one unusable inventory entry is skipped with a warning; the rest are liste
     connection(async () => ({
       dataModelObject: [
         { name: 'Good__dlm', dataSpaceName: 'default' },
-        { name: 'NoSpace__dlm' },
         { label: 'no name' },
         'not an entry',
         { name: 'Good__dlm', dataSpaceName: 'default' },
@@ -291,13 +299,12 @@ test('one unusable inventory entry is skipped with a warning; the rest are liste
     })),
     '68.0',
     'dmo',
-    undefined,
+    'default',
     warnings,
   );
   assert.deepEqual(names, ['Good__dlm']);
-  assert.equal(warnings.length, 3);
-  assert.match(warnings[0], /"NoSpace__dlm" because it has no usable data space/u);
-  assert.match(warnings[1], /entry at position 2 because it has no usable API name/u);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /entry at position 1 because it has no usable API name/u);
   const dloWarnings = [];
   assert.deepEqual(
     await listNativeNames(
@@ -309,7 +316,7 @@ test('one unusable inventory entry is skipped with a warning; the rest are liste
       })),
       '68.0',
       'dlo',
-      undefined,
+      'default',
       dloWarnings,
     ),
     ['Good__dll'],
@@ -324,6 +331,7 @@ for (const page of [{}, { dataModelObject: 'x' }, [], 'text'])
         connection(async () => page),
         '68.0',
         'dmo',
+        'default',
       ),
       { code: 'NATIVE_INVENTORY_UNCONFIRMED' },
     );
@@ -331,39 +339,55 @@ for (const page of [{}, { dataModelObject: 'x' }, [], 'text'])
 
 test('mapping inventory filters every DMO and accepts only typed no-map404, never auth', async () => {
   const calls = [];
-  const names = await listNativeMappingNames(['Empty__dlm', 'Target__dlm'], {
-    list: async (dmo) => {
-      calls.push(dmo);
-      if (dmo === 'Empty__dlm') throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
-      return { objectSourceTargetMaps: [mapping(), mapping()] };
+  const names = await listNativeMappingNames(
+    ['Empty__dlm', 'Target__dlm'],
+    {
+      list: async (dmo) => {
+        calls.push(dmo);
+        if (dmo === 'Empty__dlm') throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
+        return { objectSourceTargetMaps: [mapping(), mapping()] };
+      },
     },
-  });
+    'default',
+  );
   assert.deepEqual(calls, ['Empty__dlm', 'Target__dlm']);
   assert.deepEqual(names, ['Map']);
   for (const status of [401, 403, 500])
     await assert.rejects(
-      listNativeMappingNames(['Target__dlm'], {
-        list: async () => {
-          throw new NativeMappingError('MAPPING_HTTP_ERROR', status);
+      listNativeMappingNames(
+        ['Target__dlm'],
+        {
+          list: async () => {
+            throw new NativeMappingError('MAPPING_HTTP_ERROR', status);
+          },
         },
-      }),
+        'default',
+      ),
     );
   // Names only: the target binding is checked when the mapping itself is read.
   assert.deepEqual(
-    await listNativeMappingNames(['Other__dlm'], {
-      list: async () => ({ objectSourceTargetMaps: [mapping()] }),
-    }),
+    await listNativeMappingNames(
+      ['Other__dlm'],
+      {
+        list: async () => ({ objectSourceTargetMaps: [mapping()] }),
+      },
+      'default',
+    ),
     ['Map'],
   );
   // Extra envelope keys are ignored.
   assert.deepEqual(
-    await listNativeMappingNames(['Target__dlm'], {
-      list: async () => ({ objectSourceTargetMaps: [mapping()], nextPageUrl: 'more' }),
-    }),
+    await listNativeMappingNames(
+      ['Target__dlm'],
+      {
+        list: async () => ({ objectSourceTargetMaps: [mapping()], nextPageUrl: 'more' }),
+      },
+      'default',
+    ),
     ['Map'],
   );
   await assert.rejects(
-    listNativeMappingNames(['Target__dlm'], { list: async () => ({ other: [] }) }),
+    listNativeMappingNames(['Target__dlm'], { list: async () => ({ other: [] }) }, 'default'),
     { code: 'MAPPING_INVENTORY_UNCONFIRMED' },
   );
 });
@@ -387,7 +411,7 @@ test('mapping listing skips unusable entries with a warning and reports a failin
         };
       },
     },
-    undefined,
+    'default',
     { warnings, failure: (dmo, error) => failures.push([dmo, error.code]) },
   );
   assert.deepEqual(names, ['Map', 'NoPairs']);
@@ -400,6 +424,43 @@ test('mapping listing skips unusable entries with a warning and reports a failin
   assert.match(warnings[1], /"Elsewhere" because it belongs to another data space/u);
 });
 
+test('a DMO list entry without a data space stops the listing; a DLO one is skipped', async () => {
+  // Every DMO entry read live names its dataSpaceName (default ones too), so one without it is
+  // not a known shape and could be a DMO of the run's space: the listing fails closed.
+  await assert.rejects(
+    listNativeNames(
+      connection(async () => ({
+        dataModelObject: [
+          { name: 'Good__dlm', dataSpaceName: 'default' },
+          { name: 'NoSpace__dlm' },
+        ],
+      })),
+      '68.0',
+      'dmo',
+      'default',
+      [],
+    ),
+    (error) => error.code === 'NATIVE_INVENTORY_UNCONFIRMED' && /NoSpace__dlm/u.test(error.message),
+  );
+  const warnings = [];
+  assert.deepEqual(
+    await listNativeNames(
+      connection(async () => ({
+        dataLakeObjects: [
+          { name: 'Good__dll', dataSpaceInfo: [{ name: 'default' }] },
+          { name: 'NoSpace__dll' },
+        ],
+      })),
+      '68.0',
+      'dlo',
+      'default',
+      warnings,
+    ),
+    ['Good__dll'],
+  );
+  assert.match(warnings[0], /"NoSpace__dll" because it has no usable data space/u);
+});
+
 test('mapping inventory reader is list-only, version-pinned and disables replay/redirect', async () => {
   const calls = [];
   const owner = connection(async function (request, options) {
@@ -410,13 +471,13 @@ test('mapping inventory reader is list-only, version-pinned and disables replay/
     return { objectSourceTargetMaps: [] };
   });
   owner._refreshDelegate = () => assert.fail('no refresh');
-  const reader = createMappingInventoryReader(owner, '61.0');
+  const reader = createMappingInventoryReader(owner, '61.0', 'default');
   assert.deepEqual(Object.keys(reader), ['list']);
   await reader.list('ssot__Target__dlm', 'Source__dll');
   assert.deepEqual(calls, [
     {
       method: 'GET',
-      url: 'https://synthetic.example/services/data/v61.0/ssot/data-model-object-mappings?dmoDeveloperName=ssot__Target__dlm&dloDeveloperName=Source__dll',
+      url: 'https://synthetic.example/services/data/v61.0/ssot/data-model-object-mappings?dataspace=default&dmoDeveloperName=ssot__Target__dlm&dloDeveloperName=Source__dll',
     },
   ]);
   for (const [dmo, dlo] of [
@@ -426,7 +487,7 @@ test('mapping inventory reader is list-only, version-pinned and disables replay/
     await assert.rejects(reader.list(dmo, dlo), { code: 'INVALID_MAPPING_BINDING' });
   assert.equal(calls.length, 1);
   for (const version of ['60.0', 'latest', 'v68.0'])
-    assert.throws(() => createMappingInventoryReader(owner, version));
+    assert.throws(() => createMappingInventoryReader(owner, version, 'default'));
   const source = await readFile(
     new URL('../src/transport/mapping-rest.ts', import.meta.url),
     'utf8',
@@ -471,9 +532,10 @@ for (const failure of [
         throw failure;
       }),
       '68.0',
+      'default',
     );
     await assert.rejects(
-      listNativeMappingNames(['Target__dlm'], reader),
+      listNativeMappingNames(['Target__dlm'], reader, 'default'),
       (error) => error instanceof ConnectError && !(error instanceof NativeMappingError),
     );
   });
@@ -490,19 +552,24 @@ test('mapping inventory queries every confirmed parent in DMO order with typed 4
       return { objectSourceTargetMaps: [mapping('Zed'), mapping('Alpha'), mapping('Zed')] };
     }),
     '68.0',
+    'default',
   );
-  assert.deepEqual(await listNativeMappingNames(parents, reader), ['Alpha', 'Zed']);
+  assert.deepEqual(await listNativeMappingNames(parents, reader, 'default'), ['Alpha', 'Zed']);
   assert.deepEqual(calls, parents);
   // The same name twice is listed once; each mapping is checked when it is read.
   assert.deepEqual(
-    await listNativeMappingNames(['Target__dlm'], {
-      list: async () => ({
-        objectSourceTargetMaps: [
-          mapping(),
-          { ...mapping(), sourceEntityDeveloperName: 'Other__dll' },
-        ],
-      }),
-    }),
+    await listNativeMappingNames(
+      ['Target__dlm'],
+      {
+        list: async () => ({
+          objectSourceTargetMaps: [
+            mapping(),
+            { ...mapping(), sourceEntityDeveloperName: 'Other__dll' },
+          ],
+        }),
+      },
+      'default',
+    ),
     ['Map'],
   );
 });
@@ -535,7 +602,7 @@ test('actual core mapping GET404 becomes typed absence and continues to later co
       },
     },
   });
-  const reader = createMappingInventoryReader(owner, '68.0');
+  const reader = createMappingInventoryReader(owner, '68.0', 'default');
   await assert.rejects(reader.list('Empty__dlm'), (error) => {
     assert.ok(error instanceof NativeMappingError);
     assert.equal(error.code, 'MAPPING_HTTP_ERROR');
@@ -544,7 +611,9 @@ test('actual core mapping GET404 becomes typed absence and continues to later co
     return true;
   });
   calls.length = 0;
-  assert.deepEqual(await listNativeMappingNames(['Empty__dlm', 'Target__dlm'], reader), ['Map']);
+  assert.deepEqual(await listNativeMappingNames(['Empty__dlm', 'Target__dlm'], reader, 'default'), [
+    'Map',
+  ]);
   assert.deepEqual(calls, ['Empty__dlm', 'Target__dlm']);
 });
 
@@ -573,11 +642,13 @@ const invocation = (overrides = {}) => {
       };
   command.acquireNativeMapping = async (apiName) => ({
     kind: 'mapping',
-    identity: { dataSpace: 'default', apiName },
+    c__dataSpace: 'default',
+    identity: { apiName },
   });
   command.acquireNativeDmo = async (apiName) => ({
     kind: 'dmo',
-    identity: { dataSpace: 'default', apiName },
+    c__dataSpace: 'default',
+    identity: { apiName },
   });
   command.acquireDlo = async (apiName) => ({
     kind: 'dlo',
@@ -711,7 +782,7 @@ test('public mapping inventory uses owned connection; artifact acquisition gets 
   };
   command.acquireNativeMapping = async (apiName, client) => {
     assert.equal(client, cliClient);
-    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName } };
   };
   const result = await run(command);
   assert.equal(result.status, 'success');
@@ -749,7 +820,7 @@ test('retrieve reads DLOs, DMOs, mappings and mapping parents through one shared
   command.acquireNativeMapping = async (apiName, _client, _scope, parents) => {
     await parents.source.get('Source__dll');
     await parents.target.get('Target__dlm');
-    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName } };
   };
   const result = await run(command);
   assert.equal(result.status, 'success');
@@ -765,7 +836,7 @@ test('a listed mapping that reads 404 was deleted during the retrieve: skipped w
   command.listNativeMappingNames = async () => ['Gone', 'Kept'];
   command.acquireNativeMapping = async (apiName) => {
     if (apiName === 'Gone') throw new NativeMappingError('MAPPING_HTTP_ERROR', 404);
-    return { kind: 'mapping', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName } };
   };
   const result = await run(command);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
@@ -813,24 +884,26 @@ test('public mapping inventory transport failure leaves the mapping family empty
 });
 
 for (const scope of [undefined, 'Team'])
-  test(`native retrieval threads optional request scope unchanged ${scope}`, async () => {
+  test(`native retrieval threads the run's data space (${scope ?? 'omitted: default'})`, async () => {
     const command = invocation({ dataspace: scope });
+    // Omitted means default, and every service gets it explicitly.
+    const runSpace = scope ?? 'default';
     command.listNativeNames = async (_connection, _version, family, actual) => {
-      assert.equal(actual, scope);
+      assert.equal(actual, runSpace);
       return family === 'dlo' ? ['Source__dll'] : ['ssot__Target__dlm'];
     };
     command.createMappingInventoryReader = (_connection, _version, actual) => {
-      assert.equal(actual, scope);
+      assert.equal(actual, runSpace);
       return {};
     };
     command.listNativeMappingNames = async (parents, _reader, actual) => {
       assert.deepEqual(parents, ['ssot__Target__dlm']);
-      assert.equal(actual, scope);
+      assert.equal(actual, runSpace);
       return ['Map'];
     };
     command.createMappingClient = (_target, _version, runner, actual) => {
       assert.equal(runner, undefined);
-      assert.equal(actual, scope);
+      assert.equal(actual, runSpace);
       return {};
     };
     for (const [method, kind] of [
@@ -839,9 +912,10 @@ for (const scope of [undefined, 'Team'])
       ['acquireNativeMapping', 'mapping'],
     ])
       command[method] = async (apiName, _client, actual) => {
-        // A DLO is always read in the effective scope, binding one of several memberships.
-        assert.equal(actual, kind === 'dlo' ? (scope ?? 'default') : scope);
-        return { kind, identity: { dataSpace: scope ?? 'default', apiName } };
+        assert.equal(actual, runSpace);
+        return kind === 'dlo'
+          ? { kind, c__dataSpace: [runSpace], identity: { apiName } }
+          : { kind, c__dataSpace: runSpace, identity: { apiName } };
       };
     const result = await run(command);
     assert.equal(result.status, 'success');

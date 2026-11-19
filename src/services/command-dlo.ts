@@ -23,6 +23,8 @@ export type DloExecution = {
   serverProcessing?: true;
   /** The data spaces the DLO belongs to after the deploy, sorted. */
   dataSpaces?: string[];
+  /** Data spaces the deploy added the DLO to or removed it from; absent when none changed. */
+  dataSpaceChanges?: DloMembershipChange;
   diagnostics: Array<{ code: string; message: string }>;
 };
 /** Data space refusals a preview reports on the item instead of failing. */
@@ -114,6 +116,7 @@ export async function executeDloDeploy(
       mutation: result.operation === 'create' ? 'confirmed-created' : 'confirmed-updated',
       ...(result.serverProcessing ? { serverProcessing: true as const } : {}),
       dataSpaces: result.document.c__dataSpace,
+      ...(result.dataSpaceChanges ? { dataSpaceChanges: result.dataSpaceChanges } : {}),
       diagnostics: [],
     };
   } catch (error) {

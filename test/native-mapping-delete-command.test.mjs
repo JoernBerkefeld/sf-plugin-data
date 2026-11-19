@@ -48,7 +48,7 @@ const run = async (command) => {
   }
 };
 
-for (const scope of [undefined, 'Team'])
+for (const scope of ['default', 'Team'])
   for (const preview of [false, true])
     test(`public mapping delete passes scope without moving injection positions ${scope}/${preview}`, async () => {
       const command = invocation({ dataspace: scope, preview });
@@ -477,7 +477,8 @@ const runInProject = async (command, mappings) => {
 const authored = (apiName) => ({
   schemaVersion: 1,
   kind: 'mapping',
-  identity: { apiName, dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     sourceEntityDeveloperName: 'Source__dll',
     targetEntityDeveloperName: 'Target__dlm',

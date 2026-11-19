@@ -71,7 +71,8 @@ const validDlo = () => ({
 const validDmo = () => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { apiName: dmoName, dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName: dmoName },
   spec: {
     label: 'Loose',
     category: 'Other',
@@ -101,7 +102,7 @@ test('strict DLO and DMO normalizers still refuse what retrieve mode keeps', () 
   assert.throws(() => normalizeDlo(looseDlo(), 'default'), /INVALID_DLO_DOCUMENT/u);
   assert.throws(() => normalizeNativeDmo(looseDmo(), 'default'), /UNSUPPORTED_DMO_DATASPACE/u);
   assert.throws(
-    () => normalizeNativeDmo({ ...looseDmo(), dataSpaceName: 'default' }),
+    () => normalizeNativeDmo({ ...looseDmo(), dataSpaceName: 'default' }, 'default'),
     /INVALID_DMO_FIELD/u,
   );
 });
@@ -125,7 +126,8 @@ test('retrieve mode keeps a DLO the plugin cannot deploy as returned', () => {
 
 test('retrieve mode keeps a DMO the plugin cannot deploy as returned', () => {
   const document = normalizeNativeDmo(looseDmo(), 'default', 'retrieve');
-  assert.deepEqual(document.identity, { apiName: dmoName, dataSpace: 'default' });
+  assert.deepEqual(document.identity, { apiName: dmoName });
+  assert.equal(document.c__dataSpace, 'default');
   assert.equal(document.spec.label, '');
   assert.equal(document.spec.category, jsonNull);
   const [id, score, raw, odd] = document.spec.fields;
@@ -144,7 +146,7 @@ test('retrieve mode keeps a DMO the plugin cannot deploy as returned', () => {
   assert.equal(raw.type, undefined);
   assert.equal(odd.status, undefined);
   // Without a data space in the read and without a requested one, none is invented.
-  assert.deepEqual(normalizeNativeDmo(looseDmo(), undefined, 'retrieve').identity, {
+  assert.deepEqual(normalizeNativeDmo(looseDmo(), 'default', 'retrieve').identity, {
     apiName: dmoName,
   });
   // A differing data space stays a refusal.
@@ -298,7 +300,8 @@ test('deploy validation names each DMO key path it refuses', () => {
   const cases = [
     [(d) => (d.extra = 1), 'INVALID_DMO_DOCUMENT', /: extra is not a key/u],
     [(d) => (d.identity.id = 1), 'INVALID_DMO_DOCUMENT', /identity\.id is not a key/u],
-    [(d) => delete d.identity.dataSpace, 'INVALID_DMO_DOCUMENT', /identity\.dataSpace/u],
+    [(d) => (d.identity.dataSpace = 'default'), 'LEGACY_DATASPACE_KEY', /identity\.dataSpace/u],
+    [(d) => delete d.c__dataSpace, 'INVALID_DATASPACE_FIELD', /c__dataSpace/u],
     [(d) => (d.spec.status = 'x'), 'INVALID_DMO_DOCUMENT', /spec\.status is not a key/u],
     [(d) => (d.spec.category = jsonNull), 'INVALID_DMO_DOCUMENT', /spec\.category/u],
     [(d) => (d.spec.fields[0].type = 'Text'), 'INVALID_DMO_FIELD', /fields\[0\]\.type/u],
@@ -312,7 +315,10 @@ test('deploy validation names each DMO key path it refuses', () => {
       () => validateNativeDmoDocument(document),
       (error) => error.code === code && message.test(error.message),
     );
-    validateNativeDmoDocument(document, 'retrieve');
+    // The data space places the file, so retrieve mode needs it too.
+    if (code.includes('DATASPACE'))
+      assert.throws(() => validateNativeDmoDocument(document, 'retrieve'));
+    else validateNativeDmoDocument(document, 'retrieve');
   }
 });
 
@@ -320,7 +326,8 @@ test('an unprintable key is not echoed', () => {
   const document = {
     schemaVersion: 1,
     kind: 'dmo',
-    identity: { apiName: dmoName, dataSpace: 'default' },
+    c__dataSpace: 'default',
+    identity: { apiName: dmoName },
     spec: { label: 'L', category: 'Other', fields: [] },
     'secret value here': 1,
   };

@@ -8,13 +8,13 @@ import { WriteLedger, rejectedNextAction } from './deploy-result.js';
  * Compare a relationship with the org read-only, matched by name, else by its binding.
  * @param {unknown} value Portable relationship.
  * @param {Pick<RelationshipClient, 'list' | 'readDefinitions'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<object>} Payload-free preview.
  */
 export async function preflightRelationship(
   value: unknown,
   client: Pick<RelationshipClient, 'list' | 'readDefinitions'>,
-  requestScope?: string,
+  requestScope: string,
 ) {
   const plan = await preflightNativeRelationship(value, client, requestScope);
   return {
@@ -34,13 +34,13 @@ export async function preflightRelationship(
  * `rejected`: nothing was written.
  * @param {unknown} value Portable relationship.
  * @param {RelationshipClient} client Relationship transport.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<object>} Payload-free execution outcome.
  */
 export async function executeRelationship(
   value: unknown,
   client: Pick<RelationshipClient, 'list' | 'create' | 'readDefinitions' | 'update'>,
-  requestScope?: string,
+  requestScope: string,
 ) {
   const ledger = new WriteLedger();
   let writes = 0;

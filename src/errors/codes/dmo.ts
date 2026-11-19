@@ -1,9 +1,7 @@
 /** CLI hints for Data model object error codes. Long-form pages: docs/errors/dmo/<CODE>.md */
 export const hints: Readonly<Record<string, string>> = {
-  DMO_DATASPACE_COLLISION:
-    'The local DMO file already belongs to another data space. Retrieve into a different --output-dir or move the existing file away, then rerun.',
   DMO_DATASPACE_MISMATCH:
-    'The DMO file, --dataspace and the org disagree on the data space. Make identity.dataSpace in the file match --dataspace and the target DMO, then rerun.',
+    "The DMO file's c__dataSpace is not the data space of the run, or the DMO in the org is in another one. Run with the --dataspace the file names, or correct c__dataSpace, then rerun.",
   DMO_DELETE_NOT_CONFIRMED:
     'Salesforce accepted the DMO DELETE, but the DMO could not be confirmed gone. Do not rerun the delete; read the DMO in the org first and act on what you find.',
   DMO_DELETE_UNCONFIRMED:
@@ -41,7 +39,7 @@ export const hints: Readonly<Record<string, string>> = {
   PARTIAL_DMO_OUTPUT:
     'The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve with --overwrite.',
   UNSUPPORTED_DMO_DATASPACE:
-    'The DMO in the org is not in the requested data space. Pass the --dataspace that holds the DMO, or leave the flag out, and rerun.',
+    'The DMO in the org is not in the data space of the run. Pass the --dataspace that holds the DMO (its c__dataSpace), or leave the flag out for default, and rerun.',
   UNSUPPORTED_DMO_FIELD_ADDITION:
     'This field cannot be added to the existing DMO. New fields must not be primary keys or generated, and on a standard DMO need a name without a namespace.',
   UNSUPPORTED_DMO_FIELD_CHANGE:

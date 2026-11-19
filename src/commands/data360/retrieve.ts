@@ -36,6 +36,7 @@ import { retrieveNativeDmo } from '../../services/native-dmo.js';
 import { createDmoClient } from '../../transport/dmo-rest.js';
 import { writeNativeDmoDocument } from '../../artifacts/write-native-dmo.js';
 import { dloName, DloError } from '../../artifacts/dlo-document.js';
+import { reportedIdentity } from '../../artifacts/data-space-field.js';
 import { retrieveNativeDlo } from '../../services/native-dlo.js';
 import {
   DataSpaceError,
@@ -265,7 +266,7 @@ type RetrieveRun = {
   envelope: RetrieveEnvelope;
   outputTypes: Set<string>;
   errorTypes: Map<RetrieveDiagnostic, string>;
-  requestScope: string | undefined;
+  /** The run's data space (--dataspace, default `default`), named on every request. */
   effectiveScope: string;
   outputDirectory: string;
 };
@@ -544,19 +545,19 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    * @param {Connection} connection The run's authenticated Connection.
    * @param {string} target Target org alias or username.
    * @param {string} version Native API version.
-   * @param {string} [requestScope] Optional request scope.
+   * @param {string} dataSpace The run's data space.
    * @returns {ReturnType<typeof createRelationshipClient>} Relationship client.
    */
   protected createRelationshipClient(
     connection: Connection,
     target: string,
     version: string,
-    requestScope?: string,
+    dataSpace: string,
   ): ReturnType<typeof createRelationshipClient> {
     return createRelationshipClient(
       target,
       version,
-      requestScope,
+      dataSpace,
       this.ssotSender(target, version, connection),
     );
   }
@@ -688,7 +689,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       );
       const family = verbatimFamily(target.kind);
       target.push({
-        identity: { ...document.identity },
+        identity: { ...target.identity },
         operation: 'retrieve',
         ...(family === 'dmo' ? {} : { family: family as RetrieveItem['family'] }),
         routes: target.routes,
@@ -708,7 +709,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    * @param {Connection} connection Command-owned connection for the bound reads.
    * @param {string} target Resolved username.
    * @param {string} version Native API version.
-   * @param {string | undefined} requestScope Optional request scope.
+   * @param {string} effectiveScope The run's data space.
    * @param {string} root Project root.
    * @param {boolean} overwrite Permit replacing differing files.
    * @returns {Promise<object>} Items, diagnostics and whether a failure was not local.
@@ -718,7 +719,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     connection: Connection,
     target: string,
     version: string,
-    requestScope: string | undefined,
+    effectiveScope: string,
     root: string,
     overwrite: boolean,
   ): Promise<{
@@ -741,11 +742,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           'Relationship retrieval did not complete for this item; the org was not changed.',
         ),
         retryable: false,
-        identity: { dataSpace: requestScope ?? 'default', apiName },
+        identity: { dataSpace: effectiveScope, apiName },
         family: 'relationship',
       });
     };
-    const client = this.createRelationshipClient(connection, target, version, requestScope);
+    const client = this.createRelationshipClient(connection, target, version, effectiveScope);
     // Up to relationshipReads DMOs are listed at once; results, files and diagnostics still follow
     // the DMO order, one DMO after another.
     const reads = await Promise.all(
@@ -753,7 +754,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         (this.acquireRelationships ?? retrieveUnlabelledRelationships)(
           dmo,
           client,
-          requestScope,
+          effectiveScope,
           'retrieve',
         ),
       ),
@@ -798,7 +799,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             overwrite,
           );
           items.push({
-            identity: document.identity,
+            identity: reportedIdentity(document, effectiveScope),
             operation: 'retrieve',
             family: 'relationship',
             routes,
@@ -810,7 +811,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         } catch (error_) {
           const error = await this.verbatimFallback(error_, carriedNativeResponse(document), {
             kind: 'relationship',
-            identity: document.identity,
+            identity: reportedIdentity(document, effectiveScope),
             routes,
             root,
             overwrite,
@@ -1249,7 +1250,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     relationshipDmos: string[],
     context: RetrieveRun,
   ): GroupPlan {
-    const { flags, envelope, outputTypes, errorTypes, requestScope, effectiveScope } = context;
+    const { flags, envelope, outputTypes, errorTypes, effectiveScope } = context;
     const outputDirectory = context.outputDirectory;
     const label = selectorFamily(selectors[0]);
     let version: string;
@@ -1304,7 +1305,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             connection,
             version,
             'dmo',
-            requestScope,
+            effectiveScope,
             warnings,
             listed.dmo,
           ));
@@ -1323,8 +1324,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               if (family === 'mapping') {
                 const inventory = await this.listNativeMappingNames(
                   await listDmos(),
-                  this.createMappingInventoryReader(connection, version, requestScope),
-                  requestScope,
+                  this.createMappingInventoryReader(connection, version, effectiveScope),
+                  effectiveScope,
                   {
                     warnings,
                     listed: listedMappings,
@@ -1348,7 +1349,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         connection,
                         version,
                         family,
-                        requestScope,
+                        effectiveScope,
                         warnings,
                         listed.dlo,
                       )),
@@ -1422,12 +1423,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         target,
                         version,
                         undefined,
-                        requestScope,
+                        effectiveScope,
                         this.ssotSender(target, version, connection),
                         listedMappings,
                       ),
                     ),
-                    requestScope,
+                    effectiveScope,
                     this.mappingParents(
                       target,
                       version,
@@ -1450,7 +1451,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   target,
                   version,
                   undefined,
-                  requestScope,
+                  effectiveScope,
                   this.ssotSender(target, version, connection),
                 ),
               )),
@@ -1488,7 +1489,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                             listed.dmo,
                           ),
                         ),
-                        requestScope,
+                        effectiveScope,
                         'retrieve',
                       );
               const root = outputDirectory;
@@ -1508,7 +1509,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                       identity: { dataSpace: effectiveScope, apiName: document.identity.apiName },
                       dataSpaces: document.c__dataSpace,
                     }
-                  : { identity: document.identity }),
+                  : { identity: reportedIdentity(document, effectiveScope) }),
                 operation: 'retrieve',
                 ...(family === 'dmo' ? {} : { family }),
                 routes,
@@ -1566,7 +1567,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             connection,
             target,
             version,
-            requestScope,
+            effectiveScope,
             outputDirectory,
             flags.overwrite,
           );
@@ -1593,12 +1594,16 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     relationshipDmos: string[],
     context: RetrieveRun,
   ): GroupPlan {
-    const { flags, envelope, outputTypes, errorTypes, requestScope, effectiveScope } = context;
+    const { flags, envelope, outputTypes, errorTypes, effectiveScope } = context;
     const outputDirectory = context.outputDirectory;
     const label = selectorFamily(selectors[0]);
     // The family whose check runs, named in a refusal beside other groups.
     let family: RetrieveFamily = label;
-    if (effectiveScope !== 'default') return { refusal: 'INVALID_SCOPE', family };
+    // This group exists only beside a segment, calculated insight or identity resolution (the
+    // native-only group takes DLOs, DMOs, mappings and relationships alone), and those families
+    // are not converted to c__dataSpace yet: outside the default data space they refuse it below
+    // with INVALID_SCOPE (the DMO and segment selection keys, dependencyKey, are default-only
+    // too). The DLO, mapping and relationship reads here pass the run's space all the same.
     const dloSelectors = selectors.filter((value) => value === 'dlo' || value.startsWith('dlo:'));
     const mappingSelectors = selectors.filter((value) => value.startsWith('mapping:'));
     const ciSelectors = selectors.filter((value) => inGroup('calculated-insight', value));
@@ -1621,7 +1626,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       if (dloSelectors.length > 0) {
         if (dloSelectors.some((value) => value !== 'dlo' && !dloName.test(value.slice(4))))
           return { refusal: 'INVALID_SELECTION', family };
-        if (!['68.0', 'auto'].includes(flags['api-version']) || effectiveScope !== 'default')
+        if (!['68.0', 'auto'].includes(flags['api-version']))
           return { refusal: 'INVALID_SCOPE', family };
       }
       family = 'mapping';
@@ -1629,7 +1634,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         throw new MappingDefinitionError('MAPPING_INVENTORY_UNQUALIFIED');
       if (mappingSelectors.length > 0) {
         nativeApiVersion(flags['api-version']);
-        if (effectiveScope !== 'default') throw new MappingDefinitionError('INVALID_SCOPE');
         if (mappingSelectors.some((value) => !mappingName.test(value.slice(8))))
           throw new MappingDefinitionError('INVALID_SELECTION');
       }
@@ -1819,7 +1823,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   org.getConnection('68.0'),
                   '68.0',
                   'dlo',
-                  'default',
+                  effectiveScope,
                   envelope.diagnostics.warnings,
                   listed.dlo,
                 )),
@@ -1847,10 +1851,15 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 ),
               );
               nativeOf = reads.nativeOf;
-              const document = await this.acquireDlo(apiName, reads.client, 'default', 'retrieve');
+              const document = await this.acquireDlo(
+                apiName,
+                reads.client,
+                effectiveScope,
+                'retrieve',
+              );
               const receipt = await this.writeDlo(document, outputDirectory, flags.overwrite);
               envelope.result.items.push({
-                identity: { dataSpace: 'default', apiName },
+                identity: { dataSpace: effectiveScope, apiName },
                 operation: 'retrieve',
                 family: 'dlo',
                 dataSpaces: document.c__dataSpace,
@@ -1860,7 +1869,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             } catch (error_: unknown) {
               const error = await this.verbatimFallback(error_, nativeOf(apiName), {
                 kind: 'dlo',
-                identity: { dataSpace: 'default', apiName },
+                identity: { dataSpace: effectiveScope, apiName },
                 routes: dloRoutes,
                 root: outputDirectory,
                 overwrite: flags.overwrite,
@@ -1904,7 +1913,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   target,
                   version,
                   undefined,
-                  requestScope,
+                  effectiveScope,
                   this.ssotSender(target, version, org.getConnection()),
                 ),
               );
@@ -1913,7 +1922,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               entry.document = await this.acquireNativeMapping(
                 apiName,
                 reads.client,
-                requestScope,
+                effectiveScope,
                 this.mappingParents(
                   target,
                   version,
@@ -1941,7 +1950,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 flags.overwrite,
               );
               envelope.result.items.push({
-                identity: { dataSpace: 'default', apiName },
+                identity: { dataSpace: effectiveScope, apiName },
                 operation: 'retrieve',
                 family: 'mapping',
                 routes,
@@ -1950,7 +1959,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
             } catch (error_: unknown) {
               const error = await this.verbatimFallback(error_, nativeOf(apiName), {
                 kind: 'mapping',
-                identity: { dataSpace: 'default', apiName },
+                identity: { dataSpace: effectiveScope, apiName },
                 routes,
                 root: outputDirectory,
                 overwrite: flags.overwrite,
@@ -1976,7 +1985,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               envelope.diagnostics.errors.push({
                 code,
                 family: 'mapping',
-                identity: { dataSpace: 'default', apiName },
+                identity: { dataSpace: effectiveScope, apiName },
                 message: unproven
                   ? operationDiagnostic(error, 'This mapping definition was not exported.')
                   : 'This mapping definition was not exported. Check the exact selection, acquisition and output path.',
@@ -2012,7 +2021,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 org.getConnection(),
                 target,
                 nativeApiVersion(flags['api-version']),
-                requestScope,
+                effectiveScope,
                 outputDirectory,
                 flags.overwrite,
               );
@@ -2288,7 +2297,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                     )
                   : await this.documentWriter(kind)(document, outputDirectory, flags.overwrite);
               envelope.result.items.push({
-                identity: { ...document.identity },
+                identity: reportedIdentity(document, effectiveScope),
                 ...(kind === 'dmo' ? {} : { family: kind as RetrieveItem['family'] }),
                 routes,
                 operation: 'retrieve',
@@ -2303,7 +2312,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 carriedNativeResponse('insight' in entry ? entry.insight : document),
                 {
                   kind,
-                  identity: { ...document.identity },
+                  identity: reportedIdentity(document, effectiveScope),
                   routes,
                   root: outputDirectory,
                   overwrite: flags.overwrite,
@@ -2341,8 +2350,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    */
   private async retrieveAll(): Promise<RetrieveEnvelope> {
     const { flags } = await this.parse(Retrieve);
-    const requestScope = flags.dataspace;
-    const effectiveScope = requestScope ?? 'default';
+    const effectiveScope = flags.dataspace ?? 'default';
     // Writers require an absolute project root; resolve a relative -d against the cwd once.
     const outputDirectory = path.resolve(flags['output-dir'] ?? process.cwd());
     const plugin = {
@@ -2437,7 +2445,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       envelope,
       outputTypes,
       errorTypes,
-      requestScope,
       effectiveScope,
       outputDirectory,
     };

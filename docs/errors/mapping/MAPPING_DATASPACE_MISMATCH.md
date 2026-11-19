@@ -1,6 +1,6 @@
 # `MAPPING_DATASPACE_MISMATCH`
 
-> The mapping file's identity.dataSpace does not match the data space of this command. Make them match, or pass the right --dataspace.
+> The mapping file's c__dataSpace is not the data space of the run. Run with the --dataspace the file names, or correct c__dataSpace.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-Each mapping file records the data space it belongs to in `identity.dataSpace`. This command runs in the data space given by `--dataspace`, or `default` when the flag is not set, and the two differ.
+Each mapping file names the data space it belongs to in its top-level `c__dataSpace` key. This command runs in the data space given by `--dataspace`, or `default` when the flag is not set, and the two differ. A deploy refuses the file, and so does a delete of a mapping whose file (or, with `--changed-since`, whose deleted file) names another data space.
 
 ## Why the plugin stops
 
@@ -18,8 +18,8 @@ Deploying a mapping into a data space it was not written for could bind objects 
 
 ## How to fix
 
-1. Check `identity.dataSpace` in the mapping file.
-2. Either change it to the data space you deploy to, or pass that data space with `--dataspace`.
+1. Check `c__dataSpace` in the mapping file.
+2. Run with that data space in `--dataspace`. Files of different data spaces go in separate runs.
 3. Rerun with `--preview`.
 
 ## Example output
@@ -27,11 +27,10 @@ Deploying a mapping into a data space it was not written for could bind objects 
 ```text
 Deploy preview: blocked (MAPPING_DATASPACE_MISMATCH). No deployment executed.
 MAPPING_DATASPACE_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Preview did not complete. Check explicit authored inputs, target authentication and supported scope. No deployment executed.
-Hint: The mapping file's identity.dataSpace does not match the data space of this command. Make them match, or pass the right --dataspace.
+Hint: The mapping file's c__dataSpace is not the data space of the run. Run with the --dataspace the file names, or correct c__dataSpace.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/mapping/MAPPING_DATASPACE_MISMATCH.md
 ```
 
 ## Related codes
 
 - [`UNSUPPORTED_MAPPING_DATASPACE`](../mapping/UNSUPPORTED_MAPPING_DATASPACE.md) — Salesforce reported the mapping in another data space.
-- [`MAPPING_DATASPACE_COLLISION`](../mapping/MAPPING_DATASPACE_COLLISION.md) — a local mapping file belongs to another data space.

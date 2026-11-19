@@ -89,7 +89,7 @@ export async function listNativeRelationships(
  * Retrieve every relationship whose source object is the DMO, as portable documents.
  * @param {string} dmoName Exact source DMO.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope; omission is the default data space.
+ * @param {string} requestScope The run's data space.
  * A relationship the document cannot represent is returned as a verbatim document of its raw list
  * entry; each saved document carries its raw entry for the same fallback at write time.
  * @param {DocumentMode} [mode] `retrieve` checks only the entries it keeps and keeps their values
@@ -99,7 +99,7 @@ export async function listNativeRelationships(
 export async function retrieveNativeRelationships(
   dmoName: string,
   client: Pick<RelationshipClient, 'list' | 'readDefinitions'>,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
   const documents = await retrieveUnlabelledRelationships(dmoName, client, requestScope, mode);
@@ -112,14 +112,14 @@ export async function retrieveNativeRelationships(
  * be read together.
  * @param {string} dmoName Exact source DMO.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope; omission is the default data space.
+ * @param {string} requestScope The run's data space.
  * @param {DocumentMode} [mode] `retrieve` keeps values as listed.
  * @returns {Promise<Array<NativeRelationshipDocument | VerbatimDocument>>} Documents ordered by name.
  */
 export async function retrieveUnlabelledRelationships(
   dmoName: string,
   client: Pick<RelationshipClient, 'list'>,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): Promise<Array<NativeRelationshipDocument | VerbatimDocument>> {
   const inventory = await listNativeRelationships(dmoName, client, mode);
@@ -138,7 +138,7 @@ export async function retrieveUnlabelledRelationships(
           ? undefined
           : createVerbatimDocument(
               'relationship',
-              { dataSpace: requestScope ?? 'default', apiName: entry.name },
+              { dataSpace: requestScope, apiName: entry.name },
               reason,
               native.native,
             );
@@ -225,17 +225,17 @@ function entryToWire(entry: ObservedRelationship): Record<string, unknown> {
 /**
  * Admit a portable relationship for the request scope.
  * @param {unknown} value Portable input.
- * @param {string} [requestScope] Optional request scope; omission is the default data space.
+ * @param {string} requestScope The run's data space.
  * @param {DocumentMode} [mode] `retrieve` for a delete: values the plugin does not model are kept.
  * @returns {NativeRelationshipDocument} Checked document.
  */
 function admit(
   value: unknown,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): NativeRelationshipDocument {
   const document = validateNativeRelationshipDocument(value, mode);
-  if (document.identity.dataSpace !== (requestScope ?? 'default'))
+  if (document.c__dataSpace !== requestScope)
     throw new NativeRelationshipError('UNSUPPORTED_RELATIONSHIP_DATASPACE');
   return document;
 }
@@ -365,13 +365,13 @@ function listedChanges(
  * Metadata API record with the file's values. Salesforce decides which changes it accepts.
  * @param {unknown} value Portable relationship.
  * @param {Pick<RelationshipClient, 'list' | 'readDefinitions'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeRelationshipDeployPlan>} Create, update or no-op.
  */
 export async function preflightNativeRelationship(
   value: unknown,
   client: Pick<RelationshipClient, 'list' | 'readDefinitions'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeRelationshipDeployPlan> {
   const desired = admit(value, requestScope);
   const inventory = await listNativeRelationships(desired.spec.sourceObjectName, client);
@@ -487,14 +487,14 @@ async function updateAndConfirm(
  * file states another one than Salesforce generated.
  * @param {unknown} value Portable relationship.
  * @param {RelationshipClient} client Relationship transport.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<{operation: 'create' | 'update' | 'noop'; apiName: string}>} Confirmed outcome
  * and org name.
  */
 export async function deployNativeRelationship(
   value: unknown,
   client: Pick<RelationshipClient, 'list' | 'create' | 'readDefinitions' | 'update'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ operation: 'create' | 'update' | 'noop'; apiName: string }> {
   const plan = await preflightNativeRelationship(value, client, requestScope);
   if (plan.operation === 'noop') return { operation: 'noop', apiName: plan.existing! };
@@ -564,14 +564,14 @@ async function labelCreated(
  * @param {string} sourceDmo Exact source DMO named in the selector.
  * @param {string} name Relationship name named in the selector.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeRelationshipDocument | undefined>} The relationship as a document.
  */
 export async function findNativeRelationshipByName(
   sourceDmo: string,
   name: string,
   client: Pick<RelationshipClient, 'list'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeRelationshipDocument | undefined> {
   if (!nativeRelationshipName.test(name))
     throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
@@ -620,14 +620,14 @@ export async function findNativeRelationshipByName(
  * @param {string} apiName Exact relationship name.
  * @param {unknown} value Local relationship file naming the source DMO.
  * @param {Pick<RelationshipClient, 'list'>} client Relationship reader.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<{present: boolean; document: NativeRelationshipDocument}>} Presence.
  */
 export async function preflightDeleteNativeRelationship(
   apiName: string,
   value: unknown,
   client: Pick<RelationshipClient, 'list'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ present: boolean; document: NativeRelationshipDocument }> {
   if (!nativeRelationshipName.test(apiName))
     throw new NativeRelationshipError('INVALID_RELATIONSHIP_NAME');
@@ -665,14 +665,14 @@ export async function preflightDeleteNativeRelationship(
  * @param {string} apiName Exact relationship name.
  * @param {unknown} value Local relationship file naming the source DMO.
  * @param {Pick<RelationshipClient, 'list' | 'remove'>} client Relationship transport.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<{outcome: 'deleted' | 'unchanged'}>} Confirmed absence.
  */
 export async function deleteNativeRelationship(
   apiName: string,
   value: unknown,
   client: Pick<RelationshipClient, 'list' | 'remove'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<{ outcome: 'deleted' | 'unchanged' }> {
   const plan = await preflightDeleteNativeRelationship(apiName, value, client, requestScope);
   if (!plan.present) return { outcome: 'unchanged' };

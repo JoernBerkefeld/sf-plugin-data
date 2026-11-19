@@ -1,6 +1,7 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import { sameEnum } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, readSingleDataSpace, refuseLegacyDataSpace } from './data-space-field.js';
 
 export type NativeDmoField = {
   name: string;
@@ -13,7 +14,9 @@ export type NativeDmoField = {
 export type NativeDmoDocument = {
   schemaVersion: 1;
   kind: 'dmo';
-  identity: { apiName: string; dataSpace: string };
+  /** The data space the DMO belongs to (file key `c__dataSpace`). */
+  c__dataSpace: string;
+  identity: { apiName: string };
   spec: {
     label: string;
     category: string;
@@ -126,6 +129,39 @@ export class NativeDmoError extends Error {
 }
 
 export const nativeDmoName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dlm$/u;
+
+/**
+ * The default spelling of a standard DMO copy in a non-default data space. Salesforce names the
+ * copy of `ssot__<Name>__dlm` `<prefix>_<Name>__dlm` there, with fields without `ssot__`
+ * (live API 68, DB entry data360:dataspace-name-spelling-api68). Only this rule is derived: a
+ * name without the data space prefix, the default data space or no prefix give undefined, and
+ * a standard DMO without `ssot__` (such as `StaticCurrencyRates_Home__dlm`) is never derived.
+ * Whether the result is a standard DMO is for the caller's read to prove.
+ * @param {string} name DMO name as the file names it.
+ * @param {string} dataSpace The run's data space.
+ * @param {string} [prefix] The prefix the org's data space list names for it.
+ * @returns {string | undefined} `ssot__<Name>__dlm`, or undefined.
+ */
+export function standardCopyOrigin(
+  name: string,
+  dataSpace: string,
+  prefix: string | undefined,
+): string | undefined {
+  if (dataSpace === 'default' || prefix === undefined || !name.startsWith(`${prefix}_`))
+    return undefined;
+  const spelling = `ssot__${name.slice(prefix.length + 1)}`;
+  return nativeDmoName.test(spelling) ? spelling : undefined;
+}
+
+/**
+ * The name a field of the default-spelling standard DMO has on its copy: `ssot__X__c` is
+ * `X__c`, any other field (`KQ_`, unprefixed) keeps its name.
+ * @param {string} name Field name on the default object.
+ * @returns {string} Field name on the copy.
+ */
+export function standardCopyFieldName(name: string): string {
+  return name.startsWith('ssot__') ? name.slice('ssot__'.length) : name;
+}
 export const nativeDmoFieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
 const runtimeKeys = new Set([
   'id',
@@ -177,22 +213,6 @@ function objectAt(value: unknown, keyPath: string): Record<string, unknown> {
 }
 
 /**
- * Whether a value is a usable data space name.
- * @param {unknown} value Candidate.
- * @returns {boolean} Non-empty, trimmed and free of control characters.
- */
-function isDataSpace(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    Boolean(value.trim()) &&
-    value === value.trim() &&
-    ![...value].some(
-      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127,
-    )
-  );
-}
-
-/**
  * Validate the document shape, retaining field definitions and any extra spec keys. Category,
  * data types, label length and key rules are left to the API. Deploy mode (the default) admits
  * only what a deploy can send and names the first offending key path; retrieve mode keeps what
@@ -217,18 +237,17 @@ export function validateNativeDmoDocument(
       'identity.apiName',
       'must be a DMO API name ending in __dlm',
     );
-  // A retrieved DMO read without any data space keeps none; deploy needs one.
-  if (!isDataSpace(identity.dataSpace) && (mode !== 'retrieve' || identity.dataSpace !== undefined))
-    throw refuse('INVALID_DMO_DOCUMENT', 'identity.dataSpace', 'must be a data space name');
+  refuseLegacyDataSpace(identity, refuse);
+  readSingleDataSpace(document, refuse);
   if (!Array.isArray(spec.fields))
     throw refuse('INVALID_DMO_DOCUMENT', 'spec.fields', 'must be a list of fields');
   const fields = spec.fields.map((field, index) => objectAt(field, `spec.fields[${index}]`));
   if (mode === 'retrieve') return structuredClone(value) as NativeDmoDocument;
   for (const key of Object.keys(document))
-    if (!['identity', 'kind', 'schemaVersion', 'spec'].includes(key))
+    if (![dataSpaceKey, 'identity', 'kind', 'schemaVersion', 'spec'].includes(key))
       throw refuse('INVALID_DMO_DOCUMENT', printableKey(key), 'is not a key a DMO file can hold');
   for (const key of Object.keys(identity))
-    if (key !== 'apiName' && key !== 'dataSpace')
+    if (key !== 'apiName')
       throw refuse(
         'INVALID_DMO_DOCUMENT',
         `identity.${printableKey(key)}`,
@@ -285,15 +304,16 @@ export function unwrapNativeDmo(value: unknown): Record<string, unknown> {
  * Map the read field `type` to the authored `dataType` and keep definition fields, not runtime IDs.
  * Retrieve mode keeps what the plugin cannot map as returned: a field without `type`, or with a
  * `dataType` that differs from it, keeps both keys; a non-boolean `isPrimaryKey` stays; a read
- * without `dataSpaceName` takes the data space it was requested in.
+ * without `dataSpaceName` takes the data space it was requested in. A DMO of another data space
+ * is UNSUPPORTED_DMO_DATASPACE.
  * @param {unknown} value Direct native response.
- * @param {string} [dataSpace] Optional expected observed scope.
+ * @param {string} dataSpace The run's data space.
  * @param {DocumentMode} [mode] `retrieve` (lenient) or `deploy` (strict, the default).
  * @returns {NativeDmoDocument} Portable definition with authoritative observed scope.
  */
 export function normalizeNativeDmo(
   value: unknown,
-  dataSpace?: string,
+  dataSpace: string,
   mode: DocumentMode = 'deploy',
 ): NativeDmoDocument {
   const object = unwrapNativeDmo(value);
@@ -302,16 +322,13 @@ export function normalizeNativeDmo(
     lenient && (object.dataSpaceName === undefined || object.dataSpaceName === null)
       ? dataSpace
       : object.dataSpaceName;
-  if (dataSpace !== undefined && observed !== dataSpace)
-    throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
+  if (observed !== dataSpace) throw new NativeDmoError('UNSUPPORTED_DMO_DATASPACE');
   return validateNativeDmoDocument(
     {
       schemaVersion: 1,
       kind: 'dmo',
-      identity:
-        lenient && observed === undefined
-          ? { apiName: object.name }
-          : { apiName: object.name, dataSpace: observed },
+      [dataSpaceKey]: dataSpace,
+      identity: { apiName: object.name },
       spec: {
         label: object.label,
         // Reads are upper case (OTHER, SEGMENT_MEMBERSHIP); save the documented input spelling.

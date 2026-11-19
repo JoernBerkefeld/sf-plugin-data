@@ -62,7 +62,8 @@ const families = {
     value: {
       schemaVersion: 1,
       kind: 'dmo',
-      identity: { dataSpace: 'default', apiName: 'Example__dlm' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'Example__dlm' },
       spec: {
         label: 'Example',
         category: 'Other',
@@ -85,7 +86,8 @@ const families = {
     value: {
       schemaVersion: 1,
       kind: 'mapping',
-      identity: { dataSpace: 'default', apiName: 'SourceGenerated' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'SourceGenerated' },
       spec: {
         sourceEntityDeveloperName: 'Example__dll',
         targetEntityDeveloperName: 'Example__dlm',
@@ -100,7 +102,8 @@ const families = {
     value: {
       schemaVersion: 1,
       kind: 'relationship',
-      identity: { apiName: 'A_BRef_map_B_Id', dataSpace: 'default' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'A_BRef_map_B_Id' },
       spec: {
         sourceObjectName: 'A__dlm',
         sourceFieldName: 'BRef__c',

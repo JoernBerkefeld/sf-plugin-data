@@ -34,4 +34,4 @@ Downloaded mapping: 0
 
 ## Related codes
 
-- [`MAPPING_DATASPACE_COLLISION`](../mapping/MAPPING_DATASPACE_COLLISION.md) — a local mapping file belongs to another data space.
+- [`UNSUPPORTED_MAPPING_DATASPACE`](../mapping/UNSUPPORTED_MAPPING_DATASPACE.md) — Salesforce reported the mapping in another data space.

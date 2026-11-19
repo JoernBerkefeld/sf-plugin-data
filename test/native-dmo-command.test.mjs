@@ -26,7 +26,8 @@ const wire = {
 const document = {
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName: name },
+  c__dataSpace: 'default',
+  identity: { apiName: name },
   spec: { label: 'Example', category: 'Other', fields },
 };
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'native-dmo-command-'));
@@ -99,7 +100,7 @@ test('native writer leaves generated fields out and binds canonical source bytes
 });
 test('DMO wrappers forward explicit scope while retaining conservative dispatch evidence', async () => {
   const saved = structuredClone(document);
-  saved.identity.dataSpace = 'other';
+  saved.c__dataSpace = 'other';
   saved.spec.label = 'Changed';
   const scoped = { ...wire, dataSpaceName: 'other' };
   const updated = { ...scoped, label: saved.spec.label };
@@ -132,14 +133,14 @@ test('DMO wrapper unchanged preview and execution are GET-only and not-attempted
     update: async () => assert.fail('no PATCH'),
     delete: async () => assert.fail('no DELETE'),
   });
-  assert.deepEqual(await preflightDmo(document, target), {
+  assert.deepEqual(await preflightDmo(document, target, 'default'), {
     family: 'dmo',
     outcome: 'unchanged',
     target: 'existing',
     absenceProof: 'none',
     diagnostics: [],
   });
-  assert.deepEqual(await executeDmo(document, target), {
+  assert.deepEqual(await executeDmo(document, target, 'default'), {
     outcome: 'unchanged',
     mutation: 'not-attempted',
     diagnostics: [],
@@ -385,16 +386,16 @@ test('native deploy permission failure never writes', async () => {
   assert.equal(writes, 0);
   assert.equal(auth, 1);
 });
-for (const scope of [undefined, 'Team'])
+for (const scope of ['default', 'Team'])
   for (const preview of [true, false])
     test(`public native DMO deploy/delete optional scope ${scope} preview=${preview}`, async () => {
       const cwd = await scratch();
       const desired = structuredClone(document);
-      desired.identity.dataSpace = scope ?? 'default';
+      desired.c__dataSpace = scope ?? 'default';
       desired.spec.label = 'Changed';
       await writeNativeDmoDocument(desired, cwd, false);
       const inputs = await readDeployInputs({ cwd, metadata: [`dmo:${name}`] });
-      const actual = { ...wire, dataSpaceName: desired.identity.dataSpace };
+      const actual = { ...wire, dataSpaceName: desired.c__dataSpace };
       let updates = 0;
       const deploy = invocation(Deploy, { dataspace: scope, preview, 'target-org': org });
       deploy.resolveInputs = async () => inputs;
@@ -443,8 +444,10 @@ for (const scope of [undefined, 'Team'])
     });
 
 for (const preview of [true, false])
-  for (const dataspace of [undefined, 'Other'])
-    test(`public DMO delete reports observed Team scope, requested=${dataspace} preview=${preview}`, async () => {
+  for (const dataspace of [undefined, 'Team', 'Other'])
+    test(`public DMO delete in the run's data space only: DMO in Team, requested=${dataspace} preview=${preview}`, async () => {
+      // Omitted means default: a DMO of another data space is refused, never deleted.
+      const refused = dataspace !== 'Team';
       const reads = [];
       const writes = [];
       const command = invocation(Delete, { dataspace, preview });
@@ -465,17 +468,17 @@ for (const preview of [true, false])
       const result = await run(command);
       const localFile = path.join(process.cwd(), 'data360', 'dmo', `${name}.dmo-meta.json`);
       // A confirmed delete reads once more after the DELETE.
-      assert.deepEqual(reads, preview || dataspace ? [[name]] : [[name], [name]]);
-      assert.deepEqual(writes, preview || dataspace ? [] : [[name]]);
-      assert.equal(result.status, dataspace ? 'blocked' : 'success');
+      assert.deepEqual(reads, preview || refused ? [[name]] : [[name], [name]]);
+      assert.deepEqual(writes, preview || refused ? [] : [[name]]);
+      assert.equal(result.status, refused ? 'blocked' : 'success');
       assert.deepEqual(result.result.items[0], {
         family: 'dmo',
-        identity: { dataSpace: dataspace ?? 'Team', apiName: name },
+        identity: { dataSpace: dataspace ?? 'default', apiName: name },
         operation: preview ? 'preview' : 'delete',
-        outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',
-        mutation: !dataspace && !preview ? 'confirmed-deleted' : 'not-attempted',
+        outcome: refused ? 'blocked' : preview ? 'delete' : 'deleted',
+        mutation: !refused && !preview ? 'confirmed-deleted' : 'not-attempted',
         // The project's own DMO file is listed by a preview and, absent here, reported not present.
-        ...(dataspace
+        ...(refused
           ? {}
           : preview
             ? { localFiles: [{ path: localFile, exists: false }] }
@@ -483,7 +486,7 @@ for (const preview of [true, false])
       });
       assert.deepEqual(
         result.diagnostics.errors.map(({ code }) => code),
-        dataspace ? ['UNSUPPORTED_DMO_DATASPACE'] : [],
+        refused ? ['UNSUPPORTED_DMO_DATASPACE'] : [],
       );
     });
 

@@ -7,11 +7,7 @@ import {
   validateNativeRelationshipDocument,
 } from './native-relationship-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
-import {
-  isVerbatimDocument,
-  previousIdentity,
-  serializeVerbatimDocument,
-} from './verbatim-document.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 /**
  * Validate real ancestors before publication.
@@ -120,15 +116,9 @@ export async function writeNativeRelationshipDocument(
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
-    if (previous) {
-      const saved = previousIdentity(
-        previous.toString('utf8'),
-        (previousValue) => validateNativeRelationshipDocument(previousValue, 'retrieve').identity,
-      );
-      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
-        throw new NativeRelationshipError('RELATIONSHIP_DATASPACE_COLLISION');
-      if (!overwrite) throw new NativeRelationshipError('OVERWRITE_REQUIRED');
-    }
+    // The name is unique in the org (whatever its data space), so the file at the path is the same
+    // component.
+    if (previous && !overwrite) throw new NativeRelationshipError('OVERWRITE_REQUIRED');
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-relationship-output-'));
     const marker = await open(path.join(staging, 'ownership'), 'wx');

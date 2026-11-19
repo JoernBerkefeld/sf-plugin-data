@@ -743,7 +743,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     dataspace: Flags.string({
       aliases: ['data-space'],
       summary:
-        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DLO that also belongs to another data space is not deleted (DLO_DELETE_OTHER_DATASPACES).',
+        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DMO, mapping or relationship of another data space is refused, and a DLO that also belongs to another data space is not deleted (DLO_DELETE_OTHER_DATASPACES).',
     }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'changed-since': Flags.string({
@@ -986,11 +986,11 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const apiName = selector.slice(4);
     const fields = [...new Set(flags.field)];
     // The run's data space, always explicit: --dataspace, or default.
-    const requestScope = flags.dataspace ?? 'default';
+    const effectiveScope = flags.dataspace ?? 'default';
     const root = path.resolve(flags['output-dir'] ?? process.cwd());
     const item: DeleteItem = {
       family: 'dmo',
-      identity: { dataSpace: requestScope, apiName },
+      identity: { dataSpace: effectiveScope, apiName },
       operation: flags.preview ? 'preview' : 'delete-field',
       fields,
       outcome: 'blocked',
@@ -1020,7 +1020,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       // The run's data space must exist in the org: one read, before any other read.
       await dataSpaceCheckOf(this, async () =>
         (this.createDataSpaceSender ?? openBoundSsot)(target, '68.0'),
-      ).require([requestScope]);
+      ).require([effectiveScope]);
       clients = {
         dmo: this.createDmoNativeDeleteClient(target, version),
         remover: (this.createDmoClient ?? createDmoClient)(target, version),
@@ -1028,13 +1028,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           target,
           version,
           undefined,
-          requestScope,
+          effectiveScope,
           this.createMappingSender(target, version),
         ),
         // Read only to refresh a mapping file without the pairs Salesforce generated.
         source: (this.createDloNativeDeleteClient ?? createNativeDloDeleteClient)(target, version),
       };
-      plan = await planDmoFieldDelete(apiName, fields, clients, requestScope);
+      plan = await planDmoFieldDelete(apiName, fields, clients, effectiveScope);
       item.identity.dataSpace = plan.dataSpace;
       if (flags.preview) {
         const files = await dmoFieldLocalFiles(plan, root);
@@ -1075,7 +1075,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       removalSent: false,
     };
     try {
-      await executeDmoFieldDelete(plan, clients, progress, requestScope, this.fieldRemovalSettle);
+      await executeDmoFieldDelete(plan, clients, progress, effectiveScope, this.fieldRemovalSettle);
     } catch (error) {
       item.unmappedPairs = [];
       item.removedFields = [];
@@ -1111,7 +1111,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         dmo: this.writeNativeDmo ?? writeNativeDmoDocument,
         mapping: this.writeNativeMapping ?? writeNativeMappingDocument,
       },
-      requestScope,
+      effectiveScope,
     );
     const failed = item.refreshedFiles.filter((file) => file.outcome === 'failed');
     if (failed.length === 0) {
@@ -1133,7 +1133,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    * @param {string} target Resolved username.
    * @param {string} version Native API version.
    * @param {boolean} preview Read-only when true.
-   * @param {string | undefined} requestScope Optional request scope.
+   * @param {string} effectiveScope The run's data space.
    * @param {DeleteEnvelope} envelope Envelope receiving the item.
    * @param {Map<DeleteItem, string>} selectorsByItem Human labels.
    * @param {Function} track Registers the item's local file for removal or preview.
@@ -1149,7 +1149,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     target: string,
     version: string,
     preview: boolean,
-    requestScope: string | undefined,
+    effectiveScope: string,
     envelope: DeleteEnvelope,
     selectorsByItem: Map<DeleteItem, string>,
     track: (item: DeleteItem, candidates: LocalFileCandidate[]) => Promise<void>,
@@ -1164,7 +1164,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         : [baseDocument.spec.sourceObjectName, baseDocument.identity.apiName];
     const item: DeleteItem = {
       family: 'relationship',
-      identity: { dataSpace: requestScope ?? 'default', apiName: selectedName },
+      identity: { dataSpace: effectiveScope, apiName: selectedName },
       operation: preview ? 'preview' : 'delete',
       outcome: 'blocked',
       mutation: 'not-attempted',
@@ -1178,7 +1178,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       const base = (this.createRelationshipClient ?? createRelationshipClient)(
         target,
         version,
-        requestScope,
+        effectiveScope,
         (this.createRelationshipSender ?? openBoundSsot)(target, version),
       );
       const client = {
@@ -1203,7 +1203,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       // -m: the relationship as the org lists it under its source DMO; none of that name is absent.
       const document =
         baseDocument ??
-        (await findNativeRelationshipByName(sourceDmo, selectedName, client, requestScope));
+        (await findNativeRelationshipByName(sourceDmo, selectedName, client, effectiveScope));
       if (document === undefined) {
         item.outcome = 'unchanged';
         return;
@@ -1226,7 +1226,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           apiName,
           document,
           client,
-          requestScope,
+          effectiveScope,
         );
         item.outcome = plan.present ? 'delete' : 'unchanged';
         await track(item, files);
@@ -1236,7 +1236,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         apiName,
         document,
         client,
-        requestScope,
+        effectiveScope,
       );
       item.outcome = result.outcome;
       if (result.outcome === 'deleted') item.mutation = 'confirmed-deleted';
@@ -1261,8 +1261,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    */
   public async run(): Promise<DeleteEnvelope> {
     const { flags } = await this.parse(Delete);
-    const requestScope = flags.dataspace;
-    const effectiveScope = requestScope ?? 'default';
+    const effectiveScope = flags.dataspace ?? 'default';
     const envelope: DeleteEnvelope = {
       contract: 'sf-data360-delete',
       contractVersion: '1.1.0',
@@ -1494,7 +1493,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           error,
           flags.preview
             ? 'Preview stopped; nothing was deleted. Correct the reported check before another attempt.'
-            : 'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+            : // Stopped before any delete was sent (every item not attempted): nothing to inspect.
+              envelope.result.items.every((item) => item.mutation === 'not-attempted')
+              ? 'Deletion stopped before any delete was sent; nothing was deleted. Correct the reported check before another attempt.'
+              : 'Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         ),
         retryable: false,
       });
@@ -2169,10 +2171,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
               target,
               nativeVersion,
               undefined,
-              requestScope,
+              effectiveScope,
               this.createMappingSender(target, nativeVersion),
             ).list(dependent.name, dloName),
-            requestScope,
+            effectiveScope,
           ).map((entry) => String(entry.developerName).toLowerCase());
           return names.length > 0 && names.every((value) => mappings.has(value));
         } catch {
@@ -2274,7 +2276,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             target,
             version,
             undefined,
-            requestScope,
+            effectiveScope,
             this.createMappingSender(target, version),
           );
         // Like deploy, an authored mapping (the file of that name, or with --changed-since its base
@@ -2295,7 +2297,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   path.join(projectData, 'mapping', `${name}.mapping-meta.json`),
                 );
             if (binding === undefined) continue;
-            if (binding.identity.dataSpace !== effectiveScope)
+            if (binding.c__dataSpace !== effectiveScope)
               throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
             const found = await resolveNativeMappingTarget(binding, mappingReader());
             if (found) orgMappingNames.set(selector, found.identity.apiName);
@@ -2326,7 +2328,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             try {
               names = unwrapNativeMappingCollection(
                 await mappingReader().list(dependent.name, dlo),
-                requestScope,
+                effectiveScope,
               ).map((entry) => String(entry.developerName));
             } catch {
               return false;
@@ -2401,7 +2403,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 absent = await (this.confirmMappingAbsent ?? confirmNativeMappingAbsent)(
                   entry.name,
                   entry.reader,
-                  requestScope,
+                  effectiveScope,
                 );
               } catch (error) {
                 failure = error;
@@ -2432,7 +2434,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                 target,
                 version,
                 flags.preview,
-                requestScope,
+                effectiveScope,
                 envelope,
                 selectorsByItem,
                 track,
@@ -2451,7 +2453,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   target,
                   version,
                   undefined,
-                  requestScope,
+                  effectiveScope,
                   this.createMappingSender(target, version),
                 )
               : native
@@ -2526,7 +2528,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   if (resolved !== undefined) return [canonical];
                   try {
                     const found = await mappingLocalFile(
-                      normalizeNativeMapping(firstRead, requestScope, 'retrieve'),
+                      normalizeNativeMapping(firstRead, effectiveScope, 'retrieve'),
                       process.cwd(),
                     );
                     return [{ path: found.path, boundary: projectData }];
@@ -2545,7 +2547,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                     return undefined;
                   let dmo: string;
                   try {
-                    dmo = normalizeNativeMapping(firstRead, requestScope, 'retrieve').spec
+                    dmo = normalizeNativeMapping(firstRead, effectiveScope, 'retrieve').spec
                       .targetEntityDeveloperName;
                   } catch {
                     return undefined;
@@ -2560,7 +2562,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                       orgName,
                       mappingClient,
                       dependencies,
-                      requestScope,
+                      effectiveScope,
                     );
                     item.plan = [{ operation: 'delete', apiName: orgName }];
                     item.outcome = 'delete';
@@ -2569,7 +2571,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                       orgName,
                       mappingClient,
                       dependencies,
-                      requestScope,
+                      effectiveScope,
                     );
                 } catch (error) {
                   const owner = ownerDmo(error);
@@ -2598,7 +2600,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                     ? (this.retrieveDmo ?? previewDeleteNativeDmo)(
                         apiName,
                         definitionClient,
-                        requestScope,
+                        effectiveScope,
                       )
                     : this.retrieveDlo(apiName, definitionClient, effectiveScope));
                   // A DLO is reported in the run's data space.
@@ -2608,7 +2610,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   item.outcome = 'delete';
                 } else {
                   const receipt = await (native
-                    ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, requestScope)
+                    ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, effectiveScope)
                     : this.deleteDlo(apiName, definitionClient, effectiveScope));
                   item.identity.dataSpace = receipt.dataSpace;
                   if ('processing' in receipt && receipt.processing) {

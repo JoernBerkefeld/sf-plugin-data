@@ -1,6 +1,6 @@
 # `DMO_DATASPACE_MISMATCH`
 
-> The DMO file, --dataspace and the org disagree on the data space. Make identity.dataSpace in the file match --dataspace and the target DMO, then rerun.
+> The DMO file's c__dataSpace is not the data space of the run, or the DMO in the org is in another one. Run with the --dataspace the file names, or correct c__dataSpace, then rerun.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,19 +10,17 @@
 
 ## What it means
 
-A DMO deploy compares the data space in three places: `identity.dataSpace` in the `.dmo-meta.json` file, the `--dataspace` flag when you pass it, and the data space of the DMO that already exists in the org. Two of them differ.
-
-It also fires when the DMO does not exist yet, the file names a data space other than `default`, and `--dataspace` is not passed: a new DMO outside the default data space needs the flag.
+Every command runs in one data space: `--dataspace`, or `default` when you leave it out. A DMO file names its data space in its top-level `c__dataSpace` key. This code means the file names another data space than the run's, or the DMO that already exists in the org is in another one.
 
 ## Why the plugin stops
 
-The same DMO name can exist in more than one data space. Writing across data spaces would change an object the file was not meant for, so the plugin stops before any write.
+The plugin never filters a selected file out silently. A file of another data space is refused, so a deploy never changes a DMO in a data space you did not ask for.
 
 ## How to fix
 
-1. Check `identity.dataSpace` in the file.
+1. Check `c__dataSpace` in the file.
 2. Pass `--dataspace` with the same value, or leave it out when the file says `default`.
-3. Check which data space holds the DMO in the target org and correct the file or the flag to match.
+3. Deploy files of different data spaces in separate runs.
 4. Rerun the deploy.
 
 ## Example output
@@ -31,7 +29,7 @@ The same DMO name can exist in more than one data space. Writing across data spa
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: dmo:Customer__dlm; mutation: not-attempted.
 DMO_DATASPACE_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. No write attempted; correct the reported check before another attempt.
-Hint: The DMO file, --dataspace and the org disagree on the data space. Make identity.dataSpace in the file match --dataspace and the target DMO, then rerun.
+Hint: The DMO file's c__dataSpace is not the data space of the run, or the DMO in the org is in another one. Run with the --dataspace the file names, or correct c__dataSpace, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dmo/DMO_DATASPACE_MISMATCH.md
 Deployed: 0 (0 created / 0 updated / 0 failed)
 ```

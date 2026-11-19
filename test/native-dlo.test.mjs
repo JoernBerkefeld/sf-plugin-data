@@ -648,9 +648,14 @@ test('DLO file lists every data space; the run data space selects, binds create 
   // A DELETE would remove a DLO from every data space: one in several is never deleted.
   await assert.rejects(
     deleteNativeDlo(apiName, { ...client, get: async () => multiple }, 'other'),
-    {
-      code: 'DLO_DELETE_OTHER_DATASPACES',
-    },
+    (error) =>
+      error.code === 'DLO_DELETE_OTHER_DATASPACES' &&
+      /also belongs to the data space default,/u.test(error.message),
+  );
+  const three = { ...raw, dataSpaceInfo: [...multiple.dataSpaceInfo, { name: 'third' }] };
+  await assert.rejects(
+    deleteNativeDlo(apiName, { ...client, get: async () => three }, 'other'),
+    (error) => /also belongs to the data spaces default, third,/u.test(error.message),
   );
   assert.equal(writes, 0);
 });
@@ -758,11 +763,14 @@ test('a data space the file adds is sent as the full member list read right befo
   assert.equal(result.outcome, 'updated');
   assert.equal(result.mutation, 'confirmed-updated');
   assert.deepEqual(result.dataSpaces, ['dataspace2', 'default']);
+  // The executed item names the data space changes like the preview item.
+  assert.deepEqual(result.dataSpaceChanges, { add: ['dataspace2'], remove: [] });
   assert.deepEqual(writes, [['PUT', 'dataspace2', ['Other__dll', 'Last__dll', apiName]]]);
   // Once added, the same file is unchanged.
   const again = memberClient(['default', 'dataspace2']);
   const unchanged = await executeDloDeploy(file, again.client, 'default');
   assert.equal(unchanged.outcome, 'unchanged');
+  assert.equal(unchanged.dataSpaceChanges, undefined);
   assert.deepEqual(again.writes, []);
 });
 
@@ -828,6 +836,22 @@ test('a PUT that replaces the member list instead of adding to it is reported, n
   assert.equal(writes.length, 1);
 });
 
+test('a member list unreadable after the PUT is unconfirmed: the change was already sent', async () => {
+  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
+  const { client, writes } = memberClient(['default']);
+  const members = client.members;
+  // Readable before the PUT (preflight and the read right before it), unreadable after it.
+  client.members = async (space, token) =>
+    writes.length > 0 ? { items: [] } : members(space, token);
+  const result = await executeDloDeploy(file, client, 'default');
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_MEMBERS_UNCONFIRMED');
+  assert.match(result.diagnostics[0].message, /was sent, but its member list then/u);
+  assert.doesNotMatch(result.diagnostics[0].message, /so it was not changed/u);
+  assert.equal(writes.length, 1);
+});
+
 test('a member write Salesforce answers without success is rejected', async () => {
   const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
   const { client } = memberClient(['default']);
@@ -883,6 +907,7 @@ test('a data space the file drops is removed only with allowDataspaceRemoval', a
   });
   assert.equal(result.outcome, 'updated');
   assert.deepEqual(result.dataSpaces, ['default']);
+  assert.deepEqual(result.dataSpaceChanges, { add: [], remove: ['dataspace2'] });
   assert.deepEqual(allowed.writes, [['DELETE', 'dataspace2', apiName]]);
 });
 

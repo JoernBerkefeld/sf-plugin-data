@@ -4,6 +4,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce returned zero or several data lake objects where exactly one was expected. Check that the name is unique in the org, then rerun.',
   DLO_DATASPACE_MEMBERS_CHANGED:
     'After the DLO was added, the data space no longer lists members it had before. Check its members in the org and restore the missing ones before any further deploy.',
+  DLO_DATASPACE_MEMBERS_UNCONFIRMED:
+    'The data space member change was sent, but the member list could not be read completely afterwards, so the plugin cannot confirm every member is still there. Check the members in the org before any further deploy.',
   DLO_DATASPACE_MEMBERS_UNREADABLE:
     'The member list of a data space the DLO joins could not be read completely, or holds a member the plugin cannot read (such as a filter). Nothing was changed; check the data space in the org.',
   DLO_DATASPACE_MISMATCH:

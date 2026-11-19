@@ -241,7 +241,8 @@ test('writers replace a verbatim or non-strict previous file only with overwrite
     previousIdentity(serializeVerbatimDocument(verbatimDmo()), () => {
       throw new Error('strict');
     }),
-    { dataSpace: 'default', apiName: dmoName },
+    // A verbatim DMO keeps its data space in c__dataSpace, not in identity.
+    { apiName: dmoName },
   );
   assert.deepEqual(
     previousIdentity('{"other":1}', () => assert.fail('strict')),
@@ -255,7 +256,7 @@ test('writers replace a verbatim or non-strict previous file only with overwrite
     /strict/u,
   );
   const cwd = await root('writer');
-  const normal = normalizeNativeDmo(dmoNative());
+  const normal = normalizeNativeDmo(dmoNative(), 'default');
   const first = await writeNativeDmoDocument(normal, cwd, false);
   await assert.rejects(writeNativeDmoDocument(verbatimDmo(), cwd, false), {
     code: 'OVERWRITE_REQUIRED',
@@ -264,16 +265,19 @@ test('writers replace a verbatim or non-strict previous file only with overwrite
   assert.equal(replaced.outcome, 'retrieved');
   const again = await writeNativeDmoDocument(verbatimDmo(), cwd, false);
   assert.equal(again.outcome, 'unchanged');
-  // A verbatim file of another data space is still a collision.
+  // DMO names are unique in the org: a verbatim file of another data space is the same DMO and
+  // is replaced only with overwrite, like any other difference.
   await writeFile(
     first.path,
     serializeVerbatimDocument(
       createVerbatimDocument('dmo', { dataSpace: 'other', apiName: dmoName }, 'A_B', {}),
     ),
   );
-  await assert.rejects(writeNativeDmoDocument(normal, cwd, true), {
-    code: 'DMO_DATASPACE_COLLISION',
+  await assert.rejects(writeNativeDmoDocument(normal, cwd, false), {
+    code: 'OVERWRITE_REQUIRED',
   });
+  const replacedOther = await writeNativeDmoDocument(normal, cwd, true);
+  assert.equal(replacedOther.outcome, 'retrieved');
   await writeFile(first.path, '{"legacy":true}\n');
   const restored = await writeNativeDmoDocument(normal, cwd, true);
   assert.equal(restored.outcome, 'retrieved');
@@ -452,9 +456,16 @@ const entry = (name, field = 'BRef__c') => ({
 });
 
 test('a relationship the document cannot represent is returned verbatim with its raw entry', async () => {
-  const documents = await retrieveNativeRelationships('A__dlm', {
-    list: async () => ({ relationships: [entry('Good'), entry('Odd', 'Bad Field')], totalSize: 2 }),
-  });
+  const documents = await retrieveNativeRelationships(
+    'A__dlm',
+    {
+      list: async () => ({
+        relationships: [entry('Good'), entry('Odd', 'Bad Field')],
+        totalSize: 2,
+      }),
+    },
+    'default',
+  );
   assert.equal(documents[0].kind, 'relationship');
   assert.deepEqual(carriedNativeResponse(documents[0]), { native: entry('Good') });
   assert.ok(isVerbatimDocument(documents[1], 'relationship'));
@@ -469,7 +480,7 @@ test('a relationship the document cannot represent is returned verbatim with its
 const project = async () => {
   const cwd = await root('deploy');
   await writeNativeDmoDocument(
-    normalizeNativeDmo({ ...dmoNative(), name: 'Normal__dlm' }),
+    normalizeNativeDmo({ ...dmoNative(), name: 'Normal__dlm' }, 'default'),
     cwd,
     false,
   );

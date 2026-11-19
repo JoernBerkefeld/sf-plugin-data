@@ -8,11 +8,7 @@ import {
   validateNativeDmoDocument,
 } from './native-dmo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
-import {
-  isVerbatimDocument,
-  previousIdentity,
-  serializeVerbatimDocument,
-} from './verbatim-document.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 /**
  * Validate real ancestors before publication.
@@ -120,15 +116,9 @@ export async function writeNativeDmoDocument(
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
-    if (previous) {
-      const saved = previousIdentity(
-        previous.toString('utf8'),
-        (previousValue) => validateNativeDmoDocument(previousValue, 'retrieve').identity,
-      );
-      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
-        throw new NativeDmoError('DMO_DATASPACE_COLLISION');
-      if (!overwrite) throw new NativeDmoError('OVERWRITE_REQUIRED');
-    }
+    // The name is unique in the org (whatever its data space), so the file at the path is the same
+    // component.
+    if (previous && !overwrite) throw new NativeDmoError('OVERWRITE_REQUIRED');
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-dmo-output-'));
     const marker = await open(path.join(staging, 'ownership'), 'wx');

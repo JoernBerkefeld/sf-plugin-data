@@ -10,12 +10,15 @@ import {
 } from '../artifacts/native-mapping-document.js';
 import { normalizeDlo } from '../artifacts/dlo-document.js';
 import {
+  NativeDmoError,
   nativeDmoWriteScope,
+  standardCopyFieldName,
+  standardCopyOrigin,
   normalizeNativeDmo,
   unwrapNativeDmo,
 } from '../artifacts/native-dmo-document.js';
 import type { DloField } from '../artifacts/dlo-document.js';
-import type { NativeDmoField } from '../artifacts/native-dmo-document.js';
+import type { NativeDmoDocument, NativeDmoField } from '../artifacts/native-dmo-document.js';
 import type {
   NativeMappingDocument,
   NativeMappingField,
@@ -30,6 +33,26 @@ import type { DocumentMode } from '../artifacts/verbatim-document.js';
 export type MappingDependencies = {
   source: Pick<DloClient, 'get'>;
   target: Pick<DmoClient, 'get'>;
+  /**
+   * Prefix of the run's data space as the org's data space list names it (`ds2`), outside the
+   * default data space only. It lets a mapping onto a standard DMO copy that is not activated yet
+   * be sent with the default spelling (see {@link activationSpelling}).
+   */
+  dataSpacePrefix?: string;
+};
+
+/**
+ * The default spelling of a standard DMO copy that is not activated yet. Salesforce creates the
+ * copy `<prefix>_<Name>__dlm` of a standard DMO `ssot__<Name>__dlm` in a non-default data space
+ * with the first mapping onto it, and that first mapping must name the default spelling
+ * (`ssot__<Name>__dlm`, fields as the default object names them); Salesforce stores it under the
+ * copy name (live API 68, DB entry data360:dataspace-identity-resolution-api68).
+ */
+export type MappingActivation = {
+  /** The default spelling of the target, `ssot__<Name>__dlm`. */
+  targetEntityDeveloperName: string;
+  /** Default field name by copy field name (`ssot__X__c` by `X__c`; others unchanged). */
+  fields: Map<string, string>;
 };
 export type NativeMappingDeployPlan = {
   operation: 'create' | 'update' | 'noop';
@@ -48,6 +71,11 @@ export type NativeMappingDeployPlan = {
   }>;
   /** Set when this create is the first mapping of a standard DMO that is not yet enabled. */
   activatesStandardDmo?: true;
+  /**
+   * Set only when the target, a standard DMO copy, read 404 and its default spelling was found:
+   * the create is sent once more in the default spelling when Salesforce answers it with 404.
+   */
+  activationRetry?: { body: MappingWriteBody; activation: MappingActivation };
   /** The label of the file when it differs from the org's (absent `from` on a create). */
   labelChange?: { from?: string; to: string };
 };
@@ -61,15 +89,18 @@ const keyQualifierField = /^KQ_(\w+)__c$/u;
 
 /**
  * Recognise a pair Salesforce generates for a system field on a standard DMO. The target field is
- * the source's namesake or `ssot__<Name>Id__c`. A target field read as System qualifies any such
- * pair; otherwise only the three known system sources onto their standard-named field do.
+ * the source's namesake or `ssot__<Name>Id__c` (`<Name>Id__c` outside the default data space,
+ * where a standard DMO copy's fields drop `ssot__`). A target field read as System qualifies any
+ * such pair; otherwise only the three known system sources onto their standard-named field do.
  * @param {DloField} from Source field.
  * @param {NativeDmoField} to Target field.
+ * @param {boolean} copy The mapping is outside the default data space (a standard DMO copy).
  * @returns {boolean} Whether the pair is generated, not authored.
  */
-function isStandardSystemPair(from: DloField, to: NativeDmoField): boolean {
+function isStandardSystemPair(from: DloField, to: NativeDmoField, copy: boolean): boolean {
   if (from.isPrimaryKey || to.isPrimaryKey || keyQualifierField.test(from.name)) return false;
-  const named = to.name === `ssot__${from.name.slice(0, -'__c'.length)}Id__c`;
+  const base = `${from.name.slice(0, -'__c'.length)}Id__c`;
+  const named = to.name === `ssot__${base}` || (copy && to.name === base);
   if (to.creationType === 'System') return named || to.name === from.name;
   return named && systemSourceFields.has(from.name) && to.creationType === 'Standard';
 }
@@ -191,7 +222,7 @@ function pairKey(field: NativeMappingField): string {
  */
 function checkBinding(expected: NativeMappingDocument, actual: NativeMappingDocument): void {
   if (
-    expected.identity.dataSpace !== actual.identity.dataSpace ||
+    expected.c__dataSpace !== actual.c__dataSpace ||
     expected.spec.sourceEntityDeveloperName !== actual.spec.sourceEntityDeveloperName ||
     expected.spec.targetEntityDeveloperName !== actual.spec.targetEntityDeveloperName
   )
@@ -200,12 +231,12 @@ function checkBinding(expected: NativeMappingDocument, actual: NativeMappingDocu
       'mapping binding readback',
       expected.identity.apiName,
       {
-        dataSpace: expected.identity.dataSpace,
+        dataSpace: expected.c__dataSpace,
         sourceEntityDeveloperName: expected.spec.sourceEntityDeveloperName,
         targetEntityDeveloperName: expected.spec.targetEntityDeveloperName,
       },
       {
-        dataSpace: actual.identity.dataSpace,
+        dataSpace: actual.c__dataSpace,
         sourceEntityDeveloperName: actual.spec.sourceEntityDeveloperName,
         targetEntityDeveloperName: actual.spec.targetEntityDeveloperName,
       },
@@ -241,14 +272,14 @@ export async function resolveNativeMappingTarget(
   // The retained contract has exactly this wrapper and no pagination mechanism.
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const entries = unwrapNativeMappingCollection(response, desired.identity.dataSpace).map((entry) =>
-    normalizeNativeMapping(entry, desired.identity.dataSpace),
+  const entries = unwrapNativeMappingCollection(response, desired.c__dataSpace).map((entry) =>
+    normalizeNativeMapping(entry, desired.c__dataSpace),
   );
   for (const entry of entries) checkBinding(desired, entry);
   if (entries.length > 1) throw new NativeMappingError('AMBIGUOUS_MAPPING_TARGET');
   if (entries.length === 0) return;
   const raw = await client.get(entries[0].identity.apiName);
-  const document = normalizeNativeMapping(raw, desired.identity.dataSpace);
+  const document = normalizeNativeMapping(raw, desired.c__dataSpace);
   if ((raw as Record<string, unknown>).status !== 'ACTIVE')
     throw new NativeMappingError('MAPPING_TARGET_NOT_SETTLED');
   checkBinding(desired, document);
@@ -266,6 +297,8 @@ export type MappingPairContext = {
   targets: Map<string, NativeDmoField>;
   standard: boolean;
   pairs: NativeMappingField[];
+  /** Outside the default data space, where a standard DMO is a copy whose fields drop `ssot__`. */
+  copy?: boolean;
 };
 
 /**
@@ -287,8 +320,78 @@ export function isGeneratedMappingPair(
   if (!from || !to) return false;
   if (isMappedFieldQualifierPair(pair, context)) return true;
   return context.standard
-    ? isStandardSystemPair(from, to) || isStandardKeyQualifierPair(pair, sources, targets)
+    ? isStandardSystemPair(from, to, context.copy === true) ||
+        isStandardKeyQualifierPair(pair, sources, targets)
     : isCustomGeneratedPair(from, to, sources, targets);
+}
+
+/**
+ * The default spelling to read when a mapping's target DMO reads 404 in a non-default data space:
+ * `ssot__<Name>__dlm` for a target `<prefix>_<Name>__dlm`, where `<prefix>` is the prefix the
+ * org's data space list names for the run's data space. Anything else (another failure, the
+ * default data space, no prefix, a name without it) is undefined: nothing is guessed.
+ * @param {NativeMappingDocument} desired Mapping file.
+ * @param {MappingDependencies} dependencies Readers and the data space prefix.
+ * @param {unknown} error Failure of the target read.
+ * @returns {string | undefined} The default spelling to read, or undefined.
+ */
+function activationSpelling(
+  desired: NativeMappingDocument,
+  dependencies: MappingDependencies,
+  error: unknown,
+): string | undefined {
+  if (!(error instanceof NativeDmoError) || error.code !== 'DMO_HTTP_ERROR' || error.status !== 404)
+    return undefined;
+  return standardCopyOrigin(
+    desired.spec.targetEntityDeveloperName,
+    desired.c__dataSpace,
+    dependencies.dataSpacePrefix,
+  );
+}
+
+/**
+ * Add to an existing standard DMO copy the fields of its default spelling that the mapping names
+ * but the copy does not have yet: a copy holds only mapped fields, and Salesforce adds a field
+ * to it when a mapping names it (live API 68, MiddleName__c took the copy from 7 to 8 fields).
+ * Only a copy (non-default data space, the space's prefix, creationType Standard) whose default
+ * spelling reads as a Standard DMO of the default data space is extended; anything else is left
+ * as read, so the pair is refused as before.
+ * @param {NativeMappingDocument} desired Mapping file.
+ * @param {MappingDependencies} dependencies Readers and the data space prefix.
+ * @param {Record<string, unknown>} rawTarget The copy as read.
+ * @param {NativeDmoDocument} target The copy's document.
+ * @param {DocumentMode} mode Read mode.
+ * @returns {Promise<NativeDmoDocument>} The copy, with the default object's missing fields.
+ */
+async function withOriginFields(
+  desired: NativeMappingDocument,
+  dependencies: MappingDependencies,
+  rawTarget: Record<string, unknown>,
+  target: NativeDmoDocument,
+  mode: DocumentMode,
+): Promise<NativeDmoDocument> {
+  const present = new Set(target.spec.fields.map((field) => field.name));
+  const missing = desired.spec.fieldMappings.some(
+    (pair) => !present.has(pair.targetFieldDeveloperName),
+  );
+  const spelling = standardCopyOrigin(
+    desired.spec.targetEntityDeveloperName,
+    desired.c__dataSpace,
+    dependencies.dataSpacePrefix,
+  );
+  if (!missing || spelling === undefined || rawTarget.creationType !== 'Standard') return target;
+  let original: NativeDmoDocument;
+  try {
+    const raw = unwrapNativeDmo(await dependencies.target.get(spelling));
+    original = normalizeNativeDmo(raw, 'default', mode);
+    if (original.identity.apiName !== spelling || raw.creationType !== 'Standard') return target;
+  } catch {
+    return target;
+  }
+  const added = original.spec.fields
+    .map((field) => ({ ...field, name: standardCopyFieldName(field.name) }))
+    .filter((field) => !present.has(field.name));
+  return { ...target, spec: { ...target.spec, fields: [...target.spec.fields, ...added] } };
 }
 
 /**
@@ -297,7 +400,12 @@ export function isGeneratedMappingPair(
  * @param {MappingDependencies} dependencies Fresh source and target readers.
  * @param {DocumentMode} [mode] `retrieve` reads both parents leniently; a field without a text
  * name is then left out of the maps, so no pair can match it.
- * @returns {Promise<object>} Field maps, write scope and whether a first mapping activates the DMO.
+ * In deploy mode, a target that reads 404 in a non-default data space whose default spelling
+ * exists ({@link activationSpelling}) is a standard DMO copy that its first mapping creates: its
+ * fields are read from the default spelling under the copy's names, and `activation` says how to
+ * send the create with the default spelling.
+ * @returns {Promise<object>} Field maps, write scope, whether a first mapping activates the DMO,
+ * and the default spelling of a copy that does not exist yet.
  */
 async function readMappingParents(
   desired: NativeMappingDocument,
@@ -306,28 +414,73 @@ async function readMappingParents(
 ) {
   const source = normalizeDlo(
     await dependencies.source.get(desired.spec.sourceEntityDeveloperName),
-    desired.identity.dataSpace,
+    desired.c__dataSpace,
     mode,
   );
-  const rawTarget = unwrapNativeDmo(
-    await dependencies.target.get(desired.spec.targetEntityDeveloperName),
-  );
+  if (
+    // normalizeDlo already required the mapping's data space among the DLO's spaces.
+    !source.c__dataSpace.includes(desired.c__dataSpace) ||
+    source.identity.apiName !== desired.spec.sourceEntityDeveloperName
+  )
+    throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
+  let rawTarget: Record<string, unknown>;
+  let activation: MappingActivation | undefined;
+  let target: NativeDmoDocument;
+  try {
+    rawTarget = unwrapNativeDmo(
+      await dependencies.target.get(desired.spec.targetEntityDeveloperName),
+    );
+    target = normalizeNativeDmo(rawTarget, desired.c__dataSpace, mode);
+    if (
+      target.c__dataSpace !== desired.c__dataSpace ||
+      target.identity.apiName !== desired.spec.targetEntityDeveloperName
+    )
+      throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
+    if (mode === 'deploy')
+      target = await withOriginFields(desired, dependencies, rawTarget, target, mode);
+  } catch (error) {
+    const spelling =
+      mode === 'deploy' ? activationSpelling(desired, dependencies, error) : undefined;
+    if (spelling === undefined) throw error;
+    // The copy does not exist yet: its default spelling must be a standard DMO of the default
+    // data space; its fields are read under the names the copy will have.
+    let original: NativeDmoDocument;
+    try {
+      rawTarget = unwrapNativeDmo(await dependencies.target.get(spelling));
+      original = normalizeNativeDmo(rawTarget, 'default', mode);
+    } catch {
+      // No standard DMO under the default spelling: the copy's own 404 stands.
+      throw error;
+    }
+    if (original.identity.apiName !== spelling || rawTarget.creationType !== 'Standard')
+      throw error;
+    activation = { targetEntityDeveloperName: spelling, fields: new Map() };
+    const fields: NativeDmoField[] = [];
+    for (const field of original.spec.fields) {
+      const copy = standardCopyFieldName(field.name);
+      if (activation.fields.has(copy))
+        throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
+      activation.fields.set(copy, field.name);
+      fields.push({ ...field, name: copy });
+    }
+    target = {
+      ...original,
+      c__dataSpace: desired.c__dataSpace,
+      identity: { apiName: desired.spec.targetEntityDeveloperName },
+      spec: { ...original.spec, fields },
+    };
+  }
   // Every target but an unprefixed custom DMO is mapped within the standard scope; Salesforce
   // answers for the DMOs it does not map onto (it refuses platform-generated ones).
   const standard = nativeDmoWriteScope(rawTarget) === 'standard';
   // The first mapping enables a standard DMO for good; the raw read says whether that is ahead.
-  const activates = rawTarget.creationType === 'Standard' && rawTarget.isEnabled !== true;
-  const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace, mode);
-  if (
-    // normalizeDlo already required the mapping's data space among the DLO's spaces.
-    !source.c__dataSpace.includes(desired.identity.dataSpace) ||
-    target.identity.dataSpace !== desired.identity.dataSpace ||
-    source.identity.apiName !== desired.spec.sourceEntityDeveloperName ||
-    target.identity.apiName !== desired.spec.targetEntityDeveloperName
-  )
-    throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
+  // A copy that does not exist yet is created (and enabled) by it.
+  const activates =
+    activation !== undefined ||
+    (rawTarget.creationType === 'Standard' && rawTarget.isEnabled !== true);
   return {
     activates,
+    ...(activation ? { activation } : {}),
     context: {
       sources: new Map(
         source.spec.fields
@@ -341,6 +494,7 @@ async function readMappingParents(
       ),
       standard,
       pairs: structuredClone(desired.spec.fieldMappings),
+      copy: desired.c__dataSpace !== 'default',
     } satisfies MappingPairContext,
   };
 }
@@ -369,7 +523,7 @@ export async function generatedMappingPairs(
  * recognise as generated would remove it from the org.
  * @param {string} apiName Observed target mapping name.
  * @param {MappingClient} client Target mapping transport.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @param {MappingDependencies} [dependencies] Fresh source and target readers; required.
  * @param {DocumentMode} [mode] `retrieve` keeps pairs the plugin cannot deploy, and may leave
  * none; other callers stay strict.
@@ -378,7 +532,7 @@ export async function generatedMappingPairs(
 export async function retrieveLeanNativeMapping(
   apiName: string,
   client: MappingClient,
-  requestScope?: string,
+  requestScope: string,
   dependencies?: MappingDependencies,
   mode: DocumentMode = 'deploy',
 ): Promise<NativeMappingDocument> {
@@ -656,7 +810,7 @@ async function validateDependencies(
   desired: NativeMappingDocument,
   dependencies: MappingDependencies,
 ) {
-  const { activates, context } = await readMappingParents(desired, dependencies);
+  const { activates, activation, context } = await readMappingParents(desired, dependencies);
   const { sources, targets } = context;
   const generated = new Set<string>();
   const typeDifferences: NonNullable<NativeMappingDeployPlan['typeDifferences']> = [];
@@ -688,7 +842,7 @@ async function validateDependencies(
       });
     if (isGeneratedMappingPair(pair, context)) generated.add(pairKey(pair));
   }
-  return { generated, sources, targets, context, activates, typeDifferences };
+  return { generated, sources, targets, context, activates, activation, typeDifferences };
 }
 
 /**
@@ -709,17 +863,70 @@ function bodyFor(desired: NativeMappingDocument, fields: NativeMappingField[]): 
 }
 
 /**
+ * The create body of a mapping onto a standard DMO copy that does not exist yet, in the default
+ * spelling: the default target name, and each target field under its default name.
+ * @param {MappingWriteBody} body Create body in the copy spelling (as the file names it).
+ * @param {MappingActivation} activation Default spelling of the target and its fields.
+ * @returns {MappingWriteBody} The same create in the default spelling.
+ */
+function defaultSpellingBody(
+  body: MappingWriteBody,
+  activation: MappingActivation,
+): MappingWriteBody {
+  return {
+    sourceEntityDeveloperName: body.sourceEntityDeveloperName,
+    targetEntityDeveloperName: activation.targetEntityDeveloperName,
+    fieldMapping: body.fieldMapping.map((pair) => ({
+      sourceFieldDeveloperName: pair.sourceFieldDeveloperName,
+      targetFieldDeveloperName:
+        activation.fields.get(pair.targetFieldDeveloperName) ?? pair.targetFieldDeveloperName,
+    })),
+  };
+}
+
+/**
+ * The answer to a create sent in the default spelling, under the copy's names: Salesforce stores
+ * the mapping under the copy, and an echo that still names the default spelling is read in the
+ * copy spelling, by the same read of the default object that built the retry.
+ * @param {NativeMappingDocument} document Normalised create answer.
+ * @param {NativeMappingDocument} desired Mapping file (copy spelling).
+ * @param {MappingActivation} activation Default spelling of the target and its fields.
+ * @returns {NativeMappingDocument} The answer in the copy spelling.
+ */
+function copySpelling(
+  document: NativeMappingDocument,
+  desired: NativeMappingDocument,
+  activation: MappingActivation,
+): NativeMappingDocument {
+  if (document.spec.targetEntityDeveloperName !== activation.targetEntityDeveloperName)
+    return document;
+  const copyNames = new Map([...activation.fields].map(([copy, original]) => [original, copy]));
+  return {
+    ...document,
+    spec: {
+      ...document.spec,
+      targetEntityDeveloperName: desired.spec.targetEntityDeveloperName,
+      fieldMappings: document.spec.fieldMappings.map((pair) => ({
+        ...pair,
+        targetFieldDeveloperName:
+          copyNames.get(pair.targetFieldDeveloperName) ?? pair.targetFieldDeveloperName,
+      })),
+    },
+  };
+}
+
+/**
  * Retrieve one exact mapping with all runtime KQ/system pairs retained in portable JSON.
  * @param {string} apiName Observed target mapping name.
  * @param {MappingClient} client Target mapping transport.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @param {DocumentMode} [mode] `retrieve` keeps pairs the plugin cannot deploy as returned.
  * @returns {Promise<NativeMappingDocument>} Complete portable definition.
  */
 export async function retrieveNativeMapping(
   apiName: string,
   client: MappingClient,
-  requestScope?: string,
+  requestScope: string,
   mode: DocumentMode = 'deploy',
 ): Promise<NativeMappingDocument> {
   if (!nativeMappingName.test(apiName)) throw new NativeMappingError('INVALID_MAPPING_NAME');
@@ -734,20 +941,20 @@ export async function retrieveNativeMapping(
  * @param {unknown} value Portable desired mapping.
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target definition readers.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeMappingDeployPlan>} Bounded operation plan.
  */
 export async function preflightNativeMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeMappingDeployPlan> {
   // Cloned: generated pairs of the org are merged into it below, never into the caller's input.
   const desired = structuredClone(validateNativeMappingDocument(value));
-  if (desired.identity.dataSpace !== (requestScope ?? 'default'))
+  if (desired.c__dataSpace !== requestScope)
     throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
-  const { generated, context, activates, typeDifferences } = await validateDependencies(
+  const { generated, context, activates, activation, typeDifferences } = await validateDependencies(
     desired,
     dependencies,
   );
@@ -764,13 +971,17 @@ export async function preflightNativeMapping(
   const labelPlan = await planLabel(desired, target, client);
   if (!target) {
     const fields = desired.spec.fieldMappings.filter((pair) => !generated.has(pairKey(pair)));
+    const body = bodyFor(desired, fields);
     return {
       operation: 'create',
       desired,
-      writes: [{ body: bodyFor(desired, fields) }],
+      writes: [{ body }],
       ...notices,
       ...labelPlan,
       ...(activates ? { activatesStandardDmo: true as const } : {}),
+      ...(activation
+        ? { activationRetry: { body: defaultSpellingBody(body, activation), activation } }
+        : {}),
     };
   }
   const incoming = new Set(desired.spec.fieldMappings.map((pair) => pairKey(pair)));
@@ -829,19 +1040,21 @@ export async function preflightNativeMapping(
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Source/target readers.
  * @param {Function} [onUpdated] Receive confirmed pair changes for human output only.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<{operation: 'create' | 'update' | 'noop', document: NativeMappingDocument}>} Confirmed definition.
  */
 export async function deployNativeMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
-  onUpdated?: (changes: {
-    deleted: NativeMappingField[];
-    added: NativeMappingField[];
-    label?: string;
-  }) => void,
-  requestScope?: string,
+  onUpdated:
+    | ((changes: {
+        deleted: NativeMappingField[];
+        added: NativeMappingField[];
+        label?: string;
+      }) => void)
+    | undefined,
+  requestScope: string,
 ): Promise<{
   operation: 'create' | 'update' | 'noop';
   document: NativeMappingDocument;
@@ -928,12 +1141,36 @@ export async function deployNativeMapping(
     throw new NativeMappingError('MAPPING_PERSISTENCE_UNCONFIRMED');
   }
   const write = plan.writes[0];
-  const accepted = normalizeNativeMapping(
-    plan.operation === 'create'
-      ? await client.create(write.body)
-      : await client.update(plan.target!.identity.apiName, write.body),
-    requestScope,
-  );
+  let response: unknown;
+  let retried = false;
+  if (plan.operation === 'create')
+    try {
+      response = await client.create(write.body);
+    } catch (error) {
+      // A standard DMO copy that does not exist yet: Salesforce answers the copy spelling with
+      // 404 and takes the first mapping only in the default spelling (stored under the copy).
+      // Sent once more, once; never for any other answer.
+      if (
+        !plan.activationRetry ||
+        !(error instanceof NativeMappingError) ||
+        error.code !== 'MAPPING_HTTP_ERROR' ||
+        error.status !== 404 ||
+        // Only Salesforce's "DMO not found" answer (live: "DMO not found for the given developer
+        // name"); any other 404 text is not the missing copy.
+        !getConnectDiagnostic(error)?.errors?.some(({ message }) =>
+          /\bDMO not found\b/iu.test(message ?? ''),
+        )
+      )
+        throw error;
+      retried = true;
+      response = await client.create(plan.activationRetry.body);
+    }
+  else response = await client.update(plan.target!.identity.apiName, write.body);
+  const echoed = normalizeNativeMapping(response, requestScope);
+  const accepted =
+    retried && plan.activationRetry
+      ? copySpelling(echoed, plan.desired, plan.activationRetry.activation)
+      : echoed;
   checkBinding(plan.desired, accepted);
   const name = plan.target?.identity.apiName ?? accepted.identity.apiName;
   if (accepted.identity.apiName !== name)
@@ -999,7 +1236,7 @@ export type NativeMappingUnmapPlan = {
  * @param {MappingClient} client Version-bearing mapping reader.
  * @param {MappingDependencies} dependencies Fresh parent readers.
  * @param {NativeMappingField[]} requestedRemovals Desired-state omissions.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeMappingUnmapPlan>} Complete removal evidence, without mutation.
  */
 export async function preflightUnmapNativeMapping(
@@ -1007,9 +1244,9 @@ export async function preflightUnmapNativeMapping(
   client: MappingClient,
   dependencies: MappingDependencies,
   requestedRemovals: NativeMappingField[],
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeMappingUnmapPlan> {
-  if (selected.identity.dataSpace !== (requestScope ?? 'default'))
+  if (selected.c__dataSpace !== requestScope)
     throw new NativeMappingError('MAPPING_DATASPACE_MISMATCH');
   const response = await client.list(selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
@@ -1036,7 +1273,7 @@ export async function preflightUnmapNativeMapping(
   >;
   const parentByName = new Map(sourceNames.map((name, index) => [name, parents[index]]));
   for (const name of sourceNames) {
-    if (normalizeDlo(parentByName.get(name), selected.identity.dataSpace).identity.apiName !== name)
+    if (normalizeDlo(parentByName.get(name), selected.c__dataSpace).identity.apiName !== name)
       throw new NativeMappingError('MAPPING_DEPENDENCY_IDENTITY_MISMATCH');
   }
   const { generated, sources, targets } = await validateDependencies(selected, {
@@ -1118,7 +1355,7 @@ async function checkUnmapSnapshot(
   const response = await client.list(plan.selected.spec.targetEntityDeveloperName);
   if (!response || typeof response !== 'object' || Object.keys(response).length !== 1)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
-  const entries = unwrapNativeMappingCollection(response, plan.selected.identity.dataSpace);
+  const entries = unwrapNativeMappingCollection(response, plan.selected.c__dataSpace);
   if (entries.length !== plan.inventory.length)
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   let active = true;
@@ -1151,7 +1388,7 @@ async function checkUnmapSnapshot(
  * @param {MappingClient} client Mapping transport.
  * @param {MappingDependencies} dependencies Parent readers.
  * @param {Function} onDispatch Called before awaiting each mutation, including lost responses.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeMappingUnmapPlan>} Settled retained-pair snapshot for the next operation.
  */
 export async function unmapNativeMappingFields(
@@ -1159,7 +1396,7 @@ export async function unmapNativeMappingFields(
   client: MappingClient,
   dependencies: MappingDependencies,
   onDispatch: () => void,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeMappingUnmapPlan> {
   const fresh = await preflightUnmapNativeMapping(
     evidence.selected,
@@ -1246,14 +1483,14 @@ export const defaultMappingDeleteSettle: NativeMappingDeleteSettle = {
  * @param {string} target Target DMO name.
  * @param {MappingClient} client Mapping reader.
  * @param {MappingDependencies} dependencies Parent readers.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<object>} Normalised mappings ordered by name, raw DMO and ordered field names.
  */
 async function readMappingSurroundings(
   target: string,
   client: MappingClient,
   dependencies: Pick<MappingDependencies, 'target'>,
-  requestScope?: string,
+  requestScope: string,
 ) {
   let entries: Record<string, unknown>[] = [];
   try {
@@ -1287,14 +1524,14 @@ async function readMappingSurroundings(
  * @param {string} apiName Exact target-native mapping name.
  * @param {MappingClient} client Target mapping reader.
  * @param {Pick<MappingDependencies, 'target'>} dependencies Fresh DMO reader.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<NativeMappingDeletePlan>} What must be unchanged after the deletion.
  */
 export async function preflightDeleteNativeMapping(
   apiName: string,
   client: MappingClient,
   dependencies: Pick<MappingDependencies, 'target'>,
-  requestScope?: string,
+  requestScope: string,
 ): Promise<NativeMappingDeletePlan> {
   const selected = await retrieveNativeMapping(apiName, client, requestScope);
   const target = selected.spec.targetEntityDeveloperName;
@@ -1325,7 +1562,7 @@ export async function preflightDeleteNativeMapping(
  * @param {string} apiName Exact native name, never a source artifact alias.
  * @param {MappingClient} client Mapping transport.
  * @param {MappingDependencies} dependencies Fresh parent readers.
- * @param {string} [requestScope] Optional request scope; omission has local effective default context.
+ * @param {string} requestScope The run's data space.
  * @param {NativeMappingDeleteSettle} [settle] Bounded readback budget.
  * @returns {Promise<{apiName: string}>} Independently verified absence.
  */
@@ -1333,7 +1570,7 @@ export async function deleteNativeMapping(
   apiName: string,
   client: MappingClient,
   dependencies: Pick<MappingDependencies, 'target'>,
-  requestScope?: string,
+  requestScope: string,
   settle: NativeMappingDeleteSettle = defaultMappingDeleteSettle,
 ): Promise<{ apiName: string }> {
   const before = await preflightDeleteNativeMapping(apiName, client, dependencies, requestScope);
@@ -1377,14 +1614,14 @@ export async function deleteNativeMapping(
  * mapping of a custom DMO goes with the DMO). Only the typed 404 counts as absence.
  * @param {string} apiName Exact org mapping name.
  * @param {MappingClient} client Mapping reader.
- * @param {string} [requestScope] Optional request scope.
+ * @param {string} requestScope The run's data space.
  * @param {NativeMappingDeleteSettle} [settle] Bounded readback budget.
  * @returns {Promise<boolean>} True once a read answers 404; false while it stays readable.
  */
 export async function confirmNativeMappingAbsent(
   apiName: string,
   client: Pick<MappingClient, 'get'>,
-  requestScope?: string,
+  requestScope: string,
   settle: NativeMappingDeleteSettle = defaultMappingDeleteSettle,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < settle.attempts; attempt++) {

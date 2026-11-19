@@ -15,7 +15,7 @@ const provenance = {
 };
 const selectedInput = (file) => ({
   path: file,
-  document: { kind: 'dmo', identity: { dataSpace: 'default', apiName: 'Selected__dlm' } },
+  document: { kind: 'dmo', c__dataSpace: 'default', identity: { apiName: 'Selected__dlm' } },
 });
 const invocation = (overrides = {}, paths = [selectedPath]) => {
   const calls = [];
@@ -292,7 +292,7 @@ for (const drift of ['digest', 'missing']) {
     const mapping = {
       path: 'data360/mapping/Map.mapping-meta.json',
       inputDigest: 'a'.repeat(64),
-      document: { kind: 'mapping', identity: { dataSpace: 'default', apiName: 'Map' } },
+      document: { kind: 'mapping', c__dataSpace: 'default', identity: { apiName: 'Map' } },
     };
     command.selectGitInputs = async () => ({
       paths: [mapping.path],
@@ -321,7 +321,7 @@ for (const drift of ['digest', 'document', 'count']) {
     const mapping = {
       path: 'data360/mapping/Map.mapping-meta.json',
       inputDigest: 'c'.repeat(64),
-      document: { kind: 'mapping', identity: { dataSpace: 'default', apiName: 'Map' } },
+      document: { kind: 'mapping', c__dataSpace: 'default', identity: { apiName: 'Map' } },
     };
     command.selectGitInputs = async () => ({
       paths: [dlo.path, mapping.path],

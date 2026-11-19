@@ -211,7 +211,7 @@ const document = (kind, name) => ({
   kind,
   ...(kind === 'dlo'
     ? { c__dataSpace: ['default'], identity: { apiName: name } }
-    : { identity: { apiName: name, dataSpace: 'default' } }),
+    : { c__dataSpace: 'default', identity: { apiName: name } }),
   spec: { label: 'Probe', category: 'Other', fields: structuredClone(fields) },
 });
 
@@ -289,7 +289,8 @@ test('mapping missing field reports the exact pair, field and object', async () 
   const desired = {
     schemaVersion: 1,
     kind: 'mapping',
-    identity: { apiName: 'ProbeMapping', dataSpace: 'default' },
+    c__dataSpace: 'default',
+    identity: { apiName: 'ProbeMapping' },
     spec: {
       sourceEntityDeveloperName: 'Probe__dll',
       targetEntityDeveloperName: 'Probe__dlm',
@@ -300,7 +301,7 @@ test('mapping missing field reports the exact pair, field and object', async () 
     source: { get: async () => ({ dataLakeObjects: [raw('Probe__dll')] }) },
     target: { get: async () => rawDmo('Probe__dlm') },
   };
-  await assert.rejects(preflightNativeMapping(desired, {}, dependencies), (error) => {
+  await assert.rejects(preflightNativeMapping(desired, {}, dependencies, 'default'), (error) => {
     assert.equal(error.code, 'MAPPING_FIELD_NOT_FOUND');
     assert.match(
       operationDiagnostic(error, 'No write attempted.'),
@@ -312,7 +313,7 @@ test('mapping missing field reports the exact pair, field and object', async () 
     sourceFieldDeveloperName: 'Gone__c',
     targetFieldDeveloperName: 'Id__c',
   };
-  await assert.rejects(preflightNativeMapping(desired, {}, dependencies), (error) => {
+  await assert.rejects(preflightNativeMapping(desired, {}, dependencies, 'default'), (error) => {
     assert.equal(error.code, 'MAPPING_FIELD_NOT_FOUND');
     assert.match(
       operationDiagnostic(error, ''),

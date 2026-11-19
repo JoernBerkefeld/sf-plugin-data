@@ -226,7 +226,19 @@ for (const preview of [true, false])
       result.diagnostics.errors.map(({ code }) => code),
       ['DLO_DELETE_OTHER_DATASPACES'],
     );
-    assert.match(result.diagnostics.errors[0].message, /dataspace2/u);
+    // One other data space is named in the singular.
+    assert.match(
+      result.diagnostics.errors[0].message,
+      /also belongs to the data space dataspace2,/u,
+    );
+    // Refused before any delete was sent: the blocked wording, not "inspect unknown outcomes".
+    if (!preview) {
+      assert.match(
+        result.diagnostics.errors[0].message,
+        /before any delete was sent; nothing was deleted/u,
+      );
+      assert.doesNotMatch(result.diagnostics.errors[0].message, /unknown outcomes/u);
+    }
   });
 
 test('an unknown run data space is refused before any DLO read', async () => {
@@ -488,7 +500,8 @@ test('mixed auto DLO and DMO deploy together on their native68 routes, DLO first
     {
       schemaVersion: 1,
       kind: 'dmo',
-      identity: { dataSpace: 'default', apiName: 'Synthetic__dlm' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'Synthetic__dlm' },
       spec: {
         label: 'Synthetic',
         category: 'Other',

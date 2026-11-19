@@ -41,6 +41,7 @@ import {
   isVerbatimDocument,
   parseVerbatimDocument,
   verbatimRefusalMessage,
+  verbatimIdentity,
   verbatimSkipWarning,
 } from './verbatim-document.js';
 import type { VerbatimDocument, VerbatimKind } from './verbatim-document.js';
@@ -1260,7 +1261,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.mapping-meta.json')) {
         const input = await readMappingInput(file);
         const key =
-          `mapping:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+          `mapping:${input.document.c__dataSpace}:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
@@ -1276,12 +1277,12 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.relationship-meta.json')) {
         const input = await readRelationshipInput(file);
         const key =
-          `relationship:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+          `relationship:${input.document.c__dataSpace}:${input.document.identity.apiName}`.toLowerCase();
         // Deploy matches relationships by binding, so two files with one binding are one identity.
         const { sourceObjectName, sourceFieldName, targetObjectName, targetFieldName } =
           input.document.spec;
         const binding =
-          `relationship-binding:${input.document.identity.dataSpace}:${sourceObjectName}:${sourceFieldName}:${targetObjectName}:${targetFieldName}`.toLowerCase();
+          `relationship-binding:${input.document.c__dataSpace}:${sourceObjectName}:${sourceFieldName}:${targetObjectName}:${targetFieldName}`.toLowerCase();
         if (identities.has(key) || identities.has(binding))
           throw new DeployInputError('DUPLICATE_IDENTITY');
         identities.add(binding);
@@ -1299,7 +1300,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.dmo-meta.json')) {
         const input = await readNativeDmoInput(file);
         const key =
-          `dmo:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+          `dmo:${input.document.c__dataSpace}:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
@@ -1438,7 +1439,7 @@ function admitDeletedVerbatim(
   )
     throw new DeployInputError('INVALID_SOURCE');
   return {
-    identity: { ...value.identity },
+    identity: verbatimIdentity(value),
     document: Object.freeze(value),
     ...(kind === 'relationship' ? { sourceObjectName: source as string } : {}),
   };
@@ -1477,8 +1478,9 @@ export function admitDeletedArtifact(
     let sourceObjectName: string | undefined;
     switch (kind) {
       case 'dmo': {
-        document = validateNativeDmoDocument(value, 'retrieve');
-        ({ identity } = document);
+        const dmo = validateNativeDmoDocument(value, 'retrieve');
+        document = dmo;
+        identity = { dataSpace: dmo.c__dataSpace, apiName: dmo.identity.apiName };
         break;
       }
       case 'dlo': {
@@ -1487,14 +1489,15 @@ export function admitDeletedArtifact(
         break;
       }
       case 'mapping': {
-        document = validateNativeMappingDocument(value, 'retrieve');
-        ({ identity } = document);
+        const mapping = validateNativeMappingDocument(value, 'retrieve');
+        document = mapping;
+        identity = { dataSpace: mapping.c__dataSpace, apiName: mapping.identity.apiName };
         break;
       }
       case 'relationship': {
         const relationship = validateNativeRelationshipDocument(value, 'retrieve');
         document = relationship;
-        identity = relationship.identity;
+        identity = { dataSpace: relationship.c__dataSpace, apiName: relationship.identity.apiName };
         sourceObjectName = relationship.spec.sourceObjectName;
         break;
       }

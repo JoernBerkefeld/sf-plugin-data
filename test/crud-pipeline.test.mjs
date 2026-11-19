@@ -48,7 +48,8 @@ await writeNativeMappingDocument(
   {
     schemaVersion: 1,
     kind: 'mapping',
-    identity: { dataSpace: 'default', apiName: 'Feed_map' },
+    c__dataSpace: 'default',
+    identity: { apiName: 'Feed_map' },
     spec: {
       sourceEntityDeveloperName: 'Feed__dll',
       targetEntityDeveloperName: 'Person__dlm',

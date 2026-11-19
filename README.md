@@ -119,8 +119,9 @@ plugin features.
 | Kit membership                             | Unavailable                                                                                                                                | Unavailable                                                                                                                              | Unavailable                                                                                                                                      | Unavailable                                                                                                                                         | no         | Creation/deletion qualified only with its container/template, not independently.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 The **Data space** column says whether the plugin works with a data space other than
-`default` for that type: `yes` where `--dataspace` reaches the type's native requests
-(live runs cover the default space only), `no` where a non-default space is refused.
+`default` for that type: `yes` where the type's files carry `c__dataSpace` and every
+request names the run's data space (see [Data spaces](#data-spaces)), `no` where a
+non-default space is refused.
 It tracks data-space support and goes away once every row is `yes`.
 
 The scope notes summarize the [Data Cloud DevOps guide](https://sfmc.guide/next/data-cloud-devops/),
@@ -152,9 +153,11 @@ Current plugin limits:
 - Native DLO, DMO and mapping retrieval supports omitted selectors (all implemented
   native families, every DLO the API lists included), bare types and exact members. The other families
   take exact members or the bare type, which retrieves every item the API lists, one after another
-  (bare `relationship`: the relationships of every listed DMO). Native DLO/DMO/mapping accept explicit nondefault data-space scope;
-  this is parameter plumbing, not live nondefault lifecycle qualification. Legacy
-  families and dependency adapters remain default-only. Default/`auto` uses API68 for native routes;
+  (bare `relationship`: the relationships of every listed DMO). Native DLOs, DMOs, mappings
+  and relationships work in any data space of the org: their files carry `c__dataSpace`
+  and every request names the run's data space (see [Data spaces](#data-spaces)). Streams,
+  calculated insights, segments, transforms, graphs and identity resolution remain
+  default-only. Default/`auto` uses API68 for native routes;
   explicit numeric pins are preserved, not silently upgraded. Numeric admission
   (61.0 and above for native retrieval/deploy) is not live qualification at every
   version; native mapping pair removal and whole-mapping deletion are admitted at the
@@ -173,10 +176,14 @@ Current plugin limits:
   destructive change; `delete --field` also removes standard, system and generated
   fields.
   The documented API behaviour is observed at API68 on empty custom DMOs and on one
-  standard DMO in the default data space only; see
-  [Public DMO workflow](#public-dmo-workflow). Data-bearing DMOs, standard DMOs in
-  active use, non-default data spaces, other API versions, relationships and SQL/flex
-  DMOs are not verified.
+  standard DMO in the default data space; see
+  [Public DMO workflow](#public-dmo-workflow). In a non-default data space a standard DMO
+  is a copy (`ds2_Individual__dlm`) that its first mapping creates, never a DMO deploy: a
+  DMO file for a copy that does not exist yet is refused (`UNSUPPORTED_DMO_TARGET`), and
+  the mapping is sent in the default spelling once when Salesforce answers "DMO not found"
+  (see [Data spaces](#data-spaces)). The copy naming and the retry are proven live through
+  the raw API; the plugin's own run in a non-default data space is not yet. Data-bearing
+  DMOs, standard DMOs in active use, other API versions and SQL/flex DMOs are not verified.
 - Native DLO/DMO creation and updates, mapping creation and qualified API68/default
   desired-state pair reconciliation, native API68 Segment create and update by name
   (the DBT definition is sent as written; Salesforce decides), calculated insight create and update (the file is sent as written; Salesforce decides),
@@ -566,7 +573,9 @@ model. One failing item never stops the other items or families.
   a data stream's read-only `observed` section do not block deploy.
 - **Unsupported variants are written as-is.** An object the file format cannot represent
   is written at its normal path as Salesforce returned it, with a warning:
-  `{schemaVersion, kind, identity, verbatim: {reason, native}}`. `reason` is the code of
+  `{schemaVersion, kind, identity, verbatim: {reason, native}}` (a DMO, mapping or
+  relationship also carries `c__dataSpace` beside `identity`, like its normal file, and
+  `identity` holds `apiName` only). `reason` is the code of
   the check that failed, or `UNMODELLED_RESPONSE` when there is none. Examples: streams
   whose GET names no connector type, segments with parameters or a refresh the file cannot hold, mappings that
   are not DLO to DMO, Visual Builder calculated-insight drafts, data transforms with both
@@ -948,8 +957,8 @@ flag failures use core CLI diagnostics.
 
 ### What the plugin checks and what Salesforce decides
 
-The plugin checks only the shape of the file: `schemaVersion`, `kind`, `identity`
-(API name ending `__dlm`, data space) and `spec` with a label, a category, an
+The plugin checks only the shape of the file: `schemaVersion`, `kind`, `c__dataSpace`
+(the data space), `identity` (API name ending `__dlm`) and `spec` with a label, a category, an
 optional description and at least one field. Each field needs a unique name ending
 `__c`, a label, a `dataType` and a boolean `isPrimaryKey`; runtime keys such as `id`
 or `status` are rejected. There is no local allowlist beyond that. Category, field
@@ -1039,8 +1048,8 @@ one writes only:
 
 A PATCH that only adds one custom field has the body
 `{"fields":[{"name":"<Name>","label":"<Label>","dataType":"Text","isPrimaryKey":false}]}`,
-and a label change alone sends `{"label":"<Label>"}`. `dataSpaceName` is added when
-`--dataspace` is passed.
+and a label change alone sends `{"label":"<Label>"}`. Every create and update body also
+names the run's data space in `dataSpaceName` (`default` when `--dataspace` is left out).
 
 Standard, system and generated fields (field `creationType` other than `Custom`),
 including the standard primary key, are never removed by a deploy, and only their
@@ -1577,24 +1586,22 @@ Native `retrieve`, `deploy` and `delete` accept optional `--dataspace NAME`
 specify only one spelling per invocation. An explicit scope must match the saved
 artifact and freshly observed target/parent identities before mutation.
 
-Mapping list, detail, create and additive update requests include the
-`dataspace` query only when explicitly supplied. Omission uses the documented
-mapping default locally for identity checks, without injecting `dataspace=default`
-into HTTP requests. DMO create/update includes optional `dataSpaceName` only with
-an explicit flag; creating a nondefault DMO with an omitted flag is refused.
+Every mapping and relationship REST request names the run's data space in the
+`dataspace` query (`default` when `--dataspace` is left out), and every DMO create and
+update names it in `dataSpaceName`; the Metadata API calls (mapping delete, mapping and
+relationship labels, relationship update) take record names, which are unique in the org.
 DLOs follow the run's data space (`--dataspace`, `default` when omitted) and list all
 their data spaces in `c__dataSpace`; see [Data spaces](#data-spaces). DLO/DMO detail,
 delete and collection URLs gain no invented filters. DMO identities use the
 response's actual `dataSpaceName`.
 
 Native inventory still paginates the complete bounded collection and filters
-response memberships locally: omitted scope retains default-space discovery,
-not an all-space export. Explicit scope selects the matching response space;
-ambiguous same-name inventory remains blocked. Legacy families and dependency
-adapters remain default-only. Artifact schema/version and canonical paths are
-unchanged; overwriting a different dataspace's file is refused even with
-`--overwrite`. This is documented parameter plumbing, not live nondefault-space
-lifecycle qualification; the Partial support ratings and existing API/version,
+response memberships locally (the DLO and DMO lists hold every data space whatever
+`?dataspace=` says): the run's data space only, never an all-space export. A DMO list
+entry without `dataSpaceName` stops the listing (`NATIVE_INVENTORY_UNCONFIRMED`), as
+every entry read live names one. Artifact schema/version and canonical paths are
+unchanged. This is parameter plumbing, not live nondefault-space lifecycle
+qualification; the Partial support ratings and existing API/version,
 processing, parent, survivor and destructive-operation limits remain unchanged.
 
 ```sh
@@ -1927,6 +1934,8 @@ reads the org's data spaces once (`GET /ssot/data-spaces`); an unknown run data 
 or an unknown name in a selected file's `c__dataSpace`, stops the command before any
 read or write (`UNKNOWN_DATASPACE`). The run's data space and the DLO data spaces of
 the items appear in the JSON result (`result.scope.dataSpace`, `items[].dataSpaces`).
+A DLO deploy item lists the data spaces it added the DLO to or removed it from as
+`dataSpaceChanges`, in preview and execution.
 
 - **Retrieve** reads the DLOs of the run's data space and writes every data space each
   one belongs to.
@@ -1937,7 +1946,8 @@ the items appear in the JSON result (`result.scope.dataSpace`, `items[].dataSpac
   list right before and sends it back with the DLO added (one
   `PUT /ssot/data-spaces/<space>/members`), then reads the DLO until it lists the
   planned data spaces (`DLO_DATASPACE_NOT_SETTLED` otherwise). Afterwards the member list is read again and every
-  member it had before must still be there (`DLO_DATASPACE_MEMBERS_CHANGED` otherwise); a
+  member it had before must still be there (`DLO_DATASPACE_MEMBERS_CHANGED` otherwise, and
+  `DLO_DATASPACE_MEMBERS_UNCONFIRMED` when that read cannot be completed); a
   member write Salesforce answers without success is `DLO_MEMBERSHIP_UPDATE_REJECTED`. A
   member list whose distinct names do not equal its `totalSize`, or with a member that is
   not ACTIVE or PROCESSING, also stops the deploy; this fails closed where an org states one
@@ -1952,6 +1962,52 @@ the items appear in the JSON result (`result.scope.dataSpace`, `items[].dataSpac
   (`DLO_DELETE_OTHER_DATASPACES`); deploy a shorter list with
   `--allow-dataspace-removal` instead. `--changed-since` takes the list from the deleted
   file's base revision, which must hold the run's data space.
+
+A DMO, mapping or relationship belongs to one data space, and its file names it as a
+string in `c__dataSpace`:
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "dmo",
+  "c__dataSpace": "dataspace2",
+  "identity": { "apiName": "ds2_Individual__dlm" },
+  "spec": { "label": "Individual", "category": "Profile", "fields": [] }
+}
+```
+
+- **Retrieve** reads them in the run's data space and writes it into each file. The DMO
+  list holds every data space, so each entry is kept by its own `dataSpaceName`.
+- **Deploy and delete** refuse a file that names another data space than the run's
+  (`DMO_DATASPACE_MISMATCH`, `MAPPING_DATASPACE_MISMATCH`,
+  `UNSUPPORTED_RELATIONSHIP_DATASPACE`), never skipping it, and so does `--changed-since`
+  for a deleted file's base revision. Every mapping and relationship request sends
+  `?dataspace=` with the run's data space, and every DMO create and update sends it as
+  `dataSpaceName`.
+- **Names are what Salesforce stores.** In a non-default data space a standard DMO is a
+  copy named `<prefix>_<Name>__dlm` (`ds2_Individual__dlm` for `ssot__Individual__dlm`
+  in `dataspace2`, whose prefix is `ds2`) with fields without `ssot__`
+  (`FirstName__c`); a custom DMO keeps its own name. Files carry these names and deploy
+  sends them unchanged; the plugin adds and strips no prefix. Names are unique in the
+  org, so a file of one data space never collides with another's.
+- **First mapping onto a standard DMO copy.** The copy exists only once something is
+  mapped onto it in that data space, and Salesforce takes that first mapping only in the
+  default spelling; a DMO deploy never creates a copy (a DMO file for a copy that does not
+  exist yet is refused with `UNSUPPORTED_DMO_TARGET`, deploy the mapping instead). When the
+  copy (`ds2_X__dlm`) reads 404 in the run's data space, the plugin reads `ssot__X__dlm` (the prefix comes from the org's data space list) and checks
+  the pairs against its fields under the copy's names (`ssot__F__c` as `F__c`). The create
+  is sent as the file names it; if Salesforce answers it with 404 "DMO not found", it is
+  sent once more with the target `ssot__X__dlm` and each target field under its default
+  name. Salesforce stores the mapping under the copy, and the plugin reads it back under the
+  copy name. Nothing else is ever guessed: another answer or text, a name without the
+  prefix, or no standard `ssot__X__dlm` leaves Salesforce's answer as the result. A standard
+  DMO without `ssot__` (its copy `ds2_StaticCurrencyRates_Home__dlm`) gets no retry. Observed
+  live at API 68 (DB entry `data360:dataspace-identity-resolution-api68`); the plugin's own
+  run of it is not yet.
+- **Fields a copy does not have yet.** A copy holds only its mapped fields, and Salesforce
+  adds a field when a mapping names it. A mapping file onto an existing copy may name such a
+  field: the plugin finds it on `ssot__X__dlm` (`ssot__F__c` as `F__c`, other fields
+  unchanged) and sends the pair; a field neither object has is `MAPPING_FIELD_NOT_FOUND`.
 
 The old `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`), and a filtered
 membership `{ "name": …, "filter": … }` is recognised but not deployed yet
@@ -2170,9 +2226,9 @@ at once and reads up to six mappings at once; a listed mapping's entry, which Sa
 returns exactly as its item GET, is used instead of another read, and a source DLO or
 target DMO that several mappings name is read once per run. Files, items, warnings and
 diagnostics keep the name order; throttling (429) and network retries stay per request.
-Optional `--dataspace` selects explicit scope as described in the native workflow;
-omission retains default-space discovery. Nondefault scope is parameter plumbing,
-not live nondefault lifecycle qualification. Default/`auto` selects native API `68.0`;
+Optional `--dataspace` selects the run's data space as described in the native
+workflow; omission reads the default data space. Nondefault scope is parameter
+plumbing, not live nondefault lifecycle qualification. Default/`auto` selects native API `68.0`;
 explicit numeric pins are preserved. Native retrieval/deploy admits numeric versions
 from `61.0`; pair removal and whole-mapping deletion are admitted at the same
 versions. Installed API61 create, read and one-pair addition with omitted scope is
@@ -2506,9 +2562,9 @@ keeps one file per relationship at
 {
   "schemaVersion": 1,
   "kind": "relationship",
+  "c__dataSpace": "default",
   "identity": {
-    "apiName": "Order_CustomerId_map_Customer_Id_1794467679481",
-    "dataSpace": "default"
+    "apiName": "Order_CustomerId_map_Customer_Id_1794467679481"
   },
   "spec": {
     "sourceObjectName": "Order__dlm",
@@ -3734,8 +3790,8 @@ support uses the native route described under
 
 The native DMO writer validates the document shape and writes
 `data360/dmo/<ApiName>__dlm.dmo-meta.json` beneath the project root. Identical
-bytes are unchanged; differing regular files require overwrite, and a file saved
-for a different data space is not replaced even with overwrite. Linked ancestors,
+bytes are unchanged; differing regular files require overwrite (DMO names are unique in
+the org, so the file at the path is the same DMO whatever its data space). Linked ancestors,
 linked destinations and directory/file collisions reject. Complete flushed staging
 uses OS temp and atomic rename/exclusive hard-link publication; cross-volume
 publication fails closed, with no copy fallback. There is a residual concurrent

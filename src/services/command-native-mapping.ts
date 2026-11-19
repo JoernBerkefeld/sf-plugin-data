@@ -43,14 +43,14 @@ function typeNotice(
  * @param {unknown} value Portable mapping.
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target readers.
- * @param {string} [requestScope] Optional request scope forwarded without synthesizing a flag.
+ * @param {string} requestScope The run's data space.
  * @returns {Promise<object>} Payload-free preview.
  */
 export async function preflightMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
-  requestScope?: string,
+  requestScope: string,
 ) {
   const plan = await preflightNativeMapping(value, client, dependencies, requestScope);
   return {
@@ -88,7 +88,7 @@ export async function preflightMapping(
  * @param {MappingClient} client Target mapping transport.
  * @param {MappingDependencies} dependencies Fresh source/target readers.
  * @param {Function} [onUpdated] Receive independently confirmed changes without changing JSON.
- * @param {string} [requestScope] Optional request scope forwarded without synthesizing a flag.
+ * @param {string} requestScope The run's data space.
  * @param {Function} [onResolvedName] Receive the independently verified target name for presentation.
  * @returns {Promise<object>} Payload-free execution outcome.
  */
@@ -96,8 +96,8 @@ export async function executeMapping(
   value: unknown,
   client: MappingClient,
   dependencies: MappingDependencies,
-  onUpdated?: Parameters<typeof deployNativeMapping>[3],
-  requestScope?: string,
+  onUpdated: Parameters<typeof deployNativeMapping>[3],
+  requestScope: string,
   onResolvedName?: (apiName: string) => void,
 ) {
   const ledger = new WriteLedger();

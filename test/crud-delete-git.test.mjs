@@ -106,7 +106,8 @@ const transformDocument = {
 const dmoDocument = (apiName) => ({
   schemaVersion: 1,
   kind: 'dmo',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     label: 'Example',
     category: 'Other',
@@ -155,7 +156,8 @@ const streamDocument = {
 const relationshipDocument = {
   schemaVersion: 1,
   kind: 'relationship',
-  identity: { apiName: 'A_BRef_map_B_Id', dataSpace: 'default' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'A_BRef_map_B_Id' },
   spec: {
     sourceObjectName: 'A__dlm',
     sourceFieldName: 'BRef__c',
@@ -181,7 +183,8 @@ const files = {
     {
       schemaVersion: 1,
       kind: 'mapping',
-      identity: { apiName: 'Example_map_1', dataSpace: 'default' },
+      c__dataSpace: 'default',
+      identity: { apiName: 'Example_map_1' },
       spec: {
         sourceEntityDeveloperName: 'Example_Probe__dll',
         targetEntityDeveloperName: 'Example__dlm',
@@ -543,7 +546,10 @@ test('a relationship deleted in the range takes its source DMO from the base con
 const verbatim = (kind, apiName, native) => ({
   schemaVersion: 1,
   kind,
-  identity: { dataSpace: 'default', apiName },
+  // A DMO, mapping or relationship keeps its data space in c__dataSpace, like its normal file.
+  ...(['dmo', 'mapping', 'relationship'].includes(kind)
+    ? { c__dataSpace: 'default', identity: { apiName } }
+    : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason: 'UNMODELLED_VARIANT', native },
 });
 files.verbatimDmo = ['data360/dmo/Example__dlm.dmo-meta.json', verbatim('dmo', 'Example__dlm', {})];
