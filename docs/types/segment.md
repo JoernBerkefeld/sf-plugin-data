@@ -164,6 +164,7 @@ sf data360 segment members export -o target -m segment:1sgXXXXXXXXXXXXXXX --incl
 
 **Other options and errors.**
 
+- With `--include-details` the CSV header comes from the DMO fields and is written even when the segment has no members. In basic mode the header is the keys of the first row Salesforce returns, so a segment without members gives an empty file. JSON output without members is `[]`.
 - `--column-delimiter` sets the CSV separator, as a name or the character itself: `COMMA`/`,` (default), `SEMICOLON`/`;`, `TAB`, `PIPE`/`|`, `CARET`/`^`, `BACKQUOTE`/`` ` ``.
 - Reads retry after network errors, HTTP 429 and 503 (the detail query only when it provably never left). Any other Salesforce error ends the export with `SEGMENT_MEMBERS_READ_FAILED` and its HTTP status.
 

@@ -539,6 +539,41 @@ test('--include-details joins the membership DMO to the segment DMO through one 
   assert.deepEqual(waits, [detailQueryWait.intervalMs]);
 });
 
+test('--include-details without members writes the DMO field header in both header modes; JSON []', async (t) => {
+  for (const [mode, header] of [
+    ['label', 'Id,First Name\n'],
+    ['api-name', 'ssot__Id__c,ssot__FirstName__c\n'],
+  ]) {
+    const { command, calls, cwd } = await harness(
+      {
+        metadata: 'segment:Members_Seg',
+        'include-details': true,
+        'column-headers': mode,
+        'output-file': 'z.csv',
+      },
+      details({ total: 0 }),
+      t,
+    );
+    const { result } = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.equal(result.result.rowsWritten, 0);
+    assert.equal(await readFile(path.join(cwd, 'z.csv'), 'utf8'), header);
+    assert.equal(calls.filter(({ url }) => url.pathname.endsWith('/rows')).length, 0);
+  }
+  const json = await harness(
+    {
+      metadata: 'segment:Members_Seg',
+      'include-details': true,
+      'result-format': 'json',
+      'output-file': 'z.json',
+    },
+    details({ total: 0 }),
+    t,
+  );
+  await run(json.command);
+  assert.equal(await readFile(path.join(json.cwd, 'z.json'), 'utf8'), '[]\n');
+});
+
 test('--include-details in a non-default data space reads the ds2_ segment and queries in that data space', async (t) => {
   const inner = details();
   const { command, calls } = await harness(
