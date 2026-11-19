@@ -330,7 +330,7 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   stores in the mapping's data space (`ds2_ContactPointEmail__dlm` with `EmailAddress__c`
   for a standard DMO copy in `dataspace2`). The first mapping onto a standard DMO copy that
   does not exist yet is sent once more in the default spelling when Salesforce answers the
-  copy spelling with 404 (see the README's Data spaces section). On a standard DMO the
+  copy spelling with 404 (see [mapping reference](types/mapping.md)). On a standard DMO the
   authored pairs use the standard field names (for example `Id__c` to `ssot__Id__c`)
   and the generated pairs read `DataSource__c` to `ssot__DataSourceId__c`,
   `DataSourceObject__c` to `ssot__DataSourceObjectId__c`, `InternalOrganization__c`
@@ -446,9 +446,9 @@ cleared); a category change and standard DMOs in active use are not tested. Writ
 platform-generated DMOs are observed at API 68 through the raw API.
 
 The values Salesforce accepted in live verification at API 68 (categories, field
-data types, label length and key rules) are listed in the README's Public DMO
-workflow. That verification used empty, unmapped custom DMOs in the default data
-space. Data-bearing DMOs, non-default data spaces, other API versions,
+data types, label length and key rules) are listed in the [DMO reference](types/dmo.md).
+That verification used empty, unmapped custom DMOs in the default data space.
+Data-bearing DMOs, non-default data spaces, other API versions,
 relationships and SQL/flex DMOs are not qualified.
 
 DMOs use only `data360/dmo/<ApiName>__dlm.dmo-meta.json`.

@@ -132,7 +132,7 @@ trusted-publisher configuration is updated for the renamed repository.
 
 The repository implements native DMO retrieval, read-only deployment preview,
 creation, update and exact-name deletion, with the scope and limits described in
-the README's Public DMO workflow. Offline CI
+the [DMO reference](types/dmo.md). Offline CI
 builds, lints, tests and inspects the package allowlist. It does not authenticate
 to Salesforce. No workflow deploys or provisions org resources.
 

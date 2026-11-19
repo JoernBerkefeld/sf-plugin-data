@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -65,6 +65,26 @@ test('package metadata points to the renamed repository without changing npm ide
   });
 });
 
+// README is the overview for functional readers; per-type contracts live in docs/types/<type>.md.
+const readText = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
+const flatDocument = (file) => readText(file).replaceAll(/\s+/gu, ' ');
+const typePage = (name) => flatDocument(`../docs/types/${name}.md`);
+const typePageFiles = readdirSync(new URL('../docs/types/', import.meta.url))
+  .filter((file) => file.endsWith('.md'))
+  .map((file) => `../docs/types/${file}`);
+// Current-behaviour docs: removed wording must not come back in any of them.
+const currentDocuments = ['../README.md', ...typePageFiles];
+const readmeTable = () => {
+  const readme = readText('../README.md');
+  return readme.slice(readme.indexOf('| Type ')).split('\n\n')[0];
+};
+const tableRow = (table, link) => table.split('\n').find((line) => line.includes(`](${link}`));
+const ratingCells = (row) =>
+  row
+    .split('|')
+    .slice(2, 6)
+    .map((cell) => cell.trim());
+
 test('Segment help and README describe API68-only deploy by name, sent as written', async () => {
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
@@ -88,57 +108,45 @@ test('Segment help and README describe API68-only deploy by name, sent as writte
   assert.doesNotMatch(Deploy.description, /explicit65|IS NOT NULL|Metadata reads validate/u);
   assert.match(Retrieve.description, /Segment uses auto or 68\.0 in the run data space/u);
   assert.doesNotMatch(Retrieve.description, /explicit65|single-model DBT subset/u);
-  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  assert.ok(readme.includes('`data360/segments/<name>.segment.json`'));
-  assert.ok(!readme.includes('`data360/segment/<name>.segment.json`'));
-  const row = readme.split('\n').find((line) => line.startsWith('| Segments, `segment`'));
-  assert.match(row, /`data360\/segments\/<Name>\.segment\.json`/u);
-  assert.match(row, /the file is sent as written and Salesforce decides/u);
+  const readme = readText('../README.md');
+  assert.ok(readme.includes('`data360/segments/<Name>.segment.json`'));
+  assert.ok(readme.includes('Create and update need `--allow-processing`'));
+  const row = tableRow(readmeTable(), 'docs/types/segment.md)');
+  assert.ok(row, 'README type overview must have a Segments row');
   assert.doesNotMatch(row, /Historical API65|single-model|icons\/cli\.svg/u);
+  const segment = typePage('segment');
   for (const text of [
-    'Create and update need `--allow-processing`',
+    '`data360/segments/<Name>.segment.json`',
+    'the file is sent as written and Salesforce decides',
     'execution needs no confirmation flag',
     'Generated membership DMOs are not deleted',
   ])
-    assert.ok(readme.includes(text), text);
-  assert.ok(!readme.includes('### Live segment: standard REST API 65'));
+    assert.ok(segment.includes(text), text);
+  for (const file of currentDocuments) {
+    const text = readText(file);
+    assert.ok(!text.includes('`data360/segment/<name>.segment.json`'), file);
+    assert.ok(!text.includes('### Live segment: standard REST API 65'), file);
+  }
 });
 
-test('README documents the native mapping lifecycle without obsolete XML-only or batch claims', () => {
-  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const mapping = readme
-    .split('### DLO-to-DMO mapping: native definition CRUD')[1]
-    ?.split('### DMO field relationship: native definition retrieve, create and delete')[0]
-    .replaceAll(/\s+/gu, ' ');
-  assert.ok(mapping, 'native mapping workflow must be documented');
+test('docs describe the native mapping lifecycle without obsolete XML-only or batch claims', () => {
+  const mapping = typePage('mapping');
   for (const required of [
     'data360/mapping/<name>.mapping-meta.json',
     'explicit numeric pins are preserved',
     'planned-dependencies',
     'the desired pair set',
     'one names-only, selector-free PATCH',
-    'installed public API68 reconciliation acceptance below',
-    'Installed API61 create, read and one-pair addition with omitted scope',
     'Create and update send the pairs the file lists; Salesforce decides.',
     'the preview carries the non-blocking diagnostic `MAPPING_FIELD_TYPES_DIFFER`',
     '`MAPPING_FIELD_NOT_FOUND`, which names the pair, the missing field and its object',
     'HTTP 400 `MISSING_ARGUMENT: Unable to find Primary Key of DLO in POST request of Mapping Creation`',
     'removal is refused with `MAPPING_PROTECTED_LAYOUT_UNPROVEN` before any write',
-    'passed removal of A with batch addition of D/E',
-    'B-to-C same-source/new-target retargeting and F-to-D new-source/same-target retargeting',
-    'sequentially on the same empty fixture',
-    'Each reconciliation preview and repeat performed zero writes',
-    'Exact desired pairs, retained selectors, full DLO state and DMO schema/nonflag properties',
-    'allowing only expected `isMapped` changes',
-    'Full raw DMO preservation is therefore not claimed across reconciliation',
-    'not populated-object, cross-org, arbitrary-schema or all-version qualification',
     'one Metadata API destructive deployment',
     'type `ObjectSourceTargetMap`',
     'It does not unmap pairs first and sends no native DELETE',
     'typed selected-mapping `404`',
     'Deletion is admitted at every native API version from `61.0`',
-    'pair removal is observed through the plugin at API 61, 64 and 68',
-    'a pair removed at API 64 (16 seconds) and API 61 (17 seconds)',
     'zero-write repeat',
     'DMO GET has no status field',
     'The last mapping of a custom DMO is refused before any write',
@@ -148,45 +156,41 @@ test('README documents the native mapping lifecycle without obsolete XML-only or
     'MAPPING_DELETE_FAILED',
     'MAPPING_DELETE_SIDE_EFFECT',
     'MAPPING_DELETION_UNCONFIRMED',
-    'DMO `Count__c`/`Gamma__c` fields',
     'A mapping whose own read answers `404` is already gone: it reports `unchanged`',
     'the org mapping is found the way deploy finds it, by the file',
     'reports the org name as `targetApiName`',
-    'non-last native DELETE HTTP `204`',
   ])
     assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
-  for (const obsolete of [
-    'There is no public plugin Delete command',
-    'An already-absent mapping is conservatively blocked without writes',
-    'unchanged-on-404 handling applies only to native DLO/DMO deletion',
-    'Only the `default` data space is supported.',
-    'Installed creation/reconciliation acceptance is API68;',
-    'Exact API65/default opaque XML export only',
-    'pending public plugin integration acceptance',
-    'installed public reconciliation acceptance remains separate',
-    'installed mapping lifecycle acceptance is API68 only',
-    'This does not claim installed API61 CLI acceptance',
-    'installed deletion acceptance remains separate',
-    'mixed-family deployment remain blocked',
-    'The whole\nselection is preflighted before any executor call',
-    'observed live at API 68 only',
-    'Desired-state removal/retarget remains API68-only',
-    'does not qualify installed Number removal',
-    '61.0 through 68.0',
-    'onto shared or occupied targets',
-    'only at create)',
-  ])
-    assert.ok(!readme.includes(obsolete), `obsolete README contract: ${obsolete}`);
-  assert.match(readme, /Native batches instead\s+order DLO, DMO, mapping/u);
+  for (const file of currentDocuments) {
+    const text = readText(file);
+    for (const obsolete of [
+      'There is no public plugin Delete command',
+      'An already-absent mapping is conservatively blocked without writes',
+      'unchanged-on-404 handling applies only to native DLO/DMO deletion',
+      'Only the `default` data space is supported.',
+      'Installed creation/reconciliation acceptance is API68;',
+      'Exact API65/default opaque XML export only',
+      'pending public plugin integration acceptance',
+      'installed public reconciliation acceptance remains separate',
+      'installed mapping lifecycle acceptance is API68 only',
+      'This does not claim installed API61 CLI acceptance',
+      'installed deletion acceptance remains separate',
+      'mixed-family deployment remain blocked',
+      'The whole\nselection is preflighted before any executor call',
+      'observed live at API 68 only',
+      'Desired-state removal/retarget remains API68-only',
+      'does not qualify installed Number removal',
+      '61.0 through 68.0',
+      'onto shared or occupied targets',
+      'only at create)',
+    ])
+      assert.ok(!text.includes(obsolete), `obsolete contract in ${file}: ${obsolete}`);
+  }
+  assert.match(readText('../README.md'), /in the order DLO,\s+DMO,\s+mapping,\s+relationship/u);
 });
 
-test('README documents native relationships without the removed XML export', () => {
-  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const section = readme
-    .split('### DMO field relationship: native definition retrieve, create and delete')[1]
-    ?.split('### Source object configuration:')[0]
-    .replaceAll(/\s+/gu, ' ');
-  assert.ok(section, 'native relationship workflow must be documented');
+test('docs describe native relationships without the removed XML export', () => {
+  const section = typePage('relationship');
   for (const required of [
     'data360/relationship/<Name>.relationship-meta.json',
     'sf data360 retrieve -m relationship:Order__dlm',
@@ -205,15 +209,19 @@ test('README documents native relationships without the removed XML export', () 
     'RELATIONSHIP_NAME_MISMATCH',
   ])
     assert.ok(section.includes(required), `missing relationship contract: ${required}`);
-  const row = readme.split('\n').find((line) => line.startsWith('| DMO field relationships'));
+  const row = tableRow(readmeTable(), 'docs/types/relationship.md)');
+  assert.ok(row, 'README type overview must have a relationships row');
   // All four operations are Available: a changed target or owner is refused by Salesforce
   // through the Metadata API, not by the plugin, so update is not Partial.
   assert.equal((row.match(/Partial/gu) ?? []).length, 0);
-  assert.equal((row.match(/Available </gu) ?? []).length, 4);
-  assert.match(row, /title="Metadata API update of label, cardinality and source field"/u);
+  assert.deepEqual(ratingCells(row), ['Available', 'Available', 'Available', 'Available']);
   assert.doesNotMatch(row, /\|\s*Unavailable\s*\|/u);
-  for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
-    const text = readFileSync(new URL(file, import.meta.url), 'utf8');
+  for (const file of [
+    ...currentDocuments,
+    '../docs/capabilities.md',
+    '../docs/artifact-format.md',
+  ]) {
+    const text = readText(file);
     // FieldSrcTrgtRelationship stays named: it is the Metadata API type of the update.
     for (const removed of ['fieldSrcTrgtRelationship-meta.xml', 'definitionOnly: true'])
       assert.ok(!text.includes(removed), `${file} mentions ${removed}`);
@@ -235,47 +243,80 @@ test('README and current docs do not mention removed mapping and stream refusal 
     'MAPPING_DELETE_VERSION_UNQUALIFIED',
   ];
   // The handover log keeps history; these files describe current behaviour only.
-  for (const file of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md']) {
-    const text = readFileSync(new URL(file, import.meta.url), 'utf8');
+  for (const file of [
+    ...currentDocuments,
+    '../docs/capabilities.md',
+    '../docs/artifact-format.md',
+  ]) {
+    const text = readText(file);
     for (const code of removed) assert.ok(!text.includes(code), `${file} mentions ${code}`);
   }
 });
 
-test('README describes optional scope without promoting nondefault qualification or changing CRUD ratings', () => {
-  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+test('README describes optional scope and the type overview without changing CRUD ratings', () => {
+  const readme = flatDocument('../README.md');
   for (const text of [
     'optional `--dataspace NAME`',
     '`--data-space` is a compatibility alias',
     'Neither spelling has a CLI default',
     "DLOs follow the run's data space",
-    "Every mapping and relationship REST request names the run's data space",
-    'not live nondefault-space',
-    'A DMO list\nentry without `dataSpaceName` stops the listing',
     'First mapping onto a standard DMO copy',
+    'Every type works in any data space of the org',
   ])
     assert.ok(readme.includes(text), text);
-  const table = readme.split('| Resource ')[1].split('The scope notes summarize')[0];
-  assert.equal(
-    table.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| ---')).length,
-    15,
+  assert.ok(
+    typePage('mapping').includes(
+      "Every mapping and relationship REST request names the run's data space",
+    ),
   );
-  // Data transforms, DMOs, mappings (pairs and label) and data graphs: the plugin sends every
-  // write and Salesforce decides (a graph join change is refused because Salesforce ignores it).
-  for (const resource of [
-    'Data Transforms',
-    'Data Model Objects',
-    'DLO-to-DMO mappings',
-    'Data Graphs',
-    'Data Streams',
-  ])
-    assert.doesNotMatch(
-      table.split('\n').find((line) => line.includes(resource)),
-      /Partial/u,
-    );
-  assert.match(readme, /^- Data Model Objects \(DMOs\)$/mu);
-  assert.match(readme, /^- Data graphs$/mu);
-  assert.match(readme, /^- Data streams$/mu);
-  const stream = table.split('\n').find((line) => line.includes('Data Streams'));
+  assert.ok(typePage('dmo').includes('A DMO list entry without `dataSpaceName` stops the listing'));
+  // Every type works in any data space: there is no Data space column (user decision).
+  assert.match(readme, /\| Type +\| Retrieve +\| Create +\| Update +\| Delete +\| More +\|/u);
+  const table = readmeTable();
+  assert.doesNotMatch(table, /\| Data space \|/u);
+  const rows = table
+    .split('\n')
+    .filter((line) => line.startsWith('| ') && !/^\| (?:---|Type )/u.test(line));
+  // 15 types, the Unavailable source-object and kit rows included.
+  assert.equal(rows.length, 15);
+  const all = ['Available', 'Available', 'Available', 'Available'];
+  const none = ['Unavailable', 'Unavailable', 'Unavailable', 'Unavailable'];
+  for (const link of [
+    'docs/types/data-stream.md)',
+    'docs/types/dlo.md)',
+    'docs/types/dmo.md)',
+    'docs/types/mapping.md)',
+    'docs/types/relationship.md)',
+    'docs/types/data-transform.md)',
+    'docs/types/calculated-insight.md)',
+    'docs/types/segment.md)',
+    'docs/types/data-graph.md)',
+    'docs/types/identity-resolution.md)',
+  ]) {
+    const row = tableRow(table, link);
+    assert.ok(row, `missing type row ${link}`);
+    assert.deepEqual(ratingCells(row), all, link);
+  }
+  assert.deepEqual(ratingCells(tableRow(table, 'docs/types/segment.md#export-segment-members')), [
+    'Available',
+    'Unavailable',
+    'Available',
+    'Unavailable',
+  ]);
+  for (const name of [
+    'Source object definitions',
+    'Kit templates',
+    'Kit definitions',
+    'Kit membership',
+  ]) {
+    const row = rows.find((line) => line.startsWith(`| ${name} `));
+    assert.ok(row, `missing row ${name}`);
+    assert.deepEqual(ratingCells(row), none, name);
+  }
+  // Data transforms, DMOs, mappings (pairs and label), data graphs and streams: the plugin sends
+  // every write and Salesforce decides (a graph join change is refused because Salesforce ignores it).
+  assert.doesNotMatch(table, /Partial/u);
+  const stream = typePage('data-stream');
   for (const text of [
     'streams of every other connector in a GET-shaped file',
     'others, such as S3 or streaming apps, are untested and sent as written',
@@ -283,37 +324,27 @@ test('README describes optional scope without promoting nondefault qualification
     'Salesforce answers 200 and keeps the old value',
   ])
     assert.ok(stream.includes(text), text);
-  const graph = table.split('\n').find((line) => line.includes('Data Graphs'));
+  const graph = typePage('data-graph');
   for (const text of [
     'refuses removed fields and related objects, a root change and another related object',
     'The plugin refuses join changes',
     'A file with another name creates or addresses another graph; the old graph is not renamed',
+    'DATA_GRAPH_JOIN_CHANGE',
+    'DATA_GRAPH_CHANGE_NOT_APPLIED',
   ])
     assert.ok(graph.includes(text), text);
-  for (const text of ['DATA_GRAPH_JOIN_CHANGE', 'DATA_GRAPH_CHANGE_NOT_APPLIED'])
-    assert.ok(readme.includes(text), text);
-  assert.ok(!readme.includes('Omitted fields and related objects are kept, not removed'));
-  // Every type works in any data space: the Data space column is gone (user decision).
-  assert.match(
-    readme,
-    /\| Resource +\| Retrieve +\| Create +\| Update +\| Delete +\| Scope \/ limits +\|/u,
-  );
-  assert.doesNotMatch(table, /\| Data space \|/u);
-  assert.ok(readme.includes('Every type works in any data space of the org'));
+  for (const file of currentDocuments)
+    assert.ok(
+      !flatDocument(file).includes('Omitted fields and related objects are kept, not removed'),
+      file,
+    );
 });
 
-test('README documents the transform file as native input that Salesforce decides on', () => {
-  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const dlo = readme
-    .split('### Data Lake Object (DLO): native definition CRUD')[1]
-    .split('### Data Transforms:')[0]
-    .replaceAll(/\s+/gu, ' ');
-  assert.ok(dlo.includes('a DCSQL definition creates the output DLOs it declares'));
-  const transform = readme
-    .split('### Data Transforms: definition and schedule retrieve, deploy and delete')[1]
-    .split('### DLO-to-DMO mapping:')[0];
-  const section = transform.replaceAll(/\s+/gu, ' ');
+test('docs describe the transform file as native input that Salesforce decides on', () => {
+  const transform = readText('../docs/types/data-transform.md');
+  const section = typePage('data-transform');
   for (const text of [
+    'a DCSQL definition creates the output DLOs it declares',
     "the transform's native input as Salesforce returns it",
     'everything else is sent as written and Salesforce decides',
     '`UNSUPPORTED_TRANSFORM_INPUT`',
@@ -332,23 +363,21 @@ test('README documents the transform file as native input that Salesforce decide
   assert.match(transform, /sf data360 deploy -m data-transform:Example --target-org/u);
   assert.match(transform, /no match sends one create POST, one match updates that record/u);
   assert.match(transform, /`--allow-processing` is not needed/u);
-  assert.doesNotMatch(transform, /--transform-operation|--transform-target-id/u);
-  assert.match(transform, /server validation remains pending/u);
-  assert.doesNotMatch(
-    section,
-    /UNSUPPORTED_TRANSFORM_(?:SCHEDULE|FREQUENCY|DLO_STATE)|INCOMPATIBLE_TRANSFORM_DLO_FIELDS/u,
-  );
   assert.match(transform, /sf data360 delete -m data-transform:Name/u);
   assert.match(transform, /deletion-unconfirmed/u);
+  for (const file of currentDocuments) {
+    const text = flatDocument(file);
+    assert.doesNotMatch(text, /--transform-operation|--transform-target-id/u, file);
+    assert.doesNotMatch(
+      text,
+      /UNSUPPORTED_TRANSFORM_(?:SCHEDULE|FREQUENCY|DLO_STATE)|INCOMPATIBLE_TRANSFORM_DLO_FIELDS/u,
+      file,
+    );
+  }
 });
 
-test('README separates DLO field admission from live Text qualification', () => {
-  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  const dlo = readme
-    .split('### Data Lake Object (DLO): native definition CRUD')[1]
-    ?.split('### DLO-to-DMO mapping:')[0]
-    .replaceAll(/\s+/gu, ' ');
-  assert.ok(dlo);
+test('docs separate DLO field admission from live Text qualification', () => {
+  const dlo = typePage('dlo');
   for (const text of [
     'Local validation accepts nonempty `dataType` strings rather than a Text-only allowlist',
     'UPDATE admits label changes and ordinary nonprimary field additions',
@@ -361,19 +390,20 @@ test('README separates DLO field admission from live Text qualification', () => 
     'Field removal, existing-field changes and primary-key mutation are therefore refused with `UNSUPPORTED_DLO_FIELD_CHANGE`',
   ])
     assert.ok(dlo.includes(text), text);
-  assert.ok(!dlo.includes('Update supports a label change and new nonprimary Text fields'));
-  assert.ok(!dlo.includes('Other-category CREATE'));
-  assert.ok(!dlo.includes('additive-field acceptance here covers Text'));
+  for (const file of currentDocuments) {
+    const text = flatDocument(file);
+    for (const obsolete of [
+      'Update supports a label change and new nonprimary Text fields',
+      'Other-category CREATE',
+      'additive-field acceptance here covers Text',
+    ])
+      assert.ok(!text.includes(obsolete), `${file}: ${obsolete}`);
+  }
 });
 
 test('user docs no longer name the removed DLO create-category refusal', () => {
-  for (const path of ['../README.md', '../docs/capabilities.md', '../docs/artifact-format.md'])
-    assert.ok(
-      !readFileSync(new URL(path, import.meta.url), 'utf8').includes(
-        'UNSUPPORTED_DLO_CREATE_CATEGORY',
-      ),
-      path,
-    );
+  for (const file of [...currentDocuments, '../docs/capabilities.md', '../docs/artifact-format.md'])
+    assert.ok(!readText(file).includes('UNSUPPORTED_DLO_CREATE_CATEGORY'), file);
 });
 
 test('delete help discloses whole-mapping deletion and bounded qualification', async () => {
@@ -667,11 +697,8 @@ test('deploy wait-timeout parser requires positive integer seconds and help desc
   }
 });
 
-const flatDocument = (file) =>
-  readFileSync(new URL(file, import.meta.url), 'utf8').replaceAll(/\s+/gu, ' ');
-
 test('docs and deploy help describe mapped-field removal as one destructive change in the DMO position', async () => {
-  const readme = flatDocument('../README.md');
+  const dmo = typePage('dmo');
   const capabilities = flatDocument('../docs/capabilities.md');
   const artifact = flatDocument('../docs/artifact-format.md');
   for (const text of [
@@ -684,14 +711,17 @@ test('docs and deploy help describe mapped-field removal as one destructive chan
     'MAPPING_UNMAP_PLAN_CHANGED',
     'MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED',
     'Planned pair drop (Salesforce removes it with the field)',
-    '### Observed run times',
-    '`delete --field` on a field mapped by two mappings',
   ])
-    assert.ok(readme.includes(text), `missing README field-removal contract: ${text}`);
+    assert.ok(dmo.includes(text), `missing DMO field-removal contract: ${text}`);
   for (const text of ['DMO_FIELD_REMOVAL_SIDE_EFFECT', 'does not delete pairs one by one'])
     assert.ok(capabilities.includes(text), `missing capabilities contract: ${text}`);
   assert.ok(artifact.includes("Salesforce drops the field's pairs with it"));
-  for (const document of [readme, capabilities, artifact])
+  for (const file of [
+    ...currentDocuments,
+    '../docs/capabilities.md',
+    '../docs/artifact-format.md',
+  ]) {
+    const document = flatDocument(file);
     for (const obsolete of [
       'DMO_FIELD_REMOVAL_PENDING',
       'two stages',
@@ -701,7 +731,11 @@ test('docs and deploy help describe mapped-field removal as one destructive chan
       'its own CLI process',
       'about 11 minutes',
     ])
-      assert.ok(!document.includes(obsolete), `obsolete field-removal wording: ${obsolete}`);
+      assert.ok(
+        !document.includes(obsolete),
+        `obsolete field-removal wording in ${file}: ${obsolete}`,
+      );
+  }
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
   assert.match(
     Deploy.description,
@@ -713,7 +747,7 @@ test('docs describe lean retrieved files and local file removal on delete', asyn
   const readme = flatDocument('../README.md');
   const capabilities = flatDocument('../docs/capabilities.md');
   const artifact = flatDocument('../docs/artifact-format.md');
-  for (const document of [readme, capabilities, artifact]) {
+  for (const document of [capabilities, artifact])
     for (const text of [
       'MAPPING_GENERATED_PAIRS_UNPROVEN',
       'LOCAL_FILE_REMOVAL_FAILED',
@@ -722,6 +756,17 @@ test('docs describe lean retrieved files and local file removal on delete', asyn
       '`localFiles`',
     ])
       assert.ok(document.includes(text), text);
+  assert.ok(readme.includes('--keep-local-files'));
+  assert.ok(typePage('mapping').includes('MAPPING_GENERATED_PAIRS_UNPROVEN'));
+  const deletePage = typePage('delete');
+  for (const text of ['LOCAL_FILE_REMOVAL_FAILED', '`removedLocalFiles`', '`localFiles`'])
+    assert.ok(deletePage.includes(text), text);
+  for (const file of [
+    ...currentDocuments,
+    '../docs/capabilities.md',
+    '../docs/artifact-format.md',
+  ]) {
+    const document = flatDocument(file);
     for (const obsolete of [
       'Generated pairs are saved by retrieve',
       'A retrieved file, which lists the generated pairs',
@@ -733,9 +778,9 @@ test('docs describe lean retrieved files and local file removal on delete', asyn
       'and the local file is kept',
       'local-file deletion is performed',
     ])
-      assert.ok(!document.includes(obsolete), `obsolete wording: ${obsolete}`);
+      assert.ok(!document.includes(obsolete), `obsolete wording in ${file}: ${obsolete}`);
   }
-  assert.ok(readme.includes('### Local files after delete'));
+  assert.ok(readText('../README.md').includes('### Local files after delete'));
   assert.ok(artifact.includes('## Local files after delete'));
   const { default: Delete } = await import('../lib/commands/data360/delete.js');
   assert.ok(Delete.flags['keep-local-files']);

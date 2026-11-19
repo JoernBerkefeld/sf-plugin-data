@@ -953,7 +953,7 @@ Not qualified:
 ## mapping: native API 68 route
 
 - [x] Mappings retrieve, deploy and delete on the native route (default/auto API 68, numeric
-      pins from 61 kept); see the README CRUD table. There is no Metadata API mapping export.
+      pins from 61 kept); see the README type overview. There is no Metadata API mapping export.
 - [x] Mapping label (`spec.label`): the native routes carry none (GET without label; mapping
       PATCH/PUT 405; field-mappings PATCH and create ignore `label`; live API 68). Retrieve
       reads it with Metadata API `readMetadata` (10 names per call, warning and no label when
