@@ -510,3 +510,75 @@ test('publish help names the segment route, the wait and the unchanged CI path',
   assert.match(Publish.description, /draft: false/u);
   assert.doesNotMatch(Publish.description, /allow-processing/u);
 });
+
+test('--async posts once after the admission read and returns started: no reads, no waits', async () => {
+  const h = harness(
+    { metadata: 'segment:CliPub', async: true },
+    // The admission read reports an earlier publish; it must not appear as this one's status.
+    {
+      reads: () =>
+        runtime({ publishStatus: 'SUCCESS', lastPublishedEndDateTime: '2026-11-17T09:00:00.000Z' }),
+    },
+  );
+  const output = [];
+  h.command.jsonEnabled = () => false;
+  h.command.log = (line) => output.push(line);
+  const { result, exit } = await run(h.command);
+  assert.equal(result.status, 'processing', JSON.stringify(result));
+  assert.equal(exit, undefined);
+  assert.deepEqual(h.calls.posts, [id]);
+  assert.equal(h.calls.gets.length, 1);
+  assert.deepEqual(h.calls.waits, []);
+  assert.deepEqual(h.calls.progress, []);
+  assert.deepEqual(result.diagnostics.errors, []);
+  const [item] = result.result.items;
+  assert.equal(item.outcome, 'publishing');
+  assert.equal(item.mutation, 'acknowledged-processing');
+  assert.equal(item.waitedSeconds, undefined);
+  assert.deepEqual(item.segment, {
+    marketSegmentId: id,
+    segmentStatus: 'ACTIVE',
+    publishStatus: 'PUBLISHING',
+    jobId: 'job-1',
+  });
+  assert.equal(item.diagnostics[0].code, 'SEGMENT_PUBLISH_STARTED');
+  assert.match(item.diagnostics[0].message, /without waiting \(--async\)/u);
+  assert.deepEqual(output.slice(0, 3), [
+    'Publish: processing.',
+    'publishing: CliPub; mutation: acknowledged-processing.',
+    'publishStatus: PUBLISHING.',
+  ]);
+  assert.match(output[3], /^SEGMENT_PUBLISH_STARTED: /u);
+  assert.ok(output[3].includes(errorCodeInfo('SEGMENT_PUBLISH_STARTED').docs));
+});
+
+test('--async reports a 4xx refusal as without it, and --preview stays read-only', async () => {
+  const rejected = harness(
+    { metadata: 'segment:CliPub', async: true },
+    {
+      publish: () => {
+        throw new ConnectError('REQUEST_FAILED', 400);
+      },
+    },
+  );
+  const refusal = await run(rejected.command);
+  assert.equal(refusal.exit, 1);
+  assert.equal(refusal.result.status, 'failed');
+  assert.equal(refusal.result.diagnostics.errors[0].code, 'SEGMENT_PUBLISH_REJECTED');
+  assert.equal(rejected.calls.posts.length, 1);
+  assert.equal(rejected.calls.gets.length, 1);
+  const preview = harness({ metadata: 'segment:CliPub', async: true, preview: true });
+  const read = await run(preview.command);
+  assert.equal(read.result.status, 'success');
+  assert.equal(read.result.result.items[0].outcome, 'publish');
+  assert.deepEqual(preview.calls.posts, []);
+});
+
+test('--async and --wait-timeout are mutually exclusive flags', () => {
+  assert.deepEqual(Publish.flags.async.exclusive, ['wait-timeout']);
+  assert.deepEqual(Publish.flags['wait-timeout'].exclusive, ['async']);
+  assert.equal(Publish.flags.async.default, false);
+  assert.match(Publish.description, /--async/u);
+  assert.match(Publish.description, /SEGMENT_PUBLISH_STARTED/u);
+  assert.match(Publish.description, /CI_PUBLISH_STARTED/u);
+});

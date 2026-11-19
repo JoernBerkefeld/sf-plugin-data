@@ -13,6 +13,8 @@ export const segmentPublishWait = Object.freeze({ timeoutSeconds: 1800, interval
 
 export type SegmentPublishOptions = {
   preview: boolean;
+  /** Return once Salesforce accepted the publish, without reading its status afterwards. */
+  async?: boolean;
   /** Seconds to wait for SUCCESS or FAILED after Salesforce accepted the publish. */
   waitTimeoutSeconds: number;
   /** The segment file of a `-d` selection: the org must hold this definition. */
@@ -82,7 +84,8 @@ function explained(message: string): Error {
  * publish now (also while the segment is processing or counting): one POST to
  * `/ssot/segments/{marketSegmentId}/actions/publish` without a body, never resent, then status
  * reads until `publishStatus` is SUCCESS or FAILED for this publish, or the wait ends (still
- * processing, not failed).
+ * processing, not failed). With `async`, the command returns once Salesforce accepted the POST
+ * (started, not finished) and reads nothing afterwards.
  * @param {string} apiName Exact segment name.
  * @param {SegmentConnection} connection Fixed authenticated target.
  * @param {ApiVersionSelection} selection Exact API68 selection.
@@ -217,10 +220,12 @@ export async function publishSegment(
 
   // One POST; Salesforce decides. A failed or unknown answer is never resent.
   let jobId: string | undefined;
+  let acceptedStatus: string | undefined;
   try {
     const answer = await client.publishSegment(baseline.marketSegmentId);
     const body = (answer && typeof answer === 'object' ? answer : {}) as Record<string, unknown>;
     jobId = text(body.jobId);
+    acceptedStatus = text(body.publishStatus);
     if (body.success === false)
       return result(
         'failed',
@@ -252,6 +257,21 @@ export async function publishSegment(
           : 'The publish may have started. Read the segment before publishing again; nothing was resent.',
       ),
       error,
+    );
+  }
+
+  // --async: the publish started; nothing is read afterwards and nothing is resent.
+  if (options.async === true) {
+    // The status of the read before the POST belongs to an earlier publish; report the answer's.
+    describe(
+      { ...baseline, publishStatus: acceptedStatus, lastPublishedEndDateTime: undefined },
+      jobId,
+    );
+    return result(
+      'publishing',
+      'acknowledged-processing',
+      'SEGMENT_PUBLISH_STARTED',
+      `Salesforce accepted the publish of segment ${apiName}; it was started without waiting (--async) and runs on in Salesforce. It was not resent; read the segment later for the result.`,
     );
   }
 

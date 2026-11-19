@@ -607,6 +607,7 @@ for (const command of topics.flatMap((topic) => [
         '--source-dir',
         '--metadata',
         '--wait-timeout',
+        '--async',
         '--preview',
         '--api-version',
         '--dataspace',
@@ -924,6 +925,26 @@ test('publish parser blocks a missing source and unqualified scope before authen
     assert.equal(envelope.diagnostics.errors[0].code, code);
     assert.deepEqual(envelope.result.items, []);
   }
+});
+
+test('publish parser refuses --async with --wait-timeout before authentication', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      'bin/run.js',
+      'data360',
+      'publish',
+      '-m',
+      'segment:Synthetic',
+      '--async',
+      '--wait-timeout',
+      '60',
+      '--json',
+    ],
+    { encoding: 'utf8', env: environment },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /cannot also be provided when using --async/u);
 });
 
 test('Git selector flag declares parser exclusivity against both existing modes', async () => {

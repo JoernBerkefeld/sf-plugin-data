@@ -60,6 +60,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce ran the publish and reports publishStatus FAILED. Check the segment and its source DMO in Data Cloud before publishing again; nothing was resent.',
   SEGMENT_PUBLISH_REJECTED:
     'Salesforce refused the publish request; its answer is in the message. Fix the cause it names, then run the publish again; nothing was resent.',
+  SEGMENT_PUBLISH_STARTED:
+    'With --async the publish was started and Salesforce accepted it; the command did not wait for the result. Read the segment later for its publish status; nothing was resent.',
   SEGMENT_PUBLISH_STILL_PROCESSING:
     'Salesforce accepted the publish and is still processing it when --wait-timeout ran out. It did not fail and was not resent; read the segment later for the result.',
   SEGMENT_PUBLISH_UNCONFIRMED:

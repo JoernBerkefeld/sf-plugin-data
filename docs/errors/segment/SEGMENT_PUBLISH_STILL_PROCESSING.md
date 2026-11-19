@@ -36,3 +36,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/s
 ## Related codes
 
 - [`SEGMENT_PUBLISH_FAILED`](../segment/SEGMENT_PUBLISH_FAILED.md) — The publish ran and failed.
+- [`SEGMENT_PUBLISH_STARTED`](../segment/SEGMENT_PUBLISH_STARTED.md) — `--async` returned once the publish was started.

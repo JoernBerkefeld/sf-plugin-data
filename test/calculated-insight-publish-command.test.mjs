@@ -424,3 +424,28 @@ for (const pin of [undefined, 'auto'])
     assert.equal(result.status, 'success', JSON.stringify(result));
     assert.equal(h.calls.writes, 1);
   });
+test('publish --async sends the PATCH once and returns started without the ACTIVE read', async () => {
+  const h = await harness({ async: true });
+  const { result, exit } = await run(h.command);
+  assert.equal(result.status, 'processing', JSON.stringify(result));
+  assert.equal(exit, undefined);
+  assert.equal(h.calls.writes, 1);
+  // Only the admission read; nothing is read after the PATCH.
+  assert.equal(h.calls.reads, 1);
+  assert.equal(h.calls.bodies[0].options.draft, false);
+  assert.deepEqual(result.diagnostics.errors, []);
+  const [item] = result.result.items;
+  assert.equal(item.outcome, 'publishing');
+  assert.equal(item.mutation, 'acknowledged-processing');
+  assert.equal(item.diagnostics[0].code, 'CI_PUBLISH_STARTED');
+  assert.match(item.diagnostics[0].message, /--async/u);
+});
+test('publish --async leaves an ACTIVE insight with the file unchanged', async () => {
+  const h = await harness({ async: true });
+  h.active();
+  const { result, exit } = await run(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(exit, undefined);
+  assert.equal(h.calls.writes, 0);
+  assert.equal(result.result.items[0].outcome, 'unchanged');
+});

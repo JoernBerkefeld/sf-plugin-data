@@ -21,6 +21,8 @@ import type { CalculatedInsightTiming } from './settle-calculated-insight.js';
 
 export type CalculatedInsightPublishOptions = CalculatedInsightTiming & {
   preview?: boolean;
+  /** Return once Salesforce accepted the PATCH, without reading until ACTIVE. */
+  async?: boolean;
   verifyInput: () => Promise<void>;
   context?: CalculatedInsightReadContext;
   nativeClient?: Pick<CalculatedInsightClient, 'update'>;
@@ -28,8 +30,9 @@ export type CalculatedInsightPublishOptions = CalculatedInsightTiming & {
 export type CalculatedInsightPublishResult = {
   family: 'calculated-insight';
   route: { apiVersion: '68.0'; method: 'PATCH'; resource: 'calculated-insights' };
-  outcome: 'publish' | 'published' | 'unchanged' | 'blocked' | 'failed';
-  mutation: 'not-attempted' | 'confirmed-published' | 'unknown' | 'rejected';
+  outcome: 'publish' | 'published' | 'publishing' | 'unchanged' | 'blocked' | 'failed';
+  mutation:
+    'not-attempted' | 'confirmed-published' | 'acknowledged-processing' | 'unknown' | 'rejected';
   diagnostics: Array<{ code: string; message: string }>;
 };
 
@@ -37,7 +40,8 @@ export type CalculatedInsightPublishResult = {
  * Publish one existing insight: an ACTIVE insight that holds every key of the document is
  * unchanged; otherwise one PATCH sends the document with `draft: false` (the files' SQL,
  * label and schedule become the active definition) and the insight is read until it is
- * ACTIVE with the document. Never creates; one attempt, no replay or rollback.
+ * ACTIVE with the document (with `async`, not read after the accepted PATCH). Never creates;
+ * one attempt, no replay or rollback.
  * @param {unknown} value Document from the files (JSON with its SQL).
  * @param {CalculatedInsightConnection} connection API 68 connection.
  * @param {ApiVersionSelection} selection Route selection (68.0).
@@ -77,9 +81,11 @@ export async function publishCalculatedInsight(
                   const next =
                     mutation === 'rejected'
                       ? rejectedNextAction
-                      : mutation === 'unknown'
-                        ? 'CI publication may have occurred; no replay or rollback was performed.'
-                        : 'CI publication was not attempted.';
+                      : mutation === 'acknowledged-processing'
+                        ? 'Salesforce accepted the publish; it was sent without waiting until the insight is ACTIVE (--async). It was not resent; run publish with --preview later to check.'
+                        : mutation === 'unknown'
+                          ? 'CI publication may have occurred; no replay or rollback was performed.'
+                          : 'CI publication was not attempted.';
                   return getConnectDiagnostic(error) ? operationDiagnostic(error, next) : next;
                 })(),
               },
@@ -121,6 +127,8 @@ export async function publishCalculatedInsight(
       if (rejectedWrite(error)) return result('failed', 'rejected', 'REQUEST_FAILED', error);
       throw error;
     }
+    if (options.async === true)
+      return result('publishing', 'acknowledged-processing', 'CI_PUBLISH_STARTED');
     await settleCalculatedInsight(context, desired, 'ACTIVE', options);
     return result('published', 'confirmed-published');
   } catch (error) {

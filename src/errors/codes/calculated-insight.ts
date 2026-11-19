@@ -18,6 +18,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The calculated insight does not exist in the target org. Check the API name and the target org, then rerun the retrieve.',
   CI_PUBLICATION_UNCONFIRMED:
     'The publish request was sent but the plugin could not confirm the calculated insight is ACTIVE. Do not resend; run publish with --preview to check its state.',
+  CI_PUBLISH_STARTED:
+    'With --async the publish was sent and Salesforce accepted it; the command did not wait until the calculated insight is ACTIVE. Run publish with --preview later: unchanged means it is ACTIVE.',
   CI_RUNTIME_UNKNOWN:
     'The calculated insight could not be read from the org, and the answer was not a clear not-found. Check access and the API name, then rerun.',
   CI_SETTLEMENT_MISMATCH:

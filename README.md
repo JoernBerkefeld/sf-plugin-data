@@ -348,8 +348,8 @@ The few things to know per type. Each type page has the full rules and error cod
 - Create and update need `--allow-processing`. A deployed schedule makes the segment publish in
   the target org.
 - The DMO the segment is built on must exist in the target org.
-- `sf data360 publish -m segment:<Name>` publishes and waits for the result;
-  `sf data360 segment members export -m segment:<Name>` writes the members as CSV or JSON.
+- `sf data360 publish -m segment:<Name>` publishes and waits for the result (`--async` starts
+  it and returns at once); `sf data360 segment members export -m segment:<Name>` writes the members as CSV or JSON.
 - Reference: [Segments](docs/types/segment.md).
 
 ### Data graphs

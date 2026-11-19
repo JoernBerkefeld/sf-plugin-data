@@ -9,7 +9,7 @@ Segments use API 68 only: `--api-version auto` or `68.0`; any other version is r
 - `sf data360 retrieve -m segment:<Name>` reads one segment; bare `-m segment` reads every segment of the run's data space the API lists (200 per page; one failing segment never blocks the others).
 - `sf data360 deploy -m segment:<Name>` (or `--source-dir <file>`) creates or updates the segment. Create and update need `--allow-processing`.
 - `sf data360 delete -m segment:<Name>` deletes the segment.
-- `sf data360 publish -m segment:<Name>` publishes the segment and waits for the result.
+- `sf data360 publish -m segment:<Name>` publishes the segment and waits for the result; `--async` starts the publish and returns at once.
 - `sf data360 segment members export -m segment:<value>` writes the members of a published segment as CSV or JSON rows.
 
 ## Files
@@ -120,11 +120,12 @@ Check with `--preview` first. The segment is read by its exact name:
 
 ## Publish
 
-`sf data360 publish` starts one publish of one segment and waits for its result.
+`sf data360 publish` starts one publish of one segment and waits for its result, or, with `--async`, returns once it started.
 
 ```sh
 sf data360 publish -o target -m segment:Example_Segment --preview --json
 sf data360 publish -o target -m segment:Example_Segment --wait-timeout 3600
+sf data360 publish -o target -m segment:Example_Segment --async --json
 ```
 
 - `-m segment:<Name>` publishes the segment as the org holds it. `-d data360/segments/<Name>.segment.json` (or one of its SQL files) requires the org to hold the definition of the file (`SEGMENT_PUBLISH_DEFINITION_MISMATCH` otherwise: deploy it first). A file retrieved as-is is refused with `VERBATIM_NOT_DEPLOYABLE`.
@@ -132,6 +133,7 @@ sf data360 publish -o target -m segment:Example_Segment --wait-timeout 3600
 - Salesforce decides whether the segment can be published now, also while it is `PROCESSING` or `COUNTING`. A refusal is `SEGMENT_PUBLISH_REJECTED` with Salesforce's text.
 - The command then reads the segment every 30 seconds (progress on stderr) until `publishStatus` is `SUCCESS` (`published`) or `FAILED` (`SEGMENT_PUBLISH_FAILED`).
 - `--wait-timeout <seconds>` sets that wait (default 1800). When it runs out, the result is `publishing` with status `processing` and exit code 0 (`SEGMENT_PUBLISH_STILL_PROCESSING`): still processing, not failed, and not resent.
+- `--async` returns right after Salesforce accepted the POST and reads nothing afterwards: the result is `publishing` (mutation `acknowledged-processing`) with status `processing` and exit code 0 (`SEGMENT_PUBLISH_STARTED`): started, not finished, and not resent. Read the segment later for the result. `--async` and `--wait-timeout` cannot be combined; a refusal of the POST is reported as without `--async`.
 - An answer or status read that cannot be confirmed is `SEGMENT_PUBLISH_UNCONFIRMED`; read the segment before publishing again.
 - `--preview` reads the segment and reports what would be published without publishing.
 

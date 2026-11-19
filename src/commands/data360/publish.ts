@@ -44,13 +44,13 @@ export type PublishEnvelope = {
 
 /**
  * Publish one native Calculated Insight draft (JSON plus SQL file) without deploying or
- * scheduling it, or publish one segment and wait for the result.
+ * scheduling it, or publish one segment and wait for the result (--async: return once started).
  */
 export default class Publish extends SfCommand<PublishEnvelope> {
   public static readonly aliases = ['datacloud:publish', 'd360:publish', 'dc:publish'];
   public static readonly summary = 'Publish one Data360 Calculated Insight draft or one segment.';
   public static readonly description =
-    'Segment: -m segment:Name (the segment as the org holds it) or -d data360/segments/Name.segment.json (or one of its .segment.<model>.sql files; the org must hold the definition of the file, otherwise SEGMENT_PUBLISH_DEFINITION_MISMATCH: deploy it first). A file retrieved as-is (verbatim) is refused with VERBATIM_NOT_DEPLOYABLE. --api-version auto (68.0) or 68.0, in the run data space (--dataspace; a segment or file of another data space is SEGMENT_DATASPACE_MISMATCH). The segment is read by name (absent is SEGMENT_PUBLISH_ADMISSION_FAILED), then one API 68 POST /ssot/segments/{marketSegmentId}/actions/publish without a body starts the publish; it runs on command, needs no acknowledgement flag and is never resent. Salesforce decides whether the segment can be published now, also while it is PROCESSING or COUNTING; a 4xx answer is reported with its text (SEGMENT_PUBLISH_REJECTED). The segment is then read every 30 seconds (progress on stderr) until publishStatus is SUCCESS (published) or FAILED (SEGMENT_PUBLISH_FAILED) for this publish. --wait-timeout sets that wait in whole seconds (default 1800; a publish took about 15 minutes in a test); when it runs out the result is publishing (status processing, exit 0, SEGMENT_PUBLISH_STILL_PROCESSING): still processing, not failed, and not resent. Members are readable only after SUCCESS. --preview reads the segment and reports what would be published without publishing. Calculated insight: requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and the run data space (--dataspace, default: default; --data-space is a compatibility alias), which c__dataSpace in the file must name (CI_DATASPACE_MISMATCH otherwise). The insight must exist (create it with sf data360 deploy, --draft for a draft). An ACTIVE insight that holds every key of the file is unchanged; otherwise one API 68 PATCH sends the file (translated like deploy) with draft: false, and the insight is read until it is ACTIVE with the file. Salesforce decides; a 4xx answer is reported as rejected. --preview is read-only. An unknown outcome is not retried or rolled back.';
+    'Segment: -m segment:Name (the segment as the org holds it) or -d data360/segments/Name.segment.json (or one of its .segment.<model>.sql files; the org must hold the definition of the file, otherwise SEGMENT_PUBLISH_DEFINITION_MISMATCH: deploy it first). A file retrieved as-is (verbatim) is refused with VERBATIM_NOT_DEPLOYABLE. --api-version auto (68.0) or 68.0, in the run data space (--dataspace; a segment or file of another data space is SEGMENT_DATASPACE_MISMATCH). The segment is read by name (absent is SEGMENT_PUBLISH_ADMISSION_FAILED), then one API 68 POST /ssot/segments/{marketSegmentId}/actions/publish without a body starts the publish; it runs on command, needs no acknowledgement flag and is never resent. Salesforce decides whether the segment can be published now, also while it is PROCESSING or COUNTING; a 4xx answer is reported with its text (SEGMENT_PUBLISH_REJECTED). The segment is then read every 30 seconds (progress on stderr) until publishStatus is SUCCESS (published) or FAILED (SEGMENT_PUBLISH_FAILED) for this publish. --wait-timeout sets that wait in whole seconds (default 1800; a publish took about 15 minutes in a test); when it runs out the result is publishing (status processing, exit 0, SEGMENT_PUBLISH_STILL_PROCESSING): still processing, not failed, and not resent. --async returns right after Salesforce accepted the POST, without any read afterwards: outcome publishing, mutation acknowledged-processing, status processing, exit 0, SEGMENT_PUBLISH_STARTED (started, not finished); --async and --wait-timeout cannot be combined. Members are readable only after SUCCESS. --preview reads the segment and reports what would be published without publishing. Calculated insight: requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and the run data space (--dataspace, default: default; --data-space is a compatibility alias), which c__dataSpace in the file must name (CI_DATASPACE_MISMATCH otherwise). The insight must exist (create it with sf data360 deploy, --draft for a draft). An ACTIVE insight that holds every key of the file is unchanged; otherwise one API 68 PATCH sends the file (translated like deploy) with draft: false, and the insight is read until it is ACTIVE with the file; with --async it is not read after Salesforce accepted the PATCH (outcome publishing, mutation acknowledged-processing, status processing, exit 0, CI_PUBLISH_STARTED). Salesforce decides; a 4xx answer is reported as rejected. --preview is read-only. An unknown outcome is not retried or rolled back.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -65,7 +65,14 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       summary: 'One segment to publish as the org holds it: segment:Name.',
       exclusive: ['source-dir'],
     }),
+    async: Flags.boolean({
+      default: false,
+      exclusive: ['wait-timeout'],
+      summary:
+        'Start the publish and return at once (status processing, exit 0) without waiting for the result; not with --wait-timeout.',
+    }),
     'wait-timeout': Flags.integer({
+      exclusive: ['async'],
       summary: `Segment only: seconds to wait for SUCCESS or FAILED (default ${segmentPublishWait.timeoutSeconds}).`,
     }),
     'api-version': Flags.string({ summary: 'Native lifecycle route: auto (68.0) or 68.0.' }),
@@ -186,6 +193,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         {
           context,
           preview: flags.preview,
+          ...(flags.async ? { async: true } : {}),
           verifyInput,
         },
       );
@@ -203,10 +211,14 @@ export default class Publish extends SfCommand<PublishEnvelope> {
           ? 'failed'
           : result.outcome === 'blocked'
             ? 'blocked'
-            : 'success';
-      envelope.diagnostics.errors.push(
-        ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
-      );
+            : result.outcome === 'publishing'
+              ? 'processing'
+              : 'success';
+      // A publish started with --async is reported on the item, not as an error.
+      if (result.outcome !== 'publishing')
+        envelope.diagnostics.errors.push(
+          ...result.diagnostics.map((diagnostic) => ({ ...diagnostic, retryable: false as const })),
+        );
     } catch (error) {
       envelope.diagnostics.errors.push({
         code: error instanceof DeployInputError ? error.code : code,
@@ -274,6 +286,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
         {
           preview: flags.preview,
+          ...(flags.async ? { async: true } : {}),
           waitTimeoutSeconds: flags['wait-timeout'] ?? segmentPublishWait.timeoutSeconds,
           desired,
           dataSpace,
@@ -330,14 +343,12 @@ export default class Publish extends SfCommand<PublishEnvelope> {
       this.log(`Publish${preview ? ' preview' : ''}: ${envelope.status}.`);
       for (const item of envelope.result.items) {
         this.log(`${item.outcome}: ${item.identity.apiName}; mutation: ${item.mutation}.`);
-        if (item.family === 'segment') {
-          if (item.segment?.publishStatus)
-            this.log(
-              `publishStatus: ${item.segment.publishStatus}${item.waitedSeconds === undefined ? '' : ` after ${item.waitedSeconds} s`}.`,
-            );
-          if (item.outcome === 'publishing')
-            for (const diagnostic of item.diagnostics) this.log(formatDiagnostic(diagnostic));
-        }
+        if (item.family === 'segment' && item.segment?.publishStatus)
+          this.log(
+            `publishStatus: ${item.segment.publishStatus}${item.waitedSeconds === undefined ? '' : ` after ${item.waitedSeconds} s`}.`,
+          );
+        if (item.outcome === 'publishing')
+          for (const diagnostic of item.diagnostics) this.log(formatDiagnostic(diagnostic));
       }
       for (const diagnostic of envelope.diagnostics.errors) this.log(formatDiagnostic(diagnostic));
     }
@@ -350,6 +361,7 @@ type PublishFlags = {
   'source-dir'?: string;
   metadata?: string;
   'wait-timeout'?: number;
+  async: boolean;
   'api-version'?: string;
   dataspace?: string;
   preview: boolean;
