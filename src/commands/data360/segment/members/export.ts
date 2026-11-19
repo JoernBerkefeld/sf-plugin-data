@@ -323,7 +323,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
       let rows: number;
       if (flags['include-details']) {
         route('metadata.get');
-        const { sql, columns } = await discoverMemberDetails(sender, version, segment);
+        const { sql, columns } = await discoverMemberDetails(sender, version, segment, dataSpace);
         const headers = memberColumnHeaders(columns, flags['column-headers']);
         envelope.result.columnHeaders = flags['column-headers'];
         envelope.result.columns = columns.map((column, index) => ({

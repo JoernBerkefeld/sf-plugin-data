@@ -16,7 +16,8 @@ Retrieve never refuses an object because the plugin cannot represent it. When th
 {
   "schemaVersion": 1,
   "kind": "dmo",
-  "identity": { "dataSpace": "default", "apiName": "Example__dlm" },
+  "c__dataSpace": "default",
+  "identity": { "apiName": "Example__dlm" },
   "verbatim": { "reason": "INVALID_DMO_RESPONSE", "native": { "...": "..." } }
 }
 ```

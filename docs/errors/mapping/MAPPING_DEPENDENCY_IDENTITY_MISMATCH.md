@@ -18,7 +18,7 @@ Pairs are checked against the fields of these objects. Using the wrong object's 
 
 ## How to fix
 
-1. Check `sourceEntityDeveloperName`, `targetEntityDeveloperName` and `identity.dataSpace` in the mapping file.
+1. Check `sourceEntityDeveloperName`, `targetEntityDeveloperName` and `c__dataSpace` in the mapping file.
 2. Check that the objects exist in that data space of the org.
 3. Rerun the deploy; if it repeats, the org returned an inconsistent read.
 

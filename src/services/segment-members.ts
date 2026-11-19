@@ -375,12 +375,15 @@ function metadataEntity(response: unknown, name: string): Record<string, unknown
  * @param {BoundSsot} sender Bound transport.
  * @param {string} version Numeric API version.
  * @param {SegmentSummary} segment Segment read.
+ * @param {string} [dataSpace] The run's data space; every metadata read names it (live API 68:
+ * a DMO of another data space answers HTTP 404 without `dataspace=`).
  * @returns {Promise<{ sql: string; columns: DetailColumn[] }>} Detail SQL and its output columns.
  */
 export async function discoverMemberDetails(
   sender: BoundSsot,
   version: string,
   segment: SegmentSummary,
+  dataSpace = 'default',
 ): Promise<{ sql: string; columns: DetailColumn[] }> {
   const membership = segment.membershipDmo;
   const target = segment.segmentOn;
@@ -402,6 +405,7 @@ export async function discoverMemberDetails(
         `/services/data/v${version}/ssot/metadata${query([
           ['entityType', 'DataModelObject'],
           ['entityName', name],
+          ['dataspace', dataSpace],
         ])}`,
       ),
       name,

@@ -2080,7 +2080,13 @@ the segment's own data space.
   space (`ds2_Individual__dlm`, `FirstName__c`); a DBT segment takes its segmentOn DMO from the
   SQL `FROM`.
 - **Segment members export** (`--dataspace`) reads the segment of the run's data space and runs
-  the detail query (`/ssot/query-sql`) with `dataspace=` of that data space.
+  the detail query (`/ssot/query-sql`) with `dataspace=` of that data space. With
+  `--include-details`, the metadata reads of the membership DMO and the segment's DMO
+  (`/ssot/metadata`) name that data space too: without it Salesforce answers HTTP 404 for a DMO
+  outside `default` (live API 68).
+- **Create** of the first segment on a DMO: Salesforce generates the membership DMOs (latest
+  and history table) a few seconds after the POST (live API 68). While they are missing, the
+  read after the create is repeated within its budget; any other difference fails at once.
 
 A data transform's name is unique in the org, and the transform list ignores a data space. Its
 file keeps Salesforce's create input in `definition` as read and names its data space in
@@ -2094,7 +2100,8 @@ that read fails); a transform without any data space there (a system transform) 
 Retrieve (bare `data-transform`) keeps the transforms of the run's data space; retrieve, deploy
 and delete refuse a file, or an org transform, of another data space
 (`TRANSFORM_DATASPACE_MISMATCH`, never a verbatim file), also when the org transform of that
-name is in another data space than the file. A create outside `default` needs
+name is in another data space than the file. On retrieve that is a failed item that names both
+data spaces; the other selected transforms still run. A create outside `default` needs
 `definition.dataSpaceName`, the only way a create names its data space. Names are sent as stored; a transform SQL in a non-default data space
 that names the default spelling of a standard DMO reads the default object (DCSQL accepts
 both spellings, live API 68), which the plugin does not rewrite.
@@ -2142,8 +2149,12 @@ data space, and the file names them as Salesforce stores them there. The old
   a DMO the read names in another data space, or a DLO source that does not belong to it, is
   `IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE`.
 
-Segments, segment members, transforms, data graphs and identity resolution in a non-default
-data space are not yet run live through the plugin.
+Segments, segment members and transforms in a non-default data space are run live through the
+plugin at API 68: a DBT segment's create, retrieve, unchanged redeploy, update and delete, a
+basic members export, and a DCSQL transform's create, retrieve, unchanged redeploy and delete
+(DB entry `data360:plugin-dataspace-segment-transform-acceptance-api68`). Publishing a segment
+there is not yet run live, nor are data graphs and identity resolution in a non-default data
+space.
 
 The old `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`), and a filtered
 membership `{ "name": …, "filter": … }` is recognised but not deployed yet
@@ -2909,16 +2920,13 @@ one segment failing never blocks the others), to save one portable
 {
   "schemaVersion": 1,
   "kind": "segment",
-  "identity": { "dataSpace": "default", "apiName": "Example_Segment" },
+  "c__dataSpace": "default",
+  "identity": { "apiName": "Example_Segment" },
   "spec": {
     "displayName": "Example Segment",
     "description": "",
     "segmentType": "DBT",
-    "segmentOn": {
-      "kind": "dmo",
-      "dataSpace": "default",
-      "apiName": "ssot__Individual__dlm"
-    },
+    "segmentOn": { "kind": "dmo", "apiName": "ssot__Individual__dlm" },
     "models": [{ "name": "Example_Segment" }],
     "lookbackPeriod": "P90D"
   }
@@ -3027,16 +3035,13 @@ its lookback (`lookbackPeriod`) is sent as written:
 {
   "schemaVersion": 1,
   "kind": "segment",
-  "identity": { "dataSpace": "default", "apiName": "Example_Ui_Segment" },
+  "c__dataSpace": "default",
+  "identity": { "apiName": "Example_Ui_Segment" },
   "spec": {
     "displayName": "Example UI Segment",
     "description": "",
     "segmentType": "UI",
-    "segmentOn": {
-      "kind": "dmo",
-      "dataSpace": "default",
-      "apiName": "UnifiedssotIndividualMkt__dlm"
-    },
+    "segmentOn": { "kind": "dmo", "apiName": "UnifiedssotIndividualMkt__dlm" },
     "includeCriteria": {
       "type": "TextComparison",
       "subject": {

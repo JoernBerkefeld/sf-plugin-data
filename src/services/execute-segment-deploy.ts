@@ -108,6 +108,52 @@ function preservation(
 }
 
 /**
+ * Whether a membership table is not generated yet (absent, null or empty).
+ * @param {unknown} table Table name as read.
+ * @returns {boolean} The table is still missing.
+ */
+const missingTable = (table: unknown): boolean =>
+  table === undefined || table === null || table === '';
+
+/**
+ * Salesforce generates the membership DMOs of the first segment on a DMO a few seconds after
+ * the create (live API 68: latest table ~2.5 s, history table ~6 s after the POST), so a read
+ * may show `segmentMembershipDmo` null or with a table still empty. Drop such a not yet
+ * generated value so the read projects; any other shape stays for the projection to refuse.
+ * @param {unknown} response Exact segment GET or POST response.
+ * @returns {unknown} The response, without a not yet generated membership value.
+ */
+function withoutPendingMembership(response: unknown): unknown {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return response;
+  const segments = (response as Record<string, unknown>).segments;
+  if (!Array.isArray(segments)) return response;
+  const pending = (value: unknown): boolean => {
+    if (value === null) return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const tables = value as Record<string, unknown>;
+    return (
+      Object.keys(tables).every((key) => ['historyTable', 'latestTable'].includes(key)) &&
+      ['historyTable', 'latestTable'].every(
+        (key) => missingTable(tables[key]) || (typeof tables[key] === 'string' && tables[key]),
+      ) &&
+      ['historyTable', 'latestTable'].some((key) => missingTable(tables[key]))
+    );
+  };
+  return {
+    ...(response as Record<string, unknown>),
+    segments: segments.map((segment: unknown) => {
+      if (!segment || typeof segment !== 'object' || Array.isArray(segment)) return segment;
+      const raw = segment as Record<string, unknown>;
+      if (!Object.hasOwn(raw, 'segmentMembershipDmo') || !pending(raw.segmentMembershipDmo))
+        return segment;
+      const rest = { ...raw };
+      delete rest.segmentMembershipDmo;
+      return rest;
+    }),
+  };
+}
+
+/**
  * Validate the observed partial PATCH acknowledgement, not an independent GET snapshot.
  * Only segmentOnApiName and generated membership references may be omitted by PATCH.
  * @param {unknown} value Exact PATCH response.
@@ -329,7 +375,7 @@ export async function executeSegmentDeploy(
     // Exactly one attempt. An uncertain response remains unknown even after reconciliation.
     if (creating) {
       const response = projectSegment(
-        {
+        withoutPendingMembership({
           segments: [
             await (
               options.create ??
@@ -337,7 +383,7 @@ export async function executeSegmentDeploy(
                 client.createSegment(document, children))
             )(desired, ids),
           ],
-        },
+        }),
         desired.identity.apiName,
         'deploy',
         names,
@@ -378,7 +424,8 @@ export async function executeSegmentDeploy(
     creating ? 'SEGMENT_CREATE_UNCONFIRMED' : 'SEGMENT_UPDATE_UNCONFIRMED',
     writeFailure,
   );
-  const matches = (runtime: Record<string, unknown>): boolean => {
+  // `membership: false` checks everything except the generated membership DMOs of a create.
+  const matches = (runtime: Record<string, unknown>, membership = true): boolean => {
     const observed = preservation(runtime, desired);
     if (!creating)
       return (
@@ -389,7 +436,7 @@ export async function executeSegmentDeploy(
     return (
       responseQualified &&
       Object.entries(baseline).every(([key, value]) => isDeepStrictEqual(observed[key], value)) &&
-      Object.hasOwn(runtime, 'segmentMembershipDmo') &&
+      (!membership || Object.hasOwn(runtime, 'segmentMembershipDmo')) &&
       runtime.segmentOnId === bindings[0].targetId
     );
   };
@@ -419,8 +466,9 @@ export async function executeSegmentDeploy(
         return expired();
       if (attempt > 0) await delay(segmentPollBudget.intervalMs);
       if (now() - started >= segmentPollBudget.timeoutMs) return expired();
+      const fetched = await read(desired.identity.apiName);
       const observed = projectSegment(
-        await read(desired.identity.apiName),
+        creating ? withoutPendingMembership(fetched) : fetched,
         desired.identity.apiName,
         'deploy',
         names,
@@ -433,8 +481,10 @@ export async function executeSegmentDeploy(
       )
         return expired();
       if (creating && !responseQualified) return unknown;
-      if (!matches(observed.runtime) || !carriesDefinition(observed.candidate, desired))
+      if (!carriesDefinition(observed.candidate, desired) || !matches(observed.runtime, false))
         return result('failed', 'unknown', 'SEGMENT_READBACK_MISMATCH', writeFailure);
+      // Only the generated membership DMOs are still missing: read again within the budget.
+      if (!matches(observed.runtime)) continue;
       if (['PROCESSING', 'COUNTING'].includes(String(observed.runtime.segmentStatus))) {
         if (!responseQualified) continue;
         if (!isDeepStrictEqual(bindings, await bindAll(desired)))

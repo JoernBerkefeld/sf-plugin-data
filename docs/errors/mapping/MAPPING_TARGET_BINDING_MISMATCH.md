@@ -19,7 +19,7 @@ A mapping with another binding is a different mapping. Writing to it would chang
 ## How to fix
 
 1. Read the expected and observed values in the message.
-2. Check `sourceEntityDeveloperName`, `targetEntityDeveloperName` and `identity.dataSpace` in your file.
+2. Check `sourceEntityDeveloperName`, `targetEntityDeveloperName` and `c__dataSpace` in your file.
 3. Inspect the mapping in the org, then rerun.
 
 ## Example output

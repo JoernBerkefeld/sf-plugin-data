@@ -18,7 +18,8 @@ The file holds the read answer as Salesforce returned it:
 {
   "schemaVersion": 1,
   "kind": "segment",
-  "identity": { "dataSpace": "default", "apiName": "Example" },
+  "c__dataSpace": "default",
+  "identity": { "apiName": "Example" },
   "verbatim": { "reason": "UNMODELLED_RESPONSE", "native": { "...": "..." } }
 }
 ```

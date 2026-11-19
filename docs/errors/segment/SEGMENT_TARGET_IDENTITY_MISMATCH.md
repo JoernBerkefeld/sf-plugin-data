@@ -18,7 +18,7 @@ An update must apply to exactly the segment the file names. The plugin does not 
 
 ## How to fix
 
-1. Check `identity.apiName` and `identity.dataSpace` in the file; the data space must be `default`.
+1. Check `identity.apiName` and `c__dataSpace` in the file; the data space must be the run's (`--dataspace`, `default` without it).
 2. Check the segment API name in the org, including upper and lower case.
 3. Preview the deploy again.
 

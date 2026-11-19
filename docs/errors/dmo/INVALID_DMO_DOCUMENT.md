@@ -12,7 +12,7 @@
 
 The plugin turns every DMO it reads from the org into its portable file format and checks the result:
 
-- `identity.apiName` ends in `__dlm`; `identity.dataSpace` is a non-empty name without leading or trailing spaces or control characters;
+- `identity.apiName` ends in `__dlm`; `c__dataSpace` is a non-empty name without leading or trailing spaces or control characters;
 - `spec.label` and `spec.category` are non-empty; `spec.description`, when present, is text; `spec.fields` has at least one field;
 - no runtime values (such as IDs or status) appear in `spec`.
 

@@ -195,8 +195,90 @@ test('API68 CREATE requires fresh absence, one POST and independent identity/con
     assert.equal(result.route.method, 'POST');
     assert.equal(result.serverProcessing, mode === 'processing' ? true : undefined);
     if (mode === 'conflict') assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_CONFLICT');
-    if (!blocked) assert.equal(reads, mode === 'conflict' ? 0 : 1);
+    // A read without the generated membership DMOs is read again until the budget ends.
+    if (!blocked)
+      assert.equal(
+        reads,
+        mode === 'conflict' ? 0 : mode === 'membership' ? segmentPollBudget.reads : 1,
+        mode,
+      );
+    if (mode === 'membership')
+      assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_UNCONFIRMED');
     assert.deepEqual(desired, before);
+  }
+});
+
+test('API68 CREATE reads again while the generated membership DMOs are not there yet', async () => {
+  // Live API 68: the first segment on a DMO gets its latest table ~2.5 s and its history table
+  // ~6 s after the POST; until then the GET omits segmentMembershipDmo or leaves a table empty.
+  for (const mode of ['late', 'never', 'timeout', 'other-change']) {
+    const desired = document();
+    const membership = { historyTable: 'history', latestTable: 'latest' };
+    const states = [
+      undefined,
+      // eslint-disable-next-line unicorn/no-null -- A GET may report a table not generated yet as null.
+      { historyTable: null, latestTable: 'latest' },
+      { historyTable: '', latestTable: 'latest' },
+      membership,
+    ];
+    let reads = 0;
+    let delays = 0;
+    let clock = 0;
+    const result = await executeSegmentDeploy(
+      desired,
+      { ...connection, getApiVersion: () => '68.0' },
+      '68.0',
+      'default',
+      {
+        allowProcessing: true,
+        verifyInput: async () => {},
+        bind: async () => [{ targetId: 'target-local', identity: desired.spec.segmentOn }],
+        acquire: async () =>
+          reads === 0
+            ? absent()
+            : {
+                candidate: desired,
+                blockers: [],
+                expectations: {
+                  runtime: {
+                    ...runtime(desired),
+                    segmentOnId: 'target-local',
+                    segmentMembershipDmo: membership,
+                  },
+                },
+              },
+        create: async () => ({ ...runtime(desired, 'PROCESSING'), segmentOnId: 'target-local' }),
+        read: async () => {
+          const state = mode === 'late' ? states[Math.min(reads, states.length - 1)] : undefined;
+          reads++;
+          const raw = { ...runtime(desired), segmentOnId: 'target-local' };
+          if (state !== undefined) raw.segmentMembershipDmo = state;
+          if (mode === 'other-change') raw.description = 'not-desired';
+          return { segments: [raw] };
+        },
+        now: () => clock,
+        delay: async (milliseconds) => {
+          assert.equal(milliseconds, segmentPollBudget.intervalMs);
+          delays++;
+          clock += mode === 'timeout' ? segmentPollBudget.timeoutMs / 2 : milliseconds;
+        },
+      },
+    );
+    if (mode === 'late') {
+      assert.equal(result.outcome, 'created', mode);
+      assert.equal(result.mutation, 'confirmed-created', mode);
+      assert.equal(reads, states.length, mode);
+      assert.equal(delays, states.length - 1, mode);
+    } else if (mode === 'other-change') {
+      // Any other difference still fails on the first read.
+      assert.equal(result.diagnostics[0].code, 'SEGMENT_READBACK_MISMATCH', mode);
+      assert.equal(reads, 1, mode);
+    } else {
+      assert.equal(result.outcome, 'failed', mode);
+      assert.equal(result.mutation, 'unknown', mode);
+      assert.equal(result.diagnostics[0].code, 'SEGMENT_CREATE_UNCONFIRMED', mode);
+      assert.equal(reads, mode === 'never' ? segmentPollBudget.reads : 2, mode);
+    }
   }
 });
 

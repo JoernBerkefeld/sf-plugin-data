@@ -520,6 +520,8 @@ test('--include-details joins the membership DMO to the segment DMO through one 
   );
   const post = calls.find(({ method }) => method === 'POST');
   assert.equal(post.url.search, '?dataspace=default');
+  for (const { url } of calls.filter(({ url }) => url.pathname === `${base}/metadata`))
+    assert.equal(url.searchParams.get('dataspace'), 'default');
   const { sql, rowLimit } = JSON.parse(post.body);
   assert.equal(rowLimit, 2);
   assert.match(
@@ -559,6 +561,16 @@ test('--include-details in a non-default data space reads the ds2_ segment and q
   const queries = calls.filter(({ url }) => url.pathname.startsWith(`${base}/query-sql`));
   assert.ok(queries.length >= 3);
   for (const { url } of queries) assert.equal(url.searchParams.get('dataspace'), 'dataspace2');
+  // Live API 68: /ssot/metadata answers HTTP 404 for a DMO of another data space without
+  // dataspace=, so both metadata reads (membership DMO and segment DMO) name the run's space.
+  const reads = calls.filter(({ url }) => url.pathname === `${base}/metadata`);
+  assert.deepEqual(
+    reads.map(({ url }) => [url.searchParams.get('entityName'), url.searchParams.get('dataspace')]),
+    [
+      ['Seg_SM_1__dlm', 'dataspace2'],
+      ['Person__dlm', 'dataspace2'],
+    ],
+  );
 });
 
 test('an API name of another data space falls through to the search in the run data space', async (t) => {
