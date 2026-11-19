@@ -3,7 +3,6 @@ import { explainInput, explainMismatch, printableKey } from './operation-diagnos
 import {
   DloError,
   dloDataSpaces,
-  dloName,
   dloSystemFields,
   isGeneratedDloField,
   normalizeDlo,
@@ -41,11 +40,6 @@ export type DloDeployOptions = {
   /** Remove the DLO from org data spaces the file no longer lists (--allow-dataspace-removal). */
   allowDataspaceRemoval?: boolean;
 };
-
-/** Keys a data space member entry has (live API 68); any other key, such as a filter, refuses. */
-const memberKeys: ReadonlySet<string> = new Set(['memberLabel', 'memberName', 'status']);
-// Member list pages read at most; a server that keeps answering stops the read.
-const memberPageLimit = 100;
 
 /** Field keys Salesforce stores in its own letter case (`text` reads `Text`, live API 68). */
 const dloFieldEnums: ReadonlySet<string> = new Set(['dataType']);
@@ -126,85 +120,11 @@ export async function retrieveNativeDlo(
 }
 
 /**
- * Read the complete member list of a data space (every page, by continuation token). The list is
- * complete only when its distinct member names number exactly the `totalSize` every page states;
- * every member must be ACTIVE or PROCESSING, carry only the keys the plugin knows (no filter) and
- * a DLO name. Anything else refuses with DLO_DATASPACE_MEMBERS_UNREADABLE, so a full-list PUT
- * never drops what the plugin could not read. This fails closed: an org whose member list states
- * one member more than it lists (seen live for `default`, totalSize 99 with 98 listed) cannot get
- * a DLO added to that data space by the plugin. The read after a member change (`sent`) refuses
- * with DLO_DATASPACE_MEMBERS_UNCONFIRMED instead: the change was already sent.
- * @param {string} dataSpace Data space name.
- * @param {Pick<DloClient, 'members'>} client Target client.
- * @param {boolean} [sent] The member change of this data space was already sent.
- * @returns {Promise<string[]>} Member names in list order.
- */
-export async function readDataSpaceMembers(
-  dataSpace: string,
-  client: Pick<DloClient, 'members'>,
-  sent = false,
-): Promise<string[]> {
-  const unreadable = (detail: string): DloError =>
-    sent
-      ? explainInput(
-          new DloError('DLO_DATASPACE_MEMBERS_UNCONFIRMED'),
-          `The member change of data space ${printableKey(dataSpace)} was sent, but its member list then ${detail}, so the plugin cannot confirm that every member is still there. Check its members in the org before any further deploy.`,
-        )
-      : explainInput(
-          new DloError('DLO_DATASPACE_MEMBERS_UNREADABLE'),
-          `The member list of data space ${printableKey(dataSpace)} ${detail}, so it was not changed.`,
-        );
-  const names: string[] = [];
-  let total: number | undefined;
-  let token: string | undefined;
-  for (let page = 0; page < memberPageLimit; page++) {
-    const body = (await client.members(dataSpace, token)) as {
-      members?: unknown;
-      continuationToken?: unknown;
-      totalSize?: unknown;
-    };
-    if (!Array.isArray(body.members)) throw unreadable('could not be read in the expected form');
-    if (
-      typeof body.totalSize !== 'number' ||
-      !Number.isSafeInteger(body.totalSize) ||
-      (total !== undefined && body.totalSize !== total)
-    )
-      throw unreadable('states no stable member count (totalSize)');
-    total = body.totalSize;
-    for (const entry of body.members) {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry))
-        throw unreadable('holds an entry that is not a member');
-      const unknown = Object.keys(entry).find((key) => !memberKeys.has(key));
-      if (unknown !== undefined)
-        throw unreadable(
-          `holds a member with the key ${printableKey(unknown)} (such as a filter), which the plugin does not read`,
-        );
-      const { memberName: name, status } = entry as { memberName?: unknown; status?: unknown };
-      if (typeof name !== 'string' || !dloName.test(name))
-        throw unreadable('holds a member without a DLO name');
-      if (status !== 'ACTIVE' && status !== 'PROCESSING')
-        throw unreadable(`holds the member ${name} in a state other than ACTIVE or PROCESSING`);
-      if (names.includes(name)) throw unreadable(`lists the member ${name} twice`);
-      names.push(name);
-    }
-    if (body.continuationToken === undefined || body.continuationToken === null) {
-      if (names.length !== total)
-        throw unreadable(`lists ${names.length} members but states ${total}`);
-      return names;
-    }
-    if (typeof body.continuationToken !== 'string' || body.members.length === 0)
-      throw unreadable('could not be read to its end');
-    token = body.continuationToken;
-  }
-  throw unreadable('could not be read to its end');
-}
-/**
  * Preflight one native deploy: only authoritative absence selects create.
  * Updates permit label, record-modified field and ordinary field additions, refusing any
  * removed/changed field or key. The file's data space list (`c__dataSpace`) must hold the run's
  * data space; the DLO is added to listed spaces it is not in yet, and removed from org spaces the
- * file no longer lists only with `allowDataspaceRemoval`. The member list of every space the DLO
- * joins is read here, so an unreadable one refuses before any write.
+ * file no longer lists only with `allowDataspaceRemoval`.
  * @param {unknown} value Saved document.
  * @param {DloClient} client Authenticated target client.
  * @param {string} dataSpace The run's data space.
@@ -235,7 +155,6 @@ export async function preflightNativeDlo(
     if (fields.filter((field) => field.isPrimaryKey).length !== 1)
       throw new DloError('INVALID_DLO_PRIMARY_KEY');
     const add = dataSpaces.filter((space) => space !== dataSpace);
-    for (const space of add) await readDataSpaceMembers(space, client);
     return {
       operation: 'create',
       apiName,
@@ -314,7 +233,6 @@ export async function preflightNativeDlo(
   const added = desired.spec.fields.filter((field) => !existing.has(field.name));
   if (added.some((field) => generated(field) || field.isPrimaryKey))
     throw new DloError('UNSUPPORTED_DLO_FIELD_ADDITION');
-  for (const space of membership.add) await readDataSpaceMembers(space, client);
   // Salesforce sets the record-modified field once: a PATCH naming one while the DLO has one is
   // answered with HTTP 400 "Record modified field already present" (live API 68), and that answer
   // is reported. A file without the key leaves the org's value as it is.
@@ -356,8 +274,9 @@ export async function preflightNativeDlo(
 /**
  * Change the data spaces of a DLO as planned, then read it until it lists exactly the planned
  * spaces (a membership change answers PROCESSING and settles within seconds, live API 68).
- * Adding sends the space's complete member list, read right before, plus the DLO with one PUT;
- * removing sends one DELETE of that member. Nothing is resent.
+ * Adding sends one PUT naming only this DLO: the PUT adds the members it names and keeps every
+ * other member (live API 68, DB entry data360:dataspace-members-put-semantics-api68); removing
+ * sends one DELETE of that member. Nothing is resent.
  * @param {DloDeployPlan} plan Preflighted plan.
  * @param {DloClient} client Target client.
  * @param {string} dataSpace The run's data space.
@@ -368,32 +287,15 @@ async function changeDataSpaces(
   client: DloClient,
   dataSpace: string,
 ): Promise<DloDocument> {
-  // The members each space had right before its PUT; all of them must still be there after it.
-  const before = new Map<string, string[]>();
-  for (const space of plan.membership.add) {
-    const members = await readDataSpaceMembers(space, client);
-    before.set(space, members);
-    if (!members.includes(plan.apiName)) await client.putMembers(space, [...members, plan.apiName]);
-  }
+  for (const space of plan.membership.add) await client.putMembers(space, [plan.apiName]);
   for (const space of plan.membership.remove) await client.removeMember(space, plan.apiName);
   let observed: string[] = [];
   for (let attempt = 0; attempt < readbackPace.attempts; attempt++) {
     await paceReadback(attempt);
     const readback = unwrapDlo(await client.get(plan.apiName));
     observed = dloDataSpaces(readback);
-    if (observed.join('\n') === plan.dataSpaces.join('\n')) {
-      // Whether a PUT adds or replaces is not proven: every member read before it must remain.
-      for (const [space, members] of before) {
-        const after = await readDataSpaceMembers(space, client, true);
-        const missing = [...members, plan.apiName].filter((name) => !after.includes(name));
-        if (missing.length > 0)
-          throw explainInput(
-            new DloError('DLO_DATASPACE_MEMBERS_CHANGED'),
-            `Data space ${printableKey(space)} no longer lists ${missing.join(', ')} after ${plan.apiName} was added. Check its members in the org and restore them before any further deploy.`,
-          );
-      }
+    if (observed.join('\n') === plan.dataSpaces.join('\n'))
       return normalizeDlo(readback, dataSpace);
-    }
   }
   throw explainInput(
     new DloError('DLO_DATASPACE_NOT_SETTLED'),

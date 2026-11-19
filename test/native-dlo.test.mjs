@@ -682,28 +682,14 @@ test('DLO file key c__dataSpace: legacy key, filter entries, empty and repeated 
 });
 
 /**
- * An ACTIVE data space member entry as Salesforce lists it.
- * @param {string} memberName DLO name.
- * @returns {object} Member entry.
- */
-const active = (memberName) => ({ memberName, memberLabel: memberName, status: 'ACTIVE' });
-
-/**
  * A DLO client whose org membership changes with the member writes it receives.
  * @param {string[]} spaces Data spaces the DLO belongs to at first.
- * @param {object} [options] Member pages and overrides.
+ * @param {object} [options] Overrides (`stuck`: the DLO never lists a changed space).
  * @returns {object} Client plus the recorded writes.
  */
 const memberClient = (spaces, options = {}) => {
   const current = new Set(spaces);
   const writes = [];
-  // The member list of every data space, as the org holds it; a PUT adds, or replaces it.
-  const lists = new Map();
-  const listOf = (space) => {
-    if (!lists.has(space)) lists.set(space, ['Other__dll', 'Last__dll']);
-    return lists.get(space);
-  };
-  const reads = [];
   const client = {
     get: async () => ({
       ...native(),
@@ -718,23 +704,9 @@ const memberClient = (spaces, options = {}) => {
       writes.push(['PATCH', body]);
       return native();
     },
-    members: async (space, token) => {
-      reads.push([space, token]);
-      if (options.pages) return structuredClone(options.pages[token === undefined ? 0 : 1]);
-      const list = listOf(space);
-      // Two pages: the first member, then the rest, as continuation-token paging.
-      return token === undefined
-        ? {
-            members: list.slice(0, 1).map((name) => active(name)),
-            totalSize: list.length,
-            ...(list.length > 1 ? { continuationToken: 'next' } : {}),
-          }
-        : { members: list.slice(1).map((name) => active(name)), totalSize: list.length };
-    },
     putMembers: async (space, names) => {
       writes.push(['PUT', space, names]);
       current.add(space);
-      lists.set(space, options.replace ? names.slice(-1) : [...names]);
       return { success: 'true', errors: [], dataSpaceMembers: { members: [] } };
     },
     removeMember: async (space, name) => {
@@ -743,21 +715,16 @@ const memberClient = (spaces, options = {}) => {
       return { results: [{ dataSpaceMemberName: name, errors: {}, success: true }] };
     },
   };
-  return { client, writes, reads };
+  return { client, writes };
 };
 
-test('a data space the file adds is sent as the full member list read right before, then settled', async () => {
+test('a data space the file adds gets one PUT naming only this DLO, then settles', async () => {
   const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
-  const { client, writes, reads } = memberClient(['default']);
+  const { client, writes } = memberClient(['default']);
   const plan = await preflightNativeDlo(file, client, 'default');
   assert.equal(plan.operation, 'update');
   assert.equal(plan.body, undefined);
   assert.deepEqual(plan.membership, { add: ['dataspace2'], remove: [] });
-  // Preflight reads the member list (every page) before any write.
-  assert.deepEqual(reads, [
-    ['dataspace2', undefined],
-    ['dataspace2', 'next'],
-  ]);
   assert.deepEqual(writes, []);
   const result = await executeDloDeploy(file, client, 'default');
   assert.equal(result.outcome, 'updated');
@@ -765,7 +732,7 @@ test('a data space the file adds is sent as the full member list read right befo
   assert.deepEqual(result.dataSpaces, ['dataspace2', 'default']);
   // The executed item names the data space changes like the preview item.
   assert.deepEqual(result.dataSpaceChanges, { add: ['dataspace2'], remove: [] });
-  assert.deepEqual(writes, [['PUT', 'dataspace2', ['Other__dll', 'Last__dll', apiName]]]);
+  assert.deepEqual(writes, [['PUT', 'dataspace2', [apiName]]]);
   // Once added, the same file is unchanged.
   const again = memberClient(['default', 'dataspace2']);
   const unchanged = await executeDloDeploy(file, again.client, 'default');
@@ -795,61 +762,19 @@ test('a DLO created with several data spaces is created in the run data space, t
   assert.deepEqual(result.dataSpaces, ['dataspace2', 'default']);
   assert.deepEqual(writes, [
     ['POST', [{ name: 'default' }]],
-    ['PUT', 'dataspace2', ['Other__dll', 'Last__dll', apiName]],
+    ['PUT', 'dataspace2', [apiName]],
   ]);
 });
 
-test('a member list that cannot be read completely, or holds a filter, refuses before any write', async () => {
-  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
-  for (const pages of [
-    [{ members: [{ ...active('Other__dll'), filter: { conditions: [] } }], totalSize: 1 }],
-    [
-      { members: [active('Other__dll')], continuationToken: 'next', totalSize: 2 },
-      { members: [], continuationToken: 'again', totalSize: 2 },
-    ],
-    [{ items: [] }],
-    [{ members: [{ status: 'ACTIVE' }], totalSize: 1 }],
-    // More members stated than listed (live: default states 99 and lists 98).
-    [{ members: [active('Other__dll')], totalSize: 2 }],
-    [{ members: [active('Other__dll')] }],
-    [{ members: [active('Other__dll'), active('Other__dll')], totalSize: 2 }],
-    [{ members: [{ ...active('Other__dll'), status: 'DELETING' }], totalSize: 1 }],
-    [{ members: [active('Not a DLO name')], totalSize: 1 }],
-  ]) {
-    const { client, writes } = memberClient(['default'], { pages });
-    const result = await executeDloDeploy(file, client, 'default');
-    assert.equal(result.outcome, 'blocked', JSON.stringify(pages));
-    assert.equal(result.mutation, 'not-attempted');
-    assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_MEMBERS_UNREADABLE');
-    assert.deepEqual(writes, []);
-  }
-});
-
-test('a PUT that replaces the member list instead of adding to it is reported, not success', async () => {
-  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
-  const { client, writes } = memberClient(['default'], { replace: true });
-  const result = await executeDloDeploy(file, client, 'default');
-  assert.equal(result.outcome, 'failed');
-  assert.equal(result.mutation, 'unknown');
-  assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_MEMBERS_CHANGED');
-  assert.match(result.diagnostics[0].message, /Other__dll, Last__dll/u);
-  assert.equal(writes.length, 1);
-});
-
-test('a member list unreadable after the PUT is unconfirmed: the change was already sent', async () => {
-  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
-  const { client, writes } = memberClient(['default']);
-  const members = client.members;
-  // Readable before the PUT (preflight and the read right before it), unreadable after it.
-  client.members = async (space, token) =>
-    writes.length > 0 ? { items: [] } : members(space, token);
-  const result = await executeDloDeploy(file, client, 'default');
-  assert.equal(result.outcome, 'failed');
-  assert.equal(result.mutation, 'unknown');
-  assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_MEMBERS_UNCONFIRMED');
-  assert.match(result.diagnostics[0].message, /was sent, but its member list then/u);
-  assert.doesNotMatch(result.diagnostics[0].message, /so it was not changed/u);
-  assert.equal(writes.length, 1);
+test('the default data space takes a DLO: no member list is read, only the DLO is sent', async () => {
+  // Live, default states 99 members and lists 98; the PUT only adds (proven on a custom data
+  // space), so nothing is read first and default is not refused.
+  const file = { ...document(), c__dataSpace: ['dataspace2', 'default'] };
+  const { client, writes } = memberClient(['dataspace2']);
+  assert.equal(client.members, undefined);
+  const result = await executeDloDeploy(file, client, 'dataspace2');
+  assert.equal(result.outcome, 'updated');
+  assert.deepEqual(writes, [['PUT', 'default', [apiName]]]);
 });
 
 test('a member write Salesforce answers without success is rejected', async () => {
@@ -930,17 +855,14 @@ test('REST sends the data space member routes with the proven shapes', async () 
         ? { success: 'true', errors: [] }
         : method === 'DELETE'
           ? { results: [{ success: true, errors: {} }] }
-          : { members: [] };
+          : {};
     },
   });
-  await client.members('dataspace2');
-  await client.members('dataspace2', 'a b');
+  assert.equal(client.members, undefined);
   await client.putMembers('dataspace2', ['A__dll', apiName]);
   await client.removeMember('dataspace2', apiName);
   const endpoint = '/services/data/v68.0/ssot/data-spaces/dataspace2/members';
   assert.deepEqual(requests, [
-    { method: 'GET', route: `${endpoint}?batchSize=200`, body: undefined },
-    { method: 'GET', route: `${endpoint}?batchSize=200&continuationToken=a%20b`, body: undefined },
     {
       method: 'PUT',
       route: endpoint,
@@ -949,7 +871,7 @@ test('REST sends the data space member routes with the proven shapes', async () 
     { method: 'DELETE', route: `${endpoint}?memberNames=${apiName}`, body: undefined },
   ]);
   await assert.rejects(client.putMembers('dataspace2', []), { code: 'INVALID_DLO_NAME' });
-  await assert.rejects(client.members(' bad'), { code: 'UNSUPPORTED_DLO_DATASPACE' });
+  await assert.rejects(client.putMembers(' bad', [apiName]), { code: 'UNSUPPORTED_DLO_DATASPACE' });
 });
 
 test('REST sends each call once over the bound sender with exact routes and JSON bodies', async () => {

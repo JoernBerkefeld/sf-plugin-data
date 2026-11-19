@@ -10,9 +10,7 @@ export type DloClient = {
   create: (body: Record<string, unknown>) => Promise<unknown>;
   update: (id: string, body: Record<string, unknown>) => Promise<unknown>;
   delete: (id: string) => Promise<void>;
-  /** One page of a data space's member list (`continuationToken` from the previous page). */
-  members: (dataSpace: string, continuationToken?: string) => Promise<unknown>;
-  /** The full member list of a data space, sent with one PUT (it adds the DLOs not yet in it). */
+  /** Add DLOs to a data space with one PUT; members it does not name stay (live API 68). */
   putMembers: (dataSpace: string, memberNames: string[]) => Promise<unknown>;
   /** Remove one DLO from a data space; the DLO itself is kept. */
   removeMember: (dataSpace: string, memberName: string) => Promise<unknown>;
@@ -124,15 +122,6 @@ export function createDloClient(
     delete: async (id) => {
       await request('DELETE', idSuffix(id));
     },
-    members: async (dataSpace, continuationToken) =>
-      member(
-        'GET',
-        `/${spaceSegment(dataSpace)}/members?batchSize=200${
-          continuationToken === undefined
-            ? ''
-            : `&continuationToken=${encodeURIComponent(continuationToken)}`
-        }`,
-      ),
     putMembers: async (dataSpace, memberNames) => {
       if (memberNames.length === 0 || memberNames.some((name) => !dloName.test(name)))
         throw new DloError('INVALID_DLO_NAME');

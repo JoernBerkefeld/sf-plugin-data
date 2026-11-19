@@ -1945,18 +1945,14 @@ A DLO deploy item lists the data spaces it added the DLO to or removed it from a
 - **Deploy** refuses a DLO file whose list does not hold the run's data space
   (`DLO_DATASPACE_MISMATCH`), never skipping it. A new DLO is created in the run's
   data space and then added to the other listed ones. An existing DLO is added to the
-  listed data spaces it is not in yet: the plugin reads the data space's complete member
-  list right before and sends it back with the DLO added (one
-  `PUT /ssot/data-spaces/<space>/members`), then reads the DLO until it lists the
-  planned data spaces (`DLO_DATASPACE_NOT_SETTLED` otherwise). Afterwards the member list is read again and every
-  member it had before must still be there (`DLO_DATASPACE_MEMBERS_CHANGED` otherwise, and
-  `DLO_DATASPACE_MEMBERS_UNCONFIRMED` when that read cannot be completed); a
-  member write Salesforce answers without success is `DLO_MEMBERSHIP_UPDATE_REJECTED`. A
-  member list whose distinct names do not equal its `totalSize`, or with a member that is
-  not ACTIVE or PROCESSING, also stops the deploy; this fails closed where an org states one
-  member more than it lists (seen live for `default`). A member list that cannot
-  be read to its end, or that holds a member with a filter or another unknown key, stops
-  the deploy before any write (`DLO_DATASPACE_MEMBERS_UNREADABLE`). A data space the org
+  listed data spaces it is not in yet with one `PUT /ssot/data-spaces/<space>/members`
+  that names only this DLO: the PUT adds the members it names and keeps every other member
+  (live API 68, DB entry `data360:dataspace-members-put-semantics-api68`), so no member list
+  is read or resent, and a data space whose member list cannot be read completely (such as
+  `default`, which states 99 members and lists 98) is no longer refused. The plugin then
+  reads the DLO until it lists the planned data spaces (`DLO_DATASPACE_NOT_SETTLED`
+  otherwise); a member write Salesforce answers without success is
+  `DLO_MEMBERSHIP_UPDATE_REJECTED`. A data space the org
   lists but the file leaves out is removed (`DELETE …/members?memberNames=<Name>__dll`)
   only with `--allow-dataspace-removal`; without the flag the deploy is refused
   (`DLO_DATASPACE_REMOVAL_NOT_ALLOWED`). Preview lists both as `dataSpaceChanges`.

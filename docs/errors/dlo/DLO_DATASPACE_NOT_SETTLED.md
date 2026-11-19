@@ -34,5 +34,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/d
 
 ## Related codes
 
-- [`DLO_DATASPACE_MEMBERS_UNREADABLE`](../dlo/DLO_DATASPACE_MEMBERS_UNREADABLE.md) — the member list could not be read before the change.
 - [`DLO_DATASPACE_REMOVAL_NOT_ALLOWED`](../dlo/DLO_DATASPACE_REMOVAL_NOT_ALLOWED.md) — a removal needs --allow-dataspace-removal.

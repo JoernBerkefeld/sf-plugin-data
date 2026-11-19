@@ -28,10 +28,7 @@ export type DloExecution = {
   diagnostics: Array<{ code: string; message: string }>;
 };
 /** Data space refusals a preview reports on the item instead of failing. */
-const blockingSpaceCodes: ReadonlySet<string> = new Set([
-  'DLO_DATASPACE_REMOVAL_NOT_ALLOWED',
-  'DLO_DATASPACE_MEMBERS_UNREADABLE',
-]);
+const blockingSpaceCodes: ReadonlySet<string> = new Set(['DLO_DATASPACE_REMOVAL_NOT_ALLOWED']);
 
 /**
  * Compare a portable definition without mutation.
