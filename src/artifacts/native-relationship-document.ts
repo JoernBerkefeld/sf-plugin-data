@@ -1,3 +1,4 @@
+import { nativeRelationshipName } from './path-selector.js';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
 import { dataSpaceKey, readSingleDataSpace, refuseLegacyDataSpace } from './data-space-field.js';
@@ -36,7 +37,6 @@ export class NativeRelationshipError extends Error {
   }
 }
 
-export const nativeRelationshipName = /^[A-Za-z][A-Za-z0-9_]{0,239}$/u;
 export const relationshipDmoName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dlm$/u;
 const fieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
 // The target may be a DMO or a CRM object (owner SObject, e.g. Account.Id): any API name.
@@ -291,3 +291,5 @@ export function sameRelationshipBinding(
     observed.targetFieldName === desired.targetFieldName
   );
 }
+
+export { nativeRelationshipName } from './path-selector.js';

@@ -1,3 +1,4 @@
+import { nativeDmoName } from './path-selector.js';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import { sameEnum } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
@@ -127,8 +128,6 @@ export class NativeDmoError extends Error {
     this.name = 'NativeDmoError';
   }
 }
-
-export const nativeDmoName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dlm$/u;
 
 /**
  * The default spelling of a standard DMO copy in a non-default data space. Salesforce names the
@@ -369,3 +368,5 @@ export function normalizeNativeDmo(
     mode,
   );
 }
+
+export { nativeDmoName } from './path-selector.js';

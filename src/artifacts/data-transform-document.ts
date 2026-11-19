@@ -1,3 +1,4 @@
+import { dataTransformName } from './path-selector.js';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import { foldEnums } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
@@ -37,7 +38,6 @@ export class DataTransformError extends Error {
   }
 }
 
-export const dataTransformName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 export const dataTransformId = /^1dt[A-Za-z0-9]{15}$/u;
 
 /** Top-level keys of the native create/update input, in the order a GET is projected. */
@@ -545,3 +545,5 @@ export function observeDataTransform(
     schedule: structuredClone(schedule),
   };
 }
+
+export { dataTransformName } from './path-selector.js';

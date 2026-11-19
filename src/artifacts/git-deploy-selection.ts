@@ -1,4 +1,3 @@
-import { dloName } from './dlo-document.js';
 import type { DloDeployInput, DeployInput, DeletedArtifactKind } from './read-deploy-input.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -11,16 +10,17 @@ import {
   skippedVerbatimWarnings,
 } from './read-deploy-input.js';
 import { codeFilePath } from './code-fields.js';
-import { nativeDmoName } from './native-dmo-document.js';
-import { identityResolutionName } from './identity-resolution-document.js';
 import type { IdentityResolutionDeployInput, SegmentDeployInput } from './read-deploy-input.js';
-import { segmentName } from './segment-document.js';
-import { calculatedInsightName } from './native-calculated-insight-document.js';
 import type { CalculatedInsightDeployInput } from './read-deploy-input.js';
-import { nativeMappingName } from './native-mapping-document.js';
-import { nativeRelationshipName } from './native-relationship-document.js';
-import { dataTransformName } from './data-transform-document.js';
-import { dataGraphName } from './data-graph-document.js';
+import {
+  ciJsonSuffix,
+  ciSql,
+  ciSqlSuffix,
+  classifyComponentPath,
+  families,
+  segmentSql,
+  segmentSqlPattern,
+} from './path-selector.js';
 import { parseVerbatimDocument } from './verbatim-document.js';
 import type { VerbatimDocument } from './verbatim-document.js';
 
@@ -120,87 +120,7 @@ function tokens(output: string): string[] {
   return values;
 }
 
-const ciJsonSuffix = '.calculatedInsight-meta.json';
-const ciSqlSuffix = '.calculatedInsight-meta.sql';
-
-/** Family by file suffix; every family lives under `data360/` at the repository root. */
-const families: ReadonlyArray<{
-  kind: DeletedArtifactKind;
-  suffix: string;
-  directory: readonly string[];
-  name: (value: string) => boolean;
-}> = [
-  {
-    kind: 'dmo',
-    suffix: '.dmo-meta.json',
-    directory: ['data360', 'dmo'],
-    name: (value) => nativeDmoName.test(value),
-  },
-  {
-    kind: 'dlo',
-    suffix: '.dlo-meta.json',
-    directory: ['data360', 'dlo'],
-    name: (value) => dloName.test(value) && value.endsWith('__dll'),
-  },
-  {
-    kind: 'mapping',
-    suffix: '.mapping-meta.json',
-    directory: ['data360', 'mapping'],
-    name: (value) => nativeMappingName.test(value),
-  },
-  {
-    kind: 'relationship',
-    suffix: '.relationship-meta.json',
-    directory: ['data360', 'relationship'],
-    name: (value) => nativeRelationshipName.test(value),
-  },
-  {
-    kind: 'data-stream',
-    suffix: '.data-stream-meta.json',
-    directory: ['data360', 'data-stream'],
-    name: (value) => /^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(value),
-  },
-  {
-    kind: 'data-transform',
-    suffix: '.dataTransform.json',
-    directory: ['data360', 'dataTransforms'],
-    name: (value) => dataTransformName.test(value),
-  },
-  {
-    kind: 'data-graph',
-    suffix: '.native-dataGraph.json',
-    directory: ['data360', 'dataGraphs'],
-    name: (value) => dataGraphName.test(value),
-  },
-  {
-    kind: 'identity-resolution',
-    suffix: '.identityResolution.json',
-    directory: ['data360', 'identityResolution'],
-    name: (value) => identityResolutionName.test(value),
-  },
-  {
-    kind: 'calculated-insight',
-    suffix: ciJsonSuffix,
-    directory: ['data360', 'calculatedInsights'],
-    name: (value) => calculatedInsightName.test(value),
-  },
-  {
-    kind: 'segment',
-    suffix: '.segment.json',
-    directory: ['data360', 'segments'],
-    name: (value) => segmentName.test(value),
-  },
-];
-
 const segmentXml = (file: string): boolean => /\.marketSegmentDefinition-meta\.xml$/iu.test(file);
-// The SQL file of a calculated insight selects (or, deleted, deletes) the insight like its JSON.
-const ciSql = (file: string): boolean => /\.calculatedInsight-meta\.sql$/iu.test(file);
-// A segment's SQL file (`<Name>.segment.<model>.sql`) selects the segment like its JSON.
-const segmentSql = (file: string): boolean => {
-  const entry = path.posix.basename(file).toLowerCase();
-  return entry.includes('.segment.') && entry.endsWith('.sql');
-};
-const segmentSqlPattern = /^([A-Za-z][A-Za-z0-9_]*)\.segment\.([A-Za-z0-9][A-Za-z0-9_]*)\.sql$/u;
 const relevant = (file: string): boolean =>
   segmentXml(file) ||
   ciSql(file) ||
@@ -212,44 +132,12 @@ const watched = (file: string): boolean => relevant(file) || file.split('/').inc
 /**
  * Map one repository-relative path to its family and canonical name, or refuse it.
  * @param {string} file Repository-relative POSIX path.
- * @param {string} repositoryRoot Absolute repository root.
  * @returns {object} Family and canonical name (`__cio` included for calculated insights).
  */
-function classify(
-  file: string,
-  repositoryRoot: string,
-): { kind: DeletedArtifactKind; name: string } {
-  const relative = (absolute: string): string =>
-    path.relative(repositoryRoot, absolute).split(path.sep).join('/');
-  if (ciSql(file)) {
-    const name = path.posix.basename(file).slice(0, -ciSqlSuffix.length);
-    const expected = path.join(
-      repositoryRoot,
-      'data360',
-      'calculatedInsights',
-      `${name}${ciSqlSuffix}`,
-    );
-    if (!calculatedInsightName.test(name) || file !== relative(expected))
-      throw new GitSelectionError('INVALID_GIT_SELECTION');
-    return { kind: 'calculated-insight', name };
-  }
-  if (segmentSql(file)) {
-    const match = segmentSqlPattern.exec(path.posix.basename(file));
-    if (
-      !match ||
-      !segmentName.test(match[1]) ||
-      file !== relative(path.join(repositoryRoot, 'data360', 'segments', match[0]))
-    )
-      throw new GitSelectionError('INVALID_GIT_SELECTION');
-    return { kind: 'segment', name: match[1] };
-  }
-  const family = families.find(({ suffix }) => file.toLowerCase().endsWith(suffix.toLowerCase()));
-  if (!family) throw new GitSelectionError('INVALID_GIT_SELECTION');
-  const name = path.posix.basename(file).slice(0, -family.suffix.length);
-  const expected = path.join(repositoryRoot, ...family.directory, `${name}${family.suffix}`);
-  if (!family.name(name) || file !== relative(expected))
-    throw new GitSelectionError('INVALID_GIT_SELECTION');
-  return { kind: family.kind, name };
+function classify(file: string): { kind: DeletedArtifactKind; name: string } {
+  const component = classifyComponentPath(file);
+  if (!component) throw new GitSelectionError('INVALID_GIT_SELECTION');
+  return component;
 }
 
 /**
@@ -453,7 +341,7 @@ async function deleteCandidates(
     let kind: DeletedArtifactKind;
     let name: string;
     try {
-      ({ kind, name } = classify(file, repositoryRoot));
+      ({ kind, name } = classify(file));
     } catch {
       // A deleted file of no known family cannot be turned into an org delete.
       throw new GitSelectionError('BLOCKED_GIT_LIFECYCLE');
@@ -640,7 +528,7 @@ export async function selectGitDeployInputs(options: {
     }
     const metadata = [...paths].map((file) => {
       if (segmentXml(file)) throw new GitSelectionError('INVALID_GIT_SELECTION');
-      const { kind, name } = classify(file, repositoryRoot);
+      const { kind, name } = classify(file);
       return `${kind}:${name}`;
     });
     const deletions = await deleteCandidates({ repositoryRoot, mergeBase }, removed);

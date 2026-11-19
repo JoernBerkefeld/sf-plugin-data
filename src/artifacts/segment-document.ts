@@ -1,3 +1,4 @@
+import { segmentName } from './path-selector.js';
 import { isDeepStrictEqual } from 'node:util';
 import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
@@ -75,7 +76,6 @@ export class SegmentError extends Error {
   }
 }
 
-export const segmentName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 const dmoName = /^[A-Za-z][A-Za-z0-9_]*__dlm$/u;
 // A model name is part of its SQL file name (`<Segment>.segment.<model>.sql`), as in code-fields.
 const modelFileName = /^[A-Za-z0-9][A-Za-z0-9_]*$/u;
@@ -773,3 +773,5 @@ export function carriesDefinition(observed: unknown, desired: SegmentDocument): 
       ))
   );
 }
+
+export { segmentName } from './path-selector.js';

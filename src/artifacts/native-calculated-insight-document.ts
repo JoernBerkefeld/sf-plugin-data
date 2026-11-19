@@ -1,10 +1,9 @@
+import { calculatedInsightName } from './path-selector.js';
 import { sameProperty } from './enum-case.js';
 import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
 import { dataSpaceKey, readSingleDataSpace } from './data-space-field.js';
 import { explainInput } from '../services/operation-diagnostic.js';
-
-export const calculatedInsightName = /^[A-Za-z][A-Za-z0-9_]{0,194}__cio$/u;
 
 /** Payload-free refusal; never include SQL or response content in diagnostics. */
 export class CalculatedInsightError extends Error {
@@ -410,3 +409,5 @@ export function calculatedInsightReference(
     },
   };
 }
+
+export { calculatedInsightName } from './path-selector.js';

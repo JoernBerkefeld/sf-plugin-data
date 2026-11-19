@@ -17,6 +17,7 @@ import type { NativeDmoDocument } from './native-dmo-document.js';
 import { dloName, validateDloDocument } from './dlo-document.js';
 import type { DloDocument } from './dlo-document.js';
 import { dataGraphName } from './data-graph-document.js';
+import type { DeletedArtifactKind } from './path-selector.js';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -1393,18 +1394,6 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
   }
 }
 
-export type DeletedArtifactKind =
-  | 'dmo'
-  | 'dlo'
-  | 'mapping'
-  | 'relationship'
-  | 'data-stream'
-  | 'data-transform'
-  | 'data-graph'
-  | 'identity-resolution'
-  | 'calculated-insight'
-  | 'segment';
-
 /**
  * Admit a deleted verbatim file (retrieved as-is): it is deleted by family and name, needs no SQL
  * file and no spec. A relationship's source DMO comes from the raw list entry it keeps.
@@ -1571,3 +1560,5 @@ export function admitDeletedArtifact(
     throw new DeployInputError('INVALID_SOURCE');
   }
 }
+
+export { type DeletedArtifactKind } from './path-selector.js';

@@ -1,3 +1,4 @@
+import { identityResolutionName } from './path-selector.js';
 import { isDeepStrictEqual } from 'node:util';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
@@ -85,7 +86,6 @@ export class IdentityResolutionError extends Error {
   }
 }
 
-export const identityResolutionName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
 const dmoName = /^[A-Za-z][A-Za-z0-9_]*__dlm$/u;
 const objectName = /^[A-Za-z][A-Za-z0-9_]*$/u;
 // Documents keep the established PascalCase spelling of these API values; the API answers
@@ -915,3 +915,5 @@ export function serializeIdentityResolutionDocument(
 ): string {
   return `${JSON.stringify(validateIdentityResolutionDocument(value, mode), undefined, 2)}\n`;
 }
+
+export { identityResolutionName } from './path-selector.js';

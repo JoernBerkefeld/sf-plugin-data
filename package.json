@@ -16,6 +16,13 @@
     "url": "https://github.com/JoernBerkefeld/sf-plugin-data/issues"
   },
   "type": "module",
+  "exports": {
+    "./path-selector": {
+      "types": "./lib/artifacts/path-selector.d.ts",
+      "default": "./lib/artifacts/path-selector.js"
+    },
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": "^22.22.2 || ^24.15.0"
   },

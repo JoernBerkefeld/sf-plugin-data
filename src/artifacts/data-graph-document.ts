@@ -1,5 +1,3 @@
-export const dataGraphName = /^[A-Za-z][A-Za-z0-9_]{0,199}$/u;
-
 /** Payload-free failure for unqualified Graph configuration. */
 export class DataGraphError extends Error {
   public constructor(public readonly code = 'UNSUPPORTED_DATA_GRAPH_CONFIGURATION') {
@@ -55,3 +53,5 @@ export function graphCanonicalObject(value: unknown): unknown {
   }
   return value;
 }
+
+export { dataGraphName } from './path-selector.js';

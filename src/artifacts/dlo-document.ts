@@ -1,3 +1,4 @@
+import { dloName } from './path-selector.js';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
 import {
@@ -44,7 +45,6 @@ export class DloError extends Error {
   }
 }
 
-export const dloName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dll$/u;
 const fieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
 const runtimeFieldKeys = new Set(['id', 'recordId', 'recordID', 'createdDate', 'lastModifiedDate']);
 
@@ -335,3 +335,5 @@ export function projectDlo(value: unknown, mode: DocumentMode = 'deploy'): DloDo
     mode,
   );
 }
+
+export { dloName } from './path-selector.js';

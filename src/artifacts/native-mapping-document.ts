@@ -1,3 +1,4 @@
+import { nativeMappingName } from './path-selector.js';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
 import { dataSpaceKey, readSingleDataSpace, refuseLegacyDataSpace } from './data-space-field.js';
@@ -36,7 +37,6 @@ export class NativeMappingError extends Error {
   }
 }
 
-export const nativeMappingName = /^[A-Za-z][A-Za-z0-9_]{0,239}$/u;
 export const mappingDloName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dll$/u;
 export const mappingDmoName = /^[A-Za-z][A-Za-z0-9_]{0,199}__dlm$/u;
 const fieldName = /^[A-Za-z][A-Za-z0-9_]{0,239}__c$/u;
@@ -269,3 +269,5 @@ export function unwrapNativeMappingCollection(
     return detail;
   });
 }
+
+export { nativeMappingName } from './path-selector.js';
