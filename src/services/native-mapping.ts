@@ -319,7 +319,8 @@ async function readMappingParents(
   const activates = rawTarget.creationType === 'Standard' && rawTarget.isEnabled !== true;
   const target = normalizeNativeDmo(rawTarget, desired.identity.dataSpace, mode);
   if (
-    source.identity.dataSpace !== desired.identity.dataSpace ||
+    // normalizeDlo already required the mapping's data space among the DLO's spaces.
+    !source.c__dataSpace.includes(desired.identity.dataSpace) ||
     target.identity.dataSpace !== desired.identity.dataSpace ||
     source.identity.apiName !== desired.spec.sourceEntityDeveloperName ||
     target.identity.apiName !== desired.spec.targetEntityDeveloperName

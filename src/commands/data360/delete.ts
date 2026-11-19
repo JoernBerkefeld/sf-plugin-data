@@ -116,6 +116,7 @@ import {
   previewDeleteNativeDlo,
   waitForDloDependents,
 } from '../../services/native-dlo.js';
+import { DataSpaceError, dataSpaceCheckOf } from '../../services/data-space-check.js';
 import type { DloDependent } from '../../services/native-dlo.js';
 import { plugin } from '../../plugin.js';
 import {
@@ -531,7 +532,7 @@ function admitSourceInput(input: DeployInput): {
 
 export type DeleteEnvelope = {
   contract: 'sf-data360-delete';
-  contractVersion: '1.0.0';
+  contractVersion: '1.1.0';
   status: 'success' | 'blocked' | 'failed';
   metadata: { operation: 'delete'; preview: boolean; apiVersion: string; plugin: typeof plugin };
   provenance: {
@@ -545,6 +546,8 @@ export type DeleteEnvelope = {
     errors: Array<{ code: string; message: string; retryable: false }>;
   };
   result: {
+    /** The run's data space (--dataspace, default `default`). */
+    scope: { dataSpace: string };
     /** --changed-since: the requested reference; the items are the files deleted in the range. */
     selection?: { changedSince: string };
     items: Array<{
@@ -739,7 +742,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     }),
     dataspace: Flags.string({
       aliases: ['data-space'],
-      summary: 'Optional native data space; --data-space is a compatibility alias.',
+      summary:
+        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DLO that also belongs to another data space is not deleted (DLO_DELETE_OTHER_DATASPACES).',
     }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'changed-since': Flags.string({
@@ -889,6 +893,9 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected deleteDmo = deleteNativeDmo;
   protected createDloClient = createDloClient;
   protected createDloNativeDeleteClient = createNativeDloDeleteClient;
+  // The once-per-run data space list read; tests replace this seam or the directory read.
+  protected createDataSpaceSender = (target: string, version: string): BoundSsot =>
+    openBoundSsot(target, version);
   protected retrieveDlo = previewDeleteNativeDlo;
   protected deleteDlo = deleteNativeDlo;
   protected resolveTarget = async (alias?: string): Promise<string> => {
@@ -978,11 +985,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     envelope.metadata.apiVersion = version;
     const apiName = selector.slice(4);
     const fields = [...new Set(flags.field)];
-    const requestScope = flags.dataspace;
+    // The run's data space, always explicit: --dataspace, or default.
+    const requestScope = flags.dataspace ?? 'default';
     const root = path.resolve(flags['output-dir'] ?? process.cwd());
     const item: DeleteItem = {
       family: 'dmo',
-      identity: { dataSpace: requestScope ?? 'default', apiName },
+      identity: { dataSpace: requestScope, apiName },
       operation: flags.preview ? 'preview' : 'delete-field',
       fields,
       outcome: 'blocked',
@@ -997,7 +1005,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     envelope.result.items.push(item);
     const fieldError = (error: unknown, nextAction: string): void =>
       refuse(
-        error instanceof DloError ||
+        error instanceof DataSpaceError ||
+          error instanceof DloError ||
           error instanceof NativeDmoError ||
           error instanceof NativeMappingError
           ? error.code
@@ -1008,6 +1017,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     let plan: DmoFieldDeletePlan;
     try {
       const target = await this.resolveTarget(flags['target-org']);
+      // The run's data space must exist in the org: one read, before any other read.
+      await dataSpaceCheckOf(this, async () =>
+        (this.createDataSpaceSender ?? openBoundSsot)(target, '68.0'),
+      ).require([requestScope]);
       clients = {
         dmo: this.createDmoNativeDeleteClient(target, version),
         remover: (this.createDmoClient ?? createDmoClient)(target, version),
@@ -1252,7 +1265,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const effectiveScope = requestScope ?? 'default';
     const envelope: DeleteEnvelope = {
       contract: 'sf-data360-delete',
-      contractVersion: '1.0.0',
+      contractVersion: '1.1.0',
       status: 'blocked',
       metadata: {
         operation: 'delete',
@@ -1262,7 +1275,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       },
       provenance: { command: 'sf data360 delete', generatedAt: new Date().toISOString() },
       diagnostics: { warnings: [], errors: [] },
-      result: { items: [] },
+      result: { scope: { dataSpace: effectiveScope }, items: [] },
     };
     const selectorsByItem = new Map<DeleteEnvelope['result']['items'][number], string>();
     const keepLocalFiles = flags['keep-local-files'];
@@ -1364,6 +1377,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);
+        // The default data space goes without saying; any other is named.
+        if (effectiveScope !== 'default') this.log(`Data space: ${effectiveScope}.`);
         if (gitMode && envelope.result.items.length === 0 && envelope.status === 'success')
           this.log('No plugin file was deleted in the Git range; nothing to delete.');
         for (const item of envelope.result.items) {
@@ -1463,6 +1478,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       envelope.diagnostics.errors.push({
         code:
           error instanceof DeployInputError ||
+          error instanceof DataSpaceError ||
           error instanceof DloError ||
           error instanceof NativeDmoError ||
           error instanceof NativeMappingError ||
@@ -1571,8 +1587,14 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       // from the base content of the deleted file.
       const admitted = new Map<string, AdmittedSource>();
       // A file deleted in the range names its component in its own (base) data space.
+      // A DLO file lists every data space of the DLO; it must list the run's.
       for (const candidate of gitDeletions)
-        if (candidate.identity.dataSpace !== effectiveScope) throw new DloError('INVALID_SCOPE');
+        if (
+          candidate.document.kind === 'dlo' && !isVerbatimDocument(candidate.document)
+            ? !candidate.document.c__dataSpace.includes(effectiveScope)
+            : candidate.identity.dataSpace !== effectiveScope
+        )
+          throw new DloError('INVALID_SCOPE');
       if (gitMode)
         for (const [selector, candidate] of gitBySelector) {
           // A verbatim file (retrieved as-is) is read from the org by name below, like -m.
@@ -1622,6 +1644,45 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         username ??= await this.resolveTarget(flags['target-org']);
         return username;
       };
+      // The run's data space and every space a selected file names must exist in the org: one
+      // read per run, before any phase deletes anything (preview too).
+      await dataSpaceCheckOf(this, async () =>
+        (this.createDataSpaceSender ?? openBoundSsot)(await resolveUsername(), '68.0'),
+      ).require([
+        effectiveScope,
+        ...gitDeletions.flatMap((candidate) =>
+          candidate.document.kind === 'dlo' && !isVerbatimDocument(candidate.document)
+            ? candidate.document.c__dataSpace
+            : [],
+        ),
+      ]);
+      // A DELETE removes a DLO from every data space it belongs to, so a selected DLO that also
+      // belongs to another data space than the run's is refused here, before any phase deletes
+      // anything (preview too). An absent DLO is reported unchanged by its phase.
+      for (const selector of nativeSelectors.filter((value) => value.startsWith('dlo:'))) {
+        const name = selectorName(selector);
+        try {
+          // The delete preview's own read: the same membership checks, nothing deleted.
+          await (this.retrieveDlo ?? previewDeleteNativeDlo)(
+            name,
+            this.createDloNativeDeleteClient(await resolveUsername(), nativeVersion),
+            effectiveScope,
+          );
+        } catch (error) {
+          if (error instanceof DloError && error.code === 'DLO_HTTP_ERROR' && error.status === 404)
+            continue;
+          const blocked: DeleteItem = {
+            family: 'dlo',
+            identity: { dataSpace: effectiveScope, apiName: name },
+            operation: flags.preview ? 'preview' : 'delete',
+            outcome: 'blocked',
+            mutation: 'not-attempted',
+          };
+          selectorsByItem.set(blocked, selector);
+          envelope.result.items.push(blocked);
+          throw error;
+        }
+      }
       // Read-only, preview too, before any phase deletes anything: each -m source-family
       // component's current definition by name, and the target ID of a Git-deleted transform.
       for (const selector of sourceSelectors) {
@@ -2539,13 +2600,16 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                         definitionClient,
                         requestScope,
                       )
-                    : this.retrieveDlo(apiName, definitionClient, requestScope));
-                  item.identity = document.identity;
+                    : this.retrieveDlo(apiName, definitionClient, effectiveScope));
+                  // A DLO is reported in the run's data space.
+                  item.identity = native
+                    ? (document.identity as DeleteItem['identity'])
+                    : { dataSpace: effectiveScope, apiName: document.identity.apiName };
                   item.outcome = 'delete';
                 } else {
                   const receipt = await (native
                     ? (this.deleteDmo ?? deleteNativeDmo)(apiName, definitionClient, requestScope)
-                    : this.deleteDlo(apiName, definitionClient, requestScope));
+                    : this.deleteDlo(apiName, definitionClient, effectiveScope));
                   item.identity.dataSpace = receipt.dataSpace;
                   if ('processing' in receipt && receipt.processing) {
                     // DLO/DMO read back in a DELETING state: acknowledged, server still processing.

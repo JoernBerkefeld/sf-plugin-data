@@ -1,4 +1,5 @@
 import { DloError, dloName } from '../artifacts/dlo-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import { openBoundSsot } from './bound-ssot.js';
 import type { BoundSsot } from './bound-ssot.js';
 import { dloFailure } from './dlo-native-rest.js';
@@ -9,9 +10,18 @@ export type DloClient = {
   create: (body: Record<string, unknown>) => Promise<unknown>;
   update: (id: string, body: Record<string, unknown>) => Promise<unknown>;
   delete: (id: string) => Promise<void>;
+  /** One page of a data space's member list (`continuationToken` from the previous page). */
+  members: (dataSpace: string, continuationToken?: string) => Promise<unknown>;
+  /** The full member list of a data space, sent with one PUT (it adds the DLOs not yet in it). */
+  putMembers: (dataSpace: string, memberNames: string[]) => Promise<unknown>;
+  /** Remove one DLO from a data space; the DLO itself is kept. */
+  removeMember: (dataSpace: string, memberName: string) => Promise<unknown>;
 };
 
 const recordId = /^[A-Za-z0-9]{18}$/u;
+// The data space member routes, proven live on API 68 only (DB entry
+// data360:dlo-dataspace-membership-20261118.api68), whatever version the DLO routes use.
+const dataSpacesEndpoint = '/services/data/v68.0/ssot/data-spaces';
 
 /**
  * Build a minimal API68 client on the bound in-process connection. Writes are never resent
@@ -79,6 +89,29 @@ export function createDloClient(
     return `/${id}`;
   }
 
+  /**
+   * Send one data space member request; its answer is an object (also for the DELETE).
+   * @param {'GET' | 'PUT' | 'DELETE'} method HTTP operation.
+   * @param {string} suffix Route below /ssot/data-spaces.
+   * @param {Record<string, unknown>} [body] PUT body.
+   * @returns {Promise<unknown>} Parsed object.
+   */
+  async function member(
+    method: 'GET' | 'PUT' | 'DELETE',
+    suffix: string,
+    body?: Record<string, unknown>,
+  ): Promise<unknown> {
+    let response: unknown;
+    try {
+      response = await bound.request(method, dataSpacesEndpoint + suffix, undefined, body);
+    } catch (error) {
+      throw dloFailure(error);
+    }
+    if (typeof response !== 'object' || response === null || Array.isArray(response))
+      throw new DloError('INVALID_DLO_RESPONSE');
+    return response;
+  }
+
   return {
     get: async (apiName) => {
       if (!dloName.test(apiName)) throw new DloError('INVALID_DLO_NAME');
@@ -91,5 +124,55 @@ export function createDloClient(
     delete: async (id) => {
       await request('DELETE', idSuffix(id));
     },
+    members: async (dataSpace, continuationToken) =>
+      member(
+        'GET',
+        `/${spaceSegment(dataSpace)}/members?batchSize=200${
+          continuationToken === undefined
+            ? ''
+            : `&continuationToken=${encodeURIComponent(continuationToken)}`
+        }`,
+      ),
+    putMembers: async (dataSpace, memberNames) => {
+      if (memberNames.length === 0 || memberNames.some((name) => !dloName.test(name)))
+        throw new DloError('INVALID_DLO_NAME');
+      const answer = await member('PUT', `/${spaceSegment(dataSpace)}/members`, {
+        members: { members: memberNames.map((memberName) => ({ memberName })) },
+      });
+      // Live API 68 answers {success: "true", errors: []}; anything else is Salesforce's refusal.
+      const { success, errors } = answer as { success?: unknown; errors?: unknown };
+      if (
+        !(success === true || success === 'true') ||
+        (errors !== undefined && !(Array.isArray(errors) && errors.length === 0))
+      )
+        throw new DloError('DLO_MEMBERSHIP_UPDATE_REJECTED');
+      return answer;
+    },
+    removeMember: async (dataSpace, memberName) => {
+      if (!dloName.test(memberName)) throw new DloError('INVALID_DLO_NAME');
+      const answer = await member(
+        'DELETE',
+        `/${spaceSegment(dataSpace)}/members?memberNames=${encodeURIComponent(memberName)}`,
+      );
+      // Live API 68 answers {results: [{dataSpaceMemberName, errors: {}, success: true}]}.
+      const results = (answer as { results?: unknown }).results;
+      if (
+        !Array.isArray(results) ||
+        results.length === 0 ||
+        results.some((result) => (result as { success?: unknown } | null)?.success !== true)
+      )
+        throw new DloError('DLO_MEMBERSHIP_UPDATE_REJECTED');
+      return answer;
+    },
   };
+}
+
+/**
+ * A data space name as one URL path segment.
+ * @param {string} dataSpace Data space name.
+ * @returns {string} Encoded segment.
+ */
+function spaceSegment(dataSpace: string): string {
+  if (!isDataSpaceName(dataSpace)) throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  return encodeURIComponent(dataSpace);
 }

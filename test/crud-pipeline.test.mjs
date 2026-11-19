@@ -35,7 +35,12 @@ const stream = (dlo = 'Feed__dll') => ({
 });
 const dlo = (name) => ({
   path: `data360/dlo/${name}.dlo-meta.json`,
-  document: { schemaVersion: 1, kind: 'dlo', identity: { dataSpace: 'default', apiName: name } },
+  document: {
+    schemaVersion: 1,
+    kind: 'dlo',
+    c__dataSpace: ['default'],
+    identity: { apiName: name },
+  },
 });
 // The native stage re-reads its files from disk, so the mapping is a real file.
 const cwd = await mkdtemp(path.join(os.tmpdir(), 'crud-pipeline-'));
@@ -59,7 +64,8 @@ await writeDloDocument(
   {
     schemaVersion: 1,
     kind: 'dlo',
-    identity: { dataSpace: 'default', apiName: 'Feed__dll' },
+    c__dataSpace: ['default'],
+    identity: { apiName: 'Feed__dll' },
     spec: {
       label: 'Feed',
       category: 'Other',

@@ -557,7 +557,7 @@ test('bare dlo beside identity resolution retrieves every listed DLO; a failing 
   command.acquireDlo = async (apiName) => {
     calls.push(`dlo:${apiName}`);
     if (apiName === 'Broken__dll') throw new DloError('DLO_HTTP_ERROR', 404);
-    return { kind: 'dlo', identity: { dataSpace: 'default', apiName } };
+    return { kind: 'dlo', c__dataSpace: ['default'], identity: { apiName } };
   };
   command.writeDlo = async (document) => ({
     path: `${document.identity.apiName}.json`,

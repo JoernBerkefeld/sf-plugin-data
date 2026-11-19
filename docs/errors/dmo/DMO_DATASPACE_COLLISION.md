@@ -36,6 +36,5 @@ Downloaded dmo: 0
 
 ## Related codes
 
-- [`DLO_DATASPACE_COLLISION`](../dlo/DLO_DATASPACE_COLLISION.md) — the same check for data lake object files.
 - [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — the file differs but belongs to the same data space.
 - [`LOCAL_REFRESH_FAILED`](../general/LOCAL_REFRESH_FAILED.md) — a field delete could not refresh a project file.

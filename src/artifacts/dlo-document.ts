@@ -1,5 +1,12 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
+import {
+  dataSpaceKey,
+  isDataSpaceName,
+  readDataSpaceList,
+  refuseLegacyDataSpace,
+  sortedDataSpaces,
+} from './data-space-field.js';
 
 export type DloField = {
   name: string;
@@ -12,7 +19,9 @@ export type DloField = {
 export type DloDocument = {
   schemaVersion: 1;
   kind: 'dlo';
-  identity: { apiName: string; dataSpace: string };
+  /** Every data space the DLO belongs to (file key `c__dataSpace`). */
+  c__dataSpace: string[];
+  identity: { apiName: string };
   spec: {
     label: string;
     category: string;
@@ -119,21 +128,14 @@ export function validateDloDocument(value: unknown, mode: DocumentMode = 'deploy
       'identity.apiName',
       'must be a DLO API name ending in __dll',
     );
-  if (
-    typeof identity.dataSpace !== 'string' ||
-    !identity.dataSpace.trim() ||
-    identity.dataSpace !== identity.dataSpace.trim() ||
-    [...identity.dataSpace].some(
-      (character) => character.codePointAt(0)! < 32 || character.codePointAt(0)! === 127,
-    )
-  )
-    throw refuse('INVALID_DLO_DOCUMENT', 'identity.dataSpace', 'must be a data space name');
+  refuseLegacyDataSpace(identity, refuse);
+  readDataSpaceList(document, refuse);
   if (!Array.isArray(spec.fields))
     throw refuse('INVALID_DLO_DOCUMENT', 'spec.fields', 'must be a list of fields');
   const fields = spec.fields.map((field, index) => objectAt(field, `spec.fields[${index}]`));
   if (mode === 'retrieve') return structuredClone(value) as DloDocument;
-  closedKeys(document, '', ['identity', 'kind', 'schemaVersion', 'spec']);
-  closedKeys(identity, 'identity.', ['apiName', 'dataSpace']);
+  closedKeys(document, '', [dataSpaceKey, 'identity', 'kind', 'schemaVersion', 'spec']);
+  closedKeys(identity, 'identity.', ['apiName']);
   closedKeys(
     spec,
     'spec.',
@@ -244,34 +246,70 @@ export function unwrapDlo(value: unknown): Record<string, unknown> {
 }
 
 /**
+ * The data spaces a native DLO object lists in `dataSpaceInfo[].name`, sorted; a missing, empty
+ * or unusable list is UNSUPPORTED_DLO_DATASPACE.
+ * @param {Record<string, unknown>} object Native DLO object.
+ * @returns {string[]} Its data spaces.
+ */
+export function dloDataSpaces(object: Record<string, unknown>): string[] {
+  if (!Array.isArray(object.dataSpaceInfo) || object.dataSpaceInfo.length === 0)
+    throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  // A membership with more than its name and label (a record filter, for example) is a shape the
+  // plugin does not model; it is never dropped silently (retrieve writes the DLO as-is).
+  if (
+    object.dataSpaceInfo.some(
+      (entry) =>
+        entry &&
+        typeof entry === 'object' &&
+        Object.keys(entry).some((key) => key !== 'name' && key !== 'label'),
+    )
+  )
+    throw new DloError('UNSUPPORTED_DLO_MEMBERSHIP');
+  const memberships = object.dataSpaceInfo.map((entry) =>
+    entry && typeof entry === 'object' ? (entry as { name?: unknown }).name : undefined,
+  );
+  if (!memberships.every((name) => isDataSpaceName(name)))
+    throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  return sortedDataSpaces(memberships);
+}
+
+/**
  * Save definition fields, including generated fields, without runtime/wrapper duplication.
+ * The file lists every data space of the DLO (sorted by name); the DLO must belong to the run's
+ * data space, otherwise UNSUPPORTED_DLO_DATASPACE.
  * @param {unknown} value Native API GET or write response.
- * @param {string} [dataSpace] Explicit membership to bind, if supplied.
+ * @param {string} dataSpace The run's data space.
  * @param {DocumentMode} [mode] `retrieve` keeps values the plugin cannot deploy as returned.
  * @returns {DloDocument} Portable document with observed membership.
  */
 export function normalizeDlo(
   value: unknown,
-  dataSpace?: string,
+  dataSpace: string,
   mode: DocumentMode = 'deploy',
 ): DloDocument {
+  const document = projectDlo(value, mode);
+  if (!document.c__dataSpace.includes(dataSpace)) throw new DloError('UNSUPPORTED_DLO_DATASPACE');
+  return document;
+}
+
+/**
+ * The portable document of a native DLO object with every data space it lists, whichever they
+ * are; normalizeDlo also requires the run's data space.
+ * @param {unknown} value Native API GET or write response.
+ * @param {DocumentMode} [mode] `retrieve` keeps values the plugin cannot deploy as returned.
+ * @returns {DloDocument} Portable document with observed membership.
+ */
+export function projectDlo(value: unknown, mode: DocumentMode = 'deploy'): DloDocument {
   const object = unwrapDlo(value);
-  if (!Array.isArray(object.dataSpaceInfo) || object.dataSpaceInfo.length === 0)
-    throw new DloError('UNSUPPORTED_DLO_DATASPACE');
-  const memberships = object.dataSpaceInfo.map((entry) => record(entry).name);
-  if (
-    memberships.some((name) => typeof name !== 'string' || !name.trim()) ||
-    (dataSpace === undefined ? memberships.length !== 1 : !memberships.includes(dataSpace))
-  )
-    throw new DloError('UNSUPPORTED_DLO_DATASPACE');
-  const scope = dataSpace ?? memberships[0];
+  const memberships = dloDataSpaces(object);
   const fields = object.dataLakeFieldInfoRepresentation ?? object.fields;
   if (!Array.isArray(fields)) throw new DloError('INVALID_DLO_RESPONSE');
   return validateDloDocument(
     {
       schemaVersion: 1,
       kind: 'dlo',
-      identity: { apiName: object.name, dataSpace: scope },
+      [dataSpaceKey]: memberships,
+      identity: { apiName: object.name },
       spec: {
         label: object.label,
         category: object.category,

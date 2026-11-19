@@ -30,7 +30,8 @@ test('human retrieval groups successful names and counts receipts for named, typ
       command.createDloClient = () => ({});
       command.acquireDlo = async (name) => ({
         kind: 'dlo',
-        identity: { dataSpace: 'default', apiName: name },
+        c__dataSpace: ['default'],
+        identity: { apiName: name },
       });
       command.writeDlo = async (document) => ({
         path: `${document.identity.apiName}.json`,
@@ -562,7 +563,7 @@ const run = async (command) => {
 test('command delegates acquisition and authored-only output without duplicating schema checks', async () => {
   const { result } = await run(invocation());
   assert.equal(result.contract, 'sf-data360-retrieve');
-  assert.equal(result.contractVersion, '1.0.0');
+  assert.equal(result.contractVersion, '1.1.0');
   assert.equal(result.status, 'success');
   assert.deepEqual(result.metadata.plugin, {
     name: 'sf-plugin-data',

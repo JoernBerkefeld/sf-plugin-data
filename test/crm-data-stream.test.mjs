@@ -591,7 +591,10 @@ test('delete removes a CRM stream and, with --delete-dlo, its DLO by the stream 
     dlo: {
       get: async () => {
         if (deleted) throw notFound();
-        return { dataLakeObjects: [{ name: 'CliCrmPb2__dll' }] };
+        // Deleting the DLO with the stream needs it in the default data space alone.
+        return {
+          dataLakeObjects: [{ name: 'CliCrmPb2__dll', dataSpaceInfo: [{ name: 'default' }] }],
+        };
       },
     },
   };

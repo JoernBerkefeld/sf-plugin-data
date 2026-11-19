@@ -53,9 +53,10 @@ const fixture = ({ metadata, preview = false, dependencies, mappings = [], remov
   command.retrieveDlo = retrieveNativeDlo;
   command.deleteDlo = deleteNativeDlo;
   command.createDloNativeDeleteClient = () => ({
-    get: async () => {
+    // Every DLO the selection names reads as itself (each is read before any phase).
+    get: async (apiName) => {
       if (deleted) throw new DloError('DLO_HTTP_ERROR', 404);
-      return structuredClone(runtime);
+      return { ...structuredClone(runtime), name: apiName };
     },
     delete: async (target) => {
       events.push(['delete dlo', target]);

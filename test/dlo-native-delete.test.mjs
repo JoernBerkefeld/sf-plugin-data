@@ -217,7 +217,8 @@ async function deleteWithReadback(readback, json) {
   command.retrieveDlo = retrieveNativeDlo;
   command.deleteDlo = deleteNativeDlo;
   command.createDloNativeDeleteClient = () => ({
-    get: async () => (++reads === 1 ? structuredClone(runtime) : readback()),
+    // Two reads before the DELETE: the membership check before any phase, then the delete's own.
+    get: async () => (++reads <= 2 ? structuredClone(runtime) : readback()),
     delete: async () => {
       deletes++;
     },

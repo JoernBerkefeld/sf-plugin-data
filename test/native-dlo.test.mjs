@@ -22,7 +22,7 @@ import {
   retrieveNativeDlo,
 } from '../lib/services/native-dlo.js';
 
-import { executeDloDeploy } from '../lib/services/command-dlo.js';
+import { executeDloDeploy, preflightDloDeploy } from '../lib/services/command-dlo.js';
 
 const apiName = 'Example__dll';
 const targetId = '1dlaj00000Ae4VNAAZ';
@@ -52,7 +52,7 @@ const native = () => ({
     ].map((name) => field(name)),
   ],
 });
-const document = () => normalizeDlo(native());
+const document = () => normalizeDlo(native(), 'default');
 const systemNames = [
   'cdp_sys_SourceVersion__c',
   'DataSource__c',
@@ -67,18 +67,18 @@ test('normalizes GET and write shapes, preserving all fields but not runtime/wra
   const raw = native();
   raw.fields = structuredClone(raw.dataLakeFieldInfoRepresentation);
   raw.dataLakeFieldInfoRepresentation[0].recordID = 'source';
-  const saved = normalizeDlo({ dataLakeObjects: [raw] });
+  const saved = normalizeDlo({ dataLakeObjects: [raw] }, 'default');
   assert.equal(saved.spec.fields.length, 7);
   assert.equal(saved.spec.fields[1].length, 200);
   assert.equal(saved.spec.fields[1].description, 'Portable definition');
   assert.equal(saved.spec.fields[0].recordID, undefined);
   assert.equal(saved.id, undefined);
   assert.equal(saved.spec.status, undefined);
-  assert.deepEqual(saved, normalizeDlo(raw));
-  assert.throws(() => normalizeDlo({ dataLakeObjects: [raw, raw] }), /AMBIGUOUS/);
-  assert.equal(
-    normalizeDlo({ ...raw, dataSpaceInfo: [{ name: 'other' }] }).identity.dataSpace,
-    'other',
+  assert.deepEqual(saved, normalizeDlo(raw, 'default'));
+  assert.throws(() => normalizeDlo({ dataLakeObjects: [raw, raw] }, 'default'), /AMBIGUOUS/);
+  assert.deepEqual(
+    normalizeDlo({ ...raw, dataSpaceInfo: [{ name: 'other' }] }, 'other').c__dataSpace,
+    ['other'],
   );
   assert.ok(dloName.test(apiName));
   assert.ok(!dloName.test('../Example__dll'));
@@ -90,7 +90,7 @@ test('DLO save keeps authored fields only (no KQ_Id or system fields) and roundt
     raw.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
     if (added) raw.dataLakeFieldInfoRepresentation.push(field('UpdateNote__c'));
     const before = structuredClone(raw);
-    const normalized = normalizeDlo(raw);
+    const normalized = normalizeDlo(raw, 'default');
     const snapshot = structuredClone(normalized);
     const cwd = await mkdtemp(path.join(os.tmpdir(), 'dlo-save-policy-'));
     const receipt = await writeDloDocument(normalized, cwd, false);
@@ -107,7 +107,7 @@ test('DLO save keeps authored fields only (no KQ_Id or system fields) and roundt
     assert.equal(saved.spec.fields[0].keyQualifierName, 'KQ_Id');
     assert.deepEqual(raw, before);
     assert.deepEqual(normalized, snapshot);
-    const create = await preflightNativeDlo(saved, { get: absent });
+    const create = await preflightNativeDlo(saved, { get: absent }, 'default');
     assert.deepEqual(
       create.body.dataLakeFieldInputRepresentations.map((f) => f.name),
       added ? ['Id', 'Note', 'UpdateNote'] : ['Id', 'Note'],
@@ -115,18 +115,26 @@ test('DLO save keeps authored fields only (no KQ_Id or system fields) and roundt
     let writes = 0;
     const target = native();
     target.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
-    const result = await deployNativeDlo(saved, {
-      get: async () => target,
-      update: async (_id, body) => {
-        writes++;
-        assert.equal(body.dataLakeFieldInputRepresentations?.length ?? 0, added ? 1 : 0);
-        return raw;
+    const result = await deployNativeDlo(
+      saved,
+      {
+        get: async () => target,
+        update: async (_id, body) => {
+          writes++;
+          assert.equal(body.dataLakeFieldInputRepresentations?.length ?? 0, added ? 1 : 0);
+          return raw;
+        },
       },
-    });
+      'default',
+    );
     assert.equal(writes, added ? 1 : 0);
     assert.equal(result.operation, added ? 'update' : 'unchanged');
     assert.equal(result.document.spec.fields.length, added ? 8 : 7);
-    const created = await deployNativeDlo(saved, { get: absent, create: async () => raw });
+    const created = await deployNativeDlo(
+      saved,
+      { get: absent, create: async () => raw },
+      'default',
+    );
     assert.equal(created.operation, 'create');
     assert.equal(created.document.spec.fields.length, added ? 8 : 7);
     assert.deepEqual(input.document, saved);
@@ -155,7 +163,7 @@ test('DLO save preserves other/custom/primary qualifiers and update refuses thei
     missing.spec.fields = missing.spec.fields.filter((f) => f.name !== qualifier.name);
     if (!qualifier.isPrimaryKey)
       await assert.rejects(
-        preflightNativeDlo(missing, { get: async () => target }),
+        preflightNativeDlo(missing, { get: async () => target }, 'default'),
         /FIELD_CHANGE/,
       );
   }
@@ -163,7 +171,7 @@ test('DLO save preserves other/custom/primary qualifiers and update refuses thei
     const changed = document();
     changed.spec.fields.find((f) => f.name === name).label = 'Changed';
     await assert.rejects(
-      preflightNativeDlo(changed, { get: async () => native() }),
+      preflightNativeDlo(changed, { get: async () => native() }, 'default'),
       /FIELD_CHANGE/,
     );
     if (name === 'KQ_Id__c') continue;
@@ -171,11 +179,11 @@ test('DLO save preserves other/custom/primary qualifiers and update refuses thei
     // An omitted authored field is a removal; an omitted system field stays as the org has it.
     if (name === 'Note__c')
       await assert.rejects(
-        preflightNativeDlo(changed, { get: async () => native() }),
+        preflightNativeDlo(changed, { get: async () => native() }, 'default'),
         /FIELD_CHANGE/,
       );
     else {
-      const kept = await preflightNativeDlo(changed, { get: async () => native() });
+      const kept = await preflightNativeDlo(changed, { get: async () => native() }, 'default');
       assert.equal(kept.operation, 'unchanged');
     }
   }
@@ -210,11 +218,11 @@ test('hand-written DLO file without generated fields is unchanged and adds only 
       return native();
     },
   };
-  const plan = await preflightNativeDlo(input, client);
+  const plan = await preflightNativeDlo(input, client, 'default');
   assert.equal(plan.operation, 'unchanged');
   assert.equal(plan.targetId, targetId);
   assert.equal(Object.hasOwn(plan, 'body'), false);
-  const result = await deployNativeDlo(input, client);
+  const result = await deployNativeDlo(input, client, 'default');
   assert.equal(result.operation, 'unchanged');
   // The org copy keeps all seven fields.
   assert.deepEqual(result.document, document());
@@ -226,14 +234,18 @@ test('hand-written DLO file without generated fields is unchanged and adds only 
   const updates = [];
   const after = native();
   after.dataLakeFieldInfoRepresentation.push(field('Extra__c'));
-  const deployed = await deployNativeDlo(added, {
-    get: async () => native(),
-    create: async () => assert.fail('no POST expected'),
-    update: async (id, body) => {
-      updates.push([id, body]);
-      return after;
+  const deployed = await deployNativeDlo(
+    added,
+    {
+      get: async () => native(),
+      create: async () => assert.fail('no POST expected'),
+      update: async (id, body) => {
+        updates.push([id, body]);
+        return after;
+      },
     },
-  });
+    'default',
+  );
   assert.equal(deployed.operation, 'update');
   assert.deepEqual(updates, [
     [
@@ -255,7 +267,7 @@ test('a listed DLO field is compared on the keys the file states only', async ()
   const client = { get: async () => raw };
   for (const input of [handWritten(), document()]) {
     assert.equal(Object.hasOwn(input.spec.fields[0], 'keyQualifierName'), false);
-    const plan = await preflightNativeDlo(input, client);
+    const plan = await preflightNativeDlo(input, client, 'default');
     assert.equal(plan.operation, 'unchanged');
   }
   // A stated key that differs, or that the org copy does not have, is still a change.
@@ -272,7 +284,7 @@ test('a listed DLO field is compared on the keys the file states only', async ()
   ]) {
     const input = handWritten();
     mutate(input);
-    await assert.rejects(preflightNativeDlo(input, client), refusedChange);
+    await assert.rejects(preflightNativeDlo(input, client, 'default'), refusedChange);
   }
 });
 
@@ -313,8 +325,8 @@ test('DLO update keeps only omitted generated fields; other omissions and listed
         writes++;
       },
     };
-    await assert.rejects(preflightNativeDlo(input, client), refusedChange, name);
-    await assert.rejects(deployNativeDlo(input, client), refusedChange, name);
+    await assert.rejects(preflightNativeDlo(input, client, 'default'), refusedChange, name);
+    await assert.rejects(deployNativeDlo(input, client, 'default'), refusedChange, name);
     assert.equal(writes, 0, name);
   }
   // Each generated field may be left out on its own, or listed exactly as the org has it. Salesforce
@@ -323,11 +335,13 @@ test('DLO update keeps only omitted generated fields; other omissions and listed
   const qualified = native();
   qualified.dataLakeFieldInfoRepresentation.push(field('KQ_Note__c'));
   for (const input of [handWritten(), document()]) {
-    const plan = await preflightNativeDlo(input, { get: async () => qualified });
+    const plan = await preflightNativeDlo(input, { get: async () => qualified }, 'default');
     assert.equal(plan.operation, 'unchanged');
   }
   assert.equal(
-    leanDloDocument(normalizeDlo(qualified)).spec.fields.some((f) => f.name === 'KQ_Note__c'),
+    leanDloDocument(normalizeDlo(qualified, 'default')).spec.fields.some(
+      (f) => f.name === 'KQ_Note__c',
+    ),
     false,
   );
   // Each generated field may be left out on its own, or listed exactly as the org has it.
@@ -342,7 +356,7 @@ test('DLO update keeps only omitted generated fields; other omissions and listed
     without.spec.fields = without.spec.fields.filter((f) => f.name !== name);
     const only = handWritten([field(name)]);
     for (const input of [without, only]) {
-      const plan = await preflightNativeDlo(input, { get: async () => native() });
+      const plan = await preflightNativeDlo(input, { get: async () => native() }, 'default');
       assert.equal(plan.operation, 'unchanged', name);
     }
   }
@@ -351,7 +365,7 @@ test('DLO update keeps only omitted generated fields; other omissions and listed
 test('document validation refuses invalid identity, fields, labels and primary-key inventory', () => {
   for (const mutate of [
     (d) => {
-      d.identity.dataSpace = ' ';
+      d.c__dataSpace = [' '];
     },
     (d) => {
       d.identity.apiName = 'Example';
@@ -379,7 +393,7 @@ test('document validation refuses invalid identity, fields, labels and primary-k
 });
 
 test('create selects only authoritative 404, omits generated fields and keeps Id and custom definitions', async () => {
-  const plan = await preflightNativeDlo(document(), { get: absent });
+  const plan = await preflightNativeDlo(document(), { get: absent }, 'default');
   assert.equal(plan.operation, 'create');
   assert.equal(plan.targetId, undefined);
   assert.deepEqual(plan.body.dataspaceInfo, [{ name: 'default' }]);
@@ -397,11 +411,15 @@ test('create selects only authoritative 404, omits generated fields and keeps Id
     new DloError('DLO_REQUEST_UNCONFIRMED', 404),
   ]) {
     await assert.rejects(
-      preflightNativeDlo(document(), {
-        get: async () => {
-          throw error;
+      preflightNativeDlo(
+        document(),
+        {
+          get: async () => {
+            throw error;
+          },
         },
-      }),
+        'default',
+      ),
       (actual) => actual === error,
     );
   }
@@ -411,7 +429,7 @@ test('unchanged compares fields by name and retains target generated qualifiers 
   for (const omitQualifier of [false, true]) {
     const raw = native();
     raw.dataLakeFieldInfoRepresentation[0].keyQualifierName = 'KQ_Id';
-    const saved = normalizeDlo(raw);
+    const saved = normalizeDlo(raw, 'default');
     if (omitQualifier) saved.spec.fields = saved.spec.fields.filter((f) => f.name !== 'KQ_Id__c');
     saved.spec.fields.reverse();
     const before = structuredClone(saved);
@@ -427,13 +445,13 @@ test('unchanged compares fields by name and retains target generated qualifiers 
         return raw;
       },
     };
-    const plan = await preflightNativeDlo(saved, client);
+    const plan = await preflightNativeDlo(saved, client, 'default');
     assert.equal(plan.operation, 'unchanged');
     assert.equal(plan.targetId, targetId);
     assert.equal(Object.hasOwn(plan, 'body'), false);
-    const result = await deployNativeDlo(saved, client);
+    const result = await deployNativeDlo(saved, client, 'default');
     assert.equal(result.operation, 'unchanged');
-    assert.deepEqual(result.document, normalizeDlo(raw));
+    assert.deepEqual(result.document, normalizeDlo(raw, 'default'));
     assert.deepEqual(saved, before);
     assert.equal(writes, 0);
   }
@@ -444,7 +462,7 @@ test('update uses target ID, label and ordinary additions only; mutation/removal
   const saved = document();
   saved.spec.label = 'Updated';
   saved.spec.fields.push(field('CustomerId__c'));
-  const plan = await preflightNativeDlo(saved, client);
+  const plan = await preflightNativeDlo(saved, client, 'default');
   assert.equal(plan.targetId, targetId);
   assert.deepEqual(plan.body, {
     label: 'Updated',
@@ -470,7 +488,7 @@ test('update uses target ID, label and ordinary additions only; mutation/removal
   ]) {
     const saved = document();
     mutate(saved);
-    await assert.rejects(preflightNativeDlo(saved, client), DloError);
+    await assert.rejects(preflightNativeDlo(saved, client, 'default'), DloError);
   }
 });
 
@@ -492,12 +510,12 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
       deleted = true;
     },
   };
-  assert.deepEqual(await retrieveNativeDlo(apiName, client), document());
+  assert.deepEqual(await retrieveNativeDlo(apiName, client, 'default'), document());
   const changed = document();
   changed.spec.label = 'Updated';
-  const deployed = await deployNativeDlo(changed, client);
+  const deployed = await deployNativeDlo(changed, client, 'default');
   assert.equal(deployed.operation, 'update');
-  assert.deepEqual(await deleteNativeDlo(apiName, client), {
+  assert.deepEqual(await deleteNativeDlo(apiName, client, 'default'), {
     apiName,
     targetId,
     dataSpace: 'default',
@@ -508,23 +526,35 @@ test('retrieve/deploy/delete bind exact names and fresh IDs with one write and n
   );
   assert.equal(calls[2][1], targetId);
   await assert.rejects(
-    retrieveNativeDlo(apiName, { get: async () => ({ ...native(), name: 'Other__dll' }) }),
+    retrieveNativeDlo(
+      apiName,
+      { get: async () => ({ ...native(), name: 'Other__dll' }) },
+      'default',
+    ),
     /IDENTITY/,
   );
   let writes = 0;
   deleted = false;
   await assert.rejects(
-    deleteNativeDlo(apiName, {
-      ...client,
-      delete: async () => {
-        writes++;
-        throw new Error('timeout');
+    deleteNativeDlo(
+      apiName,
+      {
+        ...client,
+        delete: async () => {
+          writes++;
+          throw new Error('timeout');
+        },
       },
-    }),
+      'default',
+    ),
     /timeout/,
   );
   assert.equal(writes, 1);
-  const result = await deployNativeDlo(document(), { get: absent, create: async () => native() });
+  const result = await deployNativeDlo(
+    document(),
+    { get: absent, create: async () => native() },
+    'default',
+  );
   assert.equal(result.operation, 'create');
 });
 
@@ -541,42 +571,50 @@ test('DLO create/update retain only explicit PROCESSING after validated write re
           create: async () => response,
           update: async () => response,
         };
-        const result = await deployNativeDlo(desired, client);
-        const execution = await executeDloDeploy(desired, client);
+        const result = await deployNativeDlo(desired, client, 'default');
+        const execution = await executeDloDeploy(desired, client, 'default');
         assert.equal(result.serverProcessing, status === 'PROCESSING' ? true : undefined);
         assert.equal(execution.serverProcessing, result.serverProcessing);
         assert.equal(execution.outcome, operation === 'create' ? 'created' : 'updated');
         assert.equal(result.document.spec.status, undefined);
       }
-  const unchanged = await executeDloDeploy(document(), {
-    get: async () => ({ ...native(), status: 'PROCESSING' }),
-  });
+  const unchanged = await executeDloDeploy(
+    document(),
+    {
+      get: async () => ({ ...native(), status: 'PROCESSING' }),
+    },
+    'default',
+  );
   assert.equal(unchanged.outcome, 'unchanged');
   assert.equal(unchanged.serverProcessing, undefined);
-  const failed = await executeDloDeploy(document(), {
-    get: absent,
-    create: async () => ({ ...native(), status: 'PROCESSING', name: 'Other__dll' }),
-  });
+  const failed = await executeDloDeploy(
+    document(),
+    {
+      get: absent,
+      create: async () => ({ ...native(), status: 'PROCESSING', name: 'Other__dll' }),
+    },
+    'default',
+  );
   assert.equal(failed.outcome, 'failed');
   assert.equal(failed.serverProcessing, undefined);
 });
 
-test('DLO concrete membership binding, required create scope and collision refusal', async () => {
+test('DLO file lists every data space; the run data space selects, binds create and refuses', async () => {
   const raw = { ...native(), dataSpaceInfo: [{ name: 'other' }] };
-  const saved = normalizeDlo(raw);
-  assert.equal(saved.identity.dataSpace, 'other');
-  const multiple = { ...raw, dataSpaceInfo: [{ name: 'default' }, { name: 'other' }] };
-  assert.throws(() => normalizeDlo(multiple), /DATASPACE/);
-  assert.equal(normalizeDlo(multiple, 'other').identity.dataSpace, 'other');
+  assert.throws(() => normalizeDlo(raw, 'default'), { code: 'UNSUPPORTED_DLO_DATASPACE' });
+  const saved = normalizeDlo(raw, 'other');
+  assert.deepEqual(saved.c__dataSpace, ['other']);
+  const multiple = { ...raw, dataSpaceInfo: [{ name: 'other' }, { name: 'default' }] };
+  // Sorted by name, whatever order the org lists them in, read in any of its data spaces.
+  assert.deepEqual(normalizeDlo(multiple, 'other').c__dataSpace, ['default', 'other']);
+  assert.deepEqual(normalizeDlo(multiple, 'default').c__dataSpace, ['default', 'other']);
   assert.throws(() => normalizeDlo(multiple, 'missing'), /DATASPACE/);
-  assert.throws(() => normalizeDlo({ ...raw, dataSpaceInfo: [] }), /DATASPACE/);
-  for (const scope of [undefined, 'other']) {
-    const plan = await preflightNativeDlo(saved, { get: absent }, scope);
-    assert.deepEqual(plan.body.dataspaceInfo, [{ name: 'other' }]);
-    assert.ok(!Object.hasOwn(plan.body, 'dataSpaceName'));
-    const result = await deployNativeDlo(saved, { get: absent, create: async () => raw }, scope);
-    assert.equal(result.document.identity.dataSpace, 'other');
-  }
+  assert.throws(() => normalizeDlo({ ...raw, dataSpaceInfo: [] }, 'other'), /DATASPACE/);
+  const plan = await preflightNativeDlo(saved, { get: absent }, 'other');
+  assert.deepEqual(plan.body.dataspaceInfo, [{ name: 'other' }]);
+  assert.ok(!Object.hasOwn(plan.body, 'dataSpaceName'));
+  const result = await deployNativeDlo(saved, { get: absent, create: async () => raw }, 'other');
+  assert.deepEqual(result.document.c__dataSpace, ['other']);
   let writes = 0;
   const client = {
     get: async () => native(),
@@ -592,23 +630,301 @@ test('DLO concrete membership binding, required create scope and collision refus
       return raw;
     },
   };
-  await assert.rejects(deployNativeDlo(saved, client), /DATASPACE/);
-  await assert.rejects(deployNativeDlo(saved, client, 'default'), /DATASPACE/);
-  await assert.rejects(deleteNativeDlo(apiName, client, 'other'), /DATASPACE/);
-  await assert.rejects(retrieveNativeDlo(apiName, client, 'other'), /DATASPACE/);
+  // A file that does not list the run's data space is refused, never filtered out.
+  await assert.rejects(deployNativeDlo(saved, client, 'default'), {
+    code: 'DLO_DATASPACE_MISMATCH',
+  });
+  await assert.rejects(deleteNativeDlo(apiName, client, 'other'), {
+    code: 'UNSUPPORTED_DLO_DATASPACE',
+  });
+  await assert.rejects(retrieveNativeDlo(apiName, client, 'other'), {
+    code: 'UNSUPPORTED_DLO_DATASPACE',
+  });
   assert.equal(writes, 0);
-  const multiplePlan = await preflightNativeDlo(saved, { get: async () => multiple }, 'other');
-  assert.equal(multiplePlan.operation, 'unchanged');
+  // The org also lists default, which the file leaves out: removing it needs the flag.
+  await assert.rejects(preflightNativeDlo(saved, { get: async () => multiple }, 'other'), {
+    code: 'DLO_DATASPACE_REMOVAL_NOT_ALLOWED',
+  });
+  // A DELETE would remove a DLO from every data space: one in several is never deleted.
   await assert.rejects(
-    deployNativeDlo(saved, { get: absent, create: async () => native() }, 'other'),
-    /DATASPACE/,
+    deleteNativeDlo(apiName, { ...client, get: async () => multiple }, 'other'),
+    {
+      code: 'DLO_DELETE_OTHER_DATASPACES',
+    },
   );
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'dlo-space-collision-'));
-  const receipt = await writeDloDocument(document(), cwd, false);
-  const bytes = await readFile(receipt.path);
-  for (const overwrite of [false, true])
-    await assert.rejects(writeDloDocument(saved, cwd, overwrite), /DATASPACE_COLLISION/);
-  assert.deepEqual(await readFile(receipt.path), bytes);
+  assert.equal(writes, 0);
+});
+
+test('DLO file key c__dataSpace: legacy key, filter entries, empty and repeated lists are refused', () => {
+  const legacy = { ...document(), identity: { apiName, dataSpace: 'default' } };
+  delete legacy.c__dataSpace;
+  for (const mode of ['deploy', 'retrieve'])
+    assert.throws(() => validateDloDocument(legacy, mode), { code: 'LEGACY_DATASPACE_KEY' });
+  for (const [list, code] of [
+    [
+      ['default', { name: 'dataspace2', filter: { conditions: [] } }],
+      'UNSUPPORTED_DATASPACE_FILTER',
+    ],
+    [[], 'INVALID_DATASPACE_FIELD'],
+    [['default', 'default'], 'INVALID_DATASPACE_FIELD'],
+    ['default', 'INVALID_DATASPACE_FIELD'],
+    [[{ name: 'default' }], 'INVALID_DATASPACE_FIELD'],
+  ])
+    assert.throws(() => validateDloDocument({ ...document(), c__dataSpace: list }), { code });
+  const missing = document();
+  delete missing.c__dataSpace;
+  assert.throws(() => validateDloDocument(missing), { code: 'INVALID_DATASPACE_FIELD' });
+});
+
+/**
+ * An ACTIVE data space member entry as Salesforce lists it.
+ * @param {string} memberName DLO name.
+ * @returns {object} Member entry.
+ */
+const active = (memberName) => ({ memberName, memberLabel: memberName, status: 'ACTIVE' });
+
+/**
+ * A DLO client whose org membership changes with the member writes it receives.
+ * @param {string[]} spaces Data spaces the DLO belongs to at first.
+ * @param {object} [options] Member pages and overrides.
+ * @returns {object} Client plus the recorded writes.
+ */
+const memberClient = (spaces, options = {}) => {
+  const current = new Set(spaces);
+  const writes = [];
+  // The member list of every data space, as the org holds it; a PUT adds, or replaces it.
+  const lists = new Map();
+  const listOf = (space) => {
+    if (!lists.has(space)) lists.set(space, ['Other__dll', 'Last__dll']);
+    return lists.get(space);
+  };
+  const reads = [];
+  const client = {
+    get: async () => ({
+      ...native(),
+      dataSpaceInfo: [...(options.stuck ? spaces : current)].map((name) => ({ name })),
+    }),
+    create: async (body) => {
+      writes.push(['POST', body.dataspaceInfo]);
+      for (const { name } of body.dataspaceInfo) current.add(name);
+      return { ...native(), status: 'PROCESSING', dataSpaceInfo: body.dataspaceInfo };
+    },
+    update: async (id, body) => {
+      writes.push(['PATCH', body]);
+      return native();
+    },
+    members: async (space, token) => {
+      reads.push([space, token]);
+      if (options.pages) return structuredClone(options.pages[token === undefined ? 0 : 1]);
+      const list = listOf(space);
+      // Two pages: the first member, then the rest, as continuation-token paging.
+      return token === undefined
+        ? {
+            members: list.slice(0, 1).map((name) => active(name)),
+            totalSize: list.length,
+            ...(list.length > 1 ? { continuationToken: 'next' } : {}),
+          }
+        : { members: list.slice(1).map((name) => active(name)), totalSize: list.length };
+    },
+    putMembers: async (space, names) => {
+      writes.push(['PUT', space, names]);
+      current.add(space);
+      lists.set(space, options.replace ? names.slice(-1) : [...names]);
+      return { success: 'true', errors: [], dataSpaceMembers: { members: [] } };
+    },
+    removeMember: async (space, name) => {
+      writes.push(['DELETE', space, name]);
+      current.delete(space);
+      return { results: [{ dataSpaceMemberName: name, errors: {}, success: true }] };
+    },
+  };
+  return { client, writes, reads };
+};
+
+test('a data space the file adds is sent as the full member list read right before, then settled', async () => {
+  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
+  const { client, writes, reads } = memberClient(['default']);
+  const plan = await preflightNativeDlo(file, client, 'default');
+  assert.equal(plan.operation, 'update');
+  assert.equal(plan.body, undefined);
+  assert.deepEqual(plan.membership, { add: ['dataspace2'], remove: [] });
+  // Preflight reads the member list (every page) before any write.
+  assert.deepEqual(reads, [
+    ['dataspace2', undefined],
+    ['dataspace2', 'next'],
+  ]);
+  assert.deepEqual(writes, []);
+  const result = await executeDloDeploy(file, client, 'default');
+  assert.equal(result.outcome, 'updated');
+  assert.equal(result.mutation, 'confirmed-updated');
+  assert.deepEqual(result.dataSpaces, ['dataspace2', 'default']);
+  assert.deepEqual(writes, [['PUT', 'dataspace2', ['Other__dll', 'Last__dll', apiName]]]);
+  // Once added, the same file is unchanged.
+  const again = memberClient(['default', 'dataspace2']);
+  const unchanged = await executeDloDeploy(file, again.client, 'default');
+  assert.equal(unchanged.outcome, 'unchanged');
+  assert.deepEqual(again.writes, []);
+});
+
+test('a DLO created with several data spaces is created in the run data space, then added', async () => {
+  const file = { ...document(), c__dataSpace: ['dataspace2', 'default'] };
+  const { client, writes } = memberClient([]);
+  client.get = (() => {
+    let created = false;
+    const read = client.get;
+    return async () => {
+      if (!created && !writes.some(([method]) => method === 'POST'))
+        throw new DloError('DLO_HTTP_ERROR', 404);
+      created = true;
+      return read();
+    };
+  })();
+  const preview = await preflightDloDeploy(file, client, 'default');
+  assert.equal(preview.outcome, 'create');
+  assert.deepEqual(preview.dataSpaceChanges, { add: ['dataspace2'], remove: [] });
+  const result = await executeDloDeploy(file, client, 'default');
+  assert.equal(result.outcome, 'created');
+  assert.deepEqual(result.dataSpaces, ['dataspace2', 'default']);
+  assert.deepEqual(writes, [
+    ['POST', [{ name: 'default' }]],
+    ['PUT', 'dataspace2', ['Other__dll', 'Last__dll', apiName]],
+  ]);
+});
+
+test('a member list that cannot be read completely, or holds a filter, refuses before any write', async () => {
+  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
+  for (const pages of [
+    [{ members: [{ ...active('Other__dll'), filter: { conditions: [] } }], totalSize: 1 }],
+    [
+      { members: [active('Other__dll')], continuationToken: 'next', totalSize: 2 },
+      { members: [], continuationToken: 'again', totalSize: 2 },
+    ],
+    [{ items: [] }],
+    [{ members: [{ status: 'ACTIVE' }], totalSize: 1 }],
+    // More members stated than listed (live: default states 99 and lists 98).
+    [{ members: [active('Other__dll')], totalSize: 2 }],
+    [{ members: [active('Other__dll')] }],
+    [{ members: [active('Other__dll'), active('Other__dll')], totalSize: 2 }],
+    [{ members: [{ ...active('Other__dll'), status: 'DELETING' }], totalSize: 1 }],
+    [{ members: [active('Not a DLO name')], totalSize: 1 }],
+  ]) {
+    const { client, writes } = memberClient(['default'], { pages });
+    const result = await executeDloDeploy(file, client, 'default');
+    assert.equal(result.outcome, 'blocked', JSON.stringify(pages));
+    assert.equal(result.mutation, 'not-attempted');
+    assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_MEMBERS_UNREADABLE');
+    assert.deepEqual(writes, []);
+  }
+});
+
+test('a PUT that replaces the member list instead of adding to it is reported, not success', async () => {
+  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
+  const { client, writes } = memberClient(['default'], { replace: true });
+  const result = await executeDloDeploy(file, client, 'default');
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_MEMBERS_CHANGED');
+  assert.match(result.diagnostics[0].message, /Other__dll, Last__dll/u);
+  assert.equal(writes.length, 1);
+});
+
+test('a member write Salesforce answers without success is rejected', async () => {
+  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
+  const { client } = memberClient(['default']);
+  client.putMembers = async () => {
+    throw new DloError('DLO_MEMBERSHIP_UPDATE_REJECTED');
+  };
+  const result = await executeDloDeploy(file, client, 'default');
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'rejected');
+  assert.equal(result.diagnostics[0].code, 'DLO_MEMBERSHIP_UPDATE_REJECTED');
+  for (const [method, answer] of [
+    ['PUT', { success: 'false', errors: [{ message: 'no' }] }],
+    ['PUT', { success: 'true', errors: [{ message: 'no' }] }],
+    ['PUT', {}],
+    ['DELETE', { results: [{ success: false, errors: { message: 'no' } }] }],
+    ['DELETE', { results: [] }],
+  ]) {
+    const rest = createDloClient('target', '68.0', { request: async () => answer });
+    await assert.rejects(
+      method === 'PUT'
+        ? rest.putMembers('dataspace2', [apiName])
+        : rest.removeMember('dataspace2', apiName),
+      { code: 'DLO_MEMBERSHIP_UPDATE_REJECTED' },
+    );
+  }
+});
+
+test('a membership with more than a name and label is not modelled', () => {
+  const raw = {
+    ...native(),
+    dataSpaceInfo: [{ name: 'default', label: 'default', filter: { conditions: [] } }],
+  };
+  assert.throws(() => normalizeDlo(raw, 'default', 'retrieve'), {
+    code: 'UNSUPPORTED_DLO_MEMBERSHIP',
+  });
+});
+
+test('a data space the file drops is removed only with allowDataspaceRemoval', async () => {
+  const file = document();
+  const blocked = memberClient(['default', 'dataspace2']);
+  const refused = await executeDloDeploy(file, blocked.client, 'default');
+  assert.equal(refused.outcome, 'blocked');
+  assert.equal(refused.diagnostics[0].code, 'DLO_DATASPACE_REMOVAL_NOT_ALLOWED');
+  assert.match(refused.diagnostics[0].message, /dataspace2/u);
+  assert.deepEqual(blocked.writes, []);
+  const allowed = memberClient(['default', 'dataspace2']);
+  const preview = await preflightDloDeploy(file, allowed.client, 'default', {
+    allowDataspaceRemoval: true,
+  });
+  assert.deepEqual(preview.dataSpaceChanges, { add: [], remove: ['dataspace2'] });
+  const result = await executeDloDeploy(file, allowed.client, 'default', {
+    allowDataspaceRemoval: true,
+  });
+  assert.equal(result.outcome, 'updated');
+  assert.deepEqual(result.dataSpaces, ['default']);
+  assert.deepEqual(allowed.writes, [['DELETE', 'dataspace2', apiName]]);
+});
+
+test('a data space change the DLO never reflects is unconfirmed, not success', async () => {
+  const file = { ...document(), c__dataSpace: ['default', 'dataspace2'] };
+  const { client, writes } = memberClient(['default'], { stuck: true });
+  const result = await executeDloDeploy(file, client, 'default');
+  assert.equal(result.outcome, 'failed');
+  assert.equal(result.mutation, 'unknown');
+  assert.equal(result.diagnostics[0].code, 'DLO_DATASPACE_NOT_SETTLED');
+  assert.equal(writes.length, 1);
+});
+
+test('REST sends the data space member routes with the proven shapes', async () => {
+  const requests = [];
+  const client = createDloClient('target', '61.0', {
+    request: async (method, route, noContent, body) => {
+      requests.push({ method, route, body });
+      return method === 'PUT'
+        ? { success: 'true', errors: [] }
+        : method === 'DELETE'
+          ? { results: [{ success: true, errors: {} }] }
+          : { members: [] };
+    },
+  });
+  await client.members('dataspace2');
+  await client.members('dataspace2', 'a b');
+  await client.putMembers('dataspace2', ['A__dll', apiName]);
+  await client.removeMember('dataspace2', apiName);
+  const endpoint = '/services/data/v68.0/ssot/data-spaces/dataspace2/members';
+  assert.deepEqual(requests, [
+    { method: 'GET', route: `${endpoint}?batchSize=200`, body: undefined },
+    { method: 'GET', route: `${endpoint}?batchSize=200&continuationToken=a%20b`, body: undefined },
+    {
+      method: 'PUT',
+      route: endpoint,
+      body: { members: { members: [{ memberName: 'A__dll' }, { memberName: apiName }] } },
+    },
+    { method: 'DELETE', route: `${endpoint}?memberNames=${apiName}`, body: undefined },
+  ]);
+  await assert.rejects(client.putMembers('dataspace2', []), { code: 'INVALID_DLO_NAME' });
+  await assert.rejects(client.members(' bad'), { code: 'UNSUPPORTED_DLO_DATASPACE' });
 });
 
 test('REST sends each call once over the bound sender with exact routes and JSON bodies', async () => {
@@ -646,7 +962,7 @@ test('REST never treats an unconfirmed or malformed answer as absence', async ()
       },
     });
     await assert.rejects(
-      preflightNativeDlo(document(), client),
+      preflightNativeDlo(document(), client, 'default'),
       (error) => error instanceof DloError && error.code !== 'DLO_HTTP_ERROR',
     );
   }
@@ -660,7 +976,7 @@ test('REST never treats an unconfirmed or malformed answer as absence', async ()
       throw new ConnectError('REQUEST_FAILED', 404);
     },
   });
-  const plan = await preflightNativeDlo(document(), client);
+  const plan = await preflightNativeDlo(document(), client, 'default');
   assert.equal(plan.operation, 'create');
   await assert.rejects(
     client.get(apiName),
@@ -684,13 +1000,13 @@ test('create sends any category as authored, and the event field of an Engagemen
   for (const category of ['Profile', 'Insights', 'Content']) {
     const file = document();
     file.spec.category = category;
-    const plan = await preflightNativeDlo(file, { get: absent });
+    const plan = await preflightNativeDlo(file, { get: absent }, 'default');
     assert.equal(plan.body.category, category);
     assert.equal(plan.body.eventDateTimeFieldName, undefined);
   }
-  const file = normalizeDlo(engagement());
+  const file = normalizeDlo(engagement(), 'default');
   assert.equal(file.spec.eventDateTimeFieldName, 'EventAt__c');
-  const plan = await preflightNativeDlo(file, { get: absent });
+  const plan = await preflightNativeDlo(file, { get: absent }, 'default');
   assert.equal(plan.body.category, 'Engagement');
   assert.equal(plan.body.eventDateTimeFieldName, 'EventAt');
   // The generated partition field is never sent.
@@ -701,7 +1017,7 @@ test('create sends any category as authored, and the event field of an Engagemen
 });
 
 test('the event field must be a listed field and cannot change after create', async () => {
-  const file = normalizeDlo(engagement());
+  const file = normalizeDlo(engagement(), 'default');
   assert.throws(
     () =>
       validateDloDocument({
@@ -721,19 +1037,19 @@ test('the event field must be a listed field and cannot change after create', as
   omitted.spec.fields = omitted.spec.fields.filter(
     (entry) => entry.name !== 'cdp_sys_PartitionDate__c',
   );
-  const unchanged = await preflightNativeDlo(omitted, target);
+  const unchanged = await preflightNativeDlo(omitted, target, 'default');
   assert.equal(unchanged.operation, 'unchanged');
   const moved = structuredClone(file);
   moved.spec.fields.push({ ...field('OtherAt__c'), dataType: 'DateTime' });
   moved.spec.eventDateTimeFieldName = 'OtherAt__c';
   await assert.rejects(
-    preflightNativeDlo(moved, target),
+    preflightNativeDlo(moved, target, 'default'),
     (error) => error.code === 'UNSUPPORTED_DLO_EVENT_FIELD_CHANGE',
   );
 });
 
 test('the event field matches a listed field exactly, round-trips through the writer, and is managed only when listed', async () => {
-  const file = normalizeDlo(engagement());
+  const file = normalizeDlo(engagement(), 'default');
   assert.throws(
     () =>
       validateDloDocument({
@@ -744,23 +1060,23 @@ test('the event field matches a listed field exactly, round-trips through the wr
   );
   // The writer saves the key and the deploy reader admits it unchanged.
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-dlo-event-'));
-  const saved = await writeDloDocument(normalizeDlo(engagement()), root, false);
+  const saved = await writeDloDocument(normalizeDlo(engagement(), 'default'), root, false);
   const reread = JSON.parse(await readFile(saved.path, 'utf8'));
   assert.equal(reread.spec.eventDateTimeFieldName, 'EventAt__c');
   assert.deepEqual(validateDloDocument(reread), reread);
   // A file without the key does not manage it: the target's event field stays as it is.
   const unmanaged = structuredClone(file);
   delete unmanaged.spec.eventDateTimeFieldName;
-  const plan = await preflightNativeDlo(unmanaged, { get: async () => engagement() });
+  const plan = await preflightNativeDlo(unmanaged, { get: async () => engagement() }, 'default');
   assert.equal(plan.operation, 'unchanged');
   // Create without the key sends none, whatever the category; with it, any category sends it.
   const bare = structuredClone(unmanaged);
-  const create = await preflightNativeDlo(bare, { get: absent });
+  const create = await preflightNativeDlo(bare, { get: absent }, 'default');
   assert.equal(create.body.category, 'Engagement');
   assert.equal(Object.hasOwn(create.body, 'eventDateTimeFieldName'), false);
   const other = structuredClone(file);
   other.spec.category = 'Other';
-  const sent = await preflightNativeDlo(other, { get: absent });
+  const sent = await preflightNativeDlo(other, { get: absent }, 'default');
   assert.equal(sent.body.eventDateTimeFieldName, 'EventAt');
 });
 
@@ -775,7 +1091,7 @@ const recordModified = () => {
 
 test('the record-modified field is retrieved, created, compared and sent only when it differs', async () => {
   // Retrieve keeps it, and keeps the field it names; the writer and the deploy reader agree.
-  const file = normalizeDlo(recordModified());
+  const file = normalizeDlo(recordModified(), 'default');
   assert.equal(file.spec.recordModifiedFieldName, 'ModAt__c');
   assert.equal(
     leanDloDocument(file).spec.fields.some((f) => f.name === 'ModAt__c'),
@@ -794,24 +1110,28 @@ test('the record-modified field is retrieved, created, compared and sent only wh
         /spec.recordModifiedFieldName/u.test(error.message),
     );
   // Create sends the bare name.
-  const create = await preflightNativeDlo(reread, { get: absent });
+  const create = await preflightNativeDlo(reread, { get: absent }, 'default');
   assert.equal(create.body.recordModifiedFieldName, 'ModAt');
   // The same value is unchanged; a file without the key leaves the org's value alone.
-  const same = await preflightNativeDlo(reread, { get: async () => recordModified() });
+  const same = await preflightNativeDlo(reread, { get: async () => recordModified() }, 'default');
   assert.equal(same.operation, 'unchanged');
   const unmanaged = structuredClone(reread);
   delete unmanaged.spec.recordModifiedFieldName;
-  const left = await preflightNativeDlo(unmanaged, { get: async () => recordModified() });
+  const left = await preflightNativeDlo(
+    unmanaged,
+    { get: async () => recordModified() },
+    'default',
+  );
   assert.equal(left.operation, 'unchanged');
   // A DLO without one gets it by PATCH; a different value is sent too, for Salesforce to answer.
   const without = native();
   without.dataLakeFieldInfoRepresentation.push({ ...field('ModAt__c'), dataType: 'DateTime' });
-  const set = await preflightNativeDlo(reread, { get: async () => without });
+  const set = await preflightNativeDlo(reread, { get: async () => without }, 'default');
   assert.deepEqual(set.body, { label: 'Example', recordModifiedFieldName: 'ModAt' });
   const moved = structuredClone(reread);
   moved.spec.fields.push({ ...field('ModAt2__c'), dataType: 'DateTime' });
   moved.spec.recordModifiedFieldName = 'ModAt2__c';
-  const changed = await preflightNativeDlo(moved, { get: async () => recordModified() });
+  const changed = await preflightNativeDlo(moved, { get: async () => recordModified() }, 'default');
   assert.equal(changed.operation, 'update');
   assert.equal(changed.body.recordModifiedFieldName, 'ModAt2');
   // Server-owned keys of the read stay out of the file and are refused in it.
@@ -819,7 +1139,7 @@ test('the record-modified field is retrieved, created, compared and sent only wh
   raw.capabilities = {};
   raw.columnMappingProperties = {};
   raw.totalRecords = 3;
-  assert.equal(Object.hasOwn(normalizeDlo(raw).spec, 'capabilities'), false);
+  assert.equal(Object.hasOwn(normalizeDlo(raw, 'default').spec, 'capabilities'), false);
   assert.throws(
     () => validateDloDocument({ ...file, spec: { ...file.spec, capabilities: {} } }),
     /INVALID_DLO_DOCUMENT/u,

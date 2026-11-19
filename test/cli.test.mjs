@@ -256,7 +256,7 @@ test('README describes optional scope without promoting nondefault qualification
     'optional `--dataspace NAME`',
     '`--data-space` is a compatibility alias',
     'Neither spelling has a CLI default',
-    'required `dataspaceInfo` membership comes from the',
+    "DLOs follow the run's data space",
     'without injecting `dataspace=default`',
     'not live nondefault-space',
     'Legacy families and dependency',
@@ -466,6 +466,9 @@ test('actual core initialization and fixed command routes never discover or save
     import { AuthInfo, ConfigAggregator, Connection } from '@salesforce/core';
     import Retrieve from './lib/commands/data360/retrieve.js';
     import Deploy from './lib/commands/data360/deploy.js';
+    import { dataSpaceDirectory } from './lib/services/data-space-check.js';
+    // The once-per-command data space read is a real request, not version discovery.
+    dataSpaceDirectory.read = async () => ['default'];
     const config = await ConfigAggregator.create();
     assert.equal(config.getPropertyValue('org-api-version'), undefined);
     let fields;

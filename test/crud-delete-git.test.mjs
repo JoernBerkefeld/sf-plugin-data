@@ -124,7 +124,8 @@ const dmoDocument = (apiName) => ({
 const dloDocument = (apiName) => ({
   schemaVersion: 1,
   kind: 'dlo',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: ['default'],
+  identity: { apiName },
   spec: {
     label: 'Example',
     category: 'Other',

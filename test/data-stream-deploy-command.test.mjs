@@ -177,7 +177,14 @@ test('new-stream landing-DLO collision, Git, nondefault document and digest drif
     if (mode === 'mixed')
       command.resolveInputs = async () => [
         input,
-        { path: 'other', document: { kind: 'dlo', identity: { apiName: 'proposed__dll' } } },
+        {
+          path: 'other',
+          document: {
+            kind: 'dlo',
+            c__dataSpace: ['default'],
+            identity: { apiName: 'proposed__dll' },
+          },
+        },
       ];
     if (mode === 'git')
       command.selectGitInputs = async () => ({ paths: ['stream'], provenance: {} });
@@ -573,7 +580,14 @@ test('a stream check that refuses the stream is reported on its item, preview an
     if (!preview)
       command.resolveInputs = async () => [
         input,
-        { path: 'other', document: { kind: 'dlo', identity: { apiName: 'proposed__dll' } } },
+        {
+          path: 'other',
+          document: {
+            kind: 'dlo',
+            c__dataSpace: ['default'],
+            identity: { apiName: 'proposed__dll' },
+          },
+        },
       ];
     command.preflightDataStream = async () => {
       calls.push('preview');

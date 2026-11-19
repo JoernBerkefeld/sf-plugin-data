@@ -63,8 +63,15 @@ export function documentDependencyNode(
 ): DependencyNode {
   if (value.kind === 'dlo') {
     const document = validateDloDocument(value, mode);
-    // Source ownership is freshly admitted by its family service, never provisioned.
-    return { identity: { kind: 'dlo', ...document.identity }, dependencies: [] };
+    // Source ownership is freshly admitted by its family service, never provisioned. The ordered
+    // batch is default-space only (dependencyKey), so a DLO is keyed in default when it lists it.
+    const dataSpace = document.c__dataSpace.includes('default')
+      ? 'default'
+      : document.c__dataSpace[0];
+    return {
+      identity: { kind: 'dlo', dataSpace, apiName: document.identity.apiName },
+      dependencies: [],
+    };
   }
   if (value.kind === 'calculated-insight') {
     // The DMOs and insights its SQL names (calculatedInsightReference): ordering edges only.

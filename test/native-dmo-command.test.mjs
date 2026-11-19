@@ -518,5 +518,9 @@ test('invalid native selections/scope are rejected before authentication', async
   const result = await run(command);
   assert.equal(result.status, 'blocked');
   assert.equal(auth, 1);
-  assert.equal(result.result.items.length, 2);
+  // The DLO is read before any phase deletes anything, so the DMO is not deleted either.
+  assert.deepEqual(
+    result.result.items.map((item) => [item.family, item.outcome]),
+    [['dlo', 'blocked']],
+  );
 });

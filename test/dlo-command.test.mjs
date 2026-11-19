@@ -9,7 +9,13 @@ import Retrieve from '../lib/commands/data360/retrieve.js';
 import Deploy from '../lib/commands/data360/deploy.js';
 import Delete from '../lib/commands/data360/delete.js';
 import { DloError } from '../lib/artifacts/dlo-document.js';
-import { retrieveNativeDlo, deleteNativeDlo } from '../lib/services/native-dlo.js';
+import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
+import {
+  retrieveNativeDlo,
+  deleteNativeDlo,
+  previewDeleteNativeDlo,
+} from '../lib/services/native-dlo.js';
 import { preflightDloDeploy, executeDloDeploy } from '../lib/services/command-dlo.js';
 import { captureDeployInputDigest } from '../lib/artifacts/read-deploy-input.js';
 import { writeDloDocument } from '../lib/artifacts/write-dlo.js';
@@ -29,7 +35,8 @@ const wire = {
 const document = {
   schemaVersion: 1,
   kind: 'dlo',
-  identity: { dataSpace: 'default', apiName: name },
+  c__dataSpace: ['default'],
+  identity: { apiName: name },
   spec: { label: 'Example', category: 'Other', fields: wire.fields },
 };
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-native-command-'));
@@ -81,7 +88,7 @@ const invocation = (Type, flags) => {
     command.writeDlo = writeDloDocument;
   }
   if (Type === Delete) {
-    command.retrieveDlo = retrieveNativeDlo;
+    command.retrieveDlo = previewDeleteNativeDlo;
     command.deleteDlo = deleteNativeDlo;
     // DLO delete uses its own bound-connection seam; tests keep overriding createDloClient.
     command.createDloNativeDeleteClient = (...arguments_) => command.createDloClient(...arguments_);
@@ -150,8 +157,8 @@ for (const scope of [undefined, 'Team'])
   });
 
 for (const preview of [true, false])
-  for (const dataspace of [undefined, 'Other'])
-    test(`public DLO delete reports observed Team scope, requested=${dataspace} preview=${preview}`, async () => {
+  for (const dataspace of [undefined, 'Other', 'Team'])
+    test(`public DLO delete runs in the run's data space only, requested=${dataspace} preview=${preview}`, async () => {
       const reads = [];
       const writes = [];
       const command = invocation(Delete, { dataspace, preview });
@@ -170,27 +177,78 @@ for (const preview of [true, false])
       };
       const result = await run(command);
       const localFile = path.join(process.cwd(), 'data360', 'dlo', `${name}.dlo-meta.json`);
-      assert.deepEqual(reads, [[name]]);
-      assert.deepEqual(writes, preview || dataspace ? [] : [[id]]);
-      assert.equal(result.status, dataspace ? 'blocked' : 'success');
+      // Omitted --dataspace is default, never "the DLO's own space": only Team deletes.
+      const deletes = dataspace === 'Team';
+      assert.equal(result.result.scope.dataSpace, dataspace ?? 'default');
+      // The membership check before any phase reads once; the phase reads again.
+      assert.deepEqual(reads, deletes ? [[name], [name]] : [[name]]);
+      assert.deepEqual(writes, deletes && !preview ? [[id]] : []);
+      assert.equal(result.status, deletes ? 'success' : 'blocked');
       assert.deepEqual(result.result.items[0], {
         family: 'dlo',
-        identity: { dataSpace: dataspace ?? 'Team', apiName: name },
+        identity: { dataSpace: dataspace ?? 'default', apiName: name },
         operation: preview ? 'preview' : 'delete',
-        outcome: dataspace ? 'blocked' : preview ? 'delete' : 'deleted',
-        mutation: !dataspace && !preview ? 'confirmed-deleted' : 'not-attempted',
+        outcome: deletes ? (preview ? 'delete' : 'deleted') : 'blocked',
+        mutation: deletes && !preview ? 'confirmed-deleted' : 'not-attempted',
         // The project's own DLO file is listed by a preview and, absent here, reported not present.
-        ...(dataspace
-          ? {}
-          : preview
+        ...(deletes
+          ? preview
             ? { localFiles: [{ path: localFile, exists: false }] }
-            : { removedLocalFiles: [{ path: localFile, outcome: 'not-present' }] }),
+            : { removedLocalFiles: [{ path: localFile, outcome: 'not-present' }] }
+          : {}),
       });
       assert.deepEqual(
         result.diagnostics.errors.map(({ code }) => code),
-        dataspace ? ['UNSUPPORTED_DLO_DATASPACE'] : [],
+        deletes ? [] : ['UNSUPPORTED_DLO_DATASPACE'],
       );
     });
+
+for (const preview of [true, false])
+  test(`a DLO that also belongs to another data space is not deleted, preview=${preview}`, async () => {
+    const writes = [];
+    const command = invocation(Delete, { preview });
+    command.resolveTarget = async () => 'target';
+    command.createDloClient = () =>
+      client({
+        get: async () => ({
+          ...wire,
+          dataSpaceInfo: [{ name: 'default' }, { name: 'dataspace2' }],
+        }),
+        delete: async (target) => {
+          writes.push(target);
+        },
+      });
+    const result = await run(command);
+    assert.equal(result.status, 'blocked');
+    assert.deepEqual(writes, []);
+    assert.equal(result.result.items[0].outcome, 'blocked');
+    assert.deepEqual(
+      result.diagnostics.errors.map(({ code }) => code),
+      ['DLO_DELETE_OTHER_DATASPACES'],
+    );
+    assert.match(result.diagnostics.errors[0].message, /dataspace2/u);
+  });
+
+test('an unknown run data space is refused before any DLO read', async () => {
+  let reads = 0;
+  const command = invocation(Delete, { dataspace: 'Nowhere' });
+  command.resolveTarget = async () => 'target';
+  command.createDloClient = () =>
+    client({
+      get: async () => {
+        reads++;
+        return wire;
+      },
+    });
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(reads, 0);
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ code }) => code),
+    ['UNKNOWN_DATASPACE'],
+  );
+  assert.equal(result.result.scope.dataSpace, 'Nowhere');
+});
 
 test('native DLO writer and strict admission roundtrip canonical JSON without source ID', async () => {
   const cwd = await scratch();
@@ -222,7 +280,7 @@ test('native DLO writer and strict admission roundtrip canonical JSON without so
 });
 test('DLO wrappers preserve optional explicit scope and block mismatch before dispatch', async () => {
   const saved = structuredClone(document);
-  saved.identity.dataSpace = 'other';
+  saved.c__dataSpace = ['other'];
   const scoped = { ...wire, dataSpaceInfo: [{ name: 'other' }] };
   const preview = await preflightDloDeploy(saved, client({ get: async () => scoped }), 'other');
   assert.equal(preview.outcome, 'unchanged');
@@ -263,17 +321,19 @@ test('DLO preview and execution report portable reordered fields unchanged with 
       return actual;
     },
   });
-  assert.deepEqual(await preflightDloDeploy(saved, target), {
+  assert.deepEqual(await preflightDloDeploy(saved, target, 'default'), {
     family: 'dlo',
     outcome: 'unchanged',
     target: 'existing',
     absenceProof: 'none',
+    dataSpaces: ['default'],
     diagnostics: [],
   });
-  assert.deepEqual(await executeDloDeploy(saved, target), {
+  assert.deepEqual(await executeDloDeploy(saved, target, 'default'), {
     family: 'dlo',
     outcome: 'unchanged',
     mutation: 'not-attempted',
+    dataSpaces: ['default'],
     diagnostics: [],
   });
   assert.deepEqual(calls, []);
@@ -365,6 +425,7 @@ test('delete ambiguous write is unknown and stops batch without retry', async ()
   command.resolveTarget = async () => 'target';
   command.createDloClient = () =>
     client({
+      get: async (apiName) => ({ ...wire, name: apiName }),
       delete: async () => {
         deletes++;
         throw new Error('ambiguous');
@@ -473,4 +534,199 @@ test('mixed auto DLO and DMO deploy together on their native68 routes, DLO first
     result.result.items.map((item) => item.family),
     ['dlo', 'dmo'],
   );
+});
+
+test('retrieve and deploy refuse an unknown data space before any read', async () => {
+  const cwd = await scratch();
+  let reads = 0;
+  const counting = () =>
+    client({
+      get: async () => {
+        reads++;
+        return wire;
+      },
+    });
+  const retrieve = invocation(Retrieve, { dataspace: 'Nowhere', 'output-dir': cwd });
+  retrieve.resolveOrg = async () => ({
+    getOrgId: () => 'org',
+    getConnection: () => ({ getUsername: () => 'target' }),
+  });
+  retrieve.createDloClient = counting;
+  const retrieved = await run(retrieve);
+  assert.equal(retrieved.status, 'blocked');
+  assert.equal(retrieved.result.scope.dataSpace, 'Nowhere');
+  assert.deepEqual(
+    retrieved.diagnostics.errors.map(({ code }) => code),
+    ['UNKNOWN_DATASPACE'],
+  );
+  const receipt = await writeDloDocument(
+    { ...document, c__dataSpace: ['default', 'dataspace9'] },
+    cwd,
+    false,
+  );
+  const deploy = invocation(Deploy, {
+    preview: true,
+    'source-dir': [receipt.path],
+    metadata: undefined,
+    'target-org': { getOrgId: () => 'org', getUsername: () => 'target' },
+  });
+  deploy.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+  deploy.createDloClient = counting;
+  const deployed = await run(deploy);
+  assert.equal(deployed.status, 'blocked');
+  assert.deepEqual(
+    deployed.diagnostics.errors.map(({ code }) => code),
+    ['UNKNOWN_DATASPACE'],
+  );
+  assert.equal(reads, 0);
+});
+
+test('retrieve writes every data space of a DLO; deploy lists and applies a removal only with the flag', async () => {
+  const cwd = await scratch();
+  const both = { ...wire, dataSpaceInfo: [{ name: 'default' }, { name: 'dataspace2' }] };
+  const retrieve = invocation(Retrieve, { dataspace: 'dataspace2', 'output-dir': cwd });
+  retrieve.resolveOrg = async () => ({
+    getOrgId: () => 'org',
+    getConnection: () => ({ getUsername: () => 'target' }),
+  });
+  retrieve.createDloClient = () => client({ get: async () => both });
+  const retrieved = await run(retrieve);
+  assert.equal(retrieved.status, 'success');
+  assert.deepEqual(retrieved.result.items[0].identity, { dataSpace: 'dataspace2', apiName: name });
+  assert.deepEqual(retrieved.result.items[0].dataSpaces, ['dataspace2', 'default']);
+  const saved = JSON.parse(await readFile(retrieved.result.items[0].path, 'utf8'));
+  assert.deepEqual(saved.c__dataSpace, ['dataspace2', 'default']);
+  // The file drops dataspace2: preview and deploy need --allow-dataspace-removal.
+  const receipt = await writeDloDocument(document, cwd, true);
+  for (const [preview, allow] of [
+    [true, false],
+    [true, true],
+    [false, true],
+  ]) {
+    const removed = [];
+    const deploy = invocation(Deploy, {
+      preview,
+      'allow-dataspace-removal': allow,
+      'source-dir': [receipt.path],
+      metadata: undefined,
+      'target-org': { getOrgId: () => 'org', getUsername: () => 'target' },
+    });
+    deploy.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
+    deploy.createDloClient = () =>
+      client({
+        get: async () => (removed.length > 0 ? wire : both),
+        removeMember: async (space, member) => {
+          removed.push([space, member]);
+          return { results: [{ dataSpaceMemberName: member, errors: {}, success: true }] };
+        },
+      });
+    const result = await run(deploy);
+    const item = result.result.items[0];
+    if (!allow) {
+      assert.equal(result.status, 'blocked');
+      assert.equal(item.outcome, 'blocked');
+      assert.match(JSON.stringify(result), /DLO_DATASPACE_REMOVAL_NOT_ALLOWED/u);
+    } else if (preview) {
+      assert.equal(result.status, 'success');
+      assert.deepEqual(item.dataSpaceChanges, { add: [], remove: ['dataspace2'] });
+    } else {
+      assert.equal(result.status, 'success', JSON.stringify(result));
+      assert.equal(item.outcome, 'updated');
+      assert.deepEqual(item.dataSpaces, ['default']);
+    }
+    assert.deepEqual(removed, preview || !allow ? [] : [['dataspace2', name]]);
+  }
+});
+
+test('a DLO file with the old identity.dataSpace key is refused with its own code', async () => {
+  const cwd = await scratch();
+  const receipt = await writeDloDocument(document, cwd, false);
+  const legacy = { ...document, identity: { dataSpace: 'default', apiName: name } };
+  delete legacy.c__dataSpace;
+  await writeFile(receipt.path, `${JSON.stringify(legacy, undefined, 2)}\n`);
+  await assert.rejects(readDeployInputs({ cwd, metadata: [`dlo:${name}`] }), {
+    code: 'LEGACY_DATASPACE_KEY',
+  });
+  await writeFile(
+    receipt.path,
+    `${JSON.stringify({ ...document, c__dataSpace: [{ name: 'default', filter: {} }] }, undefined, 2)}\n`,
+  );
+  await assert.rejects(readDeployInputs({ cwd, metadata: [`dlo:${name}`] }), {
+    code: 'UNSUPPORTED_DATASPACE_FILTER',
+  });
+});
+
+test('retrieve writes a DLO whose membership carries a filter as-is, with a warning', async () => {
+  const cwd = await scratch();
+  const retrieve = invocation(Retrieve, { 'output-dir': cwd });
+  retrieve.resolveOrg = async () => ({
+    getOrgId: () => 'org',
+    getConnection: () => ({ getUsername: () => 'target' }),
+  });
+  retrieve.createDloClient = () =>
+    client({
+      get: async () => ({
+        ...wire,
+        dataSpaceInfo: [{ name: 'default', filter: { conditions: [] } }],
+      }),
+    });
+  const result = await run(retrieve);
+  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.deepEqual(result.result.items[0].verbatim, { reason: 'UNSUPPORTED_DLO_MEMBERSHIP' });
+  assert.ok(result.diagnostics.warnings.some((text) => /UNSUPPORTED_DLO_MEMBERSHIP/u.test(text)));
+  const saved = JSON.parse(await readFile(result.result.items[0].path, 'utf8'));
+  // The filter is kept, never dropped.
+  assert.match(JSON.stringify(saved.verbatim.native), /"filter":\{"conditions":\[\]\}/u);
+});
+
+test('a session failure of the data space check keeps its own code', async (t) => {
+  const original = dataSpaceDirectory.read;
+  t.after(() => {
+    dataSpaceDirectory.read = original;
+  });
+  dataSpaceDirectory.read = async () => {
+    throw new ConnectError('AUTHENTICATION_FAILED', 401);
+  };
+  const retrieve = invocation(Retrieve, { 'output-dir': await scratch() });
+  retrieve.resolveOrg = async () => assert.fail('the fake read opens no sender');
+  const retrieved = await run(retrieve);
+  assert.deepEqual(
+    retrieved.diagnostics.errors.map(({ code }) => code),
+    ['AUTHENTICATION_FAILED'],
+  );
+  const deploy = invocation(Deploy, {
+    preview: true,
+    'target-org': { getOrgId: () => 'org', getUsername: () => 'target' },
+  });
+  deploy.resolveInputs = async () => [
+    { path: 'x', document: structuredClone(document), inputDigest: 'a'.repeat(64) },
+  ];
+  const deployed = await run(deploy);
+  assert.deepEqual(
+    deployed.diagnostics.errors.map(({ code }) => code),
+    ['AUTHENTICATION_FAILED'],
+  );
+});
+
+test('delete --field checks the run data space before any read', async () => {
+  const command = invocation(Delete, {
+    metadata: ['dmo:Example__dlm'],
+    field: ['Note__c'],
+    dataspace: 'Nowhere',
+  });
+  command.resolveTarget = async () => 'target';
+  command.createDmoNativeDeleteClient = () => ({
+    get: async () => assert.fail('no DMO read before the data space check'),
+  });
+  command.createDmoClient = () => ({});
+  command.createMappingClient = () => ({});
+  command.createMappingSender = () => ({});
+  command.createDloNativeDeleteClient = () => ({});
+  const result = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(
+    result.diagnostics.errors.map(({ code }) => code),
+    ['UNKNOWN_DATASPACE'],
+  );
+  assert.equal(result.result.items[0].identity.dataSpace, 'Nowhere');
 });

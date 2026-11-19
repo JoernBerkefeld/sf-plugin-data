@@ -37,6 +37,11 @@ import { createDmoClient } from '../../transport/dmo-rest.js';
 import { writeNativeDmoDocument } from '../../artifacts/write-native-dmo.js';
 import { dloName, DloError } from '../../artifacts/dlo-document.js';
 import { retrieveNativeDlo } from '../../services/native-dlo.js';
+import {
+  DataSpaceError,
+  dataSpaceCheckCode,
+  dataSpaceCheckOf,
+} from '../../services/data-space-check.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { writeDloDocument } from '../../artifacts/write-dlo.js';
 import {
@@ -119,7 +124,7 @@ import { localFilePresent } from '../../services/local-file-removal.js';
 
 export type RetrieveEnvelope = {
   contract: 'sf-data360-retrieve';
-  contractVersion: '1.0.0';
+  contractVersion: '1.1.0';
   status: 'success' | 'blocked' | 'failed';
   metadata: {
     operation: 'retrieve';
@@ -171,6 +176,8 @@ export type RetrieveEnvelope = {
         apiVersion: string;
         transport: 'native' | 'metadata';
       }>;
+      /** DLO: every data space it belongs to (its file's c__dataSpace), sorted. */
+      dataSpaces?: string[];
       /** Written as Salesforce returned it: the plugin cannot represent it (reason: error code). */
       verbatim?: { reason: string };
     }>;
@@ -384,7 +391,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   public static readonly summary =
     'Retrieve any mix of Data360 DLOs, DMOs, mappings, relationships, data streams, data transforms, data graphs, Segments, calculated insights and identity resolution configuration.';
   public static readonly description =
-    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves a transform (custom, system or packaged) at API68/default only into data360/dataTransforms/<Name>.dataTransform.json: its create/update input as Salesforce returns it (definition or definitions, fullRunFrequency, write mode and the rest as read), without server-owned output object fields, plus its schedule projected onto the keys the schedule PUT takes (no schedule key when the transform has none, so a deploy of the file leaves the schedule alone; also left out, with a warning, when the schedule read fails). A transform with both definition and definitions is written as-is (verbatim), and deploy refuses that file. Bare -m data-transform retrieves every transform the API lists (unless it names another data space), each through the same path; one failing transform never blocks the others. Exact -m data-stream:ApiName retrieves an Ingestion API stream (any refresh mode and DLO category) as portable JSON using native API68 reads, in default space only; a stream of any other connector (for example Salesforce CRM, SalesforceDotCom) is written as its GET without server-owned keys and the system fields and mappings Salesforce adds, formulas decoded. Bare -m data-stream retrieves every stream the API lists (unless its DLO names only other data spaces), each through the same path. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses the native APIs; only its label (spec.label) is read with the Metadata API (readMetadata of ObjectSourceTargetMap, up to 10 names per call), left out when it equals the mapping name (the default) and, with a warning, when that read fails. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare -m relationship does so for every DMO the API lists, one DMO after another. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Bare -m data-graph retrieves every default-space graph the API lists. Calculated insights use the API68 GET only (auto or 68.0, default space): -m calculated-insight:ApiName__cio retrieves that insight and bare -m calculated-insight every insight the API lists, whatever its status, schedule or SQL; each is written as data360/calculatedInsights/<ApiName>.calculatedInsight-meta.json (the GET body as returned, without status, run history, source-CI links, creation type, sub type and the dimensions and measures Salesforce derives from the SQL) plus its SQL as plain text in <ApiName>.calculatedInsight-meta.sql. IR uses native API68 owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. -m identity-resolution:ExactObjectApiName retrieves that ruleset and bare -m identity-resolution every default-space ruleset the API lists. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto or 68.0 in default space (other versions are refused): -m segment:ApiName retrieves that segment and bare -m segment every default-space segment the API lists. A SQL (DBT) segment is written as one portable data360/segments/<Name>.segment.json with its DBT model names, and the SQL of each model as Salesforce returns it in <Name>.segment.<model>.sql beside it; a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json with its criteria as JSON. Any other segment type is written with the same keys, without SQL files (a Waterfall with its child segments by API name in childSegments, named with one segment list read); the lookback and the refresh schedule are kept (schedule in the write shape; no schedule key for a segment that does not refresh), and a key the plugin does not know stays in the file and deploy refuses it. A segment with parameters (no write takes them), schedule details the plugin does not know or UI criteria that are not a JSON object is written as-is (verbatim) and deploy refuses that file. Use -m dmo or omit selectors for existing DMO inventory; omitted selectors do not include segments. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
+    'Any mix of selectors is retrieved in one run with one result: every selector is checked before the org is read, and a refused selector blocks the whole run (with several families selected, the refusal names its family). The families are then read one after another (DLO, DMO, mapping, relationship, Segment, calculated insight and identity resolution first, then data streams, data transforms and data graphs), each with its own API version and data space rules; one family failing does not stop the others. Exact -m data-transform:Name retrieves a transform (custom, system or packaged) at API68/default only into data360/dataTransforms/<Name>.dataTransform.json: its create/update input as Salesforce returns it (definition or definitions, fullRunFrequency, write mode and the rest as read), without server-owned output object fields, plus its schedule projected onto the keys the schedule PUT takes (no schedule key when the transform has none, so a deploy of the file leaves the schedule alone; also left out, with a warning, when the schedule read fails). A transform with both definition and definitions is written as-is (verbatim), and deploy refuses that file. Bare -m data-transform retrieves every transform the API lists (unless it names another data space), each through the same path; one failing transform never blocks the others. Exact -m data-stream:ApiName retrieves an Ingestion API stream (any refresh mode and DLO category) as portable JSON using native API68 reads, in default space only; a stream of any other connector (for example Salesforce CRM, SalesforceDotCom) is written as its GET without server-owned keys and the system fields and mappings Salesforce adds, formulas decoded. Bare -m data-stream retrieves every stream the API lists (unless its DLO names only other data spaces), each through the same path. Native DLO, DMO and mapping retrieval writes canonical JSON under data360/<type>, retaining definition fields without source record IDs. A DLO file lists every data space the DLO belongs to in its top-level c__dataSpace key; the DLOs of the run data space are retrieved. Every retrieve first checks that the org has the run data space (one GET /ssot/data-spaces; UNKNOWN_DATASPACE otherwise). Default/auto uses API68; explicit numeric versions >=61 are preserved, and <=60 is rejected before calls. Omit selectors for all three native families, use -m dlo, -m dmo or -m mapping for complete type inventory, or repeat type:ApiName for exact selections. Omitted selectors and -m dlo (also beside other families) retrieve every DLO the Data 360 API lists in the data space, connector- and stream-created ones included; a DLO whose read or file fails gets its own diagnostic and the others are still retrieved. Mapping JSON uses the native APIs; only its label (spec.label) is read with the Metadata API (readMetadata of ObjectSourceTargetMap, up to 10 names per call), left out when it equals the mapping name (the default) and, with a warning, when that read fails. DMOs retrieved beside other families use the same native JSON at the native version. Prerequisites are checked, never pulled in; select every component to retrieve explicitly. Every DMO selection uses this native route, and --api-version latest is not accepted. Exact -m relationship:Dmo__dlm writes every relationship whose source is that DMO as native JSON under data360/relationship/<Name>.relationship-meta.json; bare -m relationship does so for every DMO the API lists, one DMO after another. Repeat -m dmo:ApiName, -m segment:ApiName, -m calculated-insight:ApiName__cio, -m data-graph:ApiName or -m identity-resolution:ExactObjectApiName for exact selection. Graph retrieval uses native API68 (auto or explicit 68.0; other versions are rejected) and writes *.native-dataGraph.json authored intent without generated identities, default space only; repeat data-graph:ApiName for several graphs, read one after another. Bare -m data-graph retrieves every default-space graph the API lists. Calculated insights use the API68 GET only (auto or 68.0, default space): -m calculated-insight:ApiName__cio retrieves that insight and bare -m calculated-insight every insight the API lists, whatever its status, schedule or SQL; each is written as data360/calculatedInsights/<ApiName>.calculatedInsight-meta.json (the GET body as returned, without status, run history, source-CI links, creation type, sub type and the dimensions and measures Salesforce derives from the SQL) plus its SQL as plain text in <ApiName>.calculatedInsight-meta.sql. IR uses native API68 owner reads in default space; auto and explicit numeric68 are supported, while numeric67 is rejected. -m identity-resolution:ExactObjectApiName retrieves that ruleset and bare -m identity-resolution every default-space ruleset the API lists. Auto selects fixed qualified routes, never probes or upgrades an explicit numeric pin. Segment uses auto or 68.0 in default space (other versions are refused): -m segment:ApiName retrieves that segment and bare -m segment every default-space segment the API lists. A SQL (DBT) segment is written as one portable data360/segments/<Name>.segment.json with its DBT model names, and the SQL of each model as Salesforce returns it in <Name>.segment.<model>.sql beside it; a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json with its criteria as JSON. Any other segment type is written with the same keys, without SQL files (a Waterfall with its child segments by API name in childSegments, named with one segment list read); the lookback and the refresh schedule are kept (schedule in the write shape; no schedule key for a segment that does not refresh), and a key the plugin does not know stays in the file and deploy refuses it. A segment with parameters (no write takes them), schedule details the plugin does not know or UI criteria that are not a JSON object is written as-is (verbatim) and deploy refuses that file. Use -m dmo or omit selectors for existing DMO inventory; omitted selectors do not include segments. Unsupported objects produce per-object diagnostics and a nonzero aggregate while successful files are retained. Differing files require --overwrite; identical bytes are unchanged. Retrieval never mutates the org.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -400,7 +407,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     dataspace: Flags.string({
       aliases: ['data-space'],
       summary:
-        'Optional native data space; --data-space is a compatibility alias. Other families require default.',
+        'The run data space; omitted means default (never all data spaces), and the org must have it. --data-space is a compatibility alias. Native DLO, DMO, mapping and relationship retrieval use it; the other families require default.',
     }),
     metadata: Flags.string({
       char: 'm',
@@ -1496,7 +1503,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                         flags.overwrite,
                       );
               envelope.result.items.push({
-                identity: document.identity,
+                ...(document.kind === 'dlo'
+                  ? {
+                      identity: { dataSpace: effectiveScope, apiName: document.identity.apiName },
+                      dataSpaces: document.c__dataSpace,
+                    }
+                  : { identity: document.identity }),
                 operation: 'retrieve',
                 ...(family === 'dmo' ? {} : { family }),
                 routes,
@@ -1841,6 +1853,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 identity: { dataSpace: 'default', apiName },
                 operation: 'retrieve',
                 family: 'dlo',
+                dataSpaces: document.c__dataSpace,
                 routes: dloRoutes,
                 ...receipt,
               });
@@ -2338,7 +2351,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     };
     const envelope: RetrieveEnvelope = {
       contract: 'sf-data360-retrieve',
-      contractVersion: '1.0.0',
+      contractVersion: '1.1.0',
       status: 'blocked',
       metadata: { operation: 'retrieve', plugin, apiVersion: flags['api-version'] },
       diagnostics: { warnings: [], errors: [] },
@@ -2381,6 +2394,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
+        // The default data space goes without saying; any other is named.
+        if (effectiveScope !== 'default') this.log(`Data space: ${effectiveScope}.`);
         const groups = new Set([
           ...outputTypes,
           ...envelope.result.items.map((item) => item.family ?? 'dmo'),
@@ -2447,6 +2462,22 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           ? finish('blocked', plan.refusal)
           : finish('blocked', plan.refusal, undefined, plan.family);
       plans.push({ ...plan, members });
+    }
+    // The run's data space must exist in the org: one read per run, before anything is read.
+    try {
+      await dataSpaceCheckOf(this, async () => {
+        let org;
+        try {
+          org = await this.resolveOrg(flags['target-org']);
+        } catch {
+          throw new DataSpaceError('TARGET_ORG_REQUIRED');
+        }
+        const connection = org.getConnection('68.0');
+        return openBoundSsot(flags['target-org'] ?? '', '68.0', async () => connection);
+      }).require([effectiveScope]);
+    } catch (error) {
+      // The check's own code, or the failure's (an expired session keeps AUTHENTICATION_FAILED).
+      return finish('blocked', dataSpaceCheckCode(error, 'RETRIEVE_FAILED'), error);
     }
     if (plans.length === 1) {
       const outcome = await plans[0].run();

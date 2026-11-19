@@ -30,6 +30,9 @@ const invocation = (flags = {}) => {
     ...command.createDloClient(...arguments_),
   });
   command.createDmoNativeDeleteClient = (...arguments_) => command.createDmoClient(...arguments_);
+  // Every selected DLO is read once before any phase (it must belong to the run's data space
+  // only); unless a test says otherwise, Salesforce lists it in default alone.
+  command.retrieveDlo = async (name) => ({ identity: { dataSpace: 'default', apiName: name } });
   // Mapping GET/DELETE get a bound sender; the fake mapping clients below never use it.
   command.createMappingSender = () => ({
     request: async () => assert.fail('fake mapping clients must not reach the bound sender'),

@@ -371,7 +371,8 @@ test('a removal-only DMO sends no PATCH and a selected DLO still deploys first',
   const dloDocument = {
     schemaVersion: 1,
     kind: 'dlo',
-    identity: { dataSpace: 'default', apiName: 'SrcA__dll' },
+    c__dataSpace: ['default'],
+    identity: { apiName: 'SrcA__dll' },
     spec: {
       label: 'Example',
       category: 'Other',
@@ -437,7 +438,8 @@ for (const preview of [false, true])
           {
             schemaVersion: 1,
             kind: 'dlo',
-            identity: { dataSpace: 'default', apiName: 'SrcA__dll' },
+            c__dataSpace: ['default'],
+            identity: { apiName: 'SrcA__dll' },
             spec: {
               label: 'Example',
               category: 'Other',

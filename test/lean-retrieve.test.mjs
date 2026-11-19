@@ -76,7 +76,7 @@ const rawDlo = () => ({
 });
 
 test('DLO retrieve stores authored fields only and the lean file deploys unchanged', async () => {
-  const document = await retrieveNativeDlo('Events__dll', { get: async () => rawDlo() });
+  const document = await retrieveNativeDlo('Events__dll', { get: async () => rawDlo() }, 'default');
   assert.equal(document.spec.fields.length, 10);
   const saved = await roundTrip(writeDloDocument, document, 'dlo:Events__dll');
   assert.deepEqual(names(saved.spec.fields), ['Id__c', 'EventTime__c', 'Note__c', 'KQ_Note__c']);
@@ -93,16 +93,16 @@ test('DLO retrieve stores authored fields only and the lean file deploys unchang
       'InternalOrganization__c',
     ],
   );
-  const plan = await preflightNativeDlo(saved, { get: async () => rawDlo() });
+  const plan = await preflightNativeDlo(saved, { get: async () => rawDlo() }, 'default');
   assert.equal(plan.operation, 'unchanged');
 });
 
 test('DLO retrieve keeps a field the event field names, even a system-named one', async () => {
   const raw = rawDlo();
   raw.eventDateTimeFieldName = 'cdp_sys_PartitionDate__c';
-  const saved = await roundTrip(writeDloDocument, normalizeDlo(raw), 'dlo:Events__dll');
+  const saved = await roundTrip(writeDloDocument, normalizeDlo(raw, 'default'), 'dlo:Events__dll');
   assert.ok(names(saved.spec.fields).includes('cdp_sys_PartitionDate__c'));
-  const plan = await preflightNativeDlo(saved, { get: async () => raw });
+  const plan = await preflightNativeDlo(saved, { get: async () => raw }, 'default');
   assert.equal(plan.operation, 'unchanged');
 });
 
@@ -398,7 +398,9 @@ test('retrieve and deploy share one generated-pair predicate', async () => {
       org.dependencies.target,
     );
     const context = {
-      sources: new Map(normalizeDlo(sourceDlo()).spec.fields.map((field) => [field.name, field])),
+      sources: new Map(
+        normalizeDlo(sourceDlo(), 'default').spec.fields.map((field) => [field.name, field]),
+      ),
       targets: new Map(target.spec.fields.map((field) => [field.name, field])),
       standard: kind === 'standard',
       pairs: org.raw.fieldMappings,

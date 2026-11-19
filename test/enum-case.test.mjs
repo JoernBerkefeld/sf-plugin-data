@@ -232,7 +232,8 @@ test('DLO: lower-case category and field type deploy unchanged against the store
   const authored = {
     schemaVersion: 1,
     kind: 'dlo',
-    identity: { apiName: 'CliA5Src__dll', dataSpace: 'default' },
+    c__dataSpace: ['default'],
+    identity: { apiName: 'CliA5Src__dll' },
     spec: {
       label: 'CliA5 Src',
       category: 'other',
@@ -242,24 +243,25 @@ test('DLO: lower-case category and field type deploy unchanged against the store
       ],
     },
   };
-  const plan = await preflightNativeDlo(authored, { get: async () => dloNative() });
+  const plan = await preflightNativeDlo(authored, { get: async () => dloNative() }, 'default');
   assert.equal(plan.operation, 'unchanged');
   // Another category or type is still refused; a label differing only in case is an update.
   await assert.rejects(
     preflightNativeDlo(
       { ...authored, spec: { ...authored.spec, category: 'Profile' } },
       { get: async () => dloNative() },
+      'default',
     ),
     /UNSUPPORTED_DLO_CATEGORY_CHANGE/u,
   );
   const typed = structuredClone(authored);
   typed.spec.fields[1].dataType = 'Number';
   await assert.rejects(
-    preflightNativeDlo(typed, { get: async () => dloNative() }),
+    preflightNativeDlo(typed, { get: async () => dloNative() }, 'default'),
     /FIELD_CHANGE/u,
   );
   const relabelled = { ...authored, spec: { ...authored.spec, label: 'clia5 src' } };
-  const relabel = await preflightNativeDlo(relabelled, { get: async () => dloNative() });
+  const relabel = await preflightNativeDlo(relabelled, { get: async () => dloNative() }, 'default');
   assert.equal(relabel.operation, 'update');
 });
 

@@ -46,6 +46,14 @@ import {
 import type { VerbatimDocument, VerbatimKind } from './verbatim-document.js';
 import { explanationOf, replaceExplanation } from '../services/operation-diagnostic.js';
 
+/** Refusals of the c__dataSpace key that a selected file keeps instead of INVALID_SOURCE. */
+const dataSpaceFieldCodes = [
+  'LEGACY_DATASPACE_KEY',
+  'INVALID_DATASPACE_FIELD',
+  'UNSUPPORTED_DATASPACE_FILTER',
+] as const;
+type DataSpaceFieldCode = (typeof dataSpaceFieldCodes)[number];
+
 const ciMemberInfix = '.calculatedInsight-meta.';
 const ciJsonSuffix = '.calculatedInsight-meta.json';
 /**
@@ -80,7 +88,8 @@ export class DeployInputError extends Error {
       | 'INVALID_SOURCE'
       | 'DUPLICATE_IDENTITY'
       | 'UNSUPPORTED_SEGMENT_XML'
-      | 'VERBATIM_NOT_DEPLOYABLE',
+      | 'VERBATIM_NOT_DEPLOYABLE'
+      | DataSpaceFieldCode,
     message?: string,
   ) {
     super(
@@ -100,7 +109,12 @@ export class DeployInputError extends Error {
  */
 function invalidSource(error: unknown): DeployInputError {
   const explanation = explanationOf(error);
-  const refusal = new DeployInputError('INVALID_SOURCE', explanation);
+  // A refused c__dataSpace key keeps its own code; every other refusal is INVALID_SOURCE.
+  const code = (error as { code?: unknown } | null)?.code;
+  const refusal = new DeployInputError(
+    dataSpaceFieldCodes.find((known) => known === code) ?? 'INVALID_SOURCE',
+    explanation,
+  );
   if (explanation !== undefined) replaceExplanation(refusal, explanation);
   return refusal;
 }
@@ -1300,8 +1314,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       }
       if (file.endsWith('.dlo-meta.json')) {
         const input = await readDloInput(file);
-        const key =
-          `dlo:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+        // A DLO name is unique in the org, whatever data spaces it belongs to.
+        const key = `dlo:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
@@ -1449,7 +1463,8 @@ export function admitDeletedArtifact(
   bytes: Buffer,
   code?: ReadonlyArray<{ name?: string; bytes: Buffer }>,
 ): {
-  identity: { dataSpace: string; apiName: string };
+  /** No single data space for a DLO: its spaces are the document's c__dataSpace list. */
+  identity: { dataSpace?: string; apiName: string };
   document: DeployInput['document'] | VerbatimDocument;
   sourceObjectName?: string;
 } {
@@ -1457,7 +1472,7 @@ export function admitDeletedArtifact(
   if (verbatim) return verbatim;
   try {
     const value = strictJson(decode(bytes));
-    let identity: { dataSpace: string; apiName: string };
+    let identity: { dataSpace?: string; apiName: string };
     let document: DeployInput['document'];
     let sourceObjectName: string | undefined;
     switch (kind) {
@@ -1536,7 +1551,10 @@ export function admitDeletedArtifact(
     };
     freeze(document);
     return {
-      identity: { dataSpace: identity.dataSpace, apiName: identity.apiName },
+      identity:
+        identity.dataSpace === undefined
+          ? { apiName: identity.apiName }
+          : { dataSpace: identity.dataSpace, apiName: identity.apiName },
       document,
       ...(sourceObjectName === undefined ? {} : { sourceObjectName }),
     };

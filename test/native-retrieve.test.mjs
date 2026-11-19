@@ -581,7 +581,8 @@ const invocation = (overrides = {}) => {
   });
   command.acquireDlo = async (apiName) => ({
     kind: 'dlo',
-    identity: { dataSpace: 'default', apiName },
+    c__dataSpace: ['default'],
+    identity: { apiName },
   });
   command.writeNativeMapping =
     command.writeNativeDmo =
@@ -629,7 +630,7 @@ for (const metadata of [['dlo'], undefined])
     command.acquireDlo = async (apiName) => {
       reads.push(apiName);
       if (apiName === 'Broken__dll') throw new DloError('INVALID_DLO_DOCUMENT');
-      return { kind: 'dlo', identity: { dataSpace: 'default', apiName } };
+      return { kind: 'dlo', c__dataSpace: ['default'], identity: { apiName } };
     };
     const result = await run(command);
     assert.deepEqual(reads, listed.toSorted());

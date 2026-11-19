@@ -1943,6 +1943,23 @@ async function preflightUnmodelledDataStreamDelete(
   const dloName = info.name;
   if (options.survivorDloNames.length > 0)
     throw new DataStreamError('INVALID_STREAM_DELETE_SURVIVOR');
+  // Deleting the landing DLO removes it from every data space it belongs to: it must belong to
+  // the run's data space (default for streams) alone, read from the DLO itself.
+  if (options.deleteDlo) {
+    const wrapper = object(await clients.dlo.get(dloName));
+    const dlo = Array.isArray(wrapper.dataLakeObjects)
+      ? object(wrapper.dataLakeObjects[0])
+      : wrapper;
+    const memberships = Array.isArray(dlo.dataSpaceInfo)
+      ? dlo.dataSpaceInfo.map((entry) => object(entry).name)
+      : [];
+    if (memberships.length !== 1 || memberships[0] !== 'default') {
+      throw explainInput(
+        new DataStreamError('DLO_DELETE_OTHER_DATASPACES'),
+        `The landing DLO ${dloName} of ${apiName} does not belong to the default data space alone, and deleting it with the stream would remove it from every data space. Delete the stream without --delete-dlo, or take the DLO out of the other data spaces first.`,
+      );
+    }
+  }
   const streamDependencies = streamDeleteDependencies(
     await clients.dependencies.stream(raw.recordId),
   );

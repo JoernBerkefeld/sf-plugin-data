@@ -6,6 +6,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.',
   BLOCKED_GIT_LIFECYCLE:
     'The Git changes include a rename (also one split across commit, index and worktree), a conflict or a deleted file the plugin cannot identify. Stage renames so Git can detect them, or select the files with --source-dir or -m.',
+  DATASPACE_READ_FAILED:
+    'The list of data spaces could not be read completely from the org, so nothing was read or written. Check the org session and Data Cloud access, then rerun.',
   DELETE_FAILED:
     'The delete stopped for a reason without a more specific code. Read the message, check the item outcome and inspect the target before trying again; nothing is retried.',
   DELETE_PHASE_NOT_SETTLED:
@@ -28,6 +30,8 @@ export const hints: Readonly<Record<string, string>> = {
     'A write was sent but its result could not be confirmed, so it may have taken effect. Inspect the target with retrieve or deploy --preview before running the deploy again.',
   INVALID_ASYNC_SCOPE:
     '--async works only when the selection contains an identity resolution. Remove --async, or select an identity-resolution file or -m identity-resolution:<Name>.',
+  INVALID_DATASPACE_FIELD:
+    'The c__dataSpace key of the file is missing or not valid: a data space name, or for a DLO a list of names without repeats. Correct the file or retrieve it again.',
   INVALID_DRAFT_SCOPE:
     '--draft applies only to calculated insights at API auto or 68.0 in the default data space. Select only calculated insights and drop --dataspace and other API versions.',
   INVALID_FIELD_DELETE_SELECTION:
@@ -44,6 +48,8 @@ export const hints: Readonly<Record<string, string>> = {
     'A selected file is not a valid definition for its file type, or its content names a different component than its file name. Fix the file, or retrieve it again, then rerun.',
   INVALID_WAIT_TIMEOUT_SCOPE:
     '--wait-timeout applies only to a deploy that holds a data graph or to a segment publish, and must be whole seconds. Remove it, or select a data graph or a segment.',
+  LEGACY_DATASPACE_KEY:
+    'The file still has identity.dataSpace, which the plugin no longer reads. Move the value to the top-level c__dataSpace key, or retrieve the component again.',
   LOCAL_FILE_REMOVAL_FAILED:
     'The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.',
   LOCAL_REFRESH_FAILED:
@@ -78,6 +84,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The Salesforce CLI process ended without an exit code, for example after a timeout or with too much output. Check that sf runs on its own, then rerun the retrieve.',
   TARGET_ORG_REQUIRED:
     'No usable target org was found. Pass --target-org <alias or username>, or set a default with sf config set target-org, then rerun.',
+  UNKNOWN_DATASPACE:
+    'The org has no data space of that name. Check --dataspace and the c__dataSpace values of the selected files against the data spaces the message lists.',
   UNMODELLED_RESPONSE:
     'Retrieve wrote this object as-is because the plugin could not read its answer from the org, and the check gave no more specific reason. Manage the object in Salesforce, or report the output.',
   UNSAFE_PATH:
@@ -86,6 +94,8 @@ export const hints: Readonly<Record<string, string>> = {
     'A selected source file is missing, linked, too large or changed while the plugin read it. Use plain files under 1 MiB and do not edit them during the run, then rerun.',
   UNSAFE_TEMP:
     'On Windows, TEMP, TMP, TMPDIR or the Node.js temp folder is not the temp folder the plugin accepts. Set them to the same absolute folder for this shell, then rerun.',
+  UNSUPPORTED_DATASPACE_FILTER:
+    'A c__dataSpace entry is a filtered membership ({name, filter}), which the plugin does not deploy yet. Use the plain data space name, or set the filter in the org.',
   VERBATIM_NOT_DEPLOYABLE:
     'The named file was retrieved as-is because the plugin cannot represent that object, so it cannot be deployed. Change the object in the org, or select a file the plugin can represent.',
 };

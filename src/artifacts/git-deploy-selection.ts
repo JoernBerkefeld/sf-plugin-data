@@ -41,7 +41,8 @@ export type GitDeleteCandidate = Readonly<{
   family: DeletedArtifactKind;
   /** Absolute path the file had (the JSON file for a calculated insight). */
   path: string;
-  identity: Readonly<{ dataSpace: string; apiName: string }>;
+  /** A DLO has no single data space: its spaces are the base document's c__dataSpace list. */
+  identity: Readonly<{ dataSpace?: string; apiName: string }>;
   /** Calculated insight only: absolute path of the SQL file. */
   companionPath?: string;
   /** Segment only: absolute paths of the SQL file of each base model. */

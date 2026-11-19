@@ -60,7 +60,8 @@ const looseDmo = () => ({
 const validDlo = () => ({
   schemaVersion: 1,
   kind: 'dlo',
-  identity: { apiName: dloName, dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: dloName },
   spec: {
     label: 'Loose',
     category: 'Other',
@@ -97,7 +98,7 @@ const command = (Type, flags) => {
 };
 
 test('strict DLO and DMO normalizers still refuse what retrieve mode keeps', () => {
-  assert.throws(() => normalizeDlo(looseDlo()), /INVALID_DLO_DOCUMENT/u);
+  assert.throws(() => normalizeDlo(looseDlo(), 'default'), /INVALID_DLO_DOCUMENT/u);
   assert.throws(() => normalizeNativeDmo(looseDmo(), 'default'), /UNSUPPORTED_DMO_DATASPACE/u);
   assert.throws(
     () => normalizeNativeDmo({ ...looseDmo(), dataSpaceName: 'default' }),
@@ -106,9 +107,10 @@ test('strict DLO and DMO normalizers still refuse what retrieve mode keeps', () 
 });
 
 test('retrieve mode keeps a DLO the plugin cannot deploy as returned', () => {
-  const document = normalizeDlo(looseDlo(), undefined, 'retrieve');
+  const document = normalizeDlo(looseDlo(), 'default', 'retrieve');
   assert.equal(document.kind, 'dlo');
-  assert.deepEqual(document.identity, { apiName: dloName, dataSpace: 'default' });
+  assert.deepEqual(document.identity, { apiName: dloName });
+  assert.deepEqual(document.c__dataSpace, ['default']);
   assert.equal(document.spec.label, looseDlo().label);
   assert.equal(document.spec.category, '');
   assert.equal(document.spec.eventDateTimeFieldName, 'EventTime');
@@ -161,7 +163,7 @@ test('a normal DLO and DMO read the same in both modes', () => {
     dataSpaceInfo: [{ name: 'default' }],
     fields: [{ name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true }],
   };
-  assert.deepEqual(normalizeDlo(dlo, undefined, 'retrieve'), normalizeDlo(dlo));
+  assert.deepEqual(normalizeDlo(dlo, 'default', 'retrieve'), normalizeDlo(dlo, 'default'));
   const dmo = {
     name: dmoName,
     label: 'Loose',

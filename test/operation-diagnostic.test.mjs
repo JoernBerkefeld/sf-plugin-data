@@ -209,7 +209,9 @@ const rawDmo = (name) => ({
 const document = (kind, name) => ({
   schemaVersion: 1,
   kind,
-  identity: { apiName: name, dataSpace: 'default' },
+  ...(kind === 'dlo'
+    ? { c__dataSpace: ['default'], identity: { apiName: name } }
+    : { identity: { apiName: name, dataSpace: 'default' } }),
   spec: { label: 'Probe', category: 'Other', fields: structuredClone(fields) },
 });
 
@@ -258,15 +260,19 @@ for (const [kind, name, execute] of [
     const desired = document(kind, name);
     desired.spec.fields[0].dataType = 'Number';
     let writes = 0;
-    const result = await execute(desired, {
-      get: async () => (kind === 'dlo' ? { dataLakeObjects: [raw(name)] } : rawDmo(name)),
-      create: async () => {
-        writes++;
+    const result = await execute(
+      desired,
+      {
+        get: async () => (kind === 'dlo' ? { dataLakeObjects: [raw(name)] } : rawDmo(name)),
+        create: async () => {
+          writes++;
+        },
+        update: async () => {
+          writes++;
+        },
       },
-      update: async () => {
-        writes++;
-      },
-    });
+      'default',
+    );
     assert.equal(writes, 0);
     assert.equal(result.outcome, 'blocked');
     assert.equal(result.mutation, 'not-attempted');

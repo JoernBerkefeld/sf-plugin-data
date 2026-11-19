@@ -203,7 +203,7 @@ test('preview resolves local input before org inspection and returns advisory ve
   assert.deepEqual(calls, ['inputs', 'org', 'connection', 'preflight']);
   assert.equal(exitCode, undefined);
   assert.equal(result.contract, 'sf-data360-deploy');
-  assert.equal(result.contractVersion, '1.0.0');
+  assert.equal(result.contractVersion, '1.1.0');
   assert.equal(result.status, 'success');
   assert.equal(result.metadata.preview, true);
   assert.equal(result.metadata.operation, 'deploy');
@@ -224,7 +224,7 @@ test('nonpreview runs executor after selection preflight and returns mutation en
   const { command, calls } = invocation({ preview: false });
   const { result, exitCode } = await run(command);
   assert.equal(result.status, 'success');
-  assert.equal(result.contractVersion, '1.0.0');
+  assert.equal(result.contractVersion, '1.1.0');
   assert.equal(result.metadata.preview, false);
   assert.equal(exitCode, undefined);
   assert.deepEqual(calls, ['inputs', 'org', 'connection', 'preflight', 'execute']);

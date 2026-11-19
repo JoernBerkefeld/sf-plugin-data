@@ -376,7 +376,8 @@ function countPathCalls(t) {
 const dloDocument = (apiName) => ({
   schemaVersion: 1,
   kind: 'dlo',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: ['default'],
+  identity: { apiName },
   spec: {
     label: apiName,
     category: 'Other',

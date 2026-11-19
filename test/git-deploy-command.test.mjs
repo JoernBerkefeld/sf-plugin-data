@@ -316,7 +316,7 @@ for (const drift of ['digest', 'document', 'count']) {
     const dlo = {
       path: 'data360/dlo/Source__dll.dlo-meta.json',
       inputDigest: 'a'.repeat(64),
-      document: { kind: 'dlo', identity: { dataSpace: 'default', apiName: 'Source__dll' } },
+      document: { kind: 'dlo', c__dataSpace: ['default'], identity: { apiName: 'Source__dll' } },
     };
     const mapping = {
       path: 'data360/mapping/Map.mapping-meta.json',

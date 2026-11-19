@@ -312,6 +312,15 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   omits is refused (`UNSUPPORTED_DLO_FIELD_CHANGE`). A listed field is compared on
   the keys the file states: keys only the org's copy carries are ignored, and a
   stated key that differs is refused with the same code.
+- A data lake object file holds `schemaVersion` 1, `kind` `dlo`, the top-level key
+  `c__dataSpace` (every data space the DLO belongs to: a list of names sorted by name, at
+  least one, none repeated), `identity` with `apiName` only, and `spec`. The old
+  `identity.dataSpace` key is refused (`LEGACY_DATASPACE_KEY`); a filtered membership
+  `{ "name": …, "filter": … }` is recognised but refused until a filter is proven live
+  (`UNSUPPORTED_DATASPACE_FILTER`); any other invalid value is `INVALID_DATASPACE_FIELD`.
+  The list must hold the run's data space (`--dataspace`, `default` when omitted;
+  `DLO_DATASPACE_MISMATCH` otherwise). Deploy adds the DLO to listed data spaces it is not
+  in, and removes it from unlisted ones only with `--allow-dataspace-removal`.
 - The data lake object `spec` holds `label`, `category`, `fields` and, optionally,
   `eventDateTimeFieldName`: the full name (with `__c`) of one of the listed fields
   that dates each record. Engagement data lake objects need it; create sends it

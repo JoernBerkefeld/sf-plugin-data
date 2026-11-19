@@ -18,6 +18,8 @@ const result = spawnSync(
   [
     '--import',
     new URL('../test/support/fast-readback.mjs', import.meta.url).href,
+    '--import',
+    new URL('../test/support/offline-data-spaces.mjs', import.meta.url).href,
     '--test',
     ...(process.argv.slice(2).length > 0 ? process.argv.slice(2) : ['test/*.test.mjs']),
   ],

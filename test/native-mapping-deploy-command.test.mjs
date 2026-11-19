@@ -24,10 +24,16 @@ const fields = names.map((name) => ({
 const dlo = {
   schemaVersion: 1,
   kind: 'dlo',
-  identity: { dataSpace: 'default', apiName: 'Example__dll' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'Example__dll' },
   spec: { label: 'Example', category: 'Other', fields },
 };
-const dmo = { ...dlo, kind: 'dmo', identity: { ...dlo.identity, apiName: 'Example__dlm' } };
+const dmo = {
+  schemaVersion: 1,
+  kind: 'dmo',
+  identity: { dataSpace: 'default', apiName: 'Example__dlm' },
+  spec: dlo.spec,
+};
 const mapping = {
   schemaVersion: 1,
   kind: 'mapping',

@@ -367,6 +367,25 @@ select the family-specific routes described in each section.
 
 ## dlo: unimplemented
 
+Data spaces (2026-11-18): every command checks its data space and the `c__dataSpace` names of
+the selected files with one `GET /ssot/data-spaces` before any read or write. A DLO file lists
+all its data spaces. Deploy adds the DLO to a listed data space with one full-list
+`PUT /ssot/data-spaces/<space>/members`: the member list is read completely right before
+(its distinct names must equal `totalSize`, every member ACTIVE or PROCESSING, no filter or
+unknown key) and read again afterwards, and every earlier member must still be listed
+(`DLO_DATASPACE_MEMBERS_CHANGED` otherwise). It removes the DLO from an unlisted data space
+with `DELETE …/members?memberNames=<Name>__dll` only with `--allow-dataspace-removal`, then
+reads the DLO until it lists the planned data spaces. A member write that Salesforce answers
+without success is `DLO_MEMBERSHIP_UPDATE_REJECTED`. Create sends the run's data space only;
+the others follow through the member route. Delete refuses a DLO in other data spaces too
+(`DLO_DELETE_OTHER_DATASPACES`), also as the landing DLO of a stream deleted with
+`--delete-dlo`. A member list that states more members than it lists (seen live for
+`default`: 99 stated, 98 listed) fails closed: the plugin cannot add a DLO to that data
+space. Routes proven live at API 68 (verification DB entries
+`data360:dlo-dataspace-membership-20261118.api68`,
+`data360:dataspace-followups-20261118.api68`); the plugin's own run of them is not yet
+verified live.
+
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or
 redirects. Stream/connector bindings, lineage and generated replay remain unqualified.
@@ -374,8 +393,9 @@ redirects. Stream/connector bindings, lineage and generated replay remain unqual
 The unused internal raw-page DLO evidence inventory helper and its
 incomplete-evidence type have been removed. Native DLO inventory is
 `listNativeNames`: it takes every DLO the list pages return (live, `totalSize` can exceed
-the entries returned) and retrieve binds each to the data space it reads in, so a DLO in
-several data spaces retrieves too. This internal cleanup changes no public command or native
+the entries returned) and keeps those of the run's data space; the file of each lists every
+data space the DLO belongs to (`c__dataSpace`), so a DLO in several data spaces retrieves
+from any of them into the same file. This internal cleanup changes no public command or native
 retrieval behavior; the historical evidence below does not qualify ingestion,
 stream/connector bindings, lineage or generated replay.
 

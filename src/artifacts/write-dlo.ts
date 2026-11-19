@@ -4,11 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DloError, leanDloDocument, validateDloDocument } from './dlo-document.js';
 import { inspectSegmentPath, verifyTemporaryDirectory } from '../transport/project-metadata.js';
-import {
-  isVerbatimDocument,
-  previousIdentity,
-  serializeVerbatimDocument,
-} from './verbatim-document.js';
+import { isVerbatimDocument, serializeVerbatimDocument } from './verbatim-document.js';
 
 /**
  * Validate each real directory ancestor before publication.
@@ -116,15 +112,9 @@ export async function writeDloDocument(
     await ensure(path.dirname(destination));
     const previous = await existing(destination);
     if (previous?.equals(bytes)) return { path: destination, outcome: 'unchanged' };
-    if (previous) {
-      const saved = previousIdentity(
-        previous.toString('utf8'),
-        (previousValue) => validateDloDocument(previousValue, 'retrieve').identity,
-      );
-      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
-        throw new DloError('DLO_DATASPACE_COLLISION');
-      if (!overwrite) throw new DloError('OVERWRITE_REQUIRED');
-    }
+    // A DLO name is unique in the org and its file lists every data space, so the file at the
+    // path is the same DLO whatever spaces it names.
+    if (previous && !overwrite) throw new DloError('OVERWRITE_REQUIRED');
     verifyTemporaryDirectory();
     const staging = await mkdtemp(path.join(os.tmpdir(), 'data360-dlo-output-'));
     const marker = await open(path.join(staging, 'ownership'), 'wx');

@@ -501,9 +501,10 @@ const gone = () => new DataStreamHttpError('STREAM_HTTP_ERROR', 404);
  * Stream delete clients over one CRM stream; after the DELETE the stream (and DLO) read 404.
  * @param {object} raw Stream GET.
  * @param {object[]} dloDependents DLO dependents before the DELETE.
+ * @param {string[]} dloSpaces Data spaces the landing DLO reads in.
  * @returns {object} Clients and the call ledger.
  */
-function streamClients(raw, dloDependents = [ownEntry]) {
+function streamClients(raw, dloDependents = [ownEntry], dloSpaces = ['default']) {
   const ledger = [];
   let deleted = false;
   return {
@@ -529,9 +530,11 @@ function streamClients(raw, dloDependents = [ownEntry]) {
             : { dependencies: dloDependents, totalSize: dloDependents.length },
       },
       dlo: {
-        get: async () => {
+        get: async (name) => {
           if (deleted) throw gone();
-          return {};
+          return {
+            dataLakeObjects: [{ name, dataSpaceInfo: dloSpaces.map((space) => ({ name: space })) }],
+          };
         },
       },
     },
@@ -579,6 +582,29 @@ test('a stream the plugin cannot model is deleted by name; dependents and status
     );
     assert.deepEqual(ledger, []);
   }
+});
+
+test('an unmodelled stream is not deleted with a landing DLO that belongs to other data spaces too', async () => {
+  const { clients, ledger } = streamClients(crmStream(), [ownEntry], ['default', 'dataspace2']);
+  await assert.rejects(
+    deleteNativeDataStream('Account_Home', clients, {
+      deleteDlo: true,
+      survivorDloNames: [],
+      verifyInput: async () => {},
+    }),
+    { code: 'DLO_DELETE_OTHER_DATASPACES' },
+  );
+  assert.deepEqual(ledger, []);
+  // Without --delete-dlo the DLO stays, so its data spaces do not matter.
+  const kept = streamClients(crmStream(), [ownEntry], ['default', 'dataspace2']);
+  await deleteNativeDataStream('Account_Home', kept.clients, {
+    deleteDlo: false,
+    survivorDloNames: [],
+    verifyInput: async () => {},
+    now: () => 0,
+    wait: async () => {},
+  });
+  assert.deepEqual(kept.ledger, ['delete:1ds000000000002AAA:false']);
 });
 
 test('-m delete of a GET the plugin cannot model goes by name; a graph of another name refuses', async () => {
