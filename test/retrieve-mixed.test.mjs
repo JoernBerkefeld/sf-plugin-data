@@ -106,7 +106,7 @@ function invocation(metadata, overrides = {}) {
   };
   command.acquireDataTransform = async (apiName) => {
     calls.push(`data-transform:${apiName}`);
-    return { document: { definition: { name: apiName } } };
+    return { document: { c__dataSpace: 'default', definition: { name: apiName } } };
   };
   command.writeDataTransform = async (document) => ({
     path: `${document.definition.name}.json`,
@@ -347,12 +347,6 @@ for (const [metadata, overrides, code, family] of [
     'data-graph',
   ],
   [['data-graph:Alpha', 'segment:Audience'], { 'api-version': '65.0' }, 'INVALID_SCOPE', 'segment'],
-  [
-    ['dmo:Sample__dlm', 'data-transform:Alpha'],
-    { dataspace: 'other' },
-    'INVALID_SCOPE',
-    'data-transform',
-  ],
   [['dmo:Sample__dlm', 'data-graph:Alpha'], { dataspace: 'other' }, 'INVALID_SCOPE', 'data-graph'],
   [['data-graph:1bad', 'dmo:Sample__dlm'], {}, 'INVALID_SELECTION', 'data-graph'],
   [['data-stream:Alpha', 'segment:1bad'], {}, 'INVALID_SELECTION', 'segment'],
@@ -377,12 +371,12 @@ for (const [metadata, overrides, code, family] of [
   });
 
 test('outside default, DLOs, DMOs and mappings beside a family not converted yet refuse the group', async () => {
-  // DLOs, DMOs, mappings, streams and calculated insights follow the run's data space; the
-  // families not converted to c__dataSpace yet (segment, identity resolution, transform, graph)
+  // DLOs, DMOs, mappings, streams, calculated insights, segments and transforms follow the run's
+  // data space; the families not converted to c__dataSpace yet (identity resolution, graph)
   // refuse it before org access.
   for (const metadata of [
-    ['dlo:Source__dll', 'calculated-insight:Insight__cio', 'segment:Audience'],
-    ['dmo:Sample__dlm', 'segment:Audience'],
+    ['dlo:Source__dll', 'calculated-insight:Insight__cio', 'identity-resolution:Individual'],
+    ['dmo:Sample__dlm', 'segment:Audience', 'identity-resolution:Individual'],
     ['mapping:Some_map', 'identity-resolution:Individual'],
   ]) {
     const { command, calls } = invocation(metadata, { dataspace: 'other' });

@@ -16,11 +16,16 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { carryNativeResponse } from '../artifacts/verbatim-document.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
+import { explainInput, explanationOf } from './operation-diagnostic.js';
 export type SegmentAcquisition = {
-  identity: SegmentDocument['identity'];
+  /** The reported identity: the requested name in the run's data space. */
+  identity: { dataSpace: string; apiName: string };
   candidate?: SegmentDocument;
   blockers: string[];
   expectations?: { runtime: Record<string, unknown> };
+  /** The plugin-built explanation of the first blocker, when it has one. */
+  explanation?: string;
 };
 
 const configuration = [
@@ -264,13 +269,14 @@ function projectTypedSegment(
     {
       schemaVersion: 1,
       kind: 'segment',
-      identity: { dataSpace: 'default', apiName },
+      c__dataSpace: raw.dataSpace,
+      identity: { apiName },
       spec: {
         displayName: raw.displayName,
         // Salesforce leaves description out of the GET when it is empty.
         description: Object.hasOwn(raw, 'description') ? raw.description : '',
         segmentType: raw.segmentType,
-        segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
+        segmentOn: { kind: 'dmo', apiName: raw.segmentOnApiName },
         ...(ui ? { includeCriteria: criteria } : {}),
         ...(Object.hasOwn(raw, 'lookbackPeriod') ? { lookbackPeriod: raw.lookbackPeriod } : {}),
         ...(schedule ? { schedule } : {}),
@@ -317,7 +323,9 @@ export function projectSegment(
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new SegmentError('INVALID_SEGMENT_RESPONSE');
   const raw = value as Record<string, unknown>;
-  if (raw.apiName !== apiName || raw.dataSpace !== 'default')
+  // The data space is the segment's own (its name is unique in the org); a caller that requested
+  // one compares it.
+  if (raw.apiName !== apiName || !isDataSpaceName(raw.dataSpace))
     throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
   if (raw.segmentType !== 'DBT') return projectTypedSegment(raw, apiName, mode, children);
   const known = new Set([
@@ -354,13 +362,14 @@ export function projectSegment(
   const candidate = {
     schemaVersion: 1,
     kind: 'segment',
-    identity: { dataSpace: 'default', apiName },
+    c__dataSpace: raw.dataSpace,
+    identity: { apiName },
     spec: {
       displayName: raw.displayName,
       // Salesforce leaves description out of the GET when it is empty.
       description: Object.hasOwn(raw, 'description') ? raw.description : '',
       segmentType: raw.segmentType,
-      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: raw.segmentOnApiName },
+      segmentOn: { kind: 'dmo', apiName: raw.segmentOnApiName },
       models,
       lookbackPeriod: raw.lookbackPeriod,
       ...(schedule ? { schedule } : {}),
@@ -375,14 +384,36 @@ export function projectSegment(
 }
 
 /**
- * Acquire one API68/default Segment by its exact name.
+ * The refusal of a segment that the org holds in another data space than the run's. Its name is
+ * unique in the org (Salesforce stores a non-default segment as `<prefix>_<Name>`), so a read by
+ * name finds it wherever it is.
+ * @param {string} apiName Segment name.
+ * @param {unknown} found The data space the org names for it.
+ * @param {string} dataSpace The run's data space.
+ * @returns {SegmentError} SEGMENT_DATASPACE_MISMATCH with an explanation.
+ */
+export function segmentSpaceMismatch(
+  apiName: string,
+  found: unknown,
+  dataSpace: string,
+): SegmentError {
+  return explainInput(
+    new SegmentError('SEGMENT_DATASPACE_MISMATCH'),
+    `Segment ${apiName} is in the data space ${isDataSpaceName(found) ? found : '(none named)'}, but the run's data space is ${dataSpace}. Run the command with --dataspace ${isDataSpaceName(found) ? found : '<its data space>'}.`,
+  );
+}
+
+/**
+ * Acquire one API68 Segment of the run's data space by its exact (stored) name; the GET needs no
+ * data space (live API 68: the stored name is unique in the org), and a segment of another data
+ * space is SEGMENT_DATASPACE_MISMATCH.
  * A failed GET is never absence evidence; no runtime writes are available. A retrieve of a
  * Waterfall with child segments, without `children`, names them with one segment list read
  * (their definition IDs are org-specific); when that read fails the criteria stay as read.
  * @param {Connection} connection Authenticated command-owned API68 connection.
  * @param {string} apiName Exact selected identity.
  * @param {string | ApiVersionSelection} apiVersion Requested fixed API version.
- * @param {string} dataSpace Requested default data space.
+ * @param {string} dataSpace The run's data space.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps what the plugin does not model).
  * @param {ReadonlyMap<string, string>} [children] Waterfall child definition ID to API name.
  * @returns {Promise<SegmentAcquisition>} Detached portable candidate and private runtime baseline.
@@ -401,11 +432,11 @@ export async function retrieveSegment(
     (typeof apiVersion !== 'string' &&
       (apiVersion.soapNumeric !== version || apiVersion.restSelector !== `v${version}`)) ||
     connection.getApiVersion() !== version ||
-    dataSpace !== 'default' ||
+    !isDataSpaceName(dataSpace) ||
     !segmentName.test(apiName)
   )
     throw new SegmentError('INVALID_SCOPE');
-  const identity = { dataSpace: 'default', apiName } as const;
+  const identity = { dataSpace, apiName };
   // The raw GET response travels with the result and the candidate, for a verbatim file when
   // the segment cannot be represented.
   let read: { native: unknown } | undefined;
@@ -414,6 +445,12 @@ export async function retrieveSegment(
       `/services/data/v${version}/ssot/segments/${apiName}`,
     );
     read = { native: raw };
+    const found = (
+      (raw as { segments?: unknown[] } | undefined)?.segments?.[0] as
+        { apiName?: unknown; dataSpace?: unknown } | undefined
+    )?.dataSpace;
+    if ((raw as { segments?: unknown[] } | undefined)?.segments?.length && found !== dataSpace)
+      throw segmentSpaceMismatch(apiName, found, dataSpace);
     const projection = projectSegment(
       raw,
       apiName,
@@ -437,6 +474,10 @@ export async function retrieveSegment(
       },
       getConnectDiagnostic(error),
     );
+    // A data space refusal keeps its explanation for the item.
+    const explanation = explanationOf(error);
+    if (error instanceof SegmentError && explanation !== undefined)
+      (result as SegmentAcquisition).explanation = explanation;
     return read ? carryNativeResponse(result, read.native) : result;
   }
 }
@@ -486,36 +527,41 @@ export async function segmentChildNames(
 const segmentPageSize = 200;
 
 /**
- * Every default-space segment the API 68 list returns, following its `batchSize`/`offset` paging
- * until `totalSize` (or, without it, until a short or empty page). Extra envelope keys are
- * ignored; a malformed page stops the listing (SEGMENT_ACQUISITION_FAILED). An entry without a
- * usable API name or data space is skipped with a warning, a segment of another data space is
- * left out and a repeated name is listed once. A page that adds no new name ends the listing (a
- * server ignoring the offset).
+ * Every segment of the run's data space the API 68 list returns, following its
+ * `batchSize`/`offset` paging until `totalSize` (or, without it, until a short or empty page).
+ * The list is filtered by each entry's own `dataSpace`, never by a query parameter. Extra envelope
+ * keys are ignored; a malformed page stops the listing (SEGMENT_ACQUISITION_FAILED). An entry
+ * without a usable API name or data space is skipped with a warning, a segment of another data
+ * space is left out and a repeated name is listed once. A page that adds no new name ends the
+ * listing (a server ignoring the offset).
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<string[]>} Sorted API names.
  */
 export async function listSegmentNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
+  dataSpace = 'default',
 ): Promise<string[]> {
-  const entries = await listSegmentEntries(connection, warnings);
+  const entries = await listSegmentEntries(connection, warnings, dataSpace);
   const names = entries.map((entry) => entry.apiName);
   names.sort();
   return names;
 }
 
 /**
- * The default-space entries of the segment list, as `listSegmentNames` pages and filters them,
- * in list order.
+ * The entries of the segment list in one data space (or, without one, in every data space), as
+ * `listSegmentNames` pages and filters them, in list order.
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {string} [dataSpace] Data space to keep; undefined keeps every one.
  * @returns {Promise<Array<Record<string, unknown> & {apiName: string}>>} Listed segments.
  */
 async function listSegmentEntries(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
+  dataSpace?: string,
 ): Promise<Array<Record<string, unknown> & { apiName: string }>> {
   const client = new ConnectClient(connection, '68.0');
   const seen = new Set<string>();
@@ -543,7 +589,7 @@ async function listSegmentEntries(
       if (seen.has(apiName)) continue;
       seen.add(apiName);
       added++;
-      if (item.dataSpace === 'default') names.push({ ...item, apiName });
+      if (dataSpace === undefined || item.dataSpace === dataSpace) names.push({ ...item, apiName });
     }
     offset += entries.length;
     const total = (page as { totalSize?: unknown }).totalSize;

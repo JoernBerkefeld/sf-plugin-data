@@ -3,10 +3,11 @@ import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, readSingleDataSpace, refuseLegacyDataSpace } from './data-space-field.js';
 
+/** The DMO a segment is built on: always in the segment's own data space (`c__dataSpace`). */
 export type SegmentReference = {
   kind: 'dmo';
-  dataSpace: 'default';
   apiName: string;
 };
 
@@ -53,10 +54,16 @@ export type OtherSegmentSpec = SegmentSpecBase & {
   childSegments?: string[];
 };
 
+/**
+ * A segment file. `c__dataSpace` names its data space; its name is the one Salesforce stores
+ * (`<prefix>_<Name>` in a non-default data space, live API 68), and the plugin adds or strips
+ * nothing.
+ */
 export type SegmentDocument = {
   schemaVersion: 1;
   kind: 'segment';
-  identity: { dataSpace: 'default'; apiName: string };
+  c__dataSpace: string;
+  identity: { apiName: string };
   spec: DbtSegmentSpec | UiSegmentSpec | OtherSegmentSpec;
 };
 
@@ -260,13 +267,15 @@ function childSegmentsOf(value: unknown, mode: DocumentMode): string[] {
 }
 
 /**
- * Validate and detach an authored Segment/default definition (structure only). A DBT segment
+ * Validate and detach an authored Segment definition (structure only). Its data space is the
+ * top-level `c__dataSpace`; the old `identity.dataSpace` and `spec.segmentOn.dataSpace` keys are
+ * refused (LEGACY_DATASPACE_KEY), since the segmentOn DMO is always in the segment's space. A DBT segment
  * holds SQL models, a UI segment (`segmentType: UI`) its `includeCriteria` as a JSON object, and
  * any other type neither; a Waterfall may list its child segments by API name
  * (`childSegments`). The lookback (any text; optional for other types) and the optional
  * schedule are sent as written and Salesforce decides about them. Retrieve mode keeps unknown
  * `spec`, schedule and model keys and lifts the text limits, but still refuses what the file
- * cannot represent: another source kind or data space, and a model name that cannot be a file
+ * cannot represent: another source kind, and a model name that cannot be a file
  * name or repeats one (ignoring case). Deploy refuses unknown keys and names the key path.
  * @param {unknown} value Untrusted authored document.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
@@ -277,8 +286,12 @@ export function validateSegmentDocument(
   mode: DocumentMode = 'deploy',
 ): SegmentDocument {
   const lenient = mode === 'retrieve';
-  const root = record(value, ['schemaVersion', 'kind', 'identity', 'spec'], '[document]');
-  const identity = record(root.identity, ['dataSpace', 'apiName'], 'identity');
+  const root = record(value, ['schemaVersion', 'kind', 'identity', 'spec'], '[document]', false, [
+    dataSpaceKey,
+  ]);
+  const identity = record(root.identity, ['apiName'], 'identity', false, ['dataSpace']);
+  refuseLegacyDataSpace(identity, refuse);
+  const dataSpace = readSingleDataSpace(root, refuse);
   const type = (root.spec as Record<string, unknown> | null)?.segmentType;
   const keys = type === 'UI' ? uiSpecKeys : type === 'DBT' ? specKeys : otherSpecKeys;
   const waterfall = type === waterfallSegmentType;
@@ -291,28 +304,19 @@ export function validateSegmentDocument(
       ? ['lookbackPeriod', 'schedule', ...(waterfall ? ['childSegments'] : [])]
       : ['schedule'],
   );
-  const on = record(spec.segmentOn, ['kind', 'dataSpace', 'apiName'], 'spec.segmentOn');
+  const on = record(spec.segmentOn, ['kind', 'apiName'], 'spec.segmentOn', false, ['dataSpace']);
+  if (Object.hasOwn(on, 'dataSpace'))
+    throw refuse(
+      'LEGACY_DATASPACE_KEY',
+      'spec.segmentOn.dataSpace',
+      `is the old place of a data space; the DMO a segment is built on is always in the segment's own data space (${dataSpaceKey})`,
+    );
   if (root.schemaVersion !== 1 || root.kind !== 'segment')
     throw refuse('UNSUPPORTED_SEGMENT_VARIANT', 'kind', 'is not a schemaVersion 1 segment');
-  if (
-    identity.dataSpace !== 'default' ||
-    !segmentName.test(text(identity.apiName, 'identity.apiName', mode))
-  )
-    throw refuse(
-      'UNSUPPORTED_SEGMENT_VARIANT',
-      'identity',
-      'is not an API name in the default data space',
-    );
-  if (
-    on.kind !== 'dmo' ||
-    on.dataSpace !== 'default' ||
-    !dmoName.test(text(on.apiName, 'spec.segmentOn.apiName', mode))
-  )
-    throw refuse(
-      'UNSUPPORTED_SEGMENT_VARIANT',
-      'spec.segmentOn',
-      'is not a DMO (__dlm) in the default data space',
-    );
+  if (!segmentName.test(text(identity.apiName, 'identity.apiName', mode)))
+    throw refuse('UNSUPPORTED_SEGMENT_VARIANT', 'identity', 'is not a segment API name');
+  if (on.kind !== 'dmo' || !dmoName.test(text(on.apiName, 'spec.segmentOn.apiName', mode)))
+    throw refuse('UNSUPPORTED_SEGMENT_VARIANT', 'spec.segmentOn', 'is not a DMO (__dlm)');
   const segmentType = text(spec.segmentType, 'spec.segmentType', mode);
   text(spec.displayName, 'spec.displayName', mode);
   text(spec.description, 'spec.description', mode, true);
@@ -367,12 +371,13 @@ export function validateSegmentDocument(
   return {
     schemaVersion: 1,
     kind: 'segment',
-    identity: { dataSpace: 'default', apiName: identity.apiName as string },
+    c__dataSpace: dataSpace,
+    identity: { apiName: identity.apiName as string },
     spec: {
       displayName: spec.displayName as string,
       description: spec.description as string,
       segmentType,
-      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: on.apiName as string },
+      segmentOn: { kind: 'dmo', apiName: on.apiName as string },
       ...content,
       ...(lookbackPeriod === undefined ? {} : { lookbackPeriod }),
       ...(schedule ? { schedule } : {}),

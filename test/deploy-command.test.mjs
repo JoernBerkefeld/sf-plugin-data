@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DeployInputError, readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import Deploy from '../lib/commands/data360/deploy.js';
+import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 
 // A DMO-only selection joins the whole-selection batch route when Git selected it; explicit
@@ -462,7 +463,13 @@ test('human execution output reports unknown mutation and never aggregate succes
   assert.doesNotMatch(logs.join('\n'), /No deployment executed|execution: success/u);
 });
 
-test('repeated source and metadata flags plus API/scope override pass unchanged to owning services', async () => {
+test('repeated source and metadata flags plus API/scope override pass unchanged to owning services', async (t) => {
+  // The org names the prefix of the data space, so the stored segment name can be checked.
+  const restore = dataSpaceDirectory.read;
+  dataSpaceDirectory.read = async () => [{ name: 'default' }, { name: 'other', prefix: 'oth' }];
+  t.after(() => {
+    dataSpaceDirectory.read = restore;
+  });
   for (const overrides of [
     { 'source-dir': ['one.json', 'directory'] },
     { 'source-dir': undefined, metadata: ['dmo:A__dlm', 'dmo:B__dlm'] },
@@ -474,13 +481,18 @@ test('repeated source and metadata flags plus API/scope override pass unchanged 
       dataspace: 'other',
     });
     const resolve = command.resolveInputs;
-    // A Segment keeps this selection on the batch route, whose families require default space.
+    // A Segment of the run's data space keeps this selection on the batch route, which refuses
+    // the version.
     command.resolveInputs = async (options) => {
       await resolve(options);
       return [
         {
           path: 'Audience.segment.json',
-          document: { kind: 'segment', identity: { dataSpace: 'default', apiName: 'Audience' } },
+          document: {
+            kind: 'segment',
+            c__dataSpace: 'other',
+            identity: { apiName: 'oth_Audience' },
+          },
         },
       ];
     };

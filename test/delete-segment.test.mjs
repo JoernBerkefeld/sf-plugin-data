@@ -8,12 +8,13 @@ import Delete from '../lib/commands/data360/delete.js';
 const document = () => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience',
     description: 'Description',
     segmentType: 'DBT',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
     lookbackPeriod: 'P90D',
   },
@@ -337,11 +338,7 @@ test('public delete reads the segment by name, routes native68 and prints exact 
   assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
 });
 test('public Segment delete refuses legacy/mismatched scope or source before service', async () => {
-  for (const overrides of [
-    { 'api-version': '65.0' },
-    { dataspace: 'other' },
-    { 'delete-dlo': true },
-  ]) {
+  for (const overrides of [{ 'api-version': '65.0' }, { 'delete-dlo': true }]) {
     const h = invocation(overrides);
     const result = await run(h.command);
     assert.equal(result.status, 'blocked');
@@ -352,9 +349,13 @@ test('public Segment delete refuses legacy/mismatched scope or source before ser
  * A public delete over the real by-name read and the real service; only the API68 transport
  * and the dependency binding are replaced.
  * @param {boolean} preview Preview flag.
+ * @param {object} [space] The run's data space and the segment the org holds.
+ * @param {string} [space.dataspace] --dataspace; omitted is default.
+ * @param {string} [space.name] Segment name selected and read.
+ * @param {string} [space.found] Data space the org read names.
  * @returns {object} Command and observed traffic.
  */
-function endToEnd(preview) {
+function endToEnd(preview, { dataspace, name = 'Audience', found = 'default' } = {}) {
   const traffic = { gets: [], deletes: 0, values: [] };
   let gone = false;
   const connection = {
@@ -372,12 +373,17 @@ function endToEnd(preview) {
       traffic.gets.push(request.url);
       if (gone) throw absent();
       // The exact API68 GET response by name.
-      return { segments: [runtime()] };
+      return { segments: [{ ...runtime(), apiName: name, dataSpace: found }] };
     },
   };
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
-    flags: { metadata: ['segment:Audience'], preview, 'keep-local-files': true },
+    flags: {
+      metadata: [`segment:${name}`],
+      preview,
+      'keep-local-files': true,
+      ...(dataspace === undefined ? {} : { dataspace }),
+    },
   });
   command.jsonEnabled = () => true;
   command.resolveConnection = async () => connection;
@@ -409,6 +415,49 @@ test('public Segment delete by name: the org-read definition passes the service 
     [item.identity.apiName, item.outcome, item.mutation],
     ['Audience', 'deleted', 'confirmed-deleted'],
   );
+});
+test('public Segment delete in a non-default data space deletes the stored ds2_ name there', async () => {
+  const h = endToEnd(false, { dataspace: 'dataspace2', name: 'ds2_Audience', found: 'dataspace2' });
+  const result = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(h.traffic.deletes, 1);
+  assert.deepEqual(
+    h.traffic.values.map((value) => [value.c__dataSpace, value.identity.apiName]),
+    [['dataspace2', 'ds2_Audience']],
+  );
+  assert.ok(h.traffic.gets.every((url) => url.endsWith('/ssot/segments/ds2_Audience')));
+  assert.deepEqual(result.result.items[0].identity, {
+    dataSpace: 'dataspace2',
+    apiName: 'ds2_Audience',
+  });
+});
+test('public Segment delete refuses a segment of another data space before any DELETE', async () => {
+  const h = endToEnd(false, { dataspace: 'dataspace2' });
+  const result = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(h.traffic.deletes, 0);
+  assert.deepEqual(h.traffic.values, []);
+  const [error] = result.diagnostics.errors;
+  assert.equal(error.code, 'SEGMENT_DATASPACE_MISMATCH');
+  assert.match(
+    error.message,
+    /Audience is in the data space default, but the run's data space is dataspace2/u,
+  );
+});
+test('the delete service refuses a file of another data space than the run before any read', async () => {
+  const result = await deleteSegment(
+    { ...document(), c__dataSpace: 'dataspace2' },
+    {
+      instanceUrl: 'https://synthetic.my.salesforce.com',
+      getApiVersion: () => '68.0',
+      request: async () => assert.fail('no read'),
+    },
+    selection(),
+    'default',
+    { confirmDelete: true, verifyInput: async () => {} },
+  );
+  assert.deepEqual([result.outcome, result.mutation], ['blocked', 'not-attempted']);
+  assert.equal(result.diagnostics[0].code, 'SEGMENT_DATASPACE_MISMATCH');
 });
 test('public Segment preview by name runs the real read and service without a DELETE', async () => {
   const h = endToEnd(true);

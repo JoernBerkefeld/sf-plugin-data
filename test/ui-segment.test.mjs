@@ -40,12 +40,13 @@ const encode = (criteria) => JSON.stringify(criteria).replaceAll('"', '&quot;');
 const document = (criteria = normalized(), lookbackPeriod = 'P90D') => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience label',
     description: 'Description',
     segmentType: 'UI',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     includeCriteria: criteria,
     lookbackPeriod,
   },
@@ -162,7 +163,10 @@ test('UI segment write bodies match the proven create and PATCH payloads', async
   await new ConnectClient(c, '68.0').createSegment(document(authored()));
   await new ConnectClient(c, '68.0').patchSegment(document(normalized('CliNoMatchYY'), 'P30D'));
   assert.equal(calls[0].method, 'POST');
-  assert.equal(calls[0].url, `${connection.instanceUrl}/services/data/v68.0/ssot/segments`);
+  assert.equal(
+    calls[0].url,
+    `${connection.instanceUrl}/services/data/v68.0/ssot/segments?dataspace=default`,
+  );
   assert.deepEqual(JSON.parse(calls[0].body), {
     developerName: 'Audience',
     displayName: 'Audience label',

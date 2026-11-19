@@ -86,7 +86,7 @@ test('Segment help and README describe API68-only deploy by name, sent as writte
     /Segment deletion is separate: sf data360 delete -m segment:Name reads the segment from the org by name and runs fresh checks/u,
   );
   assert.doesNotMatch(Deploy.description, /explicit65|IS NOT NULL|Metadata reads validate/u);
-  assert.match(Retrieve.description, /Segment uses auto or 68\.0 in default space/u);
+  assert.match(Retrieve.description, /Segment uses auto or 68\.0 in the run data space/u);
   assert.doesNotMatch(Retrieve.description, /explicit65|single-model DBT subset/u);
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   assert.ok(readme.includes('`data360/segments/<name>.segment.json`'));
@@ -317,8 +317,11 @@ test('README describes optional scope without promoting nondefault qualification
       'Data Lake Objects (DLOs), `dlo`',
       'DLO-to-DMO mappings, `mapping`',
       'DMO field relationships, `relationship`',
+      'Data Transforms, `data-transform`',
       'Data Streams, `data-stream`',
       'Calculated insights, `calculated-insight`',
+      'Segments, `segment`',
+      'Segment members',
     ],
   );
   assert.ok(rows.every((line) => ['yes', 'no'].includes(space(line))));
@@ -518,11 +521,11 @@ test('actual core initialization and fixed command routes never discover or save
             command.resolveInputs = async () => [{
               path: 'Synthetic.segment.json',
               document: {
-                schemaVersion: 1, kind: 'segment',
-                identity: { dataSpace: 'default', apiName: 'Synthetic' },
+                schemaVersion: 1, kind: 'segment', c__dataSpace: 'default',
+                identity: { apiName: 'Synthetic' },
                 spec: {
                   displayName: 'Synthetic', description: '', segmentType: 'DBT',
-                  segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+                  segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
                   models: [{ name: 'Synthetic', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
                   lookbackPeriod: 'P90D',
                 },
@@ -882,8 +885,8 @@ test('publish parser blocks a missing source and unqualified scope before authen
       // A calculated insight is published in the run's data space; the file is read first.
       'UNSAFE_SOURCE',
     ],
-    // A segment is published in the default data space only.
-    [['-m', 'segment:Synthetic', '--data-space', 'other'], 'INVALID_SCOPE'],
+    // A segment is published in the run's data space at API 68 only.
+    [['-m', 'segment:Synthetic', '--api-version', '65.0'], 'INVALID_SCOPE'],
     [
       ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
       'UNSAFE_SOURCE',

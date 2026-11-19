@@ -392,8 +392,15 @@ test('the data space read keeps each prefix; the check answers it from the same 
   assert.equal(await new DataSpaceCheck(open).prefixOf(SPACE), undefined);
 });
 
-test('a verbatim DMO, mapping, relationship or calculated insight carries c__dataSpace like its normal file', () => {
-  for (const kind of ['dmo', 'mapping', 'relationship', 'calculated-insight']) {
+test('a verbatim DMO, mapping, relationship, calculated insight, segment or transform carries c__dataSpace like its normal file', () => {
+  for (const kind of [
+    'dmo',
+    'mapping',
+    'relationship',
+    'calculated-insight',
+    'segment',
+    'data-transform',
+  ]) {
     const document = createVerbatimDocument(
       kind,
       { dataSpace: SPACE, apiName: 'Name_1' },

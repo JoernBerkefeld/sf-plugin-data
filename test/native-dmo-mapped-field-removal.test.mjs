@@ -509,12 +509,13 @@ test('all-native route repeats the data space and prints commands on their own l
 const segment = {
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience',
     description: '',
     segmentType: 'DBT',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName },
+    segmentOn: { kind: 'dmo', apiName },
     models: [{ name: 'Audience', sql: `SELECT ${apiName}.Id__c FROM ${apiName} WHERE 1 = 0` }],
     lookbackPeriod: 'P90D',
   },

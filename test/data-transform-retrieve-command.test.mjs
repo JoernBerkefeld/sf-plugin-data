@@ -14,6 +14,7 @@ const document = () => ({
   schemaVersion: 1,
   kind: 'data-transform',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: {
     name: 'SyntheticTransform',
     label: 'Synthetic transform',
@@ -79,15 +80,18 @@ function invocation(flags = {}) {
   command.createDataTransformClient = (connection, version, scope) => {
     assert.deepEqual(connection, { offline: true });
     assert.equal(version, '68.0');
-    assert.equal(scope, 'default');
+    assert.equal(scope, flags.dataspace ?? 'default');
     return { offline: true };
   };
   command.acquireDataTransform = async (name) => {
     calls.push(name);
-    return { document: { definition: { name } }, runtime: { secret: 'not-artifact' } };
+    return {
+      document: { c__dataSpace: flags.dataspace ?? 'default', definition: { name } },
+      runtime: { secret: 'not-artifact' },
+    };
   };
   command.writeDataTransform = async (value, root, overwrite) => {
-    assert.deepEqual(Object.keys(value), ['definition']);
+    assert.deepEqual(Object.keys(value), ['c__dataSpace', 'definition']);
     assert.equal(path.isAbsolute(root), true);
     assert.equal(overwrite, false);
     return { path: `${value.definition.name}.json`, outcome: 'retrieved' };
@@ -137,7 +141,6 @@ for (const flags of [
   { metadata: ['data-transform:../Escape'] },
   { metadata: ['data-transform:Alpha:Beta'] },
   { metadata: ['data-transform:Alpha', 'segment:1bad'] },
-  { dataspace: 'other' },
   ...['61.0', '65.0', '67.0', '69.0', 'latest'].map((version) => ({ 'api-version': version })),
 ])
   test(`Transform refuses before authentication ${JSON.stringify(flags)}`, async () => {
@@ -161,10 +164,10 @@ for (const code of [
       if (name === 'Alpha') {
         if (code === 'unknown') throw new Error('private-token');
         if (code === 'TRANSFORM_IDENTITY_MISMATCH')
-          return { document: { definition: { name: 'Other' } } };
+          return { document: { c__dataSpace: 'default', definition: { name: 'Other' } } };
         throw new DataTransformError(code);
       }
-      return { document: { definition: { name } } };
+      return { document: { c__dataSpace: 'default', definition: { name } } };
     };
     const { result, exitCode } = await run(command);
     assert.equal(exitCode, 1);
@@ -178,6 +181,34 @@ for (const code of [
     );
     assert.doesNotMatch(JSON.stringify(result), /private-token/u);
   });
+
+test('Transform retrieve runs in a non-default data space; a transform of another space is an item failure', async () => {
+  const { command, calls } = invocation({ dataspace: 'dataspace2' });
+  command.acquireDataTransform = async (name) => {
+    calls.push(name);
+    // Zulu is a transform on DLOs (no dataSpaceName): it belongs to default.
+    return {
+      document: {
+        c__dataSpace: name === 'Alpha' ? 'dataspace2' : 'default',
+        definition: { name },
+      },
+    };
+  };
+  const { result, exitCode } = await run(command);
+  assert.equal(exitCode, 1);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.result.scope.dataSpace, 'dataspace2');
+  assert.deepEqual(
+    result.result.items.map((item) => [item.identity.apiName, item.identity.dataSpace]),
+    [['Alpha', 'dataspace2']],
+  );
+  const [error] = result.diagnostics.errors;
+  assert.equal(error.code, 'TRANSFORM_DATASPACE_MISMATCH');
+  assert.match(
+    error.message,
+    /Zulu is in the data space default .*run's data space is dataspace2/u,
+  );
+});
 
 test('Transform retrieval aliases parse the exact public selector', async () => {
   const config = await Config.load({ root: process.cwd() });

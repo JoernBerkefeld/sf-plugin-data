@@ -14,12 +14,13 @@ import {
 const document = () => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience',
     description: 'Description',
     segmentType: 'DBT',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
     lookbackPeriod: 'P90D',
   },
@@ -213,7 +214,11 @@ test('native API68 CREATE payload is minimal and create-only with no refresh/rep
   await new ConnectClient(c, '68.0').createSegment(document());
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'POST');
-  assert.equal(calls[0].url, `${connection.instanceUrl}/services/data/v68.0/ssot/segments`);
+  // The create names the data space of the file.
+  assert.equal(
+    calls[0].url,
+    `${connection.instanceUrl}/services/data/v68.0/ssot/segments?dataspace=default`,
+  );
   assert.deepEqual(JSON.parse(calls[0].body), {
     developerName: 'Audience',
     displayName: 'Audience',
@@ -226,6 +231,18 @@ test('native API68 CREATE payload is minimal and create-only with no refresh/rep
   });
   await assert.rejects(new ConnectClient(c, '65.0').createSegment(document()));
   assert.equal(calls.length, 1);
+  // In another data space the stored name goes as developerName unchanged: Salesforce keeps a
+  // name that already has the prefix (live API 68).
+  await new ConnectClient(c, '68.0').createSegment({
+    ...document(),
+    c__dataSpace: 'dataspace2',
+    identity: { apiName: 'ds2_Audience' },
+  });
+  assert.equal(
+    calls[1].url,
+    `${connection.instanceUrl}/services/data/v68.0/ssot/segments?dataspace=dataspace2`,
+  );
+  assert.equal(JSON.parse(calls[1].body).developerName, 'ds2_Audience');
 });
 
 test('API68 bounded update, no-op, no-ack and COUNTING exhaustion never replay', async () => {

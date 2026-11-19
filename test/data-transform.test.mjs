@@ -141,6 +141,7 @@ const document = () => ({
   schemaVersion: 1,
   kind: 'data-transform',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: input(),
 });
 /**
@@ -197,6 +198,7 @@ test('Transform projects the GET onto its native input, keeping what a full PUT 
     serialized,
     serializeDataTransformDocument({
       definition: input(),
+      c__dataSpace: 'default',
       apiVersion: '68.0',
       kind: 'data-transform',
       schemaVersion: 1,
@@ -215,7 +217,8 @@ for (const [kind, read] of [
   [
     'on DLOs without dataSpaceName',
     () => {
-      // A transform built in the UI on DLOs applies across data spaces and has no dataSpaceName.
+      // A transform built in the UI on DLOs has no dataSpaceName; its data space comes from its
+      // MktDataTransform record (resolved by the caller, here default).
       const raw = stlGet();
       delete raw.dataSpaceName;
       return raw;
@@ -225,7 +228,7 @@ for (const [kind, read] of [
   test(`Transform ${kind} GET round-trips to a file and back to the exact PUT body`, async () => {
     const raw = read();
     const expected = projected(raw);
-    const observed = observeDataTransform(raw, schedule());
+    const observed = observeDataTransform(raw, schedule(), 'deploy', 'default');
     assert.deepEqual(observed.document.definition, expected);
     assert.equal(
       Object.hasOwn(observed.document.definition, 'dataSpaceName'),
@@ -266,13 +269,13 @@ for (const [kind, read] of [
     assert.deepEqual(JSON.parse(calls[0].body), expected);
   });
 
-test('Transform admission refuses only non-inert JSON, a bad name, both/neither definitions and nondefault space', () => {
+test('Transform admission refuses only non-inert JSON, a bad name, both/neither definitions and an unusable data space name', () => {
   const refused = [
     (v) => {
-      v.dataSpaceName = 'other';
+      v.dataSpaceName = '';
     },
     (v) => {
-      v.dataSpaceName = 'x';
+      v.dataSpaceName = 7;
     },
     (v) => {
       v.definitions = [v.definition];
@@ -333,6 +336,10 @@ test('Transform admission refuses only non-inert JSON, a bad name, both/neither 
     (v) => {
       // A transform on DLOs has no data space.
       delete v.dataSpaceName;
+    },
+    (v) => {
+      // A transform on DMOs of another data space names it.
+      v.dataSpaceName = 'dataspace2';
     },
   ];
   for (const change of accepted) {
@@ -442,6 +449,7 @@ test('Transform transport pins native68 and exposes only admitted definition wri
     'create',
     'delete',
     'update',
+    'dataSpaces',
     'setSchedule',
   ]);
   await client.get('SyntheticTransform');
@@ -463,7 +471,10 @@ test('Transform transport pins native68 and exposes only admitted definition wri
   assert.deepEqual(JSON.parse(calls[4].body), input());
   for (const version of ['auto', 'latest', '67.0', '69.0', undefined])
     assert.throws(() => createDataTransformClient(connection, version, 'default'));
-  assert.throws(() => createDataTransformClient(connection, '68.0', 'other'));
+  // Any data space name: transform routes take none (names are unique in the org).
+  createDataTransformClient(connection, '68.0', 'dataspace2');
+  for (const scope of ['', ' padded', undefined])
+    assert.throws(() => createDataTransformClient(connection, '68.0', scope));
   for (const selection of ['', '../escape', 'Name?x=1', 'Name/actions/run'])
     await assert.rejects(client.get(selection));
   for (const offset of [-1, 1, 2020, Infinity, '20']) await assert.rejects(client.list(offset));
@@ -480,7 +491,7 @@ test('Transform transport pins native68 and exposes only admitted definition wri
     ],
   );
   await assert.rejects(client.update('SyntheticTransform', input()));
-  await assert.rejects(client.create({ ...input(), dataSpaceName: 'other' }));
+  await assert.rejects(client.create({ ...input(), dataSpaceName: '' }));
   assert.equal(calls.length, 7);
   await assert.rejects(client.delete('SyntheticTransform'));
   await client.delete(id);
@@ -1019,7 +1030,13 @@ test('Transform create reads back the normalized stored form and reports created
     schedule: async () => schedule(),
   };
   const result = await executeDataTransformDeploy(
-    { schemaVersion: 1, kind: 'data-transform', apiVersion: '68.0', definition: authored },
+    {
+      schemaVersion: 1,
+      kind: 'data-transform',
+      apiVersion: '68.0',
+      c__dataSpace: 'default',
+      definition: authored,
+    },
     { operation: 'create' },
     client,
   );
@@ -1610,7 +1627,7 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
   };
   command.createDataTransformClient = (_connection, version, scope) => {
     assert.equal(version, '68.0');
-    assert.equal(scope, 'default');
+    assert.equal(scope, flags.dataspace ?? 'default');
     return h.client;
   };
   command.createDloClient = () => assert.fail('Transform must not spawn general DLO CLI');
@@ -1630,7 +1647,6 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
 
 for (const flags of [
   { 'delete-dlo': true },
-  { dataspace: 'other' },
   { 'api-version': '67.0' },
   { 'api-version': 'latest' },
   { metadata: ['data-transform'] },
@@ -1644,6 +1660,18 @@ for (const flags of [
       false,
     );
   });
+
+test('public Transform delete refuses a transform of another data space than the run before any DELETE', async () => {
+  const { result, h } = await deleteTransformCommand({ dataspace: 'dataspace2' });
+  assert.equal(result.status, 'blocked');
+  assert.equal(
+    h.calls.some(([op]) => op === 'delete'),
+    false,
+  );
+  const [error] = result.diagnostics.errors;
+  assert.equal(error.code, 'TRANSFORM_DATASPACE_MISMATCH');
+  assert.match(error.message, /in the data space default .*run's data space is dataspace2/u);
+});
 
 test('public Transform delete by name: preview GET-only, then one DELETE without --confirm-delete', async () => {
   const preview = await deleteTransformCommand({ preview: true });

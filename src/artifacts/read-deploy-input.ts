@@ -1364,7 +1364,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (isSegmentMember(file)) {
         const paired = await readSegmentDeployInput(file);
         const key =
-          `segment:${paired.document.identity.dataSpace}:${paired.document.identity.apiName}`.toLowerCase();
+          `segment:${paired.document.c__dataSpace}:${paired.document.identity.apiName}`.toLowerCase();
         const prior = inputs.find(
           (input) =>
             input.document.kind === 'segment' && canonical(input.path) === canonical(paired.path),
@@ -1510,7 +1510,10 @@ export function admitDeletedArtifact(
       case 'data-transform': {
         const transform = validateDataTransformDocument(value, 'retrieve');
         document = transform;
-        identity = { dataSpace: 'default', apiName: transform.definition.name as string };
+        identity = {
+          dataSpace: transform.c__dataSpace,
+          apiName: transform.definition.name as string,
+        };
         break;
       }
       case 'data-graph': {
@@ -1543,7 +1546,7 @@ export function admitDeletedArtifact(
           })),
           'retrieve',
         );
-        ({ identity } = document);
+        identity = { dataSpace: document.c__dataSpace, apiName: document.identity.apiName };
         break;
       }
     }

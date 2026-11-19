@@ -66,12 +66,13 @@ const raw = (type = 'DBT', extra = {}) => ({
 const document = (type = 'DBT', spec = {}) => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience',
     description: 'Description',
     segmentType: type,
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     ...(type === 'DBT' ? { models: [{ name: 'Audience', sql }] } : {}),
     ...(type === 'UI' ? { includeCriteria: { type: 'TextComparison' } } : {}),
     ...(type === 'Waterfall' || type === 'EinsteinGptSegmentsUI' ? {} : { lookbackPeriod: 'P90D' }),

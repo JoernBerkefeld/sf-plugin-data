@@ -17,12 +17,13 @@ const version = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' 
 const document = (name) => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: name },
+  c__dataSpace: 'default',
+  identity: { apiName: name },
   spec: {
     displayName: name,
     description: '',
     segmentType: 'DBT',
-    segmentOn: identity('dmo', 'Person__dlm'),
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     models: [{ name, sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
     lookbackPeriod: 'P90D',
   },

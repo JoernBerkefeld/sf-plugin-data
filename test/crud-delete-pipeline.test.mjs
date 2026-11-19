@@ -35,6 +35,7 @@ const transform = () => ({
     schemaVersion: 1,
     kind: 'data-transform',
     apiVersion: '68.0',
+    c__dataSpace: 'default',
     definition: {
       name: 'Copy',
       label: 'Copy',

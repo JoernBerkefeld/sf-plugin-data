@@ -7,12 +7,12 @@ import {
   validateSegmentDocument,
 } from '../artifacts/segment-document.js';
 import type { SegmentDocument } from '../artifacts/segment-document.js';
-import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { isVerbatimDocument, verbatimDataSpace } from '../artifacts/verbatim-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
-import { projectSegment, segmentChildNames } from './retrieve-segment.js';
+import { projectSegment, segmentChildNames, segmentSpaceMismatch } from './retrieve-segment.js';
 import { operationDiagnostic } from './operation-diagnostic.js';
 
 export const segmentDeleteBudget = Object.freeze({
@@ -59,22 +59,24 @@ function preservation(runtime: Record<string, unknown>): Record<string, unknown>
 
 /**
  * The segment inside a raw GET, checked only for what names and places it: the same API name in
- * the default data space. Used for a verbatim file, whose segment the plugin cannot model.
+ * the run's data space. Used for a verbatim file, whose segment the plugin cannot model.
  * @param {unknown} response Raw GET response.
  * @param {string} apiName Selected name.
+ * @param {string} dataSpace The run's data space.
  * @returns {{candidate: undefined; runtime: Record<string, unknown>}} The raw segment.
  */
 function rawSegment(
   response: unknown,
   apiName: string,
+  dataSpace: string,
 ): { candidate: undefined; runtime: Record<string, unknown> } {
   const segments = (response as { segments?: unknown } | null)?.segments;
   const value: unknown = Array.isArray(segments) ? segments[0] : undefined;
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new SegmentError('INVALID_SEGMENT_RESPONSE');
   const raw = value as Record<string, unknown>;
-  if (raw.apiName !== apiName || raw.dataSpace !== 'default')
-    throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
+  if (raw.apiName !== apiName) throw new SegmentError('SEGMENT_IDENTITY_MISMATCH');
+  if (raw.dataSpace !== dataSpace) throw segmentSpaceMismatch(apiName, raw.dataSpace, dataSpace);
   return { candidate: undefined, runtime: structuredClone(raw) };
 }
 
@@ -82,12 +84,12 @@ function rawSegment(
  * Delete one exact native68 JSON-matched Segment, without replay or generated-resource cleanup.
  * Bindings establish selected source compatibility, not exhaustive external-consumer exclusion.
  * A verbatim file (a segment the plugin cannot model, such as one built in the UI) is deleted by
- * name: the GET must name the same segment in the default data space and keep a deletable status,
+ * name: the GET must name the same segment in the run's data space and keep a deletable status,
  * and must not change between the reads; its definition and source DMO are not compared.
  * @param {unknown} value Complete local JSON expectation, or a verbatim file; not ownership authority.
  * @param {TargetConnection} connection Fixed authenticated target.
  * @param {ApiVersionSelection} selection Exact API68 selection.
- * @param {string} dataSpace Exact default space.
+ * @param {string} dataSpace The run's data space; the file's c__dataSpace must name it.
  * @param {SegmentDeleteOptions} options Preview, destructive confirmation and fresh input guard.
  * @returns {Promise<SegmentDeleteResult>} Payload-free independent absence or preserved transition.
  */
@@ -140,6 +142,9 @@ export async function deleteSegment(
       : validateSegmentDocument(value, 'retrieve');
     const admit = (): unknown =>
       verbatim ? { identity: { ...value.identity } } : validateSegmentDocument(value, 'retrieve');
+    // The file (or the verbatim stand-in) names the run's data space.
+    const named = verbatim ? verbatimDataSpace(value) : (desired as SegmentDocument).c__dataSpace;
+    if (named !== dataSpace) throw segmentSpaceMismatch(desired.identity.apiName, named, dataSpace);
     const frozen = { ...selection };
     const origin = connection.instanceUrl;
     const request = connection.request;
@@ -163,7 +168,7 @@ export async function deleteSegment(
         connection.getApiVersion() !== '68.0' ||
         connection.instanceUrl !== origin ||
         connection.request !== request ||
-        dataSpace !== 'default' ||
+        dataSpace !== named ||
         (options.preview === true) !== preview ||
         options.confirmDelete !== confirmed ||
         typeof verify !== 'function' ||
@@ -191,7 +196,13 @@ export async function deleteSegment(
           `/services/data/v68.0/ssot/segments/${desired.identity.apiName}`,
         );
         check();
-        if (verbatim) return rawSegment(raw, desired.identity.apiName);
+        if (verbatim) return rawSegment(raw, desired.identity.apiName, dataSpace);
+        const found = (
+          (raw as { segments?: unknown[] } | undefined)?.segments?.[0] as
+            { dataSpace?: unknown } | undefined
+        )?.dataSpace;
+        if (found !== dataSpace)
+          throw segmentSpaceMismatch(desired.identity.apiName, found, dataSpace);
         // Waterfall children are compared by name, as retrieve wrote them.
         const children = await segmentChildNames(connection, raw);
         check();
@@ -293,7 +304,11 @@ export async function deleteSegment(
   } catch (error) {
     return result(
       attempted ? 'failed' : 'blocked',
-      attempted ? 'SEGMENT_DELETION_UNCONFIRMED' : 'SEGMENT_DELETE_ADMISSION_FAILED',
+      attempted
+        ? 'SEGMENT_DELETION_UNCONFIRMED'
+        : error instanceof SegmentError && error.code === 'SEGMENT_DATASPACE_MISMATCH'
+          ? error.code
+          : 'SEGMENT_DELETE_ADMISSION_FAILED',
       error,
     );
   }

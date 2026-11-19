@@ -1,6 +1,6 @@
 # `INVALID_DATASPACE_FIELD`
 
-> The c__dataSpace key of the file is missing or not valid: a data space name, or for a DLO a list of names without repeats. Correct the file or retrieve it again.
+> The c__dataSpace key of the file is missing or not valid: a data space name (for a data transform, the one its definition names), or for a DLO a list of names without repeats. Correct the file or retrieve it again.
 
 |              |                                          |
 | ------------ | ---------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The top-level key `c__dataSpace` of the file is missing or not valid. A DLO file needs a list of data space names (at least one, none repeated); every other type needs one data space name. A name is text without surrounding blanks or control characters.
+The top-level key `c__dataSpace` of the file is missing or not valid. A DLO file needs a list of data space names (at least one, none repeated); every other type needs one data space name. A data transform file's `c__dataSpace` must equal its `definition.dataSpaceName` when the definition names one. A name is text without surrounding blanks or control characters.
 
 ## Why the plugin stops
 
@@ -28,7 +28,7 @@ Every write is bound to the data space the file names. Without a usable value th
 Deploy preview: blocked (DEPLOY_PREVIEW_BLOCKED). No deployment executed.
 Planned blocked: dlo:Orders__dll.
 INVALID_DATASPACE_FIELD: Plugin verification or request completion failed; no Salesforce rejection was confirmed. The DLO file cannot be deployed: c__dataSpace must list at least one data space.
-Hint: The c__dataSpace key of the file is missing or not valid: a data space name, or for a DLO a list of names without repeats. Correct the file or retrieve it again.
+Hint: The c__dataSpace key of the file is missing or not valid: a data space name (for a data transform, the one its definition names), or for a DLO a list of names without repeats. Correct the file or retrieve it again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/INVALID_DATASPACE_FIELD.md
 ```
 

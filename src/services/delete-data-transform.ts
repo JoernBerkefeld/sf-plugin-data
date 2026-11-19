@@ -4,13 +4,15 @@ import {
   DataTransformError,
   dataTransformId,
   dataTransformName,
+  dataTransformSpaceMismatch,
   sameDataTransformDocument,
   serializeDataTransformDocument,
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
 import { retrieveDataTransform } from './retrieve-data-transform.js';
-import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { isVerbatimDocument, verbatimDataSpace } from '../artifacts/verbatim-document.js';
+import { resolveDataTransformSpace } from './data-transform-space.js';
 import { ConnectError } from '../transport/connect-client.js';
 import { rejectedWrite } from './execute-calculated-insight-deploy.js';
 import { replaceExplanation } from './operation-diagnostic.js';
@@ -129,17 +131,20 @@ function refuseProcessing(status: unknown): void {
 
 /**
  * The raw GET of a transform named by a verbatim file, checked only for what a delete needs: the
- * same record ID and name. Any owner is accepted (Salesforce decides; it refuses a system
- * transform). Its definition is not projected.
+ * same record ID and name, in the file's data space (its `dataSpaceName`, otherwise the org's
+ * MktDataTransform record; TRANSFORM_DATASPACE_MISMATCH otherwise). Any owner is accepted
+ * (Salesforce decides; it refuses a system transform). Its definition is not projected.
  * @param {string} targetId Resolved record ID.
  * @param {string} name Name of the verbatim file.
- * @param {Pick<DataTransformClient, 'get'>} client Transform reader.
+ * @param {string} dataSpace The verbatim file's data space.
+ * @param {Pick<DataTransformClient, 'get' | 'dataSpaces'>} client Transform reader.
  * @returns {Promise<string>} The GET without run observations, as comparable JSON text.
  */
 async function readVerbatimTransform(
   targetId: string,
   name: string,
-  client: Pick<DataTransformClient, 'get'>,
+  dataSpace: string,
+  client: Pick<DataTransformClient, 'get' | 'dataSpaces'>,
 ): Promise<string> {
   const runtime: unknown = await client.get(targetId);
   if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime))
@@ -147,6 +152,8 @@ async function readVerbatimTransform(
   const raw = runtime as Record<string, unknown>;
   if (raw.id !== targetId || raw.name !== name)
     throw new DataTransformError('TRANSFORM_DELETE_IDENTITY_MISMATCH');
+  const space = await resolveDataTransformSpace(raw, async () => client.dataSpaces());
+  if (space !== dataSpace) throw dataTransformSpaceMismatch(name, space, dataSpace);
   refuseProcessing(raw.status);
   return JSON.stringify(
     Object.fromEntries(Object.entries(raw).filter(([key]) => !key.startsWith('lastRun'))),
@@ -184,6 +191,10 @@ export async function deleteDataTransform(
   const name = verbatim
     ? value.identity.apiName
     : String(validateDataTransformDocument(value, 'retrieve').definition.name);
+  // The org transform must be in the file's data space, before any DELETE.
+  const space = verbatim
+    ? verbatimDataSpace(value)
+    : validateDataTransformDocument(value, 'retrieve').c__dataSpace;
   const { targetId, confirmDelete, verifyInput } = options;
   const preview = options.preview === true;
   const methods = { ...client };
@@ -210,13 +221,13 @@ export async function deleteDataTransform(
   const read = async (): Promise<void> => {
     check();
     if (verbatim) {
-      const observed = await readVerbatimTransform(targetId, name, client);
+      const observed = await readVerbatimTransform(targetId, name, space, client);
       check();
       first ??= observed;
       if (observed !== first) throw new DataTransformError('TRANSFORM_TARGET_DRIFT');
       return;
     }
-    const observed = await retrieveDataTransform(targetId, client, 'retrieve');
+    const observed = await retrieveDataTransform(targetId, client, 'retrieve', undefined, space);
     check();
     refuseProcessing(observed.runtime.status);
     // Enum values the org stores in its own letter case are no drift.

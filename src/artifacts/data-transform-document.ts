@@ -1,11 +1,20 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import { foldEnums } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
 
+/**
+ * A transform file: Salesforce's create/update input in `definition`, kept as read. Its data space
+ * is the top-level `c__dataSpace`. When the input names `dataSpaceName` (sent as written), the two
+ * must agree; a transform whose GET names none (one built on DLOs, or with `definitions`) takes
+ * its data space from the org's MktDataTransform record (SOQL), and one without any data space
+ * there (a system transform) is handled in `default` only.
+ */
 export type DataTransformDocument = {
   schemaVersion: 1;
   kind: 'data-transform';
   apiVersion: '68.0';
+  c__dataSpace: string;
   definition: Record<string, unknown>;
   /**
    * Desired schedule, sent with its own PUT. Absent leaves the org schedule alone;
@@ -137,9 +146,37 @@ function refuseKey(keyPath: string, problem: string): DataTransformError {
 }
 
 /**
+ * The data space a transform input names itself (`dataSpaceName`), or undefined when it names
+ * none (its data space then comes from the org's MktDataTransform record).
+ * @param {Record<string, unknown>} input Admitted transform input.
+ * @returns {string | undefined} Data space.
+ */
+export function dataTransformSpace(input: Record<string, unknown>): string | undefined {
+  return typeof input.dataSpaceName === 'string' ? input.dataSpaceName : undefined;
+}
+
+/**
+ * The refusal of a transform file whose `c__dataSpace` is not the run's data space.
+ * @param {string} name Transform name.
+ * @param {string} fileSpace The file's c__dataSpace.
+ * @param {string} dataSpace The run's data space.
+ * @returns {DataTransformError} TRANSFORM_DATASPACE_MISMATCH with an explanation.
+ */
+export function dataTransformSpaceMismatch(
+  name: string,
+  fileSpace: string,
+  dataSpace: string,
+): DataTransformError {
+  return explainInput(
+    new DataTransformError('TRANSFORM_DATASPACE_MISMATCH'),
+    `Data transform ${name} is in the data space ${printableKey(fileSpace)} (${dataSpaceKey}, or the org's transform; one without any data space is handled in default), but the run's data space is ${printableKey(dataSpace)}. Run the command with --dataspace ${printableKey(fileSpace)}.`,
+  );
+}
+
+/**
  * Admit the native transform input as authored: inert JSON, an exact name, exactly one of
  * `definition` / `definitions`, only create/update input keys and, when `dataSpaceName` is
- * present, the default data space. Salesforce validates the rest. Retrieve mode keeps keys the
+ * present, a data space name. Salesforce validates the rest. Retrieve mode keeps keys the
  * input does not take; deploy then refuses them, naming the key.
  * @param {unknown} value Complete native input.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
@@ -162,14 +199,28 @@ export function buildDataTransformInput(
           `definition.${printableKey(key)}`,
           'is not a key the data transform create/update input takes',
         );
-  // A transform on DLOs applies across data spaces and has no dataSpaceName; one that names a
-  // data space must name the default one.
-  requireTransform(!Object.hasOwn(input, 'dataSpaceName') || input.dataSpaceName === 'default');
+  // A transform on DLOs has no dataSpaceName; one on DMOs names its data space.
+  requireTransform(!Object.hasOwn(input, 'dataSpaceName') || isDataSpaceName(input.dataSpaceName));
   return structuredClone(input);
 }
 
 /**
- * Validate the portable input-only native API68 artifact.
+ * Refuse a transform file problem, naming the key.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {DataTransformError} Refusal with an explanation.
+ */
+function refuseFile(code: string, keyPath: string, problem: string): DataTransformError {
+  return explainInput(
+    new DataTransformError(code),
+    `The data transform file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the transform again.`,
+  );
+}
+
+/**
+ * Validate the portable input-only native API68 artifact. Its `c__dataSpace` must equal
+ * `definition.dataSpaceName` when the definition names one.
  * @param {unknown} value Portable candidate.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
  * @returns {DataTransformDocument} Detached checked document.
@@ -180,11 +231,12 @@ export function validateDataTransformDocument(
 ): DataTransformDocument {
   inert(value);
   const scheduled = Boolean(value && typeof value === 'object' && Object.hasOwn(value, 'schedule'));
+  const dataSpace = readSingleDataSpace(record(value), refuseFile);
   const document = record(
     value,
     scheduled
-      ? ['schemaVersion', 'kind', 'apiVersion', 'definition', 'schedule']
-      : ['schemaVersion', 'kind', 'apiVersion', 'definition'],
+      ? ['schemaVersion', 'kind', 'apiVersion', dataSpaceKey, 'definition', 'schedule']
+      : ['schemaVersion', 'kind', 'apiVersion', dataSpaceKey, 'definition'],
   );
   requireTransform(
     document.schemaVersion === 1 &&
@@ -198,11 +250,20 @@ export function validateDataTransformDocument(
       Array.isArray(document.schedule))
   )
     throw refuseKey('schedule', 'is not an object');
+  const definition = buildDataTransformInput(document.definition, mode);
+  const named = dataTransformSpace(definition);
+  if (named !== undefined && named !== dataSpace)
+    throw refuseFile(
+      'INVALID_DATASPACE_FIELD',
+      dataSpaceKey,
+      'must name the data space of definition.dataSpaceName',
+    );
   return {
     schemaVersion: 1,
     kind: 'data-transform',
     apiVersion: '68.0',
-    definition: buildDataTransformInput(document.definition, mode),
+    c__dataSpace: dataSpace,
+    definition,
     ...(scheduled
       ? { schedule: structuredClone(document.schedule as Record<string, unknown>) }
       : {}),
@@ -281,6 +342,7 @@ export function sameDataTransformDefinition(
         schemaVersion: 1,
         kind: 'data-transform',
         apiVersion: '68.0',
+        c__dataSpace: document.c__dataSpace,
         definition: foldEnums(document.definition, transformEnumKeys),
       },
       mode,
@@ -424,12 +486,15 @@ function projectDefinition(definition: unknown): unknown {
  * @param {unknown} value Native item response.
  * @param {unknown} scheduleValue Independently read native schedule; also kept as read.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown keys).
+ * @param {string} [dataSpace] The transform's resolved data space (from `dataSpaceName`, or the
+ * org's MktDataTransform record); required when the GET names none.
  * @returns {DataTransformObservation} Portable input plus detached read-only observations.
  */
 export function observeDataTransform(
   value: unknown,
   scheduleValue: unknown,
   mode: DocumentMode = 'deploy',
+  dataSpace?: string,
 ): DataTransformObservation {
   inert(value);
   inert(scheduleValue);
@@ -461,12 +526,18 @@ export function observeDataTransform(
       if (!inputKeys.includes(key) && !serverKeys.has(key) && !key.startsWith('lastRun'))
         projected[key] = structuredClone(runtime[key]);
   const projectedSchedule = projectDataTransformSchedule(schedule);
+  const definition = buildDataTransformInput(projected, mode);
+  const space = dataTransformSpace(definition) ?? dataSpace;
+  requireTransform(space !== undefined, 'INVALID_TRANSFORM_RESPONSE');
+  // A resolved data space that differs from the one the GET names is not this transform.
+  requireTransform(dataSpace === undefined || dataSpace === space, 'INVALID_TRANSFORM_RESPONSE');
   return {
     document: {
       schemaVersion: 1,
       kind: 'data-transform',
       apiVersion: '68.0',
-      definition: buildDataTransformInput(projected, mode),
+      c__dataSpace: space,
+      definition,
       ...(projectedSchedule === undefined ? {} : { schedule: projectedSchedule }),
     },
     targetId: runtime.id as string,

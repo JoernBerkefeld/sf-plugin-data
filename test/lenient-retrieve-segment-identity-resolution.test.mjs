@@ -151,7 +151,8 @@ for (const [label, change, reason] of [
     assert.match(result.diagnostics.warnings.join('\n'), new RegExp(`reason ${reason}`, 'u'));
     const saved = JSON.parse(await readFile(item.path, 'utf8'));
     assert.equal(saved.kind, 'segment');
-    assert.deepEqual(saved.identity, { dataSpace: 'default', apiName: 'Audience' });
+    assert.equal(saved.c__dataSpace, 'default');
+    assert.deepEqual(saved.identity, { apiName: 'Audience' });
     assert.deepEqual(saved.verbatim.native, sortKeysDeep(raw));
     assert.deepEqual(await readdir(segmentDirectory(cwd)), ['Audience.segment.json']);
     await assert.rejects(deploySegment(cwd), { code: 'VERBATIM_NOT_DEPLOYABLE' });

@@ -2,6 +2,8 @@ import select from '@inquirer/select';
 import { Flags, SfCommand } from '@salesforce/sf-plugins-core';
 import { AuthInfo, ConfigAggregator, Connection, StateAggregator } from '@salesforce/core';
 import { plugin } from '../../../../plugin.js';
+import { isDataSpaceName } from '../../../../artifacts/data-space-field.js';
+import { dataSpaceCheckOf } from '../../../../services/data-space-check.js';
 import {
   formatMemberValue,
   memberColumnHeaders,
@@ -85,7 +87,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
   ];
   public static readonly summary = 'Export the members of one published segment as CSV or JSON.';
   public static readonly description =
-    'Reads the members of the segment named by -m segment:<API name, record ID or display name> (default data space; --api-version auto (68.0), 67.0 or 68.0) and writes them as data rows to --output-file, by default data/default/<display name>-<YYYY-MM-DD_HH-mm-ss>.csv below the working directory (the display name made file-safe like the mcnext export: control characters and < > : " / \\ | ? * become -, whitespace runs -, leading and trailing dots and spaces dropped; the API name when the segment has no display name; a later file in the same second gets _2, _3, ...; never a data360/ definition folder; an existing --output-file is replaced). The segment is read first: an API name directly (GET /ssot/segments/{Name}); otherwise the segment list (GET /ssot/segments) is searched for the exact MarketSegment record ID or the exact display name, as the Data Cloud UI shows them (case matters; no match is SEGMENT_MEMBERS_NOT_FOUND). When several segments share that display name, a terminal asks which one ("Multiple segments match that name. Choose one:"); with --json or without a terminal the export stops with SEGMENT_SELECTION_AMBIGUOUS and lists each name, API name and ID. Basic mode reads GET /ssot/segments/{Name}/members page by page with limit (--limit rows per request, default 1000; Salesforce decides the maximum, 2000 worked in a test) and offset (--offset first row, default 0) until totalCount rows are read; --fields, --filters and --order-by are sent as given and Salesforce decides (its default is the member ID and a few membership columns). A member count that changes during the read (a publish finished) is SEGMENT_MEMBERS_CHANGED. --include-details instead joins the latest membership DMO to the DMO the segment is built on and writes every field of that DMO per member, through one Data 360 SQL query (POST /ssot/query-sql, rows read page by page up to the row count); a member with more than one detail row is SEGMENT_MEMBER_DETAILS_AMBIGUOUS. Its CSV header and JSON keys are the field labels (--column-headers label, default; an empty label uses the API name, a repeated header gets _2, _3, ...) or the field API names (--column-headers api-name); basic mode always uses the names Salesforce returns. Detail values of DATE fields are written as YYYY-MM-DD and of DATE_TIME fields with a space instead of the T (offset kept); basic mode writes values as Salesforce returns them. Members exist only after a publish finished (sf data360 publish); before that the export is empty with a warning. Reads retry after network errors, HTTP 429 and 503; any other Salesforce error ends the export (SEGMENT_MEMBERS_READ_FAILED) and no file is left. --result-format csv (default; header from the first row, --column-delimiter as a name or the character: COMMA or ",", SEMICOLON or ";", TAB, PIPE or "|", CARET or "^", BACKQUOTE or "`") or json (an array of row objects). Read-only: nothing in the org changes.';
+    'Reads the members of the segment named by -m segment:<API name, record ID or display name> (in the run data space, --dataspace, default: default; --api-version auto (68.0), 67.0 or 68.0) and writes them as data rows to --output-file, by default data/<data space>/<display name>-<YYYY-MM-DD_HH-mm-ss>.csv below the working directory (data/default/... in the default data space) (the display name made file-safe like the mcnext export: control characters and < > : " / \\ | ? * become -, whitespace runs -, leading and trailing dots and spaces dropped; the API name when the segment has no display name; a later file in the same second gets _2, _3, ...; never a data360/ definition folder; an existing --output-file is replaced). The segment is read first: an API name directly (GET /ssot/segments/{Name}); otherwise the segment list (GET /ssot/segments) is searched for the exact MarketSegment record ID or the exact display name, as the Data Cloud UI shows them (case matters; no match is SEGMENT_MEMBERS_NOT_FOUND). When several segments share that display name, a terminal asks which one ("Multiple segments match that name. Choose one:"); with --json or without a terminal the export stops with SEGMENT_SELECTION_AMBIGUOUS and lists each name, API name and ID. Basic mode reads GET /ssot/segments/{Name}/members page by page with limit (--limit rows per request, default 1000; Salesforce decides the maximum, 2000 worked in a test) and offset (--offset first row, default 0) until totalCount rows are read; --fields, --filters and --order-by are sent as given and Salesforce decides (its default is the member ID and a few membership columns). A member count that changes during the read (a publish finished) is SEGMENT_MEMBERS_CHANGED. --include-details instead joins the latest membership DMO to the DMO the segment is built on and writes every field of that DMO per member, through one Data 360 SQL query (POST /ssot/query-sql, rows read page by page up to the row count); a member with more than one detail row is SEGMENT_MEMBER_DETAILS_AMBIGUOUS. Its CSV header and JSON keys are the field labels (--column-headers label, default; an empty label uses the API name, a repeated header gets _2, _3, ...) or the field API names (--column-headers api-name); basic mode always uses the names Salesforce returns. Detail values of DATE fields are written as YYYY-MM-DD and of DATE_TIME fields with a space instead of the T (offset kept); basic mode writes values as Salesforce returns them. Members exist only after a publish finished (sf data360 publish); before that the export is empty with a warning. Reads retry after network errors, HTTP 429 and 503; any other Salesforce error ends the export (SEGMENT_MEMBERS_READ_FAILED) and no file is left. --result-format csv (default; header from the first row, --column-delimiter as a name or the character: COMMA or ",", SEMICOLON or ";", TAB, PIPE or "|", CARET or "^", BACKQUOTE or "`") or json (an array of row objects). Read-only: nothing in the org changes.';
   public static readonly examples = [
     'sf data360 segment members export -o target -m segment:My_Segment',
     'sf data360 segment members export -o target -m "segment:My Segment" --column-delimiter ";"',
@@ -132,7 +134,11 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
       summary: '--include-details: header from field labels (default) or API names.',
     })(),
     'api-version': Flags.string({ summary: 'auto (68.0), 67.0 or 68.0.' }),
-    dataspace: Flags.string({ aliases: ['data-space'], summary: 'Default space only.' }),
+    dataspace: Flags.string({
+      aliases: ['data-space'],
+      summary:
+        "The run's data space (default: default): the segment must be in it, and the detail query runs in it.",
+    }),
   };
   protected createSender?: (connection: Connection, version: string) => BoundSsot;
   protected reportProgress = (message: string): void => {
@@ -226,10 +232,11 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
         'INVALID_SELECTION',
         '--fields, --filters, --order-by and --offset apply to basic mode only, not with --include-details.',
       );
-    if (!['67.0', '68.0'].includes(version) || (flags.dataspace ?? 'default') !== 'default')
+    const dataSpace = flags.dataspace ?? 'default';
+    if (!['67.0', '68.0'].includes(version) || !isDataSpaceName(dataSpace))
       return fail(
         'INVALID_SCOPE',
-        'Segment members are read at --api-version auto (68.0), 67.0 or 68.0 in the default data space.',
+        'Segment members are read at --api-version auto (68.0), 67.0 or 68.0 in one data space (--dataspace).',
       );
     let connection: Connection;
     try {
@@ -249,7 +256,13 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
     try {
       route('segments.get');
       const interactive = this.interactive();
+      // The data space of a segment the API name names elsewhere, for the not-found message.
+      let elsewhere: string | undefined;
       const segment = await resolveSegmentSelection(sender, version, selection, {
+        dataSpace,
+        elsewhere: (space) => {
+          elsewhere = space;
+        },
         listed: () => route('segments.list'),
         ...(interactive
           ? {
@@ -259,18 +272,27 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
                 } catch {
                   throw new SegmentMembersError(
                     'SEGMENT_SELECTION_AMBIGUOUS',
-                    `"${selection}" matches ${candidates.length} segments in the default data space and none was chosen.`,
+                    `"${selection}" matches ${candidates.length} segments in the data space ${dataSpace} and none was chosen.`,
                   );
                 }
               },
             }
           : {}),
       });
-      if (!segment)
+      if (!segment) {
+        // Salesforce stores a segment of a non-default data space as <prefix>_<Name>.
+        let prefix: string | undefined;
+        if (dataSpace !== 'default')
+          try {
+            prefix = await dataSpaceCheckOf(this, async () => sender).prefixOf(dataSpace);
+          } catch {
+            prefix = undefined;
+          }
         return fail(
           'SEGMENT_MEMBERS_NOT_FOUND',
-          `No segment in the default data space of the org has the API name, record ID or display name "${selection}". Check the exact value (case matters).`,
+          `No segment in the data space ${dataSpace} of the org has the API name, record ID or display name "${selection}".${elsewhere === undefined ? '' : ` A segment of that API name is in the data space ${elsewhere}; run the command with --dataspace ${elsewhere} to export it.`} Check the exact value (case matters${dataSpace === 'default' ? '' : `; a segment of the data space ${dataSpace} is stored as ${prefix ?? '<prefix>'}_<Name>`}).`,
         );
+      }
       const apiName = segment.apiName;
       envelope.result.segment = {
         apiName: segment.apiName,
@@ -289,6 +311,8 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
         segment.displayName ?? apiName,
         flags['result-format'],
         this.cwd(),
+        undefined,
+        dataSpace,
       );
       const delimiter = memberDelimiter(flags['column-delimiter']);
       const report = (read: number, total: number): void => {
@@ -322,6 +346,7 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
               columns.length,
               flags.limit,
               this.pause,
+              dataSpace,
             )) {
               await sink.write(
                 page.rows.map((row) =>

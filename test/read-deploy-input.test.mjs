@@ -45,6 +45,7 @@ const transform = (name = 'SyntheticTransform') => ({
   schemaVersion: 1,
   kind: 'data-transform',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: {
     name,
     label: 'Synthetic transform',

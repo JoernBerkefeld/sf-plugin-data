@@ -90,6 +90,13 @@ retrieve leaves it out for a segment that does not refresh, and `nextScheduledDa
 kept. On deploy, a file without `schedule` leaves the org schedule alone; one with it is
 sent when a key it states differs from the org schedule (keys it leaves out keep their org
 value), and `{"frequency": "None"}` turns it off.
+The top-level `c__dataSpace` string names the segment's data space (the old
+`identity.dataSpace` and `spec.segmentOn.dataSpace` keys are `LEGACY_DATASPACE_KEY`); the
+`segmentOn` DMO and every Waterfall child are in that data space. `identity.apiName` and the
+file name are the name Salesforce stores: `<prefix>_<Name>` in a non-default data space
+(`ds2_Spring` in `dataspace2`), sent unchanged as `developerName` on create (Salesforce keeps a
+name that has the prefix); a file there without the prefix is `SEGMENT_NAME_NOT_STORED`, and a
+file of another data space than the run's is `SEGMENT_DATASPACE_MISMATCH`.
 The file holds no `parameters` (the API has no write for them). A model name must start with a letter or digit and hold only
 letters, digits and underscores, and two model names may not differ only in case; another
 name is refused with `INVALID_SEGMENT_DOCUMENT`. A repeat retrieve of an unchanged segment
@@ -111,6 +118,7 @@ under the project root, for custom, system and packaged transforms alike:
 ```json
 {
   "apiVersion": "68.0",
+  "c__dataSpace": "default",
   "definition": { "name": "Name", "label": "…", "type": "BATCH", "definition": { "…": "…" } },
   "kind": "data-transform",
   "schedule": {
@@ -121,6 +129,13 @@ under the project root, for custom, system and packaged transforms alike:
   "schemaVersion": 1
 }
 ```
+
+`c__dataSpace` names the transform's data space and must agree with `definition.dataSpaceName`
+when the definition names one (`INVALID_DATASPACE_FIELD` otherwise; kept and sent as written). A
+transform whose GET has no `dataSpaceName` takes its data space from its MktDataTransform record
+(SOQL); one without any data space there (a system transform) is in `default` only. A file of
+another data space than the run's, or one whose name the org holds in another data space, is
+`TRANSFORM_DATASPACE_MISMATCH`.
 
 `definition` is the native create/update input as the API 68 GET returns it, without
 server-owned keys, the schedule inside a definition, or the server-owned keys of each

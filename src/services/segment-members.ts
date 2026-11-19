@@ -2,6 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { BoundSsot } from '../transport/bound-ssot.js';
 import { ConnectError } from '../transport/connect-client.js';
 import { replaceExplanation } from './operation-diagnostic.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 
 /** A plugin refusal or an unexpected Salesforce answer while reading segment members. */
 export class SegmentMembersError extends Error {
@@ -85,7 +86,8 @@ function query(entries: Array<[string, string | number | undefined]>): string {
 }
 
 /**
- * Read one segment of the default data space by its exact name.
+ * Read one segment by its exact (stored) name, in whatever data space it is (the name is unique
+ * in the org; `dataSpace` reports where).
  * @param {BoundSsot} sender Bound transport.
  * @param {string} version Numeric API version.
  * @param {string} apiName Exact segment name.
@@ -115,12 +117,18 @@ export async function readSegmentSummary(
       'SEGMENT_MEMBERS_UNEXPECTED_RESPONSE',
       `Salesforce answered the read of segment ${apiName} without exactly one segment of that name.`,
     );
+  // Its data space decides whether it is the run's segment: never assumed.
+  if (!isDataSpaceName(raw.dataSpace))
+    throw new SegmentMembersError(
+      'SEGMENT_MEMBERS_UNEXPECTED_RESPONSE',
+      `Salesforce answered the read of segment ${apiName} without its data space.`,
+    );
   const membership = record(raw.segmentMembershipDmo);
   const count = raw.lastSegmentMemberCount;
   return {
     apiName,
     marketSegmentId: raw.marketSegmentId,
-    dataSpace: text(raw.dataSpace) ?? 'default',
+    dataSpace: raw.dataSpace,
     ...(typeof raw.displayName === 'string' ? { displayName: raw.displayName } : {}),
     ...(text(raw.publishStatus) ? { publishStatus: text(raw.publishStatus) } : {}),
     ...(text(raw.lastPublishedEndDateTime)
@@ -132,24 +140,27 @@ export async function readSegmentSummary(
   };
 }
 
-/** One default-space segment of the segment list, as offered when a selection is ambiguous. */
+/** One segment of the run's data space in the segment list, as offered when a selection is ambiguous. */
 export type SegmentCandidate = { apiName: string; marketSegmentId: string; displayName?: string };
 
 /** Largest page of the segment list (`batchSize` 1 to 200). */
 const listPageSize = 200;
 
 /**
- * Every default-space segment of the segment list, page by page with `batchSize` and `offset`
- * until `totalSize` (or, without it, a short or empty page). Entries without an API name or ID,
- * and segments of other data spaces, are left out. A page that adds no new name ends the
- * listing (a server ignoring the offset).
+ * Every segment of the run's data space in the segment list, page by page with `batchSize` and
+ * `offset` until `totalSize` (or, without it, a short or empty page). The list is filtered by
+ * each entry's own `dataSpace`. Entries without an API name or ID, and segments of other data
+ * spaces, are left out. A page that adds no new name ends the listing (a server ignoring the
+ * offset).
  * @param {BoundSsot} sender Bound transport.
  * @param {string} version Numeric API version.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<SegmentCandidate[]>} Segments in list order.
  */
 export async function listSegmentCandidates(
   sender: BoundSsot,
   version: string,
+  dataSpace = 'default',
 ): Promise<SegmentCandidate[]> {
   const seen = new Set<string>();
   const candidates: SegmentCandidate[] = [];
@@ -181,7 +192,7 @@ export async function listSegmentCandidates(
         continue;
       seen.add(item.apiName);
       added++;
-      if (item.dataSpace === 'default')
+      if (item.dataSpace === dataSpace)
         candidates.push({
           apiName: item.apiName,
           marketSegmentId: item.marketSegmentId,
@@ -208,9 +219,10 @@ export function describeCandidate(candidate: SegmentCandidate): string {
 }
 
 /**
- * Find the segment a selection names in the default data space, like the Data Cloud UI shows it:
- * by exact API name (read directly), otherwise through the segment list by exact record ID or
- * exact display name (case matters). More than one match is passed to `choose`; without it,
+ * Find the segment a selection names in the run's data space, like the Data Cloud UI shows it:
+ * by exact API name (read directly; a segment of that name in another data space is passed to
+ * `elsewhere` and the search goes on in the run's data space), otherwise through the segment list
+ * by exact record ID or exact display name (case matters). More than one match is passed to `choose`; without it,
  * SEGMENT_SELECTION_AMBIGUOUS lists the candidates.
  * @param {BoundSsot} sender Bound transport.
  * @param {string} version Numeric API version.
@@ -218,6 +230,8 @@ export function describeCandidate(candidate: SegmentCandidate): string {
  * @param {object} [options] Hooks.
  * @param {(candidates: SegmentCandidate[]) => Promise<SegmentCandidate>} [options.choose] Picks one of several matches.
  * @param {() => void} [options.listed] Called before the segment list is read.
+ * @param {string} [options.dataSpace] The run's data space (default: default).
+ * @param {(dataSpace: string) => void} [options.elsewhere] Receives another data space the API name is in.
  * @returns {Promise<SegmentSummary | undefined>} The segment, or undefined when nothing matches.
  */
 export async function resolveSegmentSelection(
@@ -227,14 +241,20 @@ export async function resolveSegmentSelection(
   options: {
     choose?: (candidates: SegmentCandidate[]) => Promise<SegmentCandidate>;
     listed?: () => void;
+    /** The run's data space (default: default). */
+    dataSpace?: string;
+    /** Receives the data space of a segment the API name names in another data space. */
+    elsewhere?: (dataSpace: string) => void;
   } = {},
 ): Promise<SegmentSummary | undefined> {
+  const dataSpace = options.dataSpace ?? 'default';
   if (identifier.test(selection)) {
     const direct = await readSegmentSummary(sender, version, selection);
-    if (direct) return direct;
+    if (direct && direct.dataSpace !== dataSpace) options.elsewhere?.(direct.dataSpace);
+    else if (direct) return direct;
   }
   options.listed?.();
-  const candidates = await listSegmentCandidates(sender, version);
+  const candidates = await listSegmentCandidates(sender, version, dataSpace);
   const exact = candidates.find(({ apiName }) => apiName === selection);
   const matches = exact
     ? [exact]
@@ -249,7 +269,7 @@ export async function resolveSegmentSelection(
       throw new SegmentMembersError(
         'SEGMENT_SELECTION_AMBIGUOUS',
         [
-          `"${selection}" matches ${matches.length} segments in the default data space:`,
+          `"${selection}" matches ${matches.length} segments in the data space ${dataSpace}:`,
           ...matches.map((candidate) => `- ${describeCandidate(candidate)}`),
           'Rerun with -m segment:<API name>.',
         ].join('\n'),
@@ -462,15 +482,17 @@ function queryStatus(body: Record<string, unknown> | undefined): {
 }
 
 /**
- * Run the detail SQL through `/ssot/query-sql` (default data space), wait until it is
- * Finished, then read its rows page by page up to its row count, never past the end (an
- * offset past the end is HTTP 400). Each member must match at most one detail row.
+ * Run the detail SQL through `/ssot/query-sql` in the segment's data space (`dataspace=` on
+ * every request), wait until it is Finished, then read its rows page by page up to its row
+ * count, never past the end (an offset past the end is HTTP 400). Each member must match at
+ * most one detail row.
  * @param {BoundSsot} sender Bound transport; the POST is never resent once it may have left.
  * @param {string} version Numeric API version.
  * @param {string} sql Detail SQL from discoverMemberDetails.
  * @param {number} columnCount Number of detail columns.
  * @param {number} pageSize Rows per read.
  * @param {(milliseconds: number) => Promise<void>} [pause] Wait between status reads.
+ * @param {string} [dataSpace] The segment's data space.
  * @yields {{ rows: unknown[][]; totalCount: number }} Detail rows without the two internal columns.
  */
 export async function* readDetailPages(
@@ -480,9 +502,10 @@ export async function* readDetailPages(
   columnCount: number,
   pageSize: number,
   pause: (milliseconds: number) => Promise<void> = async (milliseconds) => delay(milliseconds),
+  dataSpace = 'default',
 ): AsyncGenerator<{ rows: unknown[][]; totalCount: number }> {
   const base = `/services/data/v${version}/ssot/query-sql`;
-  const space = query([['dataspace', 'default']]);
+  const space = query([['dataspace', dataSpace]]);
   let status = queryStatus(
     record(await sender.request('POST', `${base}${space}`, undefined, { sql, rowLimit: pageSize })),
   );
@@ -520,7 +543,7 @@ export async function* readDetailPages(
       await sender.request(
         'GET',
         `${base}/${queryId}/rows${query([
-          ['dataspace', 'default'],
+          ['dataspace', dataSpace],
           ['offset', offset],
           ['rowLimit', pageSize],
         ])}`,

@@ -5,6 +5,8 @@ import {
   dataTransformName,
   dataTransformId,
 } from '../artifacts/data-transform-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
+import { readDataTransformSpaces } from '../services/data-transform-space.js';
 
 export type DataTransformClient = {
   get: (nameOrId: string) => Promise<unknown>;
@@ -15,6 +17,8 @@ export type DataTransformClient = {
   update: (targetId: string, input: unknown) => Promise<unknown>;
   /** Replace the schedule of one transform, sent as written; Salesforce decides. */
   setSchedule: (targetId: string, schedule: Record<string, unknown>) => Promise<unknown>;
+  /** The data space of every transform of the org (SOQL), read once per client. */
+  dataSpaces: () => Promise<ReadonlyMap<string, string | null>>;
   delete: (targetId: string) => Promise<unknown>;
 };
 
@@ -46,11 +50,13 @@ class DataTransformTransport extends ConnectClient {
 }
 
 /**
- * Bind only the native API68/default-space definition lifecycle contract.
+ * Bind only the native API68 definition lifecycle contract, in any data space: transform names
+ * are unique in the org, so the routes take no data space (the list ignores one, live API 68);
+ * a transform on DMOs names its data space in the input's `dataSpaceName`, sent as written.
  * Callers authorize create-only POST, identity-bound full-input PUT or schedule PUT; no runs.
  * @param {ConstructorParameters<typeof ConnectClient>[0]} connection Existing authenticated receiver.
  * @param {string} apiVersion Exact native API version.
- * @param {string} dataSpace Exact qualified dataspace.
+ * @param {string} dataSpace The run's data space (a data space name).
  * @returns {DataTransformClient} Single-attempt reads, validation, definition and schedule writes.
  */
 export function createDataTransformClient(
@@ -58,7 +64,7 @@ export function createDataTransformClient(
   apiVersion: string,
   dataSpace: string,
 ): DataTransformClient {
-  if (apiVersion !== '68.0' || dataSpace !== 'default')
+  if (apiVersion !== '68.0' || !isDataSpaceName(dataSpace))
     throw new DataTransformError('INVALID_TRANSFORM_SCOPE');
   const transport = new DataTransformTransport(connection, apiVersion);
   const origin = connection.instanceUrl;
@@ -69,6 +75,7 @@ export function createDataTransformClient(
       throw new DataTransformError('TRANSFORM_CONNECTION_DRIFT');
   }
   const endpoint = '/services/data/v68.0/ssot/data-transforms';
+  let spaces: Promise<ReadonlyMap<string, string | null>> | undefined;
   /**
    * Validate a name or native transform record ID, never an arbitrary URL.
    * @param {string} nameOrId Selected exact identity.
@@ -115,6 +122,11 @@ export function createDataTransformClient(
       if (typeof targetId !== 'string' || !dataTransformId.test(targetId))
         throw new DataTransformError('INVALID_TRANSFORM_TARGET_ID');
       return transport.request(item(targetId), 'PUT', buildDataTransformInput(input));
+    },
+    dataSpaces: async () => {
+      checkBinding();
+      spaces ??= readDataTransformSpaces(async (query) => transport.soql(query));
+      return spaces;
     },
     setSchedule: async (targetId, schedule) => {
       if (typeof targetId !== 'string' || !dataTransformId.test(targetId))

@@ -1,5 +1,6 @@
 import type { Connection } from '@salesforce/core';
 import { dataTransformName } from '../artifacts/data-transform-document.js';
+import { dataTransformSpaceById, readDataTransformSpaces } from './data-transform-space.js';
 import { NativeMappingError } from '../artifacts/native-mapping-document.js';
 import { ConnectClient } from '../transport/connect-client.js';
 
@@ -19,8 +20,13 @@ type InventoryRoute = {
   /** Entry key holding the API name. */
   nameKey: string;
   pattern: RegExp;
-  /** The data spaces an entry names; none named leaves the decision to the item's own read. */
-  spaces: (entry: Record<string, unknown>) => string[];
+  /**
+   * The data spaces an entry names; none named leaves the decision to the item's own read, and
+   * undefined leaves it to `unresolved`.
+   */
+  spaces: (entry: Record<string, unknown>) => string[] | undefined;
+  /** Receives the entries whose data space they do not state (`spaces` gave undefined). */
+  unresolved?: Array<{ apiName: string; entry: Record<string, unknown> }>;
   /** The run's data space: an entry that names spaces must name it. */
   dataSpace: string;
 };
@@ -68,7 +74,8 @@ async function listNames(
       seen.add(apiName);
       added++;
       const spaces = route.spaces(item);
-      if (spaces.length === 0 || spaces.includes(route.dataSpace)) names.push(apiName);
+      if (spaces === undefined) route.unresolved?.push({ apiName, entry: item });
+      else if (spaces.length === 0 || spaces.includes(route.dataSpace)) names.push(apiName);
     }
     if (route.pageSize === undefined) break;
     offset += entries.length;
@@ -129,31 +136,49 @@ export async function listDataStreamNames(
 }
 
 /**
- * Every data transform `GET /ssot/data-transforms` lists (pages of at most 20, `offset`), kept
- * unless it names another data space.
+ * Every data transform of the run's data space that `GET /ssot/data-transforms` lists (pages of
+ * at most 20, `offset`; the list ignores `?dataspace=`, live API 68). An entry is in the data
+ * space its `dataSpaceName` names; for one without it, one SOQL read of the org's
+ * MktDataTransform records names it by the entry's record `id`, and a transform without any data
+ * space there (a system transform) is listed in default only.
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated connection.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<string[]>} Sorted transform names.
  */
 export async function listDataTransformNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
+  dataSpace = 'default',
 ): Promise<string[]> {
-  return listNames(
+  const unresolved: Array<{ apiName: string; entry: Record<string, unknown> }> = [];
+  const names = await listNames(
     connection,
     '68.0',
     {
       family: 'data-transform',
+      unresolved,
       url: (offset) => `/services/data/v68.0/ssot/data-transforms?limit=20&offset=${offset}`,
       pageSize: 20,
       key: 'dataTransforms',
       nameKey: 'name',
       pattern: dataTransformName,
-      dataSpace: 'default',
-      spaces: (entry) => named(entry.dataSpaceName),
+      dataSpace,
+      spaces: (entry) => {
+        const space = named(entry.dataSpaceName);
+        return space.length > 0 ? space : undefined;
+      },
     },
     warnings,
   );
+  if (unresolved.length === 0) return names;
+  const client = new ConnectClient(connection, '68.0');
+  const spaces = await readDataTransformSpaces(async (query) => client.soql(query));
+  // By the record ID of the list entry only: the record's Name is a label.
+  for (const { apiName, entry } of unresolved)
+    if (dataTransformSpaceById(entry.id, spaces) === dataSpace) names.push(apiName);
+  names.sort();
+  return names;
 }
 
 /**

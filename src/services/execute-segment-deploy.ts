@@ -154,7 +154,7 @@ function acknowledgedUpdate(
  * @param {unknown} value Complete authored desired Segment.
  * @param {TargetConnection} connection Command-owned authenticated target.
  * @param {string | ApiVersionSelection} apiVersion API68 selection.
- * @param {string} dataSpace Fixed default space.
+ * @param {string} dataSpace The run's data space; the file's c__dataSpace must name it.
  * @param {SegmentExecutionOptions} options Acknowledgement, JSON digest verifier and bounded test seams.
  * @returns {Promise<SegmentDeployExecution>} Payload-free outcome with conservative mutation evidence.
  */

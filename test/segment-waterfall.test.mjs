@@ -51,12 +51,13 @@ const raw = (ids = [childIds.First, childIds.Second], extra = {}) => ({
 const document = (spec) => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Tiers' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Tiers' },
   spec: {
     displayName: 'Tiers',
     description: 'Description',
     segmentType: 'Waterfall',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     ...(spec ?? { childSegments: ['First', 'Second'] }),
   },
 });
@@ -68,7 +69,7 @@ const document = (spec) => ({
  */
 const input = (apiName, spec) => ({
   path: `${apiName}.segment.json`,
-  document: { ...document(spec), identity: { dataSpace: 'default', apiName } },
+  document: { ...document(spec), identity: { apiName } },
 });
 const sourceNames = new Map([
   [childIds.First, 'First'],

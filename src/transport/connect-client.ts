@@ -197,8 +197,9 @@ export class ConnectClient {
   }
 
   /**
-   * Create one native API68 Segment, without redirect or replay. The definition goes as written
-   * (`segmentWriteBody`); without a schedule in the file it does not refresh.
+   * Create one native API68 Segment in the data space of the file (`?dataspace=`), without
+   * redirect or replay. The definition goes as written (`segmentWriteBody`); without a schedule in
+   * the file it does not refresh.
    * @param {unknown} value Complete admitted portable definition.
    * @param {ReadonlyMap<string, string>} [children] Waterfall child API name to target definition ID.
    * @returns {Promise<unknown>} Untrusted acknowledgement, not settlement.
@@ -212,7 +213,11 @@ export class ConnectClient {
     return this.send(
       {
         method: 'POST',
-        url: this.safeUrl(`${this.prefix}segments`),
+        // The create names the data space of the file (live API 68: in a non-default data space
+        // Salesforce stores the segment as <prefix>_<Name>, and keeps a name that has it already).
+        url: this.safeUrl(
+          `${this.prefix}segments?dataspace=${encodeURIComponent(document.c__dataSpace)}`,
+        ),
         body: JSON.stringify(segmentWriteBody(document, true, false, children)),
         headers: { 'content-type': 'application/json' },
       },
@@ -343,6 +348,24 @@ export class ConnectClient {
         // JSforce never sends a POST whose body is undefined (the request hangs unsent);
         // an empty string goes out as Content-Length 0, the bodiless POST the route expects.
         body: '',
+      },
+      this.noRefreshReceiver(),
+    );
+  }
+
+  /**
+   * Run one read-only SOQL query (the core `/query` route, outside SSOT) over the command's own
+   * connection, without refresh or redirect; the first page only. Callers check `done`.
+   * @param {string} query SOQL built only from validated identifiers and static text.
+   * @returns {Promise<unknown>} Untrusted query response.
+   */
+  public async soql(query: string): Promise<unknown> {
+    if (this.selection.restSelector === 'latest' || typeof query !== 'string' || !query.trim())
+      throw new ConnectError('INVALID_REQUEST');
+    return this.send(
+      {
+        method: 'GET',
+        url: `${this.origin}/services/data/${this.selection.restSelector}/query?q=${encodeURIComponent(query)}`,
       },
       this.noRefreshReceiver(),
     );

@@ -130,7 +130,7 @@ function defaultStem(name: string, now: Date): string {
 }
 
 /**
- * The output file: the given path, or a new `data/default/<display name>-<timestamp>.<format>`
+ * The output file: the given path, or a new `data/<data space>/<display name>-<timestamp>.<format>`
  * below the working directory (never a `data360/` definition folder). The display name is
  * used, as in the mcnext export, because a segment's API name stays the same when its display
  * name changes (tested live); it is made file-safe with memberFileName.
@@ -139,6 +139,7 @@ function defaultStem(name: string, now: Date): string {
  * @param {MemberFormat} format Output format.
  * @param {string} cwd Working directory.
  * @param {Date} [now] Time of the export.
+ * @param {string} [dataSpace] The run's data space, the folder below data/.
  * @returns {Promise<string>} Absolute output path.
  */
 export async function memberOutputFile(
@@ -147,9 +148,11 @@ export async function memberOutputFile(
   format: MemberFormat,
   cwd: string,
   now = new Date(),
+  dataSpace = 'default',
 ): Promise<string> {
   if (requested !== undefined) return path.resolve(cwd, requested);
-  const directory = path.join(cwd, 'data', 'default');
+  // The run's data space names the folder, file-safe like the file name.
+  const directory = path.join(cwd, 'data', memberFileName(dataSpace));
   const stem = defaultStem(memberFileName(name), now);
   for (let suffix = 1; ; suffix++) {
     const candidate = path.join(directory, `${stem}${suffix === 1 ? '' : `_${suffix}`}.${format}`);

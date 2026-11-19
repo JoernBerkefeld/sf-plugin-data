@@ -18,12 +18,13 @@ const segment = async (
   const value = {
     schemaVersion: 1,
     kind: 'segment',
-    identity: { dataSpace: 'default', apiName: 'Audience' },
+    c__dataSpace: 'default',
+    identity: { apiName: 'Audience' },
     spec: {
       displayName: 'Audience',
       description: 'Description',
       segmentType: 'DBT',
-      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+      segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
       models,
       lookbackPeriod: 'P90D',
     },
@@ -514,7 +515,14 @@ test('Git selector rejects invalid refs without payload leakage', async () => {
 const verbatimFile = (kind, apiName, reason, native) => ({
   schemaVersion: 1,
   kind,
-  ...(['dmo', 'mapping', 'relationship', 'calculated-insight'].includes(kind)
+  ...([
+    'dmo',
+    'mapping',
+    'relationship',
+    'calculated-insight',
+    'segment',
+    'data-transform',
+  ].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason, native },

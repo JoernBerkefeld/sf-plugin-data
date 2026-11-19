@@ -15,6 +15,7 @@ import type { SegmentAcquisition } from './retrieve-segment.js';
 import { retrieveSegment } from './retrieve-segment.js';
 import { retrieveNativeDmo } from './native-dmo.js';
 import { bindSegmentDependencies } from './bind-segment-dependencies.js';
+import { explainInput } from './operation-diagnostic.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { createDmoClient } from '../transport/dmo-rest.js';
 import { openBoundSsot } from '../transport/bound-ssot.js';
@@ -120,11 +121,15 @@ export async function acquireRetrieveSelection(
           'retrieve',
         );
         read = carriedNativeResponse(acquired);
-        if (acquired.blockers.length > 0 || !acquired.candidate)
+        if (acquired.blockers.length > 0 || !acquired.candidate) {
+          const refusal = new SegmentError(acquired.blockers[0] ?? 'INCOMPLETE_SEGMENT');
           throw retainConnectDiagnostic(
-            new SegmentError(acquired.blockers[0] ?? 'INCOMPLETE_SEGMENT'),
+            acquired.explanation === undefined
+              ? refusal
+              : explainInput(refusal, acquired.explanation),
             getConnectDiagnostic(acquired),
           );
+        }
         entry = { document: acquired.candidate };
       } else {
         const document = await retrieveNativeDmo(

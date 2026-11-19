@@ -18,7 +18,7 @@ Without the DMO's ID, the plugin cannot check that the segment read back after a
 
 ## How to fix
 
-1. Check that the DMO named in the segment exists in the org, in the default data space.
+1. Check that the DMO named in the segment exists in the org, in the segment's data space (`c__dataSpace`).
 2. Check the login of `-o` and read the HTTP status in the message.
 3. Rerun the command.
 

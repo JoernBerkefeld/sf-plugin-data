@@ -29,12 +29,13 @@ const dmo = (apiName = 'Person__dlm') => ({
 const segment = (apiName = 'Audience') => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     displayName: apiName,
     description: '',
     segmentType: 'DBT',
-    segmentOn: identity('dmo', 'Person__dlm'),
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     models: [{ name: apiName, sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0' }],
     lookbackPeriod: 'P90D',
   },

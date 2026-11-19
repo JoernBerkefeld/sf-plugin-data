@@ -22,12 +22,13 @@ const reference = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
 const segmentDocument = (object, apiName = 'Audience') => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName },
+  c__dataSpace: 'default',
+  identity: { apiName },
   spec: {
     displayName: apiName,
     description: '',
     segmentType: 'DBT',
-    segmentOn: reference('dmo', object),
+    segmentOn: { kind: 'dmo', apiName: object },
     models: [{ name: apiName, sql: `SELECT ${object}.Id__c FROM ${object} WHERE 1 = 0` }],
     lookbackPeriod: 'P90D',
   },

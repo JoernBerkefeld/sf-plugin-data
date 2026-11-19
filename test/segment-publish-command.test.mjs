@@ -441,7 +441,6 @@ for (const [flags, code] of [
     'INVALID_WAIT_TIMEOUT_SCOPE',
   ],
   [{ metadata: 'segment:CliPub', 'api-version': '65.0' }, 'INVALID_SCOPE'],
-  [{ metadata: 'segment:CliPub', dataspace: 'other' }, 'INVALID_SCOPE'],
 ])
   test(`publish refuses ${JSON.stringify(flags)} with ${code} before auth`, async () => {
     const h = harness(flags);
@@ -451,6 +450,54 @@ for (const [flags, code] of [
     assert.equal(result.diagnostics.errors[0].code, code);
     assert.equal(h.calls.auth, 0);
   });
+
+test('publish runs in the run data space: a ds2_ segment of dataspace2 is published there', async () => {
+  const h = harness(
+    { metadata: 'segment:ds2_CliPub', dataspace: 'dataspace2' },
+    {
+      reads: (index) =>
+        runtime({
+          apiName: 'ds2_CliPub',
+          dataSpace: 'dataspace2',
+          ...(index > 0 ? { publishStatus: 'SUCCESS' } : {}),
+        }),
+    },
+  );
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(result.result.items[0].identity, {
+    apiName: 'ds2_CliPub',
+    dataSpace: 'dataspace2',
+  });
+  assert.deepEqual(h.calls.posts, [id]);
+  assert.ok(h.calls.gets.every((route) => route.endsWith('/ssot/segments/ds2_CliPub')));
+});
+
+test('publish refuses a segment of another data space than the run without a POST', async () => {
+  const h = harness({ metadata: 'segment:CliPub', dataspace: 'dataspace2' });
+  const { result, exit } = await run(h.command);
+  assert.equal(exit, 1);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_DATASPACE_MISMATCH');
+  assert.match(
+    result.diagnostics.errors[0].message,
+    /CliPub is in the data space default, but the run's data space is dataspace2/u,
+  );
+  assert.deepEqual(h.calls.posts, []);
+});
+
+test('publish refuses a segment file of another data space than the run before auth', async () => {
+  const file = await segmentFile();
+  const h = harness({ 'source-dir': file.path, dataspace: 'dataspace2' });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_DATASPACE_MISMATCH');
+  assert.match(
+    result.diagnostics.errors[0].message,
+    /names the data space default in c__dataSpace/u,
+  );
+  assert.equal(h.calls.auth, 0);
+});
 
 test('publish help names the segment route, the wait and the unchanged CI path', () => {
   assert.equal(Publish.flags.metadata.char, 'm');

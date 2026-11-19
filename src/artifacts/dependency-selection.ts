@@ -97,14 +97,16 @@ export function documentDependencyNode(
   }
   if (value.kind === 'segment') {
     const document = validateSegmentDocument(value, mode);
-    const { kind, dataSpace, apiName } = document.spec.segmentOn;
+    // The segmentOn DMO and every Waterfall child are in the segment's own data space.
+    const space = document.c__dataSpace;
+    const { kind, apiName } = document.spec.segmentOn;
     // A Waterfall runs after the child segments it names (a stand-in for an unnamed child is none).
     const children = ((document.spec as OtherSegmentSpec).childSegments ?? [])
       .filter((child) => child !== unnamedChildSegment)
-      .map((child) => ({ kind: 'segment' as const, dataSpace: 'default', apiName: child }));
+      .map((child) => ({ kind: 'segment' as const, dataSpace: space, apiName: child }));
     return {
-      identity: { kind: 'segment', ...document.identity },
-      dependencies: [{ kind, dataSpace, apiName }, ...children],
+      identity: { kind: 'segment', dataSpace: space, apiName: document.identity.apiName },
+      dependencies: [{ kind, dataSpace: space, apiName }, ...children],
     };
   }
   if (value.kind !== 'dmo') throw new DependencySelectionError('DEPENDENCY_CLOSURE_UNSUPPORTED');

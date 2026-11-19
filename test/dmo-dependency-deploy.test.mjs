@@ -16,7 +16,6 @@ import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { executeDmo, preflightDmo } from '../lib/services/command-native-dmo.js';
 
-const identity = (kind, apiName) => ({ kind, dataSpace: 'default', apiName });
 const dmo = (apiName) => ({
   schemaVersion: 1,
   kind: 'dmo',
@@ -31,12 +30,13 @@ const dmo = (apiName) => ({
 const segment = (object = 'Person__dlm') => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience',
     description: '',
     segmentType: 'DBT',
-    segmentOn: identity('dmo', object),
+    segmentOn: { kind: 'dmo', apiName: object },
     models: [{ name: 'Audience', sql: `SELECT ${object}.Id__c FROM ${object} WHERE 1 = 0` }],
     lookbackPeriod: 'P90D',
   },

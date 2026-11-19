@@ -6,8 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import SegmentMembersExport from '../lib/commands/data360/segment/members/export.js';
 import { detailQueryWait } from '../lib/services/segment-members.js';
+import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
 import {
   formatMemberValue,
+  memberOutputFile,
   memberColumnHeaders,
   memberDelimiter,
   memberFileName,
@@ -395,7 +397,7 @@ test('selection, scope and detail-mode flag refusals happen before auth', async 
     [{ metadata: 'segment:S', 'include-details': true, filters: 'x' }, 'INVALID_SELECTION'],
     [{ metadata: 'segment:S', 'include-details': true, offset: 5 }, 'INVALID_SELECTION'],
     [{ metadata: 'segment:S', 'api-version': '66.0' }, 'INVALID_SCOPE'],
-    [{ metadata: 'segment:S', dataspace: 'other' }, 'INVALID_SCOPE'],
+    [{ metadata: 'segment:S', dataspace: ' padded' }, 'INVALID_SCOPE'],
   ]) {
     const { command } = await harness(flags, () => assert.fail('no request'), t);
     command.resolveConnection = () => assert.fail('no auth');
@@ -533,6 +535,80 @@ test('--include-details joins the membership DMO to the segment DMO through one 
     'never past the end',
   );
   assert.deepEqual(waits, [detailQueryWait.intervalMs]);
+});
+
+test('--include-details in a non-default data space reads the ds2_ segment and queries in that data space', async (t) => {
+  const inner = details();
+  const { command, calls } = await harness(
+    {
+      metadata: 'segment:ds2_Members_Seg',
+      dataspace: 'dataspace2',
+      'include-details': true,
+      limit: 2,
+      'output-file': 'd.csv',
+    },
+    (request, url, count) =>
+      url.pathname === `${base}/segments/ds2_Members_Seg`
+        ? { segments: [segment({ apiName: 'ds2_Members_Seg', dataSpace: 'dataspace2' })] }
+        : inner(request, url, count),
+    t,
+  );
+  const { result } = await run(command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.segment.dataSpace, 'dataspace2');
+  const queries = calls.filter(({ url }) => url.pathname.startsWith(`${base}/query-sql`));
+  assert.ok(queries.length >= 3);
+  for (const { url } of queries) assert.equal(url.searchParams.get('dataspace'), 'dataspace2');
+});
+
+test('an API name of another data space falls through to the search in the run data space', async (t) => {
+  const restore = dataSpaceDirectory.read;
+  dataSpaceDirectory.read = async () => [
+    { name: 'default' },
+    { name: 'dataspace2', prefix: 'ds2' },
+  ];
+  try {
+    const { command, calls } = await harness(
+      { metadata: 'segment:Members_Seg', dataspace: 'dataspace2' },
+      () => ({ segments: [segment()] }),
+      t,
+    );
+    const { result, exit } = await run(command);
+    assert.equal(exit, 1);
+    const [error] = result.diagnostics.errors;
+    assert.equal(error.code, 'SEGMENT_MEMBERS_NOT_FOUND');
+    assert.match(error.message, /No segment in the data space dataspace2/u);
+    assert.match(error.message, /A segment of that API name is in the data space default/u);
+    assert.match(error.message, /stored as ds2_<Name>/u);
+    // The list of the run's data space was searched; no member was read.
+    assert.ok(calls.some(({ url }) => url.pathname === `${base}/segments`));
+    assert.ok(!calls.some(({ url }) => url.pathname.endsWith('/members')));
+  } finally {
+    dataSpaceDirectory.read = restore;
+  }
+});
+
+test('a segment read without its data space is an unexpected response', async (t) => {
+  const { command } = await harness(
+    { metadata: 'segment:Members_Seg' },
+    () => ({ segments: [segment({ dataSpace: undefined })] }),
+    t,
+  );
+  const { result } = await run(command);
+  assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_MEMBERS_UNEXPECTED_RESPONSE');
+});
+
+test('the default output folder is the run data space', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-segment-members-folder-'));
+  const now = new Date('2026-11-19T10:00:00Z');
+  assert.equal(
+    path.dirname(await memberOutputFile(undefined, 'Seg', 'csv', cwd, now, 'dataspace2')),
+    path.join(cwd, 'data', 'dataspace2'),
+  );
+  assert.equal(
+    path.dirname(await memberOutputFile(undefined, 'Seg', 'csv', cwd, now)),
+    path.join(cwd, 'data', 'default'),
+  );
 });
 
 // eslint-disable-next-line unicorn/no-null -- query-sql rows report an empty field as null.
@@ -726,7 +802,7 @@ test('a record ID is found through the segment list, never put into the URL path
   );
 });
 
-test('the search is exact, case-sensitive and covers only the default data space', async (t) => {
+test("the search is exact, case-sensitive and covers only the run's data space", async (t) => {
   for (const selection of ['members seg', 'Other Space Seg', '1sgaj000000XmQr']) {
     const { command, calls } = await harness(
       { metadata: `segment:${selection}` },
@@ -790,7 +866,7 @@ test('a shared display name without a terminal stops with the candidates', async
   assert.equal(result.status, 'blocked');
   const [error] = result.diagnostics.errors;
   assert.equal(error.code, 'SEGMENT_SELECTION_AMBIGUOUS');
-  assert.match(error.message, /"Shared Name" matches 2 segments in the default data space:/u);
+  assert.match(error.message, /"Shared Name" matches 2 segments in the data space default:/u);
   assert.match(error.message, /- "Shared Name" \(API name Shared_A, ID 1sgaj000000AAAAAAA\)/u);
   assert.match(error.message, /- "Shared Name" \(API name Shared_B, ID 1sgaj000000BBBBBBB\)/u);
   assert.equal(error.hint, errorCodeInfo('SEGMENT_SELECTION_AMBIGUOUS').hint);

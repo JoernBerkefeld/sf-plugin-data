@@ -43,12 +43,13 @@ const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
 const document = () => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience',
     description: 'Description',
     segmentType: 'DBT',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql }],
     lookbackPeriod: 'P90D',
   },
@@ -325,10 +326,7 @@ test('missing, divergent, duplicate-key, wrong-identity and invalid UTF8 compani
         break;
       }
       case 'identity': {
-        await writeFile(
-          p.path,
-          JSON.stringify({ ...document(), identity: { dataSpace: 'default', apiName: 'Other' } }),
-        );
+        await writeFile(p.path, JSON.stringify({ ...document(), identity: { apiName: 'Other' } }));
         break;
       }
       default: {
@@ -413,7 +411,7 @@ test('unproven404, permission failure and malformed target never admit create', 
     async () => ({ blockers: ['SEGMENT_ACQUISITION_FAILED'] }),
     async () => ({
       ...(await acquire()),
-      candidate: { ...document(), identity: { dataSpace: 'default', apiName: 'Other' } },
+      candidate: { ...document(), identity: { apiName: 'Other' } },
     }),
   ]) {
     const result = await preflightSegmentDeploy(
@@ -716,7 +714,7 @@ test('reverse mixed selection orders prerequisites first and retains partial/unk
     };
     const later = {
       ...segment,
-      document: { ...segment.document, identity: { dataSpace: 'default', apiName: 'ZZTail' } },
+      document: { ...segment.document, identity: { apiName: 'ZZTail' } },
     };
     const command = commandSetup([later, segment, dmo], false);
     const parse = command.parse;
@@ -834,7 +832,7 @@ test('late pair or prerequisite drift preserves earlier completed DMO and unatte
     };
     const tail = {
       ...segment,
-      document: { ...segment.document, identity: { dataSpace: 'default', apiName: 'ZZTail' } },
+      document: { ...segment.document, identity: { apiName: 'ZZTail' } },
     };
     const command = commandSetup([tail, segment, dmo], false);
     command.captureInput = async () => 'same';

@@ -26,12 +26,13 @@ const sql = 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE 1 = 0';
 const candidate = () => ({
   schemaVersion: 1,
   kind: 'segment',
-  identity: { dataSpace: 'default', apiName: 'Audience' },
+  c__dataSpace: 'default',
+  identity: { apiName: 'Audience' },
   spec: {
     displayName: 'Audience label',
     description: 'Description',
     segmentType: 'DBT',
-    segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+    segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
     models: [{ name: 'Audience', sql }],
     lookbackPeriod: 'P90D',
   },

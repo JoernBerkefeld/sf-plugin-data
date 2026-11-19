@@ -741,12 +741,13 @@ const command = async (saved, client, mode = {}) => {
       {
         schemaVersion: 1,
         kind: 'segment',
-        identity: { dataSpace: 'default', apiName: 'Audience' },
+        c__dataSpace: 'default',
+        identity: { apiName: 'Audience' },
         spec: {
           displayName: 'Audience',
           description: '',
           segmentType: 'DBT',
-          segmentOn: { kind: 'dmo', dataSpace: 'default', apiName },
+          segmentOn: { kind: 'dmo', apiName },
           models: [
             { name: 'Audience', sql: `SELECT ${apiName}.ssot__Id__c FROM ${apiName} WHERE 1 = 0` },
           ],

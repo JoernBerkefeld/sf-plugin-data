@@ -1,11 +1,11 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Connection } from '@salesforce/core';
-import { carriesDefinition } from '../artifacts/segment-document.js';
+import { SegmentError, carriesDefinition } from '../artifacts/segment-document.js';
 import type { SegmentDocument } from '../artifacts/segment-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { projectSegment } from './retrieve-segment.js';
+import { projectSegment, segmentSpaceMismatch } from './retrieve-segment.js';
 import { operationDiagnostic, replaceExplanation } from './operation-diagnostic.js';
 
 /** Default wait for the publish result and the pause between status reads. */
@@ -17,6 +17,8 @@ export type SegmentPublishOptions = {
   waitTimeoutSeconds: number;
   /** The segment file of a `-d` selection: the org must hold this definition. */
   desired?: SegmentDocument;
+  /** The run's data space: the segment read must name it (default: default). */
+  dataSpace?: string;
   verifyInput: () => Promise<void>;
   client?: Pick<ConnectClient, 'get' | 'publishSegment'>;
   now?: () => number;
@@ -74,8 +76,9 @@ function explained(message: string): Error {
 }
 
 /**
- * Publish one segment of the default data space and wait for the result. The segment is read by
- * name; with a file, the org must hold the file's definition. Salesforce decides whether it can
+ * Publish one segment of the run's data space and wait for the result. The segment is read by
+ * its (stored) name, which is unique in the org; a read naming another data space is refused
+ * (SEGMENT_DATASPACE_MISMATCH). With a file, the org must hold the file's definition. Salesforce decides whether it can
  * publish now (also while the segment is processing or counting): one POST to
  * `/ssot/segments/{marketSegmentId}/actions/publish` without a body, never resent, then status
  * reads until `publishStatus` is SUCCESS or FAILED for this publish, or the wait ends (still
@@ -116,6 +119,7 @@ export async function publishSegment(
   const now = options.now ?? Date.now;
   const pause = options.delay ?? (async (milliseconds: number) => delay(milliseconds));
   const client = options.client ?? new ConnectClient(connection, selection);
+  const dataSpace = options.dataSpace ?? 'default';
   const read = async (): Promise<Observed | undefined> => {
     if (connection.getApiVersion() !== '68.0') throw new Error('Connection drift');
     let response: unknown;
@@ -137,13 +141,13 @@ export async function publishSegment(
     const raw = value as Record<string, unknown>;
     if (
       raw.apiName !== apiName ||
-      raw.dataSpace !== 'default' ||
       typeof raw.marketSegmentId !== 'string' ||
       !/^1sg[A-Za-z0-9]{12}(?:[A-Za-z0-9]{3})?$/u.test(raw.marketSegmentId)
     )
       throw explained(
-        `Salesforce answered the read of segment ${apiName} with another name, data space or record ID.`,
+        `Salesforce answered the read of segment ${apiName} with another name or record ID.`,
       );
+    if (raw.dataSpace !== dataSpace) throw segmentSpaceMismatch(apiName, raw.dataSpace, dataSpace);
     return {
       raw,
       marketSegmentId: raw.marketSegmentId,
@@ -174,7 +178,7 @@ export async function publishSegment(
         'blocked',
         'not-attempted',
         'SEGMENT_PUBLISH_ADMISSION_FAILED',
-        `Segment ${apiName} does not exist in the default data space of the org (HTTP 404 ITEM_NOT_FOUND). Deploy it first with sf data360 deploy. Nothing was published.`,
+        `Segment ${apiName} does not exist in the org (HTTP 404 ITEM_NOT_FOUND). Deploy it first with sf data360 deploy. Nothing was published.`,
       );
     baseline = observed;
     describe(baseline);
@@ -201,7 +205,7 @@ export async function publishSegment(
     return result(
       'blocked',
       'not-attempted',
-      'SEGMENT_PUBLISH_ADMISSION_FAILED',
+      error instanceof SegmentError ? error.code : 'SEGMENT_PUBLISH_ADMISSION_FAILED',
       operationDiagnostic(
         error,
         'The segment could not be read before the publish, so nothing was published.',

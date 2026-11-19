@@ -18,6 +18,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce refused the create because a segment with this name already exists (HTTP 409). The plugin does not switch to an update; inspect the target, then preview again.',
   SEGMENT_CREATE_UNCONFIRMED:
     'The segment create was sent, but its result could not be confirmed. Inspect the segment in the org before deploying again; the plugin does not retry.',
+  SEGMENT_DATASPACE_MISMATCH:
+    "The segment (its file's c__dataSpace, or the segment Salesforce read by that name) is in another data space than the run. Run with the --dataspace the message names, or correct c__dataSpace, then rerun.",
   SEGMENT_DELETE_ADMISSION_FAILED:
     'The checks before the segment delete failed, so nothing was deleted. Read the message, check the segment and its source DMO in Data Cloud, then preview the delete again.',
   SEGMENT_DELETION_UNCONFIRMED:
@@ -28,14 +30,16 @@ export const hints: Readonly<Record<string, string>> = {
     'The DMO this segment is built on (spec.segmentOn) was not returned under that exact name. Create the DMO in the target org or fix the name in the file, then rerun.',
   SEGMENT_DEPENDENCY_DRIFT:
     'The DMO this segment uses changed in the org while the deploy was running, so nothing was written. Make sure nobody changes the DMO, then preview and deploy again.',
+  SEGMENT_DEPENDENCY_OTHER_DATASPACE:
+    "The DMO this segment is built on, or a Waterfall child segment, is in another data space than the segment. Name the component of the segment's own data space (<prefix>_<Name> in a non-default one), then rerun.",
   SEGMENT_FRESH_ADMISSION_BLOCKED:
     'Right before writing this segment in a batch, a fresh check no longer allowed a create, update or no change, or --allow-processing was missing. Preview the batch again.',
   SEGMENT_IDENTITY_MISMATCH:
-    'Salesforce returned a segment with a different name or data space than requested. Check the exact segment name (case matters) and that it lives in the default data space.',
+    'Salesforce returned a segment with a different name than requested, or without a data space. Check the exact segment name (case matters), then rerun.',
   SEGMENT_MEMBERS_CHANGED:
     "The segment's member count changed during the export, so a publish finished mid-read and no file was written. Run the export again.",
   SEGMENT_MEMBERS_NOT_FOUND:
-    'No segment in the default data space has this API name, record ID or display name. Check the exact value (case matters) and rerun the export.',
+    "No segment in the run's data space has this API name, record ID or display name. Check the exact value (case matters; <prefix>_<Name> outside default) and --dataspace, then rerun the export.",
   SEGMENT_MEMBERS_OUTPUT_FAILED:
     'The members were read but the output file could not be written, so no file was left. Check that the folder is writable and has free space, then rerun.',
   SEGMENT_MEMBERS_READ_FAILED:
@@ -46,8 +50,10 @@ export const hints: Readonly<Record<string, string>> = {
     'A segment member matched more than one row of the DMO the segment is built on, so --include-details cannot write one row per member. Export without --include-details.',
   SEGMENT_MEMBER_DETAILS_UNAVAILABLE:
     'The segment names no membership DMO or source DMO, or Salesforce lists no single relationship between them, so --include-details cannot join them. Export without it.',
+  SEGMENT_NAME_NOT_STORED:
+    "In a non-default data space Salesforce stores a segment as <prefix>_<Name>; this file's name lacks the prefix, so a create could not be read back. Nothing was sent; add the prefix to the file name and identity.apiName.",
   SEGMENT_PUBLISH_ADMISSION_FAILED:
-    'The segment could not be read before the publish, or it does not exist in the default data space, so nothing was published. Deploy or check the segment, then rerun.',
+    'The segment could not be read before the publish, or it does not exist in the org, so nothing was published. Deploy or check the segment, then rerun.',
   SEGMENT_PUBLISH_DEFINITION_MISMATCH:
     'The segment in the org does not hold the definition of the selected file, so it was not published. Deploy the file first, or publish the org segment with -m segment:Name.',
   SEGMENT_PUBLISH_FAILED:
@@ -63,7 +69,7 @@ export const hints: Readonly<Record<string, string>> = {
   SEGMENT_SCHEDULE_CHANGE:
     'The deploy sends the schedule of the file, so the segment publishes on that schedule in the target org ({ "frequency": "None" } turns it off). Remove the schedule key from the file to leave the org schedule alone.',
   SEGMENT_SELECTION_AMBIGUOUS:
-    'More than one segment in the default data space matches this display name or record ID and none was chosen. Rerun with an API name listed in the message.',
+    "More than one segment in the run's data space matches this display name or record ID and none was chosen. Rerun with an API name listed in the message.",
   SEGMENT_SETTLEMENT_UNQUALIFIED:
     'After the write, the segment showed a status other than active, processing or counting. Inspect the segment status in the org before any further deploy.',
   SEGMENT_TARGET_DRIFT:
@@ -77,7 +83,7 @@ export const hints: Readonly<Record<string, string>> = {
   UNKNOWN_SEGMENT_CONFIGURATION:
     'The segment has a setting the plugin does not know, or misses one. Retrieve keeps unknown settings in the file; deploy refuses them and names the key. Remove the key, or manage the segment in Data Cloud.',
   UNSUPPORTED_SEGMENT_VARIANT:
-    'The segment has parameters (no write takes them), schedule details the plugin does not know, UI criteria that are not a JSON object or no DMO source in the default space. Retrieve writes it as-is; deploy refuses it.',
+    'The segment has parameters (no write takes them), schedule details the plugin does not know, UI criteria that are not a JSON object or no DMO source. Retrieve writes it as-is; deploy refuses it.',
   UNSUPPORTED_SEGMENT_XML:
     "Segment XML files cannot be deployed. Select the segment's .segment.json file instead; retrieve one with sf data360 retrieve -m segment:Name if you do not have it.",
 };

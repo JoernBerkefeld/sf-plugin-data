@@ -21,7 +21,7 @@ A segment file is written only from a complete definition that passed all of the
 ## How to fix
 
 1. Run the same retrieve again.
-2. If it repeats, read the segment directly, for example `sf api request rest /services/data/v68.0/ssot/segments/<Name> -o <alias>`, and check that it exists in the default data space.
+2. If it repeats, read the segment directly, for example `sf api request rest /services/data/v68.0/ssot/segments/<Name> -o <alias>`, and check that it exists in the run's data space.
 3. Report the case if the direct read looks normal.
 
 ## Example output

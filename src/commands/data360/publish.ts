@@ -11,7 +11,8 @@ import type {
   CalculatedInsightDeployInput,
   SegmentDeployInput,
 } from '../../artifacts/read-deploy-input.js';
-import { segmentName } from '../../artifacts/segment-document.js';
+import { SegmentError, segmentName } from '../../artifacts/segment-document.js';
+import { explainSpaceMismatch, operationDiagnostic } from '../../services/operation-diagnostic.js';
 import type { SegmentDocument } from '../../artifacts/segment-document.js';
 import { publishSegment, segmentPublishWait } from '../../services/publish-segment.js';
 import type { SegmentPublishResult } from '../../services/publish-segment.js';
@@ -49,7 +50,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
   public static readonly aliases = ['datacloud:publish', 'd360:publish', 'dc:publish'];
   public static readonly summary = 'Publish one Data360 Calculated Insight draft or one segment.';
   public static readonly description =
-    'Segment: -m segment:Name (the segment as the org holds it) or -d data360/segments/Name.segment.json (or one of its .segment.<model>.sql files; the org must hold the definition of the file, otherwise SEGMENT_PUBLISH_DEFINITION_MISMATCH: deploy it first). A file retrieved as-is (verbatim) is refused with VERBATIM_NOT_DEPLOYABLE. --api-version auto (68.0) or 68.0, default space. The segment is read by name (absent is SEGMENT_PUBLISH_ADMISSION_FAILED), then one API 68 POST /ssot/segments/{marketSegmentId}/actions/publish without a body starts the publish; it runs on command, needs no acknowledgement flag and is never resent. Salesforce decides whether the segment can be published now, also while it is PROCESSING or COUNTING; a 4xx answer is reported with its text (SEGMENT_PUBLISH_REJECTED). The segment is then read every 30 seconds (progress on stderr) until publishStatus is SUCCESS (published) or FAILED (SEGMENT_PUBLISH_FAILED) for this publish. --wait-timeout sets that wait in whole seconds (default 1800; a publish took about 15 minutes in a test); when it runs out the result is publishing (status processing, exit 0, SEGMENT_PUBLISH_STILL_PROCESSING): still processing, not failed, and not resent. Members are readable only after SUCCESS. --preview reads the segment and reports what would be published without publishing. Calculated insight: requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and the run data space (--dataspace, default: default; --data-space is a compatibility alias), which c__dataSpace in the file must name (CI_DATASPACE_MISMATCH otherwise). The insight must exist (create it with sf data360 deploy, --draft for a draft). An ACTIVE insight that holds every key of the file is unchanged; otherwise one API 68 PATCH sends the file (translated like deploy) with draft: false, and the insight is read until it is ACTIVE with the file. Salesforce decides; a 4xx answer is reported as rejected. --preview is read-only. An unknown outcome is not retried or rolled back.';
+    'Segment: -m segment:Name (the segment as the org holds it) or -d data360/segments/Name.segment.json (or one of its .segment.<model>.sql files; the org must hold the definition of the file, otherwise SEGMENT_PUBLISH_DEFINITION_MISMATCH: deploy it first). A file retrieved as-is (verbatim) is refused with VERBATIM_NOT_DEPLOYABLE. --api-version auto (68.0) or 68.0, in the run data space (--dataspace; a segment or file of another data space is SEGMENT_DATASPACE_MISMATCH). The segment is read by name (absent is SEGMENT_PUBLISH_ADMISSION_FAILED), then one API 68 POST /ssot/segments/{marketSegmentId}/actions/publish without a body starts the publish; it runs on command, needs no acknowledgement flag and is never resent. Salesforce decides whether the segment can be published now, also while it is PROCESSING or COUNTING; a 4xx answer is reported with its text (SEGMENT_PUBLISH_REJECTED). The segment is then read every 30 seconds (progress on stderr) until publishStatus is SUCCESS (published) or FAILED (SEGMENT_PUBLISH_FAILED) for this publish. --wait-timeout sets that wait in whole seconds (default 1800; a publish took about 15 minutes in a test); when it runs out the result is publishing (status processing, exit 0, SEGMENT_PUBLISH_STILL_PROCESSING): still processing, not failed, and not resent. Members are readable only after SUCCESS. --preview reads the segment and reports what would be published without publishing. Calculated insight: requires one exact --source-dir data360/calculatedInsights/Name__cio.calculatedInsight-meta.json or its .calculatedInsight-meta.sql file (the JSON is joined with its SQL; a missing SQL file or another Name__cio.calculatedInsight-meta.* file beside them is refused with INVALID_SOURCE), --api-version auto (68.0) or 68.0 and the run data space (--dataspace, default: default; --data-space is a compatibility alias), which c__dataSpace in the file must name (CI_DATASPACE_MISMATCH otherwise). The insight must exist (create it with sf data360 deploy, --draft for a draft). An ACTIVE insight that holds every key of the file is unchanged; otherwise one API 68 PATCH sends the file (translated like deploy) with draft: false, and the insight is read until it is ACTIVE with the file. Salesforce decides; a 4xx answer is reported as rejected. --preview is read-only. An unknown outcome is not retried or rolled back.';
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -70,7 +71,8 @@ export default class Publish extends SfCommand<PublishEnvelope> {
     'api-version': Flags.string({ summary: 'Native lifecycle route: auto (68.0) or 68.0.' }),
     dataspace: Flags.string({
       aliases: ['data-space'],
-      summary: "The run's data space (default: default). Segments: default only.",
+      summary:
+        "The run's data space (default: default); a segment or calculated insight file must name it in c__dataSpace.",
     }),
     preview: Flags.boolean({ default: false, summary: 'Read and report only; never publish.' }),
   };
@@ -146,12 +148,8 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         throw new Error('Wait timeout');
       code = 'INVALID_SCOPE';
       const dataSpace = flags.dataspace ?? 'default';
-      // A calculated insight is published in the run's data space; a segment in default only.
-      if (
-        !['auto', '68.0'].includes(flags['api-version'] ?? 'auto') ||
-        (segment && dataSpace !== 'default')
-      )
-        throw new Error('Scope');
+      // A calculated insight or segment is published in the run's data space.
+      if (!['auto', '68.0'].includes(flags['api-version'] ?? 'auto')) throw new Error('Scope');
       const snapshot = JSON.stringify(flags);
       if (segment) {
         await this.runSegment(envelope, flags, snapshot, segmentMember ? member : undefined);
@@ -216,7 +214,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         message:
           error instanceof DeployInputError && error.code === 'VERBATIM_NOT_DEPLOYABLE'
             ? error.message
-            : 'Publication stopped. Verify the exact JSON and SQL source, API 68, the data space (--dataspace for a calculated insight, default for a segment) and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
+            : 'Publication stopped. Verify the exact JSON and SQL source, API 68, the data space (--dataspace) and target access. Inspect unknown outcomes before another attempt; no automatic retry or rollback.',
         retryable: false,
       });
     }
@@ -237,6 +235,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
     member?: string,
   ): Promise<void> {
     let code = 'INVALID_SOURCE';
+    const dataSpace = flags.dataspace ?? 'default';
     try {
       let apiName: string;
       let desired: SegmentDocument | undefined;
@@ -252,6 +251,15 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         input = inputs[0] as SegmentDeployInput;
         desired = input.document;
         apiName = desired.identity.apiName;
+        if (desired.c__dataSpace !== dataSpace) {
+          code = 'SEGMENT_DATASPACE_MISMATCH';
+          throw explainSpaceMismatch(
+            new SegmentError(code),
+            apiName,
+            desired.c__dataSpace,
+            dataSpace,
+          );
+        }
       }
       const verifyInput = async (): Promise<void> => {
         if (JSON.stringify(flags) !== snapshot) throw new Error('Intent drift');
@@ -268,13 +276,14 @@ export default class Publish extends SfCommand<PublishEnvelope> {
           preview: flags.preview,
           waitTimeoutSeconds: flags['wait-timeout'] ?? segmentPublishWait.timeoutSeconds,
           desired,
+          dataSpace,
           verifyInput,
           progress: this.segmentProgress,
         },
       );
       envelope.result.items.push({
         ...result,
-        identity: { apiName, dataSpace: 'default' },
+        identity: { apiName, dataSpace },
         operation: flags.preview ? 'preview' : 'publish',
         routes: [
           { operation: 'segments.get', apiVersion: '68.0', transport: 'native' },
@@ -300,7 +309,9 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         message:
           error instanceof DeployInputError && error.code === 'VERBATIM_NOT_DEPLOYABLE'
             ? error.message
-            : 'Publication stopped. Verify the segment selection (-m segment:Name or its .segment.json file), API 68 and default data space, and target access. Nothing was published.',
+            : code === 'SEGMENT_DATASPACE_MISMATCH'
+              ? operationDiagnostic(error, 'Nothing was published.')
+              : 'Publication stopped. Verify the segment selection (-m segment:Name or its .segment.json file), API 68 and data space (--dataspace), and target access. Nothing was published.',
         retryable: false,
       });
     }

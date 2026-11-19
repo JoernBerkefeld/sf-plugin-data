@@ -527,12 +527,13 @@ test('a confirmed segment delete removes its JSON and every SQL file in any lett
       desired: {
         schemaVersion: 1,
         kind: 'segment',
-        identity: { dataSpace: 'default', apiName: 'Audience' },
+        c__dataSpace: 'default',
+        identity: { apiName: 'Audience' },
         spec: {
           displayName: 'Audience',
           description: '',
           segmentType: 'DBT',
-          segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+          segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
           models: [{ name: 'First', sql: 'SELECT 1' }],
           lookbackPeriod: 'P90D',
         },

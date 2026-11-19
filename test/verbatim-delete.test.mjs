@@ -22,7 +22,14 @@ import { ConnectError } from '../lib/transport/connect-client.js';
 const verbatim = (kind, apiName) => ({
   schemaVersion: 1,
   kind,
-  ...(['dmo', 'mapping', 'relationship', 'calculated-insight'].includes(kind)
+  ...([
+    'dmo',
+    'mapping',
+    'relationship',
+    'calculated-insight',
+    'segment',
+    'data-transform',
+  ].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason: 'UNMODELLED_RESPONSE', native: {} },
@@ -192,9 +199,11 @@ test('a verbatim identity resolution with null sources is deleted by name; guard
 });
 
 const transformId = '1dt000000000001AAA';
-const transformClient = (raw, ledger) => {
+const transformClient = (raw, ledger, space = 'default') => {
   let deleted = false;
   return {
+    // The MktDataTransform records (SOQL): the GET above names no dataSpaceName.
+    dataSpaces: async () => new Map([[transformId, space]]),
     list: async () =>
       deleted
         ? { totalSize: 0, dataTransforms: [] }
@@ -238,6 +247,23 @@ test('a verbatim transform of any owner is deleted by name; renamed and processi
         { targetId: transformId, confirmDelete: true, verifyInput: async () => {} },
       ),
       { code },
+    );
+    assert.deepEqual(refused, []);
+  }
+  // The org transform is resolved to its data space before any DELETE: its MktDataTransform
+  // record, or the dataSpaceName of its GET.
+  for (const [raw, space] of [
+    [rawTransform(), 'dataspace2'],
+    [rawTransform({ dataSpaceName: 'dataspace2' }), 'default'],
+  ]) {
+    const refused = [];
+    await assert.rejects(
+      deleteDataTransform(
+        verbatim('data-transform', 'SyntheticTransform'),
+        transformClient(raw, refused, space),
+        { targetId: transformId, confirmDelete: true, verifyInput: async () => {} },
+      ),
+      { code: 'TRANSFORM_DATASPACE_MISMATCH', message: /in the data space dataspace2/u },
     );
     assert.deepEqual(refused, []);
   }

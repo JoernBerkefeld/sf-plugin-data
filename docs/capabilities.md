@@ -419,6 +419,23 @@ checks each GET, and deploy, publish and delete refuse a file of another data sp
 carry no data space, so an insight's dependencies are taken from its own data space. Neither family has run live outside `default` through the
 plugin yet.
 
+Data spaces of segments and data transforms (2026-11-19, D3): a segment file names its data
+space in a top-level `c__dataSpace` string (`identity.dataSpace` and `spec.segmentOn.dataSpace`
+are `LEGACY_DATASPACE_KEY`); its DMO and Waterfall children are in the same data space
+(`SEGMENT_DEPENDENCY_OTHER_DATASPACE`). Files carry the stored name (`ds2_<Name>` in
+`dataspace2`), sent unchanged as `developerName` with `POST /ssot/segments?dataspace=<space>`;
+a non-default file without the org's prefix is `SEGMENT_NAME_NOT_STORED`. Item routes (GET,
+PATCH, DELETE, publish by ID) take no data space; the segment list is kept by each entry's
+`dataSpace`. Retrieve, deploy, delete, publish and `segment members export` (detail query with
+`dataspace=`) work in the run's data space and refuse another (`SEGMENT_DATASPACE_MISMATCH`). A
+data transform file names its data space in `c__dataSpace`, equal to `definition.dataSpaceName`
+when it names one; otherwise the data space comes from the transform's MktDataTransform record
+(one SOQL read per command, `TRANSFORM_DATASPACE_UNREADABLE` on failure), and a transform without
+any data space there is handled in `default` only. Retrieve, deploy and delete resolve it before
+any projection, verbatim file, write or DELETE and refuse another
+(`TRANSFORM_DATASPACE_MISMATCH`); a create outside `default` needs `dataSpaceName`. Neither family has
+run live outside `default` through the plugin yet.
+
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or
 redirects. Stream/connector bindings, lineage and generated replay remain unqualified.

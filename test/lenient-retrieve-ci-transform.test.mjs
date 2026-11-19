@@ -179,7 +179,8 @@ for (const [label, change, reason] of [
     assert.deepEqual(result.result.items[0].verbatim, { reason });
     const saved = JSON.parse(await readFile(transformFile(cwd), 'utf8'));
     assert.equal(saved.kind, 'data-transform');
-    assert.deepEqual(saved.identity, { dataSpace: 'default', apiName: transformName });
+    assert.equal(saved.c__dataSpace, 'default');
+    assert.deepEqual(saved.identity, { apiName: transformName });
     assert.deepEqual(saved.verbatim.native, sortKeysDeep(raw));
     await assert.rejects(deployTransform(cwd), { code: 'VERBATIM_NOT_DEPLOYABLE' });
   });

@@ -84,6 +84,7 @@ const transform = (name = 'Copy') => ({
     schemaVersion: 1,
     kind: 'data-transform',
     apiVersion: '68.0',
+    c__dataSpace: 'default',
     definition: {
       name,
       definition: {
@@ -566,12 +567,13 @@ const waterfall = (apiName, spec = {}) => ({
   document: {
     schemaVersion: 1,
     kind: 'segment',
-    identity: { dataSpace: 'default', apiName },
+    c__dataSpace: 'default',
+    identity: { apiName },
     spec: {
       displayName: apiName,
       description: '',
       segmentType: 'Waterfall',
-      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+      segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
       ...spec,
     },
   },

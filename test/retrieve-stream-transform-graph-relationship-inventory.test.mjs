@@ -110,7 +110,7 @@ test('transform inventory pages by 20; graph inventory is one unpaged read', asy
   const urls = [];
   const transforms = Array.from({ length: 21 }, (_, index) => ({
     name: `T${String(index).padStart(2, '0')}`,
-    dataSpaceName: index === 0 ? undefined : 'default',
+    dataSpaceName: 'default',
   }));
   transforms.push({ name: 'Other', dataSpaceName: 'other' });
   const names = await listDataTransformNames(
@@ -200,7 +200,7 @@ function command(metadata, cwd, answer) {
   instance.createDataTransformClient = () => ({});
   instance.acquireDataTransform = async (name) => {
     fail(name);
-    return { document: { definition: { name } } };
+    return { document: { c__dataSpace: 'default', definition: { name } } };
   };
   instance.nativeGraphContext = async () => ({ orgId: 'synthetic-org' });
   instance.retrieveNativeGraph = async (name) => {
@@ -251,11 +251,76 @@ const listings = (url) => {
   if (pathname.endsWith('/ssot/data-streams'))
     return { totalSize: 3, dataStreams: [stream('Alpha'), stream('Broken'), { label: 'x' }] };
   if (pathname.endsWith('/ssot/data-transforms'))
-    return { totalSize: 2, dataTransforms: [{ name: 'Alpha' }, { name: 'Broken' }] };
+    return {
+      totalSize: 2,
+      dataTransforms: [
+        { name: 'Alpha', dataSpaceName: 'default' },
+        { name: 'Broken', dataSpaceName: 'default' },
+      ],
+    };
   if (pathname.endsWith('/ssot/data-graphs/metadata'))
     return { dataGraphMetadata: [{ developerName: 'Alpha' }, { developerName: 'Broken' }] };
   throw new Error(`unexpected ${url}`);
 };
+
+/**
+ * A synthetic transform record ID.
+ * @param {number} n Digit.
+ * @returns {string} 18-character ID.
+ */
+const id = (n) => `1dt00000000000${n}AAA`;
+
+test('transform inventory keeps the transforms of the run data space; one without dataSpaceName takes it from SOQL by record ID', async () => {
+  const transforms = [
+    { id: id(1), name: 'OnDlos' },
+    { id: id(2), name: 'UiSecond' },
+    { id: id(3), name: 'SystemOne' },
+    { id: id(4), name: 'InDefault', dataSpaceName: 'default' },
+    { id: id(5), name: 'InSecond', dataSpaceName: 'dataspace2' },
+  ];
+  // MktDataTransform records (live API 68): Name is the label, not the API name; only the record
+  // ID matches a transform. A label equal to another transform's API name never decides its space.
+  const records = [
+    { Id: id(1), Name: 'UiSecond', DataSpace: { Name: 'default' } },
+    { Id: id(2), Name: 'A label with spaces', DataSpace: { Name: 'dataspace2' } },
+    // eslint-disable-next-line unicorn/no-null -- SOQL answers a missing lookup as null.
+    { Id: id(3), Name: 'OnDlos', DataSpace: null },
+    { Id: id(4), Name: 'In default', DataSpace: { Name: 'default' } },
+    { Id: id(5), Name: 'In second', DataSpace: { Name: 'dataspace2' } },
+  ];
+  const urls = [];
+  const connection = connectionOf(
+    (url) =>
+      url.includes('/query?q=')
+        ? { done: true, totalSize: records.length, records }
+        : { totalSize: transforms.length, dataTransforms: transforms },
+    urls,
+  );
+  assert.deepEqual(await listDataTransformNames(connection), ['InDefault', 'OnDlos', 'SystemOne']);
+  assert.deepEqual(await listDataTransformNames(connection, [], 'dataspace2'), [
+    'InSecond',
+    'UiSecond',
+  ]);
+  const query = urls.find((url) => url.includes('/query?q='));
+  assert.equal(
+    new URL(query).searchParams.get('q'),
+    'SELECT Id, DataSpace.Name FROM MktDataTransform',
+  );
+  // An incomplete SOQL answer, or an entry whose ID the records lack, never lists by guess.
+  for (const [answer, list] of [
+    [{ done: false, totalSize: 5, records: [] }, transforms],
+    [{ done: true, totalSize: records.length, records }, [{ id: id(9), name: 'Unknown' }]],
+    [{ done: true, totalSize: records.length, records }, [{ name: 'NoId' }]],
+  ])
+    await assert.rejects(
+      listDataTransformNames(
+        connectionOf((url) =>
+          url.includes('/query?q=') ? answer : { totalSize: list.length, dataTransforms: list },
+        ),
+      ),
+      { code: 'TRANSFORM_DATASPACE_UNREADABLE' },
+    );
+});
 
 test('bare stream, transform, graph and relationship retrieve every listed item; one failing item never blocks the others', async () => {
   const cwd = await scratch();

@@ -10,7 +10,7 @@
 
 ## What it means
 
-Each family supports a fixed set of API versions and data spaces. Native DLO, DMO, mapping and relationship routes accept `auto` (API 68) or a numeric version from `61.0`. Data graphs, data streams, data transforms, Segments, calculated insights and identity resolutions accept only `auto` or their own fixed version and only the `default` data space. `INVALID_SCOPE` means the requested `--api-version` or `--dataspace` is outside that set.
+Each family supports a fixed set of API versions and data spaces. Native DLO, DMO, mapping and relationship routes accept `auto` (API 68) or a numeric version from `61.0`. Data graphs, data streams, data transforms, Segments, calculated insights and identity resolutions accept only `auto` or their own fixed version; data graphs and identity resolutions accept only the `default` data space. `INVALID_SCOPE` means the requested `--api-version` or `--dataspace` is outside that set.
 
 ## Why the plugin stops
 

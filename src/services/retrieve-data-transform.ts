@@ -1,4 +1,5 @@
 import {
+  dataTransformSpaceMismatch,
   DataTransformError,
   dataTransformId,
   dataTransformName,
@@ -7,6 +8,7 @@ import {
 import type { DataTransformObservation } from '../artifacts/data-transform-document.js';
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
+import { resolveDataTransformSpace } from './data-transform-space.js';
 
 /**
  * Acquire one explicitly selected native transform and its schedule (projected into the document
@@ -14,16 +16,22 @@ import type { DocumentMode } from '../artifacts/verbatim-document.js';
  * retrieve mode the schedule read is best effort: a failed read or an answer that is not an object
  * leaves the schedule out of the file (deploy then leaves the schedule alone), with a warning.
  * @param {string} nameOrId Exact selected API name or native record ID.
- * @param {Pick<DataTransformClient, 'get' | 'schedule'>} client Qualified API68/default transport.
+ * The transform's data space is resolved right after the GET, before anything is projected: its
+ * `dataSpaceName`, otherwise the org's MktDataTransform record (`client.dataSpaces`). With
+ * `dataSpace`, a transform of another data space is TRANSFORM_DATASPACE_MISMATCH, never a
+ * verbatim stand-in.
+ * @param {Pick<DataTransformClient, 'get' | 'schedule' | 'dataSpaces'>} client Qualified API68 transport.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (lenient).
  * @param {string[]} [warnings] Receives the retrieve-mode schedule warning.
+ * @param {string} [dataSpace] The data space the transform must be in.
  * @returns {Promise<DataTransformObservation>} Input-only artifact and detached observations.
  */
 export async function retrieveDataTransform(
   nameOrId: string,
-  client: Pick<DataTransformClient, 'get' | 'schedule'>,
+  client: Pick<DataTransformClient, 'get' | 'schedule' | 'dataSpaces'>,
   mode: DocumentMode = 'deploy',
   warnings?: string[],
+  dataSpace?: string,
 ): Promise<DataTransformObservation> {
   if (
     typeof nameOrId !== 'string' ||
@@ -47,7 +55,13 @@ export async function retrieveDataTransform(
     (nameOrId !== id.value && nameOrId !== name.value)
   )
     throw new DataTransformError('TRANSFORM_IDENTITY_MISMATCH');
-  if (mode === 'deploy') return observeDataTransform(runtime, await client.schedule(id.value));
+  const space = await resolveDataTransformSpace(runtime as Record<string, unknown>, async () =>
+    client.dataSpaces(),
+  );
+  if (dataSpace !== undefined && space !== dataSpace)
+    throw dataTransformSpaceMismatch(name.value, space, dataSpace);
+  if (mode === 'deploy')
+    return observeDataTransform(runtime, await client.schedule(id.value), 'deploy', space);
   let schedule: unknown;
   try {
     schedule = await client.schedule(id.value);
@@ -60,7 +74,7 @@ export async function retrieveDataTransform(
     );
     schedule = {};
   }
-  return observeDataTransform(runtime, schedule, mode);
+  return observeDataTransform(runtime, schedule, mode, space);
 }
 
 /**

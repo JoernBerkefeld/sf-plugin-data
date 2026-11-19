@@ -1,6 +1,6 @@
 # `SEGMENT_MEMBERS_NOT_FOUND`
 
-> No segment in the default data space has this API name, record ID or display name. Check the exact value (case matters) and rerun the export.
+> No segment in the run's data space has this API name, record ID or display name. Check the exact value (case matters; <prefix>_<Name> outside default) and --dataspace, then rerun the export.
 
 |              |                                                        |
 | ------------ | ------------------------------------------------------ |
@@ -10,11 +10,11 @@
 
 ## What it means
 
-The export looks for the segment in the default data space before it reads any member. A value that can be an API name is read directly; when Salesforce answers HTTP 404 `ITEM_NOT_FOUND`, or the value cannot be an API name (for example a display name with spaces), the plugin searches the segment list for the exact record ID or the exact display name. Nothing matched.
+The export looks for the segment in the run's data space (`--dataspace`, default `default`) before it reads any member. A value that can be an API name is read directly; when Salesforce answers HTTP 404 `ITEM_NOT_FOUND`, or the value cannot be an API name (for example a display name with spaces), the plugin searches the segment list for the exact record ID or the exact display name. Nothing matched.
 
 ## Why the plugin stops
 
-Without the segment there are no members to read. The search is exact and case-sensitive, and it covers only the default data space.
+Without the segment there are no members to read. The search is exact and case-sensitive, and it covers only the run's data space. In a non-default data space a segment API name carries the prefix of the data space (`ds2_<Name>`); a segment of the selected API name in another data space is named in the message.
 
 ## How to fix
 
@@ -25,8 +25,8 @@ Without the segment there are no members to read. The search is exact and case-s
 
 ```text
 Segment members export: blocked.
-SEGMENT_MEMBERS_NOT_FOUND: No segment in the default data space of the org has the API name, record ID or display name "My Segment". Check the exact value (case matters).
-Hint: No segment in the default data space has this API name, record ID or display name. Check the exact value (case matters) and rerun the export.
+SEGMENT_MEMBERS_NOT_FOUND: No segment in the data space default of the org has the API name, record ID or display name "My Segment". Check the exact value (case matters).
+Hint: No segment in the run's data space has this API name, record ID or display name. Check the exact value (case matters; <prefix>_<Name> outside default) and --dataspace, then rerun the export.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/segment/SEGMENT_MEMBERS_NOT_FOUND.md
 ```
 

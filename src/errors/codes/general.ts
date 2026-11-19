@@ -31,7 +31,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_ASYNC_SCOPE:
     '--async works only when the selection contains an identity resolution. Remove --async, or select an identity-resolution file or -m identity-resolution:<Name>.',
   INVALID_DATASPACE_FIELD:
-    'The c__dataSpace key of the file is missing or not valid: a data space name, or for a DLO a list of names without repeats. Correct the file or retrieve it again.',
+    'The c__dataSpace key of the file is missing or not valid: a data space name (for a data transform, the one its definition names), or for a DLO a list of names without repeats. Correct the file or retrieve it again.',
   INVALID_DRAFT_SCOPE:
     '--draft applies only to calculated insights at API auto or 68.0. Select only calculated insights and drop other API versions.',
   INVALID_FIELD_DELETE_SELECTION:
@@ -49,7 +49,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_WAIT_TIMEOUT_SCOPE:
     '--wait-timeout applies only to a deploy that holds a data graph or to a segment publish, and must be whole seconds. Remove it, or select a data graph or a segment.',
   LEGACY_DATASPACE_KEY:
-    'The file still has the old data space key (identity.dataSpace, or dataSpace in a calculated insight file). Move the value to the top-level c__dataSpace key, or retrieve again.',
+    'The file still has an old data space key (identity.dataSpace, spec.segmentOn.dataSpace in a segment file, or dataSpace in a calculated insight file). Move the value to the top-level c__dataSpace key, or retrieve again.',
   LOCAL_FILE_REMOVAL_FAILED:
     'The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.',
   LOCAL_REFRESH_FAILED:

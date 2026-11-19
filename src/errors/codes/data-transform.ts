@@ -9,7 +9,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_TRANSFORM_RESPONSE:
     'Salesforce returned something other than a data transform record when the plugin read it. Nothing was changed; check the transform in Data Cloud and rerun.',
   INVALID_TRANSFORM_SCOPE:
-    'Data transforms are only supported with API version auto or 68.0 in the default data space. Remove other --api-version or data space values and rerun.',
+    'Data transforms are only supported with API version auto or 68.0. Remove another --api-version value and rerun.',
   INVALID_TRANSFORM_SELECTION:
     'A data transform name or record ID has an invalid format. Use the API name as in the org (letters, digits, underscores) or the 18-character ID starting with 1dt, then rerun.',
   INVALID_TRANSFORM_TARGET_ID:
@@ -18,6 +18,10 @@ export const hints: Readonly<Record<string, string>> = {
     'The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve with --overwrite.',
   TRANSFORM_CONNECTION_DRIFT:
     'The connection to the org changed while the command was running. Check that your org login is stable, then rerun the command.',
+  TRANSFORM_DATASPACE_MISMATCH:
+    "The data transform (its file's c__dataSpace, or the transform of that name in the org) is in another data space than the run. A transform without any data space in the org is handled in default. Run with the --dataspace the message names, then rerun.",
+  TRANSFORM_DATASPACE_UNREADABLE:
+    'The plugin could not read the data space of the transform from the org (SOQL on MktDataTransform), so nothing was retrieved, changed or deleted. Check the org login and the message, then rerun.',
   TRANSFORM_DELETE_IDENTITY_MISMATCH:
     'The data transform list has no entry with the resolved ID and name together. Nothing was deleted; the transform changed during the run, so preview the delete again, then rerun.',
   TRANSFORM_DELETE_INPUT_DRIFT:

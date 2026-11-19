@@ -28,7 +28,7 @@ export type SegmentDeployPreview = DeployPreviewResult & {
  * @param {unknown} value Desired bounded authored document.
  * @param {Connection} connection Command-owned authenticated target connection.
  * @param {string | ApiVersionSelection} apiVersion API68 selection.
- * @param {string} dataSpace Explicit default target space.
+ * @param {string} dataSpace The run's data space; the file's c__dataSpace must name it.
  * @param {Function} acquire Independent acquisition seam for deterministic synthetic tests.
  * @param {Function} bind Fresh independent target dependency binding; never cached across calls.
  * @param {Function} children Fresh binding of the Waterfall child segments of the file.
@@ -90,9 +90,11 @@ export async function preflightSegmentDeploy(
   } catch {
     return result('blocked', 'unknown', 'INVALID_SOURCE');
   }
+  // The file's data space must be the run's (deploy refuses that earlier, naming both).
+  if (desired.c__dataSpace !== dataSpace)
+    return result('blocked', 'unknown', 'SEGMENT_DATASPACE_MISMATCH');
   if (
     requested !== '68.0' ||
-    dataSpace !== 'default' ||
     connection.getApiVersion() !== requested ||
     (typeof apiVersion !== 'string' &&
       (apiVersion.soapNumeric !== requested || apiVersion.restSelector !== `v${requested}`))
@@ -142,7 +144,10 @@ export async function preflightSegmentDeploy(
         acquired,
       );
     const current = validateSegmentDocument(acquired.candidate);
-    if (JSON.stringify(current.identity) !== JSON.stringify(desired.identity))
+    if (
+      JSON.stringify(current.identity) !== JSON.stringify(desired.identity) ||
+      current.c__dataSpace !== desired.c__dataSpace
+    )
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
     return carriesDefinition(current, desired)
       ? result('unchanged', 'present')

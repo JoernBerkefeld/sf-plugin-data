@@ -71,6 +71,7 @@ const transformDocument = {
   schemaVersion: 1,
   kind: 'data-transform',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: {
     name: 'SyntheticTransform',
     label: 'Synthetic transform',
@@ -548,7 +549,14 @@ const verbatim = (kind, apiName, native) => ({
   schemaVersion: 1,
   kind,
   // A DMO, mapping, relationship or calculated insight keeps its data space in c__dataSpace.
-  ...(['dmo', 'mapping', 'relationship', 'calculated-insight'].includes(kind)
+  ...([
+    'dmo',
+    'mapping',
+    'relationship',
+    'calculated-insight',
+    'segment',
+    'data-transform',
+  ].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason: 'UNMODELLED_VARIANT', native },
@@ -714,12 +722,13 @@ files.lenientSegment = [
   {
     schemaVersion: 1,
     kind: 'segment',
-    identity: { dataSpace: 'default', apiName: 'Audience' },
+    c__dataSpace: 'default',
+    identity: { apiName: 'Audience' },
     spec: {
       displayName: 'Audience',
       description: '',
       segmentType: 'DBT',
-      segmentOn: { kind: 'dmo', dataSpace: 'default', apiName: 'Person__dlm' },
+      segmentOn: { kind: 'dmo', apiName: 'Person__dlm' },
       models: [{ name: 'Audience' }],
       lookbackPeriod: 'P90D',
       futureConfiguration: true,
