@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Deploy from '../lib/commands/data360/deploy.js';
@@ -9,6 +9,7 @@ import Delete from '../lib/commands/data360/delete.js';
 import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import { writeNativeRelationshipDocument } from '../lib/artifacts/write-native-relationship.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
+import { deleteSelectorFor } from '../lib/artifacts/path-selector.js';
 import { NativeRelationshipError } from '../lib/artifacts/native-relationship-document.js';
 import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 
@@ -310,6 +311,18 @@ for (const value of [
     assert.deepEqual(fixture.client.calls, []);
     assert.deepEqual(fixture.order, []);
   });
+
+test('delete accepts the selector deleteSelectorFor builds from the written relationship file', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'relationship-delete-selector-'));
+  await writeNativeRelationshipDocument(relationship, cwd, false);
+  const file = `data360/relationship/${name}.relationship-meta.json`;
+  const built = deleteSelectorFor(file, await readFile(path.join(cwd, file), 'utf8'));
+  assert.equal(built, selector);
+  const fixture = await deleteFixture({ metadata: [built], preview: true });
+  const result = await inProject(fixture);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.result.items[0].identity.apiName, name);
+});
 
 test('delete by name needs no local file: the source DMO comes from the selector', async () => {
   const fixture = await deleteFixture({ file: false });

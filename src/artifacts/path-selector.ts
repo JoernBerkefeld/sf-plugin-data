@@ -153,3 +153,44 @@ export function selectorForPath(
   const component = classifyComponentPath(relativePath);
   return component && { ...component, selector: `${component.kind}:${component.name}` };
 }
+
+/**
+ * The source DMO a relationship file names: `spec.sourceObjectName` of a normal document, or
+ * `verbatim.native.sourceObject.name` of one retrieved as-is.
+ * @param {unknown} document Parsed file content.
+ * @returns {string | undefined} A valid DMO API name, or undefined.
+ */
+function relationshipSourceDmo(document: unknown): string | undefined {
+  const bag = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  const root = bag(document);
+  const source =
+    bag(root?.spec)?.sourceObjectName ?? bag(bag(bag(root?.verbatim)?.native)?.sourceObject)?.name;
+  return typeof source === 'string' && nativeDmoName.test(source) ? source : undefined;
+}
+
+/**
+ * The exact `sf data360 delete -m` selector of a component file. Every family deletes by its
+ * deploy selector except a relationship, which also names its source DMO
+ * (`relationship:<SourceDmo__dlm>:<Name>`), read from the file's content.
+ * @param {string} relativePath Project-relative POSIX path.
+ * @param {string} documentText The file's text (only read for a relationship).
+ * @returns {string | undefined} The selector, or undefined (unknown path, or a relationship whose
+ * text is not JSON or names no valid source DMO); never throws.
+ */
+export function deleteSelectorFor(relativePath: string, documentText: string): string | undefined {
+  const component = selectorForPath(relativePath);
+  if (!component) return undefined;
+  if (component.kind !== 'relationship') return component.selector;
+  if (typeof documentText !== 'string') return undefined;
+  let document: unknown;
+  try {
+    document = JSON.parse(documentText);
+  } catch {
+    return undefined;
+  }
+  const source = relationshipSourceDmo(document);
+  return source && `relationship:${source}:${component.name}`;
+}

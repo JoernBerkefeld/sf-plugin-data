@@ -2,7 +2,7 @@ import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { selectorForPath } from '../lib/artifacts/path-selector.js';
+import { deleteSelectorFor, selectorForPath } from '../lib/artifacts/path-selector.js';
 
 /** One canonical project-relative path per family, with the selector deploy/retrieve accept. */
 const families = [
@@ -89,6 +89,62 @@ for (const file of [
 test('selectorForPath never throws on a non-string', () => {
   for (const value of [undefined, 42, {}, ['data360']])
     assert.equal(selectorForPath(value), undefined);
+});
+
+const relationshipFile = 'data360/relationship/A_BRef_map_B_Id.relationship-meta.json';
+
+test('deleteSelectorFor names the source DMO of a relationship from its spec', () => {
+  const text = JSON.stringify({
+    schemaVersion: 1,
+    kind: 'relationship',
+    c__dataSpace: 'default',
+    identity: { apiName: 'A_BRef_map_B_Id' },
+    spec: { sourceObjectName: 'A__dlm', sourceFieldName: 'BRef__c' },
+  });
+  assert.equal(deleteSelectorFor(relationshipFile, text), 'relationship:A__dlm:A_BRef_map_B_Id');
+});
+
+test('deleteSelectorFor reads the source DMO of a verbatim relationship from its native entry', () => {
+  const text = JSON.stringify({
+    schemaVersion: 1,
+    kind: 'relationship',
+    c__dataSpace: 'default',
+    identity: { apiName: 'A_BRef_map_B_Id' },
+    verbatim: { reason: 'X', native: { sourceObject: { name: 'A__dlm' } } },
+  });
+  assert.equal(deleteSelectorFor(relationshipFile, text), 'relationship:A__dlm:A_BRef_map_B_Id');
+});
+
+for (const [label, text] of [
+  ['text that is not JSON', '{ not json'],
+  ['an empty text', ''],
+  ['JSON null', 'null'],
+  ['an array', '[]'],
+  ['a missing spec', '{"schemaVersion":1}'],
+  ['a missing sourceObjectName', '{"spec":{}}'],
+  ['a non-string sourceObjectName', '{"spec":{"sourceObjectName":42}}'],
+  ['a source that is not a DMO', '{"spec":{"sourceObjectName":"A__dll"}}'],
+  ['a source with a colon', '{"spec":{"sourceObjectName":"X:A__dlm"}}'],
+])
+  test(`deleteSelectorFor returns undefined for a relationship with ${label}`, () => {
+    assert.equal(deleteSelectorFor(relationshipFile, text), undefined);
+  });
+
+test('deleteSelectorFor returns the deploy selector of every other family, ignoring the text', () => {
+  for (const [file, kind, name] of families.filter(([, kind]) => kind !== 'relationship'))
+    assert.equal(deleteSelectorFor(file, 'not json'), `${kind}:${name}`);
+  assert.equal(
+    deleteSelectorFor('data360/segments/Synthetic.segment.Model_1.sql', ''),
+    'segment:Synthetic',
+  );
+});
+
+test('deleteSelectorFor never throws on an unknown path or non-string input', () => {
+  assert.equal(deleteSelectorFor('README.md', '{}'), undefined);
+  for (const value of [undefined, 42, {}]) {
+    assert.equal(deleteSelectorFor(value, '{}'), undefined);
+    assert.equal(deleteSelectorFor(relationshipFile, value), undefined);
+  }
 });
 
 test('the built path-selector module imports nothing but node:path', async () => {
